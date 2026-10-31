@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -80,7 +81,7 @@ func fetchRemoteWithin(ctx context.Context, rt Runtime, b store.Binding, head ti
 		return f
 	}
 
-	f.Observe = serverChainMemberActive(rt.Store, b.Name)
+	f.Observe = chain.ServerMemberActive(rt.Store, b.Name)
 
 	headCtx, cancel := boundedWait(ctx, head)
 	view, err := rt.Remote.GetBinding(headCtx, f.Server, f.Name)

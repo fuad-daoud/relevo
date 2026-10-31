@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 
 	"github.com/fuad-daoud/relevo/internal/refusal"
@@ -27,7 +28,7 @@ func haltFlowAt(t *testing.T, rt Runtime, at, reason string, awaiting workflow.A
 		if err != nil {
 			return err
 		}
-		st, err := chainWorkflowState(c)
+		st, err := chain.WorkflowState(c)
 		if err != nil {
 			return err
 		}
@@ -62,9 +63,9 @@ func haltAtZeroBudgetRepair(t *testing.T, rt Runtime) {
 	if c.Status != string(workflow.StatusHalted) {
 		t.Fatalf("chain status = %q (%q), want the zero-budget halt", c.Status, c.Reason)
 	}
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if st.At != "repair" {
 		t.Fatalf("halted at %q, want the repair arm", st.At)
@@ -106,9 +107,9 @@ func TestResumeWithANewGateRerunsTheHaltedArmsCheck(t *testing.T) {
 			if row.Status != string(workflow.StatusRunning) {
 				t.Fatalf("status = %q (%q), want running: the check must rerun, not re-halt", row.Status, row.Reason)
 			}
-			st, err := chainWorkflowState(row)
+			st, err := chain.WorkflowState(row)
 			if err != nil {
-				t.Fatalf("chainWorkflowState: %v", err)
+				t.Fatalf("chain.WorkflowState: %v", err)
 			}
 			if st.Awaiting.Step != tt.wantAwait {
 				t.Errorf("engine at %q awaiting %+v, want it on %q", st.At, st.Awaiting, tt.wantAwait)
@@ -138,9 +139,9 @@ func TestResumeWithANewGateOnTheFixArmRerunsFixCheck(t *testing.T) {
 	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop", Gate: "new-cmd"}); err != nil {
 		t.Fatalf("ChainResume: %v", err)
 	}
-	st, err := chainWorkflowState(flowChainRow(t, rt))
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if st.At != "fix-check" || st.Awaiting.Step != "fix-check" {
 		t.Errorf("engine at %q awaiting %+v, want the fix-check step", st.At, st.Awaiting)
@@ -178,9 +179,9 @@ steps:
 	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop", Gate: "new-cmd"}); err != nil {
 		t.Fatalf("ChainResume: %v", err)
 	}
-	st, err := chainWorkflowState(flowChainRow(t, rt))
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if st.At != "guard" {
 		t.Errorf("engine at %q, want guard: the check whose red edge named arm", st.At)
@@ -208,9 +209,9 @@ func TestResumeFromWinsOverTheGateReroute(t *testing.T) {
 			if _, err := ChainResume(context.Background(), rt, tt.opts); err != nil {
 				t.Fatalf("ChainResume(%+v): %v", tt.opts, err)
 			}
-			st, err := chainWorkflowState(flowChainRow(t, rt))
+			st, err := chain.WorkflowState(flowChainRow(t, rt))
 			if err != nil {
-				t.Fatalf("chainWorkflowState: %v", err)
+				t.Fatalf("chain.WorkflowState: %v", err)
 			}
 			if st.At != "build" || st.Awaiting.Member != "builder" {
 				t.Errorf("engine at %q awaiting %+v, want the named step build: --from wins", st.At, st.Awaiting)
@@ -237,9 +238,9 @@ func TestResumeGateChangeOffARedArmDoesNotReroute(t *testing.T) {
 	if row.Status != string(workflow.StatusRunning) {
 		t.Fatalf("status = %q (%q), want running", row.Status, row.Reason)
 	}
-	st, err := chainWorkflowState(row)
+	st, err := chain.WorkflowState(row)
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if st.At != "review" {
 		t.Errorf("engine at %q, want review: no reroute off a red arm", st.At)
@@ -360,9 +361,9 @@ func TestResumeStagedTextWalksBackOnAParamGate(t *testing.T) {
 	// to re-hand, not the walk that got to it.
 	row := haltFlowAt(t, rt, "repair", "repair has no budget left",
 		workflow.Awaiting{Step: "repair", Member: "builder", Round: 2})
-	before, err := chainWorkflowState(row)
+	before, err := chain.WorkflowState(row)
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if before.Awaiting.Member != "builder" || before.Awaiting.Round != 2 {
 		t.Fatalf("awaiting %+v, want the builder on round 2", before.Awaiting)
@@ -423,9 +424,9 @@ func startRegateFlowChain(t *testing.T, rt Runtime) {
 	})
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainRedCheck(t, rt, "shop", "FAIL the gate\n")
-	st, err := chainWorkflowState(flowChainRow(t, rt))
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if st.At != "repair" || st.Awaiting.Member != "builder" {
 		t.Fatalf("engine at %q awaiting %+v, want the repair round open on the builder", st.At, st.Awaiting)
@@ -473,9 +474,9 @@ func TestResumeWithANewGateRerunsAStoppedRepairsCheck(t *testing.T) {
 			if row.Status != string(workflow.StatusRunning) {
 				t.Fatalf("status = %q (%q), want running", row.Status, row.Reason)
 			}
-			st, err := chainWorkflowState(row)
+			st, err := chain.WorkflowState(row)
 			if err != nil {
-				t.Fatalf("chainWorkflowState: %v", err)
+				t.Fatalf("chain.WorkflowState: %v", err)
 			}
 			if st.Awaiting.Step != "check" {
 				t.Fatalf("engine at %q awaiting %+v, want the check step", st.At, st.Awaiting)
@@ -504,9 +505,9 @@ func TestResumeWithANewGateRerunsAHaltedRepairWithBudgetLeft(t *testing.T) {
 	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop", Gate: "new-cmd"}); err != nil {
 		t.Fatalf("ChainResume: %v", err)
 	}
-	st, err := chainWorkflowState(flowChainRow(t, rt))
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if st.Awaiting.Step != "check" {
 		t.Errorf("engine at %q awaiting %+v, want the check step", st.At, st.Awaiting)
@@ -522,9 +523,9 @@ func TestResumeStagedTextYieldsNothingWhenTheWalkBackLandsOffARepairPlan(t *test
 	rt, _ := chainRuntime(t)
 	startRegateFlowChain(t, rt)
 	row := flowChainRow(t, rt)
-	before, err := chainWorkflowState(row)
+	before, err := chain.WorkflowState(row)
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	round := before.Awaiting.Round
 	if err := writeStagedPrompt(rt, "shop", round, repairPlanPrefix+"2\n\nfix it\n"); err != nil {
@@ -559,9 +560,9 @@ func TestResumeFromWinsOverTheGateOnAStoppedRepair(t *testing.T) {
 	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop", Gate: "new-cmd", From: "build"}); err != nil {
 		t.Fatalf("ChainResume: %v", err)
 	}
-	st, err := chainWorkflowState(flowChainRow(t, rt))
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if st.At != "build" || st.Awaiting.Member != "builder" {
 		t.Errorf("engine at %q awaiting %+v, want the named step build", st.At, st.Awaiting)

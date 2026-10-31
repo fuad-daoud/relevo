@@ -40,7 +40,7 @@ func gatedReviewerHalt(t *testing.T, rt Runtime) store.Binding {
 	if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusHalted) {
 		t.Fatalf("chain status = %q, want halted", row.Status)
 	}
-	member, _, ok := chainAwaited(rt.Store, chainStoredRow(t, rt, "shop"))
+	member, _, ok := chain.Awaited(rt.Store, chainStoredRow(t, rt, "shop"))
 	if !ok || member != "shop-rev" {
 		t.Fatalf("awaited member = %q (ok=%v), want shop-rev", member, ok)
 	}

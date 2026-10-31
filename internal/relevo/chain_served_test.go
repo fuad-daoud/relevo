@@ -300,9 +300,9 @@ func TestServedMemberNamesMatchClientMirror(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse stored workflow: %v", err)
 	}
-	planned, err := chainMemberNames("shop", def, rt.RoleRegistry().WorkflowActors())
+	planned, err := chain.MemberNames("shop", def, rt.RoleRegistry().WorkflowActors())
 	if err != nil {
-		t.Fatalf("chainMemberNames: %v", err)
+		t.Fatalf("chain.MemberNames: %v", err)
 	}
 	engineNames := map[string]string{}
 	for _, m := range planned {
@@ -543,9 +543,9 @@ func TestWorkflowCleanServedWriterCloseStillAdvances(t *testing.T) {
 	}
 	flowAdvance(t, rt, ev)
 	c := flowChainRow(t, rt)
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if st.Awaiting.Step != "review" {
 		t.Errorf("awaiting = %+v (%q), want the review step from a clean close", st.Awaiting, c.Reason)
@@ -850,7 +850,7 @@ func TestServedChainViewCarriesRoundsAndTrace(t *testing.T) {
 
 // TestServedChainPreflightCustomWorkflow pins the preflight for a custom
 // workflow: the hand-built request yields a plan whose members match
-// chainMemberNames.
+// chain.MemberNames.
 func TestServedChainPreflightCustomWorkflow(t *testing.T) {
 	t.Parallel()
 
@@ -887,11 +887,11 @@ steps:
 		t.Fatalf("parse workflow: %v", err)
 	}
 	actors := rt.RoleRegistry().WorkflowActors()
-	wantPlanned, err := chainMemberNames(req.Name, def, actors)
+	wantPlanned, err := chain.MemberNames(req.Name, def, actors)
 	if err != nil {
-		t.Fatalf("chainMemberNames: %v", err)
+		t.Fatalf("chain.MemberNames: %v", err)
 	}
-	keeper := chainWriterKeeper(def, workflow.UsedActors(def), actors)
+	keeper := chain.WriterKeeper(def, workflow.UsedActors(def), actors)
 	wantMembers := chainWorkflowMembers(def, wantPlanned, keeper)
 
 	if !reflect.DeepEqual(plan.members, wantMembers) {

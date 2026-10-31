@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
@@ -106,7 +107,7 @@ func gatherHandoverFacts(ctx context.Context, rt Runtime, d *db.DB, opts Handove
 	}
 	f.Round = b.Round
 	f.Server = b.Link != nil || b.Builder.Remote()
-	f.ChainErr = refuseRunningChainMemberStore(rt.Store, opts.Name)
+	f.ChainErr = chain.RefuseRunningMemberStore(rt.Store, opts.Name)
 	if entries, rerr := rt.Store.ReadLog(opts.Name); rerr == nil {
 		f.RoundOpen = store.RoundOpen(entries, b.Round)
 	}

@@ -17,6 +17,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/consult"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -214,7 +215,7 @@ func startRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	if err != nil {
 		return b, err
 	}
-	argv, err := candidate.HeadlessLaunch(c, role, tier, roundBudget(b), prompt, housekeep.RoundTree(HousekeepDeps(rt), b), rt.Store.OutDir(b.Name), rt.Store.PromptPath(b.Name, b.Round), chainReadDir(rt, tx, b.Name))
+	argv, err := candidate.HeadlessLaunch(c, role, tier, roundBudget(b), prompt, housekeep.RoundTree(HousekeepDeps(rt), b), rt.Store.OutDir(b.Name), rt.Store.PromptPath(b.Name, b.Round), chain.Dir(rt.Store, tx, b.Name))
 	if err != nil {
 		return b, err
 	}
@@ -444,7 +445,7 @@ func resumeRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	if err != nil {
 		return b, err
 	}
-	sel, err := h.ResumeBuild(sessionID, l, prompt, roundBudget(b), housekeep.RoundTree(HousekeepDeps(rt), b), rt.Store.OutDir(b.Name), rt.Store.PromptPath(b.Name, b.Round), chainReadDir(rt, tx, b.Name), definition)
+	sel, err := h.ResumeBuild(sessionID, l, prompt, roundBudget(b), housekeep.RoundTree(HousekeepDeps(rt), b), rt.Store.OutDir(b.Name), rt.Store.PromptPath(b.Name, b.Round), chain.Dir(rt.Store, tx, b.Name), definition)
 	if err != nil {
 		return b, err
 	}
@@ -1457,7 +1458,7 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	}
 	if rec != nil && rec.Result == "fail" && next.Regate > 0 && next.State != store.StateNeedsYou {
 		repair := true
-		if chainOwnsMember(tx, b.Name) {
+		if chain.OwnsMember(tx, b.Name) {
 			repair, _ = repairDecision(next, gateSignature(rt.Store.ReadFile, rec.LogPath))
 			repair = repair && closedReportOutcome(tx, b.Name, closedRound) == reporttail.OutcomeDone
 		}

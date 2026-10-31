@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -1044,11 +1045,11 @@ func housekeepNow(rt Runtime) func() time.Time {
 // transition, for the check row the caller already loaded.
 func housekeepHaltChainEnv(rt Runtime) func(context.Context, *store.Tx, db.ChainRow, db.ChainCheckRow, workflow.Event) (bool, error) {
 	return func(ctx context.Context, tx *store.Tx, c db.ChainRow, row db.ChainCheckRow, ev workflow.Event) (bool, error) {
-		def, err := chainWorkflowDef(c)
+		def, err := chain.WorkflowDef(c)
 		if err != nil {
 			return false, err
 		}
-		before, err := chainWorkflowState(c)
+		before, err := chain.WorkflowState(c)
 		if err != nil {
 			return false, err
 		}
@@ -1102,7 +1103,7 @@ func UnbindWith(ctx context.Context, rt Runtime, name string, archive, force boo
 	// record the chain's next send needs, and the chain has no way to resume
 	// it. The refusal is read-only and sits before every side effect below --
 	// a late one would stop a process and then keep the record.
-	if err := refuseRunningChainMemberStore(rt.Store, name); err != nil {
+	if err := chain.RefuseRunningMemberStore(rt.Store, name); err != nil {
 		return UnbindResult{}, err
 	}
 

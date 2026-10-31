@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -319,10 +320,10 @@ func chainAdvanceOneCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 	// installs the server's outcome, so a GetCheck this machine mints an id
 	// for would 404 (no such served check run) and halt the mirror on every
 	// tick while the server runs the gate normally.
-	if chainOnServer(c) {
+	if chain.OnServer(c) {
 		return nil
 	}
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil {
 		return err
 	}
@@ -347,7 +348,7 @@ func chainAdvanceOneCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 		if result == "" {
 			return nil
 		}
-		before, err := chainWorkflowState(c)
+		before, err := chain.WorkflowState(c)
 		if err != nil {
 			return err
 		}
@@ -371,7 +372,7 @@ func chainTickPlacedCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 	if len(c.WorkflowJSON) == 0 || c.Status != string(chain.StatusRunning) {
 		return nil
 	}
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil {
 		return err
 	}
@@ -379,7 +380,7 @@ func chainTickPlacedCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 	if st.Awaiting.Step == "" || st.Awaiting.Member != "" {
 		return nil
 	}
-	def, err := chainWorkflowDef(c)
+	def, err := chain.WorkflowDef(c)
 	if err != nil {
 		return err
 	}
@@ -425,7 +426,7 @@ func chainTickPlacedCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 	if err != nil {
 		return err
 	}
-	before, err := chainWorkflowState(saved)
+	before, err := chain.WorkflowState(saved)
 	if err != nil {
 		return err
 	}
@@ -520,7 +521,7 @@ func chainCheckVisit(tx *store.Tx, name, step string) (int, error) {
 func chainCheckLogTarget(tx *store.Tx, c db.ChainRow) (string, int, error) {
 	member := c.Builder
 	if member == "" {
-		if members := chainMembersOf(c); len(members) > 0 {
+		if members := view.MembersOf(c); len(members) > 0 {
 			member = members[0]
 		}
 	}

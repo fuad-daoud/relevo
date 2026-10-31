@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
+	relevoview "github.com/fuad-daoud/relevo/internal/view"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -179,11 +180,11 @@ func servedChainPreflightWorkflow(rt Runtime, req ServedChainRequest) (ServedCha
 		return ServedChainPlan{}, err
 	}
 	actors := rt.RoleRegistry().WorkflowActors()
-	planned, err := chainMemberNames(req.Name, def, actors)
+	planned, err := chain.MemberNames(req.Name, def, actors)
 	if err != nil {
 		return ServedChainPlan{}, err
 	}
-	keeper := chainWriterKeeper(def, workflow.UsedActors(def), actors)
+	keeper := chain.WriterKeeper(def, workflow.UsedActors(def), actors)
 	if cap := chainNameCap(req.Name, planned); len(req.Name) > cap {
 		return ServedChainPlan{}, refusal.New("chain name %q exceeds %d characters (the longest member suffix is %s)", req.Name, cap, longestMemberSuffix(req.Name, planned))
 	}
@@ -427,11 +428,11 @@ func ServedChainView(rt Runtime, name string, recordID func(string) string, inst
 	// A workflow chain's position is its engine state, so the view projects the
 	// state onto the legacy columns rather than reading the row's saved copy.
 	if len(c.WorkflowJSON) > 0 {
-		def, derr := chainWorkflowDef(c)
+		def, derr := chain.WorkflowDef(c)
 		if derr != nil {
 			return remote.ChainView{}, derr
 		}
-		st, serr := chainWorkflowState(c)
+		st, serr := chain.WorkflowState(c)
 		if serr != nil {
 			return remote.ChainView{}, serr
 		}
@@ -448,7 +449,7 @@ func ServedChainView(rt Runtime, name string, recordID func(string) string, inst
 	if len(c.StateJSON) > 0 {
 		view.State = c.StateJSON
 	}
-	for _, member := range chainMembersOf(c) {
+	for _, member := range relevoview.MembersOf(c) {
 		b, err := rt.Store.Load(member)
 		if err != nil {
 			return remote.ChainView{}, err
@@ -458,7 +459,7 @@ func ServedChainView(rt Runtime, name string, recordID func(string) string, inst
 			return remote.ChainView{}, err
 		}
 		mv := remote.ChainMemberView{
-			Part:  chainPartOf(c, member),
+			Part:  chain.PartOf(c, member),
 			Name:  member,
 			Actor: b.Role,
 			View:  ServedView(b, entries, recordID(member), installation),
@@ -487,6 +488,6 @@ func ServedChainView(rt Runtime, name string, recordID func(string) string, inst
 			Round: e.Round, Plan: e.Plan, Event: e.Event, Action: e.Action, Reason: e.Reason,
 		})
 	}
-	view.Findings = chainFindingsOfState(c)
+	view.Findings = relevoview.FindingsOfState(c)
 	return view, nil
 }

@@ -30,7 +30,7 @@ type chainWFStart struct {
 	ticket       string
 	bodies       [][]byte
 	in           workflow.StartInputs
-	planned      []plannedMember
+	planned      []chain.PlannedMember
 	members      []chainMember
 	resolutions  map[string]resolve.Resolution
 	placements   map[string]resolve.PlacementResolution
@@ -113,12 +113,12 @@ func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOption
 	}
 
 	actors := rt.RoleRegistry().WorkflowActors()
-	planned, err := chainMemberNames(opts.Name, def, actors)
+	planned, err := chain.MemberNames(opts.Name, def, actors)
 	if err != nil {
 		return chainWFStart{}, err
 	}
 	plan.planned = planned
-	plan.keeper = chainWriterKeeper(def, workflow.UsedActors(def), actors)
+	plan.keeper = chain.WriterKeeper(def, workflow.UsedActors(def), actors)
 	if cap := chainNameCap(opts.Name, planned); len(opts.Name) > cap {
 		return chainWFStart{}, refusal.New("chain name %q exceeds %d characters (the longest member suffix is %s)", opts.Name, cap, longestMemberSuffix(opts.Name, planned))
 	}
@@ -273,8 +273,8 @@ func chainValidateWorkflow(rt Runtime, def workflow.Definition, given workflow.G
 // the member builders take. The keeper writer takes the builder part; the
 // shipped default's reviewer, planner and security params name their parts;
 // every other actor keeps its own name as its part.
-func chainWorkflowMembers(def workflow.Definition, planned []plannedMember, keeper string) []chainMember {
-	parts := chainDefaultParts(def)
+func chainWorkflowMembers(def workflow.Definition, planned []chain.PlannedMember, keeper string) []chainMember {
+	parts := chain.DefaultParts(def)
 	out := make([]chainMember, 0, len(planned))
 	for _, m := range planned {
 		shape := store.ShapeReader
@@ -538,7 +538,7 @@ func chainRunStartActions(ctx context.Context, rt Runtime, name string, def work
 		if err != nil {
 			return err
 		}
-		st, err := chainWorkflowState(c)
+		st, err := chain.WorkflowState(c)
 		if err != nil {
 			return err
 		}

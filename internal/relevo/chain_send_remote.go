@@ -100,10 +100,10 @@ func chainSendPending(ctx context.Context, rt Runtime) error {
 		}
 		// The server drives a server chain's sends and the chain pull collects
 		// them, so the pending-send step leaves it alone.
-		if chainOnServer(c) {
+		if chain.OnServer(c) {
 			continue
 		}
-		name, awaitedRound, ok := chainAwaited(rt.Store, c)
+		name, awaitedRound, ok := chain.Awaited(rt.Store, c)
 		if !ok {
 			continue
 		}
@@ -160,7 +160,7 @@ func chainRemoteSend(ctx context.Context, rt Runtime, b store.Binding, round int
 		if c.Status != string(chain.StatusRunning) {
 			return nil
 		}
-		awaited, awaitedRound, ok := chainAwaited(tx, c)
+		awaited, awaitedRound, ok := chain.Awaited(tx, c)
 		if !ok || awaited != b.Name || awaitedRound != round {
 			return nil
 		}

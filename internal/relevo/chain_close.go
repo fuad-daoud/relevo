@@ -46,7 +46,7 @@ type chainCloseWF struct {
 // outcomes, keys its artifacts and closes the step halted when a declared
 // artifact is missing.
 func chainEventFromCloseWF(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, b store.Binding, wf chainCloseWF) (workflow.Event, error) {
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil {
 		return workflow.Event{}, err
 	}
@@ -137,7 +137,7 @@ func chainEventFromCloseWF(ctx context.Context, rt Runtime, tx *store.Tx, c db.C
 // receive it, not the stream. A chain with no readable stored definition skips
 // the gate.
 func chainPlanStepsReason(rt Runtime, c db.ChainRow, step string, wf chainCloseWF) string {
-	def, err := chainWorkflowDef(c)
+	def, err := chain.WorkflowDef(c)
 	if err != nil || !chainStepWritesPlan(def, step) {
 		return ""
 	}
@@ -205,7 +205,7 @@ func chainHaltedOverUncommittedWork(reason string) bool {
 // key the store sealed for the round.
 func chainDirtyReason(rt Runtime, c db.ChainRow, b store.Binding, round int, summary string) string {
 	return fmt.Sprintf("round %d of %s closed done with %s left uncommitted in %s and no commit to carry it: %s; commit it, or recover it from %s (sealed diff: %s)",
-		round, c.Name, summary, b.CWD, chainUncommittedWorkClause, chainRoundSnapshotRef(b, round), rt.Store.DiffPath(b.Name, round))
+		round, c.Name, summary, b.CWD, chainUncommittedWorkClause, chain.SnapshotRef(b, round), rt.Store.DiffPath(b.Name, round))
 }
 
 // chainDirtyUnreadReason is the halt wording for a tree the gate could not
@@ -213,7 +213,7 @@ func chainDirtyReason(rt Runtime, c db.ChainRow, b store.Binding, round int, sum
 // unknown rather than reporting it clean.
 func chainDirtyUnreadReason(c db.ChainRow, b store.Binding, round int, err error) string {
 	return fmt.Sprintf("round %d of %s closed done but its tree %s could not be read (%v), so the chain cannot tell a finished round from uncommitted work and does not advance on the guess; commit the round, or recover it from %s",
-		round, c.Name, b.CWD, err, chainRoundSnapshotRef(b, round))
+		round, c.Name, b.CWD, err, chain.SnapshotRef(b, round))
 }
 
 // chainDirtySummary is the one-line count of what is uncommitted. A stat that
@@ -225,13 +225,6 @@ func chainDirtySummary(ctx context.Context, rt Runtime, b store.Binding) string 
 		return "changes"
 	}
 	return fmt.Sprintf("%d files changed (+%d/-%d)", stat.FilesChanged, stat.Insertions, stat.Deletions)
-}
-
-// chainRoundSnapshotRef is the ref that holds a round's uncommitted work: the
-// same namespace the remote allow-list admits and the remote note names, keyed
-// on the closing writer and the round that closed.
-func chainRoundSnapshotRef(b store.Binding, round int) string {
-	return fmt.Sprintf("refs/relevo/%s/round-%d", b.Name, round)
 }
 
 // chainMirrorDirtyCloseReason is the dirty gate's answer for a close whose
@@ -253,7 +246,7 @@ func chainMirrorDirtyCloseReason(rt Runtime, c db.ChainRow, b store.Binding, rou
 // would be, and the server's snapshot ref where the work survives.
 func chainMirrorDirtyReason(rt Runtime, c db.ChainRow, b store.Binding, round int) string {
 	return fmt.Sprintf("round %d of %s closed done with uncommitted work (%s) left on the server and no commit in %s to carry it: %s; commit it, or recover it from %s (sealed diff: %s)",
-		round, c.Name, chainSealedDiffPaths(rt, b, round), b.Branch, chainUncommittedWorkClause, chainRoundSnapshotRef(b, round), rt.Store.DiffPath(b.Name, round))
+		round, c.Name, chainSealedDiffPaths(rt, b, round), b.Branch, chainUncommittedWorkClause, chain.SnapshotRef(b, round), rt.Store.DiffPath(b.Name, round))
 }
 
 // chainSealedDiffPaths reads the round's sealed diff patch and names the files

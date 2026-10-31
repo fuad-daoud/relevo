@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -243,8 +244,8 @@ func TestDoneRefusedOnARunningChainMember(t *testing.T) {
 
 	for _, name := range []string{"shop", "shop-rev"} {
 		_, err := Done(context.Background(), rt, name)
-		if !errors.Is(err, ErrRunningChainMember) {
-			t.Errorf("Done(%s) = %v, want ErrRunningChainMember", name, err)
+		if !errors.Is(err, chain.ErrRunningMember) {
+			t.Errorf("Done(%s) = %v, want chain.ErrRunningMember", name, err)
 		} else if !strings.Contains(err.Error(), "relevo stop shop first") {
 			t.Errorf("Done(%s) message = %v, want it to name `relevo stop shop first`", name, err)
 		}
@@ -281,8 +282,8 @@ func TestUnbindRefusedOnARunningChainMember(t *testing.T) {
 	rowBefore := chainStoredRow(t, rt, "shop")
 
 	for _, archive := range []bool{false, true} {
-		if _, err := Unbind(context.Background(), rt, "shop-rev", archive); !errors.Is(err, ErrRunningChainMember) {
-			t.Errorf("Unbind(archive=%v) = %v, want ErrRunningChainMember", archive, err)
+		if _, err := Unbind(context.Background(), rt, "shop-rev", archive); !errors.Is(err, chain.ErrRunningMember) {
+			t.Errorf("Unbind(archive=%v) = %v, want chain.ErrRunningMember", archive, err)
 		}
 	}
 
@@ -372,12 +373,12 @@ func TestRefuseRunningMemberReadsState(t *testing.T) {
 			row.Reviewer, row.Planner, row.Security)
 	}
 
-	err := rt.Store.WithLock(func(tx *store.Tx) error { return refuseRunningChainMember(tx, "shop-assistant") })
-	if !errors.Is(err, ErrRunningChainMember) {
-		t.Errorf("refuseRunningChainMember = %v, want ErrRunningChainMember", err)
+	err := rt.Store.WithLock(func(tx *store.Tx) error { return chain.RefuseRunningMember(tx, "shop-assistant") })
+	if !errors.Is(err, chain.ErrRunningMember) {
+		t.Errorf("chain.RefuseRunningMember = %v, want chain.ErrRunningMember", err)
 	}
-	if err := refuseRunningChainMemberStore(rt.Store, "shop-assistant"); !errors.Is(err, ErrRunningChainMember) {
-		t.Errorf("refuseRunningChainMemberStore = %v, want ErrRunningChainMember", err)
+	if err := chain.RefuseRunningMemberStore(rt.Store, "shop-assistant"); !errors.Is(err, chain.ErrRunningMember) {
+		t.Errorf("chain.RefuseRunningMemberStore = %v, want chain.ErrRunningMember", err)
 	}
 }
 
@@ -466,7 +467,7 @@ func TestChainDoneReleasesEveryMemberAndMarksDone(t *testing.T) {
 	if row.Status != string(chain.StatusDone) || row.Phase != string(chain.PhaseFinished) {
 		t.Errorf("chain = status %q phase %q, want done/finished", row.Status, row.Phase)
 	}
-	for _, name := range chainMembersOf(row) {
+	for _, name := range view.MembersOf(row) {
 		if b := chainBinding(t, rt, name); b.State != store.StateDone {
 			t.Errorf("member %s state = %q, want done", name, b.State)
 		}
@@ -568,9 +569,9 @@ func TestWorkflowChainDoneWritesTheEngineState(t *testing.T) {
 	stoppedChain(t, rt, ChainOptions{})
 
 	row := chainStoredRow(t, rt, "shop")
-	st, err := chainWorkflowState(row)
+	st, err := chain.WorkflowState(row)
 	if err != nil {
-		t.Fatalf("chainWorkflowState before done: %v", err)
+		t.Fatalf("chain.WorkflowState before done: %v", err)
 	}
 	if st.Status != workflow.StatusStopped {
 		t.Fatalf("state before done = %q, want stopped", st.Status)
@@ -584,9 +585,9 @@ func TestWorkflowChainDoneWritesTheEngineState(t *testing.T) {
 	if row.Status != string(chain.StatusDone) {
 		t.Fatalf("chain status = %q, want done", row.Status)
 	}
-	st, err = chainWorkflowState(row)
+	st, err = chain.WorkflowState(row)
 	if err != nil {
-		t.Fatalf("chainWorkflowState after done: %v", err)
+		t.Fatalf("chain.WorkflowState after done: %v", err)
 	}
 	if st.Status != workflow.StatusDone {
 		t.Errorf("state status after done = %q, want done", st.Status)
@@ -635,9 +636,9 @@ func TestChainDoneOnAWorkflowlessChainNeverInternal(t *testing.T) {
 			t.Errorf("chain carries workflow %d and state %d bytes, want the migration to have written both",
 				len(row.WorkflowJSON), len(row.StateJSON))
 		}
-		st, err := chainWorkflowState(row)
+		st, err := chain.WorkflowState(row)
 		if err != nil {
-			t.Fatalf("chainWorkflowState after the migrated done: %v", err)
+			t.Fatalf("chain.WorkflowState after the migrated done: %v", err)
 		}
 		if st.Status != workflow.StatusDone {
 			t.Errorf("engine state status = %q, want done", st.Status)

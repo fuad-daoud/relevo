@@ -9,6 +9,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -140,7 +141,7 @@ func Stop(ctx context.Context, rt Runtime, name string, opts StopOptions) (StopR
 			// finish is not an error: the next sync, pull or wait collects it.
 			// A server-chain member is the exception: its round stops on the
 			// server, and the chain pull is what collects it here.
-			if serverChainMember(tx, b.Name) {
+			if chain.ServerMember(tx, b.Name) {
 				return nil
 			}
 			next, _, oerr := observeRemote(ctx, rt, tx, b)
@@ -310,7 +311,7 @@ func closeStopped(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 // process on the way. A member the predicate leaves, or whose close already
 // exists, is left to the resume's own refusal.
 func closeDeadMemberRound(ctx context.Context, rt Runtime, c db.ChainRow) error {
-	member, _, ok := chainAwaited(rt.Store, c)
+	member, _, ok := chain.Awaited(rt.Store, c)
 	if !ok {
 		return nil
 	}

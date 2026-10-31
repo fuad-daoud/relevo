@@ -65,7 +65,7 @@ func ChainTrace(ctx context.Context, rt Runtime, name string) (ChainTraceDoc, er
 	if err != nil {
 		return ChainTraceDoc{}, err
 	}
-	if chainOnServer(c) {
+	if chain.OnServer(c) {
 		return chainServerTrace(ctx, rt, c)
 	}
 	return chainStoredTrace(rt, c)
@@ -296,7 +296,7 @@ func showWorkflow(ctx context.Context, rt Runtime, opts ShowOptions) (ShowResult
 		}
 		return ShowResult{}, err
 	}
-	def, err := chainWorkflowDef(c)
+	def, err := chain.WorkflowDef(c)
 	if err != nil {
 		return ShowResult{}, err
 	}

@@ -31,7 +31,7 @@ func tickChains(ctx context.Context, rt Runtime) {
 		}
 		// A server chain is swept by the server's daemon; this machine must
 		// not halt it from a mirror that has not been pulled.
-		if chainOnServer(c) {
+		if chain.OnServer(c) {
 			continue
 		}
 		running = append(running, c.Name)
@@ -124,11 +124,11 @@ func chainSweepBrokenReason(name, halt string) string {
 // workflow terminal so the chain's own payload and resume hint are written. The
 // step named is the one the engine is on, which is where the chain stopped.
 func chainSweepFlowHalt(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, reason string) error {
-	def, err := chainWorkflowDef(c)
+	def, err := chain.WorkflowDef(c)
 	if err != nil {
 		return err
 	}
-	before, err := chainWorkflowState(c)
+	before, err := chain.WorkflowState(c)
 	if err != nil {
 		return err
 	}

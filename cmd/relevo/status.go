@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/board"
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -170,7 +171,7 @@ func cmdStatus(args []string) error {
 	// never come back as a missing binding.
 	isChain := target != "" && statusChain(rt, target)
 	if target != "" && !isChain {
-		if c, memberOf := relevo.MemberChain(rt.Store.ChainByMember, target); memberOf {
+		if c, memberOf := chain.MemberChain(rt.Store.ChainByMember, target); memberOf {
 			isChain = true
 			target = c.Name
 		}

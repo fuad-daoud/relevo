@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
+	relevoview "github.com/fuad-daoud/relevo/internal/view"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -85,7 +86,7 @@ func TestMirrorChainCheckTickNeverPollsOrHalts(t *testing.T) {
 			break
 		}
 	}
-	for _, m := range chainMembersOf(row) {
+	for _, m := range relevoview.MembersOf(row) {
 		if entries := chainPendingChain(t, rt, m); len(entries) != 0 {
 			t.Errorf("member %s queued %d end deliveries, want none for a mirror's own tick", m, len(entries))
 		}
@@ -169,7 +170,7 @@ func TestMirrorChainCheckSurvivesPullTickPull(t *testing.T) {
 				t.Fatalf("round %d: calls = %v, want no check call of any kind from a mirror", round, fr.calls)
 			}
 		}
-		for _, m := range chainMembersOf(row) {
+		for _, m := range relevoview.MembersOf(row) {
 			if entries := chainPendingChain(t, rt, m); len(entries) != 0 {
 				t.Fatalf("round %d: member %s queued %d chain deliveries, want none", round, m, len(entries))
 			}
@@ -180,9 +181,9 @@ func TestMirrorChainCheckSurvivesPullTickPull(t *testing.T) {
 // mirrorAwaitedCheck returns the mirror's awaiting check step and run.
 func mirrorAwaitedCheck(t *testing.T, rt Runtime) (string, int) {
 	t.Helper()
-	st, err := chainWorkflowState(chainStoredRow(t, rt, "shop"))
+	st, err := chain.WorkflowState(chainStoredRow(t, rt, "shop"))
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	return st.Awaiting.Step, st.Awaiting.Run
 }

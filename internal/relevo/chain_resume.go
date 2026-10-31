@@ -63,7 +63,7 @@ func ChainResume(ctx context.Context, rt Runtime, opts ResumeOptions) (ChainResu
 	if err != nil {
 		return ChainResult{}, err
 	}
-	if chainOnServer(c) {
+	if chain.OnServer(c) {
 		return chainServerResume(ctx, rt, c, opts)
 	}
 	out, err := chainResumeWorkflow(ctx, rt, c, opts)

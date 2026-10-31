@@ -119,7 +119,7 @@ func TestChainResumeAfterHaltStillSends(t *testing.T) {
 	if after.AwaitingRound == 0 || after.AwaitingMember == "" {
 		t.Errorf("the resume awaited no round: awaiting %q round %d", after.AwaitingMember, after.AwaitingRound)
 	}
-	name := chainMemberName(after, after.AwaitingMember)
+	name := chain.MemberName(after, after.AwaitingMember)
 	member, err := rt.Store.Load(name)
 	if err != nil {
 		t.Fatalf("Load %s: %v", name, err)

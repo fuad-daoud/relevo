@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -22,7 +23,7 @@ func splitPlannedMembers(members []chainMember, rows []db.ChainMemberRow) (add, 
 		stored, ok := have[m.name]
 		if !ok {
 			add = append(add, m)
-		} else if chainFlowActorName(stored.Actor) != m.actor {
+		} else if chain.FlowActorName(stored.Actor) != m.actor {
 			swap = append(swap, m)
 		}
 	}
@@ -258,11 +259,11 @@ func chainResumeSwapServed(rt Runtime, tx *store.Tx, c db.ChainRow, builder stor
 // chain's member rows.
 func chainResumeSyncMembers(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, snap *chainResumeSnapshot) (db.ChainRow, error) {
 	actors := rt.RoleRegistry().WorkflowActors()
-	planned, err := chainMemberNames(c.Name, def, actors)
+	planned, err := chain.MemberNames(c.Name, def, actors)
 	if err != nil {
 		return c, err
 	}
-	keeper := chainWriterKeeper(def, workflow.UsedActors(def), actors)
+	keeper := chain.WriterKeeper(def, workflow.UsedActors(def), actors)
 	members := chainWorkflowMembers(def, planned, keeper)
 	rows, err := chainFlowMembers(tx, c)
 	if err != nil {

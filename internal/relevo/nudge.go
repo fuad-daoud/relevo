@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/account"
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/text"
 	"github.com/fuad-daoud/relevo/internal/usage"
@@ -108,11 +109,11 @@ func memberWritesPlan(rt Runtime, b store.Binding) bool {
 	if err != nil {
 		return false
 	}
-	def, err := chainWorkflowDef(c)
+	def, err := chain.WorkflowDef(c)
 	if err != nil {
 		return false
 	}
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil {
 		return false
 	}

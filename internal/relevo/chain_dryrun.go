@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -94,7 +95,7 @@ func ChainDryRun(ctx context.Context, rt Runtime, opts ChainOptions) (DryRunDoc,
 	for _, p := range workflow.Validate(applied, dryRunEnv(rt, opts)) {
 		doc.Problems = append(doc.Problems, p.String())
 	}
-	members, err := chainMemberNames(opts.Name, applied, actors)
+	members, err := chain.MemberNames(opts.Name, applied, actors)
 	if err != nil {
 		doc.Problems = append(doc.Problems, err.Error())
 		return doc, nil
