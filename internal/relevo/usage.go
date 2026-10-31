@@ -18,15 +18,15 @@ import (
 // whatever the reader does; a slow read is a note, not a stall.
 const usageDeadline = 5 * time.Second
 
-// liveDeadline bounds one live usage read per binding (#234). Status runs
+// liveDeadline bounds one live usage read per binding. Status runs
 // on every ui tick and statusline call across every binding, so a slow or
 // absent record shows nothing live rather than stalling the refresh.
 const liveDeadline = 500 * time.Millisecond
 
-// peekUsage reads what the binding's open round has consumed so far
-// (#234): the same reader and source recordUsage uses, asked without
-// waiting for the record to close. nil when no round is open, no reader
-// is wired, or nothing is readable yet. Never recorded, never summed.
+// peekUsage reads what the binding's open round has consumed so far: the
+// same reader and source recordUsage uses, asked without waiting for the
+// record to close. nil when no round is open, no reader is wired, or
+// nothing is readable yet. Never recorded, never summed.
 func peekUsage(ctx context.Context, rt Runtime, b store.Binding, now time.Time) *usage.Usage {
 	if rt.Usage == nil || b.RoundStartedAt.IsZero() || b.Builder.Kind == "" {
 		return nil
@@ -52,8 +52,8 @@ func peekUsage(ctx context.Context, rt Runtime, b store.Binding, now time.Time) 
 // roundSource is everything the usage reader needs for the binding's
 // current round: the builder that closed it, its candidate's provider and
 // model when it was spawned from one, the round's stream file, the worktree
-// and the window. A local builder is always headless since #303, so the mode
-// defaults to headless.
+// and the window. A local builder is always headless, so the mode defaults
+// to headless.
 func roundSource(rt Runtime, b store.Binding, start, end time.Time) usage.Source {
 	src := usage.Source{
 		Harness:  b.Builder.Kind,
@@ -71,16 +71,16 @@ func roundSource(rt Runtime, b store.Binding, start, end time.Time) usage.Source
 	return src
 }
 
-// consultSource is roundSource for one consult: its own process stream, the
-// binding's worktree, its spawn as the window's start. A consult is always a
-// process since #303, so the mode is headless and the stream path is the
+// consultSource returns the usage source for one consult: its own process
+// stream, the binding's worktree, its spawn as the window's start. A consult
+// is always a process, so the mode is headless and the stream path is the
 // process's log.
 func consultSource(rt Runtime, b store.Binding, c store.Consult, end time.Time) usage.Source {
 	return usage.Source{
 		Harness:    c.Endpoint.Kind,
 		Mode:       usage.ModeHeadless,
 		Worktree:   b.Worktree,
-		StreamPath: c.Endpoint.LogPath, // the consult's stream file: stdout, stderr and the exit trailer (#420)
+		StreamPath: c.Endpoint.LogPath, // the consult's stream file: stdout, stderr and the exit trailer
 		ReadFile:   rt.Store.ReadFile,
 		Start:      c.SpawnedAt,
 		End:        end,
@@ -105,9 +105,9 @@ func fillCandidate(src *usage.Source, rt Runtime, token, accountName string) {
 }
 
 // remoteNoUsage is what the client records for a remote round whose
-// server's view carried no usage (#216): the same shape recordUsage
-// returns for an unreadable round, with an honest note instead of a
-// figure guessed from a record the client does not have.
+// server's view carried no usage: the same shape recordUsage returns for
+// an unreadable round, with an honest note instead of a figure guessed
+// from a record the client does not have.
 func remoteNoUsage(rt Runtime, b store.Binding, start, end time.Time) *usage.Usage {
 	src := roundSource(rt, b, start, end)
 	u := usage.Fold(nil, rt.Prices, src.Plan, "remote: server sent no usage")
@@ -155,9 +155,9 @@ func recordUsage(ctx context.Context, rt Runtime, src usage.Source) *usage.Usage
 	if !src.Start.IsZero() && src.End.After(src.Start) {
 		u.DurationMS = src.End.Sub(src.Start).Milliseconds()
 	}
-	// The step figures come from the round's builder stream, read at close
-	// (#323, #324). A missing or unreadable stream leaves them zero; this
-	// is not part of the reader, so it happens with no reader too.
+	// The step figures come from the round's builder stream, read at close.
+	// A missing or unreadable stream leaves them zero; this is not part of
+	// the reader, so it happens with no reader too.
 	if src.StreamPath != "" {
 		if data, err := rt.Store.ReadFile(src.StreamPath); err == nil {
 			steps := usage.StreamSteps(src.Harness, data)

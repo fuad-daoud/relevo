@@ -107,11 +107,9 @@ internal/relevo/land_test.go
 internal/relevo/ledger.go
 internal/relevo/ledger_test.go
 internal/relevo/limit.go
-internal/relevo/limit_test.go
 internal/relevo/logline.go
 internal/relevo/logline_test.go
 internal/relevo/names.go
-internal/relevo/off_test.go
 internal/relevo/opencode_session.go
 internal/relevo/opencode_session_test.go
 internal/relevo/origin.go
@@ -170,8 +168,6 @@ internal/relevo/tab_test.go
 internal/relevo/text.go
 internal/relevo/text_test.go
 internal/relevo/tier.go
-internal/relevo/usage.go
-internal/relevo/usage_test.go
 internal/relevo/verify.go
 internal/relevo/verify_test.go
 internal/relevo/wait.go
