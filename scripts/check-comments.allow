@@ -193,8 +193,6 @@ internal/roles/file_test.go
 internal/roles/init.go
 internal/roles/init_test.go
 internal/roles/off_test.go
-internal/roles/registry.go
-internal/roles/registry_test.go
 internal/ui/actions.go
 internal/ui/actions_test.go
 internal/ui/actor_form.go

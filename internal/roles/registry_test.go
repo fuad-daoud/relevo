@@ -102,7 +102,7 @@ func TestBuildNoOverridePin(t *testing.T) {
 	}
 }
 
-// TestBuildNilSet pins #374 §4.1: Build tolerates a nil set, treating it as a
+// TestBuildNilSet pins that Build tolerates a nil set, treating it as a
 // machine with no candidates.json -- legacy Build succeeds, a built-in role's
 // spec is byte-for-byte harness.RoleByName, and no candidate is ranked.
 func TestBuildNilSet(t *testing.T) {
@@ -461,7 +461,7 @@ func TestFileTier(t *testing.T) {
 	}
 }
 
-// TestBuildNewWriterRow pins #382 plan §4: a new writer row is a writer in the
+// TestBuildNewWriterRow pins that a new writer row is a writer in the
 // built registry, its gate defaults to true (the built-in builder's rule),
 // and its definition is what Spec resolves for the kind the row gives.
 func TestBuildNewWriterRow(t *testing.T) {
@@ -501,7 +501,7 @@ func TestBuildNewWriterRow(t *testing.T) {
 	}
 }
 
-// TestBuildNewWriterGateFalse pins #382 plan §4: "gate": false opts a new
+// TestBuildNewWriterGateFalse pins that "gate": false opts a new
 // writer out of the default gate.
 func TestBuildNewWriterGateFalse(t *testing.T) {
 	f := fileFromJSON(t, `{"ui-builder": {"shape": "writer", "gate": false}}`)
@@ -518,8 +518,8 @@ func TestBuildNewWriterGateFalse(t *testing.T) {
 	}
 }
 
-// TestValidateNewReaderGateStillRefused pins that #382 §4 lifts the writer
-// refusal only: a new reader role still has no gate.
+// TestValidateNewReaderGateStillRefused pins that the gate is writer-only:
+// a new reader role still has no gate.
 func TestValidateNewReaderGateStillRefused(t *testing.T) {
 	_, err := Load(writeRoles(t, `{"security-reviewer": {"shape": "reader", "gate": true}}`))
 	if err == nil {
@@ -573,7 +573,7 @@ func TestRoleCopies(t *testing.T) {
 	}
 }
 
-// TestFileCandidatesByName pins A1 §4.2 for roles.json: an entry may be a
+// TestFileCandidatesByName pins that for roles.json an entry may be a
 // candidate name, buildFile ranks the canonical token, and Serves is true for
 // it.
 func TestFileCandidatesByName(t *testing.T) {
@@ -605,7 +605,7 @@ func TestFileCandidatesByName(t *testing.T) {
 	}
 }
 
-// TestCandidateEntriesAcceptNames pins A1 §4.2's validation rule for a role's
+// TestCandidateEntriesAcceptNames pins the validation rule for a role's
 // candidates: an entry is a candidate name or a harness/provider/model token.
 func TestCandidateEntriesAcceptNames(t *testing.T) {
 	for _, body := range []string{
