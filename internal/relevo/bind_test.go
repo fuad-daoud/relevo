@@ -23,7 +23,7 @@ import (
 var baseTime = time.Unix(1757000000, 0).UTC()
 
 // The mastermind record newRuntime's registry holds. The id and the name are
-// both tested, so both are named constants; --mastermind accepts either (§4.3),
+// both tested, so both are named constants; --mastermind accepts either form,
 // and the id shape is the one mastermind.ValidID accepts.
 const (
 	testMasterMindID   = "pl_aaaaaaaaaaaa"
@@ -55,7 +55,7 @@ func newRuntime(t *testing.T) Runtime {
 		Gates:      gates,
 		History:    testHistoryDB(t),
 		Now:        func() time.Time { return baseTime },
-		// Every local builder is headless since #303, so every Send needs a
+		// Every local builder is headless, so every Send needs a
 		// Runner. A test that wants "no runner" sets rt.Runner = nil.
 		Runner: newFakeRunner(),
 		// The one seeded mastermind, and a ProcStart that always fails so the
@@ -66,8 +66,8 @@ func newRuntime(t *testing.T) Runtime {
 	}
 }
 
-// newTestRuntime is newRuntime with a test's Git: a local builder is headless
-// (#303), so there is no pane dependency left to thread through, and fg may be
+// newTestRuntime is newRuntime with a test's Git: a local builder is headless,
+// so there is no pane dependency to thread through, and fg may be
 // nil for the tests that prove --cwd needs no git.
 func newTestRuntime(t *testing.T, fg *fakeGit) Runtime {
 	t.Helper()
@@ -108,7 +108,7 @@ func testMasterMindRegistry(t *testing.T, rec mastermind.Record) (*mastermind.DB
 	return reg, created
 }
 
-// TestBindRecordsRepoFeature pins #172: a fresh bind captures the git repo
+// TestBindRecordsRepoFeature pins that a fresh bind captures the git repo
 // identity (normalised) and the human-given --feature label, and stamps
 // CreatedAt. TestBindRepoFactsFailureIsNil pins that a git failure never fails a
 // bind: captureRepo swallows it and RepoRef stays nil.
@@ -157,11 +157,10 @@ func TestBindRepoFactsFailureIsNil(t *testing.T) {
 	}
 }
 
-// TestBindRecordsMasterMindFromRegistry is the plan's required case (§3.2,
-// §5.3): with a registry configured, Binding.MasterMindID, MasterMind.Kind and
-// MasterMind.SessionID come from the record. #303 deleted the pane the caller
-// used to pass, so MasterMind.PaneID is no longer written by anything (see the
-// field's own comment); the assertion on it is gone with the pane.
+// TestBindRecordsMasterMindFromRegistry pins that with a registry configured,
+// Binding.MasterMindID, MasterMind.Kind and MasterMind.SessionID come from the
+// record. Nothing writes MasterMind.PaneID (see the field's own comment),
+// so the test asserts it stays empty.
 func TestBindRecordsMasterMindFromRegistry(t *testing.T) {
 	t.Parallel()
 
@@ -191,10 +190,9 @@ func TestBindRecordsMasterMindFromRegistry(t *testing.T) {
 	}
 }
 
-// TestBindNoMasterMindIsHardError is the plan's required case for §4.3: with a
-// registry configured and nothing resolving -- no --mastermind, no
-// $RELEVO_MASTERMIND, no host and no detectable session -- a verb fails with
-// exactly the CLI's no-mastermind line. The old "no mastermind pane" error is gone.
+// TestBindNoMasterMindIsHardError pins that with a registry configured and
+// nothing resolving -- no --mastermind, no $RELEVO_MASTERMIND, no host and no
+// detectable session -- a verb fails with exactly the CLI's no-mastermind line.
 func TestBindNoMasterMindIsHardError(t *testing.T) {
 	t.Setenv("RELEVO_MASTERMIND", "")
 	t.Setenv("CLAUDECODE", "")
@@ -231,11 +229,10 @@ func TestBindRejectsBadFeature(t *testing.T) {
 	}
 }
 
-// TestBindRefusesAnOverlongBuilderName pins #64: a 25-character binding
+// TestBindRefusesAnOverlongBuilderName pins that a 25-character binding
 // name passes the store's own limit but builds a 33-character agent name, and
-// Bind must refuse it before anything is started or any binding saved. #303
-// deleted the pane client's ErrInvalidAgentName with it, so the wrapped
-// error is store.ValidName's own text.
+// Bind must refuse it before anything is started or any binding saved, with
+// store.ValidName's own text as the wrapped error.
 func TestBindRefusesAnOverlongBuilderName(t *testing.T) {
 	t.Parallel()
 
@@ -458,9 +455,8 @@ func TestBindResumeRepointsMasterMindAndKeepsRound(t *testing.T) {
 	}
 }
 
-// TestResumeKeepsFields pins the resume rule for #172's fields: a
-// mastermind-only resume leaves RepoRef and Feature exactly as the binding
-// already had them.
+// TestResumeKeepsFields pins that a mastermind-only resume leaves RepoRef
+// and Feature exactly as the binding already had them.
 func TestResumeKeepsFields(t *testing.T) {
 	t.Parallel()
 
@@ -518,7 +514,7 @@ func TestSanitizeName(t *testing.T) {
 // old round 1. Reconcile then reads the old report entry as "already handled"
 // and the binding stalls with no error and no notification.
 // TestBindResumeStillAdoptsAnExistingName guards the exit the refusal offers.
-// TestResumePausedRestoresAndRebinds pins #137: resuming a PAUSED binding
+// TestResumePausedRestoresAndRebinds pins that resuming a PAUSED binding
 // restores the released worktree and rebinds a fresh builder even though the
 // caller passed neither --rebind nor --candidate, because a paused binding has
 // no builder identity left to keep.
@@ -786,7 +782,7 @@ func TestResumeRestoresMissingWorktree(t *testing.T) {
 	}
 }
 
-// TestResumePausedRestoresAndRebinds pins #137: resuming a PAUSED binding
+// TestResumePausedRestoresAndRebinds pins that resuming a PAUSED binding
 // restores the released worktree and rebinds a fresh builder even though the
 // caller passed neither --rebind nor --candidate, because a paused binding has
 // no builder identity left to keep.
@@ -1117,8 +1113,8 @@ func TestBindTimeoutOverrideAndDefault(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Bind: %v", err)
 		}
-		// A builder working a real stage runs for hours; 30m flagged healthy
-		// work as needing a human on the first live run.
+		// A builder working a real stage runs for hours; a 30m default would
+		// flag healthy work as needing a human.
 		if got, want := b.RoundTimeoutMS, int((24 * time.Hour).Milliseconds()); got != want {
 			t.Errorf("default RoundTimeoutMS = %d, want %d (24h)", got, want)
 		}
@@ -1555,7 +1551,7 @@ func TestResumeMasterMindOnlyPreservesRoundClosedTree(t *testing.T) {
 func TestResumeRebindResolvesThroughTheOrder(t *testing.T) {
 	t.Parallel()
 
-	// #92: a builder that halted between rounds is gone, no round is open,
+	// A builder that halted between rounds is gone, no round is open,
 	// and the mastermind wants a replacement without naming a token. Rebind
 	// must walk policy.json order and the ledger exactly as create does,
 	// and record the pick.
@@ -1648,7 +1644,7 @@ func TestBindHeadlessRecordsAnEndpointAndSpawnsNothing(t *testing.T) {
 }
 
 // A binding's mode is fixed at creation. Rebinding a headless binding whose
-// process is gone must produce another headless endpoint, not a pane (#119).
+// process is gone must produce another headless endpoint, not a pane.
 func TestBindResumeRebindKeepsAHeadlessBindingHeadless(t *testing.T) {
 	t.Parallel()
 
@@ -1702,7 +1698,7 @@ func TestBindResumeRebindKeepsAHeadlessBindingHeadless(t *testing.T) {
 }
 
 // The Runner is the only thing that can see a process, so a headless
-// binding's liveness is its answer. A live process refuses the rebind (§4.3).
+// binding's liveness is its answer. A live process refuses the rebind.
 func TestBindResumeRebindRefusesALiveHeadlessProcess(t *testing.T) {
 	t.Parallel()
 
@@ -1861,7 +1857,7 @@ func TestBindPolicyTierBuilderRead(t *testing.T) {
 	}
 }
 
-// TestBindGateFlagStored pins #132: an explicit --gate is stored on the
+// TestBindGateFlagStored pins that an explicit --gate is stored on the
 // binding as given.
 func TestBindGateFlagStored(t *testing.T) {
 	t.Parallel()
@@ -1880,7 +1876,7 @@ func TestBindGateFlagStored(t *testing.T) {
 	}
 }
 
-// TestBindGatePolicyDefaultApplied pins #132: with no --gate, policy.json's
+// TestBindGatePolicyDefaultApplied pins that with no --gate, policy.json's
 // gate.default is used.
 func TestBindGatePolicyDefaultApplied(t *testing.T) {
 	t.Parallel()
@@ -1899,7 +1895,7 @@ func TestBindGatePolicyDefaultApplied(t *testing.T) {
 	}
 }
 
-// TestBindNoGateOverridesPolicyDefault pins #132: --no-gate opts a binding
+// TestBindNoGateOverridesPolicyDefault pins that --no-gate opts a binding
 // out of policy.json's gate.default.
 func TestBindNoGateOverridesPolicyDefault(t *testing.T) {
 	t.Parallel()
@@ -1919,7 +1915,7 @@ func TestBindNoGateOverridesPolicyDefault(t *testing.T) {
 	}
 }
 
-// TestBindRegateFlagStored pins #132 part 2: an explicit --regate is stored on
+// TestBindRegateFlagStored pins that an explicit --regate is stored on
 // the binding as given.
 func TestBindRegateFlagStored(t *testing.T) {
 	t.Parallel()
@@ -1945,7 +1941,7 @@ func TestBindRegateFlagStored(t *testing.T) {
 	}
 }
 
-// TestBindRegatePolicyDefaultApplied pins #132 part 2: with no --regate,
+// TestBindRegatePolicyDefaultApplied pins that with no --regate,
 // policy.json's gate.regate becomes the binding's budget.
 func TestBindRegatePolicyDefaultApplied(t *testing.T) {
 	t.Parallel()
@@ -1964,7 +1960,7 @@ func TestBindRegatePolicyDefaultApplied(t *testing.T) {
 	}
 }
 
-// TestBindRegateFlagOverridesPolicy pins #132 part 2: an explicit --regate 0
+// TestBindRegateFlagOverridesPolicy pins that an explicit --regate 0
 // turns the policy default off for this binding.
 func TestBindRegateFlagOverridesPolicy(t *testing.T) {
 	t.Parallel()
@@ -2019,7 +2015,7 @@ func TestResolveVerbMasterMindRegistersOpencodeSession(t *testing.T) {
 	}
 }
 
-// TestRequireFeatureChoice pins #637's pure CLI rule: a fresh bind must name
+// TestRequireFeatureChoice pins the pure CLI rule: a fresh bind must name
 // exactly one of --feature/--no-feature; a resume may name none, but not both.
 func TestRequireFeatureChoice(t *testing.T) {
 	t.Parallel()
@@ -2061,7 +2057,7 @@ func TestRequireFeatureChoice(t *testing.T) {
 	}
 }
 
-// TestBindStoresTicketWithRepoHint pins #637: a fresh bind parses --ticket
+// TestBindStoresTicketWithRepoHint pins that a fresh bind parses --ticket
 // against the binding's own captured origin, so a bare number becomes
 // owner/repo#N.
 func TestBindStoresTicketWithRepoHint(t *testing.T) {
@@ -2154,7 +2150,7 @@ func TestBindStoresAnIssueKeyVerbatim(t *testing.T) {
 	}
 }
 
-// TestBindRejectsBadTicketBeforeSpawn pins #637: a malformed --ticket is
+// TestBindRejectsBadTicketBeforeSpawn pins that a malformed --ticket is
 // refused before anything is spawned and no binding is saved.
 func TestBindRejectsBadTicketBeforeSpawn(t *testing.T) {
 	t.Parallel()
@@ -2176,7 +2172,7 @@ func TestBindRejectsBadTicketBeforeSpawn(t *testing.T) {
 	}
 }
 
-// TestResumeAppliesLabelFlags pins #637's resume rule: --feature sets,
+// TestResumeAppliesLabelFlags pins the resume rule: --feature sets,
 // --no-feature clears, neither keeps; --ticket sets (parsed against the
 // binding's own origin) and absent keeps. A malformed --ticket is refused even
 // though the resume changes nothing else.

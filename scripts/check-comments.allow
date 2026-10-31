@@ -62,7 +62,6 @@ internal/relevo/authgrace.go
 internal/relevo/authgrace_test.go
 internal/relevo/available.go
 internal/relevo/available_test.go
-internal/relevo/bind_test.go
 internal/relevo/builder_change.go
 internal/relevo/builder_change_test.go
 internal/relevo/candidate.go
@@ -150,7 +149,6 @@ internal/relevo/roles_runtime_test.go
 internal/relevo/roles_views_test.go
 internal/relevo/runtime.go
 internal/relevo/seal_test.go
-internal/relevo/send_test.go
 internal/relevo/served.go
 internal/relevo/served_test.go
 internal/relevo/servers.go
