@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
@@ -85,17 +84,4 @@ func strandError(cause, saveErr error) error {
 		return fmt.Errorf("%w (also failed to record the consult: %s)", cause, saveErr.Error())
 	}
 	return cause
-}
-
-// brief reduces an error to one line, for a note field where a multi-line
-// message would break the line's shape.
-func brief(err error) string {
-	if err == nil {
-		return ""
-	}
-	s := strings.TrimSpace(err.Error())
-	if idx := strings.Index(s, "\n"); idx != -1 {
-		s = strings.TrimSpace(s[:idx])
-	}
-	return s
 }

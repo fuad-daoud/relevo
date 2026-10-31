@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // RefOutcome records what happened to one git ref during cleanup or sweep.
@@ -21,19 +22,6 @@ type RefOutcome struct {
 type SweepResult struct {
 	Dir  string       `json:"dir"`
 	Refs []RefOutcome `json:"refs"`
-}
-
-// firstLine reduces an error to one line, for a reason or note field where a
-// multi-line git message would break the line's shape.
-func firstLine(err error) string {
-	if err == nil {
-		return ""
-	}
-	s := strings.TrimSpace(err.Error())
-	if idx := strings.Index(s, "\n"); idx != -1 {
-		s = strings.TrimSpace(s[:idx])
-	}
-	return s
 }
 
 func repoDirOf(b store.Binding) string {
@@ -87,7 +75,7 @@ func cleanRefs(ctx context.Context, deps Deps, dir string, refs []string, dryRun
 		if err != nil {
 			outcomes = append(outcomes, RefOutcome{
 				Ref:    ref,
-				Reason: "check failed: " + firstLine(err),
+				Reason: "check failed: " + text.Brief(err),
 			})
 			continue
 		}
@@ -113,7 +101,7 @@ func cleanRefs(ctx context.Context, deps Deps, dir string, refs []string, dryRun
 		if err != nil {
 			outcomes = append(outcomes, RefOutcome{
 				Ref:    ref,
-				Reason: "delete failed: " + firstLine(err),
+				Reason: "delete failed: " + text.Brief(err),
 			})
 			continue
 		}
