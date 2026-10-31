@@ -29,7 +29,7 @@ const streamTailWindow = 64 * 1024
 // segment that contains each line's absolute offset (segmentKind); a later
 // line can never change an earlier one, so the rendering's prefix is stable as
 // the stream grows, which serve's files/log?from= offsets and the client
-// mirror (#442) depend on.
+// mirror depend on.
 //
 // lineRenderer turns one raw line of a stream -- with the harness kind of the
 // segment that holds it -- into the lines a reader or a scan sees. Rendering
@@ -42,9 +42,8 @@ func renderStream(stream []byte, segs []store.StreamSegment, fallback string) []
 	return renderStreamFrom(stream, 0, segs, fallback, streamRenderer())
 }
 
-// renderStreamFrom is renderStream with the window's bytes starting at base:
-// the caller that reads only a tail renders the window with the lines'
-// absolute offsets in the whole stream, so segment kinds stay correct. render
+// renderStreamFrom renders a window starting at base, keeping the lines'
+// absolute offsets in the whole stream so segment kinds stay correct. render
 // is the one place the reader and the limit scan differ.
 func renderStreamFrom(stream []byte, base int64, segs []store.StreamSegment, fallback string, render lineRenderer) []byte {
 	end := bytes.LastIndexByte(stream, '\n')
@@ -63,8 +62,8 @@ func renderStreamFrom(stream []byte, base int64, segs []store.StreamSegment, fal
 	return []byte(strings.Join(out, "\n") + "\n")
 }
 
-// renderedLines splits rendered bytes into lines, the same way logTail reads
-// a file: no trailing newline, and no lines for an empty rendering.
+// renderedLines splits rendered bytes into lines with logTail's conventions:
+// no trailing newline, and no lines for an empty rendering.
 func renderedLines(rendered []byte) []string {
 	s := strings.TrimRight(string(rendered), "\n")
 	if s == "" {
@@ -144,10 +143,10 @@ func scanTailBoth(path string, read func(string) ([]byte, error), segs []store.S
 	return text, allowMS
 }
 
-// tailWith is streamTail and scanTail's shared reader: the last n lines of a
-// round's stream rendered by render, with exactly logTail's conventions (no
-// trailing newline, "" for a missing or empty file, or n <= 0), over
-// renderStream's output, whose entries may themselves contain newlines.
+// tailWith renders the last n lines of a round's stream with render, using
+// logTail's conventions (no trailing newline, "" for a missing or empty
+// file, or n <= 0), over renderStream's output, whose entries may themselves
+// contain newlines.
 //
 // from is the earliest byte it may read: 0 for the whole file, a later offset
 // to ignore bytes another process wrote into the same file. When path exists
@@ -173,8 +172,8 @@ func tailWith(path string, read func(string) ([]byte, error), segs []store.Strea
 	return joinTailLines(renderedLines(renderStreamFrom(data[from:], from, segs, fallback, render)), n)
 }
 
-// diskStreamTail is streamTail's backwards reader. ok is false when the file
-// is not on disk (or cannot be read), so the caller falls back to read.
+// diskStreamTail reads the stream backwards from disk. ok is false when the
+// file is not on disk (or cannot be read), so the caller falls back to read.
 func diskStreamTail(path string, segs []store.StreamSegment, fallback string, n int, from int64, render lineRenderer) (string, bool) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -220,8 +219,7 @@ func diskStreamTail(path string, segs []store.StreamSegment, fallback string, n 
 // builderTail is the last n lines of a round's builder output: the log when
 // the endpoint writes one (LogPath is this round's BuilderLogPath: a legacy
 // round, see legacyLog), otherwise the rendered stream's tail, which holds the
-// builder's stderr too. It replaces every logTail(b.Builder.LogPath, n) call
-// site.
+// builder's stderr too.
 func builderTail(rt Runtime, b store.Binding, n int) string {
 	if b.Builder.LogPath != "" && b.Builder.LogPath == rt.Store.BuilderLogPath(b.Name, b.Round) {
 		return logTail(b.Builder.LogPath, n)
@@ -229,12 +227,12 @@ func builderTail(rt Runtime, b store.Binding, n int) string {
 	return streamTail(rt.Store.StreamPath(b.Name, b.Round), rt.Store.ReadFile, b.Builder.StreamSegments, b.Builder.Kind, n, 0)
 }
 
-// currentBuilderTail is builderTail limited to what the current builder
-// process wrote. A mid-round switch appends the new process's bytes to the
-// same stream file, so scanning the whole round would charge the outgoing
+// currentBuilderTail is builderTail's read starting at the current builder
+// process's first byte. A mid-round switch appends the new process's bytes to
+// the same stream file, so scanning the whole round would charge the outgoing
 // builder's lines -- and its provider's quota text -- to the incoming one.
-// The legacy-log branch is unchanged: such a round's log is the round's own
-// and every decision about it already keeps to that log.
+// The legacy-log branch needs no cut: such a round's log is the round's own,
+// as in builderTail.
 func currentBuilderTail(rt Runtime, b store.Binding, n int) string {
 	if b.Builder.LogPath != "" && b.Builder.LogPath == rt.Store.BuilderLogPath(b.Name, b.Round) {
 		return logTail(b.Builder.LogPath, n)
@@ -246,19 +244,18 @@ func currentBuilderTail(rt Runtime, b store.Binding, n int) string {
 	return streamTail(rt.Store.StreamPath(b.Name, b.Round), rt.Store.ReadFile, b.Builder.StreamSegments, b.Builder.Kind, n, from)
 }
 
-// currentBuilderScanText is currentBuilderTail's sibling for a limit scan. It
-// reads the same bytes -- the current builder process's own output, or a legacy
-// round's log -- but renders each stream line with transcript.LimitLines, so
-// only the lines the harness itself wrote can gate; the legacy log keeps
-// today's rendered-tail scan, because such a round writes its stderr to the log
-// and the rendered text is what the patterns were written against.
+// currentBuilderScanText reads currentBuilderTail's bytes for a limit scan,
+// rendering each stream line with transcript.LimitLines so only the lines the
+// harness itself wrote can gate; the legacy log is scanned as rendered tail,
+// because such a round writes its stderr to the log and the rendered text is
+// what the patterns match.
 func currentBuilderScanText(rt Runtime, b store.Binding, n int) string {
 	text, _ := currentBuilderScan(rt, b, n)
 	return text
 }
 
-// currentBuilderScan is currentBuilderScanText paired with the structured
-// reset the same bytes carry: one pass, no new I/O. A legacy round's log is
+// currentBuilderScan pairs currentBuilderScanText with the structured reset
+// the same bytes carry: one pass, no new I/O. A legacy round's log is
 // rendered text with no JSON beside it, so it never carries one.
 func currentBuilderScan(rt Runtime, b store.Binding, n int) (string, int64) {
 	if b.Builder.LogPath != "" && b.Builder.LogPath == rt.Store.BuilderLogPath(b.Name, b.Round) {
@@ -284,9 +281,9 @@ func currentBuilderTransportText(rt Runtime, b store.Binding, n int) string {
 	return tailWith(rt.Store.StreamPath(b.Name, b.Round), rt.Store.ReadFile, b.Builder.StreamSegments, b.Builder.Kind, n, from, transcript.TransportLines)
 }
 
-// limitScan is limitText paired with the structured reset the same bytes
-// carry: one scan, no new I/O. The gate decision prefers that instant over
-// whatever the text names.
+// limitScan pairs limitText with the structured reset the same bytes carry:
+// one scan, no new I/O. The gate decision prefers that instant over whatever
+// the text names.
 func limitScan(ctx context.Context, rt Runtime, b store.Binding) (string, int64) {
 	return currentBuilderScan(rt, b, availability.LimitScanLines)
 }
@@ -316,8 +313,8 @@ func roundSegments(live store.Endpoint, round int, read func(string) ([]byte, bo
 }
 
 // RoundTranscript answers "what did the builder write in round N" for every
-// reader: the round's NNN-builder.log when one exists (history, and rounds
-// from before the log is dropped), otherwise the round's stream rendered per
+// reader: the round's NNN-builder.log when one exists (older rounds that
+// still have one), otherwise the round's stream rendered per
 // segment, otherwise not found. read reports a miss as found=false, err=nil,
 // exactly as readFileMissing and ArchivedFile do; a real read error is
 // returned as is.
@@ -357,7 +354,7 @@ func readBytesMissing(read func(string) ([]byte, error), path string) ([]byte, b
 	return data, true, nil
 }
 
-// defaultRound is showLive's no---round rule. A transcript read prefers the
+// defaultRound picks the round when --round is absent. A transcript read prefers the
 // round in flight: a server-chain member installs its rounds only at close, so
 // its open round has no report entry and the completed-round default would
 // show the round before it. A round with no readable transcript, and every

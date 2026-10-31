@@ -14,9 +14,9 @@ import (
 // status is one-shot and still reads close to live within this window.
 const liveStatCacheTTL = 5 * time.Second
 
-// liveDiffDeadline bounds one live diff read, the git sibling of
-// liveDeadline: the detail pane opens a row and waits on it, so a slow or
-// wedged git shows no diff line rather than stalling the open.
+// liveDiffDeadline is liveDeadline's git sibling: the detail pane opens a row
+// and waits on it, so a slow or wedged git shows no diff line rather than
+// stalling the open.
 const liveDiffDeadline = 500 * time.Millisecond
 
 type liveStatEntry struct {

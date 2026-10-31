@@ -1,6 +1,6 @@
 package relevo
 
-// A2 round 1's pick tests: off entries are skipped by an omitted token, served
+// Off-entry pick tests: off entries are skipped by an omitted token, served
 // when named explicitly, refused with resolve.ErrAllGated when nothing else is left,
 // and shown as "off" in the pick block.
 
@@ -26,8 +26,8 @@ func offRows() map[string]roles.Row {
 	}
 }
 
-// TestResolveSkipsOff pins §4.3: with no explicit token the walk passes an off
-// entry over exactly as it passes a gated one, and the pick note says "(off)".
+// TestResolveSkipsOff pins the off skip: with no explicit token the walk passes
+// an off entry over exactly as it passes a gated one, and the pick note says "(off)".
 func TestResolveSkipsOff(t *testing.T) {
 	t.Parallel()
 
@@ -54,7 +54,7 @@ func TestResolveSkipsOff(t *testing.T) {
 	}
 }
 
-// TestResolveExplicitOffNotes pins §4.3's explicit case: naming an off
+// TestResolveExplicitOffNotes pins the explicit case: naming an off
 // candidate serves it, and the resolution carries the advisory note.
 func TestResolveExplicitOffNotes(t *testing.T) {
 	t.Parallel()
@@ -78,8 +78,8 @@ func TestResolveExplicitOffNotes(t *testing.T) {
 	}
 }
 
-// TestAllOffOrGated pins §4.3's last rule: when every remaining entry is off
-// or gated the error is today's resolve.ErrAllGated, with the off entries listed as
+// TestAllOffOrGated pins the last rule: when every remaining entry is off
+// or gated the error is resolve.ErrAllGated, with the off entries listed as
 // "<name> (off)".
 func TestAllOffOrGated(t *testing.T) {
 	t.Parallel()
@@ -137,7 +137,7 @@ func TestAllOffOrGated(t *testing.T) {
 	})
 }
 
-// TestFormatPolicyShowsOff pins §4.4 and round 2's R1: an off entry prints the
+// TestFormatPolicyShowsOff pins the off display: an off entry prints the
 // plain word "off" in the status column, never "<- would pick", and never an
 // escape code (relevo config is read through a pipe).
 func TestFormatPolicyShowsOff(t *testing.T) {
@@ -174,10 +174,10 @@ func TestFormatPolicyShowsOff(t *testing.T) {
 	}
 }
 
-// TestFormatPolicyHeaderSaysActors pins A2 round 3 S2.3, updated by A4-1a: the
-// pick block's header names the section the registry came from, which is
-// "config actors" for both the actors section and a legacy roles file -- the
-// roles file is only ever the input of the A2 migration now.
+// TestFormatPolicyHeaderSaysActors pins the header rule: the pick block's
+// header names the section the registry came from, which is "config actors"
+// for both the actors section and a legacy roles file -- the roles file is
+// only ever migration input.
 func TestFormatPolicyHeaderSaysActors(t *testing.T) {
 	t.Parallel()
 
