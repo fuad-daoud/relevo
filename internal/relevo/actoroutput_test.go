@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // TestActorOutputShippedLabels pins the shipped output labels (A5 R4a):
@@ -23,8 +24,8 @@ func TestActorOutputShippedLabels(t *testing.T) {
 		}
 	}
 
-	if got := ActorOutput(nil, nil, "custom", "no-such-agent"); got != defaultOutput {
-		t.Errorf("ActorOutput(unknown) = %q, want %q", got, defaultOutput)
+	if got := ActorOutput(nil, nil, "custom", "no-such-agent"); got != text.DefaultOutput {
+		t.Errorf("ActorOutput(unknown) = %q, want %q", got, text.DefaultOutput)
 	}
 
 	// An actor's own agent wins over the definition it was launched with.

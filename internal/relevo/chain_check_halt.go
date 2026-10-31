@@ -8,6 +8,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -43,7 +44,7 @@ func chainHaltReason(rt Runtime, tx *store.Tx, c db.ChainRow, s workflow.State) 
 	if tail := tailLines(rt.Store.ReadFile, row.Log, haltCheckTailLines); len(tail) > 0 {
 		fmt.Fprintf(&b, "\nLast %d lines of the check's log:\n%s", len(tail), strings.Join(tail, "\n"))
 	}
-	fmt.Fprintf(&b, "\n%s `%s` reads its log.", checkOutcome(rt, row), showCommand(member, round, "gate"))
+	fmt.Fprintf(&b, "\n%s `%s` reads its log.", checkOutcome(rt, row), text.ShowCommand(member, round, "gate"))
 	return b.String()
 }
 

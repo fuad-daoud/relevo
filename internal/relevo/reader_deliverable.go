@@ -7,6 +7,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 	"github.com/fuad-daoud/relevo/internal/transcript"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -178,7 +179,7 @@ func readerUndeliveredReason(rt Runtime, b store.Binding, continuations int) str
 		unit = "continuation"
 	}
 	return fmt.Sprintf("%s: %s not delivered: runner ended without its relevo block after %d %s; see %s",
-		b.Name, label, continuations, unit, showCommand(b.Name, b.Round, "transcript"))
+		b.Name, label, continuations, unit, text.ShowCommand(b.Name, b.Round, "transcript"))
 }
 
 // readerStreamTail reads the status block from a non-chain reader's final
