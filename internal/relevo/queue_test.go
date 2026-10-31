@@ -13,13 +13,13 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// TestSendDeferQueues pins #285's staging half: Send(Defer) writes the plan
+// TestSendDeferQueues pins the staging half: Send(Defer) writes the plan
 // and opens the round exactly as a normal Send does, but never spawns --
 // pid stays 0, RoundStartedAt stays zero, QueuedAt is stamped, and
 // RoundStateOf reports queued.
 //
 // Mutation check: drop the `!deferred` guard around startRound in send.go
-// and this fails on fr.specs no longer being empty.
+// and this fails on fr.specs not being empty.
 func TestSendDeferQueues(t *testing.T) {
 	t.Parallel()
 
@@ -69,14 +69,7 @@ func TestSendDeferQueues(t *testing.T) {
 	}
 }
 
-// TestAdmitStartsQueuedRound pins #285's admit half: Admit spawns the
-// process, stamps RoundStartedAt at the admitting clock, zeroes QueuedAt,
-// and logs how long the round waited.
-//
-// Mutation check: drop the `age` formatting (hardcode "0s") in queue.go and
-// this fails on the note not containing "1m30s".
-
-// TestAdmitStartsQueuedRound pins #285's admit half: Admit spawns the
+// TestAdmitStartsQueuedRound pins the admit half: Admit spawns the
 // process, stamps RoundStartedAt at the admitting clock, zeroes QueuedAt,
 // and logs how long the round waited.
 //
@@ -127,9 +120,6 @@ func TestAdmitStartsQueuedRound(t *testing.T) {
 
 // TestAdmitNotQueued pins Admit's guard: a binding that was never deferred
 // (QueuedAt zero) is refused, and nothing spawns.
-
-// TestAdmitNotQueued pins Admit's guard: a binding that was never deferred
-// (QueuedAt zero) is refused, and nothing spawns.
 func TestAdmitNotQueued(t *testing.T) {
 	t.Parallel()
 
@@ -144,10 +134,6 @@ func TestAdmitNotQueued(t *testing.T) {
 		t.Errorf("specs = %d, want 0 (no spawn)", len(fr.specs))
 	}
 }
-
-// TestAdmitSpawnFailure pins Admit's failure path: mirrors Send's own
-// spawn-failure handling, and QueuedAt is zeroed so the round is never
-// re-admitted.
 
 // TestAdmitSpawnFailure pins Admit's failure path: mirrors Send's own
 // spawn-failure handling, and QueuedAt is zeroed so the round is never
@@ -182,22 +168,7 @@ func TestAdmitSpawnFailure(t *testing.T) {
 	}
 }
 
-// TestAdmitGatedSwitches pins Admit's gated-candidate branch: when the
-// queued round's candidate is gated by the time a slot frees up, Admit
-// switches to the next candidate (uncounted, no pane/process to close) and
-// its KindQueue note says so.
-//
-// Mutation check: drop the `gatedBuilder` branch in queue.go (always call
-// startRound) and this fails on BuilderCandidate staying "agy/other/m".
-
-// TestAdmitGatedSwitches pins Admit's gated-candidate branch: when the
-// queued round's candidate is gated by the time a slot frees up, Admit
-// switches to the next candidate (uncounted, no pane/process to close) and
-// its KindQueue note says so.
-//
-// Mutation check: drop the `gatedBuilder` branch in queue.go (always call
-// startRound) and this fails on BuilderCandidate staying "agy/other/m".
-// TestAdmitSwitchFailureRecordsNoStart pins the guard half of this change:
+// TestAdmitSwitchFailureRecordsNoStart pins the guard half:
 // when the switch Admit performs cannot resolve a replacement, switchBuilder
 // queues the binding's halt entry and returns -- with no process and no
 // error. Admit must not stamp RoundStartedAt or log "started after ... queued"
@@ -205,7 +176,7 @@ func TestAdmitSpawnFailure(t *testing.T) {
 // again.
 //
 // Mutation check: delete the `b.Builder.PID == 0` guard in queue.go and this
-// fails on RoundStartedAt no longer being zero and the started note appearing.
+// fails on RoundStartedAt not being zero and the started note appearing.
 func TestAdmitSwitchFailureRecordsNoStart(t *testing.T) {
 	t.Parallel()
 
@@ -339,9 +310,9 @@ func TestAdmitSwitchFailureQueuesOneHaltAfterAFailedQueue(t *testing.T) {
 
 // TestAdmitSpawnFailureQueuesAHaltEntry pins Admit's halt entry: it halts
 // through the shared path, so a spawn failure owes its MasterMind the same one
-// entry every other NEEDS YOU owes. It used to set State and Halt by hand and
-// queue nothing -- the binding read as needs-you with no payload, and a
-// MasterMind with no push route was never told at all.
+// entry every other NEEDS YOU owes. Setting State and Halt by hand queues
+// nothing -- the binding reads as needs-you with no payload, and a
+// MasterMind with no push route is never told at all.
 //
 // Mutation check: restore the hand-set State/Halt block in queue.go and this
 // fails on haltEntries = 0 and on the empty wait payload.
@@ -504,6 +475,13 @@ func TestAdmitSwitchFailureWithAFailingHaltAppendLeavesNoSilentHalt(t *testing.T
 	}
 }
 
+// TestAdmitGatedSwitches pins Admit's gated-candidate branch: when the
+// queued round's candidate is gated by the time a slot frees up, Admit
+// switches to the next candidate (uncounted, no pane/process to close) and
+// its KindQueue note says so.
+//
+// Mutation check: drop the `gatedBuilder` branch in queue.go (always call
+// startRound) and this fails on BuilderCandidate staying "agy/other/m".
 func TestAdmitGatedSwitches(t *testing.T) {
 	t.Parallel()
 
@@ -579,7 +557,7 @@ func (d *failingConfirmDeliverer) ConfirmOnce(_ context.Context, _ store.Endpoin
 
 func (d *failingConfirmDeliverer) AdmitHorizon() time.Duration { return 0 }
 
-// TestAdmitKeepsAnAlreadyNotifiedBrokenHalt pins step 5's broken half: a
+// TestAdmitKeepsAnAlreadyNotifiedBrokenHalt pins the broken half: a
 // binding that comes back from the switch already Broken with this round's
 // notification key stamped must be recognised as already halted. Falling
 // through to haltAndSettle dedupes the entry, fails the delivery again, and

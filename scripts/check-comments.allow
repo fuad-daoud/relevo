@@ -119,8 +119,6 @@ internal/relevo/probe_test.go
 internal/relevo/progress.go
 internal/relevo/progress_test.go
 internal/relevo/push.go
-internal/relevo/queue.go
-internal/relevo/queue_test.go
 internal/relevo/reconcile.go
 internal/relevo/reconcile_hooks_test.go
 internal/relevo/reconcile_test.go
@@ -131,13 +129,9 @@ internal/relevo/remote_add.go
 internal/relevo/remote_gates.go
 internal/relevo/remote_sync.go
 internal/relevo/remote_test.go
-internal/relevo/repair.go
-internal/relevo/repair_test.go
 internal/relevo/repo.go
 internal/relevo/reporttail.go
 internal/relevo/reporttail_test.go
-internal/relevo/retry.go
-internal/relevo/retry_test.go
 internal/relevo/roles_gate_test.go
 internal/relevo/roles_list.go
 internal/relevo/roles_list_test.go
@@ -148,7 +142,6 @@ internal/relevo/seal_test.go
 internal/relevo/served.go
 internal/relevo/served_test.go
 internal/relevo/servers.go
-internal/relevo/session.go
 internal/relevo/show.go
 internal/relevo/show_test.go
 internal/relevo/sort.go
@@ -170,8 +163,6 @@ internal/relevo/tier.go
 internal/relevo/transcript.go
 internal/relevo/usage.go
 internal/relevo/usage_test.go
-internal/relevo/verify.go
-internal/relevo/verify_test.go
 internal/relevo/wait.go
 internal/relevo/waiting.go
 internal/relevo/wait_test.go

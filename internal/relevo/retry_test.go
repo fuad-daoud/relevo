@@ -11,11 +11,11 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// TestRetryPlanReadsSealed is §4.5's retry contract: RetryPlan returns the
+// TestRetryPlanReadsSealed is the retry contract: RetryPlan returns the
 // bytes of a plan even after the seal pass moved it out of the binding
 // directory and into a round_file row. The seal is driven exactly as the
 // daemon drives it (sealRounds under the state lock), so a retry keeps working
-// on a round relevo no longer holds on disk.
+// on a round relevo does not hold on disk.
 func TestRetryPlanReadsSealed(t *testing.T) {
 	t.Parallel()
 
@@ -71,9 +71,9 @@ func TestRetryPlanMissingNamesTheRound(t *testing.T) {
 	}
 }
 
-// TestPullMarksTuiRoute: Pull is pullPending with the cockpit's own route
-// (§4.5). It returns the pending text and marks the entry delivered to "tui",
-// so the daemon's own delivery and a background wait no longer claim it.
+// TestPullMarksTuiRoute: Pull is pullPending with the cockpit's own route.
+// It returns the pending text and marks the entry delivered to "tui",
+// so neither the daemon's own delivery nor a background wait claims it.
 func TestPullMarksTuiRoute(t *testing.T) {
 	t.Parallel()
 

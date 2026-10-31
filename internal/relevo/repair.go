@@ -18,7 +18,7 @@ import (
 )
 
 // repairTailLines is how much of the failing gate's log a repair plan carries,
-// as fenced text the builder can read without opening the file (#132 part 2).
+// as fenced text the builder can read without opening the file.
 const repairTailLines = 200
 
 // The noise a gate's output carries that says nothing about why it failed:
@@ -34,7 +34,7 @@ var (
 	gateTmpRe     = regexp.MustCompile(`\S*/tmp/\S*`)
 )
 
-// gateSignature is a stable fingerprint of a gate log's content (#132 part 2).
+// gateSignature is a stable fingerprint of a gate log's content.
 // Timestamps, durations, large integers, hex runs and /tmp paths are dropped,
 // the remaining lines are trimmed, emptied lines discarded, the rest sorted,
 // and the whole thing hashed, so two runs of the same failure hash the same
@@ -72,7 +72,7 @@ func gateSignature(read func(string) ([]byte, error), logPath string) string {
 // tell one from a plan, correction or fix text.
 const repairPlanPrefix = "# Repair round "
 
-// repairPlan is round failedRound+1's plan text (#132 part 2): the failed
+// repairPlan is round failedRound+1's plan text: the failed
 // round's acceptance check did not pass, so fix only what it reports. It names
 // the original plan and carries the tail of the gate log inline, because the
 // builder gets nothing but this file.
@@ -104,7 +104,7 @@ func isRepairPlan(text string) bool {
 // repair budget is spent (RepairCount >= Regate), or the new failure's
 // normalised signature equals the previous one -- the builder changed nothing
 // that mattered. ok is false when a repair cannot run, and why then carries
-// the halt wording startRepairRound has always used.
+// the halt wording startRepairRound uses.
 //
 // b is the binding after the failed round closed, so the round being judged is
 // b.Round - 1: every caller advances the binding before it asks.
@@ -120,7 +120,7 @@ func repairDecision(b store.Binding, sig string) (ok bool, why string) {
 }
 
 // startRepairRound stages and hands over round failedRound+1 after a failing
-// gate (#132 part 2). It is called on the tick that closed round failedRound,
+// gate. It is called on the tick that closed round failedRound,
 // after the report has been queued to the mastermind, with the binding already
 // advanced (`b.Round == failedRound+1`, RoundStartedAt zero).
 //
@@ -150,8 +150,8 @@ func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 	baseline, head := capture.Baseline(ctx, captureDeps(rt), b)
 	prompt := composePrompt(rt, b, planPath, rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round))
 
-	// A repair round must not be handed to a candidate the configured set no
-	// longer holds: pick again first, exactly as a switch does.
+	// A repair round must not be handed to a candidate the configured set does
+	// not hold: pick again first, exactly as a switch does.
 	b, res, _, err := repickForRound(rt, b, false, false)
 	if err != nil {
 		return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: repair round %d could not start: %v", b.Name, b.Round, err))
