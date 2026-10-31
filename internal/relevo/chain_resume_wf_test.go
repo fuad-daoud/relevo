@@ -190,6 +190,7 @@ func TestOldPlacedChainStillAnswersFromPulledGate(t *testing.T) {
 	t.Parallel()
 
 	rt, _, _ := chainRemoteRuntime(t, chainCheckFake())
+	stubRemoteSend(&rt)
 	startFlowChain(t, rt, flowPlacedCheckWorkflow)
 
 	// The server goes back to a build without the check feature, and the chain
@@ -266,6 +267,7 @@ func TestWorkflowResumeShipsAPlacedCustomMembersRound(t *testing.T) {
 
 	fr := chainRemoteFake()
 	rt, _, _ := chainRemoteRuntime(t, fr)
+	stubRemoteSend(&rt)
 	rt.Registry = rolesFileRegistry(t, rt.Candidates, rt.Policy, flowTriageRemoteRows())
 
 	startFlowChain(t, rt, flowTriageBuildWorkflow)
@@ -292,6 +294,7 @@ func TestResumeGateOnPlacedWriterWithoutCheckFeatureRefused(t *testing.T) {
 
 	fr := chainRemoteFake()
 	rt, _, _ := chainRemoteRuntime(t, fr)
+	stubRemoteSend(&rt)
 	rt.Registry = rolesFileRegistry(t, rt.Candidates, rt.Policy, flowTriageRemoteRows())
 
 	startFlowChain(t, rt, flowTriageBuildWorkflow)

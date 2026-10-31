@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// TestStagePlanOnlyTouchesARegularFile pins stagePlan's cases: an absent path
+// TestStagePlanOnlyTouchesARegularFile pins StagePlan's cases: an absent path
 // is created with the bytes, an existing regular file is replaced in place with
 // its mode kept, and a symlink or a directory is refused with nothing written
 // through it.
@@ -20,8 +20,8 @@ func TestStagePlanOnlyTouchesARegularFile(t *testing.T) {
 	}{
 		{"absent is created with the bytes", func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "001-prompt.md")
-			if err := stagePlan(path, []byte("plan body")); err != nil {
-				t.Fatalf("stagePlan: %v", err)
+			if err := StagePlan(path, []byte("plan body")); err != nil {
+				t.Fatalf("StagePlan: %v", err)
 			}
 			got, err := os.ReadFile(path)
 			if err != nil {
@@ -41,8 +41,8 @@ func TestStagePlanOnlyTouchesARegularFile(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if err := stagePlan(path, []byte("new body")); err != nil {
-				t.Fatalf("stagePlan: %v", err)
+			if err := StagePlan(path, []byte("new body")); err != nil {
+				t.Fatalf("StagePlan: %v", err)
 			}
 			got, err := os.ReadFile(path)
 			if err != nil {
@@ -73,9 +73,9 @@ func TestStagePlanOnlyTouchesARegularFile(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			err := stagePlan(path, []byte("plan body"))
+			err := StagePlan(path, []byte("plan body"))
 			if err == nil {
-				t.Fatal("stagePlan: got nil error, want a refusal")
+				t.Fatal("StagePlan: got nil error, want a refusal")
 			}
 			if !strings.Contains(err.Error(), path) {
 				t.Errorf("error = %q, want it to name %s", err.Error(), path)
@@ -101,9 +101,9 @@ func TestStagePlanOnlyTouchesARegularFile(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			err := stagePlan(path, []byte("plan body"))
+			err := StagePlan(path, []byte("plan body"))
 			if err == nil {
-				t.Fatal("stagePlan: got nil error, want a refusal")
+				t.Fatal("StagePlan: got nil error, want a refusal")
 			}
 			if !strings.Contains(err.Error(), path) {
 				t.Errorf("error = %q, want it to name %s", err.Error(), path)

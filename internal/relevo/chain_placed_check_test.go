@@ -142,6 +142,7 @@ func TestPlacedCheckRunsViaRoute(t *testing.T) {
 
 	fr := chainCheckFake()
 	rt, _, _ := chainRemoteRuntime(t, fr)
+	stubRemoteSend(&rt)
 	startFlowChain(t, rt, flowPlacedCheckWorkflow)
 
 	flowAdvance(t, rt, workflow.Event{Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: "done"})
@@ -177,6 +178,7 @@ func TestPlacedCheckRedFeedsRepeatRed(t *testing.T) {
 
 	fr := chainCheckFake()
 	rt, _, _ := chainRemoteRuntime(t, fr)
+	stubRemoteSend(&rt)
 	startFlowChain(t, rt, flowPlacedCheckWorkflow)
 	flowAdvance(t, rt, workflow.Event{Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: "done"})
 
@@ -235,6 +237,7 @@ func TestPlacedCheckUnreachableKeepsAwaiting(t *testing.T) {
 
 	fr := chainCheckFake()
 	rt, _, _ := chainRemoteRuntime(t, fr)
+	stubRemoteSend(&rt)
 	startFlowChain(t, rt, flowPlacedCheckWorkflow)
 	flowAdvance(t, rt, workflow.Event{Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: "done"})
 
@@ -259,6 +262,7 @@ func TestPlacedCheckFallsBackToPulledRecordWithoutFeature(t *testing.T) {
 
 	fr := chainCheckFake()
 	rt, _, _ := chainRemoteRuntime(t, fr)
+	stubRemoteSend(&rt)
 	startFlowChain(t, rt, flowPlacedCheckWorkflow)
 	flowAdvance(t, rt, workflow.Event{Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: "done"})
 
@@ -288,6 +292,7 @@ func TestFallbackCheckRecordsNoRunID(t *testing.T) {
 	t.Parallel()
 
 	rt, _, _ := chainRemoteRuntime(t, chainCheckFake())
+	stubRemoteSend(&rt)
 	startFlowChain(t, rt, flowTwoChecksWorkflow)
 	flowAdvance(t, rt, workflow.Event{Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: "done"})
 
@@ -330,6 +335,7 @@ func TestPlacedStartAllowsTwoCommandsWithCheck(t *testing.T) {
 	t.Parallel()
 
 	rt, _, _ := chainRemoteRuntime(t, chainCheckFake())
+	stubRemoteSend(&rt)
 	res := startedChain(t, rt, ChainOptions{
 		Name: "shop", Feature: "auth", MasterMindID: testMasterMindName,
 		Plans:    []string{writePlan(t, "build it")},
@@ -353,6 +359,7 @@ func TestResumeGateOnPlacedWriterCallsSetGate(t *testing.T) {
 
 	fr := chainCheckFake()
 	rt, _, _ := chainRemoteRuntime(t, fr)
+	stubRemoteSend(&rt)
 	startFlowChain(t, rt, flowGateParamWorkflow)
 	if b := chainBinding(t, rt, "shop"); b.Gate != "make check" {
 		t.Fatalf("placed writer gate = %q, want the chain's one check command", b.Gate)
@@ -375,6 +382,7 @@ func TestResumeGateOnPlacedWriterCallsSetGate(t *testing.T) {
 	// leaves the server alone.
 	fr2 := chainCheckFake()
 	rt2, _, _ := chainRemoteRuntime(t, fr2)
+	stubRemoteSend(&rt2)
 	startFlowChain(t, rt2, flowNoGateWorkflow)
 	if b := chainBinding(t, rt2, "shop"); b.Gate != "" {
 		t.Fatalf("writer with no check step carries gate %q, want none", b.Gate)
@@ -400,6 +408,7 @@ func TestResumeGateOnPlacedWriterSkipsSetGateWhenRoundIsOpen(t *testing.T) {
 
 	fr := chainCheckFake()
 	rt, _, _ := chainRemoteRuntime(t, fr)
+	stubRemoteSend(&rt)
 	startFlowChain(t, rt, flowGateParamWorkflow)
 	advanceRemoteChain(t, rt, 2)
 	haltRemoteChain(t, rt)
@@ -436,6 +445,7 @@ func TestResumeGateOnPlacedWriterSkipsSetGateOnBadParam(t *testing.T) {
 
 	fr := chainCheckFake()
 	rt, _, _ := chainRemoteRuntime(t, fr)
+	stubRemoteSend(&rt)
 	startFlowChain(t, rt, flowGateParamWorkflow)
 	advanceRemoteChain(t, rt, 2)
 	haltRemoteChain(t, rt)
@@ -464,6 +474,7 @@ func TestPlacedCheckMissKeepsAwaiting(t *testing.T) {
 
 	fr := chainCheckFake()
 	rt, _, _ := chainRemoteRuntime(t, fr)
+	stubRemoteSend(&rt)
 	startFlowChain(t, rt, flowPlacedCheckWorkflow)
 	flowAdvance(t, rt, workflow.Event{Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: "done"})
 
@@ -494,6 +505,7 @@ func TestPlacedCheckMissAsksAgain(t *testing.T) {
 
 	fr := chainCheckFake()
 	rt, _, _ := chainRemoteRuntime(t, fr)
+	stubRemoteSend(&rt)
 	startFlowChain(t, rt, flowPlacedCheckWorkflow)
 	flowAdvance(t, rt, workflow.Event{Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: "done"})
 
@@ -519,6 +531,7 @@ func TestPlacedCheckHaltsWhenTheServerHoldsAnotherRun(t *testing.T) {
 
 	fr := chainCheckFake()
 	rt, _, _ := chainRemoteRuntime(t, fr)
+	stubRemoteSend(&rt)
 	startFlowChain(t, rt, flowPlacedCheckWorkflow)
 	flowAdvance(t, rt, workflow.Event{Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: "done"})
 
@@ -615,6 +628,7 @@ func TestShowGateRendersTheWholePulledLog(t *testing.T) {
 	t.Parallel()
 
 	rt, _, _ := chainRemoteRuntime(t, chainCheckFake())
+	stubRemoteSend(&rt)
 	startFlowChain(t, rt, flowPlacedCheckWorkflow)
 
 	var stages []string
@@ -664,6 +678,7 @@ func TestPlacedCheckStoresPartialNoteForCutLog(t *testing.T) {
 			t.Parallel()
 			fr := chainCheckFake()
 			rt, _, _ := chainRemoteRuntime(t, fr)
+			stubRemoteSend(&rt)
 			startFlowChain(t, rt, flowPlacedCheckWorkflow)
 			flowAdvance(t, rt, workflow.Event{Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: "done"})
 			fr.getCheckResp = tc.view

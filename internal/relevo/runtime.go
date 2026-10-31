@@ -401,6 +401,11 @@ type Runtime struct {
 	// unchanged, which is what a hook-less test runtime gets; both production
 	// builders wire the serve implementation.
 	CloseServedRound func(ctx context.Context, rt Runtime, b store.Binding) store.Binding
+
+	// RemoteSend ships rounds to a remote server through internal/uplink.
+	// It has no nil guard: a send without the hook fails on the nil call
+	// rather than silently skipping the server.
+	RemoteSend RemoteSendDeps
 }
 
 // legacyRegistry is the registry derived from candidates.json and

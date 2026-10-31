@@ -109,6 +109,7 @@ func TestChainSendPendingShipsAStagedRoundOnce(t *testing.T) {
 
 	fr := chainRemoteFake()
 	rt, _, _ := chainRemoteRuntime(t, fr)
+	stub := stubRemoteSend(&rt)
 	startedChain(t, rt, ChainOptions{})
 
 	if string(fr.startRoundPlan) != "build it" {
@@ -117,21 +118,17 @@ func TestChainSendPendingShipsAStagedRoundOnce(t *testing.T) {
 	if fr.startRoundVerify == nil || *fr.startRoundVerify {
 		t.Errorf("verify = %v, want an explicit false", fr.startRoundVerify)
 	}
-	if !promptNoteFor(chainLog(t, rt, "shop"), 1, "chain builder") {
-		t.Errorf("log = %+v, want the prompt entry with the chain step note", chainLog(t, rt, "shop"))
+	if !HasPromptEntry(chainLog(t, rt, "shop"), 1) {
+		t.Errorf("log = %+v, want the prompt entry the record filed", chainLog(t, rt, "shop"))
 	}
-	b := chainBinding(t, rt, "shop")
-	if b.Builder.LastShipped != "1111111111111111111111111111111111111111" {
-		t.Errorf("LastShipped = %q, want the shipped head", b.Builder.LastShipped)
+	// The shipped facts and the fresh-round reset live in uplink now: the
+	// record half pins them there, and the step pins only what it handed
+	// over -- the chain-aware half with the ship's answer.
+	if len(stub.recordCalls) != 1 {
+		t.Fatalf("record calls = %d, want the chain-aware record half once", len(stub.recordCalls))
 	}
-	if b.Builder.RemoteStatus != string(remote.RoundRunning) {
-		t.Errorf("RemoteStatus = %q, want running", b.Builder.RemoteStatus)
-	}
-	if b.State != store.StateActive {
-		t.Errorf("State = %q, want active", b.State)
-	}
-	if !b.RoundStartedAt.Equal(baseTime) {
-		t.Errorf("RoundStartedAt = %v, want the clock's stamp", b.RoundStartedAt)
+	if rc := stub.recordCalls[0]; !rc.isChain || rc.view.RoundState != remote.RoundRunning || rc.outRef != "refs/relevo/shop/out" {
+		t.Errorf("record call = %+v, want the chain half with the ship's answer", rc)
 	}
 
 	before := len(chainLog(t, rt, "shop"))
@@ -183,6 +180,7 @@ func TestChainSendPendingSkipsLocalAndUnstaged(t *testing.T) {
 
 		fr := chainRemoteFake()
 		rt, _, _ := chainRemoteRuntime(t, fr)
+		stubRemoteSend(&rt)
 		startedChain(t, rt, ChainOptions{})
 		advanceRemoteChain(t, rt, 2)
 
@@ -200,6 +198,7 @@ func TestChainSendPendingSkipsLocalAndUnstaged(t *testing.T) {
 
 		fr := chainRemoteFake()
 		rt, _, _ := chainRemoteRuntime(t, fr)
+		stubRemoteSend(&rt)
 		startedChain(t, rt, ChainOptions{})
 		advanceRemoteChain(t, rt, 2)
 		stageRemoteRoundFile(t, rt, "shop", 2, "the next plan")
@@ -227,6 +226,7 @@ func TestChainSendPendingFailureHaltsTheChain(t *testing.T) {
 
 	fr := chainRemoteFake()
 	rt, _, _ := chainRemoteRuntime(t, fr)
+	stubRemoteSend(&rt)
 	startedChain(t, rt, ChainOptions{})
 	advanceRemoteChain(t, rt, 2)
 	stageRemoteRoundFile(t, rt, "shop", 2, "the next plan")
@@ -266,6 +266,7 @@ func TestWorkflowRemoteSendFailureHaltsTheEngineState(t *testing.T) {
 
 	fr := chainRemoteFake()
 	rt, _, _ := chainRemoteRuntime(t, fr)
+	stubRemoteSend(&rt)
 	startedChain(t, rt, ChainOptions{})
 	advanceRemoteChain(t, rt, 2)
 	stageRemoteRoundFile(t, rt, "shop", 2, "the next plan")
@@ -313,6 +314,7 @@ func TestChainSendPendingResolvesAwaitedFromState(t *testing.T) {
 
 	fr := chainRemoteFake()
 	rt, _, _ := chainRemoteRuntime(t, fr)
+	stubRemoteSend(&rt)
 	startFlowChain(t, rt, flowReviewWorkflow)
 
 	row := chainStoredRow(t, rt, "shop")

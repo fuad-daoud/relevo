@@ -22,6 +22,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/serve"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/uplink"
 )
 
 func newRepo(t *testing.T) string {
@@ -231,6 +232,13 @@ func newClient(t *testing.T, url, fingerprint string) (relevo.Runtime, remote.Ke
 		Now:         time.Now,
 		Remote:      client.New(servers, kp, time.Now),
 		Transport:   remote.NewBundleTransport(gitClient, t.TempDir()),
+		// The remote send runs above the engine: a send through this client
+		// reaches it through the same uplink functions buildRuntime wires.
+		RemoteSend: relevo.RemoteSendDeps{
+			Send:   uplink.SendRemote,
+			Ship:   uplink.Ship,
+			Record: uplink.Record,
+		},
 	}
 
 	return rt, kp
