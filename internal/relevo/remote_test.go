@@ -36,8 +36,8 @@ import (
 
 // addRemoteMasterMind is the mastermind registry the hand-built Runtimes in this
 // file need: `add --server` resolves the caller's mastermind before it contacts
-// the server (the fix that gives a remote binding its MasterMindID), so an Add
-// with Server set and no registry is the hard ErrNoMasterMindSession. It holds
+// the server, giving the remote binding its MasterMindID, so an Add with Server
+// set and no registry is the hard ErrNoMasterMindSession. It holds
 // the same record newRuntime seeds, on its own temp dir, and exports it as
 // $RELEVO_MASTERMIND the way a real mastermind session does, so the Runtime below
 // resolves it without a --mastermind flag.
@@ -376,7 +376,7 @@ type fakeTransport struct {
 	snapshotErr   error
 	// snapshotErrFirst, when set, fails only the first Snapshot call and lets
 	// every later one answer snapshotResp, so a test can show what one retry
-	// buys (#959).
+	// buys.
 	snapshotErrFirst error
 	absorbCalls      []absorbCall
 	absorbResp       map[string]string
@@ -421,7 +421,7 @@ func (f *fakeTransport) Absorb(ctx context.Context, repo, contentType string, bo
 
 // recordingTransport drives a real transport -- bundles and all -- and keeps
 // what the last Absorb did, so a test can show why an absorb was rejected
-// (#274) instead of inferring it from the refs that did not move.
+// instead of inferring it from the refs that did not move.
 type recordingTransport struct {
 	inner remote.TreeTransport
 	moved map[string]string
@@ -439,8 +439,8 @@ func (r *recordingTransport) Absorb(ctx context.Context, repo, contentType strin
 }
 
 // TestProbeServersStates checks ProbeServers' one-state-per-outcome mapping
-// over fakeRemote (#100 step 5): no client key, enrolled, not enrolled, a
-// changed certificate, unreachable, and an unrecognised error.
+// over fakeRemote: no client key, enrolled, not enrolled, a changed
+// certificate, unreachable, and an unrecognised error.
 func TestProbeServersStates(t *testing.T) {
 	t.Parallel()
 
@@ -512,7 +512,7 @@ func TestProbeServersStates(t *testing.T) {
 
 // TestProbeServersFillsTierFields pins that ProbeServers copies
 // WhoAmI.Features/BuilderTier/MaxTier into the enrolled probe, and leaves
-// them zero for a pre-tier (non-aware) server (#141 remote half).
+// them zero for a pre-tier (non-aware) server.
 func TestProbeServersFillsTierFields(t *testing.T) {
 	t.Parallel()
 
@@ -548,7 +548,7 @@ func TestProbeServersFillsTierFields(t *testing.T) {
 
 // TestProbeServersPreTierLeavesTierFieldsZero pins the pre-tier (v1) server
 // case: WhoAmI carries no Features, so the probe is not TierAware and its
-// tier fields stay empty (#141 remote half).
+// tier fields stay empty.
 func TestProbeServersPreTierLeavesTierFieldsZero(t *testing.T) {
 	t.Parallel()
 
@@ -572,8 +572,7 @@ func TestProbeServersPreTierLeavesTierFieldsZero(t *testing.T) {
 
 // TestServerTierWarning pins the one condition that warns: an enrolled,
 // tier-aware server whose builder tier is harness. Every other combination
-// -- not aware, or aware at a tier above harness -- is silent (#141 remote
-// half).
+// -- not aware, or aware at a tier above harness -- is silent.
 func TestServerTierWarning(t *testing.T) {
 	t.Parallel()
 
@@ -598,7 +597,7 @@ func TestServerTierWarning(t *testing.T) {
 
 // TestRenderServersShowsTierAndWarning pins the two lines RenderServers adds
 // per probe: the builder-tier annotation on the row, and a "!!" warning line
-// underneath when ServerTierWarning fires (#141 remote half).
+// underneath when ServerTierWarning fires.
 func TestRenderServersShowsTierAndWarning(t *testing.T) {
 	t.Parallel()
 
@@ -618,9 +617,9 @@ func TestRenderServersShowsTierAndWarning(t *testing.T) {
 	}
 }
 
-// TestRenderServersBuilders pins #285's queue line and #295's quota:
-// an enrolled, queue-aware server's row gains "builders %d/%d, %d queued,
-// scopes %s", with the scopes word covering off/on/on (<slice>)/on (<quota>)/
+// TestRenderServersBuilders pins the queue line and quota: an enrolled,
+// queue-aware server's row gains "builders %d/%d, %d queued, scopes %s",
+// with the scopes word covering off/on/on (<slice>)/on (<quota>)/
 // on (<slice>, <quota>); an enrolled server that is not queue-aware (a
 // pre-queue server) gets no builders text.
 func TestRenderServersBuilders(t *testing.T) {
@@ -729,11 +728,11 @@ func TestAddRemoteCreatesBranchAfterServerAgrees(t *testing.T) {
 		t.Fatalf("res.Branch = %q, want relevo/api", res.Branch)
 	}
 
-	// #100 step 6: the server picked the candidate (opts.Candidate == ""),
-	// so the pick entry must say so rather than ExplainResolution's
-	// "explicit, policy bypassed", which would misdescribe a token nobody
-	// on this side named. The placement clause names the explicit server,
-	// which --server always records as a placement of one.
+	// The server picked the candidate (opts.Candidate == ""), so the pick
+	// entry must say so rather than ExplainResolution's "explicit, policy
+	// bypassed", which would misdescribe a token nobody on this side named.
+	// The placement clause names the explicit server, which --server always
+	// records as a placement of one.
 	entries, err := st.ReadLog("api")
 	if err != nil {
 		t.Fatal(err)
@@ -749,12 +748,12 @@ func TestAddRemoteCreatesBranchAfterServerAgrees(t *testing.T) {
 	}
 }
 
-// TestAddRemoteRecordsMasterMind pins the fix: `add --server` resolves the
-// caller's mastermind before it contacts the server, and records it on the
-// client-side binding exactly as the local path does -- MasterMindID is the
-// record's id, MasterMind carries the record's kind and session. Before the fix
-// the binding was written with MasterMindID "" and a zero mastermind, so
-// mastermind-filtered status hid it and the channel route could not key on it.
+// TestAddRemoteRecordsMasterMind pins the mastermind recording: `add --server`
+// resolves the caller's mastermind before it contacts the server, and records
+// it on the client-side binding exactly as the local path does -- MasterMindID
+// is the record's id, MasterMind carries the record's kind and session. A row
+// written with MasterMindID "" and a zero mastermind would be dropped by
+// mastermind-filtered status, and the channel route could not key on it.
 func TestAddRemoteRecordsMasterMind(t *testing.T) {
 	t.Parallel()
 
@@ -799,10 +798,10 @@ func TestAddRemoteRecordsMasterMind(t *testing.T) {
 	}
 }
 
-// TestAddRemoteNoMasterMindIsHardError pins §4.3 for the remote path: with
-// nothing resolving -- no --mastermind, no $RELEVO_MASTERMIND, no host and no
-// detectable session -- `add --server` fails with exactly the local path's
-// no-mastermind text, before any binding is created on the server.
+// TestAddRemoteNoMasterMindIsHardError pins the remote no-mastermind rule:
+// with nothing resolving -- no --mastermind, no $RELEVO_MASTERMIND, no host
+// and no detectable session -- `add --server` fails with exactly the local
+// path's no-mastermind text, before any binding is created on the server.
 func TestAddRemoteNoMasterMindIsHardError(t *testing.T) {
 	t.Setenv("RELEVO_MASTERMIND", "")
 	t.Setenv("CLAUDECODE", "")
@@ -836,11 +835,10 @@ func TestAddRemoteNoMasterMindIsHardError(t *testing.T) {
 	}
 }
 
-// TestStatusShowsRemoteBindingForItsMasterMind pins the status half of the fix:
-// the remote binding's row carries the client mastermind's id, which is the field
+// TestStatusShowsRemoteBindingForItsMasterMind pins the status half: the
+// remote binding's row carries the client mastermind's id, which is the field
 // cmd/relevo's filterReportMasterMind keys on, so a mastermind-filtered `relevo
-// status` keeps it. Before the fix the row's MasterMindID was "" and the filter
-// dropped it.
+// status` keeps it. A row with MasterMindID "" would be dropped by the filter.
 func TestStatusShowsRemoteBindingForItsMasterMind(t *testing.T) {
 	ctx := context.Background()
 	rt := newRuntime(t)
@@ -889,7 +887,7 @@ func TestStatusShowsRemoteBindingForItsMasterMind(t *testing.T) {
 
 // TestAddRemoteTierPreTierServerRefused pins ErrServerPreTier: a server that
 // does not advertise FeatureTier refuses --tier before any binding is
-// created there (#141 remote half).
+// created there.
 func TestAddRemoteTierPreTierServerRefused(t *testing.T) {
 	ctx := context.Background()
 	st := store.New(t.TempDir())
@@ -923,8 +921,7 @@ func TestAddRemoteTierPreTierServerRefused(t *testing.T) {
 
 // TestAddRemoteTierWiresRequestAndEchoesBinding pins the wire contract: a
 // tier-aware server gets Tier on the CreateBindingRequest, and the local
-// binding records the tier the server echoed back, not the request's own
-// (#141 remote half).
+// binding records the tier the server echoed back, not the request's own.
 func TestAddRemoteTierWiresRequestAndEchoesBinding(t *testing.T) {
 	ctx := context.Background()
 	st := store.New(t.TempDir())
@@ -970,9 +967,8 @@ func TestAddRemoteTierWiresRequestAndEchoesBinding(t *testing.T) {
 // asks WhoAmI exactly once, because the server's features decide which wire
 // fields may travel (the link needs FeatureOrigin), and omitting --tier sends
 // no Tier on the wire, so a pre-tier server is unaffected by a plain `relevo
-// bind --server` (#141 remote half). A server whose features omit FeatureOrigin
-// is also the old-server case: no Client* fields travel and the stored row has
-// no link.
+// bind --server`. A server whose features omit FeatureOrigin is also the
+// old-server case: no Client* fields travel and the stored row has no link.
 func TestAddRemoteNoTierProbesOnceAndSkipsTier(t *testing.T) {
 	ctx := context.Background()
 	st := store.New(t.TempDir())
@@ -1020,10 +1016,11 @@ func TestAddRemoteNoTierProbesOnceAndSkipsTier(t *testing.T) {
 	}
 }
 
-// TestAddRemoteRolePreRolesServerRefused pins #382 §4: a server that does not
-// advertise remote.FeatureRoles refuses a custom --actor before any binding is
-// created there. An old server would ignore the field and run its builder, so
-// the add is refused with no CreateBinding call and no branch or worktree.
+// TestAddRemoteRolePreRolesServerRefused pins the pre-roles refusal: a server
+// that does not advertise remote.FeatureRoles refuses a custom --actor before
+// any binding is created there. An old server would ignore the field and run
+// its builder, so the add is refused with no CreateBinding call and no branch
+// or worktree.
 func TestAddRemoteRolePreRolesServerRefused(t *testing.T) {
 	ctx := context.Background()
 	st := store.New(t.TempDir())
@@ -1057,7 +1054,7 @@ func TestAddRemoteRolePreRolesServerRefused(t *testing.T) {
 	}
 }
 
-// TestAddRemoteRoleWiresRequest pins #382 §5.3's client half: a roles-aware
+// TestAddRemoteRoleWiresRequest pins the roles-aware wire half: a roles-aware
 // server gets Role on the CreateBindingRequest, and the local mirror records
 // it so `relevo status` shows it. The client's registry names only the
 // builder, so an add the client's own roles.json cannot explain still
@@ -1107,7 +1104,7 @@ func TestAddRemoteRoleWiresRequest(t *testing.T) {
 	}
 }
 
-// TestCreateBindingRequestCarriesTheActor pins the A4 wire contract: the
+// TestCreateBindingRequestCarriesTheActor pins the actor wire contract: the
 // client always names the actor on create, "builder" for a default binding and
 // the custom actor otherwise.
 func TestCreateBindingRequestCarriesTheActor(t *testing.T) {
@@ -1196,9 +1193,9 @@ func readerAddRuntime(t *testing.T, fr *fakeRemote) (Runtime, *store.Store) {
 	return rt, st
 }
 
-// TestAddRemoteReaderRefusedWithoutFeature pins #607: a reader bind against a
-// server that does not advertise remote.FeatureReaders is refused before any
-// create call, naming the server.
+// TestAddRemoteReaderRefusedWithoutFeature pins the reader refusal: a reader
+// bind against a server that does not advertise remote.FeatureReaders is
+// refused before any create call, naming the server.
 func TestAddRemoteReaderRefusedWithoutFeature(t *testing.T) {
 	ctx := context.Background()
 	fr := &fakeRemote{whoAmIResp: remote.WhoAmI{Features: []string{remote.FeatureRoles}}}
@@ -1219,9 +1216,10 @@ func TestAddRemoteReaderRefusedWithoutFeature(t *testing.T) {
 	}
 }
 
-// TestAddRemoteReaderRecordsShape pins #607: a reader bind against a server
-// that advertises remote.FeatureReaders saves the reader shape locally, so
-// the close, the report path and `show --output` treat it as a reader.
+// TestAddRemoteReaderRecordsShape pins the reader shape: a reader bind against
+// a server that advertises remote.FeatureReaders saves the reader shape
+// locally, so the close, the report path and `show --output` treat it as a
+// reader.
 func TestAddRemoteReaderRecordsShape(t *testing.T) {
 	ctx := context.Background()
 	fr := &fakeRemote{
@@ -1253,7 +1251,7 @@ func TestAddRemoteReaderRecordsShape(t *testing.T) {
 	}
 }
 
-// TestAddRemoteSendsGitAuthor pins #335's client half: the identity the
+// TestAddRemoteSendsGitAuthor pins the git-author half: the identity the
 // client's repo resolves rides on the CreateBindingRequest, so the server can
 // run this binding's builders as the client.
 func TestAddRemoteSendsGitAuthor(t *testing.T) {
@@ -1285,8 +1283,8 @@ func TestAddRemoteSendsGitAuthor(t *testing.T) {
 	}
 }
 
-// TestAddRemoteRefusesWithoutGitIdentity pins #335's refusal: a repo with no
-// user.email resolves no identity, so `add --server` fails with
+// TestAddRemoteRefusesWithoutGitIdentity pins the no-identity refusal: a repo
+// with no user.email resolves no identity, so `add --server` fails with
 // ErrNoGitIdentity before it touches the server -- no CreateBinding call, no
 // local binding, no branch.
 func TestAddRemoteRefusesWithoutGitIdentity(t *testing.T) {
@@ -1324,7 +1322,7 @@ func TestAddRemoteRefusesWithoutGitIdentity(t *testing.T) {
 	}
 }
 
-// TestAddRemoteTwicePerRepo pins #100: a remote binding's CWD is the repo its
+// TestAddRemoteTwicePerRepo pins the shared-repo rule: a remote binding's CWD
 // branch is cut from, not a working tree it drives, so two remote bindings
 // may share one repo the same way two `relevo add` worktrees do. (Mutation
 // target: revert the assertCWDFree remote exemption in
@@ -1426,7 +1424,7 @@ func TestAddRemoteServerConflict(t *testing.T) {
 	}
 }
 
-// TestAddRemoteCleansUpServerOnSaveFailure pins #100: any failure after
+// TestAddRemoteCleansUpServerOnSaveFailure pins the server cleanup: any
 // CreateBinding succeeds -- not just ErrBranchExists -- unbinds the server
 // binding it just created, best-effort, before addRemote returns. A
 // fakeGit.CreateBranch error that is not ErrBranchExists exercises the
@@ -1592,8 +1590,8 @@ func TestAddRemoteExistingBranch(t *testing.T) {
 	})
 }
 
-// TestAddRemoteCleansUpLocalBranchOnSaveFailure pins #100 round 4: a failure
-// that happens after CreateBranch has already succeeded also removes the
+// TestAddRemoteCleansUpLocalBranchOnSaveFailure pins the late-failure cleanup:
+// a failure after CreateBranch has already succeeded also removes the
 // local branch relevo just cut, not only the server binding -- otherwise the
 // branch is left behind and the next `add` with the same name is refused
 // with "branch relevo/<name> exists; delete it or pick another name", even
@@ -1772,23 +1770,23 @@ func remoteBinding(server string) store.Binding {
 	}
 }
 
-// TestObserveRemoteCopiesStalledSince pins #252's remote half: a running
+// TestObserveRemoteCopiesStalledSince pins the stall-stamp copy: a running
 // round's stall stamp rides from the server view onto the client binding,
 // status shows it, and a later view without one clears it.
-// TestObserveRemoteQueuedKeepsFacts pins #285's client tolerance: a queued
+// TestObserveRemoteQueuedKeepsFacts pins the queued-view tolerance: a queued
 // view copies the server's queue facts onto Builder.RemoteQueue, sets
 // RemoteStatus to "queued", and neither halts nor catches up.
-// TestObserveRemoteRunningClearsQueue pins #285's clear rule: a binding that
-// was queued and now observes a running view drops its stale RemoteQueue.
+// TestObserveRemoteRunningClearsQueue pins the queue-clearing rule: a binding
+// that was queued and now observes a running view drops its stale RemoteQueue.
 // TestReconcileRemoteRefreshesCandidate checks that a server-side switch
 // (the round is now running a different candidate than this binding last
 // recorded) updates the token and harness kind and logs a switch entry
 // naming the server, and that a later tick whose view still names the same
-// candidate adds nothing more (#100 step 2).
+// candidate adds nothing more.
 // TestSyncRemoteCollectsClosedRoundWithoutDelivery checks that SyncRemote
-// (the read path `relevo status`/`pull`/`wait` share, spec §2.2) collects a
-// closed round -- the report entry lands, pending -- without ever
-// delivering it to a mastermind pane.
+// (the read path `relevo status`/`pull`/`wait` share) collects a closed
+// round -- the report entry lands, pending -- without ever delivering it to
+// a mastermind pane.
 // TestSyncRemoteSkipsDoneAndLocal checks that SyncRemote never touches the
 // network for a binding it should not sync: one already DONE, and one that
 // is not a remote binding at all.
@@ -1815,7 +1813,7 @@ func newRemoteClientRepo(t *testing.T, name string) (dir, headSHA string) {
 // BundleTransport.Snapshot always does -- carrying just that new commit,
 // plus its sha. ref is the full ref the server ships, which for an
 // adopted-branch binding is refs/heads/relevo/<name> even though the client's
-// own branch keeps the adopted name (#274).
+// own branch keeps the adopted name.
 func newRoundResultBundle(t *testing.T, ctx context.Context, g *git.Client, base, ref, baseSHA string) (io.ReadCloser, string) {
 	t.Helper()
 	resultDir := t.TempDir()
@@ -1844,27 +1842,26 @@ func newRoundResultBundle(t *testing.T, ctx context.Context, g *git.Client, base
 // Tree, plus the downloaded patch as Path) rather than letting queueReport
 // capture its own diff from a local baseline that a remote binding never
 // has.
-// TestCatchUpAdoptedBranchAbsorbsServerRef pins the adopted-branch fix
-// (#274): `add --server --branch feature/x` adopts a branch relevo did not
-// create, but the server still cuts its own branch and the round bundle it
-// ships always names refs/heads/relevo/<name> (handleRoundBundle snapshots
+// TestCatchUpAdoptedBranchAbsorbsServerRef pins the adopted-branch rule:
+// `add --server --branch feature/x` adopts a branch relevo did not create,
+// but the server still cuts its own branch and the round bundle it ships
+// always names refs/heads/relevo/<name> (handleRoundBundle snapshots
 // refs/heads/<server branch>, and the server's branch is relevo/<name>).
 // Catch-up must allow the server's ref through Absorb, then fast-forward the
 // adopted branch to it, so the mastermind's own branch is the one carrying the
 // round's result.
 // TestCatchUpKeepsServerUsage checks that catch-up keeps the usage the
-// server measured and shipped with the round (#216): the client's report
-// entry stores it verbatim instead of re-measuring a round whose record
-// lives on the server.
+// server measured and shipped with the round: the client's report entry
+// stores it verbatim instead of re-measuring a round whose record lives on
+// the server.
 // TestCatchUpRecordsRusage extends TestCatchUpKeepsServerUsage's pattern:
 // the server's cgroup measurement rides the same view as Usage, and lands
-// on the report entry catchUp writes (#244, #216).
-// TestCatchUpPreUsageServerNotes checks the honest answer for a server
-// built before this (#216): with no usage in the view, the client's report
-// entry says the server sent none -- basis unknown -- rather than reading
-// a record the client does not have.
+// on the report entry catchUp writes.
+// TestCatchUpPreUsageServerNotes checks the honest answer for a view with no
+// usage: the client's report entry says the server sent none -- basis
+// unknown -- rather than reading a record the client does not have.
 // captureHandler is a slog.Handler that records every record it sees, so a
-// test can count how often a message was logged (#253).
+// test can count how often a message was logged.
 type captureHandler struct {
 	mu      sync.Mutex
 	records []slog.Record
@@ -1950,8 +1947,9 @@ func TestUnbindRemote404Proceeds(t *testing.T) {
 	}
 }
 
-// TestDoneRemote404Proceeds pins #1060: a served binding the server has
-// already released (settled and GC'd, or lost to a server state reset) answers
+// TestDoneRemote404Proceeds pins the released-server 404: a served binding
+// the server already released (settled and GC'd, or lost to a server state
+// reset) answers
 // done with a bare 404. That is not a failure -- the binding is gone where it
 // matters -- so Done settles the record locally instead of wrapping the wire's
 // "not found" into an internal error and filing a bug.
@@ -1984,11 +1982,11 @@ func TestDoneRemote404Proceeds(t *testing.T) {
 	}
 }
 
-// TestUnbindRemoteRunningRoundForwardsAndDeletes pins #331's premise for the
-// local verb the hints now name: `relevo unbind` has no running-round guard,
-// and does not need one. It tells the server first -- whose wire unbind kills
-// the headless builder and archives its copy -- then deletes the local
-// record, whether or not a round is open.
+// TestUnbindRemoteRunningRoundForwardsAndDeletes pins the unbind premise:
+// `relevo unbind` has no running-round guard, and does not need one. It tells
+// the server first -- whose wire unbind kills the headless builder and
+// archives its copy -- then deletes the local record, whether or not a round
+// is open.
 func TestUnbindRemoteRunningRoundForwardsAndDeletes(t *testing.T) {
 	t.Parallel()
 
@@ -2544,11 +2542,7 @@ func TestMirrorDriftOnce(t *testing.T) {
 	})
 }
 
-// TestObserveRemoteCopiesStalledSince pins #252's remote half: a running
-// round's stall stamp rides from the server view onto the client binding,
-// status shows it, and a later view without one clears it.
-
-// TestObserveRemoteCopiesStalledSince pins #252's remote half: a running
+// TestObserveRemoteCopiesStalledSince pins the stall-stamp copy: a running
 // round's stall stamp rides from the server view onto the client binding,
 // status shows it, and a later view without one clears it.
 func TestObserveRemoteCopiesStalledSince(t *testing.T) {
@@ -2601,11 +2595,7 @@ func TestObserveRemoteCopiesStalledSince(t *testing.T) {
 	}
 }
 
-// TestObserveRemoteQueuedKeepsFacts pins #285's client tolerance: a queued
-// view copies the server's queue facts onto Builder.RemoteQueue, sets
-// RemoteStatus to "queued", and neither halts nor catches up.
-
-// TestObserveRemoteQueuedKeepsFacts pins #285's client tolerance: a queued
+// TestObserveRemoteQueuedKeepsFacts pins the queued-view tolerance: a queued
 // view copies the server's queue facts onto Builder.RemoteQueue, sets
 // RemoteStatus to "queued", and neither halts nor catches up.
 func TestObserveRemoteQueuedKeepsFacts(t *testing.T) {
@@ -2645,11 +2635,8 @@ func TestObserveRemoteQueuedKeepsFacts(t *testing.T) {
 	}
 }
 
-// TestObserveRemoteRunningClearsQueue pins #285's clear rule: a binding that
-// was queued and now observes a running view drops its stale RemoteQueue.
-
-// TestObserveRemoteRunningClearsQueue pins #285's clear rule: a binding that
-// was queued and now observes a running view drops its stale RemoteQueue.
+// TestObserveRemoteRunningClearsQueue pins the queue-clearing rule: a binding
+// that was queued and now observes a running view drops its stale RemoteQueue.
 func TestObserveRemoteRunningClearsQueue(t *testing.T) {
 	t.Parallel()
 
@@ -2779,13 +2766,7 @@ func TestObserveRemoteClosedClearsLive(t *testing.T) {
 // (the round is now running a different candidate than this binding last
 // recorded) updates the token and harness kind and logs a switch entry
 // naming the server, and that a later tick whose view still names the same
-// candidate adds nothing more (#100 step 2).
-
-// TestReconcileRemoteRefreshesCandidate checks that a server-side switch
-// (the round is now running a different candidate than this binding last
-// recorded) updates the token and harness kind and logs a switch entry
-// naming the server, and that a later tick whose view still names the same
-// candidate adds nothing more (#100 step 2).
+// candidate adds nothing more.
 func TestReconcileRemoteRefreshesCandidate(t *testing.T) {
 	t.Parallel()
 
@@ -3394,10 +3375,9 @@ func TestReconcileRemote401Halts(t *testing.T) {
 	}
 }
 
-// TestReconcileRemote401StaleIsTransientWithoutGrace pins #373 §4.6's client
-// half for a CLI one-shot: a stale 401 with no AuthGrace is shown in
-// RemoteStatus and never halts, because a one-shot has no clock to measure a
-// grace against.
+// TestReconcileRemote401StaleIsTransientWithoutGrace pins the CLI one-shot
+// half: a stale 401 with no AuthGrace is shown in RemoteStatus and never
+// halts, because a one-shot has no clock to measure a grace against.
 func TestReconcileRemote401StaleIsTransientWithoutGrace(t *testing.T) {
 	t.Parallel()
 
@@ -3540,14 +3520,9 @@ func TestReconcileRemote404Halts(t *testing.T) {
 }
 
 // TestSyncRemoteCollectsClosedRoundWithoutDelivery checks that SyncRemote
-// (the read path `relevo status`/`pull`/`wait` share, spec §2.2) collects a
-// closed round -- the report entry lands, pending -- without ever
-// delivering it to a mastermind pane.
-
-// TestSyncRemoteCollectsClosedRoundWithoutDelivery checks that SyncRemote
-// (the read path `relevo status`/`pull`/`wait` share, spec §2.2) collects a
-// closed round -- the report entry lands, pending -- without ever
-// delivering it to a mastermind pane.
+// (the read path `relevo status`/`pull`/`wait` share) collects a closed
+// round -- the report entry lands, pending -- without ever delivering it to
+// a mastermind pane.
 func TestSyncRemoteCollectsClosedRoundWithoutDelivery(t *testing.T) {
 	t.Parallel()
 
@@ -3760,7 +3735,7 @@ func stoppedRoundRemote(stopped, dirtyCommit string) *fakeRemote {
 	}
 }
 
-// TestCatchUpStoppedNoReport pins #344: a closed round the server says was
+// TestCatchUpStoppedNoReport pins the stopped close: a closed round the
 // stopped, with no report file, closes the client's round instead of halting
 // the binding, queues the stopped payload, and files the stopped KindStop
 // entry for the stopped round.
@@ -3856,9 +3831,9 @@ func TestCatchUpStoppedWithReport(t *testing.T) {
 	}
 }
 
-// TestCatchUpNotStoppedNoReportHalts is the regression guard: a round the
-// server does not say was stopped, with no report file, halts exactly as it
-// did before #344.
+// TestCatchUpNotStoppedNoReportHalts is the guard beside it: a round the
+// server does not say was stopped, with no report file, halts -- a reportless
+// close that was not stopped must not be mistaken for one that was.
 func TestCatchUpNotStoppedNoReportHalts(t *testing.T) {
 	t.Parallel()
 
@@ -3884,9 +3859,8 @@ func TestCatchUpNotStoppedNoReportHalts(t *testing.T) {
 	}
 }
 
-// TestCatchUpStoppedDirtyNote pins #344's note join: a stopped round that
-// also carried uncommitted work keeps both facts, where the dirty clause used
-// to replace the note.
+// TestCatchUpStoppedDirtyNote pins the stopped note join: a stopped round
+// that also carried uncommitted work keeps both facts in the note.
 func TestCatchUpStoppedDirtyNote(t *testing.T) {
 	t.Parallel()
 
@@ -4211,10 +4185,10 @@ func readBundle(t *testing.T, ctx context.Context, transport remote.TreeTranspor
 	return body
 }
 
-// TestObserveRemoteIdleCatchUpRecoversLostReport pins #373 §4.5's Idle
-// catch-up: the server says Idle with this round closed and the client holds
-// no report entry, so the round's report is collected and acked again -- the
-// recovery for an /ack reply that never reached the client.
+// TestObserveRemoteIdleCatchUpRecoversLostReport pins the Idle catch-up: the
+// server says Idle with this round closed and the client holds no report
+// entry, so the round's report is collected and acked again -- the recovery
+// for an /ack reply that never reached the client.
 //
 // Mutation: drop the Idle catch-up and no report entry or Ack appears.
 func TestObserveRemoteIdleCatchUpRecoversLostReport(t *testing.T) {
@@ -4503,7 +4477,7 @@ func TestCatchUpWritesDiffEntryFromView(t *testing.T) {
 	}
 }
 
-// TestCatchUpAppendsPathsLineFromView pins #216's remote half: when the
+// TestCatchUpAppendsPathsLineFromView pins the paths-line rule: when the
 // server's DiffNote carries the "paths: report N, diff M" clause, catchUp's
 // queued payload repeats it as a Paths: line right after its Diff: line. A
 // note without the clause adds no line.
@@ -4577,19 +4551,10 @@ func TestCatchUpAppendsPathsLineFromView(t *testing.T) {
 	}
 }
 
-// TestCatchUpAdoptedBranchAbsorbsServerRef pins the adopted-branch fix
-// (#274): `add --server --branch feature/x` adopts a branch relevo did not
-// create, but the server still cuts its own branch and the round bundle it
-// ships always names refs/heads/relevo/<name> (handleRoundBundle snapshots
-// refs/heads/<server branch>, and the server's branch is relevo/<name>).
-// Catch-up must allow the server's ref through Absorb, then fast-forward the
-// adopted branch to it, so the mastermind's own branch is the one carrying the
-// round's result.
-
-// TestCatchUpAdoptedBranchAbsorbsServerRef pins the adopted-branch fix
-// (#274): `add --server --branch feature/x` adopts a branch relevo did not
-// create, but the server still cuts its own branch and the round bundle it
-// ships always names refs/heads/relevo/<name> (handleRoundBundle snapshots
+// TestCatchUpAdoptedBranchAbsorbsServerRef pins the adopted-branch rule:
+// `add --server --branch feature/x` adopts a branch relevo did not create,
+// but the server still cuts its own branch and the round bundle it ships
+// always names refs/heads/relevo/<name> (handleRoundBundle snapshots
 // refs/heads/<server branch>, and the server's branch is relevo/<name>).
 // Catch-up must allow the server's ref through Absorb, then fast-forward the
 // adopted branch to it, so the mastermind's own branch is the one carrying the
@@ -4899,14 +4864,9 @@ func TestCatchUpReplacesTheMirrorFileWithARow(t *testing.T) {
 }
 
 // TestCatchUpKeepsServerUsage checks that catch-up keeps the usage the
-// server measured and shipped with the round (#216): the client's report
-// entry stores it verbatim instead of re-measuring a round whose record
-// lives on the server.
-
-// TestCatchUpKeepsServerUsage checks that catch-up keeps the usage the
-// server measured and shipped with the round (#216): the client's report
-// entry stores it verbatim instead of re-measuring a round whose record
-// lives on the server.
+// server measured and shipped with the round: the client's report entry
+// stores it verbatim instead of re-measuring a round whose record lives on
+// the server.
 func TestCatchUpKeepsServerUsage(t *testing.T) {
 	t.Parallel()
 
@@ -5051,11 +5011,7 @@ func TestCatchUpRecordsPriorTokens(t *testing.T) {
 
 // TestCatchUpRecordsRusage extends TestCatchUpKeepsServerUsage's pattern:
 // the server's cgroup measurement rides the same view as Usage, and lands
-// on the report entry catchUp writes (#244, #216).
-
-// TestCatchUpRecordsRusage extends TestCatchUpKeepsServerUsage's pattern:
-// the server's cgroup measurement rides the same view as Usage, and lands
-// on the report entry catchUp writes (#244, #216).
+// on the report entry catchUp writes.
 func TestCatchUpRecordsRusage(t *testing.T) {
 	t.Parallel()
 
@@ -5116,15 +5072,9 @@ func TestCatchUpRecordsRusage(t *testing.T) {
 	}
 }
 
-// TestCatchUpPreUsageServerNotes checks the honest answer for a server
-// built before this (#216): with no usage in the view, the client's report
-// entry says the server sent none -- basis unknown -- rather than reading
-// a record the client does not have.
-
-// TestCatchUpPreUsageServerNotes checks the honest answer for a server
-// built before this (#216): with no usage in the view, the client's report
-// entry says the server sent none -- basis unknown -- rather than reading
-// a record the client does not have.
+// TestCatchUpPreUsageServerNotes checks the honest answer for a view with no
+// usage: the client's report entry says the server sent none -- basis
+// unknown -- rather than reading a record the client does not have.
 func TestCatchUpPreUsageServerNotes(t *testing.T) {
 	t.Parallel()
 
@@ -5778,10 +5728,10 @@ func TestResumeRemoteRefusesRebind(t *testing.T) {
 	}
 }
 
-// TestAddRemoteMatchesCandidateByName pins A1 §4.2: --candidate may name a
-// server candidate by its short name, and the canonical token is what the
-// server is asked to run. An unknown value with no "/" is refused, naming the
-// server's candidates as `name (token)`.
+// TestAddRemoteMatchesCandidateByName pins the candidate-name rule:
+// --candidate may name a server candidate by its short name, and the canonical
+// token is what the server is asked to run. An unknown value with no "/" is
+// refused, naming the server's candidates as `name (token)`.
 func TestAddRemoteMatchesCandidateByName(t *testing.T) {
 	ctx := context.Background()
 	st := store.New(t.TempDir())
@@ -5972,9 +5922,9 @@ func TestCatchUpSettleSkipsAChangedBinding(t *testing.T) {
 	}
 }
 
-// TestResumeRemoteRefusesLabelFlags pins #637 call 3: no server endpoint could
-// change a stored label, so a remote resume refuses --feature, --no-feature and
-// --ticket rather than changing only the mirror.
+// TestResumeRemoteRefusesLabelFlags pins the label-flag refusal: no server
+// endpoint could change a stored label, so a remote resume refuses --feature,
+// --no-feature and --ticket rather than changing only the mirror.
 func TestResumeRemoteRefusesLabelFlags(t *testing.T) {
 	t.Parallel()
 
@@ -6003,7 +5953,7 @@ func TestResumeRemoteRefusesLabelFlags(t *testing.T) {
 	}
 }
 
-// TestAddRemoteLabelsWiresRequestAndMirror pins #637's remote half: a
+// TestAddRemoteLabelsWiresRequestAndMirror pins the labels wire half: a
 // labels-aware server gets Feature and the canonical Ticket on the
 // CreateBindingRequest, and the local mirror records them.
 func TestAddRemoteLabelsWiresRequestAndMirror(t *testing.T) {
@@ -6052,9 +6002,9 @@ func TestAddRemoteLabelsWiresRequestAndMirror(t *testing.T) {
 	}
 }
 
-// TestAddRemoteLabelsPreLabelsServerRefused pins #637 call 4: a server that
-// does not advertise FeatureLabels is refused before any binding is created
-// there, so the label is never silently dropped.
+// TestAddRemoteLabelsPreLabelsServerRefused pins the pre-labels refusal: a
+// server that does not advertise FeatureLabels is refused before any binding
+// is created there, so the label is never silently dropped.
 func TestAddRemoteLabelsPreLabelsServerRefused(t *testing.T) {
 	ctx := context.Background()
 	st := store.New(t.TempDir())

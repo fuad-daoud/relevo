@@ -130,7 +130,6 @@ internal/relevo/reconcile_test.go
 internal/relevo/reload.go
 internal/relevo/reload_test.go
 internal/relevo/remote_gates.go
-internal/relevo/remote_test.go
 internal/relevo/repair.go
 internal/relevo/repair_test.go
 internal/relevo/repo.go
