@@ -119,8 +119,8 @@ func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOption
 	}
 	plan.planned = planned
 	plan.keeper = chain.WriterKeeper(def, workflow.UsedActors(def), actors)
-	if cap := chainNameCap(opts.Name, planned); len(opts.Name) > cap {
-		return chainWFStart{}, refusal.New("chain name %q exceeds %d characters (the longest member suffix is %s)", opts.Name, cap, longestMemberSuffix(opts.Name, planned))
+	if cap := chain.NameCap(opts.Name, planned); len(opts.Name) > cap {
+		return chainWFStart{}, refusal.New("chain name %q exceeds %d characters (the longest member suffix is %s)", opts.Name, cap, chain.LongestMemberSuffix(opts.Name, planned))
 	}
 	plan.members = chainWorkflowMembers(def, planned, plan.keeper)
 	if err := chainFreeNames(rt, plan.members); err != nil {

@@ -29,14 +29,14 @@ func chainRenderSeed(rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Defin
 	if workflow.IsSingleRef(seed) && len(refs) == 1 {
 		text, isFile, rerr := chainSeedRef(rt, tx, c, def, st, refs[0])
 		if rerr != nil {
-			return chainSeedMissing(rerr), nil
+			return chain.SeedMissing(rerr), nil
 		}
 		if !isFile {
 			return text, nil
 		}
 		body, oerr := os.ReadFile(text)
 		if oerr != nil {
-			return chainSeedMissing(oerr), nil
+			return chain.SeedMissing(oerr), nil
 		}
 		return string(body), nil
 	}
@@ -55,7 +55,7 @@ func chainRenderSeed(rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Defin
 		b.WriteString(rest[:start])
 		text, _, rerr := chainSeedRef(rt, tx, c, def, st, ref)
 		if rerr != nil {
-			b.WriteString(chainSeedMissing(rerr))
+			b.WriteString(chain.SeedMissing(rerr))
 		} else {
 			b.WriteString(text)
 		}
@@ -105,7 +105,7 @@ func chainChainRef(rt Runtime, tx *store.Tx, c db.ChainRow, ref workflow.Ref) (s
 	case "branch":
 		return c.Branch, false, nil
 	case "diff":
-		key := chainBranchDiff(rt, tx, c, c.Builder, memberNewestClosedRound(tx, c.Builder))
+		key := chainBranchDiff(rt, tx, c, c.Builder, chain.NewestClosedRound(tx, c.Builder))
 		if key == "" {
 			return "", false, errors.New("no chain diff captured")
 		}
@@ -156,11 +156,11 @@ func chainRenderShippedSeed(rt Runtime, tx *store.Tx, c db.ChainRow, def workflo
 	var closedRound int
 	switch kind {
 	case chain.SeedReviewer:
-		closedRound = memberNewestClosedRound(tx, c.Builder)
+		closedRound = chain.NewestClosedRound(tx, c.Builder)
 	case chain.SeedCorrection:
-		closedRound = memberNewestClosedRound(tx, c.Reviewer)
+		closedRound = chain.NewestClosedRound(tx, c.Reviewer)
 	case chain.SeedFixes:
-		closedRound = memberNewestClosedRound(tx, c.Security)
+		closedRound = chain.NewestClosedRound(tx, c.Security)
 	}
 	v, err := chainSeedView(rt, tx, c, s, chain.Action{Seed: kind}, closedRound)
 	if err != nil {
@@ -203,7 +203,7 @@ func flowCheckResult(st workflow.State) (string, string) {
 // recorded result -- the newest check flowCheckResult names -- not from a
 // member-gate record a chain writer no longer carries.
 func chainRenderRepairSeed(rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, st workflow.State) (string, error) {
-	failedRound := memberNewestClosedRound(tx, c.Builder)
+	failedRound := chain.NewestClosedRound(tx, c.Builder)
 	b, err := tx.Load(c.Builder)
 	if err != nil {
 		return "", err

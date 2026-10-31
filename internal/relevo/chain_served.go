@@ -185,8 +185,8 @@ func servedChainPreflightWorkflow(rt Runtime, req ServedChainRequest) (ServedCha
 		return ServedChainPlan{}, err
 	}
 	keeper := chain.WriterKeeper(def, workflow.UsedActors(def), actors)
-	if cap := chainNameCap(req.Name, planned); len(req.Name) > cap {
-		return ServedChainPlan{}, refusal.New("chain name %q exceeds %d characters (the longest member suffix is %s)", req.Name, cap, longestMemberSuffix(req.Name, planned))
+	if cap := chain.NameCap(req.Name, planned); len(req.Name) > cap {
+		return ServedChainPlan{}, refusal.New("chain name %q exceeds %d characters (the longest member suffix is %s)", req.Name, cap, chain.LongestMemberSuffix(req.Name, planned))
 	}
 	members := chainWorkflowMembers(def, planned, keeper)
 	if err := chainFreeNames(rt, members); err != nil {
@@ -262,7 +262,7 @@ func ServedChainCreate(ctx context.Context, rt Runtime, plan ServedChainPlan, wo
 	if err != nil {
 		return ChainResult{}, err
 	}
-	return ChainResult{Chain: row, Members: stored, Plans: len(planPaths), Check: chainBuilderCheck(stored, name)}, nil
+	return ChainResult{Chain: row, Members: stored, Plans: len(planPaths), Check: chain.BuilderCheck(stored, name)}, nil
 }
 
 // servedChainMember is one chain member's binding in the served shape. The

@@ -220,7 +220,7 @@ func TestForkFailureRollsBackEarlierChildrenAndHaltsParent(t *testing.T) {
 	}
 }
 
-// TestForkNameOverCapRefused pins that a child name exceeding chainNameCap is
+// TestForkNameOverCapRefused pins that a child name exceeding chain.NameCap is
 // refused at fork time.
 func TestForkNameOverCapRefused(t *testing.T) {
 	t.Parallel()

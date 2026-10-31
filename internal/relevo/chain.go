@@ -105,14 +105,14 @@ func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act c
 	reviewerOutput, securityOutput := "", ""
 	switch act.Seed {
 	case chain.SeedCorrection:
-		if p, err := memberReportPath(tx, c.Reviewer, closedRound); err != nil {
-			reviewerOutput = chainSeedMissing(err)
+		if p, err := chain.MemberReportPath(tx, c.Reviewer, closedRound); err != nil {
+			reviewerOutput = chain.SeedMissing(err)
 		} else {
 			reviewerOutput = chainSeedInput(rt, c, p)
 		}
 	case chain.SeedFixes:
-		if p, err := memberReportPath(tx, c.Security, closedRound); err != nil {
-			securityOutput = chainSeedMissing(err)
+		if p, err := chain.MemberReportPath(tx, c.Security, closedRound); err != nil {
+			securityOutput = chain.SeedMissing(err)
 		} else {
 			securityOutput = chainSeedInput(rt, c, p)
 		}
@@ -125,17 +125,17 @@ func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act c
 		// reviewer's close, so it names the builder's newest closed round.
 		builderRound := closedRound
 		if act.Seed == chain.SeedCorrection {
-			builderRound = memberNewestClosedRound(tx, c.Builder)
+			builderRound = chain.NewestClosedRound(tx, c.Builder)
 		}
 		v.ReportPath = chainSeedInput(rt, c, rt.Store.ReportPath(c.Builder, builderRound))
 		v.DiffPath = chainSeedInput(rt, c, rt.Store.DiffPath(c.Builder, builderRound))
 		v.BranchDiffPath = v.DiffPath
-		rec, err := chainRoundGate(tx, c.Builder, builderRound)
+		rec, err := chain.RoundGate(tx, c.Builder, builderRound)
 		if err != nil {
 			return workflow.SeedView{}, err
 		}
 		if rec != nil {
-			v.GateResult = chainGateResult(rec)
+			v.GateResult = chain.GateResult(rec)
 			v.GateLogPath = chainSeedInput(rt, c, rec.LogPath)
 		}
 		v.PlanFiles = chainSeedPlanFiles(rt, tx, c)
@@ -151,27 +151,9 @@ func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act c
 			v.OutputPath = securityOutput
 		}
 		v.BranchDiffPath = chainSeedInput(rt, c,
-			chainBranchDiff(rt, tx, c, c.Builder, memberNewestClosedRound(tx, c.Builder)))
+			chainBranchDiff(rt, tx, c, c.Builder, chain.NewestClosedRound(tx, c.Builder)))
 	}
 	return v, nil
-}
-
-// chainRoundGate reads the gate the builder's round wrote on its report entry:
-// the KindReport entry for round in the builder's log, or nil when the round
-// ran no check. The close writes that record on the entry, so a read under the
-// same lock sees it.
-func chainRoundGate(tx *store.Tx, builder string, round int) (*store.GateRecord, error) {
-	entries, err := tx.ReadLog(builder)
-	if err != nil {
-		return nil, err
-	}
-	var rec *store.GateRecord
-	for _, e := range entries {
-		if e.Direction == store.DirToMasterMind && e.Kind == store.KindReport && e.Round == round {
-			rec = e.Gate
-		}
-	}
-	return rec, nil
 }
 
 // chainDeliveryMember names the member that carries a chain's end delivery: the

@@ -35,14 +35,3 @@ func chainStoredMembers(rt Runtime, members []chainMember) ([]store.Binding, err
 	}
 	return out, nil
 }
-
-// chainBuilderCheck is the builder member's resolved acceptance command from a
-// chain's members: "" when the member carries no gate.
-func chainBuilderCheck(members []store.Binding, builder string) string {
-	for _, m := range members {
-		if m.Name == builder {
-			return m.Gate
-		}
-	}
-	return ""
-}

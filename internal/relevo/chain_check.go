@@ -528,7 +528,7 @@ func chainCheckLogTarget(tx *store.Tx, c db.ChainRow) (string, int, error) {
 	if member == "" {
 		return "", 0, fmt.Errorf("chain %s has no member to hold a check log", c.Name)
 	}
-	round := memberNewestClosedRound(tx, member)
+	round := chain.NewestClosedRound(tx, member)
 	if round < 1 {
 		round = 1
 	}
