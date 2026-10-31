@@ -744,9 +744,9 @@ func TestChainCheckReportNamesTheCheckStepsCommand(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			cmd, source := chainCheckReport(c.def, c.res, c.params)
+			cmd, source := chain.CheckReport(c.def, c.res, c.params)
 			if cmd != c.cmd || source != c.source {
-				t.Errorf("chainCheckReport = %q (%q), want %q (%q)", cmd, source, c.cmd, c.source)
+				t.Errorf("chain.CheckReport = %q (%q), want %q (%q)", cmd, source, c.cmd, c.source)
 			}
 		})
 	}

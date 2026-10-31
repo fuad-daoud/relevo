@@ -1,4 +1,4 @@
-package relevo
+package chain
 
 import (
 	"strings"
@@ -7,9 +7,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
-// chainCheckCommands returns the distinct non-empty check commands a workflow's
+// CheckCommands returns the distinct non-empty check commands a workflow's
 // check steps render.
-func chainCheckCommands(def workflow.Definition) []string {
+func CheckCommands(def workflow.Definition) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, id := range workflow.ResumeTargets(def) {
@@ -25,24 +25,24 @@ func chainCheckCommands(def workflow.Definition) []string {
 	return out
 }
 
-// chainSingleCheckCommand is the one non-empty check command a placed writer's
+// SingleCheckCommand is the one non-empty check command a placed writer's
 // binding carries as its own gate, or "" when the workflow does not have
 // exactly one. A placed writer's binding keeps this gate so a chain started
 // before the check route can still be answered from the record the writer's
 // newest closed round carries.
-func chainSingleCheckCommand(def workflow.Definition) string {
-	cmds := chainCheckCommands(def)
+func SingleCheckCommand(def workflow.Definition) string {
+	cmds := CheckCommands(def)
 	if len(cmds) == 1 {
 		return cmds[0]
 	}
 	return ""
 }
 
-// chainCheckReport is the check a chain's start line names: the commands its
+// CheckReport is the check a chain's start line names: the commands its
 // check steps run, local or placed, with where the command came from. A
 // member's own gate is no guide, since a local writer carries none.
-func chainCheckReport(def workflow.Definition, res resolve.GateResolution, params map[string]string) (string, string) {
-	cmds := chainCheckCommands(def)
+func CheckReport(def workflow.Definition, res resolve.GateResolution, params map[string]string) (string, string) {
+	cmds := CheckCommands(def)
 	switch {
 	case len(cmds) == 0:
 		return "", ""

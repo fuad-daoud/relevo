@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/tmpdir"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // seedLogStore saves a binding with n entries under the package's temp state
@@ -66,7 +66,7 @@ func TestLogAfterAndJSON(t *testing.T) {
 	}
 	var want strings.Builder
 	for _, e := range wantEntries {
-		want.WriteString(relevo.LogLine(e))
+		want.WriteString(view.LogLine(e))
 		want.WriteString("\n")
 	}
 	stdout, _, err = captureOutput(t, func() error {

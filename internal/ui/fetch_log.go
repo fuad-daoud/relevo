@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // fetchLog formats round's log entries with the cmdLog layout.
@@ -48,7 +49,7 @@ func fetchLog(ctx context.Context, src widget.Source, key string, round int) tea
 			if e.Round != round {
 				continue
 			}
-			b.WriteString(relevo.LogLine(e))
+			b.WriteString(view.LogLine(e))
 			b.WriteByte('\n')
 			n++
 		}

@@ -61,7 +61,7 @@ func (a *mastermindActions) Stop(ctx context.Context, key string) widget.Result 
 		// command. It is an answer, not a failure, exactly as the binding case
 		// is -- Err stays nil either way.
 		if row, cerr := rt.Store.Chain(name); cerr == nil && row.Status == string(chain.StatusHalted) {
-			return widget.Result{Text: relevo.ChainHaltedStopText(name), Refresh: true}
+			return widget.Result{Text: chain.ChainHaltedStopText(name), Refresh: true}
 		}
 		return widget.Result{Text: fmt.Sprintf("nothing to stop: %s has no open round", name), Refresh: true}
 	}

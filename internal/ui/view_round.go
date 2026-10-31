@@ -317,7 +317,7 @@ func (p roundPane) readerContextCells(b view.BindingStatus) []string {
 	if artifactCount(c) > 0 {
 		cells = append(cells,
 			widget.FaintStyle.Render("  ·  ")+widget.MutedStyle.Render(artifactsWord(artifactCount(c))),
-			widget.FaintStyle.Render("  ·  ")+widget.MutedStyle.Render(relevo.ArtifactSizeText(artifactTotalSize(c))))
+			widget.FaintStyle.Render("  ·  ")+widget.MutedStyle.Render(view.ArtifactSizeText(artifactTotalSize(c))))
 	}
 	if !p.roundOpen(b) {
 		cells = append(cells, widget.FaintStyle.Render("  ·  ")+widget.MutedStyle.Render("repository unchanged"))

@@ -22,6 +22,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/text"
 	"github.com/fuad-daoud/relevo/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // nudgeNote marks the one reminder relevo sends when a builder went idle without
@@ -721,7 +722,7 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	if fellBack {
 		// The runner left no output file, so the close saved its last message:
 		// recorded in the note the round's status row and `show --output` read.
-		note = joinNotes(note, readerFallbackNote)
+		note = joinNotes(note, view.ReaderFallbackNote)
 	}
 	if _, _, ok, _ := rt.Store.StatFile(reportPath); ok {
 		slog.Info("round closed by marker", "binding", b.Name, "round", b.Round)
@@ -1104,8 +1105,8 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// take the idle branch, never halt again, and refuse every send with
 	// ErrReportPending.
 	if b.Shape == store.ShapeReader {
-		if over, total := artifactCapExceeded(rt.Store, b, closedRound, rt.Policy.ArtifactMaxBytes()); over {
-			b = closeHaltOrOwe(ctx, rt, tx, b, closedRound, artifactCapReason(total, rt.Policy.ArtifactMaxBytes()))
+		if over, total := view.ArtifactCapExceeded(rt.Store, b, closedRound, rt.Policy.ArtifactMaxBytes()); over {
+			b = closeHaltOrOwe(ctx, rt, tx, b, closedRound, view.ArtifactCapReason(total, rt.Policy.ArtifactMaxBytes()))
 		}
 	}
 
