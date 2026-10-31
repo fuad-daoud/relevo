@@ -71,7 +71,6 @@ internal/relevo/candidates_list.go
 internal/relevo/candidate_test.go
 internal/relevo/capture.go
 internal/relevo/capture_test.go
-internal/relevo/configedit.go
 internal/relevo/consult.go
 internal/relevo/consult_test.go
 internal/relevo/daemon_consult_test.go
