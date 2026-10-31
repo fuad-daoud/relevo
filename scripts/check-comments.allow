@@ -60,8 +60,6 @@ internal/relevo/authgrace.go
 internal/relevo/authgrace_test.go
 internal/relevo/available.go
 internal/relevo/available_test.go
-internal/relevo/builder_change.go
-internal/relevo/builder_change_test.go
 internal/relevo/candidate.go
 internal/relevo/candidates_list.go
 internal/relevo/candidate_test.go
@@ -164,8 +162,6 @@ internal/relevo/status_route_test.go
 internal/relevo/status_test.go
 internal/relevo/stop.go
 internal/relevo/stop_test.go
-internal/relevo/switch.go
-internal/relevo/switch_test.go
 internal/relevo/tab.go
 internal/relevo/tab_test.go
 internal/relevo/text.go

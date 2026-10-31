@@ -47,9 +47,9 @@ func switches(t *testing.T, rt Runtime) []store.LogEntry {
 	return out
 }
 
-// TestSwitchRearmsSessionCursor pins switchBuilder's replacement-pane re-arm
-// (#184, round 2 correction to base plan §4): the replacement process starts
-// on the SAME round's plan, and the switch is recorded in the log.
+// TestSwitchRearmsSessionCursor pins that switchBuilder's replacement re-arms
+// the session cursor: the replacement process starts on the SAME round's plan,
+// and the switch is recorded in the log.
 //
 // Mutation check (run and report): break switchBuilder's gated-candidate walk
 // and this fails.
@@ -116,7 +116,7 @@ func TestGatedSwitchUnpinsTheBinding(t *testing.T) {
 	}
 }
 
-// TestGatedSwitchDoesNotCount checks the two halves of §4.5 together: a
+// TestGatedSwitchDoesNotCount checks the switch-budget rule's two halves together: a
 // gated switch does not advance RoundSwitches, but the >= limit check at
 // the top of switchBuilder still applies to it -- a binding already at the
 // limit still halts instead of switching again.
@@ -245,7 +245,7 @@ func TestMaxSwitchesZeroHalts(t *testing.T) {
 	}
 }
 
-// TestExhaustionAfterResendStillSaysWhy pins #250 item 2: a human's re-send is
+// TestExhaustionAfterResendStillSaysWhy pins that a human's re-send is
 // a fresh attempt -- it resets the round's switch budget and the notification
 // dedup -- so the next exhaustion in the same round records its reason again.
 //
@@ -441,7 +441,7 @@ func TestAllGatedHalts(t *testing.T) {
 	}
 }
 
-// TestServedSwitchSkipsAGateRecordedOnTheHost is the plan's third case: a
+// TestServedSwitchSkipsAGateRecordedOnTheHost pins that a
 // mid-round switch on a SERVED runtime resolves over the same gate set the
 // pick does. The binding's provider is gated in the server row (the served
 // 429 detection's own write), the next-ranked candidate is gated only in the
@@ -480,8 +480,8 @@ func TestServedSwitchSkipsAGateRecordedOnTheHost(t *testing.T) {
 	}
 }
 
-// TestServedSwitchAllGatedHaltsWithoutConsumingASwitch is the other half of
-// case 3: with the server row gating the binding's provider AND the host row
+// TestServedSwitchAllGatedHaltsWithoutConsumingASwitch pins that with the
+// server row gating the binding's provider AND the host row
 // gating everything else, the served switch halts with the refusal instead of
 // burning a switch -- the same answer TestAllGatedHalts pins for a local
 // binding, reached through the union's gate set.
@@ -570,7 +570,7 @@ func TestSwitchRecordsOutgoingUsage(t *testing.T) {
 	}
 }
 
-// TestSwitchKeepsTheStreamCursor is §7.2 N8: a mid-round switch to a builder
+// TestSwitchKeepsTheStreamCursor pins that a mid-round switch to a builder
 // of another kind keeps the round's stream cursor and its segment list, and
 // the drain that follows renders only the bytes past the old offset -- the
 // old harness's lines are not rendered a second time (or with the new kind).
@@ -657,7 +657,7 @@ func busyScopeRuntime(t *testing.T) (Runtime, store.Binding, string) {
 	return rt, b, unit
 }
 
-// TestSwitchResendEndsTheOldRoundsScope pins step 1's working half: a resend
+// TestSwitchResendEndsTheOldRoundsScope pins that a resend
 // whose round scope is still loaded ends that unit before the replacement
 // starts, so the replacement's Start is never refused by systemd -- and
 // because the free succeeded, the candidate that did start records no
@@ -700,7 +700,7 @@ func TestSwitchResendEndsTheOldRoundsScope(t *testing.T) {
 	}
 }
 
-// TestSwitchDefersWhileTheOldScopeIsBusy pins step 1's refusing half: a runner
+// TestSwitchDefersWhileTheOldScopeIsBusy pins that a runner
 // that can see the scope but not end it gets the whole switch deferred, with
 // nothing written. The binding must come back byte-identical -- no gate, no
 // halt, no switch entry, no budget spent -- so the next tick can retry.
@@ -746,8 +746,8 @@ func TestSwitchDefersWhileTheOldScopeIsBusy(t *testing.T) {
 // loaded -- the old round's scope, still reaping.
 var scopeCollisionErr = errors.New("Failed to start transient scope unit: Unit relevo-round-local-webshop-1.scope was already loaded: hostfailure")
 
-// TestScopeCollisionStartDoesNotGateTheCandidate pins steps 2 and 3 together:
-// a Start the host refused for a scope collision records no spawn_failed gate
+// TestScopeCollisionStartDoesNotGateTheCandidate pins that a Start the host
+// refused for a scope collision records no spawn_failed gate
 // for the replacement, does not exclude it from the round, does not spend the
 // switch budget, and halts with text naming both the token and the host cause
 // -- in wording that says it never started, so a human or `chain --resume`
@@ -809,7 +809,7 @@ func TestScopeCollisionStartDoesNotGateTheCandidate(t *testing.T) {
 	}
 }
 
-// staleHaltedBinding stages the state every daemon revive in T4 walks into:
+// staleHaltedBinding stages the state every daemon revive walks into:
 // the round timed out, so Halt is set, its notification key names THIS round,
 // and the binding sits in needs_you. It is persisted, so the next tick reads
 // it exactly as a daemon restart or a later decision point would.
@@ -826,8 +826,8 @@ func staleHaltedBinding(t *testing.T, rt Runtime, b store.Binding) store.Binding
 	return next
 }
 
-// TestRevivePathsClearAStaleHalt pins step 4 across all three daemon revives:
-// a binding revived with State Active must carry no halt, or the per-round
+// TestRevivePathsClearAStaleHalt pins that across all three daemon revives, a
+// binding revived with State Active must carry no halt, or the per-round
 // notification key left behind dedups the round's NEXT halt and it is never
 // queued at all. Each subcase therefore stages a notified halt in this round,
 // revives the binding, halts it again in the same round, and requires exactly

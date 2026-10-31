@@ -14,11 +14,11 @@ import (
 // ErrBadBuilder wraps every refusal of a `relevo send --candidate` token itself:
 // an unknown candidate, a bad ref, a role it does not serve, roles_missing,
 // or a tier above the cap. It exists so the server can map these to 422
-// rather than 500 (#318).
+// rather than 500.
 var ErrBadBuilder = errors.New("send --candidate")
 
 // ResolveSendBuilder is ResolveSendBuilderFor with the built-in builder's
-// role, so the callers and tests that predate roles stay unchanged.
+// role, for the callers and tests that use it.
 func ResolveSendBuilder(rt Runtime, current, token string) (*resolve.Resolution, error) {
 	return ResolveSendBuilderFor(rt, "builder", current, token)
 }
@@ -27,7 +27,7 @@ func ResolveSendBuilder(rt Runtime, current, token string) (*resolve.Resolution,
 // for a binding whose writer role is role, or nil for a no-op. An explicit
 // token is resolved exactly as `relevo bind --worktree --candidate` resolves one, so a gated
 // candidate still resolves (its gates are recorded on the resolve.Resolution) and only
-// roles_missing refuses (#238).
+// roles_missing refuses.
 //
 // It returns nil, nil when the token canonicalises to the binding's current
 // candidate: naming the builder a binding already has changes nothing. Every
@@ -99,8 +99,8 @@ func roundOpenIn(entries []store.LogEntry, round int) bool {
 // The why: a halt is a human decision point. On a served binding `relevo
 // stop` performs the stop on the halted round, and naming the candidate that
 // continues *this* round works without stopping first, so the human has two
-// levers there. A local binding is not exempt -- it stops and re-sends as its
-// refusal has always said.
+// levers there. A local binding is not exempt -- it stops and re-sends, as the
+// refusal says.
 //
 // "Served" has two spellings, because relevo keeps two copies of such a
 // binding: the server's copy carries Owner and a headless builder, while the

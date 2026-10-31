@@ -22,7 +22,7 @@ import (
 
 // gatedBuilder reports the first live rate-limit gate on b's own builder
 // candidate, if any. Pure over the ledger and b's own token: a token the
-// configured set no longer holds (the candidate was edited or deleted
+// configured set does not hold (the candidate was edited or deleted
 // mid-round) is still checked, because the running process is on that triple.
 //
 // SpawnFailed gates are ignored: a running builder is not a failed spawn, so
@@ -38,7 +38,7 @@ func gatedBuilder(rt Runtime, b store.Binding) (availability.Gate, bool) {
 }
 
 // roundExclusionGates is one ledger.Gate per token in b.RoundExcluded --
-// candidates that exited without a report during the CURRENT round (#191).
+// candidates that exited without a report during the CURRENT round.
 // Pure. switchBuilder folds these into the live ledger gates it passes to
 // resolveCandidate, so a mid-round switch never lands the pick back on a
 // builder that already proved it cannot finish this round. gatedBuilder is
@@ -170,7 +170,7 @@ func switchLines(entries []store.LogEntry, round int, serverSwitch bool) []strin
 
 // switchEntry is the log record of one builder switch: why the switch
 // happened, and what ExplainResolution says about the pick that replaced
-// the builder (spec §3.3, §4.4). Always Confirmed and DirToMasterMind, the same
+// the builder. Always Confirmed and DirToMasterMind, the same
 // reasoning as pickEntry: a switch is never a pending payload.
 //
 // The rule that follows from Confirmed is the whole of a switch's delivery: a
@@ -207,7 +207,7 @@ func switchEntry(now time.Time, round int, reason string, res resolve.Resolution
 // records in the switch log entry is the one it makes itself, by calling
 // resolveCandidate with an omitted token, so the audit trail explains the
 // real policy decision rather than the trivial "explicit" one. This is the
-// same rule Add and Fork follow (policy-order spec §4.3).
+// same rule Add and Fork follow.
 //
 // A switch tick returns without deliverAndSettle, like the halt paths in
 // Reconcile: replacing a builder is the only thing that tick does to this
@@ -264,7 +264,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 
 	if closeOld {
 		// The one place besides done/unbind where relevo stops a process it
-		// started (#99): the mastermind gated the provider while the round's
+		// started: the mastermind gated the provider while the round's
 		// process was still running.
 		if b.Builder.PID != 0 && rt.Runner != nil {
 			if err := rt.Runner.Kill(ctx, handleOf(b.Builder), rt.Store.StreamPath(b.Name, b.Round)); err != nil {
@@ -298,7 +298,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	now := rt.Now().UTC()
 	prior := peekUsage(ctx, rt, b, now)
 
-	// The replacement inherits the mode (spec §5.4): a headless binding gets
+	// The replacement inherits the mode: a headless binding gets
 	// a headless endpoint, which startRound below fills in.
 	ep, _, err := resolveBuilder(ctx, rt, tx, BindOptions{
 		Candidate: res.Token(),
@@ -311,7 +311,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		// resolveBuilder already recorded spawn_failed for the pick, which
 		// gates it for the next resolution -- so the next human send picks a
 		// different candidate. What does not happen is a retry: with the old
-		// pane closed (or already gone) and no replacement process, the next
+		// process closed (or already gone) and no replacement process, the next
 		// tick returns at reconcileHeadless' PID == 0 branch without acting,
 		// and view.WaitingOn reads the binding as broken rather than waiting
 		// on the daemon. So this binding stops here, and the spawn_failed
@@ -432,7 +432,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 // candidate it picked.
 //
 // startProcess wraps all of these in a plain (non-spawnFailure) error, which is
-// what makes this checkable at all: the classes are no longer distinguishable
+// what makes this checkable at all: the classes are not distinguishable
 // by type at the call site, only by what the error says.
 func hostStartError(err error) bool {
 	if err == nil {
@@ -450,14 +450,13 @@ func hostStartError(err error) bool {
 // limitText is the text a decision point scans for rate-limit patterns: the
 // tail of the current builder process's output -- its log when the round has
 // one, otherwise the bytes it appended to the round's stream -- keeping only
-// the lines the harness itself wrote. A local builder is always headless since
-// #303.
+// the lines the harness itself wrote. A local builder is always headless.
 func limitText(ctx context.Context, rt Runtime, b store.Binding) string {
 	text, _ := limitScan(ctx, rt, b)
 	return text
 }
 
-// gateOnLimit is the one helper every decision point calls (spec §4.4).
+// gateOnLimit is the one helper every decision point calls.
 // Preconditions: the round is open and the caller holds the store lock.
 //
 // It applies the switchable guard itself -- the same one the existing
@@ -498,7 +497,7 @@ func gateOnLimit(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 
 	// A limit is recorded against the login that hit it, so another login of
 	// the same provider stays usable; a binding with no account records the
-	// bare group exactly as before.
+	// bare group.
 	subject := availability.ProviderOf(b.BuilderCandidate)
 	if b.BuilderAccount != "" && subject != "" {
 		subject = account.GateKey(subject, b.BuilderAccount)
@@ -540,7 +539,7 @@ func gateOnLimit(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	return next, m, true, err
 }
 
-// gateOnOutage is the exit path's answer to a provider-side outage (#931): the
+// gateOnOutage is the exit path's answer to a provider-side outage: the
 // builder's own tail says the PROVIDER failed, not the builder, so the exit
 // earns the same timed gate a rate limit earns -- one rate_limited ledger entry
 // whose note keeps the cause, then the builder switched uncounted, for the same
@@ -551,7 +550,7 @@ func gateOnLimit(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 //
 // handled is false when the tail names no provider outage. That is the whole
 // point of the split: the caller's own classification of the exit -- for the
-// headless path, the until-cleared #191 exclusion a genuine crash earns -- is
+// headless path, the until-cleared exclusion a genuine crash earns -- is
 // left exactly as it was, which is why the gate is offered only at that
 // decision and never earlier in the precedence order.
 //
