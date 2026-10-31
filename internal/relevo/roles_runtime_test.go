@@ -1,9 +1,8 @@
 package relevo
 
-// The file-mode tests for #374 round 2b: every runtime path that launches or
-// picks for a role asks the registry, and these pin what changes when that
-// registry came from roles.json. The legacy behaviour is pinned by the older
-// tests, which stay unedited.
+// The file-mode tests: every runtime path that launches or picks for a role
+// asks the registry, and these pin what it does when that registry came from
+// roles.json. The legacy behaviour is pinned by the older tests.
 
 import (
 	"context"
@@ -36,7 +35,7 @@ const rolesRuntimeTierCandidatesJSON = `[
 ]`
 
 // rolesFileRegistry builds the registry cmd/relevo builds from roles.json,
-// from in-memory rows over set (#374 §9 step 6).
+// from in-memory rows over set.
 func rolesFileRegistry(t *testing.T, set *candidate.Set, pol policy.Policy, rows map[string]roles.Row) *roles.Registry {
 	t.Helper()
 	reg, err := roles.Build(&roles.File{Rows: rows}, set, pol)
@@ -47,8 +46,7 @@ func rolesFileRegistry(t *testing.T, set *candidate.Set, pol policy.Policy, rows
 }
 
 // actorsFileRegistry is rolesFileRegistry with the file's source set to the
-// actors section, so the views label the candidates' section "config actors"
-// (A2 round 2).
+// actors section, so the views label the candidates' section "config actors".
 func actorsFileRegistry(t *testing.T, set *candidate.Set, pol policy.Policy, rows map[string]roles.Row) *roles.Registry {
 	t.Helper()
 	reg, err := roles.Build(&roles.File{Rows: rows, Source: roles.SourceActors}, set, pol)
@@ -72,7 +70,7 @@ func rolesCandidate(t *testing.T, set *candidate.Set, token string) candidate.Ca
 	return c
 }
 
-// TestRolesRuntimeFileModeRanking pins §4.3/§9 step 6.1: the row's candidates
+// TestRolesRuntimeFileModeRanking pins file-mode ranking: the row's candidates
 // list is the ranked order, the position is the token's 1-based index in that
 // list, a gated candidate is skipped and named, and a candidate the row does
 // not list is never picked.
@@ -130,9 +128,8 @@ func TestRolesRuntimeFileModeRanking(t *testing.T) {
 	}
 }
 
-// TestRolesRuntimeFileModeExplicitTokenNotListed pins §4.3/§9 step 6.2: an
-// explicit token the row does not list is refused, and in file mode the
-// refusal says so.
+// TestRolesRuntimeFileModeExplicitTokenNotListed pins that an explicit token
+// the row does not list is refused, and in file mode the refusal says so.
 func TestRolesRuntimeFileModeExplicitTokenNotListed(t *testing.T) {
 	t.Parallel()
 
@@ -153,9 +150,9 @@ func TestRolesRuntimeFileModeExplicitTokenNotListed(t *testing.T) {
 	}
 }
 
-// TestRolesRuntimeFileModeTier pins §4.4/§9 step 6.3: in file mode the role's
-// row tier wins and the candidate's own tier is ignored; the explicit tier
-// still wins over both.
+// TestRolesRuntimeFileModeTier pins that in file mode the role's row tier
+// wins and the candidate's own tier is ignored; the explicit tier still wins
+// over both.
 func TestRolesRuntimeFileModeTier(t *testing.T) {
 	t.Parallel()
 
@@ -179,8 +176,8 @@ func TestRolesRuntimeFileModeTier(t *testing.T) {
 	}
 }
 
-// TestRolesRuntimeVerifyTier pins §4.6/§9 step 6.4: verifyTier reads the
-// reviewer row in file mode, and gives yolo when the file sets no tier.
+// TestRolesRuntimeVerifyTier pins that verifyTier reads the reviewer row in
+// file mode, and gives yolo when the file sets no tier.
 func TestRolesRuntimeVerifyTier(t *testing.T) {
 	t.Parallel()
 
@@ -204,10 +201,9 @@ func TestRolesRuntimeVerifyTier(t *testing.T) {
 	}
 }
 
-// TestRolesRuntimeCustomBuilderLaunchesCustomAgent pins §5/§9 step 6.5: the
-// builder launch spec comes from the registry, so a custom definition is what
-// the argv carries, while a kind the file does not override keeps the shipped
-// one.
+// TestRolesRuntimeCustomBuilderLaunchesCustomAgent pins that the builder
+// launch spec comes from the registry, so a custom definition is what the argv
+// carries, while a kind the file does not override keeps the shipped one.
 func TestRolesRuntimeCustomBuilderLaunchesCustomAgent(t *testing.T) {
 	t.Parallel()
 
@@ -260,9 +256,9 @@ func TestRolesRuntimeCustomBuilderLaunchesCustomAgent(t *testing.T) {
 	}
 }
 
-// TestRolesRuntimeFileModeProbe pins §5's probe paragraph for file mode: the
-// probed role is whichever role's candidate list names the candidate, and a
-// candidate no role lists is still "no known role".
+// TestRolesRuntimeFileModeProbe pins the file-mode probe: the probed role is
+// whichever role's candidate list names the candidate, and a candidate no role
+// lists is still "no known role".
 func TestRolesRuntimeFileModeProbe(t *testing.T) {
 	t.Parallel()
 
