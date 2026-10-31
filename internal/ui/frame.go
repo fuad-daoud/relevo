@@ -21,9 +21,8 @@ func needsYouCount(n int) string {
 	return fmt.Sprintf("%d need you", n)
 }
 
-// headerView is row 1: the breadcrumb on the left, attention and the clock
 // headerView is row 1: the relevo mark and crumbs on the left, attention, version
-// and the clock on the right (§2.2). No gates, no background.
+// and the clock on the right. No gates, no background.
 func (m Model) headerView(env widget.Env) string {
 	var allCrumbs []string
 	for _, v := range m.stack {
@@ -43,7 +42,7 @@ func (m Model) headerView(env widget.Env) string {
 	n := 0
 	for _, b := range env.Report.Bindings {
 		// A report ready for the human mastermind needs them exactly as a
-		// NEEDS YOU question does, so it counts here too (§4.5).
+		// NEEDS YOU question does, so it counts here too.
 		if b.Display == "NEEDS YOU" || reportReady(b) {
 			n++
 		}
@@ -89,26 +88,26 @@ func (m Model) syncAttention() string {
 	return v.SyncAttention()
 }
 
-// contextView is row 2: the top view's context, spread to width (§5.3).
+// contextView is row 2: the top view's context, spread to width.
 func (m Model) contextView(env widget.Env) string {
 	left, right := m.top().Context(env)
 	return widget.Fit(spread(left, right, env.Width), env.Width)
 }
 
 // errorBlock is the optional rows under the context: the refresh error,
-// wrapped and capped (§5.3).
+// wrapped and capped.
 func (m Model) errorBlock(env widget.Env) string {
 	return widget.RenderError(m.err, env.Width)
 }
 
 // keysView is the last row: the global tail and as many of the top view's
-// keys as fit, the notices and the refresh failure on the right (§2.2).
+// keys as fit, the notices and the refresh failure on the right.
 // Each key is a kbd chip ` k ` followed by ` label` in muted. Keys are separated by
 // five spaces. The view's `Keys()` come first, then the global tail `: command`,
 // `? all keys`, `q quit` (root) / `esc back` (deeper). Drop and notice rules are unchanged.
 // While the command line, the help overlay or any overlay implementing
 // overlayKeyer is up, that overlay's own keys stand in for the view's keys and
-// the global tail (§2.1).
+// the global tail.
 func (m Model) keysView(env widget.Env) string {
 	key := func(k, v string) string { return widget.Chip(widget.KbdStyle, k) + " " + widget.MutedStyle.Render(v) }
 	tail := []string{key(":", "command"), key("?", "all keys")}
@@ -140,8 +139,7 @@ func (m Model) keysView(env widget.Env) string {
 
 	left := tailText
 	if modalKeys, ok := m.modalKeys(); ok {
-		// A modal shows its own keys instead of the view's and the tail
-		// (§2.1).
+		// A modal shows its own keys instead of the view's and the tail.
 		left = layKeys(modalKeys, room, key)
 	} else {
 		avail := room - lipgloss.Width(tailText) - 5 // 5 for the gap before the tail
@@ -171,7 +169,7 @@ func (m Model) keysView(env widget.Env) string {
 }
 
 // modalKeys is the keys of whichever overlay is up, and whether one is: the
-// command line, help, or an overlay that implements overlayKeyer (§2.1).
+// command line, help, or an overlay that implements overlayKeyer.
 func (m Model) modalKeys() ([]widget.KeyHelp, bool) {
 	switch {
 	case m.cmd.open:
@@ -207,7 +205,7 @@ func layKeys(keys []widget.KeyHelp, avail int, key func(k, v string) string) str
 }
 
 // body is row 4: the top view's body, or the command box, help overlay or a
-// modal overlay when one is up (§5.3).
+// modal overlay when one is up.
 func (m Model) body(env widget.Env) string {
 	bh := widget.BodyHeight(env)
 	if m.cmd.open {
@@ -237,7 +235,7 @@ func (m Model) body(env widget.Env) string {
 }
 
 // overlayBody dims the top view's body and composes the modal box over it:
-// centred, in the upper third (§2.3).
+// centred, in the upper third.
 func (m Model) overlayBody(env widget.Env, bh int, title string, rows []string, want int, danger bool) string {
 	lines := strings.Split(m.top().Body(env, env.Width, bh), "\n")
 	dimmed := dimLines(lines)
@@ -256,7 +254,7 @@ func (m Model) overlayBody(env widget.Env, bh int, title string, rows []string, 
 }
 
 // noticeStyle is the sticky notice's colour: red for an action's error, faint
-// for a captured stderr line, amber otherwise (§4.3, §4.4).
+// for a captured stderr line, amber otherwise.
 func (m Model) noticeStyle() lipgloss.Style {
 	switch {
 	case m.noticeErr:
@@ -268,7 +266,7 @@ func (m Model) noticeStyle() lipgloss.Style {
 }
 
 // workingText is the footer's action indicator: "working: <verb> <key>…" for
-// every action in flight, in key order so the line is stable (§4.3).
+// every action in flight, in key order so the line is stable.
 func (m Model) workingText() string {
 	if len(m.running) == 0 {
 		return ""
@@ -285,7 +283,7 @@ func (m Model) workingText() string {
 	return "working: " + strings.Join(parts, ", ")
 }
 
-// cmdModal is the command line's box (§3.1): the input, then the matches
+// cmdModal is the command line's box: the input, then the matches
 // grouped into the VIEWS, BINDINGS and GATES sections, then the overflow and
 // key rows. Title "command", want 80.
 func (m Model) cmdModal(env widget.Env) (string, []string, int, bool) {
@@ -302,7 +300,7 @@ func (m Model) cmdModal(env widget.Env) (string, []string, int, bool) {
 		section := cmdSection(c)
 		grouped[section] = append(grouped[section], entry{i, c})
 	}
-	// Done bindings sort after every other binding match (§3.1).
+	// Done bindings sort after every other binding match.
 	if es := grouped["BINDINGS"]; len(es) > 0 {
 		var live, done []entry
 		for _, e := range es {
@@ -374,16 +372,16 @@ var globalKeys = []widget.KeyHelp{
 	{Key: "shift+drag", Help: "select text"},
 }
 
-// actKeys are the keys the help modal's ACT ON THE ROW column collects (§3.2).
+// actKeys are the keys the help modal's ACT ON THE ROW column collects.
 var actKeys = map[string]bool{
 	"s": true, "E": true, "b": true, "x": true, "D": true,
 	"u": true, "g": true, "r": true, "o": true,
 }
 
 // helpColumns splits the top view's help keys into the help modal's two key
-// columns (§3.2): ACT ON THE ROW holds the action keys, MOVE & VIEW the rest.
+// columns: ACT ON THE ROW holds the action keys, MOVE & VIEW the rest.
 // ANYWHERE is globalKeys minus any key the view already shows, so a key shared
-// with the view (e.g. "/ filter") appears once (§2.6).
+// with the view (e.g. "/ filter") appears once.
 func (m Model) helpColumns(env widget.Env) (move, act, anywhere []widget.KeyHelp) {
 	keys := m.top().Keys()
 	if hk, ok := m.top().(widget.HelpKeyer); ok {
@@ -407,13 +405,13 @@ func (m Model) helpColumns(env widget.Env) (move, act, anywhere []widget.KeyHelp
 }
 
 // helpBody is the help overlay: the MOVE & VIEW, ACT ON THE ROW and ANYWHERE
-// columns in a boxed modal (§3.2). Title "keys · <last crumb>", want 108.
+// columns in a boxed modal. Title "keys · <last crumb>", want 108.
 func (m Model) helpBody(env widget.Env, height int) string {
 	title, rows, want, danger := m.helpModal(env)
 	return m.overlayBody(env, height, title, rows, want, danger)
 }
 
-// helpModal builds the help modal's title and rows (§3.2).
+// helpModal builds the help modal's title and rows.
 func (m Model) helpModal(env widget.Env) (string, []string, int, bool) {
 	const want = 108
 	innerW := modalInnerW(want, env.Width)
@@ -455,7 +453,7 @@ func (m Model) helpModal(env widget.Env) (string, []string, int, bool) {
 }
 
 // helpEntry is one help line: the key as a kbd chip padded to 12 cells, then
-// its help in muted (§3.2).
+// its help in muted.
 func helpEntry(kh widget.KeyHelp) string {
 	return widget.Fit(widget.Chip(widget.KbdStyle, kh.Key), 12) + " " + widget.MutedStyle.Render(kh.Help)
 }
