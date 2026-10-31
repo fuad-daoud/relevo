@@ -134,7 +134,7 @@ func runGit(t *testing.T, dir string, args ...string) string {
 	// otherwise spawns `git maintenance run --auto --quiet --detach`, which
 	// outlives the command and writes under .git/objects while t.TempDir()'s
 	// RemoveAll is removing the tree -- and that cleanup failure fails the
-	// test, not just the teardown (#304). Repo-local config, so every later
+	// test, not just the teardown. Repo-local config, so every later
 	// git command on it inherits it, including ones the code under test runs.
 	if len(args) > 0 && args[0] == "init" {
 		runGit(t, dir, "config", "maintenance.auto", "false")
@@ -180,8 +180,7 @@ func finishRound(t *testing.T, serverRT relevo.Runtime, name string, round int, 
 
 	// A builder writes its done marker and then exits: in that order, so a
 	// server tick running in the background between the two can never see an
-	// exited builder with a report but no marker (the unmarked close) -- the
-	// race that made TestRemoteRoundCollectedAfterClientWasAway flaky on macOS.
+	// exited builder with a report but no marker (the unmarked close).
 	if err := os.WriteFile(serverRT.Store.DonePath(name, round), []byte(""), 0o644); err != nil {
 		t.Fatalf("finishRound: write done marker: %v", err)
 	}

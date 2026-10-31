@@ -44,7 +44,7 @@ func TestLoadMissingFile(t *testing.T) {
 	}
 }
 
-// specExample is the roles.json of the design's §3.
+// specExample is an example roles.json.
 const specExample = `{
   "builder": {
     "definitions": {
@@ -68,8 +68,8 @@ const specExample = `{
   }
 }`
 
-// TestLoadSpecExample pins that the design's own example parses with no
-// warnings: every key in it is a key this relevo knows.
+// TestLoadSpecExample pins that the example parses with no warnings:
+// every key in it is a key this relevo knows.
 func TestLoadSpecExample(t *testing.T) {
 	f, warnings, err := LoadWithWarnings(writeRoles(t, specExample))
 	if err != nil {
@@ -93,7 +93,7 @@ func TestLoadSpecExample(t *testing.T) {
 	}
 }
 
-// TestLoadValidation gives one case per §5.1 rule; every case must wrap
+// TestLoadValidation gives one case per validation rule; every case must wrap
 // ErrBadRoles and name the row and field it rejected.
 func TestLoadValidation(t *testing.T) {
 	tests := []struct {
@@ -199,7 +199,7 @@ func TestLoadValidation(t *testing.T) {
 	}
 }
 
-// TestLoadUnknownKeyWarnings pins #372 §4.4 for roles.json: a key this relevo
+// TestLoadUnknownKeyWarnings pins for roles.json that a key this relevo
 // does not know is kept and warned about, never refused, and the warning names
 // the row path exactly as policy's does.
 func TestLoadUnknownKeyWarnings(t *testing.T) {
@@ -226,9 +226,9 @@ func TestLoadUnknownKeyWarnings(t *testing.T) {
 	}
 }
 
-// TestLoadWarningsSurviveValidationFailure pins §4.2's rule that warnings are
-// returned even when validation then fails, as policy.LoadWithWarnings does,
-// and that a File which failed a rule is never handed out.
+// TestLoadWarningsSurviveValidationFailure pins that warnings are returned
+// even when validation then fails, as policy.LoadWithWarnings does, and
+// that a File which failed a rule is never handed out.
 func TestLoadWarningsSurviveValidationFailure(t *testing.T) {
 	body := `{"my-role": {"colour": "red"}}`
 
@@ -282,10 +282,7 @@ func TestLoadBuiltinShapeOverride(t *testing.T) {
 	}
 }
 
-// TestLoadNewWriterAccepted is the port of TestLoadNewWriterRefused: by
-// #382 plan §4 (and the design's §3) a new writer row is accepted now, so the
-// assertion flips from "refused" to "loads". S1's refusal branch -- "a new
-// writer role needs relevo send --role, not yet available" -- is deleted.
+// TestLoadNewWriterAccepted pins that a new writer row loads with its shape kept.
 func TestLoadNewWriterAccepted(t *testing.T) {
 	f, err := Load(writeRoles(t, `{"my-writer": {"shape": "writer"}}`))
 	if err != nil {
@@ -300,7 +297,7 @@ func TestLoadNewWriterAccepted(t *testing.T) {
 	}
 }
 
-// TestLoadAcceptsNameCandidates pins A1 §4.2's validation rule for roles.json:
+// TestLoadAcceptsNameCandidates pins the validation rule for roles.json:
 // a candidate name, even one that is not a token, validates.
 func TestLoadAcceptsNameCandidates(t *testing.T) {
 	for _, body := range []string{
