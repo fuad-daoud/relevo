@@ -17,21 +17,16 @@ import (
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// mastermindRoute decides how a pending report reaches a binding mastermind:
-// the live push claim first, then the configured
-// deliverer for the mastermind kind, else "pull".
+// mastermindRoute picks the pending-report route: the live push claim
+// first, then the deliverer for the mastermind kind, else pull. A pull
+// route is never live: the daemon cannot see whether the background
+// wait's `relevo wait` is running, which is why pull is a route and not
+// a fault. A live claim for a gone record is still the push route but
+// not live: the claim outlives the session's host. A failed record
+// lookup keeps the claim's answer, and every failure reads as not live.
 //
-// live reports whether that route can push right now. A pull route is never
-// live: the daemon cannot see whether the background wait's `relevo wait` is
-// running, which is exactly why pull is a route and not a fault.
-//
-// A live claim held for a gone record is still the push route but not live:
-// the claim outlives the session's host, and nothing is listening. A failed
-// record lookup keeps the claim's answer.
-//
-// loads carries the report's bulk claim load, keyed by mastermind id, and its
-// per-record liveness memo; a nil loads, or one with no claims map, reads the
-// claim here. Either way every failure reads as not live.
+// loads is the report's bulk claim load; a nil loads, or one with no
+// claims map, reads the claim here.
 func mastermindRoute(rt Runtime, b store.Binding, loads *rowLoads) (route string, live bool) {
 	if b.MasterMindID != "" {
 		if claims := loads.claimMap(); claims != nil {
@@ -56,16 +51,14 @@ func mastermindRoute(rt Runtime, b store.Binding, loads *rowLoads) (route string
 	return "pull", false
 }
 
-// waitLive reports whether a `relevo wait` is polling the named binding now.
-// It is the pull route's one liveness fact the route itself cannot carry.
+// waitLive reports whether a `relevo wait` is polling the named binding
+// now: the pull route's one liveness fact the route itself cannot carry.
+// Every failure reads as not live -- a false positive would hold back an
+// escalation on a payload nobody is collecting, while a false negative
+// only costs the grace window before the row escalates on its own.
 //
-// Every failure reads as not live: a Runtime with no wait store, an unreadable
-// row, a read error. That is the deliberate direction -- a false positive would
-// hold back an escalation on a payload nobody is collecting, and a false
-// negative only costs the grace window before the row escalates on its own.
-//
-// waits is the report's one bulk load when the store offers one, keyed by
-// binding name; nil means no bulk surface, so the registration is read here.
+// waits is the report's bulk load when the store offers one; nil reads
+// the registration here.
 func waitLive(rt Runtime, name string, waits map[string]*delivery.WaitClaim) bool {
 	if waits != nil {
 		return waits[name] != nil
@@ -81,27 +74,23 @@ func waitLive(rt Runtime, name string, waits map[string]*delivery.WaitClaim) boo
 	return err == nil && c != nil
 }
 
-// statusConfig is what Status's options carry: whether the detail figures are
-// built at all.
+// statusConfig carries Status's options.
 type statusConfig struct {
 	detail bool
 }
 
-// StatusOption is one option on Status. The only one today is Detail.
+// StatusOption is one option on Status.
 type StatusOption func(*statusConfig)
 
 // Detail turns the detail figures -- Live, LiveUsage and Headless.Tail -- on
-// or off. They default ON, so a caller that passes no option keeps exactly
-// today's row: `relevo status`, `status --json` and the statusline all draw
-// all three. The fleet is the one caller that passes false, because it paints
-// no pixel from any of them while each costs a git diff, a usage peek or a
-// log read per row per tick. The detail pane reads those three from
-// StatusRow instead.
+// or off. They default ON. The fleet is the one caller that passes false,
+// because it paints no pixel from any of them while each costs a git diff,
+// a usage peek or a log read per row per tick.
 func Detail(on bool) StatusOption {
 	return func(c *statusConfig) { c.detail = on }
 }
 
-// statusConfigOf folds opts over the default: the detail figures are on.
+// statusConfigOf folds opts over the default-on detail figures.
 func statusConfigOf(opts []StatusOption) statusConfig {
 	cfg := statusConfig{detail: true}
 	for _, opt := range opts {
@@ -111,12 +100,10 @@ func statusConfigOf(opts []StatusOption) statusConfig {
 }
 
 // Status builds every row from the store and what relevo can determine
-// locally: the mastermind record, a live push claim and the configured
-// deliverers. Only store failures fail the call. Each chain's member rows
-// are replaced by the chain's own row (view.ApplyChains).
+// locally. Only store failures fail the call. Each chain's member rows
+// are replaced by the chain's own row.
 //
-// Detail(false) leaves Live, LiveUsage and Headless.Tail nil on every row;
-// every other field is exactly what the same store read returns with them on.
+// Detail(false) leaves Live, LiveUsage and Headless.Tail nil on every row.
 func Status(ctx context.Context, rt Runtime, opts ...StatusOption) (view.Report, error) {
 	bindings, err := rt.Store.List()
 	if err != nil {
@@ -178,11 +165,10 @@ func handedOverRows(rt Runtime) []view.HandedOverRow {
 	return out
 }
 
-// StatusRow is one binding's row with the detail figures on: the counterpart
-// to a fleet report built with Detail(false), for the surface that opens a
-// single row and does draw all three. Only store failures fail the call --
-// a binding the store does not hold is the store's own error, so the caller
-// can tell an unresolvable key from a row that is merely thin.
+// StatusRow is one binding's row with the detail figures on: the single-row
+// counterpart to a Detail(false) fleet report. Only store failures fail
+// the call -- a binding the store does not hold is the store's own error,
+// so the caller can tell an unresolvable key from a merely thin row.
 func StatusRow(ctx context.Context, rt Runtime, name string) (view.BindingStatus, error) {
 	b, err := rt.Store.Load(name)
 	if err != nil {
@@ -191,15 +177,14 @@ func StatusRow(ctx context.Context, rt Runtime, name string) (view.BindingStatus
 	return statusRow(ctx, rt, b, statusConfig{detail: true})
 }
 
-// statusRow is one binding's row with no report-wide bulk read: the single-row
-// path, which resolves each fact with its own store call.
+// statusRow is one binding's row with no report-wide bulk read: the
+// single-row path, which resolves each fact with its own store call.
 func statusRow(ctx context.Context, rt Runtime, b store.Binding, cfg statusConfig) (view.BindingStatus, error) {
 	return statusRowWith(ctx, rt, b, cfg, nil)
 }
 
-// buildReport is buildReportWith and the detail figures on, which is what every
-// caller outside Status wants: the chains reader and the server-chain view both
-// render rows that name a diff, a usage figure and a log tail.
+// buildReport is buildReportWith with the detail figures on, for callers
+// whose rows name a diff, a usage figure and a log tail.
 func buildReport(ctx context.Context, rt Runtime, bindings []store.Binding) (view.Report, error) {
 	return buildReportWith(ctx, rt, bindings, statusConfig{detail: true})
 }
@@ -215,30 +200,29 @@ func buildReportWith(ctx context.Context, rt Runtime, bindings []store.Binding, 
 		rows = append(rows, row)
 	}
 
-	// The rows sort attention-first -- NEEDS YOU, HELD, ACTIVE, PAUSED, DONE,
-	// stale first, newest Last.TS first -- so `status`, `status --json` and
-	// the statusline agree.
+	// The rows sort attention-first -- NEEDS YOU, HELD, ACTIVE, PAUSED,
+	// DONE, stale first, newest Last.TS first -- so `status`,
+	// `status --json` and the statusline agree.
 	rows = view.SortRows(rows, true)
 
 	rep := view.Report{Bindings: rows}
-	// The ledger is one kv row projected twice -- the candidate gates and the
-	// unused provider gates -- so it is read and decoded once for the report.
+	// The ledger is one kv row projected twice, so it is read and decoded
+	// once for the report.
 	l := loadLedgerOnce(rt)
 	rep.Gated = availability.GatesFrom(AvailabilityDeps(rt), l)
 	rep.Unused = UnusedProviderGatesFrom(rt, l)
 	return rep, nil
 }
 
-// statusRow is read-only, so it reaches the store through the self-locking
-// *store.Store methods directly rather than a *store.Tx: there is no
+// statusRowWith is read-only, so it reaches the store through the
+// self-locking *store.Store methods rather than a *store.Tx: there is no
 // load-modify-save here for WithLock to protect.
 //
-// cfg.detail gates the three figures no fleet pixel reads: Live, LiveUsage and
-// the headless log tail. With them off nothing calls git, the usage reader or
-// the log at all -- the gate is on the call, not on the value.
+// cfg.detail gates the three figures no fleet pixel reads -- Live,
+// LiveUsage and the headless log tail -- on the call, not on the value,
+// so with them off nothing calls git, the usage reader or the log.
 //
-// loads is the report's shared bulk read. It is nil on the single-row path,
-// which reads each fact directly.
+// loads is the report's shared bulk read, nil on the single-row path.
 func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusConfig, loads *rowLoads) (view.BindingStatus, error) {
 	row := view.BindingStatus{
 		Name: b.Name, CWD: housekeep.RoundDir(b), Round: b.Round,
@@ -257,16 +241,16 @@ func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusC
 		BuilderKind:      b.Builder.Kind, BuilderStatus: view.AgentUnknown,
 	}
 
-	// BuilderName is set only when the set actually holds the token. A retired
-	// token leaves the field empty, and RenderStatus falls back to printing
-	// the token itself.
+	// BuilderName is set only when the set holds the token; a retired
+	// token leaves the field empty and RenderStatus falls back to the
+	// token itself.
 	if name, ok := rt.Candidates.NameFor(b.BuilderCandidate); ok {
 		row.BuilderName = name
 	}
 
-	// A custom builder definition is named on the row -- and so in
-	// `status --json` -- while a shipped one leaves today's document alone.
-	// The definition named is the binding's own role's.
+	// A custom builder definition is named on the row, while a shipped one
+	// leaves the document alone. The definition named is the binding's
+	// own role's.
 	if kind := b.Builder.Kind; kind != "" {
 		if role, ok := rt.RoleRegistry().Role(resolve.BindingRole(b)); ok {
 			if d, ok := role.Definitions[kind]; ok && d.Custom {
@@ -279,13 +263,13 @@ func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusC
 	row.MasterMindRoute, row.MasterMindRouteLive = mastermindRoute(rt, b, loads)
 	row.WaitLive = waitLive(rt, b.Name, loads.waitMap())
 
-	// MasterMindName is the record's name, so `status --json` and a status row
-	// can say "mastermind architect-1" without a second lookup by the reader.
-	// A Runtime with no registry (tests) or a forgotten record leaves it "".
+	// MasterMindName is the record's name, so the row can say "mastermind
+	// architect-1" without a second lookup by the reader. No registry or
+	// a forgotten record leaves it "".
 	row.MasterMindName = loads.masterMindName(rt, b)
 
-	// A binding landed since its last send says so until the branch
-	// moves again.
+	// A binding landed since its last send says so until the branch moves
+	// again.
 	if !b.LandedAt.IsZero() {
 		row.Landed = "landed"
 		if b.LandedPR != "" {
@@ -314,10 +298,9 @@ func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusC
 		}
 	}
 
-	// The progress labels. The stale label is the row's own; the working
-	// label is a headless row's, already carried out of headlessStatus (a
-	// remote row's status comes from the server). This runs before the gate
-	// override so a gated row still reads "gating ...".
+	// The progress labels: the stale label is the row's own, the working
+	// label is a headless row's out of headlessStatus. This runs before the
+	// gate override so a gated row still reads "gating ...".
 	labelsNow := time.Now()
 	if rt.Now != nil {
 		labelsNow = rt.Now()
@@ -337,16 +320,15 @@ func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusC
 		row.Exploring = working
 	}
 
-	// A gate in flight overrides whatever the builder itself reports: the
-	// round is held on the gate, not on the builder, which the marker already
-	// confirmed finished.
+	// A gate in flight overrides whatever the builder reports: the round is
+	// held on the gate, not on the builder.
 	if b.GateRun != nil {
 		age := rt.Now().Sub(time.Unix(b.GateRun.StartedAt, 0)).Truncate(time.Second)
 		row.BuilderStatus = fmt.Sprintf("gating %s", age)
 	}
 
-	// broken is overloaded: it means the builder process is gone, which
-	// covers both a clean exit and one mid-round. needs_you is unambiguous.
+	// broken means the builder process is gone, whether a clean exit or
+	// mid-round. needs_you is unambiguous.
 	if b.State == store.StateBroken {
 		row.Detail = view.DiagnoseBuilder(b).Detail(b.Round)
 	}
@@ -427,11 +409,9 @@ func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusC
 		}
 		row.Spend = &s
 	}
-	// A round that is still running gets its figure read live:
-	// after Spend is set, so the recorded sums stay exactly what the log
-	// entries give. rt.Now is nil in some test runtimes; the clock falls
-	// back to the wall. A caller that asked for no detail figures never
-	// reaches the reader at all.
+	// A running round gets its figure read live, after Spend is set, so the
+	// recorded sums stay exactly what the log entries give. A nil rt.Now
+	// falls back to the wall clock.
 	now := time.Now()
 	if rt.Now != nil {
 		now = rt.Now()
@@ -441,31 +421,30 @@ func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusC
 	}
 	row.Dirty = row.LastClose != nil && row.LastClose.Tree == "dirty" && b.RoundStartedAt.IsZero()
 
-	// The live diff: the round's working tree against its baseline,
-	// while a round is open. liveStat degrades to nil on its own -- no Git
-	// wired, no baseline recorded, or the git read failed -- so this never
+	// The live diff: the round's working tree against its baseline while a
+	// round is open. liveStat degrades to nil on its own, so this never
 	// fails the row.
 	if cfg.detail && !b.Builder.Remote() {
 		row.Live = liveStat(ctx, rt, b)
 	}
 
-	// The quiet age: only for an ACTIVE row with an open round that has
-	// been sampled at least once. Reuses the same now the live usage figure
-	// just used, so the two clocks in one row never disagree.
+	// The quiet age: only for an ACTIVE row with an open round sampled at
+	// least once. Reuses the live usage figure's now, so the two clocks in
+	// one row never disagree.
 	if row.Display == "ACTIVE" && !b.RoundStartedAt.IsZero() && !row.LastProgressAt.IsZero() {
 		row.QuietFor = view.AgeText(now.Sub(row.LastProgressAt))
 	}
 
 	// The unread marker: the newest report entry is newer than the
-	// binding's .viewed stamp, or there is no stamp at all and a report
-	// exists. The stamp rides the binding List/Load already read, so the
-	// marker costs no second RecordGet.
+	// binding's .viewed stamp, or there is no stamp and a report exists.
+	// The stamp rides the binding List/Load already read, so the marker
+	// costs no second RecordGet.
 	for i := len(entries) - 1; i >= 0; i-- {
 		if entries[i].Kind != store.KindReport {
 			continue
 		}
-		// A report a running chain consumed is already read: the chain's own
-		// end delivery is the mastermind's copy of it, so the member row must
+		// A report a running chain consumed is already read: the chain's
+		// end delivery is the mastermind's copy, so the member row must
 		// not keep painting REPORT IN for a round nobody is waiting on.
 		if strings.Contains(entries[i].Note, view.ConsumedNoteMarker) {
 			break
@@ -477,10 +456,9 @@ func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusC
 	}
 
 	// Pending is the oldest unconfirmed to-mastermind payload, derived from
-	// the entries already decoded above rather than paid for with a second
-	// store read: the rule is pendingForMasterMind's, asked of the log in
-	// hand. TS is the pending entry's own write time, so the row can say how
-	// long the payload has been waiting for a collector.
+	// the log in hand rather than a second store read. TS is the pending
+	// entry's own write time, so the row can say how long the payload has
+	// been waiting for a collector.
 	for _, e := range entries {
 		if e.Direction == store.DirToMasterMind && !e.Confirmed {
 			row.Pending = &view.PendingInfo{Round: e.Round, Kind: e.Kind, TS: e.TS}
@@ -490,7 +468,7 @@ func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusC
 
 	// The newest reviewer verdict, while it judged the round just closed:
 	// LastVerdict.Round == b.Round-1 means no later round has closed since.
-	// A verdict for an older round is history, and `relevo log` has it.
+	// An older verdict stays in `relevo log`.
 	if b.LastVerdict != nil && b.LastVerdict.Round == b.Round-1 {
 		row.Verdict = fmt.Sprintf("verdict: %s (%d reasons)", b.LastVerdict.Verdict, len(b.LastVerdict.Reasons))
 	}

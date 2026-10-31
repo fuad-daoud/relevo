@@ -193,12 +193,11 @@ func seedShowArchiveDB(t *testing.T) *db.DB {
 	return d
 }
 
-// newShowLiveStore builds a live binding "fixture" with three rounds: round
-// 1 done (plan, report, diff), round 2 halted (plan, report, builder log,
-// no diff), round 3 the open round (plan only). b.Round is 3, matching
-// finishRound's Round++ semantics -- round 3 is the current, not-yet-closed
-// round, so "newest completed" must resolve to round 2 (the highest round
-// with a report entry), not round 3.
+// newShowLiveStore builds a live binding "fixture" holding three rounds: the
+// first done (plan, report, diff), the second halted (plan, report, builder
+// log, no diff), the third open (plan only). The binding's counter points at
+// the open round, so "newest completed" resolves to the halted one -- the
+// highest round with a report entry -- not the open one.
 func newShowLiveStore(t *testing.T) *store.Store {
 	t.Helper()
 	s := store.New(t.TempDir())
@@ -338,10 +337,9 @@ func TestShowLiveTranscriptReadsBuilderLog(t *testing.T) {
 
 // TestShowLiveRoundsIsHighestPlanned pins Task 0(b): for a live binding,
 // Rounds must be the highest round number with a plan log entry, not
-// b.Round -- b.Round is the *next* round once a round has closed
-// (finishRound does Round++), so a binding sitting idle after round 3
-// closed (Round: 4, no round-4 plan sent yet) must still report Rounds ==
-// 3, not 4.
+// b.Round -- b.Round is the *next* round once a round has closed, so a
+// binding sitting idle with no plan sent for its next round still reports
+// the highest planned round, not the counter.
 func TestShowLiveRoundsIsHighestPlanned(t *testing.T) {
 	t.Parallel()
 
@@ -457,10 +455,10 @@ func TestShowDBTranscriptFromRows(t *testing.T) {
 
 // TestShowDBSkipsOpenRoundForNewestCompleted pins the db-path completion
 // rule -- "the highest round with outcome != open" -- against a binding
-// whose highest round is still open: round 2's own plan/log entries would
-// make it the numerically newest round, but with no report, no exit and an
+// whose highest round is still open: that round's own plan/log entries make
+// it the numerically newest round, but with no report, no exit and an
 // active state it derives to OutcomeOpen (internal/ingest/outcome.go), so
-// the newest *completed* round must be round 1.
+// the newest *completed* round resolves to the earlier round with a report.
 func TestShowDBSkipsOpenRoundForNewestCompleted(t *testing.T) {
 	t.Parallel()
 
@@ -752,7 +750,7 @@ func TestShowArchivedOnALiveNameWithAnArchivedRowAnswers(t *testing.T) {
 		t.Errorf("Archived = false, want true for an archived database row")
 	}
 	// showDB's own default: the highest round with an outcome other than open,
-	// which is round 3 in the fixture.
+	// which in this fixture is the newest closed round.
 	if res.Round != 3 {
 		t.Errorf("Round = %d, want 3 (highest round with outcome != open)", res.Round)
 	}
@@ -763,8 +761,8 @@ func TestShowArchivedOnALiveNameWithAnArchivedRowAnswers(t *testing.T) {
 
 // TestShowArchivedDefaultsToNewestCompletedRound pins Show's archived step to
 // showLive's default-round rule: with no --round, the newest completed round
-// is the highest KindReport entry round -- round 2 in the fixture -- not the
-// highest planned round (3).
+// is the highest KindReport entry round in the fixture -- not the highest
+// planned round.
 func TestShowArchivedDefaultsToNewestCompletedRound(t *testing.T) {
 	t.Parallel()
 
@@ -799,10 +797,9 @@ func mirrorLines(body []byte) [][]byte {
 	return bytes.Split(body[:end], []byte{'\n'})
 }
 
-// mirrorTranscriptRecords builds round n's builder transcript rows exactly as
-// ingest built them before D3b: the builder stream (NNN-builder.jsonl) when
-// the fixture has one, else the builder log (NNN-builder.log) (D3b plan §3
-// fence item 3).
+// mirrorTranscriptRecords builds round n's builder transcript rows from the
+// fixture's own files: the builder stream (NNN-builder.jsonl) when the
+// fixture has one, else the builder log (NNN-builder.log).
 func mirrorTranscriptRecords(t *testing.T, dir string, n int, builderKind string) []db.TranscriptRecord {
 	t.Helper()
 
@@ -842,12 +839,11 @@ func mirrorTranscriptRecords(t *testing.T, dir string, n int, builderKind string
 	return recs
 }
 
-// seedRoundMirror inserts, directly, the round mirror rows ingest wrote
-// before D3b and no longer writes: the plain round-file artifacts (plan,
-// report, diff, drift) and each round's builder transcript, read from the
-// fixture's own files exactly as ingest built them (D3b plan §3 fence items
-// 1 and 3). Show's database fallback (showDB, show.go) still reads those rows
-// for a binding with no live files and no archived record, so the db-backed
+// seedRoundMirror inserts, directly, the round mirror rows: the plain
+// round-file artifacts (plan, report, diff, drift) and each round's builder
+// transcript, read from the fixture's own files. Ingest does not write these
+// rows, but Show's database fallback (showDB, show.go) still reads them for
+// a binding with no live files and no archived record, so the db-backed
 // show tests seed them by hand after ingest.Ingest.
 func seedRoundMirror(t *testing.T, d *db.DB, dir string) {
 	t.Helper()
@@ -990,9 +986,9 @@ func TestShowTranscriptRendersTheStreamWithoutALog(t *testing.T) {
 	})
 }
 
-// TestShowLiveFindingsOnBindingWithNoRounds pins #593 on the live path: a
-// consult is recorded on the binding's current round, which has no plan entry
-// yet, so `show --findings <id>` must read it with and without --round.
+// TestShowLiveFindingsOnBindingWithNoRounds pins the live path for a consult
+// recorded on the binding's current round, which has no plan entry yet, so
+// `show --findings <id>` must read it with and without --round.
 func TestShowLiveFindingsOnBindingWithNoRounds(t *testing.T) {
 	t.Parallel()
 
@@ -1068,8 +1064,8 @@ func TestShowLiveFindingsUnknownConsult(t *testing.T) {
 }
 
 // TestShowArchivedFindingsOnBindingWithNoRounds is the archived analogue of
-// TestShowLiveFindingsOnBindingWithNoRounds: an archived record whose round 1
-// has no plan entry still answers a findings read, sealed or scanned.
+// TestShowLiveFindingsOnBindingWithNoRounds: an archived record whose first
+// round has no plan entry still answers a findings read, sealed or scanned.
 func TestShowArchivedFindingsOnBindingWithNoRounds(t *testing.T) {
 	t.Parallel()
 
@@ -1167,7 +1163,7 @@ func TestShowLiveClaimsPendingMasterMindPayload(t *testing.T) {
 	}
 }
 
-// TestShowLivePeekLeavesPendingMasterMindPayload pins #673's --peek contract: a
+// TestShowLivePeekLeavesPendingMasterMindPayload pins the --peek contract: a
 // peeked live read still prints the section but claims nothing, so the payload
 // is left for the route that pushes it.
 func TestShowLivePeekLeavesPendingMasterMindPayload(t *testing.T) {
@@ -1258,8 +1254,8 @@ func TestShowClaimsOnlyTheRoundItPrinted(t *testing.T) {
 	rt := routeRuntime(t)
 	seedShowClaimStore(t, rt)
 
-	// Round 2 has no file and no payload: the report read fails on the
-	// missing file but resolves round 2, which is not the payload's round.
+	// The read resolves a round with no payload on it: it prints that round's
+	// report and claims nothing, leaving the pending payload for its own round.
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 2), []byte("# round 2 report\n"), 0o644); err != nil {
 		t.Fatalf("write round 2 report: %v", err)
 	}
@@ -1315,10 +1311,10 @@ func TestShowOtherSectionsNeverClaim(t *testing.T) {
 }
 
 // seedShowFindingsClaim is the fixture the findings claim tests share: a live
-// binding whose round 1 consult abc has a findings file on disk and a pending
-// mastermind-bound findings entry pointing at it -- the shape a consult queues
-// (internal/consult/reconcile.go finishConsult), and the payload that tells the
-// MasterMind to run exactly this read.
+// binding with a findings file on disk for first-round consult abc and a
+// pending mastermind-bound findings entry pointing at it -- the shape a
+// consult queues (internal/consult/reconcile.go finishConsult), and the
+// payload that tells the MasterMind to run exactly this read.
 func seedShowFindingsClaim(t *testing.T, rt Runtime) {
 	t.Helper()
 	if err := rt.Store.Save(store.Binding{
@@ -1348,12 +1344,12 @@ func seedShowFindingsClaim(t *testing.T, rt Runtime) {
 	}
 }
 
-// TestShowFindingsClaimsPendingFindingsPayload pins #962: a plain (non-peek)
-// `show --findings` prints the consult's findings file, which is the very
-// artifact the pending findings entry points at, so it claims that entry with
-// route "show". Without the claim the entry stays pending, the next wait
-// delivers the same findings a second time, and the statusline escalates it to
-// NEEDS YOU after the grace.
+// TestShowFindingsClaimsPendingFindingsPayload pins the plain (non-peek)
+// `show --findings` claim: it prints the consult's findings file, which is
+// the very artifact the pending findings entry points at, so it claims that
+// entry with route "show". Without the claim the entry stays pending, the
+// next wait delivers the same findings a second time, and the statusline
+// escalates it to NEEDS YOU after the grace.
 func TestShowFindingsClaimsPendingFindingsPayload(t *testing.T) {
 	t.Parallel()
 
@@ -1373,13 +1369,13 @@ func TestShowFindingsClaimsPendingFindingsPayload(t *testing.T) {
 	if route, confirmed := claimRoute(t, rt, "webshop"); !confirmed || route != "show" {
 		t.Errorf("confirmed/route = %v/%q, want true/\"show\"", confirmed, route)
 	}
-	// The second half of #962: nothing is left for the next wait to redeliver.
+	// The second half of the claim: nothing is left for the next wait to redeliver.
 	if _, found, err := delivery.Pull(context.Background(), rt.Store, "webshop", "wait"); err != nil || found {
 		t.Errorf("Pull after show --findings = found %v, err %v; want the findings already claimed", found, err)
 	}
 }
 
-// TestShowFindingsPeekLeavesFindingsPending keeps #673's --peek contract on the
+// TestShowFindingsPeekLeavesFindingsPending keeps the --peek contract on the
 // findings section too: a peeked findings read prints the section and claims
 // nothing, so the payload is left for the route that pushes it.
 func TestShowFindingsPeekLeavesFindingsPending(t *testing.T) {

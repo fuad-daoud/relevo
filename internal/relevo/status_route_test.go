@@ -8,8 +8,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/delivery"
 )
 
-// routeDoc is the part of the status JSON the plan's §4 requires: the two new
-// route fields, and the absence of the pane-era fields.
+// routeDoc is the part of the status JSON the route contract requires: the
+// two route fields, and the absence of the pane-era fields.
 type routeDoc struct {
 	Bindings []struct {
 		Name                string `json:"name"`
@@ -19,9 +19,9 @@ type routeDoc struct {
 	} `json:"bindings"`
 }
 
-// TestStatusJSONHasRouteFields is the plan's required case for §3.6: a
-// tools-mode mastermind (no live claim, no deliverer) reads mastermind_route=pull
-// with mastermind_route_live false, and a live channel claim reads channel with
+// TestStatusJSONHasRouteFields pins the route contract: a tools-mode
+// mastermind (no live claim, no deliverer) reads mastermind_route=pull with
+// mastermind_route_live false, and a live channel claim reads channel with
 // mastermind_route_live true.
 func TestStatusJSONHasRouteFields(t *testing.T) {
 	rt := routeRuntime(t)
@@ -52,8 +52,8 @@ func TestStatusJSONHasRouteFields(t *testing.T) {
 	}
 }
 
-// TestStatusJSONOmitsPaneEraFields keeps the removal honest: the fields §4
-// deletes must not reappear in the JSON.
+// TestStatusJSONOmitsPaneEraFields keeps the removal honest: the pane-era
+// fields must not reappear in the JSON.
 func TestStatusJSONOmitsPaneEraFields(t *testing.T) {
 	rt := routeRuntime(t)
 	seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
