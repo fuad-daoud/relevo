@@ -214,7 +214,6 @@ internal/ui/compose.go
 internal/ui/compose_test.go
 internal/ui/confirm.go
 internal/ui/dash_host_test.go
-internal/ui/dash/render.go
 internal/ui/detail.go
 internal/ui/fetch.go
 internal/ui/fetch_test.go
