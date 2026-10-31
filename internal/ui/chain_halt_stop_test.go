@@ -72,7 +72,7 @@ func TestCockpitStopOnAHaltedChainNamesDone(t *testing.T) {
 	if res.Err != nil {
 		t.Fatalf("Stop = %v, want an answer, not a failure", res.Err)
 	}
-	if want := relevo.ChainHaltedStopText("shop"); res.Text != want {
+	if want := chain.ChainHaltedStopText("shop"); res.Text != want {
 		t.Errorf("Stop text = %q, want %q", res.Text, want)
 	}
 	if !res.Refresh {

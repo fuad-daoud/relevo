@@ -1,4 +1,4 @@
-package relevo
+package chain
 
 import (
 	"errors"
@@ -38,10 +38,10 @@ func (e *ChainHaltedError) Error() string { return ChainHaltedStopText(e.Name) }
 // Unwrap yields ErrChainHalted, the class the CLI maps to the conflict family.
 func (e *ChainHaltedError) Unwrap() error { return ErrChainHalted }
 
-// haltedChainStop builds the refusal a stop makes on a halted chain, carrying
+// HaltedStop builds the refusal a stop makes on a halted chain, carrying
 // ErrChainHalted so the CLI maps it to the conflict family an answer about the
 // chain's own state belongs to.
-func haltedChainStop(name string) error {
+func HaltedStop(name string) error {
 	return &ChainHaltedError{Name: name}
 }
 

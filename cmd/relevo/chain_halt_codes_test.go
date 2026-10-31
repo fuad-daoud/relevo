@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/chain"
 )
 
 // TestHaltedChainStopIsAConflictNotInternal pins the CLI's class for the
@@ -54,7 +54,7 @@ func TestResumeReHaltIsRefusedNotInternal(t *testing.T) {
 		err  error
 		want errorCode
 	}{
-		{"refusal", relevo.Refused("chain shop is still halted: repair has no budget left"), codeRefused},
+		{"refusal", chain.Refused("chain shop is still halted: repair has no budget left"), codeRefused},
 		{"halted stop", classOfHaltForTest(), codeConflict},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -78,8 +78,8 @@ func TestResumeReHaltIsRefusedNotInternal(t *testing.T) {
 // sentinel the CLI classifies on. It is a constructor call rather than a
 // literal so the test cannot drift from the wording the verb prints.
 func classOfHaltForTest() error {
-	var err error = &relevo.ChainHaltedError{Name: "shop"}
-	if !errors.Is(err, relevo.ErrChainHalted) {
+	var err error = &chain.ChainHaltedError{Name: "shop"}
+	if !errors.Is(err, chain.ErrChainHalted) {
 		panic("the halted chain's refusal does not carry ErrChainHalted")
 	}
 	return err
@@ -95,10 +95,10 @@ func TestHaltedChainStopTextIsTheOneWording(t *testing.T) {
 	if got := classOfHaltForTest().Error(); got != want {
 		t.Errorf("answer = %q, want %q", got, want)
 	}
-	if got := relevo.ChainHaltedStopText("shop"); got != want {
+	if got := chain.ChainHaltedStopText("shop"); got != want {
 		t.Errorf("ChainHaltedStopText = %q, want %q", got, want)
 	}
-	if !strings.Contains(relevo.ChainHaltedStopText("shop"), "relevo done shop") {
+	if !strings.Contains(chain.ChainHaltedStopText("shop"), "relevo done shop") {
 		t.Error("the answer does not name the command that closes the chain")
 	}
 }
