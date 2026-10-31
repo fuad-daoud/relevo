@@ -17,12 +17,10 @@ import (
 )
 
 // cmdClientAddServer records a server entry in the servers section, and, when
-// --fingerprint pins it, checks enrollment once with WhoAmI (§4.7). A 401
+// --fingerprint pins it, checks enrollment once with WhoAmI. A 401
 // here is not an error: it means the admin has not enrolled this client's key
 // yet, and the reply names the enrollment line to hand them. When no client
-// key exists yet it first generates one, as `client init` did, and prints the
-// enrollment line.
-// clientAddServerFlagValues holds the pointers `config server add` parses into.
+// key exists yet it first generates one, and prints the enrollment line.
 type clientAddServerFlagValues struct {
 	fingerprint *string
 	ca          *string
@@ -154,7 +152,6 @@ func addServerDoc(asJSON bool, name, url string) error {
 // server (uplink.ServerInUse is the pure rule this checks; it is tested in
 // internal/relevo so this thin wrapper needs no harness or network access to
 // test the refusal shape -- see CLAUDE.md's CI rule).
-// clientRmServerFlagValues holds the pointer `config server rm` parses into.
 type clientRmServerFlagValues struct {
 	asJSON *bool
 }
@@ -220,7 +217,6 @@ func cmdClientRmServerRun(args []string) error {
 	return nil
 }
 
-// serversFlagValues holds the pointer `config server list` parses into.
 type serversFlagValues struct {
 	asJSON *bool
 }
@@ -234,7 +230,7 @@ func serversFlagSet(fs *flag.FlagSet) *serversFlagValues {
 }
 
 // cmdServers prints one row per configured server: name, url, and this
-// client's enrollment on it (§4.7), via the same relevo.ProbeServers doctor's
+// client's enrollment on it, via the same relevo.ProbeServers doctor's
 // per-server checks use. A machine with no client key probes every server
 // "no key" without dialling; the same probe feeds the human table and --json.
 func cmdServers(args []string) error {

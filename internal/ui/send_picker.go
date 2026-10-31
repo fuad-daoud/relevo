@@ -23,7 +23,7 @@ type planFile struct {
 
 // recentPlans lists up to n *.md files in dir, newest first by modification
 // time, filtered to names containing filter (case-insensitive substring).
-// Pure apart from the directory read (§3.4).
+// Pure apart from the directory read.
 func recentPlans(dir, filter string, n int) []planFile {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -52,7 +52,7 @@ func recentPlans(dir, filter string, n int) []planFile {
 	return out
 }
 
-// sendPicker is the s key's plan picker (§3.4): the plan-file input with its
+// sendPicker is the s key's plan picker: the plan-file input with its
 // path completion, and a list of the directory's recent markdown plans.
 type sendPicker struct {
 	env   widget.Env
@@ -60,7 +60,7 @@ type sendPicker struct {
 	input textinput.Model
 
 	// root is the binding's tree (b.CWD): relative typed values resolve
-	// against it (§2.5). "" means values are used as typed.
+	// against it. "" means values are used as typed.
 	root string
 
 	pick int // the selected list row, -1 when the typed value is used
@@ -72,7 +72,7 @@ type sendPicker struct {
 	err string
 }
 
-// resolve maps a typed value to a path (§2.5): an absolute value passes
+// resolve maps a typed value to a path: an absolute value passes
 // through, a relative one is joined to the binding tree, and a value with no
 // tree is unchanged.
 func (p sendPicker) resolve(v string) string {
@@ -82,7 +82,7 @@ func (p sendPicker) resolve(v string) string {
 	return filepath.Join(p.root, v)
 }
 
-// keys is the picker's footer (§3.4).
+// keys is the picker's footer.
 func (p sendPicker) keys() []widget.KeyHelp {
 	return []widget.KeyHelp{
 		{Key: "↑↓", Help: "choose"},
@@ -120,7 +120,7 @@ func (p sendPicker) update(k tea.KeyMsg) (overlay, tea.Cmd, bool) {
 
 // listDir is the directory the list reads: the resolved directory part of the
 // typed value, or the plan directory's own path when the value has no
-// directory (§3.4, §2.5).
+// directory.
 func (p sendPicker) listDir() string {
 	v := p.input.Value()
 	if strings.ContainsRune(v, filepath.Separator) {
@@ -164,7 +164,7 @@ func (p sendPicker) step(dir int) int {
 }
 
 // completeTab is tab inside the picker: the pathCompletion cycle today's plan
-// prompt used (§3.4).
+// prompt used.
 func (p sendPicker) completeTab() sendPicker {
 	if !p.tabbed {
 		p.base = p.input.Value()
@@ -184,7 +184,7 @@ func (p sendPicker) completeTab() sendPicker {
 }
 
 // enter uses the selected row (or the typed value), validates the file and
-// opens the existing send confirm (§3.4).
+// opens the existing send confirm.
 func (p sendPicker) enter() (overlay, tea.Cmd, bool) {
 	if list := p.plans(); p.pick >= 0 && p.pick < len(list) {
 		p.input.SetValue(list[p.pick].path)
@@ -224,7 +224,7 @@ func (p sendPicker) view(width int) []string {
 	return rows
 }
 
-// modal renders the picker (§3.4): the header, the plan-file input, the list,
+// modal renders the picker: the header, the plan-file input, the list,
 // the $EDITOR hint, the error and the buttons. Title "send", want 80.
 func (p sendPicker) modal(width int) (string, []string, int, bool) {
 	const want = 80

@@ -6,7 +6,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
-// renderMarkdown renders light markdown for prompt and report tabs (§2.6).
+// renderMarkdown renders light markdown for prompt and report tabs.
 func renderMarkdown(body string) string {
 	if body == "" {
 		return ""

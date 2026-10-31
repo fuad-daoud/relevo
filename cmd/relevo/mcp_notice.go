@@ -8,14 +8,14 @@ import (
 )
 
 // mcpNoticeTTL is how long relevo mcp keeps the daemon's record before reading
-// it again (#371 §4.10): long enough that a busy session does not stat the
+// it again: long enough that a busy session does not stat the
 // state root on every tool call, short enough that an upgrade is noticed
 // within a turn or two.
 const mcpNoticeTTL = 30 * time.Second
 
 // mcpNotice is the line a mastermind session's relevo mcp appends to every tool
 // result when the daemon has moved on to a newer relevo than the MCP server
-// this session started (#371 §4.10). Pure: this image's own version, the
+// this session started. Pure: this image's own version, the
 // daemon's record and whether there is one are the whole input.
 //
 // It returns "" -- no notice -- unless the daemon runs a different version and

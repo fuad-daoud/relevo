@@ -82,7 +82,9 @@ list_changed_paths() {
 }
 
 # map_paths_to_seeds maps changed paths to seeded module packages. Root build
-# configs fall back to ./... and exit. A deleted directory, a directory of
+# configs fall back to ./... and exit. The lint config and the comment and
+# file-size allow-lists feed only check-static, which check-affected always
+# runs in full, so they seed no package. A deleted directory, a directory of
 # unlisted .go files or a path that reaches the root does too, except under
 # --direct: a file in no package cannot move a package's own coverage, so the
 # walk goes on upward and a path that reaches the root seeds nothing.
@@ -95,12 +97,12 @@ map_paths_to_seeds() {
 		[ -n "$path" ] || continue
 
 		case "$path" in
-			go.mod|go.sum|Makefile|.golangci.yml)
+			go.mod|go.sum|Makefile)
 				echo "build configuration changed ($path); falling back to all packages" >&2
 				echo "./..."
 				exit 0
 				;;
-			docs|docs/*|LICENSE)
+			docs|docs/*|LICENSE|.golangci.yml|scripts/check-comments.allow|scripts/check-filesize.allow)
 				continue
 				;;
 			*/*)

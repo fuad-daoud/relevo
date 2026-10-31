@@ -12,7 +12,7 @@ import (
 )
 
 // TestCaptureStderr: writes to os.Stderr and to slog both arrive through
-// send, restore puts os.Stderr and the default logger back (§4.4, §7).
+// send, restore puts os.Stderr and the default logger back.
 func TestCaptureStderr(t *testing.T) {
 	origStderr := os.Stderr
 	origLogger := slog.Default()

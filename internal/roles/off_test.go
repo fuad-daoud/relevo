@@ -7,9 +7,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 )
 
-// TestOffEntriesRanked pins A2 §3.4: an off entry keeps its position in
-// Ranked, Off is true, OffCount counts it, and Serves is still true -- an
-// explicit `--candidate <off one>` is still served.
+// TestOffEntriesRanked pins that an off entry keeps its position in Ranked,
+// Off is true, OffCount counts it, and Serves is still true -- an explicit
+// `--candidate <off one>` is still served.
 func TestOffEntriesRanked(t *testing.T) {
 	set := setFromJSON(t, `[
 	  {"harness":"claude","provider":"test","model":"a","roles":["builder"]},

@@ -7,9 +7,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/histq"
 )
 
-// Round rows cycle through roundSortKeys, group rows through groupSortKeys
-// (§6, §5 "sort.go -- sort keys per level"). The two lists are disjoint,
-// so Model.sortKey alone says which level a key names.
+// Round rows cycle through roundSortKeys, group rows through groupSortKeys.
+// The two lists are disjoint, so Model.sortKey alone says which level a
+// key names.
 //
 // Direction: Model.sortDesc true is descending -- newest, biggest first,
 // the sensible default for every column here.
@@ -59,7 +59,7 @@ func (m Model) sortedRows(rows []db.RoundRow) []db.RoundRow {
 }
 
 // sortedGroups is groups ordered by the group sort key. The "-" (none) group
-// sorts last whatever the key and direction (§5.7).
+// sorts last whatever the key and direction.
 func (m Model) sortedGroups(groups []histq.GroupRow) []histq.GroupRow {
 	out := append([]histq.GroupRow(nil), groups...)
 	key, desc := m.groupSortKey(), m.sortDesc

@@ -136,7 +136,7 @@ func TestFleetNameColumnShowsOwnerName(t *testing.T) {
 	}
 }
 
-// TestSortToggleKeepsSelection pins §5.4's `a`: it flips the order, keeps
+// TestSortToggleKeepsSelection pins `a`: it flips the order, keeps
 // the selection, and returns the sort pref.
 func TestSortToggleKeepsSelection(t *testing.T) {
 	b1 := view.BindingStatus{Name: "api", Round: 2, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working", Last: &view.LastEvent{TS: railNow.Add(-6 * time.Minute)}}
@@ -188,7 +188,7 @@ func TestSendKeyDoesNotSortWithoutActions(t *testing.T) {
 	}
 }
 
-// TestFooterNoticesAndRefreshAge pins §5.3's keys row: the top view's keys
+// TestFooterNoticesAndRefreshAge pins the keys row: the top view's keys
 // and the globals on the left, the notice and the refresh age on the right,
 // the right winning on overlap. The old "<other> NEEDS YOU" note is gone
 // (X6: the header's `● N need you` replaces it).
@@ -196,12 +196,12 @@ func TestFooterNoticesAndRefreshAge(t *testing.T) {
 	m := splitModel(t, 140, 40, threeRows()...)
 	m.now = func() time.Time { return railNow.Add(2 * time.Second) }
 
-	// The refresh age is the fleet's context-row right side (§5.4).
+	// The refresh age is the fleet's context-row right side.
 	if got := stripANSI(m.contextView(m.env())); !strings.Contains(got, "refreshed 2s ago") {
 		t.Errorf("context row must carry the refresh age: %q", got)
 	}
 
-	// A notice is the keys row's right side (§5.3).
+	// A notice is the keys row's right side.
 	res, _ := m.Update(widget.NoticeMsg{Text: "hello"})
 	m = res.(Model)
 	if !strings.Contains(stripANSI(m.keysView(m.env())), "hello") {
@@ -220,7 +220,7 @@ func TestFooterNoticesAndRefreshAge(t *testing.T) {
 
 	// The right side wins on overlap: at a narrow width the notice survives
 	// and the view's keys give way -- but never half a key, and the global
-	// tail stays (§2.3b).
+	// tail stays.
 	m.width = 60
 	f := stripANSI(m.keysView(m.env()))
 	if lipgloss.Width(f) > 60 {
@@ -237,7 +237,7 @@ func TestFooterNoticesAndRefreshAge(t *testing.T) {
 	}
 }
 
-// TestHeaderGatesAndClock pins the header's right side (§5.3): the clock
+// TestHeaderGatesAndClock pins the header's right side: the clock
 // and needs-you count, and the gated line in the fleet body (D2).
 func TestHeaderGatesAndClock(t *testing.T) {
 	t.Cleanup(availability.SetGateClock(func() time.Time { return railNow }))
@@ -254,15 +254,15 @@ func TestHeaderGatesAndClock(t *testing.T) {
 	if !strings.Contains(h, "● 1 needs you") {
 		t.Errorf("header must carry the needs-you count: %q", h)
 	}
-	// Gates are rendered in the fleet body instead (§2.3, D2).
+	// Gates are rendered in the fleet body instead (D2).
 	body := stripANSI(fleet(m).Body(m.env(), 140, 40))
 	if !strings.Contains(body, "gated  codex") {
 		t.Errorf("fleet body must contain gated line: %q", body)
 	}
 }
 
-// TestTerminalFollowsTailUntilScrolledUp is the surviving tail rule
-// (plan §3), ported to the round view (R2.10).
+// TestTerminalFollowsTailUntilScrolledUp is the surviving tail rule,
+// ported to the round view (R2.10).
 func TestTerminalFollowsTailUntilScrolledUp(t *testing.T) {
 	st := store.New(t.TempDir())
 	if err := st.Save(newTestBinding("api")); err != nil {
@@ -368,8 +368,8 @@ func TestPaneHeadUsageAndSpendRows(t *testing.T) {
 	}
 }
 
-// TestPaneHeadLiveUsageRow pins the live figure's place in the card
-// (#234): a running round's `tokens` row is the live one, exactly one, and
+// TestPaneHeadLiveUsageRow pins the live figure's place in the card:
+// a running round's `tokens` row is the live one, exactly one, and
 // the closed round's row does not appear beside it; spend keeps its place.
 func TestPaneHeadLiveUsageRow(t *testing.T) {
 	var b view.BindingStatus

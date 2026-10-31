@@ -3,8 +3,8 @@ package main
 import "github.com/fuad-daoud/relevo/internal/store"
 
 // daemonNotice is the line `relevo status` prints above the rows when the
-// running daemon's recorded state needs a human (#371 §4.8). Pure: every input
-// is an argument, so it is table-tested with no store and no daemon.
+// running daemon's recorded state needs a human. Pure: every input is an
+// argument, so it is table-tested with no store and no daemon.
 //
 // It returns "" unless the daemon is running and one of two conditions holds:
 // the daemon predates version tracking (no daemon.json), or it refused the

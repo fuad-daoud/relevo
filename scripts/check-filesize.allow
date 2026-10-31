@@ -1,12 +1,7 @@
-cmd/relevo/registry_rows.go
 internal/relevo/bind.go
 internal/relevo/configedit.go
 internal/relevo/daemon.go
 internal/relevo/headless.go
 internal/relevo/reconcile.go
 internal/relevo/send.go
-internal/ui/confirm.go
-internal/ui/dash/render.go
-internal/ui/fetch.go
-internal/ui/stats/view_stats.go
 scripts/testdata/check-filesize/big.go

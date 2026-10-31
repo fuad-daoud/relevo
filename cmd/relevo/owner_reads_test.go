@@ -108,9 +108,9 @@ func seedServeOwnerState(t *testing.T, label string) (*store.Store, string) {
 	return owner, root
 }
 
-// TestShowOwnerIsTheOldServeShow pins §4.1: `show <name> --owner <label>`
-// prints the round the removed `serve show` printed, header prefixed with the
-// owner's label, and -- being a read -- stamps nothing.
+// TestShowOwnerIsTheOldServeShow pins `show <name> --owner <label>`: it
+// prints the round with the header prefixed with the owner's label, and --
+// being a read -- stamps nothing.
 func TestShowOwnerIsTheOldServeShow(t *testing.T) {
 	owner, _ := seedServeOwnerState(t, "alice")
 
@@ -131,9 +131,8 @@ func TestShowOwnerIsTheOldServeShow(t *testing.T) {
 	}
 }
 
-// TestShowOwnerLogIsTheOldServeLog pins §4.1's --log route: `show <name>
-// --owner <label> --log` prints every log line the removed `serve log`
-// printed, unreviewed.
+// TestShowOwnerLogIsTheOldServeLog pins the --log route: `show <name>
+// --owner <label> --log` prints every log line, unreviewed.
 func TestShowOwnerLogIsTheOldServeLog(t *testing.T) {
 	owner, _ := seedServeOwnerState(t, "alice")
 
@@ -161,7 +160,7 @@ func TestShowOwnerLogIsTheOldServeLog(t *testing.T) {
 	}
 }
 
-// TestShowOwnerLeavesPendingMasterMindPayload pins #673's owner carve-out: the
+// TestShowOwnerLeavesPendingMasterMindPayload pins the owner carve-out: the
 // admin's read of another owner's binding stays read-only, so a queued
 // mastermind-bound report on that binding is still pending after `show
 // --owner`. Store-only: no harness, no listener, no network.
