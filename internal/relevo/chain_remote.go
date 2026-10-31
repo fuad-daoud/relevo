@@ -107,7 +107,7 @@ func chainRemotePreflight(ctx context.Context, rt Runtime, opts ChainOptions, pl
 	}
 
 	token := res.Candidate.Ref().String()
-	srv, miss, err := serverTokenFor(ctx, rt, server, token, res.Candidate.Name)
+	srv, miss, err := ServerTokenFor(ctx, rt, server, token, res.Candidate.Name)
 	if err != nil {
 		return nil, err
 	}
