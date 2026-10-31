@@ -26,11 +26,10 @@ func StatsInputs(rt Runtime, since time.Time) (in stats.Inputs, warnings []strin
 		landed[b.ID] = true
 	}
 
-	// Latency is read exactly as formatCandidates reads it: a failure warns
-	// and leaves the report without ttft values. Both it and the history below
-	// read the two history tables, so every origin's rows inside the window are
-	// combined -- which is the whole point of the tables over the two kv
-	// documents they replaced.
+	// A latency read failure warns and leaves the report without ttft values.
+	// Latency and the history below both read the two history tables, so
+	// every origin's rows inside the window are combined -- the whole point
+	// of the tables over the two kv documents they replaced.
 	deps := AvailabilityDeps(rt)
 	var lat availability.LatencyHistory
 	if loaded, lerr := availability.LoadLatency(deps); lerr != nil {
@@ -39,8 +38,7 @@ func StatsInputs(rt Runtime, since time.Time) (in stats.Inputs, warnings []strin
 		lat = loaded
 	}
 	// The shell's clock is read once, so the prune and the report's open end
-	// agree. rt.Now is time.Now in production; the guard keeps a zero Runtime
-	// (a test) usable.
+	// agree; the guard keeps a zero Runtime (a test) usable.
 	now := time.Now()
 	if rt.Now != nil {
 		now = rt.Now()
