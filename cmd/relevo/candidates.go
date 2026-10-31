@@ -17,7 +17,7 @@ import (
 // notePick prints why relevo chose the candidate it spawned. Silent for
 // an explicit token (the mastermind already knows) and for adoption
 // (nothing was chosen); the gated note, if any, is printed separately.
-// A1 §4.4: the line names the candidate by its short name.
+// The line names the candidate by its short name.
 func notePick(rt relevo.Runtime, role string, res resolve.Resolution) {
 	if res.How == "" || res.How == resolve.HowExplicit {
 		return
@@ -36,7 +36,7 @@ func roleOrBuilder(r string) string {
 }
 
 // builderWhere is how the bound/added lines name the builder's place: a local
-// builder is always headless (a process relevo runs itself, #99, #303).
+// builder is always headless (a process relevo runs itself).
 func builderWhere(ep store.Endpoint) string {
 	if ep.Headless() {
 		return "headless"
@@ -70,7 +70,7 @@ func cmdCandidates(args []string) error {
 
 		// The column is sized from the names FormatProbe prints, not from
 		// argv: Probe resolves each argument and FormatProbe prints the
-		// resolved candidate's short name (A1 §4.4, round 3 F2).
+		// resolved candidate's short name.
 		var names []string
 		if len(tokens) > 0 {
 			for _, tok := range tokens {
@@ -120,8 +120,8 @@ func formatCandidates(rt relevo.Runtime) string {
 
 // loadHistory reads the availability history for display, treating an
 // unreadable record as empty after one stderr line -- the same rule Gates
-// applies to the ledger. The body moved to relevo.LoadHistory (cockpit C2b
-// §4.1); this keeps the stderr line for its other callers.
+// applies to the ledger. The body lives in relevo.LoadHistory; this keeps
+// the stderr line for its other callers.
 func loadHistory(rt relevo.Runtime) availability.History {
 	h, err := availability.LoadHistory(relevo.AvailabilityDeps(rt))
 	if err != nil {
