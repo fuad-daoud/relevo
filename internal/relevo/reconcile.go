@@ -54,7 +54,7 @@ func emitMutations(ctx context.Context, rt Runtime, orig, next store.Binding) {
 			Timestamp: rt.Now().UTC(),
 		})
 	}
-	// One builder_stalled per episode, on the zero -> set edge (#252). The
+	// One builder_stalled per episode, on the zero -> set edge. The
 	// clear emits nothing: the hook payload has no new fields, and a resumed
 	// builder is unremarkable.
 	if orig.StalledSince.IsZero() && !next.StalledSince.IsZero() {
@@ -67,7 +67,7 @@ func emitMutations(ctx context.Context, rt Runtime, orig, next store.Binding) {
 			Timestamp: rt.Now().UTC(),
 		})
 	}
-	// One binding_stale per episode, on the zero -> set edge (#135). As with
+	// One binding_stale per episode, on the zero -> set edge. As with
 	// builder_stalled, the clear emits nothing.
 	if orig.StaleSince.IsZero() && !next.StaleSince.IsZero() {
 		rt.Hooks.Dispatch(ctx, hooks.Event{
@@ -82,7 +82,7 @@ func emitMutations(ctx context.Context, rt Runtime, orig, next store.Binding) {
 }
 
 // emitCommitted announces a reconcile's events once the state they describe is
-// durable (#909). emitMutations above is the pure builder over orig->saved;
+// durable. emitMutations above is the pure builder over orig->saved;
 // this is the one place that dispatches it, and it is deliberately silent when
 // the transition never landed: a save that failed announced nothing, and a
 // caller that skipped an unchanged save has nothing to announce.
@@ -98,7 +98,7 @@ func emitCommitted(ctx context.Context, rt Runtime, orig, saved store.Binding) {
 	emitMutations(ctx, rt, orig, saved)
 }
 
-// stampStale maintains the stale clock (#135) for a NEEDS YOU binding:
+// stampStale maintains the stale clock for a NEEDS YOU binding:
 // it stamps StaleSince on the moment the binding started waiting -- the halt
 // time when there is one, otherwise the newest log entry -- once that moment is
 // stale_after_ms old. Every other state carries no stale stamp. Send,
@@ -130,7 +130,7 @@ func stampStale(rt Runtime, tx *store.Tx, b store.Binding) store.Binding {
 }
 
 // stateWarned is the daemon's warn-once memory, keyed by binding name plus the
-// reason (#372). It is a log dedupe and nothing more: the skipped binding is
+// reason. It is a log dedupe and nothing more: the skipped binding is
 // still skipped on every tick. Keying on the reason as well as the name lets
 // one binding carry both a newer-format and an unknown-state warning.
 var stateWarned sync.Map
@@ -159,7 +159,7 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (
 // reconcileWith is Reconcile with an optional prefetched remote view: a nil
 // pre makes a remote binding fetch inline, as Reconcile always did.
 func reconcileWith(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, pre *remoteFetch) (out store.Binding, err error) {
-	// An unknown State is one a newer relevo wrote (#372 §4.1). Reconciling it
+	// An unknown State is one a newer relevo wrote. Reconciling it
 	// as live would drive a builder the newer relevo is already driving, so
 	// the binding is returned exactly as it is and nothing at all runs: no
 	// consults, no builder handling, and no save by the caller. The warning
@@ -176,8 +176,8 @@ func reconcileWith(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 
 	defer func() {
 		if err == nil {
-			// The stale clock (#135) is stamped on whatever state the tick
-			// settled on, before the caller saves and announces it (#909): the
+			// The stale clock is stamped on whatever state the tick
+			// settled on, before the caller saves and announces it: the
 			// stamp is part of the transition being committed, not an event of
 			// its own, so it is set here and dispatched by the caller.
 			out = stampStale(rt, tx, out)
@@ -239,8 +239,8 @@ func reconcileWith(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 
 	// Every local binding reaching this line is headless: a local builder is
-	// only ever a process relevo runs per round (#99, #303). Spec §5.1 is its
-	// own tick.
+	// only ever a process relevo runs per round. The headless path below is
+	// its own tick.
 	return reconcileHeadless(ctx, rt, tx, b)
 }
 
@@ -578,7 +578,7 @@ func queueBrokenHalt(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 // because a binding can arrive here already NeedsYou for an unrelated reason
 // and must still have its pending payload delivered.
 //
-// The halting tick scans for a rate limit first (spec §5): a match switches
+// The halting tick scans for a rate limit first: a match switches
 // the builder instead of halting, and the switch does not count toward
 // max_switches.
 func checkRoundTimeout(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, bool, error) {
@@ -606,12 +606,12 @@ func checkRoundTimeout(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 }
 
 // noteScraped marks a report entry whose body is a terminal capture, not
-// the builder's own file. A scraped body is never tail-parsed (#221).
+// the builder's own file. A scraped body is never tail-parsed.
 const noteScraped = "scraped"
 
 // joinNotes space-joins the non-empty ones, so a report entry's note can
 // carry both an existing reason (e.g. "noreport") and the escape annotation
-// (#192) without either overwriting the other.
+// without either overwriting the other.
 func joinNotes(a, b string) string {
 	switch {
 	case a == "":
@@ -627,7 +627,7 @@ func joinNotes(a, b string) string {
 // (Store.DonePath) exists. It is the one place the round decides "the builder
 // says it is finished".
 //
-// With a gate configured (#132) it first runs the gate across ticks: gating
+// With a gate configured it first runs the gate across ticks: gating
 // is true while the gate is running and the round must be left alone --
 // both callers return early without acting on the builder in any way (no
 // nudge, no "exited without a report" switch, no timeout halt). closed is
@@ -635,7 +635,7 @@ func joinNotes(a, b string) string {
 // both true.
 //
 // extraNote is appended (via joinNotes) to whichever note this close would
-// otherwise write -- "" for the pane path, and the escape annotation (#192)
+// otherwise write -- "" for the pane path, and the escape annotation
 // computed by the headless path from escapeCheck before this call, since
 // queueReport clears RoundBaselineTree and the comparison must happen while
 // it is still on the binding.
@@ -656,7 +656,7 @@ func joinNotes(a, b string) string {
 // the next tick retries, since the marker is still on disk.
 //
 // The gate record is returned alongside the close (nil when no gate ran) so
-// the caller can act on a failure after the report is queued (#132 part 2).
+// the caller can act on a failure after the report is queued.
 func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, extraNote string) (store.Binding, bool, bool, *store.GateRecord, error) {
 	if _, _, ok, _ := rt.Store.StatFile(rt.Store.DonePath(b.Name, b.Round)); !ok {
 		return b, false, false, nil, nil
@@ -672,7 +672,7 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	if b.Shape == store.ShapeReader {
 		done = true
 	} else if b.GateRun == nil {
-		// Scope fires before the gate (#801): a refusal closes the round
+		// Scope fires before the gate: a refusal closes the round
 		// without running gateStep at all -- no gate record, no KindGate
 		// entry, no repair round, Regate untouched.
 		verdict = judgeRoundScope(ctx, rt, b)
@@ -772,8 +772,8 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	now := rt.Now().UTC()
 	roundStart := b.RoundStartedAt
 
-	// A round that closes while a stop was requested is the stop succeeding
-	// (#138): the note says so, and a KindStop entry follows the report below.
+	// A round that closes while a stop was requested is the stop succeeding:
+	// the note says so, and a KindStop entry follows the report below.
 	// This is the stored request's fact, not the caller's `stopped` parameter:
 	// stop_test.go pins exactly one stopped/killed entry per stop, and the
 	// parameter drives only the chain event below.
@@ -808,7 +808,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		}
 		// A remote reader's output has its relevo block stripped at the
 		// server's close, so parsing cannot recover the status: the view's
-		// ReportOutcome is the only record of it (#607 seam 3).
+		// ReportOutcome is the only record of it.
 		if fallbackOutcome != "" {
 			outcome = fallbackOutcome
 		}
@@ -894,7 +894,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		closed = result.EndTree
 		diffNote := capture.DiffSummary(result, facts)
 		// The key's presence, not the list's, is what makes the counts
-		// comparable (#216): changed_paths: [] is a real list of zero paths
+		// comparable: changed_paths: [] is a real list of zero paths
 		// and must be checked against the diff, while a report with no key
 		// at all is never compared.
 		pathsMismatch := result.Available && ok && tail.ChangedPathsSet && len(tail.ChangedPaths) != result.Stat.FilesChanged
@@ -956,7 +956,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// The closed round's cgroup measurement: what the caller already has
 	// (a remote binding's server measured its own round and shipped it as
 	// view.Rusage), or a local read when the caller sent none -- headless
-	// only, since a pane round has no supervisor (#244, #216).
+	// only, since a pane round has no supervisor.
 	entryRusage := rusage
 	if entryRusage == nil && rt.Runner != nil && b.Builder.Headless() {
 		if r, ok := rt.Runner.Rusage(ctx, handleOf(b.Builder), rt.Store.StreamPath(b.Name, b.Round)); ok {
@@ -1045,11 +1045,11 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// would answer for a halt the new round never had.
 	b = ClearHaltFields(b)
 	// A switch counted against the old round says nothing about the new one,
-	// and neither does an exclusion recorded against it (#191).
+	// and neither does an exclusion recorded against it.
 	b.RoundSwitches = 0
 	b.RoundExcluded = nil
 	b.RoundOOMKills = 0
-	// The round's verify flag has been acted on by the close (#144): the
+	// The round's verify flag has been acted on by the close: the
 	// consult, when there is one, is already running.
 	b.RoundVerify = false
 	b.RoundTier = ""
@@ -1066,10 +1066,10 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		b.RoundClosedTree = closed
 	}
 	// The stream id was the closed round's; the next round's process
-	// announces its own (a pane builder has none) (#147).
+	// announces its own (a pane builder has none).
 	b.Builder.StreamSessionID = ""
 	b.GateRun = nil
-	// A passing gate clears the repair bookkeeping (#132 part 2): the next
+	// A passing gate clears the repair bookkeeping: the next
 	// failing gate gets a fresh budget and a fresh stall comparison, whatever
 	// the previous repair rounds cost.
 	if gate != nil && gate.Result == "pass" {
@@ -1077,10 +1077,10 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		b.LastGateSig = ""
 	}
 	// A closed round is over: a stall stamped against it says nothing about
-	// the next one (#252), and neither do the progress sample or the stale
-	// clock (#135).
+	// the next one, and neither do the progress sample or the stale
+	// clock.
 	b.StalledSince = time.Time{}
-	// A request to stop belonged to the round that just closed (#138): the
+	// A request to stop belonged to the round that just closed: the
 	// stop bookkeeping never outlives it.
 	b.StopRequestedAt = time.Time{}
 	b.StopGraceMS = 0
@@ -1088,7 +1088,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	b.ExploringSince = time.Time{}
 	b.StaleSince = time.Time{}
 
-	// §3.4: a reader round whose artifact directory is over
+	// A reader round whose artifact directory is over
 	// policy.artifact_max_mb closes as usual -- the summary is written and
 	// the report is queued -- but the binding asks for a human, and nothing
 	// is deleted: sealRounds holds the round back until the cap is raised.
@@ -1140,11 +1140,11 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 
 // deliverAndSettle attempts any pending delivery. The binding is left pending
 // when no route can take the payload -- DeliverPending records why, and
-// `relevo wait` or the push holder's own drain delivers it later (#303 §5.4).
+// `relevo wait` or the push holder's own drain delivers it later.
 func deliverAndSettle(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, error) {
 	if b.Owner != "" {
 		// Owned by a remote client: there is no mastermind. Payloads stay
-		// queued; the owner reads them over the wire (remote-builders spec §6.2).
+		// queued; the owner reads them over the wire.
 		return b, nil
 	}
 	next, got, err := delivery.DeliverPending(ctx, deliveryDeps(rt), tx, b)
