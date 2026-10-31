@@ -1,4 +1,4 @@
-package relevo
+package uplink
 
 import (
 	"errors"

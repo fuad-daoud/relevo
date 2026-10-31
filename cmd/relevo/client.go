@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/uplink"
 )
 
 // cmdClientAddServer records a server entry in the servers section, and, when
@@ -150,7 +151,7 @@ func addServerDoc(asJSON bool, name, url string) error {
 }
 
 // cmdClientRmServer refuses while any binding in the store still names the
-// server (relevo.ServerInUse is the pure rule this checks; it is tested in
+// server (uplink.ServerInUse is the pure rule this checks; it is tested in
 // internal/relevo so this thin wrapper needs no harness or network access to
 // test the refusal shape -- see CLAUDE.md's CI rule).
 // clientRmServerFlagValues holds the pointer `config server rm` parses into.
@@ -192,7 +193,7 @@ func cmdClientRmServerRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	if inUse := relevo.ServerInUse(bindings, name); len(inUse) > 0 {
+	if inUse := uplink.ServerInUse(bindings, name); len(inUse) > 0 {
 		return fail(codeConflict, "server %q is used by %s; unbind them first", name, strings.Join(inUse, ", "))
 	}
 
