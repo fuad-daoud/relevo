@@ -50,10 +50,10 @@ func TestDoneKeepsRemoteWorktreeWhileRoundOpen(t *testing.T) {
 	}
 }
 
-// TestStatusJSONHasBuilderName pins A1 §4.4: a binding's status document
-// carries the candidate's short name beside the token. A token no longer
-// configured reads as itself, exactly as the text listing prints it, and a
-// binding with no candidate carries no key at all.
+// TestStatusJSONHasBuilderName pins that a binding's status document carries
+// the candidate's short name beside the token. An unconfigured token reads as
+// itself, exactly as the text listing prints it, and a binding with no
+// candidate carries no key at all.
 func TestStatusJSONHasBuilderName(t *testing.T) {
 	rt := newRuntime(t)
 
@@ -80,8 +80,8 @@ func TestStatusJSONHasBuilderName(t *testing.T) {
 		BuilderCandidate: "agy/test/gone",
 		Round:            1, State: store.StateActive,
 	})
-	// Round 3 F3: a token no longer configured leaves BuilderName empty, so
-	// the name field never carries a token. The renderers print the token.
+	// An unconfigured token leaves BuilderName empty, so the name field
+	// never carries a token; the renderers print the token.
 	if gone.BuilderName != "" {
 		t.Errorf("BuilderName for an unconfigured token = %q, want empty", gone.BuilderName)
 	}
@@ -1041,9 +1041,9 @@ func TestStatusDetailsBrokenBinding(t *testing.T) {
 	if gotAdopted.Detail != wantAdopted {
 		t.Errorf("adopted detail =\n  %q\nwant\n  %q", gotAdopted.Detail, wantAdopted)
 	}
-	// #303 deleted the pane, so the adopted-builder detail no longer warns
-	// about a moved pane; the row now says the work is unaccounted for, which
-	// is the same warning in the words that survive.
+	// An adopted builder's detail warns that its work is unaccounted for:
+	// with no name or session to look it up by, the row can only report
+	// the gap.
 	if !strings.Contains(gotAdopted.Detail, "unaccounted for") {
 		t.Errorf("adopted detail must warn that the work is unaccounted for, got %q", gotAdopted.Detail)
 	}
@@ -1215,14 +1215,14 @@ func TestStatusRemoteRow(t *testing.T) {
 		t.Fatalf("got %d bindings, want 1", len(rep.Bindings))
 	}
 	got := rep.Bindings[0]
-	// #303 deleted BuilderPane: the server a remote binding is served by is
-	// what the row shows now, and view.RenderStatus prints it below.
+	// A remote binding's row shows the status its server recorded for it;
+	// view.RenderStatus prints it below.
 	if got.BuilderStatus != "running" {
 		t.Fatalf("BuilderStatus = %q, want the recorded RemoteStatus", got.BuilderStatus)
 	}
 
-	// The row shows the remote builder and its status; the server name is no
-	// longer part of the row (#303 deleted the pane/server column data).
+	// The row shows the remote builder and its status; the server name is
+	// not part of the row.
 	text := view.RenderStatus(rep)
 	if !strings.Contains(text, "remote") || !strings.Contains(text, "running") {
 		t.Errorf("rendered status must show the remote builder and its status, got %q", text)
@@ -1245,9 +1245,9 @@ func TestStatusRemoteRowUnknownStatus(t *testing.T) {
 	}
 }
 
-// TestStatusRowQueuedText pins #285's queued text: RemoteQueue facts render
+// TestStatusRowQueuedText pins the queued text: RemoteQueue facts render
 // "queued (3/3 busy on contabo, 2 ahead, 4m)", and a queued row with no
-// facts yet (part 1's tolerance) falls back to the bare "queued".
+// facts yet falls back to the bare "queued".
 //
 // Mutation check: drop view.QueueText's format string (or the RemoteQueue
 // branch in statusRow) and this test fails.
@@ -1466,13 +1466,13 @@ func TestStatusRowQueuedText(t *testing.T) {
 	}
 }
 
-// TestStatusShowsStopping pins #138: a stop in flight shows
+// TestStatusShowsStopping pins that a stop in flight shows
 // "stopping <elapsed> of <grace>" as the builder's status, overriding
 // whatever the builder itself reports, and carries the stop bookkeeping as
 // data for the statusline consumer.
 // TestStatusHidesStoppingAfterGrace pins the fix for the "stopping" label
 // surviving an abandoned stop: once the grace has elapsed and the binding
-// went NEEDS YOU (stopDecision no longer says stopWait), the NEEDS YOU line
+// is NEEDS YOU (stopDecision does not say stopWait), the NEEDS YOU line
 // already says why, so BuilderStatus must not still read
 // "stopping <elapsed> of <grace>".
 // TestStatusJSONCarriesStructuredFields guards the statusline interface: Last

@@ -10,9 +10,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// TestStatsInputsAssemblesFromDB is cockpit C2b §7: StatsInputs reads the
-// windowed rows, the DONE bindings and the availability history from the
-// history file, which rt.DB is the shape of here.
+// TestStatsInputsAssemblesFromDB pins that StatsInputs reads the windowed
+// rows, the DONE bindings and the availability history from the history
+// file, which rt.DB is the shape of here.
 func TestStatsInputsAssemblesFromDB(t *testing.T) {
 	t.Parallel()
 
@@ -84,9 +84,9 @@ func TestStatsInputsAssemblesFromDB(t *testing.T) {
 	}
 }
 
-// TestStatsInputsCombinesBothOrigins is Round 3 step 1: a display read combines
-// every origin's rows, because what a stats panel shows is the window across
-// the fleet rather than this machine's slice of it. This machine has imported a
+// TestStatsInputsCombinesBothOrigins pins that a display read combines every
+// origin's rows, because what a stats panel shows is the window across the
+// fleet rather than this machine's slice of it. This machine has imported a
 // peer's outage and a peer's slow sample by the time it reads, and both belong
 // in History and in the TTFT closure beside its own.
 //
