@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/serve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/tmpdir"
 	usagepkg "github.com/fuad-daoud/relevo/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // ownerTabEntry is the one report entry the --owner tests seed: a usage-bearing
@@ -143,7 +143,7 @@ func TestShowOwnerLogIsTheOldServeLog(t *testing.T) {
 	}
 	var want strings.Builder
 	for _, e := range log {
-		want.WriteString(relevo.LogLine(e))
+		want.WriteString(view.LogLine(e))
 		want.WriteString("\n")
 	}
 
