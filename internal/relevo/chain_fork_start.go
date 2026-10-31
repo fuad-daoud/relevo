@@ -33,8 +33,8 @@ func chainStartChild(ctx context.Context, rt Runtime, tx *store.Tx, parent db.Ch
 	if err != nil {
 		return childCreated{}, err
 	}
-	if cap := chainNameCap(childName, planned); len(childName) > cap {
-		return childCreated{}, refusal.New("chain name %q exceeds %d characters (the longest member suffix is %s)", childName, cap, longestMemberSuffix(childName, planned))
+	if cap := chain.NameCap(childName, planned); len(childName) > cap {
+		return childCreated{}, refusal.New("chain name %q exceeds %d characters (the longest member suffix is %s)", childName, cap, chain.LongestMemberSuffix(childName, planned))
 	}
 
 	bodies, err := chainPlanBodiesFor(ChainOptions{Plans: spec.Plans})
