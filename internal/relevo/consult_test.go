@@ -204,8 +204,8 @@ func TestReconcileExpiresAStaleReservation(t *testing.T) {
 
 // seedHeadlessConsult puts a running headless consult on the webshop binding
 // and returns the runtime and the record relevo made. The record is seeded
-// directly -- the consult machinery no longer has a verb to drive it -- with
-// fr standing in as the runtime's Runner.
+// directly, since no verb drives the consult machinery, with fr standing in as
+// the runtime's Runner.
 func seedHeadlessConsult(t *testing.T, fr *fakeRunner) (Runtime, store.Consult) {
 	t.Helper()
 	rt, _ := seedBound(t)

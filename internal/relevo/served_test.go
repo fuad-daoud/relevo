@@ -224,7 +224,7 @@ func TestPickServedCandidateSkipsAProviderGatedOnTheServer(t *testing.T) {
 // TestPickServedCandidateRefusesWhenEveryCandidateIsGated pins the create-time
 // refusal: with every candidate serving the role gated, the served pick
 // answers with the resolve.ErrAllGated refusal a local bind answers with, not with
-// the empty candidate that used to create a member with nothing to spawn.
+// an empty candidate, which would create a member with nothing to spawn.
 func TestPickServedCandidateRefusesWhenEveryCandidateIsGated(t *testing.T) {
 	t.Parallel()
 
