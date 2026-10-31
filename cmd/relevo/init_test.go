@@ -10,7 +10,7 @@ import (
 )
 
 // stubBinary writes an executable stub named name into dir. A claude stub
-// answers the one probe the starter configuration now asks (`claude auth
+// answers the one probe the starter configuration asks (`claude auth
 // status` printing its loggedIn JSON), so a test's init sees a probed
 // lineup; everything else exits 0. A stub is not a real harness: no harness
 // CLI, no network, no daemon.
@@ -36,8 +36,9 @@ func stubLoggedOutClaude(t *testing.T, dir string) {
 }
 
 // initRoot gives a test its own HOME, XDG_CONFIG_HOME and XDG_STATE_HOME and
-// returns them. Both roots are per-test: config now lives in the state root's
-// database, so the #235 rule applies to a test that writes config (#235).
+// returns them. Both roots are per-test: config lives in the state root's
+// database, so a test that writes config touches neither the user's state nor
+// TestMain's root.
 func initRoot(t *testing.T) (home, configHome string) {
 	t.Helper()
 	home = t.TempDir()
@@ -78,7 +79,7 @@ func storedConfig(t *testing.T) config.Loaded {
 // TestInitWritesConfigAndRoles pins what init writes through the probed
 // lineup: the candidates the recommendations name, the policy only at
 // max_tier, and a builder actor at the yolo tier. There is no roles key on a
-// candidate and no model of the writer's choice; actors decide now.
+// candidate and no model of the writer's choice; actors decide.
 func TestInitWritesConfigAndRoles(t *testing.T) {
 	home, _ := initRoot(t)
 

@@ -48,7 +48,7 @@ type Model struct {
 	top    int
 
 	result resultModel
-	// confirm is the row a done/unbind is waiting on a `y` for (#103).
+	// confirm is the row a done/unbind is waiting on a `y` for.
 	// Meaningful only while screen == screenConfirm.
 	confirm view.BindingStatus
 
@@ -76,7 +76,7 @@ func fetchStatus(ctx context.Context, rt relevo.Runtime) tea.Cmd {
 }
 
 // runVerb runs the chosen verb and reports its text, which is the same text
-// the CLI prints (spec §5).
+// the CLI prints.
 func runVerb(ctx context.Context, rt relevo.Runtime, opts Options, name string) tea.Cmd {
 	return func() tea.Msg {
 		switch opts.Verb {
@@ -179,7 +179,7 @@ func (m Model) listKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // pick acts on the chosen row. done and unbind run at once on a DONE row and
-// stop for a `y` on any other (#103, needsConfirm).
+// stop for a `y` on any other (needsConfirm).
 func (m Model) pick(r view.BindingStatus) (tea.Model, tea.Cmd) {
 	switch m.opts.Verb {
 	case VerbDone, VerbUnbind:
@@ -193,8 +193,7 @@ func (m Model) pick(r view.BindingStatus) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// run moves to a pending result screen and starts the verb on name. It is
-// what Enter did before #103; the confirm screen's `y` reaches it now.
+// run moves to a pending result screen and starts the verb on name.
 func (m Model) run(name string) (tea.Model, tea.Cmd) {
 	m.screen = screenResult
 	m.result = resultModel{pending: true}

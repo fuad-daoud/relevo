@@ -11,7 +11,7 @@ import (
 )
 
 // configUsage is the whole `relevo config` surface: what a bare `relevo config`
-// does, and every subcommand that replaced a top-level verb (§4.1).
+// does, and every subcommand that replaced a top-level verb.
 const configUsage = `usage: relevo config [--probe [token...]]
        relevo config export
        relevo config import <file|-> [--force]
@@ -40,7 +40,7 @@ const configUsage = `usage: relevo config [--probe [token...]]
        relevo config repo list [--json]`
 
 // cmdConfig is the one verb that replaced init, candidates, policy, roles,
-// agent, client and servers (§4.1). A bare invocation, or one whose first
+// agent, client and servers. A bare invocation, or one whose first
 // argument is a flag, shows the configuration; every subcommand reuses the
 // body the removed verb had.
 func cmdConfig(args []string) error {
@@ -87,13 +87,11 @@ func cmdConfig(args []string) error {
 	}
 }
 
-// configShowFlagValues holds the pointers the bare `config` form parses into.
 type configShowFlagValues struct {
 	probe  *bool
 	asJSON *bool
 }
 
-// configShowFlagSet defines those flags on fs and returns what they parse into.
 func configShowFlagSet(fs *flag.FlagSet) *configShowFlagValues {
 	v := &configShowFlagValues{}
 	v.probe = fs.Bool("probe", false, "run each candidate once with a one-line prompt from this machine and record its time to first output")
@@ -126,9 +124,9 @@ func configShow(args []string) error {
 		return fail(codeInternal, "%v", err)
 	}
 
-	// The first block is the actors section after round 2's migration; a
-	// config that still has no actors (a newer schema this binary did not
-	// migrate) keeps today's roles block under its own heading (R7).
+	// The first block is the actors section; a config with no actors (a newer
+	// schema this binary did not migrate) keeps the roles block under its own
+	// heading.
 	L, err := rt.Config.Load()
 	if err != nil {
 		return fail(codeConfigInvalid, "%v", err)

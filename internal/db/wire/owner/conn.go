@@ -520,6 +520,9 @@ func (c *conn) cleanup() {
 		}
 		<-c.s.sem
 	}
+	// The count drops before the socket closes: a client that has seen the
+	// close may handshake again at once, and must not find itself still live.
+	c.s.removeConn(c)
 	_ = c.nc.Close()
 }
 

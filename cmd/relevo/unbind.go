@@ -14,7 +14,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
-// unbindFlagValues holds the pointers unbind parses into.
 type unbindFlagValues struct {
 	name           *string
 	archive        *bool
@@ -29,8 +28,6 @@ type unbindFlagValues struct {
 	asJSON         *bool
 }
 
-// unbindFlagSet defines those flags on fs, in the usage text's order, and
-// returns what they parse into.
 func unbindFlagSet(fs *flag.FlagSet) *unbindFlagValues {
 	v := &unbindFlagValues{}
 	v.name = fs.String("name", "", "binding to unbind")
@@ -84,7 +81,7 @@ func cmdUnbind(args []string) error {
 	}
 
 	// --done is gc, not unbind: it clears every DONE binding, so naming one or
-	// asking to pick one contradicts it (§4.3).
+	// asking to pick one contradicts it.
 	if *done {
 		if *name != "" || len(fs.Args()) > 0 || *pickFlag {
 			return fail(codeRefused, "--done clears DONE bindings; do not also name one or pass --pick")
@@ -180,9 +177,8 @@ func runSweep(dryRun, asJSON bool) error {
 	return nil
 }
 
-// runGC is gc's body (the old cmdGC), now reached through `unbind --done`
-// (§4.3). It clears the calling mastermind's DONE bindings, or, with
-// --all-masterminds, every mastermind's (#482).
+// runGC is gc's body, reached through `unbind --done`. It clears the calling
+// mastermind's DONE bindings, or, with --all-masterminds, every mastermind's.
 func runGC(delete, dryRun, force bool, mastermindRef string, all, asJSON bool) error {
 	rt, err := newRuntime()
 	if err != nil {

@@ -214,7 +214,7 @@ type hookEnvelope struct {
 	} `json:"hookSpecificOutput"`
 }
 
-// TestMasterMindInitHookAlwaysExitsZero is the hook's contract (§4.4, §6.1): a
+// TestMasterMindInitHookAlwaysExitsZero is the hook's contract: a
 // hook failure must never block a Claude Code session, so malformed or
 // incomplete stdin still exits 0 and answers on stdout with the note envelope.
 func TestMasterMindInitHookAlwaysExitsZero(t *testing.T) {
@@ -304,7 +304,7 @@ func TestMasterMindInitHookWritesEnvFile(t *testing.T) {
 	}
 }
 
-// TestMasterMindInitHookWithoutEnvFileSaysSo pins §3.4's rule for an unset
+// TestMasterMindInitHookWithoutEnvFileSaysSo pins the rule for an unset
 // $CLAUDE_ENV_FILE: `init --hook` still registers and exits 0, and its
 // additionalContext says RELEVO_MASTERMIND could not be exported and that relevo
 // resolves the session through its host process instead.
@@ -697,9 +697,9 @@ func TestMasterMindVerbsListRenameForget(t *testing.T) {
 	}
 }
 
-// TestListAlignsLongValues is the list polish: the old fixed-width format
-// shifted every later column when a 36-character session id or a long cwd
-// overflowed its cell. Under tabwriter every row -- header included -- starts
+// TestListAlignsLongValues is the list polish: under a fixed-width format a
+// 36-character session id or a long cwd would overflow its cell and shift
+// every later column. Under tabwriter every row -- header included -- starts
 // its `seen` column at the same byte offset.
 func TestListAlignsLongValues(t *testing.T) {
 	state := t.TempDir()
@@ -754,7 +754,7 @@ func TestListAlignsLongValues(t *testing.T) {
 	}
 }
 
-// TestMasterMindPruneWasRemoved pins the removal: pruning is automatic now
+// TestMasterMindPruneWasRemoved pins the removal: pruning is automatic
 // (the daemon does it hourly), so the verb returns the usage-coded refusal
 // naming that and exits 2.
 func TestMasterMindPruneWasRemoved(t *testing.T) {
@@ -771,7 +771,7 @@ func TestMasterMindPruneWasRemoved(t *testing.T) {
 	}
 }
 
-// TestPlannerVerbIsRemoved pins D5: `relevo planner ...` returns the
+// TestPlannerVerbIsRemoved pins that `relevo planner ...` returns the
 // usage-coded refusal that names its replacement as the next command, and
 // exits 2 through the code bridge, like every other removed verb.
 func TestPlannerVerbIsRemoved(t *testing.T) {
@@ -788,7 +788,7 @@ func TestPlannerVerbIsRemoved(t *testing.T) {
 	}
 }
 
-// TestRemovedPlannerFlagsAreUnknown pins D5's clean break: --planner and
+// TestRemovedPlannerFlagsAreUnknown pins the clean break: --planner and
 // --all-planners are removed, not aliased, so parsing one fails with the flag
 // package's own "flag provided but not defined" error, before any harness runs.
 func TestRemovedPlannerFlagsAreUnknown(t *testing.T) {

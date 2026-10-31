@@ -205,7 +205,7 @@ echo "docs" > docs/x.md
 echo "readme" > README.md
 assert_stdout "docs-only change (docs/x.md, root README.md) gives empty output" ""
 
-# 5. go.mod / Makefile / .golangci.yml / .github/x.yml / unknown top dir gives ./...
+# 5. go.mod / Makefile / .github/x.yml / unknown top dir gives ./...
 reset_fixture
 echo "// mod" >> go.mod
 assert_stdout "go.mod gives all" "./..."
@@ -216,7 +216,9 @@ assert_stdout "Makefile gives all" "./..."
 
 reset_fixture
 touch .golangci.yml
-assert_stdout ".golangci.yml gives all" "./..."
+mkdir -p scripts
+touch scripts/check-comments.allow scripts/check-filesize.allow
+assert_stdout "lint config and allow-lists give empty output" ""
 
 reset_fixture
 mkdir -p .github
