@@ -22,7 +22,7 @@ import (
 )
 
 // candFixtureJSON is this machine's seven candidates, with the names the store
-// derives for them: the same data as round 1's configedit_test.go fixture.
+// derives for them: the same data as configedit_test.go's fixture.
 const candFixtureJSON = `[
   {"name": "gemini-3.8-flash-high", "harness": "agy", "provider": "google", "model": "gemini-3.8-flash-high"},
   {"name": "claude-sonnet-4-6", "harness": "agy", "provider": "agy-extra", "model": "claude-sonnet-4-6"},
@@ -33,7 +33,7 @@ const candFixtureJSON = `[
   {"name": "gpt-5.6-terra", "harness": "codex", "provider": "openai", "model": "gpt-5.6-terra:high"}
 ]`
 
-// candFixtureDoc is round 1's fixture doc: the seven candidates above, the
+// candFixtureDoc is the fixture doc: the seven candidates above, the
 // three actors, no custom agents, and a policy that allows the yolo tiers the
 // actors carry. It also carries the servers the placement picker offers, with
 // the builder placed on one of them.
@@ -96,7 +96,7 @@ func candFixtureDocWithLibrarian(t *testing.T) relevo.ConfigDoc {
 	return doc
 }
 
-// candFixtureGates is §8's gate fixture, hung on railNow: gemini until
+// candFixtureGates is the gate fixture, hung on railNow: gemini until
 // cleared, claude-sonnet-4-6 in 20h, deepseek in 1d and gpt in 24d.
 func candFixtureGates() []availability.Gate {
 	return []availability.Gate{
@@ -130,27 +130,21 @@ func candUnusedReport() view.Report {
 	return rep
 }
 
-// candEnv is the widget.Env the view's pure helpers are called with.
 func candEnv(rep view.Report) widget.Env {
 	return widget.Env{Loaded: true, Now: railNow, Report: rep, Width: 132, Height: 34}
 }
 
-// goldenCandidatesModel is the candidates goldens' builder: a loaded shell, the
-// `:candidates` command, and its doc load drained.
 func goldenCandidatesModel(t *testing.T, width, height int, fa *fakeActions, rep view.Report) Model {
 	t.Helper()
 	m := goldenActionModel(t, width, height, fa, rep)
 	return drain(t, m, execLine("candidates", m.env(), m.prefs))
 }
 
-// candActionEnv is the view's widget.Env with an widget.Actions seam: the key tests pass an
-// env whose widget.Actions is the fake under test.
 func candActionEnv(a widget.Actions, rep view.Report) widget.Env {
 	return widget.Env{Ctx: context.Background(), Actions: a, Loaded: true, Now: railNow,
 		Report: rep, Width: 132, Height: 34}
 }
 
-// candView loads a candidates view over fa's doc at width x height.
 func candView(t *testing.T, fa *fakeActions, rep view.Report, width, height int) candidatesView {
 	t.Helper()
 	env := widget.Env{Ctx: context.Background(), Actions: fa, Report: rep, Loaded: true,
@@ -160,7 +154,6 @@ func candView(t *testing.T, fa *fakeActions, rep view.Report, width, height int)
 	return next.(candidatesView)
 }
 
-// rowNames is the table's candidate names in order.
 func rowNames(rows []candRow) []string {
 	out := make([]string, 0, len(rows))
 	for _, r := range rows {
@@ -169,8 +162,8 @@ func rowNames(rows []candRow) []string {
 	return out
 }
 
-// runCmd runs one tea.Cmd, unwrapping a batch's own commands so an action's
-// workingMsg and actionMsg both fire.
+// Unwraps a batch's own commands so an action's workingMsg and actionMsg
+// both fire.
 func runCmd(t *testing.T, cmd tea.Cmd) tea.Msg {
 	t.Helper()
 	if cmd == nil {
@@ -406,7 +399,7 @@ func TestCandidatesEnterAndAddOpenForm(t *testing.T) {
 }
 
 // Keys list the footer set and HelpKeys the full set: `↑↓ move` lives only in
-// the help overlay at 132 columns (§10).
+// the help overlay at 132 columns.
 func TestCandidatesKeysAndHelpKeys(t *testing.T) {
 	v := candView(t, &fakeActions{doc: candFixtureDoc(t)}, candGatedReport(), 132, 34)
 
