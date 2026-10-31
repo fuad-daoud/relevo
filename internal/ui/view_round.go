@@ -12,11 +12,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// envNow is the clock a view hands the roundPane: the shell reads time once
-// per call (widget.Env.Now).
 func envNow(env widget.Env) func() time.Time { return func() time.Time { return env.Now } }
 
-// newRoundPane builds a pane lent everything widget.Env carries (§4.4, R2.4).
 func newRoundPane(env widget.Env) roundPane {
 	return roundPane{
 		src:     env.Src,
@@ -29,10 +26,6 @@ func newRoundPane(env widget.Env) roundPane {
 	}
 }
 
-// newRoundView targets a live binding's round. round == 0 means the
-// default: pointDetailAt's rule (paneRound). A non-zero round is set
-// after the point, with the caches cleared like stepRound does, and its
-// fetch is issued (§4.5, R2.4).
 func newRoundView(env widget.Env, key string, round int) (widget.View, tea.Cmd) {
 	p := newRoundPane(env)
 	p.actions = env.Actions != nil
@@ -62,8 +55,7 @@ func newRoundView(env widget.Env, key string, round int) (widget.View, tea.Cmd) 
 	return roundView{pane: p, actions: env.Actions != nil}, cmd
 }
 
-// newChainRoundView targets a member's round from a chain's step list, where
-// the member's row is not in the shell's report: it opens the round against a
+// The member's row is not in the shell's report: the round opens against a
 // report carrying the chain's own member rows, and carries them as the view's
 // extra so every later status refresh keeps the pane's target resolvable.
 func newChainRoundView(env widget.Env, key string, round int, members []view.BindingStatus, crumbs []string) (widget.View, tea.Cmd) {
@@ -77,8 +69,6 @@ func newChainRoundView(env widget.Env, key string, round int, members []view.Bin
 	return v, cmd
 }
 
-// newHistRoundView targets an archived binding's round through
-// pointDetailAtHist. round == 0 means the default (Rounds) (§4.5, R2.4).
 func newHistRoundView(env widget.Env, h relevo.HistoryBinding, round int) (widget.View, tea.Cmd) {
 	p := newRoundPane(env)
 	p.actions = false
@@ -99,9 +89,8 @@ func newHistRoundView(env widget.Env, h relevo.HistoryBinding, round int) (widge
 	return roundView{pane: p}, cmd
 }
 
-// row finds a report row by key (BindingStatus.Key()): a mastermind row keys
-// by Name, a server row by owner/name, so two clients' same-named bindings
-// never collide. Moved from model.go (R2.8).
+// A mastermind row keys by Name, a server row by owner/name, so two clients'
+// same-named bindings never collide.
 func row(rep view.Report, key string) *view.BindingStatus {
 	for i := range rep.Bindings {
 		if rep.Bindings[i].Key() == key {
@@ -111,11 +100,10 @@ func row(rep view.Report, key string) *view.BindingStatus {
 	return nil
 }
 
-// paneRound returns the round the pane opens on (#428). While a round is in
-// flight, r.Round is the running round, so Round - 1 alone wrongly targets the
-// previous (finished) round instead of the live tail. It returns r.PlanRound
-// when > 0, else r.Round - 1 (a binding with no plan yet, or a row from an
-// older relevo serve whose JSON lacks plan_round).
+// While a round is in flight, r.Round is the running round, so Round - 1 alone
+// wrongly targets the previous (finished) round instead of the live tail:
+// prefer r.PlanRound when > 0, else r.Round - 1 (a binding with no plan yet,
+// or a row from an older relevo serve whose JSON lacks plan_round).
 func paneRound(r view.BindingStatus) int {
 	if r.PlanRound > 0 {
 		return r.PlanRound
@@ -123,8 +111,6 @@ func paneRound(r view.BindingStatus) int {
 	return r.Round - 1
 }
 
-// roundsOf returns the count of sent rounds (§2.2): r.PlanRound when it is > 0,
-// else r.Round.
 func roundsOf(r view.BindingStatus) int {
 	if r.PlanRound > 0 {
 		return r.PlanRound
@@ -132,11 +118,9 @@ func roundsOf(r view.BindingStatus) int {
 	return r.Round
 }
 
-// roundView is the full-screen round detail: today's pane, hosted as a
-// view (§4.5).
 type roundView struct {
 	pane    roundPane
-	actions bool // widget.Actions != nil at construction: the action keys are shown (r1)
+	actions bool
 	// extra carries report rows the shell's report no longer holds: a chain's
 	// own members are folded into its synthetic row by the cockpit's read
 	// model, so a round drilled in from the chains view lends them back for
@@ -155,9 +139,7 @@ type roundView struct {
 	detailRow *view.BindingStatus
 }
 
-// mergeRows is rep with extra appended, one loop, dropping any extra row the
-// report already carries under the same key: the shell's own row wins, and a
-// member spliced in twice is one row.
+// The shell's own row wins, and a member spliced in twice is one row.
 func mergeRows(rep view.Report, extra []view.BindingStatus) view.Report {
 	if len(extra) == 0 {
 		return rep
@@ -185,9 +167,8 @@ func (r roundView) Crumbs() []string {
 	return []string{r.pane.detail.name, fmt.Sprintf("r%d", r.pane.detail.round)}
 }
 
-// Context is the context row. It reads the same report the pane does, with
-// the view's own rows merged in, so a chain member's round names its binding
-// after a status refresh as it did when it was opened.
+// The view's own rows are merged in, so a chain member's round names its
+// binding after a status refresh as it did when it was opened.
 func (r roundView) Context(env widget.Env) (string, string) {
 	b := row(r.rows(env), r.pane.detail.name)
 
@@ -211,10 +192,8 @@ func (r roundView) Context(env widget.Env) (string, string) {
 	return left, right
 }
 
-// contextLine joins line 1 from the state-and-time cell, the round's own
-// cells and the round-of-n cell on the right. The state-and-time cell never
-// drops; the cells after it drop whole, from the right, while the line alone
-// is still too wide -- the writers' own rule, kept for readers (round 5b).
+// When the line is too wide, the cells after the state-and-time cell drop
+// whole, from the right; the state-and-time cell never drops.
 func contextLine(stateCell string, cells []string, right string, width int) (string, string) {
 	build := func() string {
 		s := stateCell
@@ -234,16 +213,12 @@ func contextLine(stateCell string, cells []string, right string, width int) (str
 	return left, right
 }
 
-// roundStateCell is line 1's first cell: the state chip and the age, drawn
-// the same way for a writer and a reader with the same state.
-// TestReaderHeaderSharesTheWriterLayout pins that sharing.
+// A writer and a reader with the same state draw the same cell.
 func roundStateCell(b view.BindingStatus, now time.Time) string {
 	pill, age := roundState(b, now)
 	return pill + age
 }
 
-// roundState is the state chip and the age behind roundStateCell: the words
-// and styles the fleet's group draws, then the age the row's own rule gives.
 func roundState(b view.BindingStatus, now time.Time) (pill, age string) {
 	g := groupOf(b)
 	var pStyle lipgloss.Style
@@ -283,12 +258,6 @@ func roundState(b view.BindingStatus, now time.Time) (pill, age string) {
 	return "   " + widget.Chip(pStyle, pWord), "   " + ageStr
 }
 
-// contextCells is what line 1 draws after its state-and-time cell. A reader
-// round shows its artifacts count and total size, "repository unchanged" once
-// the round has closed, and the actor, its shape, its mastermind and its scratch
-// worktree; a writer shows its candidate, its mastermind, its branch and a dirty
-// tree. The cells drop from the right, so a reader loses its scratch worktree
-// first, then its mastermind, its shape and its actor (round 5b).
 func (p roundPane) contextCells(b view.BindingStatus) []string {
 	if p.reader {
 		return p.readerContextCells(b)
@@ -308,16 +277,13 @@ func (p roundPane) contextCells(b view.BindingStatus) []string {
 	return cells
 }
 
-// readerContextCells is a reader round's cells after the state-and-time: the
-// artifact facts, the closed-round note, then the actor, its shape, its
-// mastermind and its scratch worktree.
 func (p roundPane) readerContextCells(b view.BindingStatus) []string {
 	var cells []string
 	c := p.detail.cache[tabArtifacts]
 	if artifactCount(c) > 0 {
 		cells = append(cells,
 			widget.FaintStyle.Render("  ·  ")+widget.MutedStyle.Render(artifactsWord(artifactCount(c))),
-			widget.FaintStyle.Render("  ·  ")+widget.MutedStyle.Render(relevo.ArtifactSizeText(artifactTotalSize(c))))
+			widget.FaintStyle.Render("  ·  ")+widget.MutedStyle.Render(view.ArtifactSizeText(artifactTotalSize(c))))
 	}
 	if !p.roundOpen(b) {
 		cells = append(cells, widget.FaintStyle.Render("  ·  ")+widget.MutedStyle.Render("repository unchanged"))
@@ -330,8 +296,6 @@ func (p roundPane) readerContextCells(b view.BindingStatus) []string {
 	return cells
 }
 
-// mastermindWordOf names the mastermind as the context row does: the client label
-// when the binding has one, the mastermind cell otherwise.
 func mastermindWordOf(b view.BindingStatus) string {
 	if b.OwnerLabel != "" {
 		return "client " + b.OwnerLabel
@@ -346,10 +310,6 @@ func (p roundPane) roundOpen(b view.BindingStatus) bool {
 	return p.detail.live && p.detail.round == b.Round && b.RoundEnd.IsZero()
 }
 
-// scratchText names a reader round's throwaway worktree: the head its
-// baseline was cut from (the binding's RoundBaselineHead, shortened) and the
-// uncommitted diff it carried. A round with no recorded head names the
-// worktree alone.
 func scratchText(head string) string {
 	if head == "" {
 		return "scratch + dirty diff"
@@ -361,9 +321,6 @@ func scratchText(head string) string {
 }
 
 func (r roundView) Keys() []widget.KeyHelp {
-	// A reader round's footer is its own (round 5b): no x stop, no g gate,
-	// no o shell; enter opens the artifacts tab's selected file, and send
-	// next and retry on are the reader's actions.
 	if r.pane.reader {
 		var keys []widget.KeyHelp
 		if r.pane.detail.active == tabArtifacts {
@@ -417,7 +374,7 @@ func (r roundView) HelpKeys() []widget.KeyHelp {
 func (r roundView) Capturing() bool { return false }
 
 func (r roundView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
-	// Every call lends the pane the shell's current report and box (§4.4):
+	// Every call lends the pane the shell's current report and box:
 	// invalidate, the ages and the fetch all read these. The pane's own rows
 	// and its fetched detail row ride along, or a member the shell's report
 	// no longer carries -- or the three figures the fleet row leaves nil --
@@ -447,8 +404,8 @@ func (r roundView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 		return r, cmd
 
 	case tabMsg:
-		// A reply always ends the fetch it answers, stale or not (today's
-		// tabMsg arm); onTab then drops a mismatched one.
+		// A reply always ends the fetch it answers, stale or not; onTab then drops
+		// a mismatched one.
 		r.pane.tabInFlight = false
 		r.pane = r.pane.onTab(msg)
 		return r, nil
@@ -482,8 +439,6 @@ func (r roundView) updateKey(msg tea.KeyMsg, env widget.Env) (widget.View, tea.C
 			return r, cmd
 		}
 	}
-	// The artifacts tab's own keys (round 5b): enter opens the selected
-	// file, the arrows move the cursor between files.
 	if r.pane.reader && r.pane.detail.active == tabArtifacts {
 		switch msg.String() {
 		case "enter":
@@ -542,7 +497,6 @@ func (r roundView) updateKey(msg tea.KeyMsg, env widget.Env) (widget.View, tea.C
 	return r, cmd
 }
 
-// Body is the pane, given the shell's full body box (§5.4).
 func (r roundView) Body(env widget.Env, width, height int) string {
 	r.pane.width = width
 	r.pane.rows = height

@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/ingest"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/transcript"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // showFixtureDir is the shared golden fixture ingest's own tests use,
@@ -989,67 +990,6 @@ func TestShowTranscriptRendersTheStreamWithoutALog(t *testing.T) {
 	})
 }
 
-// TestFindingsRound pins the pure resolver behind `show --findings`: a
-// requested round within upper is taken as is, one above upper is refused with
-// the plan-round count, and no --round scans newest-first for the round that
-// holds the consult's findings, ErrNoFindings when none does.
-func TestFindingsRound(t *testing.T) {
-	t.Parallel()
-
-	existsErr := errors.New("exists failed")
-	holds := func(rounds ...int) func(int) (bool, error) {
-		return func(round int) (bool, error) {
-			for _, r := range rounds {
-				if r == round {
-					return true, nil
-				}
-			}
-			return false, nil
-		}
-	}
-
-	cases := []struct {
-		name      string
-		requested int
-		upper     int
-		exists    func(int) (bool, error)
-		want      int
-		wantErr   string
-		wantNone  bool
-	}{
-		{name: "requested round within upper", requested: 1, upper: 1, exists: holds(), want: 1},
-		{name: "requested round above upper", requested: 2, upper: 1, exists: holds(), wantErr: "round 2: binding has 1 rounds"},
-		{name: "newest held round wins", requested: 0, upper: 2, exists: holds(1), want: 1},
-		{name: "newest of two held rounds wins", requested: 0, upper: 2, exists: holds(1, 2), want: 2},
-		{name: "no round holds the findings", requested: 0, upper: 2, exists: holds(), wantNone: true},
-		{name: "exists error propagates", requested: 0, upper: 2, exists: func(int) (bool, error) { return false, existsErr }, wantErr: "exists failed"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			round, err := findingsRound(tc.requested, tc.upper, tc.exists)
-			if tc.wantNone {
-				if !errors.Is(err, ErrNoFindings) {
-					t.Fatalf("findingsRound(%d, %d) err = %v, want ErrNoFindings", tc.requested, tc.upper, err)
-				}
-				return
-			}
-			if tc.wantErr != "" {
-				if err == nil || err.Error() != tc.wantErr {
-					t.Fatalf("findingsRound(%d, %d) err = %v, want %q", tc.requested, tc.upper, err, tc.wantErr)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("findingsRound(%d, %d): %v", tc.requested, tc.upper, err)
-			}
-			if round != tc.want {
-				t.Errorf("findingsRound(%d, %d) = %d, want %d", tc.requested, tc.upper, round, tc.want)
-			}
-		})
-	}
-}
-
 // TestShowLiveFindingsOnBindingWithNoRounds pins #593 on the live path: a
 // consult is recorded on the binding's current round, which has no plan entry
 // yet, so `show --findings <id>` must read it with and without --round.
@@ -1119,8 +1059,8 @@ func TestShowLiveFindingsUnknownConsult(t *testing.T) {
 	_, err := Show(context.Background(), rt, ShowOptions{
 		Name: "consultonly", Round: 0, Section: ShowFindings, FindingsID: "zzz",
 	})
-	if !errors.Is(err, ErrNoFindings) {
-		t.Fatalf("err = %v, want ErrNoFindings", err)
+	if !errors.Is(err, view.ErrNoFindings) {
+		t.Fatalf("err = %v, want view.ErrNoFindings", err)
 	}
 	if !strings.Contains(err.Error(), "zzz") || !strings.Contains(err.Error(), "consultonly") {
 		t.Errorf("err = %v, want it to name consult zzz on consultonly", err)

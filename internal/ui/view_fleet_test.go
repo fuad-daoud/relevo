@@ -11,7 +11,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// TestWhatAge ports the rail's whatAge assertions to view_fleet.go (R2.10).
 func TestWhatAge(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -61,8 +60,6 @@ func TestWhatAge(t *testing.T) {
 	}
 }
 
-// TestNowCellCarriesTheStaleLabel is the stale-label port (#135): a NEEDS
-// YOU row carries its stale age in the NOW cell.
 func TestNowCellCarriesTheStaleLabel(t *testing.T) {
 	b := view.BindingStatus{
 		Name: "webshop", Round: 4, Display: "NEEDS YOU", BuilderKind: "agy",
@@ -74,8 +71,6 @@ func TestNowCellCarriesTheStaleLabel(t *testing.T) {
 	}
 }
 
-// TestCandidateText pins the ON cell's naming rule in the one place it
-// lives: the model part is everything after the second '/'.
 func TestCandidateText(t *testing.T) {
 	cases := map[string]string{
 		"cline-pass/deepseek-v4.1-flash#high": "deepseek-v4.1-flash#high",
@@ -89,9 +84,6 @@ func TestCandidateText(t *testing.T) {
 	}
 }
 
-// TestSpendText pins the SPEND cell (A2): money only. Measured and estimated
-// dollars sum, a '~' marks a partly estimated sum, a plan lane reads "plan",
-// and anything under a cent reads "<$0.01".
 func TestSpendText(t *testing.T) {
 	cases := []struct {
 		name string
@@ -117,9 +109,6 @@ func TestSpendText(t *testing.T) {
 	}
 }
 
-// TestFleetBodyHeader pins A1: the table's first body line is the header, and
-// TestFleetBodyHeader pins D4: the table's first list lines are section lines,
-// and neither the loading nor the empty body has one.
 func TestFleetBodyHeader(t *testing.T) {
 	rows := []view.BindingStatus{{Name: "webshop", Round: 4, Display: "ACTIVE", BuilderStatus: "working"}}
 	loaded := widget.Env{Loaded: true, Now: railNow, Report: view.Report{Bindings: rows}, Width: 140, Height: 40}
@@ -145,7 +134,6 @@ func TestFleetBodyHeader(t *testing.T) {
 	}
 }
 
-// TestFleetHeaderSurvivesNarrowing pins D4: at 80 columns, name and now survive.
 func TestFleetHeaderSurvivesNarrowing(t *testing.T) {
 	b := view.BindingStatus{
 		Name: "webshop", Round: 4, Display: "ACTIVE", BuilderStatus: "working",
@@ -161,9 +149,6 @@ func TestFleetHeaderSurvivesNarrowing(t *testing.T) {
 	}
 }
 
-// TestNeedsYouGrammarIsShared pins A3: the header and the fleet's context
-// line read "1 needs you" for one and "N need you" for more, from the one
-// helper, so they cannot drift.
 func TestNeedsYouGrammarIsShared(t *testing.T) {
 	one := splitModel(t, 140, 40, view.BindingStatus{Name: "webshop", Round: 1, Display: "NEEDS YOU"})
 	if h := stripANSI(one.headerView(one.env())); !strings.Contains(h, "● 1 needs you") {
@@ -187,9 +172,6 @@ func TestNeedsYouGrammarIsShared(t *testing.T) {
 	}
 }
 
-// TestFleetFilter pins A4: '/' opens a capturing input, the typed text keeps
-// only matching rows, the selection survives, enter keeps the filter, and
-// esc clears it.
 func TestFleetFilter(t *testing.T) {
 	rows := []view.BindingStatus{
 		{Name: "webshop", Round: 4, Display: "ACTIVE", CWD: "/home/x/web"},
@@ -201,7 +183,6 @@ func TestFleetFilter(t *testing.T) {
 	f.showDone = true
 	key := func(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
 
-	// Put the selection on "docs" first: it must survive the filter.
 	all := f.rows(env)
 	for i, b := range all {
 		if b.Name == "docs" {
@@ -212,14 +193,12 @@ func TestFleetFilter(t *testing.T) {
 		t.Fatalf("cursor on %q, want docs", got)
 	}
 
-	// '/' opens the input; it captures every key while open.
 	next, _ := f.Update(key('/'), env)
 	f = next.(fleetView)
 	if !f.Capturing() {
 		t.Fatal("the filter input must capture keys while open")
 	}
 
-	// Type "do": only docs matches, and it stays selected.
 	for _, r := range "do" {
 		next, _ = f.Update(key(r), env)
 		f = next.(fleetView)
@@ -234,7 +213,6 @@ func TestFleetFilter(t *testing.T) {
 		t.Errorf("the context line must name the filter, right = %q", stripANSI(right))
 	}
 
-	// enter keeps the filter and closes the input.
 	next, _ = f.Update(tea.KeyMsg{Type: tea.KeyEnter}, env)
 	f = next.(fleetView)
 	if f.Capturing() {
@@ -244,7 +222,6 @@ func TestFleetFilter(t *testing.T) {
 		t.Errorf("enter must keep the filter, rows = %v", got)
 	}
 
-	// esc at the fleet, not capturing, clears it.
 	next, _ = f.Update(tea.KeyMsg{Type: tea.KeyEsc}, env)
 	f = next.(fleetView)
 	if got := f.rows(env); len(got) != len(rows) {
@@ -254,7 +231,6 @@ func TestFleetFilter(t *testing.T) {
 		t.Errorf("the cleared filter must leave the context line, right = %q", stripANSI(right))
 	}
 
-	// esc while the input is open clears it and closes.
 	next, _ = f.Update(key('/'), env)
 	f = next.(fleetView)
 	next, _ = f.Update(key('w'), env)
@@ -272,8 +248,6 @@ func TestFleetFilter(t *testing.T) {
 	}
 }
 
-// TestFleetFilterMatchesEveryShownField pins A4's field list: key, actor,
-// candidate, mastermind, repo and state all match, case-insensitively.
 func TestFleetFilterMatchesEveryShownField(t *testing.T) {
 	b := view.BindingStatus{
 		Name: "webshop", Round: 4, Display: "PAUSED", Role: "reviewer",
@@ -290,8 +264,6 @@ func TestFleetFilterMatchesEveryShownField(t *testing.T) {
 	}
 }
 
-// TestFleetColumnsAndNarrowDropOrder pins D4: the new drop order mastermind first,
-// then spend, then candidate.
 func TestFleetColumnsAndNarrowDropOrder(t *testing.T) {
 	b := view.BindingStatus{
 		Name: "webshop", Round: 4, Display: "ACTIVE", BuilderStatus: "working",
@@ -329,8 +301,6 @@ func TestFleetColumnsAndNarrowDropOrder(t *testing.T) {
 	}
 }
 
-// TestFleetNeedsYouSecondLine pins §2.3 and D4: a NEEDS YOU row with a Waiting
-// line gets a second line with the quote glyph "╰ ".
 func TestFleetNeedsYouSecondLine(t *testing.T) {
 	b := view.BindingStatus{
 		Name: "webshop", Round: 4, Display: "NEEDS YOU",
@@ -349,7 +319,6 @@ func TestFleetNeedsYouSecondLine(t *testing.T) {
 		t.Errorf("the question line belongs to row 0, got %d", lines[2].row)
 	}
 
-	// No Waiting line: no second line.
 	b.Waiting = &view.Waiting{Cause: "blocked"}
 	env.Report = view.Report{Bindings: []view.BindingStatus{b}}
 	if got := len(f.fleetListLines(env, 140)); got != 3 {

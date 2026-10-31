@@ -142,7 +142,7 @@ func RunSource(ctx context.Context, src widget.Source, opts Options) error {
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
 
 	// Every internal write -- including slog's -- is captured into the
-	// footer and :log while the cockpit runs (§4.4), so nothing can corrupt
+	// footer and :log while the cockpit runs, so nothing can corrupt
 	// the screen. restore runs on the way out, panic included.
 	restore, err := captureStderr(p.Send)
 	if err != nil {

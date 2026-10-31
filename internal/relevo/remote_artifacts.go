@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
+	relevoview "github.com/fuad-daoud/relevo/internal/view"
 )
 
 // downloadTemp writes r into a new temp file beside final and returns its
@@ -120,7 +121,7 @@ func fetchCatchUpArtifacts(ctx context.Context, rt Runtime, b store.Binding, vie
 	if cap := rt.Policy.ArtifactMaxBytes(); artifactListTotal(list.Files) > cap {
 		slog.Warn("remote artifacts over the cap; not fetched", "server", server, "name", name, "round", n,
 			"bytes", artifactListTotal(list.Files))
-		cf.ArtifactCap = artifactCapReason(artifactListTotal(list.Files), cap)
+		cf.ArtifactCap = relevoview.ArtifactCapReason(artifactListTotal(list.Files), cap)
 		cf.release()
 		return false
 	}

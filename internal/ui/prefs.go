@@ -8,7 +8,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// prefs is what the ui's preference document holds (§4.6, reduced in round
+// prefs is what the ui's preference document holds (reduced in round
 // 2): the sort order, and the dashboard's applied query and sort column. It
 // lives in the machine database's kv row "ui" (or "serve.ui" for the server
 // ui) -- the file ui.json before an earlier round -- written by the ui alone
@@ -25,9 +25,9 @@ type prefs struct {
 	DashboardSort string `json:"dashboard_sort,omitempty"`
 }
 
-// PrefsStore is where the ui's preferences live (P3b plan §4.4): the kv row Key
+// PrefsStore is where the ui's preferences live: the kv row Key
 // in KV. A zero PrefsStore -- KV nil -- keeps the ui stateless, nothing loaded,
-// nothing saved, exactly as an empty Options.PrefsPath did.
+// nothing saved.
 type PrefsStore struct {
 	KV  db.KV
 	Key string

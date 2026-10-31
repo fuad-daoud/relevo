@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/text"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // ErrNothingToStop reports a stop on a binding with no round in flight. The
@@ -286,7 +287,7 @@ func closeStopped(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 	}
 	payload, note := stopPayload(how, b.Name, stoppedRound, "", haveReport, closeClause(rt, b, stoppedRound), b.Shape)
 	if fellBack {
-		note = joinNotes(note, readerFallbackNote)
+		note = joinNotes(note, view.ReaderFallbackNote)
 	}
 
 	next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil, nil, "", true, "", pathscope.Verdict{})

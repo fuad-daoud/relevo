@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/sanitize"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 const showUsage = `usage: relevo show <name> [--round N] [--prompt|--report|--diff|--drift|--log|--transcript|--gate|--findings ID|--output|--artifacts|--artifact REL] [--json] [--peek]
@@ -388,7 +389,7 @@ func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB b
 
 	if res.Section == relevo.ShowArtifacts {
 		for _, f := range res.Artifacts {
-			fmt.Println(relevo.ArtifactLine(f))
+			fmt.Println(view.ArtifactLine(f))
 		}
 		stampViewed()
 		return nil
@@ -396,7 +397,7 @@ func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB b
 
 	if res.Section == relevo.ShowLog {
 		for _, e := range res.Events {
-			fmt.Println(relevo.LogLine(e))
+			fmt.Println(view.LogLine(e))
 		}
 		stampViewed()
 		return nil
@@ -526,7 +527,7 @@ func printLog(rt relevo.Runtime, name string, round, after int, asJSON, follow, 
 			_ = json.NewEncoder(os.Stdout).Encode(e)
 			return
 		}
-		fmt.Println(relevo.LogLine(e))
+		fmt.Println(view.LogLine(e))
 	}
 
 	entries, err := rt.Store.ReadLogAfter(name, after)

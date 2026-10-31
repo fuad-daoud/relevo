@@ -40,12 +40,12 @@ func (a *mastermindActions) runtime() relevo.Runtime {
 
 // resolve maps a row key to the runtime that owns it and the bare binding
 // name inside that runtime's store. `relevo ui` is welded to one mastermind
-// runtime, so every key resolves to it under its own name (§4.2).
+// runtime, so every key resolves to it under its own name.
 func (a *mastermindActions) resolve(key string) (relevo.Runtime, string, bool) {
 	return a.runtime(), key, true
 }
 
-// Stop ends the binding's open round (§4.2). Nothing to stop is an answer,
+// Stop ends the binding's open round. Nothing to stop is an answer,
 // not a failure: the text says so and Err stays nil, exactly as
 // `relevo stop` prints it (cmd/relevo/main.go cmdStop).
 func (a *mastermindActions) Stop(ctx context.Context, key string) widget.Result {
@@ -61,7 +61,7 @@ func (a *mastermindActions) Stop(ctx context.Context, key string) widget.Result 
 		// command. It is an answer, not a failure, exactly as the binding case
 		// is -- Err stays nil either way.
 		if row, cerr := rt.Store.Chain(name); cerr == nil && row.Status == string(chain.StatusHalted) {
-			return widget.Result{Text: relevo.ChainHaltedStopText(name), Refresh: true}
+			return widget.Result{Text: chain.ChainHaltedStopText(name), Refresh: true}
 		}
 		return widget.Result{Text: fmt.Sprintf("nothing to stop: %s has no open round", name), Refresh: true}
 	}
@@ -72,7 +72,7 @@ func (a *mastermindActions) Stop(ctx context.Context, key string) widget.Result 
 }
 
 // Done marks the binding done. On ErrStopFailed the CLI prints the text and
-// still returns the error, so both come back (§4.2).
+// still returns the error, so both come back.
 func (a *mastermindActions) Done(ctx context.Context, key string) widget.Result {
 	rt, name, ok := a.resolve(key)
 	if !ok {
@@ -90,7 +90,7 @@ func (a *mastermindActions) Done(ctx context.Context, key string) widget.Result 
 }
 
 // Unbind archives the binding: the cockpit's unbind always passes archive
-// true, so the round log survives (§4.2).
+// true, so the round log survives.
 func (a *mastermindActions) Unbind(ctx context.Context, key string) widget.Result {
 	rt, name, ok := a.resolve(key)
 	if !ok {
@@ -109,7 +109,7 @@ func (a *mastermindActions) Unbind(ctx context.Context, key string) widget.Resul
 // Gate records a rate limit on subject's provider and forwards it, the same
 // text `relevo gate <token>` prints (cmd/relevo/main.go gateUnavailable).
 // subject is a candidate name or canonical token; forDur 0 means "until
-// cleared" (§4.2, §4.3).
+// cleared".
 func (a *mastermindActions) Gate(ctx context.Context, subject string, forDur time.Duration, reason string) widget.Result {
 	rt, _, ok := a.resolve(subject)
 	if !ok {
@@ -148,7 +148,7 @@ func (a *mastermindActions) Gate(ctx context.Context, subject string, forDur tim
 
 // Ungate clears every rate-limit gate on subject's provider and forwards the
 // clear, the same text `relevo gate --clear` prints (cmd/relevo/main.go
-// gateClear). An ungate is never destructive, so it has no confirm (§4.3).
+// gateClear). An ungate is never destructive, so it has no confirm.
 func (a *mastermindActions) Ungate(ctx context.Context, subject string) widget.Result {
 	rt, _, ok := a.resolve(subject)
 	if !ok {
@@ -171,8 +171,8 @@ func (a *mastermindActions) Ungate(ctx context.Context, subject string) widget.R
 	return widget.Result{Text: strings.Join(lines, "\n"), Refresh: true}
 }
 
-// ensureYou returns the human mastermind's id, creating the record on first use
-// (§4.1, spec §6.3). It is idempotent -- mastermind.Init looks the record up by
+// ensureYou returns the human mastermind's id, creating the record on first use.
+// It is idempotent -- mastermind.Init looks the record up by
 // (kind, session) before it creates anything -- and is only called by an
 // action that needs an owner, so a read-only session never creates it. The
 // record is never pruned, because HostPID is 0 (internal/mastermind/prune.go).
@@ -195,7 +195,7 @@ func ensureYou(rt relevo.Runtime) (string, error) {
 }
 
 // Send files planFile as the binding's next round, the same call `relevo send`
-// makes (§4.5). The text is the pick line, the drift line when there is one,
+// makes. The text is the pick line, the drift line when there is one,
 // then the round that was filed.
 func (a *mastermindActions) Send(ctx context.Context, key, planFile string) widget.Result {
 	rt, name, ok := a.resolve(key)
@@ -210,7 +210,7 @@ func (a *mastermindActions) Send(ctx context.Context, key, planFile string) widg
 }
 
 // sendText is what a send prints: the pick line, the drift line when there is
-// one, then `sent round <N> to <name>` (§4.5).
+// one, then `sent round <N> to <name>`.
 func sendText(name string, res relevo.SendResult) string {
 	var lines []string
 	if res.Pick != "" {
@@ -223,7 +223,7 @@ func sendText(name string, res relevo.SendResult) string {
 	return strings.Join(lines, "\n")
 }
 
-// Bind adds a binding of this repo for the human mastermind (§4.5): the same
+// Bind adds a binding of this repo for the human mastermind: the same
 // relevo.Add the `relevo bind` verb calls, with `you` as the owner. The text
 // is `added <name>: builder <candidate> on <tree>`, then the gated note and
 // the pick note, as runAdd prints them (cmd/relevo/main.go:1509-1604).
@@ -271,7 +271,7 @@ func bindPickNote(rt relevo.Runtime, res resolve.Resolution) string {
 	return resolve.PickText("builder", res, rt.Candidates)
 }
 
-// Retry resends a round's plan on another candidate (§4.5): stop the open
+// Retry resends a round's plan on another candidate: stop the open
 // round if there is one (and resend that round), else resend the newest round
 // with a recorded plan; then Send the plan bytes with the candidate, which
 // persists as the binding's builder from that round on.
@@ -291,7 +291,7 @@ func (a *mastermindActions) Retry(ctx context.Context, key, candidate string) wi
 		if round == 0 {
 			// Nothing to stop and nothing plan-shaped on disk: fall back to
 			// the newest round that ought to have a plan, so RetryPlan's own
-			// "no plan recorded for <name> round <N>" is the notice (§6).
+			// "no plan recorded for <name> round <N>" is the notice.
 			b, lerr := rt.Store.Load(name)
 			if lerr != nil {
 				return widget.Result{Err: lerr, Refresh: true}
@@ -321,7 +321,7 @@ func (a *mastermindActions) Retry(ctx context.Context, key, candidate string) wi
 }
 
 // lastPlannedRound is the highest round with a plan recorded, 0 when none is:
-// the round a retry resends when the binding has no open round (§4.5).
+// the round a retry resends when the binding has no open round.
 func lastPlannedRound(rt relevo.Runtime, name string) int {
 	files, err := rt.Store.RoundFiles(name)
 	if err != nil {
@@ -350,7 +350,7 @@ func plannedRound(base string) (int, bool) {
 	return n, true
 }
 
-// Candidates is a role's candidate names in the role's order (§4.5): what the
+// Candidates is a role's candidate names in the role's order: what the
 // bind and retry prompts cycle through. A role the registry does not know has
 // none.
 func (a *mastermindActions) Candidates(role string) []string {
@@ -365,7 +365,7 @@ func (a *mastermindActions) Candidates(role string) []string {
 	return out
 }
 
-// ConfigDoc is the stored config, freshly read through the store (§4.2). A
+// ConfigDoc is the stored config, freshly read through the store. A
 // runtime with no config store cannot answer.
 func (a *mastermindActions) ConfigDoc() (relevo.ConfigDoc, error) {
 	if a.runtime().Config == nil {
@@ -375,7 +375,7 @@ func (a *mastermindActions) ConfigDoc() (relevo.ConfigDoc, error) {
 }
 
 // ApplyConfig writes one validated edit and reloads this adapter's runtime from
-// the store (§4.2): the sections ConfigWatcher.Refresh would replace. An error
+// the store: the sections ConfigWatcher.Refresh would replace. An error
 // from the write is a failure; a failed reload after a successful write is not,
 // because the write already happened, so the text says so.
 func (a *mastermindActions) ApplyConfig(ctx context.Context, e relevo.ConfigEdit) widget.Result {
@@ -391,7 +391,7 @@ func (a *mastermindActions) ApplyConfig(ctx context.Context, e relevo.ConfigEdit
 	return widget.Result{Text: e.Message, Refresh: true}
 }
 
-// Probe spawns one candidate's harness headless and measures it (§4.2), the
+// Probe spawns one candidate's harness headless and measures it, the
 // same relevo.Probe `relevo probe <token>` runs. The result is one formatted
 // line; a sample carrying an error is that error.
 func (a *mastermindActions) Probe(ctx context.Context, name string) widget.Result {
@@ -453,20 +453,20 @@ func (a *mastermindActions) ResetAgentFile(ctx context.Context, kind, agent stri
 	return widget.Result{Text: "reset " + kind + "'s " + agent, Refresh: true}
 }
 
-// actionMsg is what an action's tea.Cmd returns (§3).
+// actionMsg is what an action's tea.Cmd returns.
 type actionMsg struct {
 	verb, key string
 	res       widget.Result
 }
 
-// stderrMsg carries one captured stderr/slog line (§3, §4.4).
+// stderrMsg carries one captured stderr/slog line.
 type stderrMsg struct{ line string }
 
 // workingMsg marks one action in flight, so the footer can show it until its
-// actionMsg arrives (§4.3).
+// actionMsg arrives.
 type workingMsg struct{ verb, key string }
 
-// openOverlayMsg asks the shell to show an overlay (§3).
+// openOverlayMsg asks the shell to show an overlay.
 type openOverlayMsg struct{ ov overlay }
 
 // openOverlay returns the command a key returns to raise ov.
@@ -475,7 +475,7 @@ func openOverlay(ov overlay) tea.Cmd {
 }
 
 // runAction is what a confirm's yes or a prompt's enter returns: mark the
-// action in flight, then run it off the update loop (§5).
+// action in flight, then run it off the update loop.
 func runAction(ctx context.Context, verb, key string, f func(context.Context) widget.Result) tea.Cmd {
 	return tea.Batch(
 		func() tea.Msg { return workingMsg{verb: verb, key: key} },

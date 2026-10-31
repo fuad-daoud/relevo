@@ -16,7 +16,7 @@ import (
 
 // TestCommandModalGroupsSections: a report with 2 live, 1 done binding and 1
 // gate, typed `r`. The stripped box shows VIEWS, then BINDINGS with the done
-// binding last, and the selected row is the first match (§3.1, §5).
+// binding last, and the selected row is the first match.
 func TestCommandModalGroupsSections(t *testing.T) {
 	rep := view.Report{
 		Bindings: []view.BindingStatus{
@@ -69,7 +69,7 @@ func TestCommandModalGroupsSections(t *testing.T) {
 }
 
 // TestCommandModalFoldsOverflow: 12 bindings, empty input. It shows 8 rows and
-// `+ N more match` (§3.1, §5).
+// `+ N more match`.
 func TestCommandModalFoldsOverflow(t *testing.T) {
 	var bindings []view.BindingStatus
 	for i := 1; i <= 12; i++ {
@@ -114,7 +114,7 @@ func TestCommandModalFoldsOverflow(t *testing.T) {
 }
 
 // TestHelpModalColumns: on :fleet with actions, ACT ON THE ROW holds x and D,
-// MOVE & VIEW holds . and /, and ANYWHERE holds : (§3.2, §5).
+// MOVE & VIEW holds . and /, and ANYWHERE holds :.
 func TestHelpModalColumns(t *testing.T) {
 	m := goldenActionModel(t, 140, 40, &fakeActions{},
 		view.Report{Bindings: allStatesRows(), Gated: gatedGates()})
@@ -153,7 +153,7 @@ func TestHelpModalColumns(t *testing.T) {
 }
 
 // TestHelpNoDuplicateKeys: on :fleet the view's own "/ filter" is not repeated
-// in ANYWHERE (§2.6, §5).
+// in ANYWHERE.
 func TestHelpNoDuplicateKeys(t *testing.T) {
 	m := goldenActionModel(t, 140, 40, &fakeActions{},
 		view.Report{Bindings: allStatesRows(), Gated: gatedGates()})
@@ -169,7 +169,7 @@ func TestHelpNoDuplicateKeys(t *testing.T) {
 
 // TestGateFormOneSubmitCallsGateOnce: a fake widget.Actions. Type 2h, tab, type
 // quota, enter. Gate is called once with 2h and quota. An invalid 2x keeps the
-// box open with an error and focus on for (§3.3, §5).
+// box open with an error and focus on for.
 func TestGateFormOneSubmitCallsGateOnce(t *testing.T) {
 	fa := &fakeActions{result: widget.Result{Text: "gated", Refresh: true}}
 	m := actionModel(t, fa, view.BindingStatus{
@@ -225,8 +225,7 @@ func TestGateFormOneSubmitCallsGateOnce(t *testing.T) {
 	}
 }
 
-// TestGateFormEmptyDurationIsUntilCleared: an empty for field calls Gate with 0
-// (§3.3, §5).
+// TestGateFormEmptyDurationIsUntilCleared: an empty for field calls Gate with 0.
 func TestGateFormEmptyDurationIsUntilCleared(t *testing.T) {
 	fa := &fakeActions{result: widget.Result{Text: "gated", Refresh: true}}
 	m := actionModel(t, fa, view.BindingStatus{
@@ -248,7 +247,7 @@ func TestGateFormEmptyDurationIsUntilCleared(t *testing.T) {
 }
 
 // TestGateFormNoPrompt: the stripped gate form carries no `> ` prompt before
-// its fields; the label already names each field (§2.4, §5).
+// its fields; the label already names each field.
 func TestGateFormNoPrompt(t *testing.T) {
 	m := actionModel(t, &fakeActions{}, view.BindingStatus{
 		Name: "atlas", Round: 4, Display: "ACTIVE",
@@ -264,7 +263,7 @@ func TestGateFormNoPrompt(t *testing.T) {
 }
 
 // TestModalFooterShowsOverlayKeys: with the gate form open, the footer contains
-// `next field` and not `? all keys` (§2.1, §5).
+// `next field` and not `? all keys`.
 func TestModalFooterShowsOverlayKeys(t *testing.T) {
 	m := actionModel(t, &fakeActions{}, view.BindingStatus{
 		Name: "atlas", Round: 4, Display: "ACTIVE",
@@ -284,7 +283,7 @@ func TestModalFooterShowsOverlayKeys(t *testing.T) {
 
 // TestRetryListDisablesCurrentAndGated: three candidates, one current and one
 // gated. sel starts on the ready one, ↑/↓ never land on a disabled one, and
-// enter opens the retry confirm naming it (§3.5, §5).
+// enter opens the retry confirm naming it.
 func TestRetryListDisablesCurrentAndGated(t *testing.T) {
 	fa := &fakeActions{candidates: []string{"current-c", "gated-g", "ready-r"}}
 	b := view.BindingStatus{
@@ -345,7 +344,7 @@ func TestRetryListDisablesCurrentAndGated(t *testing.T) {
 // TestSendPickerListsNewestFirst: a temp dir with three .md files at distinct
 // mtimes and one .txt. The list shows the three .md files, newest first.
 // Typing a filter narrows it. ↓ then enter opens the send confirm with that
-// path (§3.4, §5).
+// path.
 func TestSendPickerListsNewestFirst(t *testing.T) {
 	dir := t.TempDir()
 	files := []struct {
@@ -422,8 +421,7 @@ func TestSendPickerListsNewestFirst(t *testing.T) {
 // TestSendPickerRelativePath: a binding tree with docs/plans/ pre-fills the
 // relative "docs/plans/"; typing a.md resolves against the tree and the send
 // confirm's widget.Actions.Send receives the absolute path. An absolute path typed by
-// the human also works, and the confirm title shows the value as typed
-// (§2.5, §5).
+// the human also works, and the confirm title shows the value as typed.
 func TestSendPickerRelativePath(t *testing.T) {
 	dir := t.TempDir()
 	planDir := filepath.Join(dir, "docs", "plans")
@@ -496,7 +494,7 @@ func TestSendPickerRelativePath(t *testing.T) {
 }
 
 // TestSendPickerCtrlEOpensEditorFlow: ctrl+e returns a non-nil cmd and closes
-// the picker. Assert via the returned overlay state (§3.4, §5).
+// the picker. Assert via the returned overlay state.
 func TestSendPickerCtrlEOpensEditorFlow(t *testing.T) {
 	m := actionModel(t, &fakeActions{}, view.BindingStatus{
 		Name: "atlas", Round: 4, Display: "ACTIVE", CWD: t.TempDir(),

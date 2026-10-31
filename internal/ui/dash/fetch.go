@@ -11,11 +11,10 @@ import (
 
 // fetchFunc is one refresh: the db half through query.Filter, the in-Go
 // half through query.Apply. It is Model.fetchFn's shape, so a test can hand
-// the screen literal rows instead of a database (Task 1).
+// the screen literal rows instead of a database.
 type fetchFunc func(ctx context.Context, q histq.Query) ([]db.RoundRow, error)
 
-// fetchDB is the default fetch (§2: fetch(ctx, db, query) -> rowsMsg |
-// errMsg): one db.Query per refresh, then Apply.
+// fetchDB is the default fetch: one db.Query per refresh, then Apply.
 func (m Model) fetchDB() fetchFunc {
 	return func(ctx context.Context, q histq.Query) ([]db.RoundRow, error) {
 		if m.db == nil {
