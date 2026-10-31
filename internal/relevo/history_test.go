@@ -341,7 +341,7 @@ func TestHistoryOptionsByOverridesQueryByNote(t *testing.T) {
 	}
 }
 
-// TestHistoryFilterResolvesName pins A1 §4.2: a --candidate value with no "/"
+// TestHistoryFilterResolvesName pins that a --candidate value with no "/"
 // resolves to its canonical token, and an unresolved value is left as typed.
 func TestHistoryFilterResolvesName(t *testing.T) {
 	t.Parallel()
@@ -424,7 +424,7 @@ func TestParseSinceMovedKeepsRelevoWrapper(t *testing.T) {
 	}
 }
 
-// TestHistoryOptionsTicketFlagOverridesQuery pins #637: --ticket merges with
+// TestHistoryOptionsTicketFlagOverridesQuery pins that --ticket merges with
 // the -q query like every other flag, with the override note when -q set a
 // different ticket.
 func TestHistoryOptionsTicketFlagOverridesQuery(t *testing.T) {

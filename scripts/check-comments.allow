@@ -102,8 +102,6 @@ internal/relevo/gate_test.go
 internal/relevo/giveuplog.go
 internal/relevo/headless.go
 internal/relevo/headless_test.go
-internal/relevo/history.go
-internal/relevo/history_test.go
 internal/relevo/injection.go
 internal/relevo/installenv.go
 internal/relevo/land.go
