@@ -1,7 +1,6 @@
 // Package pick is the interactive mode behind `relevo done --pick` and
-// `relevo unbind --pick` (#15): a list of bindings, the verb run on the chosen
-// one, and the result held on screen until a key. It is built for a terminal
-// popup pane, which closes when the command exits.
+// `relevo unbind --pick`: a list of bindings, the verb run on the chosen one,
+// and the result held on screen until a key, since the popup pane closes on exit.
 package pick
 
 import (
@@ -28,7 +27,7 @@ type Options struct {
 // The non-zero outcomes of Run. The picker has already shown the text for
 // each on screen, so the command maps all three to a silent exit 1: a
 // second "relevo: ..." line would land in the plugin log, not in front of the
-// human (spec §3).
+// human.
 var (
 	ErrCancelled     = errors.New("cancelled")
 	ErrNothingToPick = errors.New("nothing to pick")
@@ -38,7 +37,7 @@ var (
 	ErrVerbFailed = errors.New("verb failed")
 )
 
-// rowsFor is the spec §4 table: what each verb can act on. done cannot act
+// rowsFor is what each verb can act on: done cannot act
 // on a DONE binding; unbind clears DONE bindings, so it lists them.
 func rowsFor(verb Verb, rep view.Report) []view.BindingStatus {
 	switch verb {
@@ -49,7 +48,7 @@ func rowsFor(verb Verb, rep view.Report) []view.BindingStatus {
 	}
 }
 
-// emptyText is the one line shown when rowsFor is empty (spec §4).
+// emptyText is the one line shown when rowsFor is empty.
 func emptyText(verb Verb) string {
 	switch verb {
 	case VerbDone:
@@ -59,7 +58,7 @@ func emptyText(verb Verb) string {
 	}
 }
 
-// needsConfirm is the #103 rule: done and unbind stop for a `y` before
+// needsConfirm stops done and unbind for a `y` before
 // acting on any row that is not DONE. A terminal popup takes focus the instant
 // it opens, so a keystroke already in flight lands on it -- and the most
 // common such key is Enter. The list showed the row's state; nobody had

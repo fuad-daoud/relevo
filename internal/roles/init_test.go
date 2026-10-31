@@ -1,8 +1,8 @@
 package roles
 
-// The tests for #374 §3.1: FromLegacy translates candidates.json and
-// policy.json into a roles.json, File.Encode writes it, and Registry.RoleTier
-// reads a role's own tier without a candidate.
+// FromLegacy translates candidates.json and policy.json into a roles.json,
+// File.Encode writes it, and Registry.RoleTier reads a role's own tier
+// without a candidate.
 
 import (
 	"errors"
@@ -20,8 +20,7 @@ import (
 // strPtr is a *string for the Row fields these tests build in memory.
 func strPtr(s string) *string { return &s }
 
-// legacyFixtures loads the round-1 fixtures: the candidates.json and
-// policy.json relevo translates.
+// legacyFixtures loads the candidates.json and policy.json fixtures.
 func legacyFixtures(t *testing.T) (*candidate.Set, policy.Policy) {
 	t.Helper()
 	return setFromFile(t, filepath.Join("testdata", "legacy-candidates.json")),
@@ -37,8 +36,8 @@ func rankedTokens(role Role) []string {
 	return tokens
 }
 
-// TestFromLegacyFixtures pins §3.1 over the round-1 fixtures: the rows hold the
-// ranked tokens in order, the tier chain resolves to yolo for builder (policy)
+// TestFromLegacyFixtures pins that the rows hold the ranked tokens in order,
+// the tier chain resolves to yolo for builder (policy)
 // and reviewer (candidates), researcher has none, and there are no notes.
 func TestFromLegacyFixtures(t *testing.T) {
 	set, pol := legacyFixtures(t)
@@ -97,7 +96,7 @@ func derefTier(t *string) string {
 	return *t
 }
 
-// TestFromLegacyRankedPostcondition pins §3.1's postcondition: for every role
+// TestFromLegacyRankedPostcondition pins the postcondition: for every role
 // the legacy registry orders, the file FromLegacy produces ranks exactly the
 // same tokens.
 //
@@ -136,7 +135,7 @@ func TestFromLegacyRankedPostcondition(t *testing.T) {
 	}
 }
 
-// TestFromLegacyAmbiguousTier pins §3.1 case 4: candidates of one role carrying
+// TestFromLegacyAmbiguousTier pins that candidates of one role carrying
 // different tiers, with no policy tier, is ErrAmbiguousTier naming both tokens.
 //
 // Mutation check: take the first candidate's tier instead of refusing, and this
@@ -158,7 +157,7 @@ func TestFromLegacyAmbiguousTier(t *testing.T) {
 	}
 }
 
-// TestFromLegacyNotes pins §3.1's notes: an unordered role with several
+// TestFromLegacyNotes pins the notes: an unordered role with several
 // candidates says relevo refused to choose, and an ordered role with an unlisted
 // server says it was appended.
 func TestFromLegacyNotes(t *testing.T) {
@@ -205,7 +204,7 @@ func hasNote(notes []string, want string) bool {
 	return false
 }
 
-// TestFileEncodeRoundTrip pins §3.1's Encode contract: two-space JSON with a
+// TestFileEncodeRoundTrip pins the Encode contract: two-space JSON with a
 // trailing newline, an empty candidates list written as [], and a round trip
 // through LoadWithWarnings that warns about nothing and yields equal rows.
 func TestFileEncodeRoundTrip(t *testing.T) {
@@ -258,7 +257,7 @@ func TestFileEncodeRoundTrip(t *testing.T) {
 // boolPtr is a *bool for the Row fields these tests build in memory.
 func boolPtr(b bool) *bool { return &b }
 
-// TestRegistryRoleTier pins §3.2's RoleTier: the file tier in file mode,
+// TestRegistryRoleTier pins RoleTier: the file tier in file mode,
 // policy's tier for the role in legacy mode, and false when neither sets one.
 func TestRegistryRoleTier(t *testing.T) {
 	set, pol := legacyFixtures(t)

@@ -71,7 +71,6 @@ func configGet(args []string) error {
 // configSet sets a JSON value at a path, creating intermediate objects. A
 // value that is not valid JSON is stored as a JSON string. A path through a
 // non-object is config_invalid. With no key the whole section is replaced.
-// configSetFlagValues holds the pointer `config set` parses into.
 type configSetFlagValues struct {
 	asJSON *bool
 	force  *bool
@@ -161,15 +160,12 @@ func configSetRun(args []string) error {
 
 // configUnset removes a key, or, with no key, deletes the whole section. A
 // path through a non-object, or a key that is not set, is config_invalid.
-// configUnsetFlagValues holds the pointer `config unset` parses into.
 type configUnsetFlagValues struct {
 	asJSON *bool
 	force  *bool
 	local  *bool
 }
 
-// configUnsetFlagSet defines those flags on fs and returns what they parse
-// into.
 func configUnsetFlagSet(fs *flag.FlagSet) *configUnsetFlagValues {
 	v := &configUnsetFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the document the write produced")
@@ -251,15 +247,13 @@ func configUnsetRun(args []string) error {
 }
 
 // configEdit opens the whole-config document in $VISUAL, else $EDITOR, else
-// vi, and stores what the editor leaves (§4.2). A file left empty aborts, an
+// vi, and stores what the editor leaves. A file left empty aborts, an
 // unchanged file is a no-op, and an invalid document goes round again with the
 // editor so the user can fix it.
-// configEditFlagValues holds the pointer `config edit` parses into.
 type configEditFlagValues struct {
 	local *bool
 }
 
-// configEditFlagSet declares `config edit`'s flags.
 func configEditFlagSet(fs *flag.FlagSet) *configEditFlagValues {
 	v := &configEditFlagValues{}
 	v.local = fs.Bool("local", false, "store the edits on this machine only, never in the shared config")
@@ -431,7 +425,6 @@ func configPath(path string) (config.Section, []string, bool) {
 	return sec, parts[1:], true
 }
 
-// configSectionKnown reports whether sec names a stored section.
 func configSectionKnown(sec config.Section) bool {
 	for _, s := range config.Sections {
 		if s == sec {

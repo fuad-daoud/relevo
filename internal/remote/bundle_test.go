@@ -36,7 +36,7 @@ func runGit(t *testing.T, dir string, args ...string) string {
 	// otherwise spawns `git maintenance run --auto --quiet --detach`, which
 	// outlives the command and writes under .git/objects while t.TempDir()'s
 	// RemoveAll is removing the tree -- and that cleanup failure fails the
-	// test, not just the teardown (#304). Repo-local config, so every later
+	// test, not just the teardown. Repo-local config, so every later
 	// git command on it inherits it, including ones the code under test runs.
 	if len(args) > 0 && args[0] == "init" {
 		runGit(t, dir, "config", "maintenance.auto", "false")
@@ -482,8 +482,8 @@ func TestBundlePathUnderStateRoot(t *testing.T) {
 	}
 }
 
-// TestSnapshotTimeoutSurfacesDeadlineExceeded pins #959's premise at the
-// transport half: git.Client bounds every git call by its own timeout, and a
+// TestSnapshotTimeoutSurfacesDeadlineExceeded pins the transport half:
+// git.Client bounds every git call by its own timeout, and a
 // blown budget keeps errors.Is(err, context.DeadlineExceeded) true all the way
 // out of Snapshot. The verb half above it can therefore probe for it, which is
 // what remoteShip's one retry-on-deadline does.

@@ -18,7 +18,7 @@ var stdoutStat = os.Stdout.Stat
 //
 // Preconditions:  stdout is a character device; rt.Store non-nil.
 // Postconditions: the terminal is restored. On ErrCancelled, "cancelled" has
-// been printed to stdout after the alternate screen closed (spec §3).
+// been printed to stdout after the alternate screen closed.
 // Errors:         nil after a successful verb; ErrCancelled, ErrNothingToPick
 // or ErrVerbFailed for the three outcomes already shown on screen; any other
 // error is a startup or terminal failure the caller should print.

@@ -92,7 +92,6 @@ func noMasterMinds(rt relevo.Runtime) bool {
 	return err == nil && len(recs) == 0
 }
 
-// statusFlagValues holds the pointers status parses into.
 type statusFlagValues struct {
 	all            *bool
 	allMasterMinds *bool
@@ -103,7 +102,6 @@ type statusFlagValues struct {
 	chains         *bool
 }
 
-// statusFlagSet defines those flags on fs and returns what they parse into.
 func statusFlagSet(fs *flag.FlagSet) *statusFlagValues {
 	v := &statusFlagValues{}
 	v.all = fs.Bool("all", false, "include bindings marked DONE (hidden by default; relevo unbind --done clears them)")
@@ -131,7 +129,7 @@ func cmdStatus(args []string) error {
 		return runStatusChains(*asJSON, *v.mastermind, *v.allMasterMinds)
 	}
 
-	// --line is today's statusline: one row per builder of the calling
+	// --line is the statusline: one row per builder of the calling
 	// mastermind, so it takes no binding and no other output mode. It also
 	// takes no --all-masterminds: it names one mastermind on its first line
 	// and in its document, which is no answer at all for every one of them.
@@ -277,7 +275,7 @@ func boardBlockFor(root, id string, procStart func(pid int) (int64, error)) *vie
 	return &view.StatusLineBoard{Name: scene, Scope: string(board.ScopeLive), URL: url}
 }
 
-// runStatusline is statusline's body, now reached through `status --line`: the
+// runStatusline is statusline's body, reached through `status --line`: the
 // same output, COLUMNS and RELEVO_STATUSLINE_MARGIN, over the same scoped
 // report every other status surface reads. With asJSON it prints
 // StatusLineDoc instead of the text.
@@ -391,8 +389,6 @@ func runStatusChains(asJSON bool, mastermindRef string, allMasterMinds bool) err
 	return printChainsStatus(doc)
 }
 
-// printChainsStatus formats chains as one line per chain, indented for nesting,
-// followed by the halt reason when halted.
 func printChainsStatus(doc relevo.ChainsDoc) error {
 	for _, c := range doc.Chains {
 		indent := strings.Repeat("  ", c.Depth)
