@@ -77,7 +77,7 @@ func chainServerStatus(ctx context.Context, rt Runtime, c db.ChainRow) (view.Rep
 func chainServerTrace(ctx context.Context, rt Runtime, c db.ChainRow) (ChainTraceDoc, error) {
 	v, err := chainGetView(ctx, rt, c)
 	if err != nil {
-		if is404(err) {
+		if remote.Is404(err) {
 			if chainTerminalStatus(c.Status) {
 				return chainStoredTrace(rt, c)
 			}
@@ -176,7 +176,7 @@ func chainServerStop(ctx context.Context, rt Runtime, c db.ChainRow) (StopResult
 			return StopResult{}, chainStoppedNothing(c)
 		case remoteCode(err, 409, remote.CodeChainHalted):
 			return StopResult{}, haltedChainStop(c.Name)
-		case is404(err):
+		case remote.Is404(err):
 			// A mirror that already ended keeps the answer an ended chain
 			// gives; a running one is halted in all but its row, which the
 			// next pull writes.
@@ -281,7 +281,7 @@ func chainServerDone(ctx context.Context, rt Runtime, c db.ChainRow) (DoneResult
 	if rt.Remote == nil {
 		return DoneResult{}, ErrRemoteUnavailable
 	}
-	if _, err := chainResultFromMirror(ctx, rt, c.Name); err != nil && !is404(err) {
+	if _, err := chainResultFromMirror(ctx, rt, c.Name); err != nil && !remote.Is404(err) {
 		return DoneResult{}, err
 	}
 	chainView, err := rt.Remote.ChainDone(ctx, c.Server, c.Name)
@@ -292,7 +292,7 @@ func chainServerDone(ctx context.Context, rt Runtime, c db.ChainRow) (DoneResult
 		if remoteCode(err, 409, remote.CodeRoundOpen) {
 			return DoneResult{}, roundOpenFromWire(err)
 		}
-		if !is404(err) {
+		if !remote.Is404(err) {
 			return DoneResult{}, err
 		}
 	}

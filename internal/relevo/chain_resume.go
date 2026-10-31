@@ -176,7 +176,7 @@ func resumeRemoteGateRefusal(ctx context.Context, rt Runtime, c db.ChainRow) err
 	if err != nil {
 		return err
 	}
-	if !hasFeature(who, remote.FeatureCheck) {
+	if !remote.HasFeature(who, remote.FeatureCheck) {
 		return refusal.New("chain %s: server %s lacks the %q feature, so a served binding's gate cannot be changed", c.Name, b.Builder.Server, remote.FeatureCheck)
 	}
 	return nil

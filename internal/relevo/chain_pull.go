@@ -56,7 +56,7 @@ func chainPullOne(ctx context.Context, rt Runtime, c db.ChainRow) error {
 	}
 	view, err := rt.Remote.GetChain(ctx, c.Server, c.Name)
 	if err != nil {
-		if is404(err) {
+		if remote.Is404(err) {
 			return chainPullGone(ctx, rt, c)
 		}
 		return err
