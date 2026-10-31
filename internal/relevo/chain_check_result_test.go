@@ -27,8 +27,8 @@ func TestCheckResultWordsFollowTheRunnersResult(t *testing.T) {
 		if got := chainCheckResult(c.raw); got != c.wantCheck {
 			t.Errorf("chainCheckResult(%q) = %q, want %q", c.raw, got, c.wantCheck)
 		}
-		if got := chainGateResult(&store.GateRecord{Result: c.raw}); got != c.wantGate {
-			t.Errorf("chainGateResult(%q) = %q, want %q", c.raw, got, c.wantGate)
+		if got := chain.GateResult(&store.GateRecord{Result: c.raw}); got != c.wantGate {
+			t.Errorf("chain.GateResult(%q) = %q, want %q", c.raw, got, c.wantGate)
 		}
 	}
 }

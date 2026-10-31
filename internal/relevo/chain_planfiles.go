@@ -6,42 +6,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
-// planFileToken matches a word that looks like a repo file: dotted name with an
-// extension, optionally under directories. Most matches are not files; the base
-// branch decides which are.
-var planFileToken = regexp.MustCompile(`[A-Za-z0-9_@-][A-Za-z0-9_.@-]*(?:/[A-Za-z0-9_.@-]+)*\.[A-Za-z0-9]+`)
-
-// maxPlanFiles bounds the tokens looked up on the base branch, and
-// maxPlanFileBytes the size of one copied file.
-const (
-	maxPlanFiles     = 64
-	maxPlanFileBytes = 1 << 20
-)
-
-// planFileCandidates lists the distinct file-like names the plan texts carry,
-// in order of first appearance.
-func planFileCandidates(texts [][]byte) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, text := range texts {
-		for _, tok := range planFileToken.FindAllString(string(text), -1) {
-			if seen[tok] || len(out) >= maxPlanFiles || strings.Contains(tok, "..") {
-				continue
-			}
-			seen[tok] = true
-			out = append(out, tok)
-		}
-	}
-	return out
-}
+// maxPlanFileBytes bounds the size of one copied file.
+const maxPlanFileBytes = 1 << 20
 
 // chainBaseCommit resolves the chain's base branch to a commit from refs the
 // repository already holds: the builder's base branch, then its origin
@@ -66,7 +39,7 @@ func chainBaseCommit(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRo
 // chainSeedPlanFiles copies every repo file the chain's plan texts name from
 // the chain's base branch into the chain's inputs directory. A name the base
 // branch does not hold is not a file and is left out; a file or a base that
-// cannot be read renders as chainSeedMissing's path-free clause. It never fails
+// cannot be read renders as chain.SeedMissing's path-free clause. It never fails
 // a send.
 func chainSeedPlanFiles(rt Runtime, tx *store.Tx, c db.ChainRow) []workflow.SeedFile {
 	paths, err := chainPlanPaths(c)
@@ -79,14 +52,14 @@ func chainSeedPlanFiles(rt Runtime, tx *store.Tx, c db.ChainRow) []workflow.Seed
 			texts = append(texts, body)
 		}
 	}
-	names := planFileCandidates(texts)
+	names := chain.PlanFileCandidates(texts)
 	if len(names) == 0 {
 		return nil
 	}
 	ctx := context.Background()
 	commit, err := chainBaseCommit(ctx, rt, tx, c)
 	if err != nil {
-		return []workflow.SeedFile{{Name: "base branch", Path: chainSeedMissing(err)}}
+		return []workflow.SeedFile{{Name: "base branch", Path: chain.SeedMissing(err)}}
 	}
 	var files []workflow.SeedFile
 	for _, name := range names {
@@ -96,7 +69,7 @@ func chainSeedPlanFiles(rt Runtime, tx *store.Tx, c db.ChainRow) []workflow.Seed
 		}
 		f := workflow.SeedFile{Name: name}
 		if err != nil {
-			f.Path = chainSeedMissing(err)
+			f.Path = chain.SeedMissing(err)
 		} else {
 			f.Path = chainCopyPlanFile(ctx, rt, c, oid, name)
 		}
@@ -110,20 +83,20 @@ func chainSeedPlanFiles(rt Runtime, tx *store.Tx, c db.ChainRow) []workflow.Seed
 func chainCopyPlanFile(ctx context.Context, rt Runtime, c db.ChainRow, oid, name string) string {
 	dest, ok := rt.Store.ChainRepoFilePath(c.Name, name)
 	if !ok {
-		return chainSeedMissing(errors.New("not a repo-relative path"))
+		return chain.SeedMissing(errors.New("not a repo-relative path"))
 	}
 	body, err := rt.Git.ReadBlob(ctx, c.Repo, oid)
 	if err != nil {
-		return chainSeedMissing(err)
+		return chain.SeedMissing(err)
 	}
 	if len(body) > maxPlanFileBytes {
-		return chainSeedMissing(errors.New("file too large"))
+		return chain.SeedMissing(errors.New("file too large"))
 	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		return chainSeedMissing(err)
+		return chain.SeedMissing(err)
 	}
 	if err := os.WriteFile(dest, body, 0o644); err != nil {
-		return chainSeedMissing(err)
+		return chain.SeedMissing(err)
 	}
 	return dest
 }

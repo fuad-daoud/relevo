@@ -262,7 +262,7 @@ func ServedChainCreate(ctx context.Context, rt Runtime, plan ServedChainPlan, wo
 	if err != nil {
 		return ChainResult{}, err
 	}
-	return ChainResult{Chain: row, Members: stored, Plans: len(planPaths), Check: chainBuilderCheck(stored, name)}, nil
+	return ChainResult{Chain: row, Members: stored, Plans: len(planPaths), Check: chain.BuilderCheck(stored, name)}, nil
 }
 
 // servedChainMember is one chain member's binding in the served shape. The

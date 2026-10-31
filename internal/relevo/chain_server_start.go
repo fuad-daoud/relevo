@@ -289,7 +289,7 @@ func chainServerCreate(ctx context.Context, rt Runtime, opts ChainOptions, plan 
 	if err != nil {
 		return ChainResult{}, err
 	}
-	return ChainResult{Chain: row, Members: stored, Plans: len(plan.bodies), Check: chainBuilderCheck(stored, name), CheckSource: plan.gateRes.Source}, nil
+	return ChainResult{Chain: row, Members: stored, Plans: len(plan.bodies), Check: chain.BuilderCheck(stored, name), CheckSource: plan.gateRes.Source}, nil
 }
 
 // chainMirrorStored loads the mirror bindings from the store, so the returned

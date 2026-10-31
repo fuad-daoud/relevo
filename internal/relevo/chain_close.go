@@ -80,7 +80,7 @@ func chainEventFromCloseWF(ctx context.Context, rt Runtime, tx *store.Tx, c db.C
 	// says nothing about the step: the reader routes on the status its own
 	// block carries -- done when it carries outcomes without one.
 	if b.Shape == store.ShapeReader {
-		ev.Status = chainReaderStatus(bodies, outs)
+		ev.Status = chain.ReaderStatus(bodies, outs)
 	} else {
 		ev.Status = wf.Outcome
 		// A builder close that is not done carries why in one line from its
@@ -343,5 +343,5 @@ func chainReaderCloseOutcome(rt Runtime, tx *store.Tx, b store.Binding, round in
 	if _, reason := workflow.ParseOutcomes(info.Outputs, bodies...); reason != "" {
 		return ""
 	}
-	return chainReaderStatus(bodies, info.Outputs)
+	return chain.ReaderStatus(bodies, info.Outputs)
 }
