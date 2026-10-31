@@ -7,14 +7,14 @@ import (
 
 // authGraceLimit is how long a binding's server may keep answering a transient
 // auth error -- a stale signature from a clock skew, typically -- before the
-// daemon halts it and asks for a human (#373 §3).
+// daemon halts it and asks for a human.
 const authGraceLimit = 15 * time.Minute
 
 // AuthGrace remembers, per binding name, the first time its server answered an
 // auth error that might clear on its own (stale, bad_signature, not_enrolled).
 // The daemon owns it, so one process-wide record covers every binding on a
 // server that restarted its clock; a CLI one-shot leaves it nil and so never
-// halts on a transient 401 (#373 §3).
+// halts on a transient 401.
 //
 // Every method is nil-safe: a nil *AuthGrace never expires.
 type AuthGrace struct {
@@ -22,14 +22,12 @@ type AuthGrace struct {
 	since map[string]time.Time
 }
 
-// NewAuthGrace returns an empty grace record.
 func NewAuthGrace() *AuthGrace {
 	return &AuthGrace{since: make(map[string]time.Time)}
 }
 
 // Note records now as the first sight of a transient auth error for name and
-// returns that first time: on the first sight it is now, and on every later
-// sight it is the time the error started. A nil receiver has no memory, so it
+// returns when that error started. A nil receiver has no memory, so it
 // answers now.
 func (g *AuthGrace) Note(name string, now time.Time) time.Time {
 	if g == nil {

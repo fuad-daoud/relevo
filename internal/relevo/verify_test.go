@@ -11,7 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// TestVerifyConsultScope pins #313: the verify reviewer runs in its own
+// TestVerifyConsultScope pins that the verify reviewer runs in its own
 // relevo-verify-* scope, with the template's CPUQuota and the gate quota left
 // behind in the template.
 func TestVerifyConsultScope(t *testing.T) {
@@ -76,9 +76,9 @@ func TestVerifyConsultScope(t *testing.T) {
 	}
 }
 
-// TestVerifyStillRunsTheReviewer pins that `send --verify` survives the
-// removal of `relevo ask`: closing a verify round still starts the reviewer
-// through consult.StartVerify, and that reviewer's final message is reconciled
+// TestVerifyStillRunsTheReviewer pins that closing a verify round still starts
+// the reviewer through consult.StartVerify, and that reviewer's final message
+// is reconciled
 // into the round's findings like any consult's. Deleting StartVerify's call
 // site in the close path fails this test.
 func TestVerifyStillRunsTheReviewer(t *testing.T) {
@@ -129,8 +129,8 @@ func TestVerifyStillRunsTheReviewer(t *testing.T) {
 	}
 }
 
-// TestVerifyConsultStderrSharesTheStream is the surviving consult path's
-// version of the removed ask tests: a consult's stderr goes into its stream
+// TestVerifyConsultStderrSharesTheStream pins the consult path: a consult's
+// stderr goes into its stream
 // file, and no separate -consult.log is written.
 func TestVerifyConsultStderrSharesTheStream(t *testing.T) {
 	t.Parallel()
@@ -148,7 +148,7 @@ func TestVerifyConsultStderrSharesTheStream(t *testing.T) {
 	}
 }
 
-// TestVerifyConsultCarriesRunnerMarker pins #662: the reviewer a verify close
+// TestVerifyConsultCarriesRunnerMarker pins that the reviewer a verify close
 // starts is a runner too, so its spec carries exactly the one RELEVO_RUNNER
 // entry -- no GIT_* identity and no other variable it could inherit. Deleting
 // the Env from the verify spawn fails this test.

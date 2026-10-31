@@ -9,7 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// TestRepairPlanNamesEverything pins the repair plan's text (#132 part 2): the
+// TestRepairPlanNamesEverything pins the repair plan's text: the
 // builder gets nothing but this file, so it must name the failed round, the
 // gate command, the original plan and the gate log, and carry every tail line
 // the closing tick captured.
@@ -48,8 +48,8 @@ func TestRepairPlanNamesEverything(t *testing.T) {
 	}
 }
 
-// TestGateSignatureIgnoresNoise pins the stall bound's comparison (#132 part
-// 2): two gate logs that differ only in timestamps, durations, a 7-digit
+// TestGateSignatureIgnoresNoise pins the stall bound's comparison: two gate
+// logs that differ only in timestamps, durations, a 7-digit
 // integer, a 10-hex sha, a /tmp path and line order must hash equal; a real
 // word difference must not; and an unreadable log is "".
 func TestGateSignatureIgnoresNoise(t *testing.T) {
@@ -103,8 +103,7 @@ func TestGateSignatureIgnoresNoise(t *testing.T) {
 	}
 }
 
-// repairPlanGolden is repairPlan's output for the fixture below, captured before
-// the plan text moved into the shipped template.
+// repairPlanGolden is repairPlan's output for the fixture below.
 func repairPlanGolden() string {
 	return strings.Join([]string{
 		"# Repair round 3 for shop: round 2's gate failed",

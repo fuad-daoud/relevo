@@ -7,9 +7,9 @@ import (
 )
 
 // RetryPlan returns the bytes of name's plan for round: the plan the cockpit's
-// r key resends on another candidate (cockpit B2 §4.5). It reads through
-// Store.ReadFile, so a plan the seal pass already moved into the database
-// still reads exactly as it did on disk.
+// r key resends on another candidate (the cockpit retry rule). It reads
+// through Store.ReadFile, so a sealed plan still reads exactly as it did on
+// disk.
 //
 // A round with no plan recorded is not a retry: it is an error naming the
 // round, so the caller can say so without stopping anything.

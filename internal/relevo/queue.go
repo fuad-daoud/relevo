@@ -12,20 +12,19 @@ import (
 )
 
 // ErrNotQueued reports that Admit was asked to start a round that is not
-// waiting in the queue: QueuedAt is zero, or the binding is not active
-// (#285).
+// waiting in the queue: QueuedAt is zero, or the binding is not active.
 var ErrNotQueued = errors.New("round is not queued")
 
 // Admit starts a queued round's builder: the counterpart to Send(Defer),
-// called by serve.admit once a slot under serve.max_builders frees up
-// (#285). It spawns the process (switching candidate first if the queued
+// called by serve.admit once a slot under serve.max_builders frees up.
+// It spawns the process (switching candidate first if the queued
 // one is now gated), stamps RoundStartedAt, zeroes QueuedAt, and logs the
 // wait as a KindQueue entry -- the audit trail for how long the round sat.
 //
 // The stamp and the note are written only for a start that actually produced a
 // process; the admission itself always happens. A switch whose replacement
 // could not be resolved leaves the binding broken with nothing running, and
-// recording that as a started round is what used to hide the fault.
+// recording that as a started round hides the fault.
 func Admit(ctx context.Context, rt Runtime, name string) error {
 	var b store.Binding
 	admitted := false
@@ -57,7 +56,7 @@ func Admit(ctx context.Context, rt Runtime, name string) error {
 
 		var switched bool
 		var startErr error
-		// A queued reader round runs in its scratch worktree (A5 §2): create it
+		// A queued reader round runs in its scratch worktree: create it
 		// before the admit spawns anything, from the baseline the deferred Send
 		// captured. A failure leaves the binding NEEDS YOU below, like any
 		// other admit failure, and never falls back to b.CWD.

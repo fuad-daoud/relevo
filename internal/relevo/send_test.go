@@ -35,18 +35,9 @@ func writePlan(t *testing.T, body string) string {
 	return path
 }
 
-// TestSendArmsSessionCursorForPaneBuilder pins Send's pane branch (#184):
-// after the plan lands, the builder's cursor is cut at the located session
-// record's current size, so the round's log holds only what the builder
-// writes to its own record from here on.
-// The role is selected with --agent at launch (#85); the plan prompt is
-// the plan prompt, on round 1 as on every other.
-// TestPromptRetryReportsANonStallFailureAsItself and
-// TestPromptRetryReportsASecondStallAsAStall are gone with the pane delivery
-// path itself (#303, closed-list item 1): promptWithRetry typed into a pane,
-// and there is no pane to type into any more. The headless equivalent -- a
-// process that cannot start -- is startRound's ErrRunnerUnavailable and the
-// spawn-failed switch, both covered in headless_test.go.
+// TestSendLogsThePlan pins the send's log contract: the bind's pick entry
+// stays first and the outbound plan lands as a confirmed builder-bound
+// prompt entry.
 func TestSendLogsThePlan(t *testing.T) {
 	t.Parallel()
 
@@ -157,7 +148,7 @@ func TestSendBaselineFailureTolerated(t *testing.T) {
 }
 
 // A binding that appears only after the pre-lock load must never be addressed
-// with the zero agent's empty pane id. See round 3, Task 1.
+// with the zero agent's empty pane id.
 // TestSendRefusesPaused: a paused binding has no builder to address and its
 // worktree is gone; the human resumes it first. No plan is staged.
 func TestSendRefusesPaused(t *testing.T) {
@@ -278,7 +269,7 @@ func TestSendChangedTreeBetweenRounds(t *testing.T) {
 	if de.Path == "" {
 		t.Fatal("drift entry Path is empty")
 	}
-	// Drift is a round_file row now, not a file (R1-lite).
+	// Drift lives in a round_file row, so the patch is read through the store.
 	patch, err := rt.Store.ReadFile(de.Path)
 	if err != nil {
 		t.Fatalf("read drift patch %s: %v", de.Path, err)
@@ -387,7 +378,7 @@ func TestSendSuccessfulSendClearsRoundClosedTree(t *testing.T) {
 
 // TestComposePromptNamesPlanReportAndMarkerInOrder pins the handoff contract:
 // the builder is told the plan, the report and the completion marker, in that
-// order, and told the marker is its last action (spec §3.3).
+// order, and told the marker is its last action.
 func TestComposePromptNamesPlanReportAndMarkerInOrder(t *testing.T) {
 	t.Parallel()
 
@@ -462,9 +453,8 @@ func TestComposePromptReaderNamesTheOutputFile(t *testing.T) {
 
 // TestComposePromptReaderPutsTheBlockMessageLast pins the reader handoff's
 // ending: the block-bearing message is the last text the runner writes and the
-// done marker is its final action, with nothing written after it -- the old
-// "the final message comes after the marker" sentence is gone, so the summary
-// the close reads is the block message itself.
+// done marker is its final action, with nothing written after it, so the
+// summary the close reads is the block message itself.
 func TestComposePromptReaderPutsTheBlockMessageLast(t *testing.T) {
 	t.Parallel()
 
@@ -617,9 +607,9 @@ func TestSendHeadlessTierYoloOverrideAndRoundClose(t *testing.T) {
 	}
 }
 
-// TestSendKillsTheBuilderWhenTheSendFailsAfterSpawn pins #436's second half:
-// a failure after the process started must stop it and say so, so a busy db
-// never leaves an untracked builder running.
+// TestSendKillsTheBuilderWhenTheSendFailsAfterSpawn pins that a failure after
+// the process started must stop it and say so, so a busy db never leaves an
+// untracked builder running.
 func TestSendKillsTheBuilderWhenTheSendFailsAfterSpawn(t *testing.T) {
 	fr := newFakeRunner()
 	rt, _ := seedHeadless(t, fr)
@@ -669,7 +659,7 @@ func TestSendKillsTheBuilderWhenTheSendFailsAfterSpawn(t *testing.T) {
 	}
 }
 
-// TestSendRefusesWhileTheRoundsScopeIsActive pins #445: when the round's
+// TestSendRefusesWhileTheRoundsScopeIsActive pins that when the round's
 // scope unit is still loaded, Send refuses before it spawns anything, with
 // ErrScopeActive, and leaves no plan file or NEEDS YOU behind.
 func TestSendRefusesWhileTheRoundsScopeIsActive(t *testing.T) {
@@ -893,7 +883,7 @@ func TestSendHeadlessNoTierDefaultsToHarness(t *testing.T) {
 		t.Errorf("plan entry Tier = %q, want %q", planEntry.Tier, "harness")
 	}
 
-	// Verify argv is identical to pre-#141 (contains extra_args from candidate)
+	// Verify argv carries the candidate's extra_args.
 	if len(fr.specs) != 1 {
 		t.Fatalf("got %d specs, want 1", len(fr.specs))
 	}
@@ -917,9 +907,9 @@ func TestSendHeadlessNoTierDefaultsToHarness(t *testing.T) {
 
 // TestSendDryRunPaneMakesNoWrites pins the dry run's contract for a pane
 // binding: it describes the round Send would open and writes nothing -- no
-// staged plan, no log entry, no prompt, no change to the binding (#149).
+// staged plan, no log entry, no prompt, no change to the binding.
 // endProcess scripts the binding's recorded process as exited, so a second
-// Send into the same binding is allowed: one process per round (#99 §5.2).
+// Send into the same binding is allowed: one process per round.
 func endProcess(t *testing.T, rt Runtime, b store.Binding) {
 	t.Helper()
 	fr, ok := rt.Runner.(*fakeRunner)
@@ -1080,7 +1070,7 @@ func TestSendDryRunTierFrom(t *testing.T) {
 	}
 }
 
-// TestSendDryRunErrorsMatchSend pins §6: for every precondition, the dry run
+// TestSendDryRunErrorsMatchSend pins that for every precondition, the dry run
 // returns the identical error Send would, exit-1 text included, and writes
 // nothing on the way.
 func TestSendDryRunErrorsMatchSend(t *testing.T) {
@@ -1256,7 +1246,7 @@ func TestRenderDryRunShape(t *testing.T) {
 	}
 }
 
-// TestVerifyPolicyDefault pins #144's trigger: an explicit SendOptions.Verify
+// TestVerifyPolicyDefault pins that an explicit SendOptions.Verify
 // wins, and a plain Send takes policy.json verify.default.
 func TestVerifyPolicyDefault(t *testing.T) {
 	t.Parallel()
@@ -1309,7 +1299,7 @@ func switchSetup(t *testing.T) (Runtime, *fakeRunner) {
 	return rt, fr
 }
 
-// TestSendBuilderMovesTheCandidateAndPersists pins §5.2 (a): --candidate starts
+// TestSendBuilderMovesTheCandidateAndPersists pins that --candidate starts
 // the round on the named candidate, files its pick entry before the plan
 // entry, and the change persists into the next plain send.
 //
@@ -1381,7 +1371,7 @@ func TestSendBuilderMovesTheCandidateAndPersists(t *testing.T) {
 	}
 }
 
-// TestSendRecordsPickAndPlanInOrderInOneWrite pins #471: a --candidate send
+// TestSendRecordsPickAndPlanInOrderInOneWrite pins that a --candidate send
 // writes the pick entry and the plan entry in one write, so they land with
 // consecutive seqs in that order, and the binding carries the spawned pid.
 func TestSendRecordsPickAndPlanInOrderInOneWrite(t *testing.T) {
@@ -1432,7 +1422,7 @@ func TestSendRecordsPickAndPlanInOrderInOneWrite(t *testing.T) {
 	endProcess(t, rt, b)
 }
 
-// TestSendBuilderRefusedWhileRoundOpen pins §5.2 (b): an open round is
+// TestSendBuilderRefusedWhileRoundOpen pins that an open round is
 // refused before anything is staged or spawned.
 func TestSendBuilderRefusedWhileRoundOpen(t *testing.T) {
 	t.Parallel()
@@ -1597,8 +1587,7 @@ func TestSendRefusedWhileReportNotIngested(t *testing.T) {
 }
 
 // TestSendAfterExitWithoutReportStillResends pins the other side of the rule:
-// a builder that died without writing either file leaves the round re-sendable,
-// exactly as before.
+// a builder that died without writing either file leaves the round re-sendable.
 func TestSendAfterExitWithoutReportStillResends(t *testing.T) {
 	t.Parallel()
 
@@ -1676,7 +1665,7 @@ func TestSendProceedsOnceRoundClosed(t *testing.T) {
 	}
 }
 
-// TestSendBuilderUnknownTokenWritesNothing pins §5.2 (c): a token that does
+// TestSendBuilderUnknownTokenWritesNothing pins that a token that does
 // not resolve is refused with ErrBadBuilder before any write.
 func TestSendBuilderUnknownTokenWritesNothing(t *testing.T) {
 	t.Parallel()
@@ -1710,7 +1699,7 @@ func TestSendBuilderUnknownTokenWritesNothing(t *testing.T) {
 	}
 }
 
-// TestSendBuilderGatedTokenProceeds pins §5.2 (d): an explicit pick of a
+// TestSendBuilderGatedTokenProceeds pins that an explicit pick of a
 // rate-limited candidate proceeds, and the pick line records the bypass and
 // names the live gate.
 func TestSendBuilderGatedTokenProceeds(t *testing.T) {
@@ -1740,7 +1729,7 @@ func TestSendBuilderGatedTokenProceeds(t *testing.T) {
 	}
 }
 
-// TestSendDryRunBuilderMakesNoWrites pins §5.2 (e): the dry run reports the
+// TestSendDryRunBuilderMakesNoWrites pins that the dry run reports the
 // new candidate and its argv, and writes nothing.
 func TestSendDryRunBuilderMakesNoWrites(t *testing.T) {
 	t.Parallel()
@@ -1777,7 +1766,7 @@ func TestSendDryRunBuilderMakesNoWrites(t *testing.T) {
 	}
 }
 
-// TestSendBuilderSameCandidateIsPlainSend pins §5.2 (f): naming the binding's
+// TestSendBuilderSameCandidateIsPlainSend pins that naming the binding's
 // own candidate is a no-op -- no pick entry, no tier change, and the send
 // proceeds exactly as a plain one.
 func TestSendBuilderSameCandidateIsPlainSend(t *testing.T) {
@@ -1851,7 +1840,7 @@ func plannerSeedRuntime(t *testing.T, name, role string) Runtime {
 	return rt
 }
 
-// TestPlannerSeedCapRefusesOverCap pins §4.3: a seed over 4 KiB to a planner
+// TestPlannerSeedCapRefusesOverCap pins that a seed over 4 KiB to a planner
 // actor is refused in the preflight, naming the size and --force, and writes
 // nothing.
 func TestPlannerSeedCapRefusesOverCap(t *testing.T) {
@@ -1986,11 +1975,11 @@ func TestSendRefusesStoredTierAboveMaxWithoutAllowYolo(t *testing.T) {
 // TestAMissingPlanFileIsAUsageError pins that a --file the caller named which
 // does not exist is refused as the caller's own argument: the class is
 // refusal.ErrBadInput, which the CLI maps to usage with `relevo help`, and the message
-// names the path so the reader can see which one was read. Reported as an
-// internal failure it sent a mistyped path to `relevo bugreport`.
+// names the path so the reader can see which one was read. As an internal
+// failure a mistyped path would read as a relevo bug instead of a caller typo.
 //
-// Wrapping the read in refusal.BadInputf instead kills this (the error unwraps to
-// nothing the CLI knows and the message no longer leads with --file).
+// The read must stay wrapped so the error unwraps to refusal.ErrBadInput
+// and the message leads with --file.
 func TestAMissingPlanFileIsAUsageError(t *testing.T) {
 	t.Parallel()
 
@@ -2178,7 +2167,7 @@ func TestSendPreflightClaudeArgvChainReadGrant(t *testing.T) {
 	if !hasRule(pfMember.argv, wantRule) {
 		t.Errorf("chain member argv want %q, got %v", wantRule, pfMember.argv)
 	}
-	// The prompt-file rule from #1257 must survive alongside it.
+	// The prompt-file rule must survive alongside it.
 	promptRule := "--allowedTools=Read(/" + rt.Store.PromptPath("member", mb.Round) + ")"
 	if !hasRule(pfMember.argv, promptRule) {
 		t.Errorf("chain member argv must keep %q, got %v", promptRule, pfMember.argv)

@@ -28,7 +28,7 @@ func TestReconcileHeadlessSkipsEscapeCheckWithoutAMarker(t *testing.T) {
 	}
 
 	// The marker makes the close real, and the close is the reader of the
-	// escape answer: the snapshot and the dirty read are taken once.
+	// escape answer: the snapshot and the dirty read are taken there.
 	touch(t, rt.Store.DonePath(b.Name, b.Round))
 	if _, err := reconcile(t, rt, b); err != nil {
 		t.Fatalf("Reconcile with the marker: %v", err)

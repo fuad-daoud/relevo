@@ -5,7 +5,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 )
 
-// verifyTier is the reviewer's permission tier (#144): in file mode, the
+// verifyTier is the reviewer's permission tier: in file mode, the
 // reviewer row's tier when roles.json set one, else yolo; otherwise
 // policy.json tier.reviewer when set, else the candidate's own tier, else
 // yolo.
@@ -23,7 +23,7 @@ func verifyTier(rt Runtime, c candidate.Candidate) harness.Tier {
 	reg := rt.RoleRegistry()
 	if reg.FileMode() {
 		// roles.json is the only place a file-mode role's tier comes from,
-		// so the candidate's own tier is ignored here (#374 §4.6).
+		// so the candidate's own tier is ignored here.
 		if t, ok := reg.TierFor("reviewer", c); ok {
 			return t
 		}
