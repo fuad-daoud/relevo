@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// TestWatchedNilSafety pins §3's contract: a nil *Watched is valid, has
+// TestWatchedNilSafety pins the nil contract: a nil *Watched is valid, has
 // seen nothing, and Mark on it is a no-op -- which is what lets a CLI
 // one-shot leave Runtime.Watched nil.
 func TestWatchedNilSafety(t *testing.T) {
@@ -58,10 +58,9 @@ func TestWatchedIgnoresZeroValueInputs(t *testing.T) {
 	}
 }
 
-// TestLostToRestart is the table for the one lost-to-a-restart predicate
-// (#370, spec §4.2). The last case is the #244 compatibility rule: a nil
-// Watched has seen nothing, so it answers exactly as relevo did before this
-// round.
+// TestLostToRestart is the table for the one lost-to-a-restart predicate.
+// The last case is the compatibility rule: a nil Watched has seen nothing,
+// so it judges a process started before the daemon lost.
 func TestLostToRestart(t *testing.T) {
 	t.Parallel()
 

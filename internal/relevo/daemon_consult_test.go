@@ -11,10 +11,10 @@ import (
 )
 
 // A finished consult must be persisted by the daemon's own Tick, not only by
-// a caller that saves unconditionally. Found on the first real consult (#63):
-// finishConsult mutates the Consults slice in place, so the pre- and
-// post-reconcile bindings share the change and the tick's SameBinding gate
-// skips the save -- and the next tick queues the findings entry again.
+// a caller that saves unconditionally: finishConsult mutates the Consults
+// slice in place, so the pre- and post-reconcile bindings share the change
+// and the tick's SameBinding gate skips the save -- and the next tick queues
+// the findings entry again.
 func TestTickPersistsFinishedConsultOnce(t *testing.T) {
 	t.Parallel()
 

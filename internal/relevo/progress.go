@@ -9,7 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// signals is one tick's read of a binding's progress sources (#135). A source
+// signals is one tick's read of a binding's progress sources. A source
 // that cannot be read is absent for that sample: sampleSignals leaves it at its
 // zero value rather than inventing one, because a failed read is not evidence
 // that a builder stopped.
@@ -25,7 +25,7 @@ type signals struct {
 	cpuOK    bool
 }
 
-// sampleSignals reads a binding's progress sources for one tick (#135). It is
+// sampleSignals reads a binding's progress sources for one tick. It is
 // read-only and best-effort: every failure is simply an absent signal.
 func sampleSignals(ctx context.Context, rt Runtime, b store.Binding) signals {
 	var s signals
@@ -36,8 +36,7 @@ func sampleSignals(ctx context.Context, rt Runtime, b store.Binding) signals {
 		}
 	}
 
-	// A headless builder's liveness signal is the stream file's mtime,
-	// exactly as #252 read it.
+	// A headless builder's liveness signal is the stream file's mtime.
 	s.outputAt = streamLastActivity(rt, b)
 
 	if silenceDue(b) {
@@ -51,14 +50,13 @@ func sampleSignals(ctx context.Context, rt Runtime, b store.Binding) signals {
 	return s
 }
 
-// progressStep advances a binding's progress clock by one tick (#135).
+// progressStep advances a binding's progress clock by one tick.
 //
 // Precondition: the round is open (RoundStartedAt non-zero). The first call
 // records the current signals and starts the clock from the round's start; a
-// call inside policy.json's progress_interval_ms returns the binding unchanged,
-// so callers may call it every tick and sample at most once per interval.
+// call inside policy.json's progress_interval_ms returns the binding unchanged.
 //
-// It sets and clears two labels and never acts:
+// It sets and clears two labels:
 //   - StalledSince when no signal has moved for stall_after_ms;
 //   - ExploringSince when the output or screen has moved while the tree has
 //     not for explore_after_ms, and the builder is not stalled.

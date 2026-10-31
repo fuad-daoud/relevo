@@ -353,7 +353,7 @@ func TestRefreshStartupFailureSaysStartup(t *testing.T) {
 	}
 }
 
-// TestRefreshCarriesAndLogsConfigWarnings pins #372 §4.4: the watcher carries
+// TestRefreshCarriesAndLogsConfigWarnings pins that the watcher carries
 // the config warnings on the Runtime, logs each distinct text once, and does
 // not repeat an unchanged warning on a later reload.
 func TestRefreshCarriesAndLogsConfigWarnings(t *testing.T) {
@@ -392,7 +392,7 @@ func TestRefreshCarriesAndLogsConfigWarnings(t *testing.T) {
 	}
 }
 
-// TestRefreshReloadsRegistry pins §5.1: a new version's roles section replaces
+// TestRefreshReloadsRegistry pins that a new version's roles section replaces
 // the runtime's registry.
 func TestRefreshReloadsRegistry(t *testing.T) {
 	t.Parallel()
@@ -430,7 +430,7 @@ func TestRefreshReloadsRegistry(t *testing.T) {
 	}
 }
 
-// TestRefreshLoadsLegacyRegistryWhenNoRolesSection pins §5.1: a Loaded with no
+// TestRefreshLoadsLegacyRegistryWhenNoRolesSection pins that a Loaded with no
 // roles file still has a registry, and it is the legacy derivation.
 func TestRefreshLoadsLegacyRegistryWhenNoRolesSection(t *testing.T) {
 	t.Parallel()

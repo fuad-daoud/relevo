@@ -23,7 +23,7 @@ type WaitResult struct {
 	Done bool // false while the round is open and nothing needs a human
 
 	// Payload is the pending entry's text Wait delivered for the round it
-	// stopped on (§4.1): the same text `relevo wait` printed. "" when nothing
+	// stopped on: the same text `relevo wait` printed. "" when nothing
 	// was pending, when --peek suppressed the delivery, or on an exit that
 	// delivers nothing (124 and 4).
 	Payload string
@@ -31,11 +31,11 @@ type WaitResult struct {
 	// confirmed, waited round last, each carrying the text that entry alone
 	// carries. Payload is these concatenated, so a caller that prints the
 	// result whole reads Delivered and a caller with an output budget of its
-	// own (#907) can decide per entry which ones fit. Empty whenever Payload
+	// own can decide per entry which ones fit. Empty whenever Payload
 	// is.
 	Delivered []delivery.Delivered
 	// DeliverErr is a read or confirm failure while delivering Payload. It
-	// never changes the exit code (§6): the CLI prints it to stderr.
+	// never changes the exit code: the CLI prints it to stderr.
 	DeliverErr error
 
 	// Round is the round Wait waited on for the binding it returns, so the
@@ -57,10 +57,10 @@ const (
 	// while Wait was polling it.
 	WaitGone = 4
 	// WaitHalted is the exit code for a round that closed and its report's
-	// Outcome is halted or blocked (#133).
+	// Outcome is halted or blocked.
 	WaitHalted = 5
 	// WaitNotStarted is the exit code for a round that has no plan entry:
-	// nothing is in flight, so waiting for it can only time out (#253).
+	// nothing is in flight, so waiting for it can only time out.
 	WaitNotStarted = 6
 	// WaitTimeout is the exit code for a wait whose --timeout elapsed.
 	WaitTimeout = 124
@@ -82,7 +82,7 @@ func lastReportEntry(entries []store.LogEntry, round int) (store.LogEntry, bool)
 // DefaultWaitRound is the round `relevo wait` waits on when --round is not
 // given: the highest round among to_builder/prompt entries (a nudge is not a
 // send, so entries noted nudgeNote are excluded, as HasPromptEntry excludes
-// them); b.Round when there is none (spec §4.5, decision 7).
+// them); b.Round when there is none.
 func DefaultWaitRound(b store.Binding, entries []store.LogEntry) int {
 	round := 0
 	for _, e := range entries {
@@ -126,7 +126,7 @@ func noteClaims(note string) (unmarked, noReport bool) {
 // a whole word and a join like "noreport stopped" still reads as unmarked.
 //
 // "stopped" is the one token whose round did leave a report on disk, and it is
-// unmarked all the same (#964): a stopped round never wrote its done marker --
+// unmarked all the same: a stopped round never wrote its done marker --
 // closeStopped only runs on an open round -- so that report is unconfirmed and
 // possibly partial, killed mid-write. That is a weaker guarantee than
 // "unmarked", where an exited process cannot be mid-write. Reading it as closed
@@ -156,8 +156,8 @@ func noreportNote(note string) bool {
 	return noReport
 }
 
-// WaitOutcome classifies one binding's round into a WaitResult, per spec
-// §4.6. Pure apart from questionOf. The report entry for round is checked
+// WaitOutcome classifies one binding's round into a WaitResult, pure apart
+// from questionOf. The report entry for round is checked
 // before State == done and before view.WaitingOn, so an earlier round's close is
 // reported regardless of what the binding is doing now.
 func WaitOutcome(b store.Binding, entries []store.LogEntry, round int, questionOf func(name string, round int) string) WaitResult {
@@ -226,7 +226,7 @@ type WaitOptions struct {
 }
 
 // waitDeliverable reports whether code is an exit on which `relevo wait`
-// prints the pending payload (§4.1): every exit except the timeout (124) and a
+// prints the pending payload: every exit except the timeout (124) and a
 // done or unbound binding (4).
 func waitDeliverable(code int) bool {
 	return code != WaitTimeout && code != WaitGone
@@ -365,12 +365,12 @@ func (r waitRegistration) release() {
 }
 
 // Wait polls the store until one of opts.Names closes its
-// round, needs a human, or is gone, or opts.Timeout elapses, per spec §4.7.
+// round, needs a human, or is gone, or opts.Timeout elapses.
 // On an exit that delivers (every code but WaitTimeout and WaitGone) it then
-// prints the binding's oldest pending payload for the mastermind (§4.1): the
+// prints the binding's oldest pending payload for the mastermind: the
 // returned WaitResult carries the text in Payload and marks the entry
 // delivered with route "wait", unless opts.Peek suppresses that. A delivery
-// failure is returned in DeliverErr and never changes Code (§6).
+// failure is returned in DeliverErr and never changes Code.
 //
 // Every name is loaded once up front, so a name that does not exist is an
 // error before the loop starts (exit 1 from cmd/relevo); a name that
@@ -415,7 +415,7 @@ func Wait(ctx context.Context, rt Runtime, opts WaitOptions) (name string, res W
 	defer registration.release()
 
 	for {
-		// A remote binding's closed round is collected here too (spec §2.2):
+		// A remote binding's closed round is collected here too:
 		// with no daemon running, this is the only place `relevo wait` would
 		// otherwise see the round's state go stale. Advisory: a sync error
 		// does not stop the poll, since the loop below re-reads the store
@@ -435,11 +435,11 @@ func Wait(ctx context.Context, rt Runtime, opts WaitOptions) (name string, res W
 				return n, WaitResult{}, err
 			}
 			if r := WaitOutcome(b, entries, rounds[n], qf); r.Done {
-				// §4.1: every exit except the timeout and a gone binding
-				// prints the pending payload, after the outcome line, and
-				// marks it delivered with route "wait". --peek reports the
-				// outcome only. A delivery failure never changes the exit
-				// code (§6); the CLI prints DeliverErr to stderr.
+				// Every exit except the timeout and a gone binding prints
+				// the pending payload, after the outcome line, and marks it
+				// delivered with route "wait". --peek reports the outcome
+				// only. A delivery failure never changes the exit code; the
+				// CLI prints DeliverErr to stderr.
 				if waitDeliverable(r.Code) && !opts.Peek {
 					delivered, derr := delivery.PullPendingThroughEntries(ctx, rt.Store, n, "wait", rounds[n])
 					if derr != nil {
