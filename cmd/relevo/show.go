@@ -40,8 +40,8 @@ func flagGiven(fs *flag.FlagSet, name string) bool {
 }
 
 // showSectionArgs is showSectionFlags' input: which section flags were given.
-// It is a struct rather than a parameter list because the count has outgrown
-// a readable argument list.
+// It is a struct rather than a parameter list because the section flags do
+// not fit a readable argument list.
 type showSectionArgs struct {
 	prompt, report, diff, drift bool
 	log, transcript, gate       bool
@@ -94,7 +94,6 @@ func showSectionFlags(a showSectionArgs) (relevo.ShowSection, error) {
 	}
 }
 
-// showFlagValues holds the pointers show parses into.
 type showFlagValues struct {
 	round       *int
 	prompt      *bool
@@ -120,9 +119,9 @@ type showFlagValues struct {
 	state       *string
 }
 
-// renamedShowFlag answers --summary with the flag that replaced it. Release
-// notes and old plans still name it, so the flag package's generic "not
-// defined" would leave a reader with no way forward.
+// renamedShowFlag answers --summary with the flag that replaced it. Old
+// references still name it, so the flag package's generic "not defined"
+// would leave a reader with no way forward.
 func renamedShowFlag(args []string) error {
 	for _, a := range args {
 		if a == "--summary" || a == "-summary" || strings.HasPrefix(a, "--summary=") {
@@ -132,8 +131,6 @@ func renamedShowFlag(args []string) error {
 	return nil
 }
 
-// showFlagSet defines those flags on fs, in the usage text's order, and
-// returns what they parse into.
 func showFlagSet(fs *flag.FlagSet) *showFlagValues {
 	v := &showFlagValues{}
 	v.round = fs.Int("round", 0, "the round to read; 0 = the newest completed round")
@@ -189,7 +186,7 @@ func cmdShow(args []string) error {
 	name := fs.Args()[0]
 
 	// --state names the serve root, so it means nothing without an owner to
-	// read there (§4.1).
+	// read there.
 	if *state != "" && *owner == "" {
 		return fail(codeUsage, "--state only applies with --owner")
 	}
@@ -203,16 +200,16 @@ func cmdShow(args []string) error {
 		findingsID: *findings, artifactRel: *artifact,
 	})
 	if serr != nil {
-		// An --owner invocation is the moved serve show body, so its section
-		// conflict keeps that route's name and a hint naming that form (§4.1).
+		// An --owner invocation runs the serve show body, so its section
+		// conflict keeps that route's name and a hint naming that form.
 		if *owner != "" {
 			return failNext(codeUsage, "relevo show --owner", "serve show: %v", serr)
 		}
 		return fail(codeUsage, "show: %v", serr)
 	}
 
-	// The absorbed flags are valid only with the section they came from
-	// (§4.2): --stat/--anchors are diff's, --follow/--after are log's.
+	// The absorbed flags are valid only with their own section:
+	// --stat/--anchors are diff's, --follow/--after are log's.
 	if *stat || *anchors {
 		if section != relevo.ShowDiff && section != relevo.ShowDrift {
 			bad := "--stat"
@@ -236,8 +233,8 @@ func cmdShow(args []string) error {
 	}
 
 	if *owner != "" {
-		// --log without --round is the whole-log read the removed `serve
-		// log` did; every other form is the removed `serve show` (§4.1).
+		// --log without --round is the whole-log read; every other form is
+		// the `serve show` section read.
 		if section == relevo.ShowLog && *round == 0 {
 			return serveLog(*owner, *state, name, *round, *after, *asJSON, *follow)
 		}
@@ -252,7 +249,7 @@ func cmdShow(args []string) error {
 	switch {
 	case section == relevo.ShowDiff, section == relevo.ShowDrift:
 		// Byte-identical to the removed diff verb, including its default
-		// round and its #143 .viewed stamp.
+		// round and its .viewed stamp.
 		return classifyReadErr(printDiff(rt, name, *round, *stat, section == relevo.ShowDrift, *anchors))
 	case section == relevo.ShowLog && (*round == 0 || *follow):
 		// The whole log is the removed log verb, byte for byte, --json's
@@ -292,10 +289,10 @@ func classifyReadErr(err error) error {
 	}
 }
 
-// printShow is cmdShow's body after section resolution, moved verbatim.
+// printShow is cmdShow's body after section resolution.
 // allowDB=false means a non-live binding returns store.ErrNotFound instead
 // of opening (and so creating) the database: `relevo serve show` reads live
-// bindings only. markViewed guards the #143 .viewed stamp the same way
+// bindings only. markViewed guards the .viewed stamp the same way
 // printLog's does. headerPrefix is prepended to the stderr header, which is
 // how `relevo serve show` names the owner it read from.
 func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB bool, headerPrefix string) error {
@@ -320,7 +317,7 @@ func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB b
 	} else {
 		live = true
 	}
-	// #143: a successful print is what "viewed" means, for a live binding
+	// A successful print is what "viewed" means, for a live binding
 	// only -- an archived binding's record stays as it is.
 	// Best-effort: never fails the read.
 	stampViewed := func() {
@@ -411,9 +408,9 @@ func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB b
 	return nil
 }
 
-// printDiff is diff's body (the old cmdDiff), shared by `show --diff` and
-// `show --drift` (§4.2): the output is byte-identical to the removed diff verb
-// for the same arguments, including the #143 .viewed stamp.
+// printDiff is diff's body, shared by `show --diff` and `show --drift`: the
+// output is byte-identical to the removed diff verb for the same arguments,
+// including the .viewed stamp.
 // round 0 means diff's default: the newest completed round, or the open round
 // with drift.
 func printDiff(rt relevo.Runtime, name string, round int, stat, drift, anchors bool) error {
@@ -463,7 +460,7 @@ func printDiff(rt relevo.Runtime, name string, round int, stat, drift, anchors b
 			return fmt.Errorf("no diff recorded for round %d of %q: %w", targetRound, name, relevo.ErrNoArtifact)
 		}
 		fmt.Println(found.Note)
-		// #143: a successful print is what "viewed" means; the stamp is
+		// A successful print is what "viewed" means; the stamp is
 		// best-effort and must never fail a read command.
 		_ = rt.Store.MarkViewed(name, time.Now())
 		return nil
@@ -496,8 +493,8 @@ func printDiff(rt relevo.Runtime, name string, round int, stat, drift, anchors b
 	if _, err := os.Stdout.Write(patch); err != nil {
 		return err
 	}
-	// #143: a successful print is what "viewed" means; the stamp is
-	// best-effort and must never fail a read command.
+	// A successful print is what "viewed" means; the stamp is best-effort
+	// and must never fail a read command.
 	_ = rt.Store.MarkViewed(name, time.Now())
 	return nil
 }
@@ -505,7 +502,7 @@ func printDiff(rt relevo.Runtime, name string, round int, stat, drift, anchors b
 // printLog is the log body after flag parsing and newRuntime(): it prints
 // name's entries, applying the --round filter, JSON-encoded when asJSON is
 // set, and follows new entries until the binding is DONE or removed when
-// follow is set. markViewed guards the #143 .viewed stamp: `relevo show --log`
+// follow is set. markViewed guards the .viewed stamp: `relevo show --log`
 // stamps and the read-only `relevo serve log` must not, because the stamp is
 // the owner's, not the admin's.
 func printLog(rt relevo.Runtime, name string, round, after int, asJSON, follow, markViewed bool) error {
@@ -540,7 +537,7 @@ func printLog(rt relevo.Runtime, name string, round, after int, asJSON, follow, 
 	}
 
 	if !follow {
-		// #143: a successful print is what "viewed" means; the stamp is
+		// A successful print is what "viewed" means; the stamp is
 		// best-effort and must never fail a read command.
 		if markViewed {
 			_ = rt.Store.MarkViewed(name, time.Now())
@@ -554,7 +551,7 @@ func printLog(rt relevo.Runtime, name string, round, after int, asJSON, follow, 
 	if err := relevo.FollowLog(ctx, rt, name, last, time.Second, emit); err != nil {
 		if ctx.Err() != nil {
 			// Interrupted: what was already printed is the answer, and the
-			// stamp is #143's the same as any other exit.
+			// stamp is the same as any other exit.
 			if markViewed {
 				_ = rt.Store.MarkViewed(name, time.Now())
 			}

@@ -3,13 +3,6 @@ cmd/relevo/owner_reads_test.go
 cmd/relevo/read_verbs_test.go
 cmd/relevo/restart_notice.go
 cmd/relevo/restart_notice_test.go
-cmd/relevo/serve.go
-cmd/relevo/serve_admin.go
-cmd/relevo/serve_show.go
-cmd/relevo/serve_test.go
-cmd/relevo/show.go
-cmd/relevo/show_test.go
-cmd/relevo/status.go
 cmd/relevo/unbind.go
 cmd/relevo/update.go
 cmd/relevo/wait.go
