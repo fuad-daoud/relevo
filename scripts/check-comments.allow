@@ -75,7 +75,6 @@ internal/relevo/configedit.go
 internal/relevo/consult.go
 internal/relevo/consult_test.go
 internal/relevo/daemon_consult_test.go
-internal/relevo/daemon.go
 internal/relevo/daemon_run_test.go
 internal/relevo/daemon_test.go
 internal/relevo/deliver_agy.go
