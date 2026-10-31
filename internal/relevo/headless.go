@@ -891,7 +891,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		// stream-only rule: the tree and the stream are both signals, and a
 		// stall is quiet on both. The read is gated on the interval (#135
 		// follow-up): a tick inside it samples nothing.
-		if progressDue(next, now, rt.Policy.ProgressInterval()) {
+		if view.ProgressDue(next, now, rt.Policy.ProgressInterval()) {
 			next = progressStep(rt, next, now, sampleSignals(ctx, rt, next))
 			if err := noteResumedIdle(tx, b, next, now); err != nil {
 				return next, err
@@ -988,7 +988,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			}
 			note := "unmarked"
 			if fellBack {
-				note = joinNotes(note, readerFallbackNote)
+				note = joinNotes(note, view.ReaderFallbackNote)
 			}
 			if escapeCheck(ctx, rt, b, true) == git.EscapeNote {
 				note = joinNotes(note, git.EscapedNote)
@@ -1015,7 +1015,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	c := builderCandidateOf(rt, b)
 	tail := currentBuilderTail(rt, b, availability.LimitScanLines)
 	denialLine, isDenial := matchDenial(tail, denialPatterns(c, h))
-	suffix := denialSuffix(denialLine, isDenial)
+	suffix := text.DenialSuffix(denialLine, isDenial)
 
 	// Detect the oom kill before the exit entry, so the entry says it. A
 	// requested stop still wins and is checked below. The kernel reports a
@@ -1591,7 +1591,7 @@ func headlessStatus(ctx context.Context, rt Runtime, b store.Binding, detail boo
 	}
 	// #252's label is now one of #135's progress labels, so a live
 	// headless builder can also read "exploring <age>".
-	working, _ := labelsOf(b, rt.Now())
+	working, _ := view.LabelsOf(b, rt.Now())
 	if working = silenceLabel(rt, b, rt.Now(), working); working != "" {
 		return working, info
 	}

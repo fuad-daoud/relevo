@@ -7,7 +7,6 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/store"
-	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // signals is one tick's read of a binding's progress sources (#135). A source
@@ -50,19 +49,6 @@ func sampleSignals(ctx context.Context, rt Runtime, b store.Binding) signals {
 	}
 
 	return s
-}
-
-// progressDue reports whether a binding's progress sources are due to be
-// sampled at now (#135 follow-up). A binding that has never sampled is due at
-// once; every later sample waits out the interval, which progressStep measures
-// from SampledAt. Callers gate the read with it, so a tick inside the interval
-// costs no git call at all -- progressStep's own cadence check stays as a
-// harmless second guard for direct callers.
-func progressDue(b store.Binding, now time.Time, interval time.Duration) bool {
-	if b.Progress == nil {
-		return true
-	}
-	return now.Sub(b.Progress.SampledAt) >= interval
 }
 
 // progressStep advances a binding's progress clock by one tick (#135).
@@ -171,20 +157,4 @@ func anySignal(b store.Binding, p *store.Progress) bool {
 		return true
 	}
 	return p.OutputAt.After(b.RoundStartedAt)
-}
-
-// labelsOf renders a binding's progress labels for `relevo status` and
-// `relevo ui` (#135): the working word that replaces "working", and the stale
-// word that sits after the state word. Either may be "".
-func labelsOf(b store.Binding, now time.Time) (working string, stale string) {
-	switch {
-	case !b.StalledSince.IsZero():
-		working = "stalled " + view.AgeText(now.Sub(b.StalledSince))
-	case !b.ExploringSince.IsZero():
-		working = "exploring " + view.AgeText(now.Sub(b.ExploringSince))
-	}
-	if !b.StaleSince.IsZero() {
-		stale = "stale " + view.AgeText(now.Sub(b.StaleSince))
-	}
-	return working, stale
 }

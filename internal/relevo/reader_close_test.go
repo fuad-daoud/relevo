@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/text"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // readerCloseFinal is the final message a fake reader stream carries: a
@@ -222,7 +223,7 @@ func TestReaderCloseKeepsARunnerWrittenSummary(t *testing.T) {
 	if e.Path != output {
 		t.Errorf("report entry Path = %q, want the summary path %q", e.Path, output)
 	}
-	if strings.Contains(e.Note, readerFallbackNote) {
+	if strings.Contains(e.Note, view.ReaderFallbackNote) {
 		t.Errorf("report entry Note = %q, want no fallback marker: the runner wrote its own file", e.Note)
 	}
 	if e.Outcome != "done" {
@@ -264,8 +265,8 @@ func TestReaderCloseMarksAFallbackFromAnEmptyOutputFile(t *testing.T) {
 		t.Errorf("findings.md = %q, want the stream's message saved over the empty file %q", got, readerCloseSummary)
 	}
 	e := reportEntryFor(t, rt, "reader-bind", 1)
-	if !strings.Contains(e.Note, readerFallbackNote) {
-		t.Errorf("report entry Note = %q, want it to mark the %s fallback", e.Note, readerFallbackNote)
+	if !strings.Contains(e.Note, view.ReaderFallbackNote) {
+		t.Errorf("report entry Note = %q, want it to mark the %s fallback", e.Note, view.ReaderFallbackNote)
 	}
 	if e.Path != output {
 		t.Errorf("report entry Path = %q, want %q", e.Path, output)
