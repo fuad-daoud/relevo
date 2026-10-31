@@ -23,9 +23,9 @@ func writeEditor(t *testing.T, body string) string {
 	return path
 }
 
-// TestRemovedVerbsNameReplacement is step 3's table test: each of the seven
-// verbs P2b folded into `relevo config` returns the usage-coded refusal whose
-// next command is its replacement, and exits 2.
+// TestRemovedVerbsNameReplacement is a table test: each of the seven removed
+// verbs returns the usage-coded refusal whose next command is its
+// replacement under `relevo config`, and exits 2.
 func TestRemovedVerbsNameReplacement(t *testing.T) {
 	initRoot(t)
 
@@ -55,8 +55,8 @@ func TestRemovedVerbsNameReplacement(t *testing.T) {
 func TestConfigBareShowsThreeHeadings(t *testing.T) {
 	initRoot(t)
 
-	// An actors section (round 2's shape) is what makes the first block read
-	// "actors"; without one it keeps the legacy "roles" heading.
+	// An actors section is what makes the first block read "actors"; without
+	// one it keeps the legacy "roles" heading.
 	for _, args := range [][]string{
 		{"config", "set", "candidates", `[{"harness":"claude","provider":"p","model":"m"}]`},
 		{"config", "set", "actors", `{"builder":{"agent":"plan-executor","candidates":["m"]}}`},
@@ -253,8 +253,8 @@ func TestConfigSetRefusesInvalidPolicy(t *testing.T) {
 	}
 
 	// Nothing changed: the invalid policy was refused, so the refused key is
-	// absent and the section is still there. (Round 2's migration may have
-	// rewritten the stored policy's shape first, since it carried an order.)
+	// absent and the section is still there. (A migration may have rewritten
+	// the stored policy's shape first, since it carried an order.)
 	stdout, _, err := captureOutput(t, func() error {
 		return run([]string{"config", "get", "policy"})
 	})
@@ -697,7 +697,7 @@ func TestConfigRollbackYes(t *testing.T) {
 		t.Errorf("log =\n%s\nwant the rollback revision present", logOut)
 	}
 	// The rollback restored the pre-actors config, so the very next runtime
-	// migrates it again as a new revision (round 2 R4).
+	// migrates it again as a new revision.
 	first := strings.SplitN(strings.TrimSuffix(string(logOut), "\n"), "\n", 2)[0]
 	if !strings.Contains(first, "migration") {
 		t.Errorf("newest log line = %q, want the re-migration after the rollback", first)

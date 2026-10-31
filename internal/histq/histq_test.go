@@ -224,8 +224,8 @@ func TestStringRoundTrip(t *testing.T) {
 	}
 }
 
-// TestHistqByBuilderIsUnknown pins the clean break: by:builder is no longer an
-// axis, and the error lists the valid ones, so no caller can keep using it.
+// TestHistqByBuilderIsUnknown pins the refusal: by:builder is not an axis, and
+// the error lists the valid ones, so no caller can keep using it.
 func TestHistqByBuilderIsUnknown(t *testing.T) {
 	_, err := ParseAt("by:builder", parseNow)
 	var eq ErrQuery

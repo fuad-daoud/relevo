@@ -419,8 +419,7 @@ func TestContractDocsErrorCodes(t *testing.T) {
 		{"doctor unknown flag", []string{"doctor", "--bogus"}, codeUsage, "relevo help"},
 		{"version args", []string{"version", "extra"}, codeUsage, "relevo help"},
 		// gate: the list misuses. The write forms' own documents and failures
-		// are pinned in contract_write_test.go, so the interim write-document
-		// refusals that used to live here are gone with the interim refusals.
+		// are pinned in contract_write_test.go.
 		{"gate misuse", []string{"gate", "one", "two"}, codeUsage, "relevo help"},
 		{"gate serve misuse", []string{"gate", "--serve", "one", "two"}, codeUsage, "relevo help"},
 	}
