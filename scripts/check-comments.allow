@@ -246,7 +246,6 @@ internal/ui/stderr_test.go
 internal/ui/ui.go
 internal/ui/version.go
 internal/ui/view.go
-internal/ui/view_log.go
 internal/ui/view_log_test.go
 scripts/testdata/check-comments/cites-issue.go
 scripts/testdata/check-comments/cites-section.go
