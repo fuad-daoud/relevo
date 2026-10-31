@@ -229,17 +229,6 @@ func buildReportWith(ctx context.Context, rt Runtime, bindings []store.Binding, 
 	return rep, nil
 }
 
-// bindingShape is the shape a status row carries: store.ShapeReader for a
-// reader, "" for a writer. A writer's row keeps the document it always had --
-// an absent shape reads as a writer everywhere -- while a reader names itself
-// so the row's word can follow it.
-func bindingShape(b store.Binding) string {
-	if b.Shape == store.ShapeReader {
-		return store.ShapeReader
-	}
-	return ""
-}
-
 // statusRow is read-only, so it reaches the store through the self-locking
 // *store.Store methods directly rather than a *store.Tx: there is no
 // load-modify-save here for WithLock to protect.
@@ -257,7 +246,7 @@ func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusC
 		BuilderCandidate: b.BuilderCandidate,
 		BuilderAccount:   b.BuilderAccount,
 		Role:             resolve.BindingRole(b),
-		Shape:            bindingShape(b),
+		Shape:            view.BindingShape(b),
 		ForkedFrom:       b.ForkedFrom,
 		ForkedAtRound:    b.ForkedAtRound,
 		Consults:         consult.Running(b),
@@ -333,7 +322,7 @@ func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusC
 	if rt.Now != nil {
 		labelsNow = rt.Now()
 	}
-	working, staleLabel := labelsOf(b, labelsNow)
+	working, staleLabel := view.LabelsOf(b, labelsNow)
 	row.Stale = staleLabel
 	if b.Progress != nil {
 		row.LastProgressAt = b.Progress.TreeAt
