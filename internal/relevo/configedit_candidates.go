@@ -209,7 +209,7 @@ func DeleteCandidate(d ConfigDoc, name string) (ConfigEdit, error) {
 	return ConfigEdit{Sections: sections, Message: "delete candidate " + name, Name: name}, nil
 }
 
-// validateCandidateInput applies §4.1's rules in order. skip is the index of
+// validateCandidateInput applies the rules in order. skip is the index of
 // the entry an edit is replacing, excluded from the duplicate checks, or -1.
 func validateCandidateInput(in CandidateInput, d ConfigDoc, skip int) (CandidateInput, error) {
 	if err := checkProvider(in.Harness, in.Provider); err != nil {
