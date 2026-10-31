@@ -7,9 +7,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// These pin the exact bytes the CLI prints today (cmd/relevo/main.go before
-// this change), because the picker's result screen and the terminal must
-// never say different things (spec §5).
+// These pin the exact bytes the CLI prints, because the picker's result
+// screen and the terminal must never say different things.
 
 func TestDoneText(t *testing.T) {
 	t.Parallel()

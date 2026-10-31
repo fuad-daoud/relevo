@@ -135,7 +135,6 @@ internal/relevo/remote_sync.go
 internal/relevo/remote_test.go
 internal/relevo/repair.go
 internal/relevo/repair_test.go
-internal/relevo/repo.go
 internal/relevo/reporttail.go
 internal/relevo/reporttail_test.go
 internal/relevo/retry.go
@@ -170,8 +169,6 @@ internal/relevo/switch.go
 internal/relevo/switch_test.go
 internal/relevo/tab.go
 internal/relevo/tab_test.go
-internal/relevo/text.go
-internal/relevo/text_test.go
 internal/relevo/tier.go
 internal/relevo/transcript.go
 internal/relevo/usage.go
@@ -179,10 +176,7 @@ internal/relevo/usage_test.go
 internal/relevo/verify.go
 internal/relevo/verify_test.go
 internal/relevo/wait.go
-internal/relevo/waiting.go
 internal/relevo/wait_test.go
-internal/relevo/watched.go
-internal/relevo/watched_test.go
 internal/remote/bundle_test.go
 internal/remote/proto.go
 internal/remote/proto_test.go
