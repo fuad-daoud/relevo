@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
@@ -183,7 +184,7 @@ func nudgeResume(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		return b, false, nil
 	}
 	note := fmt.Sprintf("%s (ended its turn %s): resumed session %s of %s: same candidate, not counted",
-		nudgeNotePrefix, withoutArtifact(b.Shape), sess, b.BuilderCandidate)
+		nudgeNotePrefix, text.WithoutArtifact(b.Shape == store.ShapeReader), sess, b.BuilderCandidate)
 	return settleResumed(tx, b, next, keep, prior, note, now)
 }
 

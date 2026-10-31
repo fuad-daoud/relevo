@@ -5,10 +5,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
-
-// defaultOutput words a reader's prompt when its agent names no output label.
-const defaultOutput = "notes"
 
 // ActorOutput is the output label of the agent actor plays: the shipped
 // agent's label, else a custom source agent's `output:`, else defaultOutput.
@@ -25,7 +23,7 @@ func ActorOutput(actors map[string]roles.Actor, agents map[string]roles.AgentEnt
 			return src.Output
 		}
 	}
-	return defaultOutput
+	return text.DefaultOutput
 }
 
 // actorOutput loads the config for ActorOutput; a missing or unreadable config

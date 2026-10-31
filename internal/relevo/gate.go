@@ -9,6 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 	"github.com/fuad-daoud/relevo/internal/trail"
 )
 
@@ -114,7 +115,7 @@ func gateTimeoutFor(b store.Binding, pol policy.Policy) time.Duration {
 // error:   "Gate: make check -- ERROR: <note>."
 func gateLine(name string, round int, rec store.GateRecord, tail []string) string {
 	dur := time.Duration(rec.DurationMS) * time.Millisecond
-	out := showCommand(name, round, "gate")
+	out := text.ShowCommand(name, round, "gate")
 	switch rec.Result {
 	case "pass":
 		return fmt.Sprintf("Gate: %s -- PASS (exit %d, %s). Output: %s", rec.Command, rec.ExitCode, dur, out)

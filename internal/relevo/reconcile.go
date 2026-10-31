@@ -19,6 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
@@ -752,7 +753,7 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 	slog.Warn("round closed by marker without a report", "binding", b.Name, "round", b.Round, "note", "noreport")
 	next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
-		fmt.Sprintf("Builder wrote its completion marker for round %d but wrote no %s.", b.Round, outputWord(b.Shape))+gateSuffix, joinNotes("noreport", note), rec, nil, nil, nil, "", false, "", verdict)
+		fmt.Sprintf("Builder wrote its completion marker for round %d but wrote no %s.", b.Round, text.OutputWord(b.Shape == store.ShapeReader))+gateSuffix, joinNotes("noreport", note), rec, nil, nil, nil, "", false, "", verdict)
 	if err != nil {
 		return b, false, false, nil, fmt.Errorf("close round on marker: %w", err)
 	}
@@ -900,7 +901,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	}
 	payload = pFirst + pRest
 	if verdict.Refused {
-		payload += "\n" + pathscope.PayloadLine(showCommand(b.Name, b.Round, "diff"), verdict)
+		payload += "\n" + pathscope.PayloadLine(text.ShowCommand(b.Name, b.Round, "diff"), verdict)
 	}
 
 	closed := ""

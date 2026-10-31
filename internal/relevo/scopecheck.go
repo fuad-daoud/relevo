@@ -7,6 +7,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // judgeRoundScope resolves the closing binding's actor and judges the round's
@@ -40,12 +41,12 @@ func judgeRoundScope(ctx context.Context, rt Runtime, b store.Binding) pathscope
 	}
 	end, err := rt.Git.SnapshotTree(ctx, b.CWD)
 	if err != nil {
-		v.Refused, v.Reason = true, brief(err)
+		v.Refused, v.Reason = true, text.Brief(err)
 		return v
 	}
 	changes, err := rt.Git.ChangedFiles(ctx, b.CWD, b.RoundBaselineTree, end)
 	if err != nil {
-		v.Refused, v.Reason = true, brief(err)
+		v.Refused, v.Reason = true, text.Brief(err)
 		return v
 	}
 	readBlob := func(oid string) ([]byte, error) {
