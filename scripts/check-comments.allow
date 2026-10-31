@@ -97,7 +97,6 @@ internal/relevo/fixture_test.go
 internal/relevo/fork.go
 internal/relevo/fork_test.go
 internal/relevo/giveuplog.go
-internal/relevo/headless_test.go
 internal/relevo/history.go
 internal/relevo/history_test.go
 internal/relevo/injection.go
