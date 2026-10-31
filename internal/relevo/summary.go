@@ -16,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 	"github.com/fuad-daoud/relevo/internal/transcript"
 )
 
@@ -314,10 +315,11 @@ func replaceReaderOutput(root *os.Root, name string, data []byte) error {
 // kind of the process that last wrote, which a mid-round switch changes. The
 // endpoint's own Kind is the fallback for a round that recorded no segment.
 func lastStreamKind(b store.Binding) string {
-	if n := len(b.Builder.StreamSegments); n > 0 {
-		return b.Builder.StreamSegments[n-1].Kind
+	kinds := make([]string, 0, len(b.Builder.StreamSegments))
+	for _, seg := range b.Builder.StreamSegments {
+		kinds = append(kinds, seg.Kind)
 	}
-	return b.Builder.Kind
+	return text.LastStreamKind(b.Builder.Kind, kinds)
 }
 
 // removeReaderScratch takes a reader round's throwaway worktree away. Every

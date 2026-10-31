@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -110,10 +111,10 @@ func isRepairPlan(text string) bool {
 func repairDecision(b store.Binding, sig string) (ok bool, why string) {
 	failedRound := b.Round - 1
 	if b.RepairCount >= b.Regate {
-		return false, fmt.Sprintf("%s: gate failed after %d repair round(s) (regate %d); see %s", b.Name, b.RepairCount, b.Regate, showCommand(b.Name, failedRound, "gate"))
+		return false, fmt.Sprintf("%s: gate failed after %d repair round(s) (regate %d); see %s", b.Name, b.RepairCount, b.Regate, text.ShowCommand(b.Name, failedRound, "gate"))
 	}
 	if sig != "" && sig == b.LastGateSig {
-		return false, fmt.Sprintf("%s: gate output unchanged after repair; see %s", b.Name, showCommand(b.Name, failedRound, "gate"))
+		return false, fmt.Sprintf("%s: gate output unchanged after repair; see %s", b.Name, text.ShowCommand(b.Name, failedRound, "gate"))
 	}
 	return true, ""
 }

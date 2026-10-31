@@ -7,6 +7,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // escapeCheck gathers DecideEscape's inputs and runs it, for one headless
@@ -88,5 +89,5 @@ func escapeRepoBaseline(ctx context.Context, rt Runtime, b store.Binding, tree s
 func escapeDiagnosis(b store.Binding, codeText string) string {
 	return fmt.Sprintf(
 		"%s: builder exited (code %s) without a report; worktree %s unchanged since the round began while %s changed -- the builder likely worked outside its tree; see %s",
-		b.Name, codeText, b.CWD, b.Repo, showCommand(b.Name, b.Round, "transcript"))
+		b.Name, codeText, b.CWD, b.Repo, text.ShowCommand(b.Name, b.Round, "transcript"))
 }

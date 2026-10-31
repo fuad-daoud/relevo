@@ -28,6 +28,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 	"github.com/fuad-daoud/relevo/internal/transcript"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -678,7 +679,7 @@ func exitEntry(now time.Time, round int, logPath, codeText, suffix, payload, sha
 		Direction: store.DirToMasterMind,
 		Kind:      store.KindExit,
 		Path:      logPath,
-		Note:      fmt.Sprintf("builder exited (code %s) %s%s", codeText, withoutArtifact(shape), suffix),
+		Note:      fmt.Sprintf("builder exited (code %s) %s%s", codeText, text.WithoutArtifact(shape == store.ShapeReader), suffix),
 		Payload:   payload,
 		Confirmed: true,
 	}
@@ -1192,7 +1193,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	if isDenial {
 		return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf(
 			"%s: builder exited (code %s) %s after a permission denial (%q); not switched -- re-send with a higher tier (relevo send --name %s --file <plan> --tier edit|yolo [--allow-yolo]) or extend the harness's allow list; log: %s",
-			b.Name, codeText, withoutArtifact(b.Shape), denialLine, b.Name, showCommand(b.Name, b.Round, "log")))
+			b.Name, codeText, text.WithoutArtifact(b.Shape == store.ShapeReader), denialLine, b.Name, text.ShowCommand(b.Name, b.Round, "log")))
 	}
 
 	// A builder that ended its turn cleanly without a report has left a
@@ -1215,7 +1216,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	}
 
 	if !switchable {
-		return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: builder exited (code %s) %s; see %s", b.Name, codeText, withoutArtifact(b.Shape), showCommand(b.Name, b.Round, "log")))
+		return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: builder exited (code %s) %s; see %s", b.Name, codeText, text.WithoutArtifact(b.Shape == store.ShapeReader), text.ShowCommand(b.Name, b.Round, "log")))
 	}
 	if next, ok, err := sameSessionRecovery(ctx, rt, tx, b, entries, now); err != nil {
 		return next, err
@@ -1252,7 +1253,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	// (#191): a headless builder that exited without a report is excluded
 	// from the pick for the rest of this round.
 	b.RoundExcluded = appendUnique(b.RoundExcluded, b.BuilderCandidate)
-	return switchBuilder(ctx, rt, tx, b, fmt.Sprintf("exited (code %s) %s", codeText, withoutArtifact(b.Shape)), false, true)
+	return switchBuilder(ctx, rt, tx, b, fmt.Sprintf("exited (code %s) %s", codeText, text.WithoutArtifact(b.Shape == store.ShapeReader)), false, true)
 }
 
 // nudgePlanOnMarker resumes an exited plan-writing reader whose marker is down

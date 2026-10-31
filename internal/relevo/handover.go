@@ -9,6 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // HandoverOptions names the binding, the machine it goes to and the remote its
@@ -152,7 +153,7 @@ func branchFacts(ctx context.Context, rt Runtime, b store.Binding, remote string
 	var st branchState
 	if _, err := os.Stat(dir); err == nil {
 		if st.dirty, err = rt.Git.Dirty(ctx, dir); err != nil {
-			return branchState{unpushable: "the dirty check failed: " + brief(err)}
+			return branchState{unpushable: "the dirty check failed: " + text.Brief(err)}
 		}
 	}
 	if b.Branch == "" {
@@ -161,7 +162,7 @@ func branchFacts(ctx context.Context, rt Runtime, b store.Binding, remote string
 	}
 	remotes, err := rt.Git.Remotes(ctx, dir)
 	if err != nil {
-		st.unpushable = "the remotes could not be listed: " + brief(err)
+		st.unpushable = "the remotes could not be listed: " + text.Brief(err)
 		return st
 	}
 	for _, r := range remotes {

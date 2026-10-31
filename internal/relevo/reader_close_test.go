@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // readerCloseFinal is the final message a fake reader stream carries: a
@@ -877,11 +878,11 @@ func TestReaderSentencesUseTheOutputWord(t *testing.T) {
 	if got := exitEntry(baseTime, 1, "/x/log", "0", "", "tail", store.ShapeWriter).Note; got != "builder exited (code 0) without a report" {
 		t.Errorf("writer exit note = %q", got)
 	}
-	if got := withoutArtifact(store.ShapeReader); got != "without an output" {
-		t.Errorf("withoutArtifact(reader) = %q", got)
+	if got := text.WithoutArtifact(true); got != "without an output" {
+		t.Errorf("WithoutArtifact(reader) = %q", got)
 	}
-	if got := outputWord(store.ShapeReader); got != "output" {
-		t.Errorf("outputWord(reader) = %q", got)
+	if got := text.OutputWord(true); got != "output" {
+		t.Errorf("OutputWord(reader) = %q", got)
 	}
 
 	rt := newRuntime(t)

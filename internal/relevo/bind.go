@@ -23,6 +23,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -878,7 +879,7 @@ func worktreeTeardown(ctx context.Context, rt Runtime, b store.Binding, dryRun b
 
 	dirty, err := rt.Git.Dirty(ctx, b.Worktree)
 	if err != nil {
-		return worktreeOutcome{Kept: b.Worktree, Reason: "dirty check failed: " + brief(err)}
+		return worktreeOutcome{Kept: b.Worktree, Reason: "dirty check failed: " + text.Brief(err)}
 	}
 	if dirty {
 		return worktreeOutcome{Kept: b.Worktree, Reason: "uncommitted changes"}
@@ -889,7 +890,7 @@ func worktreeTeardown(ctx context.Context, rt Runtime, b store.Binding, dryRun b
 	}
 
 	if err := rt.Git.RemoveWorktree(ctx, b.CWD, b.Worktree, false); err != nil {
-		return worktreeOutcome{Kept: b.Worktree, Reason: brief(err)}
+		return worktreeOutcome{Kept: b.Worktree, Reason: text.Brief(err)}
 	}
 	rt.Store.PruneWorktreeDirs()
 	return worktreeOutcome{Removed: b.Worktree}
@@ -985,7 +986,7 @@ func HousekeepDeps(rt Runtime) housekeep.Deps {
 		ClearProcess:    clearProcess,
 		Halt:            housekeepHalt(rt),
 		Preflight:       housekeepPreflight(rt),
-		ShowCommand:     showCommand,
+		ShowCommand:     text.ShowCommand,
 		Admit:           housekeepAdmit(rt),
 		NotQueued:       ErrNotQueued,
 		AllowedCPUs:     housekeepAllowedCPUs(rt),
