@@ -51,8 +51,7 @@ func TestStopDecisionTable(t *testing.T) {
 		{"no round", store.Binding{Round: 1}, nil, stopNothing},
 		{"open round", open, []store.LogEntry{prompt}, stopKill},
 		{"queued round", queued, []store.LogEntry{prompt}, stopDequeue},
-		// A round the log calls open is stoppable whatever the timestamps say:
-		// this is the disagreement the issue names, with stop on the wrong side.
+		// A round the log calls open is stoppable whatever the timestamps say.
 		{
 			"an open round with no start stamp",
 			store.Binding{Round: 1},
@@ -182,12 +181,9 @@ func TestStopPayload(t *testing.T) {
 	}
 }
 
-// TestStopPaneRequestsAndRecords pins the pane path: the wrap-up prompt goes
-// through the same delivery path as a plan, and the request and its grace are
-// recorded while the round stays open.
-// TestStopHeadlessKillsAndClosesWithoutSwitch pins design question 1's option
-// (a): a headless round has no stdin, so a stop kills now and closes the
-// round without a report -- never through the exit-without-report path, which
+// TestStopHeadlessKillsAndClosesWithoutSwitch pins the headless stop: a
+// headless round has no stdin, so a stop kills now and closes the round
+// without a report -- never through the exit-without-report path, which
 // would switch the builder and charge the round.
 func TestStopHeadlessKillsAndClosesWithoutSwitch(t *testing.T) {
 	t.Parallel()
@@ -467,10 +463,10 @@ func ownedStopFixture(t *testing.T, fr *fakeRunner, queued bool) (Runtime, store
 	return rt, b
 }
 
-// TestStopOwnedRunningRoundClosesServedRound pins #344's served close: after
+// TestStopOwnedRunningRoundClosesServedRound pins the served close: after
 // Stop on an owned binding with an open running round, the binding's
 // Serve.ClosedRound names the stopped round and RoundStateOf reports closed,
-// so the owner's ServedView is no longer "running" (nor "idle").
+// so the owner's ServedView reports closed instead of "running" (or "idle").
 func TestStopOwnedRunningRoundClosesServedRound(t *testing.T) {
 	t.Parallel()
 
@@ -512,7 +508,7 @@ func TestStopOwnedRunningRoundClosesServedRound(t *testing.T) {
 	}
 }
 
-// TestStopOwnedQueuedRoundDequeues pins #344's queued decision: a queued round
+// TestStopOwnedQueuedRoundDequeues pins the queued decision: a queued round
 // is dropped from the queue rather than refused or killed. QueuedAt is
 // cleared (the server's census is derived from it), no process is killed, and
 // the round closes as stopped with the dequeued wording.
@@ -637,7 +633,7 @@ func remoteStopFixture(t *testing.T, fr *fakeRemote) (Runtime, remote.BindingVie
 	return Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}, view
 }
 
-// TestStopRemoteKillsAndCollects pins #344's client half: Stop asks the
+// TestStopRemoteKillsAndCollects pins the client half: Stop asks the
 // server (WhoAmI first, then POST stop), reports the server's "killed", and
 // runs one observe pass so the round is closed locally with the stopped
 // payload pending -- never delivered.

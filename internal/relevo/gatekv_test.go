@@ -12,8 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 )
 
-// testGateKV returns a real t.TempDir() database for a Runtime's Gates field
-// (P3b plan §7: new tests use t.TempDir() DBs only).
+// testGateKV returns a real t.TempDir() database for a Runtime's Gates field.
 func testGateKV(t *testing.T) db.KV {
 	t.Helper()
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
@@ -52,8 +51,7 @@ func testHistoryDB(t *testing.T) *db.DB {
 }
 
 // testSecretDB returns a real t.TempDir() database, the machine database the
-// secret store and the run log live in (P3b round 2 §7: new tests use
-// t.TempDir() DBs only).
+// secret store and the run log live in.
 func testSecretDB(t *testing.T) *db.DB {
 	t.Helper()
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
@@ -77,7 +75,7 @@ func testMasterMinds(t *testing.T) *mastermind.DBRegistry {
 }
 
 // badJSONKV returns invalid bytes for every key, so a reader hits the decode
-// failure a hand-edited file used to cause.
+// failure corrupt stored bytes can cause.
 type badJSONKV struct{}
 
 func (badJSONKV) KVGet(string) ([]byte, bool, error) { return []byte("not json"), true, nil }

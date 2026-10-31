@@ -112,7 +112,7 @@ func TestTailLines(t *testing.T) {
 
 }
 
-// TestGateStepScopesTheGate pins #313: the gate starts in its own
+// TestGateStepScopesTheGate pins that the gate starts in its own
 // relevo-gate-* scope, using the template's GateCPUQuota as its CPUQuota, and
 // with no scope at all when the runtime has no template.
 func TestGateStepScopesTheGate(t *testing.T) {
@@ -178,7 +178,7 @@ func TestGateStepScopesTheGate(t *testing.T) {
 		}
 	})
 
-	// The gate runs on its round's core while the round is still open (#314).
+	// The gate runs on its round's core while the round is still open.
 	t.Run("template pool and a pinned round", func(t *testing.T) {
 		fr := newFakeRunner()
 		rt, b := sentBinding(t)
@@ -202,7 +202,7 @@ func TestGateStepScopesTheGate(t *testing.T) {
 	})
 }
 
-// TestGateStepRestartsAGateLostToRestart pins #370, spec §4.4: a gate whose
+// TestGateStepRestartsAGateLostToRestart pins that a gate whose
 // last run predates the daemon and that this daemon never saw alive, found
 // exited with no exit trailer, is started once more as Attempt 1 -- through the
 // same spec as the first run -- and the re-run is logged.
@@ -278,7 +278,7 @@ func TestGateStepRestartsAGateLostToRestart(t *testing.T) {
 	}
 }
 
-// TestGateStepSecondLossIsReportedNotRerun pins §4.4's one-re-run bound: a
+// TestGateStepSecondLossIsReportedNotRerun pins the one-re-run bound: a
 // gate already at Attempt 1 that is lost again is reported as an error, not
 // restarted a second time.
 func TestGateStepSecondLossIsReportedNotRerun(t *testing.T) {

@@ -25,7 +25,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// The headless fixtures (#303 step 3): a local builder is a process relevo runs
+// The headless fixtures: a local builder is a process relevo runs
 // per round, so every test here drives it through fakeRunner, and no pane
 // agent or pane appears anywhere.
 
@@ -69,7 +69,7 @@ func TestRoundBudgetIsTheBindingsRoundTimeout(t *testing.T) {
 	}
 }
 
-// TestBuilderEnv pins builderEnv's contract (#335): no identity on the
+// TestBuilderEnv pins builderEnv's contract: no identity on the
 // binding is nil (a local binding, or one made before the identity existed),
 // a half identity is nil too, and a full one is exactly the four GIT_*
 // values a commit reads, in order.
@@ -259,7 +259,7 @@ func TestStartRoundRecordsTheHandleAndTheLogPath(t *testing.T) {
 
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr)
-	// A new process announces its own session on the stream (#147): the
+	// A new process announces its own session on the stream: the
 	// previous round's id must not survive the start.
 	b.Builder.StreamSessionID = "sess-from-the-previous-process"
 
@@ -271,8 +271,8 @@ func TestStartRoundRecordsTheHandleAndTheLogPath(t *testing.T) {
 		t.Fatalf("specs = %+v, want one Start", fr.specs)
 	}
 	spec := fr.specs[0]
-	// A new round has no builder.log: stderr joins the stream, so the spec's
-	// LogPath is the stream path itself (builder-log spec §4.4).
+	// A new round has no builder.log: stderr joins the stream, so LogPath
+	// is the stream path itself.
 	wantStream := rt.Store.RunnerStreamPath("webshop", 1)
 	if spec.Dir != "/repo" || spec.LogPath != wantStream || spec.StreamPath != wantStream {
 		t.Errorf("spec Dir/LogPath/StreamPath = %q/%q/%q, want /repo/%q/%q", spec.Dir, spec.LogPath, spec.StreamPath, wantStream, wantStream)
@@ -526,7 +526,7 @@ func TestStartRoundWithoutARunnerIsErrRunnerUnavailable(t *testing.T) {
 }
 
 // TestStartRoundSetsScope: rt.Scope set fills ProcSpec.Scope with the
-// per-round unit name and the template's slice/weight/limits (#244, #216).
+// per-round unit name and the template's slice/weight/limits.
 
 func TestStartRoundSetsScope(t *testing.T) {
 	t.Parallel()
@@ -567,7 +567,7 @@ func TestScopeUnitNameSafe(t *testing.T) {
 	}
 }
 
-// TestScopeUnitNameFor is #313's unit-name table: each kind, id present and
+// TestScopeUnitNameFor is the unit-name table: each kind, id present and
 // absent, an owned binding whose owner8 comes from a real ClientID, and a name
 // that needs sanitising.
 func TestScopeUnitNameFor(t *testing.T) {
@@ -602,7 +602,7 @@ func TestScopeUnitNameFor(t *testing.T) {
 	}
 }
 
-// TestScopeFor is #313's scopeFor table: nil template gives nil, the spec
+// TestScopeFor is the scopeFor table: nil template gives nil, the spec
 // carries the template's other fields, a gate uses GateCPUQuota when set and
 // falls back to CPUQuota when not, the returned spec always zeroes
 // GateCPUQuota, and the template is never mutated.
@@ -695,11 +695,10 @@ func TestScopeFor(t *testing.T) {
 	})
 }
 
-// TestSendHeadlessWithoutRunnerStagesNothing pins #149's behaviour fix: the
-// missing runner is a send precondition, checked before anything is staged.
-// Before the fix Send wrote the plan first and only startRound discovered the
-// runner was gone, leaving a staged plan and a NEEDS YOU binding behind a
-// process that could never start.
+// TestSendHeadlessWithoutRunnerStagesNothing pins the missing-runner guard:
+// the missing runner is a send precondition, checked before anything is
+// staged, so no plan is written and the binding stays out of NEEDS YOU when
+// no process could ever start.
 
 func TestSendHeadlessWithoutRunnerStagesNothing(t *testing.T) {
 	t.Parallel()
@@ -921,8 +920,7 @@ func readLog(t *testing.T, rt Runtime) string {
 }
 
 // seedLegacyLog creates an empty NNN-builder.log for a round, making it a
-// round from before builder-log round 2 (builder-log spec §4.5): the drain
-// renders into it and the readers show it, exactly as before.
+// legacy round: the drain renders into it and the readers show it.
 func seedLegacyLog(t *testing.T, rt Runtime, name string, round int) {
 	t.Helper()
 	p := rt.Store.BuilderLogPath(name, round)
@@ -1194,7 +1192,7 @@ func TestReconcileHeadlessSkipsQueued(t *testing.T) {
 	}
 }
 
-// TestVerifyRoundStartsOnHeadlessClose pins #144's headless close path: the
+// TestVerifyRoundStartsOnHeadlessClose pins the headless close path: the
 // same reviewer a pane round's close starts must start when a headless round
 // closes on its marker. The builder's own process is the first entry in
 // fr.specs; the verify consult is the second, in the throwaway worktree.
@@ -1401,7 +1399,7 @@ func TestVerifyRoundHandsTheReviewerAGitDiff(t *testing.T) {
 	}
 }
 
-// TestSendResetsRoundBudget pins #250 item 2 for the headless shape: a
+// TestSendResetsRoundBudget pins the re-send rule for the headless shape: a
 // human's re-send is a fresh attempt, so it clears the round's switch
 // bookkeeping along with Halt/HaltAt.
 
@@ -1609,7 +1607,7 @@ func TestReconcileHeadlessReportWinsEvenIfTheProcessExitedNonZero(t *testing.T) 
 }
 
 // TestHeadlessMarkerWrittenBetweenChecksClosesMarked pins the check-then-check
-// race (#328): the marker is absent when closeOnMarker reads it, then the
+// race: the marker is absent when closeOnMarker reads it, then the
 // process writes it and exits before the liveness check observes the exit. The
 // re-check in the exited branch must close the round through the marker path,
 // so the report's note is the marked one (""), not "unmarked".
@@ -1704,7 +1702,7 @@ func TestReconcileHeadlessStallClearsWhenStreamMoves(t *testing.T) {
 	}
 
 	// The stream moves again: the next tick clears the stamp. The clock must
-	// tick past progress_interval_ms first -- #135 samples at most once per
+	// tick past progress_interval_ms first -- sampling happens at most once per
 	// interval, so a tick at the same instant records nothing.
 	moved := now
 	if err := os.Chtimes(stream, moved, moved); err != nil {
@@ -1741,7 +1739,7 @@ func TestReconcileHeadlessStallClearsWhenStreamMoves(t *testing.T) {
 	}
 }
 
-// TestStatusHeadlessStalledLabel pins #252's label: a live, stalled headless
+// TestStatusHeadlessStalledLabel pins the stalled label: a live, stalled headless
 // builder reads "stalled <age>", and a live, unstalled one reads "working".
 
 func TestStatusHeadlessStalledLabel(t *testing.T) {
@@ -1851,7 +1849,7 @@ func TestReconcileHeadlessExitUnknownCode(t *testing.T) {
 	}
 }
 
-// TestReconcileHeadlessLostToDaemonRestartRelaunches pins #244 half 1: a
+// TestReconcileHeadlessLostToDaemonRestartRelaunches pins the restart-loss relaunch: a
 // builder whose recorded start predates the daemon's own could not have
 // died on its own -- the daemon itself must have taken it down (a systemd
 // restart, a kill -9 of the process tree) before the supervisor could write
@@ -1870,7 +1868,7 @@ func TestReconcileHeadlessLostToDaemonRestartRelaunches(t *testing.T) {
 	rt.Watched = NewWatched()                           // and it has seen nothing yet: this builder is lost
 	fr.script(b.Builder.PID, false)                     // exited; no exit() set: code unknown
 	// Tick ten minutes after the round started, so a relaunch that restarted
-	// the round's budget clock (the pre-#370 reset) is visible here.
+	// the round's budget clock would be visible here.
 	rt = withClock(rt, &fakeClock{now: baseTime.Add(10 * time.Minute)})
 	keep := b.RoundStartedAt
 
@@ -1882,7 +1880,7 @@ func TestReconcileHeadlessLostToDaemonRestartRelaunches(t *testing.T) {
 		t.Fatalf("specs = %d, want 2 (the relaunch)", len(fr.specs))
 	}
 	// The relaunch's argv is the first run's with only the prompt replaced by
-	// one carrying the interrupted note (#370, spec §4.3): the two slices have
+	// one carrying the interrupted note: the two slices have
 	// equal length, exactly one element differs, and that element is the old
 	// prompt plus "\n\n" and the note.
 	first, relaunch := fr.specs[0].Argv, fr.specs[1].Argv
@@ -1958,8 +1956,8 @@ func TestReconcileHeadlessLostToDaemonRestartRelaunches(t *testing.T) {
 	}
 }
 
-// TestReconcileHeadlessSeenBuilderIsNotLost pins the other half of #370's
-// rule (spec §4.3): a builder this daemon saw alive that later exits with no
+// TestReconcileHeadlessSeenBuilderIsNotLost pins the seen-builder rule:
+// a builder this daemon saw alive that later exits with no
 // trailer is not lost to a restart. It takes the normal
 // exited-without-report path -- here a counted switch -- and is never
 // relaunched on the same round.
@@ -2001,9 +1999,9 @@ func TestReconcileHeadlessSeenBuilderIsNotLost(t *testing.T) {
 }
 
 // TestReconcileHeadlessCLINeverRelaunchesLostBuilder pins lostToRestart's
-// first clause (spec §4.2): rt.StartedAt is zero in a CLI one-shot, so a
-// builder that merely predates the command is never judged lost and takes the
-// normal counted switch instead of being relaunched (#244 kept).
+// first clause: rt.StartedAt is zero in a CLI one-shot, so a builder that
+// merely predates the command is never judged lost and takes the normal
+// counted switch instead of being relaunched.
 func TestReconcileHeadlessCLINeverRelaunchesLostBuilder(t *testing.T) {
 	t.Parallel()
 
@@ -2030,7 +2028,7 @@ func TestReconcileHeadlessCLINeverRelaunchesLostBuilder(t *testing.T) {
 	}
 }
 
-// TestLostBuilderRequeuesOnServer pins #285: on a server (Owner set), a
+// TestLostBuilderRequeuesOnServer pins the server rule: on a server (Owner set), a
 // builder lost to a daemon restart is re-queued at the head of the queue
 // instead of relaunched -- a box reboot must not relaunch every builder past
 // the cap. TestReconcileHeadlessLostToDaemonRestartRelaunches above is the
@@ -2089,9 +2087,9 @@ func TestLostBuilderRequeuesOnServer(t *testing.T) {
 }
 
 // TestReconcileHeadlessUnknownExitBeforeDaemonStartStillSwitches pins the
-// negative cases of #244: a builder that started after the daemon (so its
-// death cannot be blamed on a restart) still switches and counts, exactly
-// as before -- and so does one whose daemon start is unknown (zero
+// negative cases of the restart-loss rule: a builder that started after the
+// daemon (so its death cannot be blamed on a restart) still switches and
+// counts -- and so does one whose daemon start is unknown (zero
 // rt.StartedAt), the control case for every other test in this file.
 
 func TestReconcileHeadlessUnknownExitBeforeDaemonStartStillSwitches(t *testing.T) {
@@ -2171,8 +2169,8 @@ func TestReconcileHeadlessLostToDaemonRestartRelaunchFails(t *testing.T) {
 	}
 }
 
-// TestReconcileHeadlessLostToDaemonRestartResumesSession pins #370's R3 half
-// (spec §4.10): a builder lost to a restart whose round announced a session
+// TestReconcileHeadlessLostToDaemonRestartResumesSession pins the resume half:
+// a builder lost to a restart whose round announced a session
 // is continued in that session -- claude --resume <id> on the round's own
 // builder-grade argv -- instead of being started fresh. It is still not
 // counted, and the round's budget clock still survives.
@@ -2235,8 +2233,8 @@ func TestReconcileHeadlessLostToDaemonRestartResumesSession(t *testing.T) {
 }
 
 // TestReconcileHeadlessLostToDaemonRestartCodexFallsBackFresh pins the
-// unsupported fallback (spec §6): codex has no verified resume form, so a lost
-// codex builder is relaunched fresh, with the round 1 note, and never carries
+// unsupported fallback: codex has no verified resume form, so a lost codex
+// builder is relaunched fresh, with the interrupted note, and never carries
 // a resume selector.
 //
 // Mutation check: drop the ErrResumeUnsupported fallback and this fails: the
@@ -2300,9 +2298,9 @@ func TestReconcileHeadlessLostToDaemonRestartCodexFallsBackFresh(t *testing.T) {
 }
 
 // TestReconcileHeadlessLostToDaemonRestartWithoutSessionRelaunchesFresh pins
-// the other side of the session test (#370, spec §4.3): a lost builder whose
-// round never announced a session has nothing to resume, so it takes round
-// 1's fresh relaunch and the note names the relaunch.
+// the other side of the session test: a lost builder whose round never
+// announced a session has nothing to resume, so it takes the fresh relaunch
+// and the note names the relaunch.
 func TestReconcileHeadlessLostToDaemonRestartWithoutSessionRelaunchesFresh(t *testing.T) {
 	t.Parallel()
 
@@ -2346,7 +2344,7 @@ func anyArgContains(argv []string, s string) bool {
 }
 
 // TestReconcileHeadlessLostToDaemonRestartResumeSpawnFailsFallsBackFresh pins
-// spec §6's spawn failure: the resume is attempted first, its Start fails, and
+// the resume-spawn failure: the resume is attempted first, its Start fails, and
 // one fresh relaunch follows -- not a halt. Two Start calls, and the note
 // names the relaunch.
 //
@@ -2590,8 +2588,8 @@ func TestDoneHeadlessStopsTheLiveProcess(t *testing.T) {
 }
 
 // N6: `relevo done` records the stop in the ledger, in the same shape
-// `relevo stop` uses (builder-log spec §4.4). A live process gets one KindStop
-// entry with Note "stopped/done"; an idle binding gets none.
+// `relevo stop` uses. A live process gets one KindStop entry with Note
+// "stopped/done"; an idle binding gets none.
 func TestDoneRecordsTheStop(t *testing.T) {
 	t.Parallel()
 
@@ -2885,7 +2883,7 @@ func TestReconcileHeadlessAliveWithReportButNoMarkerWaits(t *testing.T) {
 }
 
 // TestReconcileHeadlessExitedWithReportButNoMarkerClosesUnmarked: exit is a
-// hard fact, so the report is trusted with the omission noted (spec §4.4).
+// hard fact, so the report is trusted with the omission noted.
 
 func TestReconcileHeadlessExitedWithReportButNoMarkerClosesUnmarked(t *testing.T) {
 	t.Parallel()
@@ -3066,7 +3064,7 @@ func TestReconcileWithScopesOffNeverProbesAScope(t *testing.T) {
 
 // escapeFixture seeds webshop headless with a Repo and a fake Git configured
 // so a round that leaves the worktree's tree unchanged while the repo is
-// dirty is detected as a worktree escape (#192): fg.snapshotTreeID is
+// dirty is detected as a worktree escape: fg.snapshotTreeID is
 // captured as the round's baseline by Send and compared against again at
 // close, so leaving it alone between the two is what makes treeUnchanged
 // hold.
@@ -3102,7 +3100,7 @@ func TestHeadlessMarkerCloseEscapedNote(t *testing.T) {
 // TestHeadlessExitNoReportEscapedHalts: the tree is unchanged, the source
 // repo is dirty, and the process exited without a report at all -- nothing
 // suggests the builder ever touched its own tree, so relevo halts NEEDS YOU
-// rather than dispatching a replacement into the same broken setup (#192).
+// rather than dispatching a replacement into the same broken setup.
 
 func TestHeadlessExitNoReportEscapedHalts(t *testing.T) {
 	t.Parallel()
@@ -3173,9 +3171,9 @@ func repoMovesDuringRound(repo string) map[string][]string {
 }
 
 // TestHeadlessExitNoReportNoRepoSwitches pins that a binding with no Repo
-// (an old bind.json, a --cwd bind, or an adopted one) is untouched by #192:
-// escapeCheck's precondition on b.Repo keeps the existing switch-on-exit
-// behaviour exactly as it was.
+// (an old bind.json, a --cwd bind, or an adopted one) is untouched by the
+// escape check: escapeCheck's precondition on b.Repo keeps the existing
+// switch-on-exit behaviour.
 
 func TestHeadlessExitNoReportNoRepoSwitches(t *testing.T) {
 	t.Parallel()
@@ -3209,7 +3207,7 @@ const twoBuilderJSON = `[
   {"harness":"claude","provider":"test","model":"m","roles":["builder"]}
 ]`
 
-// TestReconcileHeadlessRoundExclusionThenAllGatedHalts is #191's end-to-end
+// TestReconcileHeadlessRoundExclusionThenAllGatedHalts is the end-to-end
 // pin: A exits without a report and is excluded in favour of B; B then also
 // exits without a report, and with every candidate serving "builder" now
 // excluded, relevo halts instead of dispatching a third pick into the same
@@ -3283,7 +3281,7 @@ func TestReconcileHeadlessExitPermissionBlockedHalts(t *testing.T) {
 	}
 }
 
-// TestGateHeadlessCallSiteHolds pins #132: the headless marker path holds
+// TestGateHeadlessCallSiteHolds pins that the headless marker path holds
 // the round while a configured gate runs -- no "exited without a report"
 // handling (no KindExit, no switch) -- exactly as the pane call site does.
 
@@ -3330,7 +3328,7 @@ func TestGateHeadlessCallSiteHolds(t *testing.T) {
 	}
 }
 
-// TestRegateHeadlessStartsRepairProcess pins #132 part 2's intended case: a
+// TestRegateHeadlessStartsRepairProcess pins the repair case: a
 // headless binding whose gate fails gets round N+1 started as a fresh process,
 // with the repair plan as its prompt -- the same hand-off Send performs.
 
@@ -3419,7 +3417,7 @@ func claudeStreamLines(t *testing.T) []string {
 
 // escapeFixture seeds webshop headless with a Repo and a fake Git configured
 // so a round that leaves the worktree's tree unchanged while the repo is
-// dirty is detected as a worktree escape (#192): fg.snapshotTreeID is
+// dirty is detected as a worktree escape: fg.snapshotTreeID is
 // captured as the round's baseline by Send and compared against again at
 // close, so leaving it alone between the two is what makes treeUnchanged
 // hold.
@@ -3520,7 +3518,7 @@ func TestSwitchBuilderHeadlessStartsAProcessNotAPane(t *testing.T) {
 	if len(fr.kills) != 0 {
 		t.Errorf("closeOld=false must not kill: %+v", fr.kills)
 	}
-	// #303 deleted the "switched builder to X" notification; the switch
+	// There is no "switched builder to X" notification; the switch
 	// log entry beside it survives and is what the human reads.
 	sw := switches(t, rt)
 	if len(sw) != 1 || !strings.Contains(sw[0].Note, testClaudeRef) {
@@ -3615,14 +3613,13 @@ func TestReconcileHeadlessAliveWaits(t *testing.T) {
 	}
 }
 
-// TestReconcileHeadlessStampsStallWhenStreamQuiet pins #252's core under
-// #135's shared clock: a live process whose stream file has not moved for
+// TestReconcileHeadlessStampsStallWhenStreamQuiet pins the stall-stamp core
+// under the shared clock: a live process whose stream file has not moved for
 // stall_after_ms is stamped StalledSince = the stream's last activity, and
 // nothing else happens. The second case is the mutation target: with the
 // stream only 5m quiet the comparison must not fire, so inverting it (or
-// comparing `<` for `>=`) makes both cases fail. The notice beside the
-// stamp is gone (#303, closed-list item 4); the stamp itself and the
-// builder_stalled hook event are what survive.
+// comparing `<` for `>=`) makes both cases fail. No notice goes with the
+// stamp; the stamp itself and the builder_stalled hook event are what survive.
 func TestReconcileHeadlessStampsStallWhenStreamQuiet(t *testing.T) {
 	t.Parallel()
 
@@ -3681,7 +3678,7 @@ func TestReconcileHeadlessStampsStallWhenStreamQuiet(t *testing.T) {
 	}
 }
 
-// stallAlive is #905's fixture: a live, switchable headless builder whose
+// stallAlive is the stalled-limit fixture: a live, switchable headless builder whose
 // stream file carries tail (raw agy stream lines) and whose cursor points at
 // the start of that round's stream, so limitText reads exactly the bytes the
 // current process wrote. quietPastStall sets the stream's mtime either past
@@ -3708,7 +3705,7 @@ func stallAlive(t *testing.T, rt Runtime, b store.Binding, tail string, quietPas
 	return b
 }
 
-// TestReconcileHeadlessStalledLimitTailSwitchesUncounted pins #905: a live
+// TestReconcileHeadlessStalledLimitTailSwitchesUncounted pins the stalled-limit switch: a live
 // builder the sampler has marked stalled, whose own tail carries a provider
 // limit line, is gated and switched on that tick. Nothing about the exit is
 // required -- the process is still running, there is no marker, and the round
@@ -3760,9 +3757,9 @@ func TestReconcileHeadlessStalledLimitTailSwitchesUncounted(t *testing.T) {
 
 // TestReconcileHeadlessStalledWithoutLimitChangesNothing is the other side of
 // the same guard: a stall whose tail holds no limit line is still only a stall.
-// The scan runs, matches nothing, and the tick settles exactly as it did
-// before #905 -- same candidate, same process, no ledger entry, no switch, and
-// the stall stamp the status label reads left standing.
+// The scan runs, matches nothing, and the tick changes nothing -- same
+// candidate, same process, no ledger entry, no switch, and the stall stamp
+// the status label reads left standing.
 func TestReconcileHeadlessStalledWithoutLimitChangesNothing(t *testing.T) {
 	t.Parallel()
 
@@ -3796,8 +3793,8 @@ func TestReconcileHeadlessStalledWithoutLimitChangesNothing(t *testing.T) {
 	}
 }
 
-// TestReconcileHeadlessAliveNotStalledNeverGates pins the cost guard (#905
-// step 3): the scan reads nothing unless the binding is already stalled. The
+// TestReconcileHeadlessAliveNotStalledNeverGates pins the cost guard:
+// the scan reads nothing unless the binding is already stalled. The
 // tail here carries the same limit line the switch case above gates on, and
 // the stream is still moving, so the binding must come out of the tick
 // untouched. Dropping the StalledSince guard makes this tick gate and switch.
@@ -3876,7 +3873,7 @@ func TestReconcileHeadlessStalledLimitHaltsAtTheSwitchLimit(t *testing.T) {
 // stalled live builder whose round already has its report on disk records the
 // rate-limit gate once and never again.
 //
-// This is the shape the #905 review found. gateOnLimit writes the ledger entry
+// gateOnLimit writes the ledger entry
 // before it looks for the report, so a report-on-disk match returned
 // handled=false -- the gate is recorded, the round is left to be closed -- and
 // the tick fell through to deliverAndSettle with the builder still alive and
@@ -4368,7 +4365,7 @@ func TestReconcileHeadlessRoundExclusionThenAllGatedHalts(t *testing.T) {
 	}
 }
 
-// TestDrainStreamRecordsSessionIDOnce pins #147: the first drained line that
+// TestDrainStreamRecordsSessionIDOnce pins the session capture: the first drained line that
 // names a session records it on the endpoint, and a later line naming another
 // (a sub-agent's) leaves it alone.
 func TestDrainStreamRecordsSessionIDOnce(t *testing.T) {
@@ -4398,7 +4395,7 @@ func TestDrainStreamRecordsSessionIDOnce(t *testing.T) {
 	}
 }
 
-// TestReportEntryCarriesHeadlessSession pins #147: the report entry of a
+// TestReportEntryCarriesHeadlessSession pins the session carry-over: the report entry of a
 // closed headless round names the stream's session, and the id is cleared
 // from the endpoint once the round has closed.
 func TestReportEntryCarriesHeadlessSession(t *testing.T) {
@@ -4490,7 +4487,7 @@ func TestStartProcessSetsStreamStart(t *testing.T) {
 	}
 }
 
-// TestSegmentKind is §7.2 N3: the last segment whose Start is at or before the
+// TestSegmentKind is N3: the last segment whose Start is at or before the
 // line's offset names the harness that wrote it, and anything before the first
 // Start falls back to the endpoint's own Kind.
 func TestSegmentKind(t *testing.T) {
@@ -4520,7 +4517,7 @@ func TestSegmentKind(t *testing.T) {
 	}
 }
 
-// TestCarryStream is §7.2 N4: the four cursor fields move onto the replacement
+// TestCarryStream is N4: the four cursor fields move onto the replacement
 // endpoint, and the replacement's own identity fields are untouched.
 func TestCarryStream(t *testing.T) {
 	t.Parallel()
@@ -4554,7 +4551,7 @@ func TestCarryStream(t *testing.T) {
 		t.Errorf("carryStream changed the replacement's own fields: %+v, want Kind/AgentName/Mode/PID from %+v", out, to)
 	}
 
-	// The carried segment list must be a copy, not an alias of from's (§7.2 N4):
+	// The carried segment list must be a copy, not an alias of from's (N4):
 	// mutating the carried copy must not rewrite the outgoing endpoint's slice.
 	out.StreamSegments[0].Kind = "changed"
 	if from.StreamSegments[0].Kind != "agy" {
@@ -4562,7 +4559,7 @@ func TestCarryStream(t *testing.T) {
 	}
 }
 
-// TestStartProcessAppendsSegments is §7.2 N5: each spawn records the byte
+// TestStartProcessAppendsSegments is N5: each spawn records the byte
 // offset it writes from and its harness kind; a retried spawn at the same
 // offset replaces its predecessor's segment rather than appending a second
 // one there, and a later round starts a fresh list.
@@ -4636,10 +4633,10 @@ func TestStartProcessAppendsSegments(t *testing.T) {
 	}
 }
 
-// TestDrainRendersEachSegmentWithItsKind is §7.2 N6: a round whose stream has
+// TestDrainRendersEachSegmentWithItsKind is N6: a round whose stream has
 // two processes' bytes -- agy first, then claude -- renders each with the kind
-// that wrote it, even though the endpoint's own Kind is the later one. Before
-// this, the whole file was re-rendered with the new kind.
+// that wrote it, even though the endpoint's own Kind is the later one: each
+// line is rendered with its own segment's kind.
 func TestDrainRendersEachSegmentWithItsKind(t *testing.T) {
 	t.Parallel()
 
@@ -4678,8 +4675,8 @@ func TestDrainRendersEachSegmentWithItsKind(t *testing.T) {
 	}
 }
 
-// TestDrainSessionIDComesOnlyFromTheCurrentProcess is the test M7 needs
-// (§7.4): an undrained line from the round's earlier process must not set
+// TestDrainSessionIDComesOnlyFromTheCurrentProcess pins the current-process rule:
+// an undrained line from the round's earlier process must not set
 // StreamSessionID once the cursor is carried over. Only bytes at or past
 // StreamStart -- the current process's own -- may name the session.
 func TestDrainSessionIDComesOnlyFromTheCurrentProcess(t *testing.T) {
@@ -4710,7 +4707,7 @@ func TestDrainSessionIDComesOnlyFromTheCurrentProcess(t *testing.T) {
 	}
 }
 
-// TestStatusExitCodeReadsTheStream is §7.2 N7: `relevo status` asks the
+// TestStatusExitCodeReadsTheStream is N7: `relevo status` asks the
 // Runner for the exit code of the round's stream file, not of the log. The
 // trailer is what records the code, and it lives in the stream; the log may
 // not have drained it (or a later marker may have replaced it).
@@ -4732,9 +4729,8 @@ func TestStatusExitCodeReadsTheStream(t *testing.T) {
 	}
 }
 
-// N1: a new round writes no builder.log. The spec's LogPath is the round's
-// stream, so the harness's stderr joins its stdout, and the endpoint points
-// there too (builder-log spec §4.4).
+// N1: a new round writes no builder.log. LogPath is the round's stream, so
+// the harness's stderr joins its stdout, and the endpoint points there too.
 func TestStartProcessSendsStderrToTheStream(t *testing.T) {
 	t.Parallel()
 
@@ -4762,8 +4758,8 @@ func TestStartProcessSendsStderrToTheStream(t *testing.T) {
 }
 
 // N2: a round that already had a NNN-builder.log when the process started --
-// history, or a round in flight across the upgrade -- keeps writing stderr to
-// that log (builder-log spec §4.5).
+// a legacy round, or a round in flight across the upgrade -- keeps writing
+// stderr to that log.
 func TestStartProcessKeepsALegacyRoundsLog(t *testing.T) {
 	t.Parallel()
 
@@ -4821,7 +4817,7 @@ func TestStartRoundKeepsWritingAPreRenameRoundStream(t *testing.T) {
 }
 
 // N3: for a new round the drain writes no log. It still advances the cursor
-// past every complete line and captures the session id (builder-log spec §4.4).
+// past every complete line and captures the session id.
 func TestDrainWritesNoLogForANewRound(t *testing.T) {
 	t.Parallel()
 
@@ -4842,8 +4838,7 @@ func TestDrainWritesNoLogForANewRound(t *testing.T) {
 	}
 }
 
-// N4: a legacy round keeps its log: the drain appends the rendered lines to it,
-// exactly as before (builder-log spec §4.4).
+// N4: a legacy round keeps its log: the drain appends the rendered lines to it.
 func TestDrainKeepsAppendingALegacyLog(t *testing.T) {
 	t.Parallel()
 
@@ -4896,9 +4891,9 @@ func TestDrainRefusesASymlinkedLegacyLog(t *testing.T) {
 	}
 }
 
-// N7: stderr-only agy limits must survive the move of stderr into the stream
-// (builder-log spec §4.4, item 2): builderTail reads the raw stderr line out of
-// the rendered stream, and the limit scan still matches it.
+// N7: stderr-only agy limits must survive the move of stderr into the stream:
+// builderTail reads the raw stderr line out of the rendered stream, and the
+// limit scan still matches it.
 func TestStderrLimitTextStillDetected(t *testing.T) {
 	t.Parallel()
 
