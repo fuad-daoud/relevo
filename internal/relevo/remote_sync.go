@@ -32,7 +32,7 @@ const pollSwitchNotePrefix = store.PollSwitchNotePrefix
 
 // checkedOutWarned records the bindings whose "checked out" hint catchUp has
 // already logged at Info in this process, so the hint does not repeat on every
-// SyncRemote (#253). Process-local on purpose: the daemon and `relevo wait` are
+// SyncRemote. Process-local on purpose: the daemon and `relevo wait` are
 // separate processes and each says it once.
 var checkedOutWarned sync.Map // binding name -> struct{}
 
@@ -75,7 +75,7 @@ func mirrorDriftOnce(ctx context.Context, rt Runtime, tx *store.Tx, server, name
 // the caller's lock. It makes no network call: every value it acts on was read
 // by fetchRemote before the lock was taken. deliver reports whether the caller
 // should follow up with deliverAndSettle; it is false for every path that
-// already returned on its own in the original function (a running mirror, a
+// returns on its own (a running mirror, a
 // fresh halt, an unreachable/cert/other error).
 //
 // The split exists for SyncRemote: a read path must observe the server's state
@@ -130,18 +130,18 @@ func applyRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	return applyRemoteView(ctx, rt, tx, b, f, now)
 }
 
-// applyRemoteErr classifies a failed fetch exactly as the inline observe did:
-// a revoked key halts at once, every other 401 gets its grace, a 404 or a
-// round unreachable past its budget halts, a server this machine's config does
-// not name only updates the reported status -- the round may be running fine
-// there -- and anything else does the same.
+// applyRemoteErr classifies a failed fetch: a revoked key halts at once,
+// every other 401 gets its grace, a 404 or a round unreachable past its
+// budget halts, a server this machine's config does not name only updates
+// the reported status -- the round may be running fine there -- and
+// anything else just warns.
 func applyRemoteErr(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, err error, now time.Time) (store.Binding, bool, error) {
 	server := b.Builder.Server
 	name := b.Name
 	var httpErr *client.HTTPError
 	if errors.As(err, &httpErr) {
 		if httpErr.Status == 401 {
-			// A revoked key is permanent: halt at once, as it always did.
+			// A revoked key is permanent: halt at once.
 			if httpErr.Body.Code == remote.CodeRevoked {
 				b, err := haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: %s: %s", name, server, httpErr.Body.Message))
 				return b, false, err
@@ -254,8 +254,8 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 	switch view.RoundState {
 	case remote.RoundQueued:
 		// A queued round has no process and no clocks: it behaves like
-		// RoundRunning minus the stall copy -- no halt, no catch-up, and any
-		// stall stamp from an earlier running round no longer applies.
+		// RoundRunning minus the stall copy -- no halt, no catch-up; a
+		// stall stamp from an earlier running round does not apply.
 		b.StalledSince = time.Time{}
 		if view.Queue != nil {
 			b.Builder.RemoteQueue = &store.QueueFacts{
@@ -293,11 +293,11 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 				next, a, err := applyCatchUp(ctx, rt, tx, b, view, f.CatchUp)
 				f.Settle = a
 				// The catch-up owns the tick's outcome whenever it ran,
-				// settled or not. Falling through to the halt below discarded
-				// `next` and halted the stale `b` with view.Halt: the deciding
+				// settled or not. Falling through to the halt below would discard
+				// `next` and halt the stale `b` with view.Halt: the deciding
 				// reason clobbered, a second entry for a round already
 				// notified, a second delivery, and the failure counters
-				// dropped so the budget never accumulated here. The
+				// dropped so the budget never accumulates here. The
 				// retry-no-halt outcomes stop here too -- they owe no halt.
 				return next, true, err
 			} else {
@@ -432,9 +432,8 @@ func settleCatchUp(ctx context.Context, rt Runtime, a *catchUpAck, reconcile boo
 			return nil
 		}
 		if reconcile {
-			// Announced after the commit, like the daemon's own tick (#909):
-			// the catch-up's second emit-before-save site moves under the same
-			// rule, so a save that failed announces nothing.
+			// Announced after the commit, like the daemon's own tick: a save
+			// that failed announces nothing.
 			emitCommitted(ctx, rt, cur, next)
 		}
 		return nil
@@ -444,7 +443,7 @@ func settleCatchUp(ctx context.Context, rt Runtime, a *catchUpAck, reconcile boo
 // SyncRemote runs one read-only observe pass over every remote binding that
 // is still relaying (not store.StateDone), so `relevo status`, `relevo wait`
 // and each `relevo wait` iteration collect a closed round without the daemon
-// running (spec §2.2). It never delivers: it calls observeRemote directly,
+// running. It never delivers: it calls observeRemote directly,
 // not reconcileRemote, so a payload stays pending for the daemon, the push holder
 // or `relevo wait` to take.
 //

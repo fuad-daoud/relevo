@@ -143,7 +143,7 @@ type fakeGit struct {
 	lastDiffFrom string
 	lastDiffTo   string
 
-	// The scope check's git seam (#801): changedFiles is the fixed answer,
+	// The scope check's git seam: changedFiles is the fixed answer,
 	// changedFilesFunc, when set, answers per (from, to) so a test can move
 	// the tree between the pre-gate and post-gate judgements; blobs is what
 	// ReadBlob returns per object id.
@@ -276,7 +276,7 @@ type fakeGit struct {
 	repoFactsErr       error
 	repoFactsCalls     []repoFactsCall
 
-	// identityName/identityEmail/identityErr configure Identity (#335).
+	// identityName/identityEmail/identityErr configure Identity.
 	// Most tests build fakeGit as a bare struct literal, so an unset pair
 	// with identityUnset false returns the test defaults below -- what a
 	// developer's own repo would resolve -- and every remote-add test keeps
@@ -299,7 +299,7 @@ type fakeGit struct {
 	treeFingerprintErr   error
 	treeFingerprintCalls int
 
-	// The land primitives (#136). rebaseConflicts/mergeConflicts are scripted
+	// The land primitives: rebaseConflicts/mergeConflicts are scripted
 	// as the conflict set: setting either makes the corresponding call return
 	// those paths with git.ErrMergeConflict. remoteBranchExists is what
 	// RemoteBranchExists reports, which decides whether Push gets the lease.
@@ -386,7 +386,7 @@ func (f *fakeGit) DiffWorktreeStat(ctx context.Context, dir, tree string) (git.S
 	return f.worktreeStat, nil
 }
 
-// ChangedFiles answers the scope check's raw diff (#801): the fixed list, or
+// ChangedFiles answers the scope check's raw diff: the fixed list, or
 // changedFilesFunc's per-call answer.
 func (f *fakeGit) ChangedFiles(ctx context.Context, dir, from, to string) ([]pathscope.Change, error) {
 	f.calls++
@@ -849,7 +849,7 @@ func withClock(rt Runtime, c *fakeClock) Runtime {
 	return rt
 }
 
-// fakeRunner is the in-memory Runner (#99). It records every Start and
+// fakeRunner is the in-memory Runner. It records every Start and
 // Kill, answers Alive from a per-pid script (the last answer repeats; an
 // unscripted pid is alive until killed), and reports the exit code a test
 // set with exit(). Nothing here runs a process.
@@ -875,7 +875,7 @@ type fakeRunner struct {
 
 	// onAlive runs at the top of Alive, before the scripted answer is read.
 	// A test uses it to act in the window between closeOnMarker's read and
-	// the liveness observation, e.g. to write the marker file (#328).
+	// the liveness observation, e.g. to write the marker file.
 	onAlive func()
 
 	alive     map[int][]bool
