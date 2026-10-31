@@ -179,9 +179,6 @@ internal/relevo/waiting.go
 internal/relevo/wait_test.go
 internal/relevo/watched.go
 internal/relevo/watched_test.go
-internal/remote/bundle_test.go
-internal/remote/proto.go
-internal/remote/proto_test.go
 internal/ui/actions.go
 internal/ui/actions_test.go
 internal/ui/actor_form.go

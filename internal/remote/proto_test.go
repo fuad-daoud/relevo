@@ -146,8 +146,8 @@ func TestBindingViewJSONNames(t *testing.T) {
 
 // TestBindingViewUsageRoundTrip checks that a view carrying the closed
 // round's usage round-trips through the same JSON the log entry already
-// persists (#216), and that a view without one ships no "usage" key -- so
-// a pre-usage server stays indistinguishable from "no usage recorded".
+// persists, and that a view without one ships no "usage" key -- so a
+// pre-usage server stays indistinguishable from "no usage recorded".
 func TestBindingViewUsageRoundTrip(t *testing.T) {
 	bv := BindingView{
 		Name:        "api",
