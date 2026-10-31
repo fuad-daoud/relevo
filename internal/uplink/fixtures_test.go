@@ -59,8 +59,7 @@ func candidateSet(t *testing.T, body string) *candidate.Set {
 	return set
 }
 
-// testGateKV returns a real t.TempDir() database for a Runtime's Gates field
-// (P3b plan §7: new tests use t.TempDir() DBs only).
+// testGateKV returns a real t.TempDir() database for a Runtime's Gates field.
 func testGateKV(t *testing.T) db.KV {
 	t.Helper()
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
