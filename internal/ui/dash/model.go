@@ -1,10 +1,6 @@
-// Package dash is the drawer's dashboard screen: a totals line, a grid of
-// every round matching a query line, an optional regroup by axis with sums,
-// sortable, over one db.Query per refresh.
-//
-// It is its own model, hosted by internal/ui's fleet Model the way the
-// detail pane is. It must never import internal/ui: the host draws it and
-// the host imports it, not the other way round (§2).
+// Package dash is the dashboard screen, hosted by internal/ui's fleet
+// Model. It must never import internal/ui: the host draws it and the
+// host imports it, not the other way round.
 package dash
 
 import (
@@ -19,7 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/histq"
 )
 
-// Model is the dashboard screen's whole state (§3).
+// Model is the dashboard screen's whole state.
 type Model struct {
 	db *db.DB // nil -> the host never enters the screen
 	// loc decides where a round's day starts (histq.Group's day axis) and
@@ -52,22 +48,22 @@ type Model struct {
 	width, height int
 
 	// vp is the grid's window: header lines 1-3 are fixed, the grid
-	// scrolls under them, "the viewport follows" the cursor (§6).
+	// scrolls under them, "the viewport follows" the cursor.
 	vp viewport.Model
 
-	// fetchFn is the test seam Task 1 asks for: it defaults to the db path
+	// fetchFn is the test seam: it defaults to the db path
 	// (fetchDB below), so a test can hand the model literal rows.
 	fetchFn func(ctx context.Context, q histq.Query) ([]db.RoundRow, error)
 
-	// styles is the host's palette, set with SetStyles (§5).
+	// styles is the host's palette, set with SetStyles.
 	styles Styles
 
 	// Notice is a host-owned line the host drops in at view time: the
-	// dashboard has no footer, and §6 needs a notice on screen for a jump
-	// whose name vanished. "" when there is none.
+	// dashboard has no footer, and a jump whose name vanished needs a
+	// notice on screen. "" when there is none.
 	Notice string
 
-	// Names resolves a candidate token to its display name (§5). A nil value
+	// Names resolves a candidate token to its display name. A nil value
 	// means identity.
 	Names func(token string) string
 
@@ -76,14 +72,14 @@ type Model struct {
 	Running func(binding string, round int) bool
 
 	// Embedded is true when the dashboard is hosted as a view inside the
-	// cockpit shell rather than owning the whole screen (B1 round 2). The
+	// cockpit shell rather than owning the whole screen. The
 	// shell draws the identity line itself, so View omits headerLine and
 	// gridHeight reclaims its row.
 	Embedded bool
 }
 
 // Styles is the handful of internal/ui styles the dashboard borrows rather
-// than duplicating colours (§5). The host builds it from its own vars and
+// than duplicating colours. The host builds it from its own vars and
 // hands it over with SetStyles: the dash must not import internal/ui.
 type Styles struct {
 	Fg        lipgloss.Style
@@ -156,7 +152,7 @@ func New(d *db.DB, loc *time.Location, now func() time.Time, queryText, sortKey 
 	return m
 }
 
-// SetStyles hands the screen the host's palette (§5).
+// SetStyles hands the screen the host's palette.
 func (m *Model) SetStyles(s Styles) { m.styles = s }
 
 // Init is the first fetch.
@@ -220,7 +216,7 @@ func (m *Model) Refresh() tea.Cmd {
 }
 
 // Update is the screen's whole message handling. It returns dash.Model, not
-// tea.Model: the host wraps it (§4).
+// tea.Model: the host wraps it.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -247,7 +243,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateKeys is the un-editing key map (§4).
+// updateKeys is the un-editing key map.
 func (m Model) updateKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 	switch msg.String() {
 	case "/":
@@ -276,7 +272,7 @@ func (m Model) updateKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "enter":
 		lines := m.visible()
 		if m.cursor < 0 || m.cursor >= len(lines) {
-			return m, nil // an empty grid: enter is a no-op (§6)
+			return m, nil // an empty grid: enter is a no-op
 		}
 		switch l := lines[m.cursor]; l.kind {
 		case lineDay:
@@ -310,7 +306,7 @@ func (m Model) updateKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// selectable reports whether line i can receive the cursor (§5.6).
+// selectable reports whether line i can receive the cursor.
 func (m Model) selectable(i int) bool {
 	lines := m.visible()
 	if i < 0 || i >= len(lines) {
@@ -376,7 +372,7 @@ func (m Model) pageSize() int {
 }
 
 // gridHeight is the rows left for the grid under the fixed lines: three
-// when the screen owns its identity line, two when it is embedded (§5.1).
+// when the screen owns its identity line, two when it is embedded.
 func (m Model) gridHeight() int {
 	header := 3
 	if m.Embedded {
@@ -431,7 +427,7 @@ func (m Model) grouped() bool {
 	return m.query.By != histq.AxisNone && m.query.By != ""
 }
 
-// View draws the three fixed lines and the scrolled grid (§5). The host
+// View draws the three fixed lines and the scrolled grid. The host
 // sets Notice before calling when it has one to show.
 func (m Model) View() string {
 	m.vp.Width = m.width

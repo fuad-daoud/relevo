@@ -213,13 +213,8 @@ internal/ui/cmdline_test.go
 internal/ui/compose.go
 internal/ui/compose_test.go
 internal/ui/confirm.go
-internal/ui/dash/d2_test.go
-internal/ui/dash/fetch.go
 internal/ui/dash_host_test.go
-internal/ui/dash/input.go
-internal/ui/dash/model.go
 internal/ui/dash/render.go
-internal/ui/dash/sort.go
 internal/ui/detail.go
 internal/ui/fetch.go
 internal/ui/fetch_test.go
