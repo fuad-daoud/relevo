@@ -1,6 +1,6 @@
 // Package roles reads roles.json: which roles exist, the agent definition
 // each runs on each harness kind, the candidates each uses, ranked, and its
-// tier. Nothing outside the package uses the registry yet (#374).
+// tier. Nothing outside the package uses the registry yet.
 package roles
 
 import (
@@ -41,8 +41,8 @@ type File struct {
 	// keeps its built-in row.
 	Rows map[string]Row
 	// Source names where this File came from: empty means roles.json (the
-	// default), SourceActors means it was derived from the actors section
-	// (A2 round 2). It is not part of the JSON shape.
+	// default), SourceActors means it was derived from the actors section.
+	// It is not part of the JSON shape.
 	Source string `json:"-"`
 }
 
@@ -57,8 +57,8 @@ type Row struct {
 	Shape *string `json:"shape"`
 
 	// Check marks a writer role whose round closes on a check. true is
-	// refused on a reader role. The JSON key stays "gate": a roles section is
-	// only ever the input of the A2 migration, which still carries that key.
+	// refused on a reader role. The JSON key stays "gate": the stored roles
+	// section carries that key.
 	Check *bool `json:"gate,omitempty"`
 
 	// Definitions overrides the agent definition per harness kind. A kind
@@ -71,9 +71,8 @@ type Row struct {
 	Candidates []string `json:"candidates"`
 
 	// Off is the raw candidates that are off: each is kept in Candidates, at
-	// its position, but the pick skips it unless it is named explicitly (A2
-	// §3.4). Every entry must also appear in Candidates, as the same raw
-	// string.
+	// its position, but the pick skips it unless it is named explicitly.
+	// Every entry must also appear in Candidates, as the same raw string.
 	Off []string `json:"off,omitempty"`
 
 	// Placement is where the role's rounds run, most preferred first, as the
@@ -87,9 +86,9 @@ type Row struct {
 
 	// Outputs is the role's declared outputs.
 	Outputs workflow.Outputs `json:"outputs,omitempty"`
-	// Scope is the scope the actors conversion carried for a writer role
-	// (#801): the paths its rounds may change, and whether a Go comment-only
-	// edit is allowed. It is refused on a reader. A legacy roles.json may
+	// Scope is the scope the actors conversion carried for a writer role:
+	// the paths its rounds may change, and whether a Go comment-only edit
+	// is allowed. It is refused on a reader. A legacy roles.json may
 	// carry the key; it flows the same way.
 	Scope *pathscope.Scope `json:"scope,omitempty"`
 	// Skills are the skills the role's harness must be able to load, as the
@@ -116,7 +115,7 @@ func Load(path string) (*File, error) {
 }
 
 // LoadWithWarnings reads and validates roles.json, returning one warning per
-// key this relevo does not know (#372 §4.4): a key a newer relevo reads must not
+// key this relevo does not know: a key a newer relevo reads must not
 // stop this relevo, and a typo surfaces in `relevo doctor`.
 //
 // A missing file is nil, nil, nil. A file that does not validate is an error
@@ -158,7 +157,7 @@ func Parse(name string, raw []byte) (*File, []string, error) {
 	return f, warnings, nil
 }
 
-// validate applies every §5.1 rule to f. Rows are checked in sorted name
+// validate applies every rule to f. Rows are checked in sorted name
 // order and fields in rule order, so the first error is deterministic.
 func validate(path string, f *File) error {
 	for _, name := range sortedNames(f.Rows) {
@@ -187,7 +186,7 @@ func validate(path string, f *File) error {
 					return badField("shape", "built-in role is "+shapeWord(builtin.Shape))
 				}
 			} else if word == "writer" {
-				// #382 §4: a new writer row is accepted. Shape is what the
+				// A new writer row is accepted. Shape is what the
 				// gate check below reads, so record the writer word as one.
 				shape = harness.ShapeBuilder
 			}
@@ -236,7 +235,7 @@ func validate(path string, f *File) error {
 		// candidates
 		seen := make(map[string]bool, len(row.Candidates))
 		for i, tok := range row.Candidates {
-			// An entry is a candidate name or a canonical token (A1 §4.2).
+			// An entry is a candidate name or a canonical token.
 			if !candidate.IsName(tok) {
 				if _, err := candidate.ParseRef(tok); err != nil {
 					return badField(fmt.Sprintf("candidates[%d]", i), fmt.Sprintf("%q: want a candidate name or harness/provider/model", tok))
@@ -249,7 +248,7 @@ func validate(path string, f *File) error {
 		}
 
 		// off: every off entry must also be a candidate, as the same raw
-		// string (A2 §3.4).
+		// string.
 		for i, tok := range row.Off {
 			if !seen[tok] {
 				return badField(fmt.Sprintf("off[%d]", i), fmt.Sprintf("%q is not in candidates", tok))
@@ -309,7 +308,7 @@ func sortedDefKinds(defs map[string]DefRow) []string {
 
 // rolesUnknownKeyWarnings returns one warning per decoded key path that Row's
 // and DefRow's JSON shapes (jsonshape.Keys) do not declare, formatted exactly
-// as policyUnknownKeyWarnings formats its own (#372 §4.4).
+// as policyUnknownKeyWarnings formats its own.
 //
 // The known key sets are derived from the types themselves, so a field added
 // to Row or DefRow can never be reported as unknown.

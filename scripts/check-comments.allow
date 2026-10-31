@@ -188,10 +188,6 @@ internal/roles/actors_convert_test.go
 internal/roles/actors_shipped.go
 internal/roles/actors_shipped_test.go
 internal/roles/actors_test.go
-internal/roles/file.go
-internal/roles/file_test.go
-internal/roles/init.go
-internal/roles/init_test.go
 internal/roles/off_test.go
 internal/ui/actions.go
 internal/ui/actions_test.go
