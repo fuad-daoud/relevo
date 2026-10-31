@@ -106,7 +106,7 @@ func (m Model) Summary() Summary {
 	}
 	var durations []int64
 	for _, r := range m.rows {
-		s.Tokens += tokenValue(r)
+		s.Tokens += histq.RowTokens(r)
 		word, _ := m.outcomeWord(r)
 		s.ByWord[word]++
 		if r.DurationMS != nil {
@@ -225,7 +225,7 @@ func (m Model) visible() []line {
 			run := rows[i:j]
 			var runTokens int64
 			for _, r := range run {
-				runTokens += tokenValue(r)
+				runTokens += histq.RowTokens(r)
 			}
 			lbl := m.dayLabel(run[0].StartedAt)
 			out = append(out, line{

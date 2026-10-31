@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/histq"
 )
 
 type roundColLayout struct {
@@ -175,7 +176,7 @@ func (m Model) appendRoundTokens(parts []string, r db.RoundRow, cursor bool) []s
 	if r.InTokens == nil && r.CacheTokens == nil && r.WriteTokens == nil && r.OutTokens == nil {
 		return append(parts, m.cell("·", 7, true, m.styles.Fg, cursor))
 	}
-	return append(parts, m.cell(shortTokens(tokenValue(r)), 7, true, m.styles.Fg, cursor))
+	return append(parts, m.cell(shortTokens(histq.RowTokens(r)), 7, true, m.styles.Fg, cursor))
 }
 
 // TOOK: shortDuration; for running round now-StartedAt; for nil DurationMS it is ·, Dim, width 5
