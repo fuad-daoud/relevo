@@ -1,4 +1,4 @@
-package relevo
+package view
 
 import (
 	"fmt"
@@ -15,9 +15,9 @@ import (
 const logLineIndent = 21
 
 // LogLine is the one text form of a log entry, shared by `relevo log` and
-// the ui's log tab. Line one is the format both have always printed; a
-// second line, indented and marked ⎿ like the status log tail, carries the
-// round's usage when the entry has one (#142).
+// the ui's log tab. Line one is the entry's fields on one line; a second
+// line, indented and marked ⎿ like the status log tail, carries the round's
+// usage when the entry has one.
 func LogLine(e store.LogEntry) string {
 	first := fmt.Sprintf("%s  round %-3d %-10s %-9s %s %s",
 		e.TS.Local().Format("2006-01-02 15:04:05"), e.Round, e.Direction, e.Kind, e.Path, e.Note)
@@ -70,7 +70,7 @@ func short8(id string) string {
 // shortCPU renders a round's CPU time at seconds resolution: tenths of a
 // second below a minute, minutes and seconds below an hour, then hours and
 // minutes. usage.ShortDuration answers "<1m" for every one of those, which
-// collapses the 8.5s/19.7s rounds this number is compared for (#299); the
+// collapses the 8.5s/19.7s rounds this number is compared for; the
 // wall-clock formatter is left to its other callers.
 func shortCPU(ms int64) string {
 	if ms <= 0 {

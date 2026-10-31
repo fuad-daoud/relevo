@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/transcript"
+	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -92,7 +93,7 @@ func chainSeedPlanView(rt Runtime, c db.ChainRow, plan int, v *workflow.SeedView
 func chainOutcomeBodies(rt Runtime, b store.Binding, round int, body []byte) [][]byte {
 	bodies := [][]byte{body}
 	if stream, err := rt.Store.ReadFile(rt.Store.StreamPath(b.Name, round)); err == nil {
-		texts := transcript.Texts(lastStreamKind(b), stream)
+		texts := transcript.Texts(view.LastStreamKind(b), stream)
 		for i := len(texts) - 1; i >= 0; i-- {
 			bodies = append(bodies, []byte(texts[i]))
 		}

@@ -476,7 +476,7 @@ func (s *Server) handleStopChain(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
 		case errors.Is(err, relevo.ErrNothingToStop):
 			writeErr(w, http.StatusConflict, remote.CodeNothingToStop, err.Error())
-		case errors.Is(err, relevo.ErrChainHalted):
+		case errors.Is(err, chain.ErrChainHalted):
 			writeErr(w, http.StatusConflict, remote.CodeChainHalted, err.Error())
 		default:
 			writeErr(w, http.StatusInternalServerError, "", err.Error())

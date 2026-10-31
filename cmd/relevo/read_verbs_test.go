@@ -9,6 +9,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // seedReadVerbStore builds a binding with one completed round: a plan entry
@@ -93,7 +94,7 @@ func TestPrintLogAndPrintShowWriteNothing(t *testing.T) {
 		t.Fatalf("printLog: %v", err)
 	}
 	for _, e := range log {
-		if line := relevo.LogLine(e); !strings.Contains(string(stdout), line) {
+		if line := view.LogLine(e); !strings.Contains(string(stdout), line) {
 			t.Errorf("printLog output:\n%s\nlacks %q", stdout, line)
 		}
 	}

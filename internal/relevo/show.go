@@ -14,15 +14,12 @@ import (
 	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // ErrNoCompletedRound is Show's error when no --round is given and every
 // round of the binding is still open.
 var ErrNoCompletedRound = errors.New("no completed round yet; --round N to read an open round's prompt")
-
-// ErrNoFindings is Show's error when --findings <id> without --round finds no
-// round holding that consult's findings.
-var ErrNoFindings = errors.New("no findings for that consult")
 
 // ShowSection is one of a round's readable parts.
 type ShowSection string
@@ -95,7 +92,7 @@ type ShowResult struct {
 	Events []store.LogEntry
 	// Artifacts is filled for Section artifacts: the round's artifact files,
 	// output first, then summary.md, then by rel.
-	Artifacts []ArtifactFile `json:"artifacts,omitempty"`
+	Artifacts []view.ArtifactFile `json:"artifacts,omitempty"`
 	// Trace is filled for Section trace: the chain's state and its trace, the
 	// document the CLI encodes for --json. Text carries the same trace
 	// rendered for a human. Nil for every other section, and for no round.
@@ -195,43 +192,6 @@ func Show(ctx context.Context, rt Runtime, opts ShowOptions) (ShowResult, error)
 	return ShowResult{}, fmt.Errorf("binding %q not found (live or in the database): %w", opts.Name, store.ErrNotFound)
 }
 
-// findingsRound resolves which round holds a consult's findings for
-// `show --findings <id>`. requested is --round; 0 scans for the newest round
-// holding the findings. upper is the highest round a consult can be recorded
-// on: the binding's current round counter, or the plan-round count when that
-// is larger. exists reports whether a round holds the consult's findings, and
-// an error from it propagates. With none found it returns ErrNoFindings.
-func findingsRound(requested, upper int, exists func(round int) (bool, error)) (int, error) {
-	if requested > 0 {
-		if requested > upper {
-			return 0, refusal.Rangef("round %d: binding has %d rounds", requested, upper)
-		}
-		return requested, nil
-	}
-	for round := upper; round >= 1; round-- {
-		ok, err := exists(round)
-		if err != nil {
-			return 0, err
-		}
-		if ok {
-			return round, nil
-		}
-	}
-	return 0, ErrNoFindings
-}
-
-// findingsRoundFor is the --findings resolution showLive and showArchived
-// share: findingsRound over the highest round a consult can be recorded on --
-// counter (b.Round, or ab.Binding.Round) or the plan-round count, whichever is
-// larger -- with the consult named when no round holds the findings.
-func findingsRoundFor(requested, counter, rounds int, name, id string, exists func(round int) (bool, error)) (int, error) {
-	round, err := findingsRound(requested, max(counter, rounds), exists)
-	if errors.Is(err, ErrNoFindings) {
-		return 0, fmt.Errorf("consult %s on %s: %w", id, name, err)
-	}
-	return round, err
-}
-
 // liveFindingsPresent reports whether a live binding's round holds a consult's
 // findings: its findings file, read through the store, is present.
 func liveFindingsPresent(rt Runtime, name, id string) func(round int) (bool, error) {
@@ -253,7 +213,7 @@ func archivedFindingsRound(rt Runtime, ab store.ArchivedBinding, rounds int, opt
 		_, ok, err := rt.Store.ArchivedFile(ab.RecordID, base)
 		return ok, err
 	}
-	return findingsRoundFor(opts.Round, ab.Binding.Round, rounds, ab.Binding.Name, opts.FindingsID, present)
+	return view.FindingsRoundFor(opts.Round, ab.Binding.Round, rounds, ab.Binding.Name, opts.FindingsID, present)
 }
 
 // showLive resolves opts against b's files, as `relevo show` reads a live
@@ -286,7 +246,7 @@ func showLive(rt Runtime, b store.Binding, opts ShowOptions) (ShowResult, error)
 		// no plan entry yet, so a findings read is bounded by both counters
 		// and, with no --round, scans for the round holding the findings.
 		present := liveFindingsPresent(rt, b.Name, opts.FindingsID)
-		round, err = findingsRoundFor(opts.Round, b.Round, rounds, b.Name, opts.FindingsID, present)
+		round, err = view.FindingsRoundFor(opts.Round, b.Round, rounds, b.Name, opts.FindingsID, present)
 		if err != nil {
 			return ShowResult{}, err
 		}
@@ -358,7 +318,7 @@ func showSections(rt Runtime, name string, round int, actor, shape, output strin
 			if err == nil {
 				res.Text, res.Missing = string(text), text == nil
 				if !res.Missing {
-					res.Text = withFallbackHeader(entries, round, res.Text)
+					res.Text = view.WithFallbackHeader(entries, round, res.Text)
 				}
 			}
 		} else {
