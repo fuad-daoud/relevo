@@ -25,7 +25,6 @@ func TestLogFoldsSend(t *testing.T) {
 	roundNum := 17
 
 	events := []db.EventLogRow{
-		// Newest first: drift, pick, plan
 		{
 			TS:          now.Add(2 * time.Second),
 			Seq:         3,
@@ -77,9 +76,6 @@ func TestLogFoldsSend(t *testing.T) {
 	}
 }
 
-// TestLogRowOfBothPromptKindsReadsSent pins the cockpit's event word for a
-// prompt row in either stored spelling: the legacy one already written and the
-// one new entries carry.
 func TestLogRowOfBothPromptKindsReadsSent(t *testing.T) {
 	now := time.Date(2026, 9, 25, 18, 33, 0, 0, time.UTC)
 	for _, kind := range []string{"prompt", "plan"} {
@@ -138,7 +134,6 @@ func TestLogFoldsReport(t *testing.T) {
 		t.Errorf("Detail = %q, want %q", e.Detail, wantDetail)
 	}
 
-	// Done report with " paths:" tail in diff note drops that tail
 	doneEvents := []db.EventLogRow{
 		{
 			TS:          now.Add(time.Second),
@@ -215,7 +210,6 @@ func TestLogSwitchAndExit(t *testing.T) {
 		t.Errorf("entries[1] = %+v, want exited / without a report (code 0)", entries[1])
 	}
 
-	// Rate-limited switch reason is shortened by GateReason
 	rateLimitSwitch := []db.EventLogRow{
 		{
 			TS:          now,
@@ -238,11 +232,6 @@ func TestLogSwitchAndExit(t *testing.T) {
 	}
 }
 
-// TestLogReaderRowWords pins a reader binding's log rows: its report entry's
-// event cell reads "artifact", its exit note reads "without an output", and a
-// switch whose why names the missing output reads "exited without an output".
-// A writer's row keeps today's words, whether the store names the shape
-// "writer" or does not hold it at all.
 func TestLogReaderRowWords(t *testing.T) {
 	now := time.Date(2026, 9, 25, 18, 26, 0, 0, time.UTC)
 	roundID := "r1"
@@ -337,22 +326,18 @@ func TestLogGatesRevisionsActions(t *testing.T) {
 	}
 
 	entries := buildLogEntries(nil, hist, revs, actions, since, nil, nil)
-	// 3 entries: hist (now), action (now-30m), rev (now-1h). Old hist event dropped.
 	if len(entries) != 3 {
 		t.Fatalf("got %d entries, want 3", len(entries))
 	}
 
-	// Hist rate_limited gives gated and detail starting "cline-pass · "
 	if entries[0].Word != "gated" || !strings.HasPrefix(entries[0].Detail, "cline-pass · ") {
 		t.Errorf("entries[0] = %+v, want gated starting with 'cline-pass · '", entries[0])
 	}
 
-	// Action gives Binding "you", Word = verb, Err carried through
 	if entries[1].Binding != "you" || entries[1].Word != "gate" || !entries[1].Err {
 		t.Errorf("entries[1] = %+v, want you / gate / Err=true", entries[1])
 	}
 
-	// Revision gives config / rev 4 · config set candidates
 	if entries[2].Word != "config" || entries[2].Detail != "rev 4 · config set candidates" {
 		t.Errorf("entries[2] = %+v, want config / rev 4 · config set candidates", entries[2])
 	}
@@ -382,7 +367,6 @@ func TestLogNewestFirst(t *testing.T) {
 		t.Fatalf("got %d entries, want 4", len(entries))
 	}
 
-	// Mixed sources come out in time order, newest first: action (-1m), rev (-2m), gate (-3m), event (-4m)
 	if entries[0].Word != "stop" {
 		t.Errorf("entries[0].Word = %q, want stop", entries[0].Word)
 	}
@@ -433,8 +417,6 @@ func TestLogViewDayRulesAndMargins(t *testing.T) {
 		}
 		if strings.Contains(l, "today") && strings.Contains(l, "2 events") {
 			ruleFound = true
-			// Body has a today rule ending with N events, 3 cells before the edge
-			// The line ends with "   ", so the rule content ends 3 cells before the edge.
 			if !strings.HasSuffix(l, "   ") {
 				t.Errorf("rule line does not end with 3 spaces margin: %q", l)
 			}
@@ -443,7 +425,6 @@ func TestLogViewDayRulesAndMargins(t *testing.T) {
 			if !strings.HasSuffix(trimmed, "2 events") {
 				t.Errorf("rule line trimmed content = %q, want suffix '2 events'", trimmed)
 			}
-			// Cursor is never on a rule line:
 			if strings.Contains(l, bg) {
 				t.Errorf("cursor must never be on a rule line: %q", l)
 			}
@@ -486,7 +467,6 @@ func TestLogViewFollow(t *testing.T) {
 	}
 	env := widget.Env{Now: now, Width: 132, Height: 30}
 
-	// Down sets follow false
 	res, _ := v.Update(tea.KeyMsg{Type: tea.KeyDown}, env)
 	v = res.(logView)
 	if v.follow {
@@ -496,7 +476,6 @@ func TestLogViewFollow(t *testing.T) {
 		t.Errorf("cursor = %d, want 1", v.cursor)
 	}
 
-	// A new eventLogMsg with a newer event keeps the cursor on the same entry index
 	newEvents := []db.EventLogRow{
 		{TS: now.Add(-5 * time.Minute), Seq: 3, Kind: "exit", BindingName: "newbind"},
 		{TS: now.Add(-10 * time.Minute), Seq: 1, Kind: "exit", BindingName: "atlas"},
@@ -508,7 +487,6 @@ func TestLogViewFollow(t *testing.T) {
 		t.Errorf("cursor after new eventLogMsg = %d, want 1 (kept index)", v.cursor)
 	}
 
-	// f sets follow true and cursor 0
 	res, _ = v.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}}, env)
 	v = res.(logView)
 	if !v.follow {
@@ -535,14 +513,12 @@ func TestLogViewEnterOpensRound(t *testing.T) {
 	}
 	env := widget.Env{Now: now, Width: 132, Height: 30}
 
-	// Cursor 0 is the sent entry: enter returns non-nil command
 	v.cursor = 0
 	_, cmd := v.Update(tea.KeyMsg{Type: tea.KeyEnter}, env)
 	if cmd == nil {
 		t.Error("enter on a sent entry must return a non-nil command")
 	}
 
-	// Cursor 1 is the gate entry: enter returns nil
 	v.cursor = 1
 	_, cmd = v.Update(tea.KeyMsg{Type: tea.KeyEnter}, env)
 	if cmd != nil {
@@ -562,20 +538,17 @@ func TestLogViewFilter(t *testing.T) {
 	}
 	env := widget.Env{Now: now, Width: 132, Height: 30}
 
-	// Type /
 	res, _ := v.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}}, env)
 	v = res.(logView)
 	if !v.editing {
 		t.Error("/ must enter editing")
 	}
 
-	// Type oc-496
 	for _, r := range "oc-496" {
 		res, _ = v.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}, env)
 		v = res.(logView)
 	}
 
-	// Press enter
 	res, _ = v.Update(tea.KeyMsg{Type: tea.KeyEnter}, env)
 	v = res.(logView)
 	if v.editing {
@@ -626,7 +599,7 @@ func TestLogSwitchRateLimitedReason(t *testing.T) {
 }
 
 // A gate history row with an empty note shows the provider alone: no trailing
-// " · " from a reason that is not there (§2, round 7).
+// " · " from a reason that is not there.
 func TestLogGateRowWithoutReason(t *testing.T) {
 	now := time.Date(2026, 9, 25, 18, 11, 0, 0, time.UTC)
 	hist := availability.History{
@@ -686,7 +659,6 @@ func TestLogViewPageDown(t *testing.T) {
 		return v, env
 	}
 
-	// With 40 entries, second pgdown clamps to the last entry (39)
 	v, env := makeView(40)
 	res, _ := v.Update(tea.KeyMsg{Type: tea.KeyPgDown}, env)
 	v = res.(logView)
@@ -702,7 +674,6 @@ func TestLogViewPageDown(t *testing.T) {
 		t.Errorf("cursor after 2nd pgdown = %d, want %d", v.cursor, want2)
 	}
 
-	// With 60 entries, second pgdown is exactly twice that (52)
 	v60, env60 := makeView(60)
 	res, _ = v60.Update(tea.KeyMsg{Type: tea.KeyPgDown}, env60)
 	v60 = res.(logView)
@@ -716,8 +687,6 @@ func TestLogViewPageDown(t *testing.T) {
 	}
 }
 
-// TestLogViewDetailStripsControlBytes pins the one sanitising pass over every
-// entry's Detail at the end of buildLogEntries.
 func TestLogViewDetailStripsControlBytes(t *testing.T) {
 	now := time.Date(2026, 9, 25, 18, 30, 0, 0, time.UTC)
 	actions := []widget.ActionEntry{{At: now, Verb: "stop", Text: "stopped \x1b[2J"}}
