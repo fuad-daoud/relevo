@@ -5,13 +5,11 @@ import (
 	"errors"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
-	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -301,171 +299,25 @@ func runGit(t *testing.T, dir string, args ...string) string {
 	return string(out)
 }
 
-func TestRoundStateOf(t *testing.T) {
-	t.Parallel()
-
-	// Arm 1: StateNeedsYou
-	b1 := store.Binding{
-		State: store.StateNeedsYou,
-		Round: 1,
-	}
-	if got := RoundStateOf(b1, nil); got != remote.RoundNeedsYou {
-		t.Fatalf("arm 1 (needs_you): got %v, want %v", got, remote.RoundNeedsYou)
-	}
-
-	// Arm 2: RoundRunning (plan sent, report not yet sent)
-	b2 := store.Binding{
-		State: store.StateActive,
-		Round: 1,
-	}
-	entries2 := []store.LogEntry{
-		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt},
-	}
-	if got := RoundStateOf(b2, entries2); got != remote.RoundRunning {
-		t.Fatalf("arm 2 (running): got %v, want %v", got, remote.RoundRunning)
-	}
-
-	// Arm 3: RoundClosed (Serve.ClosedRound > Serve.AckedRound)
-	b3 := store.Binding{
-		State: store.StateActive,
-		Round: 2,
-		Serve: &store.ServeFacts{
-			ClosedRound: 1,
-			AckedRound:  0,
-		},
-	}
-	// Entries has both plan and report for round 1
-	entries3 := []store.LogEntry{
-		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt},
-		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport},
-	}
-	if got := RoundStateOf(b3, entries3); got != remote.RoundClosed {
-		t.Fatalf("arm 3 (closed): got %v, want %v", got, remote.RoundClosed)
-	}
-
-	// Arm 4: RoundIdle
-	b4 := store.Binding{
-		State: store.StateActive,
-		Round: 2,
-		Serve: &store.ServeFacts{
-			ClosedRound: 1,
-			AckedRound:  1,
-		},
-	}
-	if got := RoundStateOf(b4, entries3); got != remote.RoundIdle {
-		t.Fatalf("arm 4 (idle): got %v, want %v", got, remote.RoundIdle)
-	}
-}
-
-// TestRoundStateOfBroken pins the broken arm: a binding whose builder is gone
-// reports broken with its round open, and an un-acked close still outranks it,
-// so a broken binding whose close the owner has not collected reports closed.
-//
-// Mutation check: delete the broken arm from RoundStateOf and the first case
-// fails; the closed case passes either way.
-func TestRoundStateOfBroken(t *testing.T) {
+// TestServedViewShipsBrokenHalt pins that the view of a stuck broken binding
+// carries the binding's own halt reason: the round reads broken and no tick
+// retries it, so the reason is the only account of the fault there is.
+func TestServedViewShipsBrokenHalt(t *testing.T) {
 	t.Parallel()
 
 	entries := []store.LogEntry{
 		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt},
 	}
-
-	open := store.Binding{
-		State: store.StateBroken,
-		Round: 1,
-	}
-	if got := RoundStateOf(open, entries); got != remote.RoundBroken {
-		t.Fatalf("broken + open round: got %v, want %v", got, remote.RoundBroken)
-	}
-
-	closed := store.Binding{
-		State: store.StateBroken,
-		Round: 2,
-		Serve: &store.ServeFacts{
-			ClosedRound: 1,
-			AckedRound:  0,
-		},
-	}
-	if got := RoundStateOf(closed, entries); got != remote.RoundClosed {
-		t.Fatalf("broken + un-acked close: got %v, want %v (close outranks broken)", got, remote.RoundClosed)
-	}
-}
-
-// TestRoundStateOfSwitchableBrokenReportsRunning pins the guard on the broken
-// arm: only a break the server will not fix by itself goes on the wire as
-// broken. A switchable one the server retries on its next tick is routine, and
-// a laptop told broken halts with its own fallback reason and queues an entry
-// for it -- advice the laptop cannot follow on a remote binding.
-//
-// Mutation check: drop the !bindingSwitchable(b) guard and this reads broken.
-func TestRoundStateOfSwitchableBrokenReportsRunning(t *testing.T) {
-	t.Parallel()
-
-	entries := []store.LogEntry{
-		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt},
-	}
-
-	switchable := store.Binding{
+	stuck := store.Binding{
 		State:            store.StateBroken,
 		Round:            1,
 		BuilderCandidate: "claude/first/m",
 		RoundStartedAt:   time.Unix(1_700_000_000, 0),
-		Builder:          store.Endpoint{PID: 4242},
-	}
-	if got := RoundStateOf(switchable, entries); got != remote.RoundRunning {
-		t.Fatalf("switchable broken: got %v, want %v: the daemon still fixes this one", got, remote.RoundRunning)
-	}
-
-	// No process behind it: nothing retries the switch, so it is broken for the
-	// owner, and the reason is the only account of the fault there is.
-	stuck := switchable
-	stuck.Builder = store.Endpoint{}
-	stuck.Halt = "builder claude; switching to codex failed: exit status 1"
-	if got := RoundStateOf(stuck, entries); got != remote.RoundBroken {
-		t.Fatalf("broken with no process: got %v, want %v", got, remote.RoundBroken)
+		Builder:          store.Endpoint{},
+		Halt:             "builder claude; switching to codex failed: exit status 1",
 	}
 	if got := ServedView(stuck, entries, "", ""); got.Halt != stuck.Halt {
 		t.Errorf("view halt = %q, want the binding's own reason %q", got.Halt, stuck.Halt)
-	}
-}
-
-// TestRoundStateOfQueued pins #285: an open plan entry with a non-zero
-// QueuedAt is queued, not running; zero QueuedAt is running as before; and
-// needs_you still wins over queued, exactly as it wins over running.
-//
-// Mutation check: drop the `!b.QueuedAt.IsZero()` arm from RoundStateOf and
-// this fails on the first case.
-func TestRoundStateOfQueued(t *testing.T) {
-	t.Parallel()
-
-	entries := []store.LogEntry{
-		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt},
-	}
-
-	queued := store.Binding{
-		State:    store.StateActive,
-		Round:    1,
-		QueuedAt: time.Unix(1_700_000_000, 0),
-	}
-	if got := RoundStateOf(queued, entries); got != remote.RoundQueued {
-		t.Fatalf("open plan + QueuedAt set: got %v, want %v", got, remote.RoundQueued)
-	}
-
-	running := store.Binding{
-		State: store.StateActive,
-		Round: 1,
-	}
-	if got := RoundStateOf(running, entries); got != remote.RoundRunning {
-		t.Fatalf("open plan + zero QueuedAt: got %v, want %v", got, remote.RoundRunning)
-	}
-
-	needsYou := store.Binding{
-		State:    store.StateNeedsYou,
-		Round:    1,
-		QueuedAt: time.Unix(1_700_000_000, 0),
-	}
-	if got := RoundStateOf(needsYou, entries); got != remote.RoundNeedsYou {
-		t.Fatalf("needs_you + QueuedAt set: got %v, want %v (needs_you wins)", got, remote.RoundNeedsYou)
 	}
 }
 
@@ -745,174 +597,18 @@ func TestServedViewCarriesStalledSince(t *testing.T) {
 	}
 }
 
-func TestCloseServedRoundClean(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	client := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
-
-	bare := t.TempDir()
-	runGit(t, bare, "init", "--bare")
-
-	seedDir := t.TempDir()
-	runGit(t, seedDir, "clone", bare, ".")
-	if err := os.WriteFile(filepath.Join(seedDir, "file.txt"), []byte("seed\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, seedDir, "add", "file.txt")
-	runGit(t, seedDir, "commit", "-m", "init")
-	runGit(t, seedDir, "push", "origin", "HEAD:refs/heads/relevo/api")
-
-	branchHead := strings.TrimSpace(runGit(t, bare, "rev-parse", "refs/heads/relevo/api"))
-
-	wt := t.TempDir()
-	runGit(t, bare, "worktree", "add", wt, "refs/heads/relevo/api")
-
-	rt := Runtime{Git: client}
-	b := store.Binding{
-		Name:     "api",
-		Owner:    "client1",
-		Branch:   "relevo/api",
-		Worktree: wt,
-		Round:    2, // queueReport already advanced Round from 1 to 2
-		Serve: &store.ServeFacts{
-			BareRepo: bare,
-		},
-	}
-
-	res := closeServedRound(ctx, rt, b)
-	if res.Serve.ClosedRound != 1 {
-		t.Fatalf("ClosedRound: got %d, want 1", res.Serve.ClosedRound)
-	}
-	if res.Serve.ResultCommit != branchHead {
-		t.Fatalf("ResultCommit: got %q, want %q", res.Serve.ResultCommit, branchHead)
-	}
-	if res.Serve.DirtyCommit != "" {
-		t.Fatalf("DirtyCommit on clean worktree: got %q, want empty", res.Serve.DirtyCommit)
-	}
-
-	// Side ref must not exist
-	sideSHA, ok, err := client.RefSHA(ctx, bare, "refs/relevo/api/round-1")
-	if err != nil || ok {
-		t.Fatalf("side ref exists on clean worktree: sha=%q, ok=%v, err=%v", sideSHA, ok, err)
-	}
-
-	// Branch must be unchanged
-	headAfter, ok, err := client.RefSHA(ctx, bare, "refs/heads/relevo/api")
-	if err != nil || !ok || headAfter != branchHead {
-		t.Fatalf("branch changed: got %q, want %q", headAfter, branchHead)
-	}
-}
-
-func TestCloseServedRoundDirty(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	client := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
-
-	bare := t.TempDir()
-	runGit(t, bare, "init", "--bare")
-
-	seedDir := t.TempDir()
-	runGit(t, seedDir, "clone", bare, ".")
-	if err := os.WriteFile(filepath.Join(seedDir, "file.txt"), []byte("seed\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, seedDir, "add", "file.txt")
-	runGit(t, seedDir, "commit", "-m", "init")
-	runGit(t, seedDir, "push", "origin", "HEAD:refs/heads/relevo/api")
-
-	branchHead := strings.TrimSpace(runGit(t, bare, "rev-parse", "refs/heads/relevo/api"))
-
-	wt := t.TempDir()
-	runGit(t, bare, "worktree", "add", wt, "refs/heads/relevo/api")
-
-	// Make worktree dirty with an untracked file
-	if err := os.WriteFile(filepath.Join(wt, "dirty.txt"), []byte("dirty work\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	rt := Runtime{Git: client}
-	b := store.Binding{
-		Name:     "api",
-		Owner:    "client1",
-		Branch:   "relevo/api",
-		Worktree: wt,
-		Round:    2,
-		Serve: &store.ServeFacts{
-			BareRepo: bare,
-		},
-	}
-
-	res := closeServedRound(ctx, rt, b)
-	if res.Serve.ClosedRound != 1 {
-		t.Fatalf("ClosedRound: got %d, want 1", res.Serve.ClosedRound)
-	}
-	if res.Serve.ResultCommit != branchHead {
-		t.Fatalf("ResultCommit: got %q, want %q", res.Serve.ResultCommit, branchHead)
-	}
-	if res.Serve.DirtyCommit == "" {
-		t.Fatal("DirtyCommit is empty on dirty worktree")
-	}
-
-	// Side ref must exist in bare repo and equal DirtyCommit
-	sideSHA, ok, err := client.RefSHA(ctx, bare, "refs/relevo/api/round-1")
-	if err != nil || !ok {
-		t.Fatalf("side ref missing: ok=%v, err=%v", ok, err)
-	}
-	if sideSHA != res.Serve.DirtyCommit {
-		t.Fatalf("side ref %q != DirtyCommit %q", sideSHA, res.Serve.DirtyCommit)
-	}
-
-	// Side ref parent must be branch head
-	parent := strings.TrimSpace(runGit(t, bare, "rev-parse", sideSHA+"^"))
-	if parent != branchHead {
-		t.Fatalf("side ref parent %q != branchHead %q", parent, branchHead)
-	}
-
-	// Branch must be unchanged
-	headAfter, ok, err := client.RefSHA(ctx, bare, "refs/heads/relevo/api")
-	if err != nil || !ok || headAfter != branchHead {
-		t.Fatalf("branch changed: got %q, want %q", headAfter, branchHead)
-	}
-}
-
-func TestCloseServedRoundGitFailureKeepsFacts(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	fGit := &fakeGit{
-		refSHA: map[string]string{
-			"refs/heads/relevo/api": "commit123",
-		},
-		dirtyErr: errors.New("dirty failure"),
-	}
-
-	rt := Runtime{Git: fGit}
-	b := store.Binding{
-		Name:     "api",
-		Owner:    "client1",
-		Branch:   "relevo/api",
-		Worktree: "/tmp/fake-wt",
-		Round:    2,
-		Serve: &store.ServeFacts{
-			BareRepo:     "/tmp/fake-bare",
-			ClosedRound:  0,
-			ResultCommit: "old-head",
-			DirtyCommit:  "",
-		},
-	}
-
-	// Must not panic, and must leave facts unchanged
-	res := closeServedRound(ctx, rt, b)
-	if res.Serve.ClosedRound != 0 {
-		t.Fatalf("ClosedRound changed on git error: got %d, want 0", res.Serve.ClosedRound)
-	}
-	if res.Serve.ResultCommit != "old-head" {
-		t.Fatalf("ResultCommit changed on git error: got %q, want old-head", res.Serve.ResultCommit)
-	}
-	if res.Serve.DirtyCommit != "" {
-		t.Fatalf("DirtyCommit changed on git error: got %q, want empty", res.Serve.DirtyCommit)
+// recordCloseServedRound is the CloseServedRound hook for the engine tests
+// that pin the close call sites: it records the call and applies the close
+// outcome, so the test proves the site fires while the facts themselves are
+// pinned by internal/serve's tests.
+func recordCloseServedRound(called *bool, resultCommit string) func(context.Context, Runtime, store.Binding) store.Binding {
+	return func(_ context.Context, _ Runtime, b store.Binding) store.Binding {
+		*called = true
+		if b.Serve != nil {
+			b.Serve.ClosedRound = b.Round - 1
+			b.Serve.ResultCommit = resultCommit
+		}
+		return b
 	}
 }
 
@@ -942,7 +638,8 @@ func TestDeliverAndSettleOwnedLeavesQueued(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rt := Runtime{Store: st, Now: time.Now}
+	called := false
+	rt := Runtime{Store: st, Now: time.Now, CloseServedRound: recordCloseServedRound(&called, "")}
 	var got store.Binding
 	err := st.WithLock(func(tx *store.Tx) error {
 		var err error
@@ -963,6 +660,9 @@ func TestDeliverAndSettleOwnedLeavesQueued(t *testing.T) {
 	}
 	if len(entries) == 0 || entries[0].Confirmed {
 		t.Fatalf("payload was confirmed: %+v", entries)
+	}
+	if called {
+		t.Fatal("CloseServedRound hook called: deliverAndSettle never closes")
 	}
 }
 
@@ -1019,11 +719,13 @@ func TestReconcileHeadlessOwnedCloseRecordsFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	called := false
 	rt := Runtime{
-		Store:  st,
-		Git:    fGit,
-		Runner: fr,
-		Now:    time.Now,
+		Store:            st,
+		Git:              fGit,
+		Runner:           fr,
+		Now:              time.Now,
+		CloseServedRound: recordCloseServedRound(&called, expectedSHA),
 	}
 
 	var reconciled store.Binding
@@ -1047,6 +749,9 @@ func TestReconcileHeadlessOwnedCloseRecordsFacts(t *testing.T) {
 	}
 	if reconciled.Serve.ResultCommit != expectedSHA {
 		t.Fatalf("Serve.ResultCommit: got %q, want %q", reconciled.Serve.ResultCommit, expectedSHA)
+	}
+	if !called {
+		t.Fatal("CloseServedRound hook not called: the marked close must record the served round")
 	}
 }
 
@@ -1109,6 +814,8 @@ func TestReconcileHeadlessOwnedUnmarkedCloseRecordsFacts(t *testing.T) {
 	t.Parallel()
 
 	rt, b, _, sha := ownedExitFixture(t)
+	called := false
+	rt.CloseServedRound = recordCloseServedRound(&called, sha)
 	if err := os.MkdirAll(rt.Store.OutDir("api"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1125,6 +832,9 @@ func TestReconcileHeadlessOwnedUnmarkedCloseRecordsFacts(t *testing.T) {
 	if got.Serve.ResultCommit != sha {
 		t.Errorf("Serve.ResultCommit = %q, want %q", got.Serve.ResultCommit, sha)
 	}
+	if !called {
+		t.Fatal("CloseServedRound hook not called: the unmarked close must record the served round")
+	}
 }
 
 // TestReconcileHeadlessOwnedStopRequestedExitRecordsFacts: a served builder
@@ -1134,6 +844,8 @@ func TestReconcileHeadlessOwnedStopRequestedExitRecordsFacts(t *testing.T) {
 	t.Parallel()
 
 	rt, b, _, _ := ownedExitFixture(t)
+	called := false
+	rt.CloseServedRound = recordCloseServedRound(&called, "")
 	b.StopRequestedAt = time.Now().Add(-time.Second)
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatal(err)
@@ -1141,6 +853,9 @@ func TestReconcileHeadlessOwnedStopRequestedExitRecordsFacts(t *testing.T) {
 	got := reconcileOwned(t, rt, b)
 	if got.Serve == nil || got.Serve.ClosedRound != 1 {
 		t.Fatalf("Serve.ClosedRound = %+v, want 1", got.Serve)
+	}
+	if !called {
+		t.Fatal("CloseServedRound hook not called: the stop-requested close must record the served round")
 	}
 }
 

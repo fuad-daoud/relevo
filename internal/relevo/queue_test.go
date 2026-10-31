@@ -61,7 +61,7 @@ func TestSendDeferQueues(t *testing.T) {
 		t.Errorf("plan entries = %d, want 1", planCount)
 	}
 
-	if state := RoundStateOf(got, entries); state != remote.RoundQueued {
+	if state := remote.RoundStateOf(got, entries); state != remote.RoundQueued {
 		t.Errorf("RoundStateOf = %v, want %v", state, remote.RoundQueued)
 	}
 	if len(fr.specs) != 0 {

@@ -27,6 +27,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/serve"
 	"github.com/fuad-daoud/relevo/internal/setup"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/tmpdir"
@@ -457,6 +458,7 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 		}
 		rt.MasterMinds = reg
 	}
+	rt.CloseServedRound = serve.CloseServedRound
 	return rt, nil
 }
 

@@ -34,7 +34,7 @@ func requireRoundState(t *testing.T, rt relevo.Runtime, name string, want remote
 	if err != nil {
 		t.Fatalf("ReadLog %s: %v", name, err)
 	}
-	if got := relevo.RoundStateOf(b, entries); got != want {
+	if got := remote.RoundStateOf(b, entries); got != want {
 		t.Errorf("%s round_state = %v, want %v", name, got, want)
 	}
 }

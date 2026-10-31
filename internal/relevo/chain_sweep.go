@@ -8,6 +8,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -100,7 +101,7 @@ func chainSweepFlow(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow
 		switch {
 		case mb.State == store.StateNeedsYou:
 			return chainSweepFlowHalt(ctx, rt, tx, c, mb.Halt)
-		case mb.State == store.StateBroken && !bindingSwitchable(mb):
+		case mb.State == store.StateBroken && !remote.BindingSwitchable(mb):
 			return chainSweepFlowHalt(ctx, rt, tx, c, chainSweepBrokenReason(m.Binding, mb.Halt))
 		}
 	}

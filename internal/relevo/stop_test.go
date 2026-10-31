@@ -403,7 +403,7 @@ func TestStopWithScopesOffNeverProbesAScope(t *testing.T) {
 }
 
 // ownedStopFixture is a served (owned) binding with a bare repo and a
-// worktree on relevo/api -- the shape the closeServedRound tests build -- plus
+// worktree on relevo/api -- the shape the served close tests build -- plus
 // a plan entry for round 1 so RoundStateOf reports it running (or queued when
 // queued is true).
 func ownedStopFixture(t *testing.T, fr *fakeRunner, queued bool) (Runtime, store.Binding) {
@@ -476,6 +476,8 @@ func TestStopOwnedRunningRoundClosesServedRound(t *testing.T) {
 
 	fr := newFakeRunner()
 	rt, _ := ownedStopFixture(t, fr, false)
+	called := false
+	rt.CloseServedRound = recordCloseServedRound(&called, "")
 
 	res, err := Stop(context.Background(), rt, "api", StopOptions{})
 	if err != nil {
@@ -502,8 +504,11 @@ func TestStopOwnedRunningRoundClosesServedRound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state := RoundStateOf(got, entries); state != remote.RoundClosed {
+	if state := remote.RoundStateOf(got, entries); state != remote.RoundClosed {
 		t.Errorf("RoundStateOf = %v, want %v", state, remote.RoundClosed)
+	}
+	if !called {
+		t.Error("CloseServedRound hook not called: the stop must record the served round")
 	}
 }
 
@@ -516,6 +521,8 @@ func TestStopOwnedQueuedRoundDequeues(t *testing.T) {
 
 	fr := newFakeRunner()
 	rt, _ := ownedStopFixture(t, fr, true)
+	called := false
+	rt.CloseServedRound = recordCloseServedRound(&called, "")
 
 	res, err := Stop(context.Background(), rt, "api", StopOptions{})
 	if err != nil {
@@ -539,11 +546,14 @@ func TestStopOwnedQueuedRoundDequeues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state := RoundStateOf(got, entries); state != remote.RoundClosed {
+	if state := remote.RoundStateOf(got, entries); state != remote.RoundClosed {
 		t.Errorf("RoundStateOf = %v, want %v", state, remote.RoundClosed)
 	}
 	if text := StopText("api", res); !strings.Contains(text, "dropped from the server queue") {
 		t.Errorf("StopText = %q, want the dequeued wording", text)
+	}
+	if !called {
+		t.Error("CloseServedRound hook not called: the dequeue must record the served round")
 	}
 }
 

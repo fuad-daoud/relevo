@@ -158,7 +158,7 @@ func TestChainServerE2E(t *testing.T) {
 		}
 	}
 	if entries, rerr := serverStore.ReadLog(builderName); rerr == nil {
-		switch st := relevo.RoundStateOf(sb, entries); st {
+		switch st := remote.RoundStateOf(sb, entries); st {
 		case remote.RoundQueued, remote.RoundRunning:
 		default:
 			t.Fatalf("plan 1 round state = %q, want queued or running", st)
