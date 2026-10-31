@@ -58,6 +58,14 @@ type fakeRemote struct {
 	calls []string
 
 	whoAmIResp          remote.WhoAmI
+	whoAmIErr           error
+	candidatesResp      remote.CandidatesResponse
+	candidatesErr       error
+	unavailableErr      error
+	unavailableErrFor   func(server, name, token string) error
+	availableResp       remote.AvailableResponse
+	availableErr        error
+	availableErrFor     func(server, subject string) error
 	startRoundResp      remote.BindingView
 	startRoundErr       error
 	startRoundPlan      []byte
@@ -75,7 +83,32 @@ type fakeRemote struct {
 
 func (f *fakeRemote) WhoAmI(ctx context.Context, server string) (remote.WhoAmI, error) {
 	f.calls = append(f.calls, "WhoAmI:"+server)
-	return f.whoAmIResp, nil
+	return f.whoAmIResp, f.whoAmIErr
+}
+
+// Candidates answers the server's candidate list from the canned response.
+func (f *fakeRemote) Candidates(ctx context.Context, server string) (remote.CandidatesResponse, error) {
+	f.calls = append(f.calls, "Candidates:"+server)
+	return f.candidatesResp, f.candidatesErr
+}
+
+// Unavailable records one gated binding, answering per-binding when the test
+// fails one binding and succeeds the rest.
+func (f *fakeRemote) Unavailable(ctx context.Context, server, name, token, reason string) error {
+	f.calls = append(f.calls, fmt.Sprintf("Unavailable:%s:%s:%s", server, name, token))
+	if f.unavailableErrFor != nil {
+		return f.unavailableErrFor(server, name, token)
+	}
+	return f.unavailableErr
+}
+
+// Available answers the clear from the canned response.
+func (f *fakeRemote) Available(ctx context.Context, server, subject string) (remote.AvailableResponse, error) {
+	f.calls = append(f.calls, fmt.Sprintf("Available:%s:%s", server, subject))
+	if f.availableErrFor != nil {
+		return remote.AvailableResponse{}, f.availableErrFor(server, subject)
+	}
+	return f.availableResp, f.availableErr
 }
 
 func (f *fakeRemote) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier, candidate string, force bool, tags []remote.TagRef, retryOnUnreachable bool, verify *bool) (remote.BindingView, error) {

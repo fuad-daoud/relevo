@@ -8,6 +8,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/uplink"
 )
 
 // gateDoc is the gate tool's document. Its keys are exactly the CLI's GateDoc
@@ -85,7 +86,7 @@ func (v *RelevoVerbs) Gate(ctx context.Context, _ string, a GateArgs) (any, erro
 		if err != nil {
 			return nil, err
 		}
-		_ = relevo.ForwardAvailable(ctx, v.RT, a.Token)
+		_ = uplink.ForwardAvailable(ctx, v.RT, a.Token)
 		return gateClearDocOf(provider, providerCandidateCount(v.RT, provider), removed), nil
 	}
 
@@ -102,6 +103,6 @@ func (v *RelevoVerbs) Gate(ctx context.Context, _ string, a GateArgs) (any, erro
 	if err != nil {
 		return nil, err
 	}
-	_ = relevo.ForwardUnavailable(ctx, v.RT, a.Token, a.Reason, until)
+	_ = uplink.ForwardUnavailable(ctx, v.RT, a.Token, a.Reason, until)
 	return gateSetDocOf(provider, until, providerCandidateCount(v.RT, provider)), nil
 }
