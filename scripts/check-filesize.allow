@@ -6,7 +6,6 @@ internal/relevo/headless.go
 internal/relevo/reconcile.go
 internal/relevo/send.go
 internal/relevo/status.go
-internal/ui/confirm.go
 internal/ui/fetch.go
 internal/ui/view_agents.go
 internal/ui/view_candidates.go

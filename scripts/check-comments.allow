@@ -212,7 +212,6 @@ internal/ui/cmdline.go
 internal/ui/cmdline_test.go
 internal/ui/compose.go
 internal/ui/compose_test.go
-internal/ui/confirm.go
 internal/ui/dash_host_test.go
 internal/ui/detail.go
 internal/ui/fetch.go
