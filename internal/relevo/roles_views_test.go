@@ -1,9 +1,9 @@
 package relevo
 
-// The view tests for #374 §3.1-§3.3: relevo config's pick and candidates blocks, the
-// post-bind consult-name note and the legacy-field warnings read the roles
-// registry when a roles.json is loaded, and reproduce today's bytes when it is
-// not. The legacy behaviour is pinned by the older tests, which stay unedited.
+// The view tests: relevo config's pick and candidates blocks, the post-bind
+// consult-name note and the legacy-field warnings read the roles registry when
+// a roles.json is loaded, and reproduce today's bytes when it is not. The
+// legacy behaviour is pinned by the older tests.
 
 import (
 	"context"
@@ -46,10 +46,10 @@ func rolesViewsSection(t *testing.T, got, start, end string) string {
 	return rest[:j]
 }
 
-// TestRolesViewsFormatPolicyForFileMode pins §3.1's FormatPolicyFor: the header
-// names roles.json, the rows are the row's candidate list in order with an
-// `order` tag and the pick marked, a role with nothing listed says so, and the
-// legacy "no policy configured" line is never printed.
+// TestRolesViewsFormatPolicyForFileMode pins FormatPolicyFor in file mode: the
+// header names roles.json, the rows are the row's candidate list in order with
+// an `order` tag and the pick marked, a role with nothing listed says so, and
+// the legacy "no policy configured" line is never printed.
 //
 // Mutation check: make FormatPolicyFor print FormatPolicy's "  (no order set)"
 // header instead of "  (config actors)" and this test fails on its first line.
@@ -93,7 +93,7 @@ func TestRolesViewsFormatPolicyForFileMode(t *testing.T) {
 	}
 }
 
-// TestRolesViewsFormatPolicyForLegacyMatches pins §3.1's legacy half: with a
+// TestRolesViewsFormatPolicyForLegacyMatches pins the legacy half: with a
 // legacy registry the file-mode entry point is FormatPolicy byte for byte.
 func TestRolesViewsFormatPolicyForLegacyMatches(t *testing.T) {
 	t.Parallel()
@@ -110,7 +110,7 @@ func TestRolesViewsFormatPolicyForLegacyMatches(t *testing.T) {
 	}
 }
 
-// TestRolesViewsPerRoleGateFiltering pins §3.1's per-role gate filtering in the
+// TestRolesViewsPerRoleGateFiltering pins per-role gate filtering in the
 // legacy renderer: a roles-missing gate scoped to reviewer never shows on a
 // builder row, and does show on reviewer's.
 //
@@ -137,8 +137,8 @@ func TestRolesViewsPerRoleGateFiltering(t *testing.T) {
 	}
 }
 
-// TestRolesViewsPolicyWarningsForFileMode pins §3.1's PolicyWarningsFor: a
-// listed token that is not configured, and a listed token whose kind has no
+// TestRolesViewsPolicyWarningsForFileMode pins PolicyWarningsFor in file mode:
+// a listed token that is not configured, and a listed token whose kind has no
 // definition for the role, each give their exact text -- and nothing else,
 // since in file mode the list is the assignment.
 func TestRolesViewsPolicyWarningsForFileMode(t *testing.T) {
@@ -167,7 +167,7 @@ func TestRolesViewsPolicyWarningsForFileMode(t *testing.T) {
 	}
 }
 
-// TestRolesViewsRoleRefusalsForFileMode pins §3.1's RoleRefusalsFor: with every
+// TestRolesViewsRoleRefusalsForFileMode pins RoleRefusalsFor: with every
 // listed candidate gated for builder only, builder has a refusal and reviewer
 // -- same candidates, same gates -- has none.
 func TestRolesViewsRoleRefusalsForFileMode(t *testing.T) {
@@ -195,9 +195,10 @@ func TestRolesViewsRoleRefusalsForFileMode(t *testing.T) {
 	}
 }
 
-// TestRolesViewsFormatCandidatesLatencyForFileMode pins §3.2: the roles column
-// is the registry's answer, "(no role)" when no role lists the candidate, and
-// the tier segment is gone -- the role owns the tier in file mode.
+// TestRolesViewsFormatCandidatesLatencyForFileMode pins the file-mode
+// candidates list: the roles column is the registry's answer, "(no role)"
+// when no role lists the candidate, and the tier segment is gone -- the role
+// owns the tier in file mode.
 func TestRolesViewsFormatCandidatesLatencyForFileMode(t *testing.T) {
 	t.Parallel()
 
@@ -227,8 +228,8 @@ func TestRolesViewsFormatCandidatesLatencyForFileMode(t *testing.T) {
 	}
 }
 
-// TestRolesViewsLegacyRoleFieldWarnings pins §3.1's LegacyRoleFieldWarnings:
-// file mode names each legacy field still set, in order, and legacy mode says
+// TestRolesViewsLegacyRoleFieldWarnings pins LegacyRoleFieldWarnings: file
+// mode names each legacy field still set, in order, and legacy mode says
 // nothing -- without roles.json those fields are the source, not stale copies.
 func TestRolesViewsLegacyRoleFieldWarnings(t *testing.T) {
 	t.Parallel()
@@ -261,9 +262,9 @@ func TestRolesViewsLegacyRoleFieldWarnings(t *testing.T) {
 	}
 }
 
-// TestRolesViewsMergedGateTexts pins §3.3: a candidate gated for two roles
-// prints one merged roles-missing part naming both, in sorted order, beside the
-// role-free gate rendered as it always was.
+// TestRolesViewsMergedGateTexts pins merged gate texts: a candidate gated for
+// two roles prints one merged roles-missing part naming both, in sorted order,
+// beside the role-free gate, which renders unchanged.
 //
 // Mutation check: render one part per gate instead of grouping by kind and
 // until, and the merged roles-missing part is gone.
@@ -290,7 +291,7 @@ func TestRolesViewsMergedGateTexts(t *testing.T) {
 	}
 }
 
-// TestRolesViewsResolveRoleFileModeNothingServes pins §3.4: in file mode a role
+// TestRolesViewsResolveRoleFileModeNothingServes pins that in file mode a role
 // whose row lists nothing gives the roles.json wording, and the error still
 // matches resolve.ErrRoleNotServed.
 func TestRolesViewsResolveRoleFileModeNothingServes(t *testing.T) {
@@ -339,8 +340,8 @@ func customBuilderBinding(name string) store.Binding {
 	}
 }
 
-// TestRolesViewsStatusNamesCustomBuilderDefinition pins #374 §2.2: a binding
-// whose kind has a custom definition carries it on the row and in its JSON.
+// TestRolesViewsStatusNamesCustomBuilderDefinition pins that a binding whose
+// kind has a custom definition carries it on the row and in its JSON.
 func TestRolesViewsStatusNamesCustomBuilderDefinition(t *testing.T) {
 	rt := newRuntime(t)
 	rt.Registry = rolesFileRegistry(t, rt.Candidates, policy.Policy{}, map[string]roles.Row{
@@ -365,9 +366,9 @@ func TestRolesViewsStatusNamesCustomBuilderDefinition(t *testing.T) {
 	}
 }
 
-// TestRolesViewsStatusOmitsShippedBuilderDefinition pins #374 §2.2's other
-// half: a shipped definition -- here the legacy registry's -- leaves the
-// fields out, so today's JSON is unchanged.
+// TestRolesViewsStatusOmitsShippedBuilderDefinition pins the other half: a
+// shipped definition -- here the legacy registry's -- leaves the fields out,
+// so today's JSON is unchanged.
 func TestRolesViewsStatusOmitsShippedBuilderDefinition(t *testing.T) {
 	rt := newRuntime(t) // no roles.json: the legacy derivation
 

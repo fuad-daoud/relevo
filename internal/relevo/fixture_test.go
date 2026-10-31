@@ -10,14 +10,12 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// This file holds the internal/relevo test fixtures (#303 step 3). Before
-// #303 every one of them seeded its world through a fake pane client and
-// BindOptions.MasterMindPane; both are gone, so each fixture now builds on
-// newRuntime's mastermind registry and on the store. No pane type appears here
-// at all: a local builder is a headless process relevo runs, and the tests
-// drive it through fakeRunner.
+// This file holds the internal/relevo test fixtures: each builds on
+// newRuntime's mastermind registry and on the store. No pane type appears here:
+// a local builder is a headless process relevo runs, and the tests drive it
+// through fakeRunner.
 
-// seedBound binds webshop on the agy test candidate, headless (#303): the
+// seedBound binds webshop on the agy test candidate, headless: the
 // runtime gets a fakeRunner, and no pane agent is added for the builder --
 // there is none.
 func seedBound(t *testing.T) (Runtime, store.Binding) {
@@ -48,7 +46,7 @@ func seedHeadless(t *testing.T, fr *fakeRunner) (Runtime, store.Binding) {
 }
 
 // haltOnce runs haltBinding inside one store lock, so a test can halt a
-// binding with the transaction its signature now needs without having to
+// binding with the transaction its signature needs without having to
 // persist the result. haltBinding queues the round's halt entry through that
 // transaction, so the lock is required, not merely convenient.
 //
@@ -124,7 +122,7 @@ func queuedBinding(t *testing.T) (Runtime, store.Binding) {
 }
 
 // timedOutBinding is a binding whose round is well past its budget, with a
-// payload already waiting on the mastermind. The waiting payload is what made the
+// payload already waiting on the mastermind. The waiting payload is what makes the
 // halt and the held-payload notice overwrite each other's state and each
 // re-notify on every poll.
 func timedOutBinding(t *testing.T) (Runtime, store.Binding) {

@@ -14,7 +14,7 @@ import (
 )
 
 // ServerProbe is one configured server's reachability and enrollment, as
-// `relevo config server list` and `relevo doctor` both report it (spec §5.5, §4.7).
+// `relevo config server list` and `relevo doctor` both report it.
 type ServerProbe struct {
 	Name  string
 	URL   string
@@ -25,13 +25,13 @@ type ServerProbe struct {
 	Detail string
 
 	// TierAware, BuilderTier and MaxTier are filled only in the "enrolled"
-	// arm, from WhoAmI.Features/BuilderTier/MaxTier (#141 remote half).
+	// arm, from WhoAmI.Features/BuilderTier/MaxTier.
 	TierAware   bool   // WhoAmI.Features contains FeatureTier
 	BuilderTier string // WhoAmI.BuilderTier; "" when !TierAware
 	MaxTier     string // WhoAmI.MaxTier;     "" when !TierAware
 
 	// QueueAware and Builders are filled only in the "enrolled" arm, from
-	// WhoAmI.Features/Builders (#285).
+	// WhoAmI.Features/Builders.
 	QueueAware bool                 // WhoAmI.Features contains FeatureQueue
 	Builders   *remote.BuildersView // nil when !QueueAware
 }
@@ -99,9 +99,7 @@ func ProbeServers(ctx context.Context, rt Runtime, servers map[string]remote.Ser
 	return probes
 }
 
-// probeStatusText is one ServerProbe's status word, exactly what `relevo
-// servers` printed before ProbeServers existed (serverStatus in
-// cmd/relevo/client.go).
+// probeStatusText is one ServerProbe's status word.
 func probeStatusText(p ServerProbe) string {
 	switch p.State {
 	case "enrolled":
