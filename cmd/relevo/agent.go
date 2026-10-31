@@ -51,7 +51,7 @@ func agentInstallEnv() (setup.SetupEnv, error) {
 
 // agentFlagValues holds the pointers `relevo config agents`' flags parse into.
 // agentFlagSet defines them on fs; cmdAgentInstall and TestRemovedFlagsAreUnknown
-// read the same surface (A4-1a).
+// read the same surface.
 type agentFlagValues struct {
 	kind   *string
 	agent  *string
@@ -78,8 +78,7 @@ func agentFlagSet(fs *flag.FlagSet) *agentFlagValues {
 	return v
 }
 
-// cmdAgentInstall installs embedded agent definitions, the body
-// `relevo config agents` had (now `relevo config agents`).
+// cmdAgentInstall installs embedded agent definitions.
 func cmdAgentInstall(args []string) error {
 	return outcomeError(cmdAgentInstallRun(args))
 }
@@ -99,7 +98,7 @@ func cmdAgentInstallRun(args []string) error {
 		Force:  *force,
 		DryRun: *dryRun,
 		// The OpenCode plugin is opt-in: this verb is the one place that
-		// writes it when it is absent (#393 §5.4).
+		// writes it when it is absent.
 		Files: true,
 	}
 
