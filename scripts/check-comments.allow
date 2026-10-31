@@ -245,9 +245,6 @@ internal/ui/stderr.go
 internal/ui/stderr_test.go
 internal/ui/ui.go
 internal/ui/version.go
-internal/ui/view_actor.go
-internal/ui/view_actors.go
-internal/ui/view_actors_test.go
 internal/ui/view_agent.go
 internal/ui/view_agents.go
 internal/ui/view_agents_test.go
