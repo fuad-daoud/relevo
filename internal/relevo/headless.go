@@ -997,11 +997,11 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			if err != nil {
 				return b, err
 			}
-			if next.Owner != "" {
+			if next.Owner != "" && rt.CloseServedRound != nil {
 				// An unmarked close is still a close: record the served round's
 				// facts as markerClose does, or the owner sees "idle" and never
 				// fetches the report.
-				next = closeServedRound(ctx, rt, next)
+				next = rt.CloseServedRound(ctx, rt, next)
 			}
 			next.Builder = clearProcess(next.Builder)
 			next.StalledSince = time.Time{}
@@ -1045,11 +1045,11 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		if err != nil {
 			return next, err
 		}
-		if next.Owner != "" {
+		if next.Owner != "" && rt.CloseServedRound != nil {
 			// Same as Stop and markerClose: a served round that closed here
 			// must record its facts, or the owner sees "idle" and never
 			// collects it.
-			next = closeServedRound(ctx, rt, next)
+			next = rt.CloseServedRound(ctx, rt, next)
 		}
 		return next, nil
 	}
@@ -1410,8 +1410,8 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	}
 
 	closedRound := b.Round
-	if next.Owner != "" {
-		next = closeServedRound(ctx, rt, next)
+	if next.Owner != "" && rt.CloseServedRound != nil {
+		next = rt.CloseServedRound(ctx, rt, next)
 	}
 	next.Builder = clearProcess(next.Builder)
 	// A runner that wrote its marker and then died inside the same tick is

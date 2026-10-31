@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -96,8 +95,8 @@ func TestRoundStartUnsupportedTierIs422(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read log: %v", err)
 	}
-	if relevo.RoundStateOf(b, entries) != remote.RoundIdle {
-		t.Fatalf("round state = %v, want idle", relevo.RoundStateOf(b, entries))
+	if remote.RoundStateOf(b, entries) != remote.RoundIdle {
+		t.Fatalf("round state = %v, want idle", remote.RoundStateOf(b, entries))
 	}
 	if n := len(startedSpecs(env)); n != 0 {
 		t.Fatalf("runner specs count = %d, want 0", n)

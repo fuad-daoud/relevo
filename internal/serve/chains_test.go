@@ -275,7 +275,7 @@ func TestCreateChainRunsPlanOneOnTheServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read log: %v", err)
 	}
-	switch st := relevo.RoundStateOf(builder, entries); st {
+	switch st := remote.RoundStateOf(builder, entries); st {
 	case remote.RoundQueued, remote.RoundRunning:
 	default:
 		t.Fatalf("plan 1 round state = %q, want queued or running", st)

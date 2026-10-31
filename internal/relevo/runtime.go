@@ -396,11 +396,14 @@ type Runtime struct {
 	// binding; cmd/relevo wires the real one.
 	SessionReaper SessionDeleter
 
-	// RemoteSend is the above-engine remote-send orchestration (declared
-	// beside SendOptions): the network half and the under-lock record half a
-	// remote send is made of, plus the two-phase chain path that ships
-	// outside the lock and records inside it. cmd/relevo and internal/serve
-	// wire the uplink functions; a send with no hook fails on the nil call
+	// CloseServedRound records an owned binding's closed round, through the
+	// server package that owns the served close. Nil keeps the binding
+	// unchanged, which is what a hook-less test runtime gets; both production
+	// builders wire the serve implementation.
+	CloseServedRound func(ctx context.Context, rt Runtime, b store.Binding) store.Binding
+
+	// RemoteSend ships rounds to a remote server through internal/uplink.
+	// It has no nil guard: a send without the hook fails on the nil call
 	// rather than silently skipping the server.
 	RemoteSend RemoteSendDeps
 }

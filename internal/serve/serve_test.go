@@ -28,7 +28,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
-	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/spawn"
@@ -2048,8 +2047,8 @@ func TestRoundStartTierAboveMaxIs422(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read log: %v", err)
 	}
-	if relevo.RoundStateOf(b, entries) != remote.RoundIdle {
-		t.Fatalf("round state = %v, want idle", relevo.RoundStateOf(b, entries))
+	if remote.RoundStateOf(b, entries) != remote.RoundIdle {
+		t.Fatalf("round state = %v, want idle", remote.RoundStateOf(b, entries))
 	}
 	if n := len(startedSpecs(env)); n != 0 {
 		t.Fatalf("runner specs count = %d, want 0", n)
@@ -2209,8 +2208,8 @@ func TestRoundStartQueuedSamePlanIs200(t *testing.T) {
 	if len(entriesAfter) != len(entriesBefore) {
 		t.Errorf("log entries = %d, want %d (an identical retry appends nothing)", len(entriesAfter), len(entriesBefore))
 	}
-	if relevo.RoundStateOf(after, entriesAfter) != remote.RoundQueued {
-		t.Errorf("round_state = %q, want queued", relevo.RoundStateOf(after, entriesAfter))
+	if remote.RoundStateOf(after, entriesAfter) != remote.RoundQueued {
+		t.Errorf("round_state = %q, want queued", remote.RoundStateOf(after, entriesAfter))
 	}
 	if after.Builder.PID != 0 {
 		t.Errorf("PID = %d, want 0 (an identical retry starts no builder)", after.Builder.PID)

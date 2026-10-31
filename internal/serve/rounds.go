@@ -125,7 +125,7 @@ func (d roundStartDecision) write(w http.ResponseWriter, view remote.BindingView
 // identical retry is a no-op, a different plan for the open round is
 // 409 round_open, and a different round's plan is 409 round_started.
 func roundStartDecisionOf(rt relevo.Runtime, b store.Binding, entries []store.LogEntry, reqRound int, planText string) (roundStartDecision, string) {
-	st := relevo.RoundStateOf(b, entries)
+	st := remote.RoundStateOf(b, entries)
 	// A broken round is an open round: the server holds it and there is no
 	// process left to finish it, which is what makes a start a conflict about
 	// that round rather than a fresh one. It is named here beside running and

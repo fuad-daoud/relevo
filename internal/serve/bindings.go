@@ -394,7 +394,7 @@ func (s *Server) handleDone(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entries, _ := rt.Store.ReadLog(name)
-	switch relevo.RoundStateOf(b, entries) {
+	switch remote.RoundStateOf(b, entries) {
 	case remote.RoundRunning:
 		writeErr(w, http.StatusConflict, remote.CodeRoundOpen, "round is open")
 		return
@@ -494,7 +494,7 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entries, _ := rt.Store.ReadLog(name)
-	switch relevo.RoundStateOf(b, entries) {
+	switch remote.RoundStateOf(b, entries) {
 	case remote.RoundIdle, remote.RoundClosed:
 		writeErr(w, http.StatusConflict, remote.CodeNothingToStop, relevo.ErrNothingToStop.Error())
 		return

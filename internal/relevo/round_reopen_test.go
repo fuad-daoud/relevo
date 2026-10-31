@@ -87,7 +87,7 @@ func TestRoundStateOfReportsAnUnackedCloseOverNeedsYou(t *testing.T) {
 		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true},
 	}
 
-	if got := RoundStateOf(b, entries); got != remote.RoundClosed {
+	if got := remote.RoundStateOf(b, entries); got != remote.RoundClosed {
 		t.Errorf("RoundStateOf = %q, want %q: the un-acked close of round 1 is hidden behind the halt of round 2", got, remote.RoundClosed)
 	}
 }

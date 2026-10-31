@@ -432,42 +432,6 @@ func TestServedChainMemberSendQueues(t *testing.T) {
 	})
 }
 
-// TestCloseServedRoundRecordsABranchlessReader pins the branchless close: a
-// reader with no branch records ClosedRound with no git call and no git facts,
-// while the writer path is unchanged.
-func TestCloseServedRoundRecordsABranchlessReader(t *testing.T) {
-	t.Parallel()
-
-	rt, fg := chainRuntime(t)
-	reader := store.Binding{
-		Name: "shop-rev", Owner: "alice", CWD: "/build/shop", Round: 2,
-		Shape: store.ShapeReader, Serve: &store.ServeFacts{BareRepo: "/bare/shop.git"},
-	}
-	got := closeServedRound(context.Background(), rt, reader)
-	if got.Serve.ClosedRound != 1 {
-		t.Errorf("reader ClosedRound = %d, want 1", got.Serve.ClosedRound)
-	}
-	if got.Serve.ResultCommit != "" || got.Serve.DirtyCommit != "" {
-		t.Errorf("reader result/dirty = %q/%q, want both empty", got.Serve.ResultCommit, got.Serve.DirtyCommit)
-	}
-	if fg.calls != 0 {
-		t.Errorf("git calls = %d, want none for a branchless reader", fg.calls)
-	}
-
-	writer := store.Binding{
-		Name: "shop", Owner: "alice", CWD: "/build/shop", Worktree: "/build/shop",
-		Branch: "relevo/shop", Round: 2, Shape: store.ShapeWriter,
-		Serve: &store.ServeFacts{BareRepo: "/bare/shop.git"},
-	}
-	gotWriter := closeServedRound(context.Background(), rt, writer)
-	if gotWriter.Serve.ClosedRound != 1 || gotWriter.Serve.ResultCommit != "fakerefsha" {
-		t.Errorf("writer close = closed %d result %q, want 1/fakerefsha", gotWriter.Serve.ClosedRound, gotWriter.Serve.ResultCommit)
-	}
-	if fg.calls == 0 {
-		t.Error("the writer's close must have made a git call")
-	}
-}
-
 // TestServedChainEndQueuesNoDelivery pins the delivery skip: a served chain
 // writes its terminal row and trace but queues no end delivery, while a local
 // chain still queues one.

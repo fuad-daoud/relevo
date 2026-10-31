@@ -307,7 +307,7 @@ func GCAbandoned(ctx context.Context, s *Server, olderThan time.Duration, now ti
 				continue
 			}
 			logEntries, _ := rt.Store.ReadLog(b.Name)
-			switch relevo.RoundStateOf(b, logEntries) {
+			switch remote.RoundStateOf(b, logEntries) {
 			case remote.RoundRunning, remote.RoundQueued:
 				continue
 			}
@@ -358,7 +358,7 @@ func AdminUnbind(ctx context.Context, s *Server, owner string, name string, forc
 
 	if !force {
 		logEntries, _ := rt.Store.ReadLog(b.Name)
-		if relevo.RoundStateOf(b, logEntries) == remote.RoundRunning {
+		if remote.RoundStateOf(b, logEntries) == remote.RoundRunning {
 			return relevo.UnbindResult{}, fmt.Errorf("round %d is running; wait, or --force", b.Round)
 		}
 	}
