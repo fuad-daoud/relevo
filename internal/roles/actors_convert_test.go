@@ -29,7 +29,7 @@ func testSet(t *testing.T, body string) *candidate.Set {
 // ptrStr returns a pointer to s, for a Row's optional string fields.
 func ptrStr(s string) *string { return &s }
 
-// TestToRolesFileShipped pins §4.1's shipped path: a builder actor on
+// TestToRolesFileShipped pins the shipped path: a builder actor on
 // plan-executor builds the registry today's builtin builder builds, with the
 // same candidates, off list and tier. Spec is compared for every kind, and
 // the whole Role (Ranked included) must match.
@@ -93,7 +93,7 @@ func TestToRolesFileShipped(t *testing.T) {
 	}
 }
 
-// TestToRolesFileCustomAndNative pins §4.1's custom paths: a source agent's
+// TestToRolesFileCustomAndNative pins the custom paths: a source agent's
 // definitions come from its rendered kinds, a native agent's map is copied,
 // and an agents entry no actor uses is warned about.
 func TestToRolesFileCustomAndNative(t *testing.T) {
@@ -145,9 +145,9 @@ func TestToRolesFileCustomAndNative(t *testing.T) {
 	}
 }
 
-// TestToRolesFileErrors pins §4.1's errors: an unknown agent, check on a
-// reader, and a builtin actor name whose agent has the wrong shape. Every one
-// wraps ErrBadRoles.
+// TestToRolesFileErrors pins the conversion errors: an unknown agent, check
+// on a reader, and a builtin actor name whose agent has the wrong shape.
+// Every one wraps ErrBadRoles.
 func TestToRolesFileErrors(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -189,7 +189,7 @@ func TestToRolesFileErrors(t *testing.T) {
 	}
 }
 
-// TestToRolesFileOffPinsTheCandidateList pins §4.1's candidates rule: the raw
+// TestToRolesFileOffPinsTheCandidateList pins the candidates rule: the raw
 // entries in order, with the off entries also listed in Off.
 func TestToRolesFileOffPinsTheCandidateList(t *testing.T) {
 	actors := map[string]Actor{

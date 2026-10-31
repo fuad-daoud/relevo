@@ -182,13 +182,6 @@ internal/relevo/watched_test.go
 internal/remote/bundle_test.go
 internal/remote/proto.go
 internal/remote/proto_test.go
-internal/roles/actors.go
-internal/roles/actors_convert.go
-internal/roles/actors_convert_test.go
-internal/roles/actors_shipped.go
-internal/roles/actors_shipped_test.go
-internal/roles/actors_test.go
-internal/roles/off_test.go
 internal/ui/actions.go
 internal/ui/actions_test.go
 internal/ui/actor_form.go
