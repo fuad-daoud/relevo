@@ -1,4 +1,2 @@
 internal/relevo/configedit.go
-internal/relevo/daemon.go
-internal/relevo/reconcile.go
 scripts/testdata/check-filesize/big.go

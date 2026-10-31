@@ -17,7 +17,7 @@ import (
 const verifyConsultID = "7f2a3c1d"
 
 // claudeStream renders a claude harness stream whose last assistant text is
-// text: the shape transcript.FinalText reads (#147).
+// text: the shape transcript.FinalText reads.
 func claudeStream(t *testing.T, text string) []byte {
 	t.Helper()
 	line, err := json.Marshal(map[string]any{
@@ -204,8 +204,8 @@ func TestReconcileExpiresAStaleReservation(t *testing.T) {
 
 // seedHeadlessConsult puts a running headless consult on the webshop binding
 // and returns the runtime and the record relevo made. The record is seeded
-// directly -- the consult machinery no longer has a verb to drive it -- with
-// fr standing in as the runtime's Runner.
+// directly, since no verb drives the consult machinery, with fr standing in as
+// the runtime's Runner.
 func seedHeadlessConsult(t *testing.T, fr *fakeRunner) (Runtime, store.Consult) {
 	t.Helper()
 	rt, _ := seedBound(t)
@@ -356,8 +356,8 @@ func TestHeadlessConsultTimesOut(t *testing.T) {
 	}
 }
 
-// TestHeadlessConsultNoTrailerIsSilentDespiteText pins #370, spec §4.5: a
-// consult whose stream already holds assistant text but that was killed before
+// TestHeadlessConsultNoTrailerIsSilentDespiteText pins that a consult whose
+// stream already holds assistant text but that was killed before
 // writing its exit trailer is Silent with a note naming the missing trailer,
 // and the findings file is not written -- partial text is never delivered as
 // findings, whether the daemon's restart killed it or anything else did.
@@ -417,13 +417,13 @@ func TestHeadlessConsultNoTrailerIsSilentDespiteText(t *testing.T) {
 	})
 }
 
-// TestVerifyVerdictParsedOntoFindingsAndBinding pins #144's verdict path: a
+// TestVerifyVerdictParsedOntoFindingsAndBinding pins the verdict path: a
 // verify consult whose findings end with `verdict: rejected` records the
 // verdict and its two reasons on the findings entry and on the binding, names
 // them in the payload, removes the throwaway worktree, and shows in `relevo
 // status` until the round after next.
 
-// TestVerifyVerdictParsedOntoFindingsAndBinding pins #144's verdict path: a
+// TestVerifyVerdictParsedOntoFindingsAndBinding pins the verdict path: a
 // verify consult whose findings end with `verdict: rejected` records the
 // verdict and its two reasons on the findings entry and on the binding, names
 // them in the payload, removes the throwaway worktree, and shows in `relevo
@@ -517,10 +517,10 @@ func TestVerifyVerdictParsedOntoFindingsAndBinding(t *testing.T) {
 	}
 }
 
-// TestVerifyUnstructuredWhenNoBlock pins #144's prose case: findings without
+// TestVerifyUnstructuredWhenNoBlock pins the prose case: findings without
 // a readable block are delivered as unstructured rather than guessed at.
 
-// TestVerifyUnstructuredWhenNoBlock pins #144's prose case: findings without
+// TestVerifyUnstructuredWhenNoBlock pins the prose case: findings without
 // a readable block are delivered as unstructured rather than guessed at.
 func TestVerifyUnstructuredWhenNoBlock(t *testing.T) {
 	t.Parallel()
