@@ -114,6 +114,32 @@ func statusFlagSet(fs *flag.FlagSet) *statusFlagValues {
 	return v
 }
 
+// statusMode runs the --chains and --line modes. Each takes no binding and
+// its own output, and each refuses the flags of the binding path. It reports
+// whether it handled the invocation.
+func statusMode(chains, line, all, allMasterMinds bool, name string, args []string, asJSON bool, mastermind string) (bool, error) {
+	if chains {
+		if line || name != "" || len(args) > 0 {
+			return true, fail(codeUsage, "--chains cannot be combined with --line/--name")
+		}
+		return true, runStatusChains(asJSON, mastermind, allMasterMinds)
+	}
+	// --line is the statusline: one row per builder of the calling
+	// mastermind, so it takes no binding and no other output mode. It also
+	// takes no --all-masterminds: it names one mastermind on its first line
+	// and in its document, which is no answer at all for every one of them.
+	if !line {
+		return false, nil
+	}
+	if all || name != "" || len(args) > 0 {
+		return true, fail(codeUsage, "--line cannot be combined with --all/--name")
+	}
+	if allMasterMinds {
+		return true, fail(codeUsage, "--line cannot be combined with --all-masterminds: it shows one mastermind's builders")
+	}
+	return true, runStatusline(asJSON, mastermind)
+}
+
 func cmdStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	v := statusFlagSet(fs)
@@ -122,25 +148,10 @@ func cmdStatus(args []string) error {
 		return err
 	}
 
-	if *chains {
-		if *line || *name != "" || len(fs.Args()) > 0 {
-			return fail(codeUsage, "--chains cannot be combined with --line/--name")
-		}
-		return runStatusChains(*asJSON, *v.mastermind, *v.allMasterMinds)
-	}
-
-	// --line is the statusline: one row per builder of the calling
-	// mastermind, so it takes no binding and no other output mode. It also
-	// takes no --all-masterminds: it names one mastermind on its first line
-	// and in its document, which is no answer at all for every one of them.
-	if *line {
-		if *all || *name != "" || len(fs.Args()) > 0 {
-			return fail(codeUsage, "--line cannot be combined with --all/--name")
-		}
-		if *v.allMasterMinds {
-			return fail(codeUsage, "--line cannot be combined with --all-masterminds: it shows one mastermind's builders")
-		}
-		return runStatusline(*asJSON, *v.mastermind)
+	// The --chains and --line modes each take no binding and their own output,
+	// so they return before the binding path below builds a runtime.
+	if handled, herr := statusMode(*chains, *line, *all, *v.allMasterMinds, *name, fs.Args(), *asJSON, *v.mastermind); handled {
+		return herr
 	}
 
 	target, err := bindingArg(*name, fs.Args())
@@ -213,10 +224,21 @@ func cmdStatus(args []string) error {
 		return enc.Encode(rep)
 	}
 
+	printStatusNotices(rt)
+
+	fmt.Print(view.RenderStatus(rep))
+	return nil
+}
+
+// printStatusNotices prints the lines above the rows: a newer release, a
+// restart that would kill an out-of-scope process, the daemon's version
+// state, and the sync meter. JSON output above stays notice-free, and a read
+// error prints nothing: a status must never fail because its record could
+// not be read.
+func printStatusNotices(rt relevo.Runtime) {
 	// One line above the rows, only when the daemon's cached check has
 	// seen a newer release. Read through the doctor's own Env so `status` and
-	// `doctor` can never disagree about the same file. JSON output above stays
-	// notice-free.
+	// `doctor` can never disagree about the same file.
 	env := doctor.NewEnv(rt.Store, releaseInputs())
 	running, latest, ok, kind := env.ReleaseState()
 	if notice := statusNotice(running, latest, ok, kind); notice != "" {
@@ -225,14 +247,13 @@ func cmdStatus(args []string) error {
 	// One line above the rows only when a daemon restart right now would
 	// kill a process running outside its own scope. The same computation
 	// doctor's restart row makes -- cheap, one small file read per running
-	// process. JSON output above stays notice-free.
+	// process.
 	if notice := restartNotice(restartCheck(rt)); notice != "" {
 		fmt.Println(notice)
 	}
 
 	// The daemon's own version state, read from its record rather than
-	// probed. A read error prints nothing: a status must never fail because its
-	// record could not be read.
+	// probed.
 	if daemonRunning, derr := rt.Store.DaemonRunning(); derr == nil {
 		if info, iok, ierr := rt.Store.ReadDaemonInfo(); ierr == nil {
 			if notice := daemonNotice(buildVersion(), info, iok, daemonRunning); notice != "" {
@@ -242,15 +263,11 @@ func cmdStatus(args []string) error {
 	}
 	// One line above the rows only when the account's month of Turso traffic
 	// or the last hour's idle exports need a human, read from the local file
-	// the same way and under the same rule: a read error prints nothing. JSON
-	// output above stays notice-free.
+	// the same way and under the same rule.
 	q, qok, idle, iok := syncMeter(rt.Store, time.Now())
 	if notice := syncMeterNotice(q, qok, idle, iok); notice != "" {
 		fmt.Println(notice)
 	}
-
-	fmt.Print(view.RenderStatus(rep))
-	return nil
 }
 
 // boardBlockFor reads one MasterMind's live board block from the state root's

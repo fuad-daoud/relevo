@@ -173,12 +173,12 @@ func gateUnavailable(token, forFlag, reason string, asJSON bool) error {
 		fmt.Printf("gated %s (%d candidates) %s\n", provider, count, availability.GateUntilText(until))
 	}
 	if len(accounts) > 0 {
-		fmt.Fprintf(notices, "gated accounts: %s\n", strings.Join(accounts, ", "))
+		_, _ = fmt.Fprintf(notices, "gated accounts: %s\n", strings.Join(accounts, ", "))
 	}
 
 	if bs, err := rt.Store.List(); err == nil {
 		if names := availability.BindingsOnProvider(bs, provider); len(names) > 0 {
-			fmt.Fprintf(notices, "the daemon will switch: %s\n", strings.Join(names, ", "))
+			_, _ = fmt.Fprintf(notices, "the daemon will switch: %s\n", strings.Join(names, ", "))
 		}
 	}
 
@@ -290,16 +290,16 @@ func gateClear(subject string, asJSON bool) error {
 	// asked, and each answer is printed -- these are answers, not warnings.
 	ctx := context.Background()
 	for _, line := range uplink.ForwardAvailable(ctx, rt, subject) {
-		fmt.Fprintln(notices, line)
+		_, _ = fmt.Fprintln(notices, line)
 	}
 
 	// On a box that also runs a serve daemon, the client ledger just cleared
 	// is not the record that gates anything: a serve daemon keeps its own
 	// gates, in its own database.
 	if d, _, err := openMachineDB(); err == nil {
-		defer d.Close()
+		defer func() { _ = d.Close() }()
 		if p, ok, _ := db.ReadDaemonPointer(d); ok && pidAlive(p.PID) {
-			fmt.Fprint(notices, "note: a relevo serve daemon runs here with its own gates; use relevo gate --serve\n")
+			_, _ = fmt.Fprint(notices, "note: a relevo serve daemon runs here with its own gates; use relevo gate --serve\n")
 		}
 	}
 

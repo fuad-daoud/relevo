@@ -48,7 +48,7 @@ func cmdUpdateRun(args []string) error {
 	fs := flag.NewFlagSet("relevo update", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), usage)
+		_, _ = fmt.Fprintln(fs.Output(), usage)
 	}
 	v := updateFlagSet(fs)
 	check, to, forceRelease, asJSON := v.check, v.to, v.forceRelease, v.asJSON
@@ -68,20 +68,9 @@ func cmdUpdateRun(args []string) error {
 		return fail(codeInternal, "cannot resolve the running executable: %v", err)
 	}
 
-	// The fetch is skipped whenever the decision cannot need the latest tag:
-	// an explicit --to names the target, a go install only prints, and a
-	// local or unknown build without --release refuses before any target is
-	// read.
-	needLatest := *to == "" && kind != release.KindGoInstall &&
-		!((kind == release.KindLocalBuild || kind == release.KindUnknown) && !*forceRelease)
-	latest := ""
-	if needLatest {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		latest, err = release.NewHTTPFetcher("", 0).Latest(ctx)
-		cancel()
-		if err != nil {
-			return fail(codeRemoteUnreachable, "cannot learn the latest release: %v", err)
-		}
+	latest, err := fetchUpdateLatest(*to, kind, *forceRelease)
+	if err != nil {
+		return err
 	}
 
 	dec := release.DecideUpdate(release.UpdateRequest{
@@ -92,41 +81,72 @@ func cmdUpdateRun(args []string) error {
 		ForceRelease: *forceRelease,
 	})
 
-	if *check {
+	if finished, ferr := reportUpdateDecision(running, exe, kind, dec, *check, *asJSON); finished {
+		return ferr
+	}
+	return replaceWithUpdate(running, exe, kind, dec, *asJSON)
+}
+
+// fetchUpdateLatest learns the latest release unless the decision cannot need
+// it: an explicit --to names the target, a go install only prints, and a
+// local or unknown build without --release refuses before any target is read.
+func fetchUpdateLatest(to string, kind release.Kind, forceRelease bool) (string, error) {
+	needLatest := to == "" && kind != release.KindGoInstall &&
+		((kind != release.KindLocalBuild && kind != release.KindUnknown) || forceRelease)
+	if !needLatest {
+		return "", nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	latest, err := release.NewHTTPFetcher("", 0).Latest(ctx)
+	if err != nil {
+		return "", fail(codeRemoteUnreachable, "cannot learn the latest release: %v", err)
+	}
+	return latest, nil
+}
+
+// reportUpdateDecision prints the --check answer and every decision but the
+// replace one. It reports whether it answered.
+func reportUpdateDecision(running, exe string, kind release.Kind, dec release.UpdateDecision, check, asJSON bool) (bool, error) {
+	if check {
 		doc := updateDocOf(running, exe, kind, dec, false)
-		if *asJSON {
-			return printDoc(doc)
+		if asJSON {
+			return true, printDoc(doc)
 		}
 		renderUpdateCheck(doc)
-		return nil
+		return true, nil
 	}
 
 	switch dec.Action {
 	case release.UpdateInvalid:
-		return fail(codeUsage, "%s", dec.Message)
+		return true, fail(codeUsage, "%s", dec.Message)
 	case release.UpdateRefuse:
-		return fail(codeRefused, "%s", dec.Message)
+		return true, fail(codeRefused, "%s", dec.Message)
 	case release.UpdateCurrent:
-		if *asJSON {
-			return printDoc(updateDocOf(running, exe, kind, dec, false))
+		if asJSON {
+			return true, printDoc(updateDocOf(running, exe, kind, dec, false))
 		}
 		fmt.Println(dec.Message)
-		return nil
+		return true, nil
 	case release.UpdatePrintGoInstall:
-		if *asJSON {
-			return printDoc(updateDocOf(running, exe, kind, dec, false))
+		if asJSON {
+			return true, printDoc(updateDocOf(running, exe, kind, dec, false))
 		}
 		fmt.Println("relevo was installed with go install; run:")
 		fmt.Printf("  %s\n", dec.Message)
-		return nil
+		return true, nil
 	}
+	return false, nil
+}
 
-	// UpdateReplace: download, verify, preflight, then swap in place. The
-	// progress line keeps stdout in the default mode and moves to stderr under
-	// --json, where stdout carries the document alone.
-	w := noticeWriter(*asJSON)
+// replaceWithUpdate downloads the target, preflights the candidate binary,
+// and swaps it in place: the UpdateReplace decision's whole body. The progress
+// line keeps stdout in the default mode and moves to stderr under --json,
+// where stdout carries the document alone.
+func replaceWithUpdate(running, exe string, kind release.Kind, dec release.UpdateDecision, asJSON bool) error {
+	w := noticeWriter(asJSON)
 	archive, _ := release.AssetURLs(dec.Target, runtime.GOOS, runtime.GOARCH)
-	fmt.Fprintf(w, "relevo %s -> %s: downloading %s\n", running, dec.Target, path.Base(archive))
+	_, _ = fmt.Fprintf(w, "relevo %s -> %s: downloading %s\n", running, dec.Target, path.Base(archive))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -144,7 +164,7 @@ func cmdUpdateRun(args []string) error {
 	swapped := false
 	defer func() {
 		if !swapped {
-			os.Remove(tmp)
+			_ = os.Remove(tmp)
 		}
 	}()
 
@@ -157,7 +177,7 @@ func cmdUpdateRun(args []string) error {
 	}
 	swapped = true
 
-	if *asJSON {
+	if asJSON {
 		return printDoc(updateDocOf(running, exe, kind, dec, true))
 	}
 	fmt.Printf("relevo updated to %s (%s)\n", dec.Target, exe)

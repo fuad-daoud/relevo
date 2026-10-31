@@ -47,62 +47,19 @@ func unbindFlagSet(fs *flag.FlagSet) *unbindFlagValues {
 func cmdUnbind(args []string) error {
 	fs := flag.NewFlagSet("unbind", flag.ContinueOnError)
 	v := unbindFlagSet(fs)
-	name, archive, pickFlag := v.name, v.archive, v.pick
-	done, delete, dryRun := v.done, v.delete, v.dryRun
-	sweep, mastermindRef, allMasterMinds := v.sweep, v.mastermindRef, v.allMasterMinds
-	asJSON, force := v.asJSON, v.force
+	archive, asJSON, force := v.archive, v.asJSON, v.force
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
-	if *sweep {
-		if *done || *delete || *archive || *pickFlag || *name != "" || len(fs.Args()) > 0 || *mastermindRef != "" || *allMasterMinds || *force {
-			return fail(codeRefused, "--sweep takes no binding and no other flag except --dry-run")
-		}
-		return runSweep(*dryRun, *asJSON)
+	// The --sweep, --done and --pick paths run here; the plain path falls
+	// through with its target.
+	target, handled, herr := unbindRoute(v, fs)
+	if herr != nil {
+		return herr
 	}
-
-	if (*mastermindRef != "" || *allMasterMinds) && !*done {
-		return fail(codeRefused, "--mastermind and --all-masterminds go with --done")
-	}
-
-	// The plain and --pick paths honour neither --dry-run nor --delete, and
-	// --done archives by default, so --archive contradicts it. Refuse here,
-	// before newRuntime and any store or network access: each flag is scoped
-	// to a path this command does not take.
-	if *dryRun && !*done {
-		return fail(codeRefused, "--dry-run goes with --done or --sweep")
-	}
-	if *delete && !*done {
-		return fail(codeRefused, "--delete goes with --done")
-	}
-	if *done && *archive {
-		return fail(codeRefused, "--archive goes with a named binding or --pick, not --done")
-	}
-
-	// --done is gc, not unbind: it clears every DONE binding, so naming one or
-	// asking to pick one contradicts it.
-	if *done {
-		if *name != "" || len(fs.Args()) > 0 || *pickFlag {
-			return fail(codeRefused, "--done clears DONE bindings; do not also name one or pass --pick")
-		}
-		return runGC(*delete, *dryRun, *force, *mastermindRef, *allMasterMinds, *asJSON)
-	}
-
-	if *pickFlag {
-		if *force {
-			return fail(codeRefused, "--force goes with a named binding or --done, not --pick")
-		}
-		if err := pickNamesNothing(*name, fs.Args()); err != nil {
-			return err
-		}
-		return runPick(pick.Options{Verb: pick.VerbUnbind, Archive: *archive})
-	}
-
-	target, ok := explicitBinding(*name, fs.Args())
-	if !ok {
-		return fail(codeUsage, "usage: relevo unbind <name> | --pick [--archive]  (or --name <name>)%s\n"+
-			"unbind removes a binding; it will not guess which one you meant", bindingHint("unbind"))
+	if handled {
+		return nil
 	}
 
 	rt, err := newRuntime()
@@ -128,6 +85,62 @@ func cmdUnbind(args []string) error {
 	warnWaitingOnYou(rt, target)
 
 	return nil
+}
+
+// unbindRoute runs the --sweep, --done and --pick paths, refusing the flag
+// combinations each path cannot honour. The plain path is not handled: it
+// falls through with its target. Every refusal happens before newRuntime and
+// any store or network access.
+func unbindRoute(v *unbindFlagValues, fs *flag.FlagSet) (target string, handled bool, err error) {
+	if *v.sweep {
+		if *v.done || *v.delete || *v.archive || *v.pick || *v.name != "" || len(fs.Args()) > 0 || *v.mastermindRef != "" || *v.allMasterMinds || *v.force {
+			return "", true, fail(codeRefused, "--sweep takes no binding and no other flag except --dry-run")
+		}
+		return "", true, runSweep(*v.dryRun, *v.asJSON)
+	}
+
+	if (*v.mastermindRef != "" || *v.allMasterMinds) && !*v.done {
+		return "", true, fail(codeRefused, "--mastermind and --all-masterminds go with --done")
+	}
+
+	// The plain and --pick paths honour neither --dry-run nor --delete, and
+	// --done archives by default, so --archive contradicts it: each flag is
+	// scoped to a path this command does not take.
+	if *v.dryRun && !*v.done {
+		return "", true, fail(codeRefused, "--dry-run goes with --done or --sweep")
+	}
+	if *v.delete && !*v.done {
+		return "", true, fail(codeRefused, "--delete goes with --done")
+	}
+	if *v.done && *v.archive {
+		return "", true, fail(codeRefused, "--archive goes with a named binding or --pick, not --done")
+	}
+
+	// --done is gc, not unbind: it clears every DONE binding, so naming one or
+	// asking to pick one contradicts it.
+	if *v.done {
+		if *v.name != "" || len(fs.Args()) > 0 || *v.pick {
+			return "", true, fail(codeRefused, "--done clears DONE bindings; do not also name one or pass --pick")
+		}
+		return "", true, runGC(*v.delete, *v.dryRun, *v.force, *v.mastermindRef, *v.allMasterMinds, *v.asJSON)
+	}
+
+	if *v.pick {
+		if *v.force {
+			return "", true, fail(codeRefused, "--force goes with a named binding or --done, not --pick")
+		}
+		if err := pickNamesNothing(*v.name, fs.Args()); err != nil {
+			return "", true, err
+		}
+		return "", true, runPick(pick.Options{Verb: pick.VerbUnbind, Archive: *v.archive})
+	}
+
+	target, ok := explicitBinding(*v.name, fs.Args())
+	if !ok {
+		return "", true, fail(codeUsage, "usage: relevo unbind <name> | --pick [--archive]  (or --name <name>)%s\n"+
+			"unbind removes a binding; it will not guess which one you meant", bindingHint("unbind"))
+	}
+	return target, false, nil
 }
 
 func runSweep(dryRun, asJSON bool) error {

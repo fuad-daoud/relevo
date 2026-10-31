@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -189,9 +188,13 @@ func cmdMasterMindEnableRun(args []string) error {
 	if err != nil {
 		return err
 	}
+	return reportEnableResult(rt, cwd, *repo, rec, res, *asJSON)
+}
 
-	// The env-file append is a side effect both modes keep; only the stdout
-	// export line is a notice that moves off stdout under --json.
+// reportEnableResult prints the enable answer: the session's text on the
+// human surface, the document under --json. The env-file append and the
+// export line are side effects both modes keep.
+func reportEnableResult(rt relevo.Runtime, cwd string, repo bool, rec mastermind.Record, res mastermind.InitResult, asJSON bool) error {
 	exported := false
 	if envFile := os.Getenv("CLAUDE_ENV_FILE"); envFile != "" {
 		if err := appendEnvLine(envFile, mastermind.EnvLine(rec.ID)); err != nil {
@@ -200,15 +203,15 @@ func cmdMasterMindEnableRun(args []string) error {
 		exported = true
 	}
 	docRepo := ""
-	if *repo {
+	if repo {
 		docRepo = mastermindRepoLabel(rt, cwd)
 	}
 
-	if *asJSON {
+	if asJSON {
 		if !exported {
 			fmt.Fprintf(os.Stderr, "export RELEVO_MASTERMIND=%s\n", rec.ID)
 		}
-		if *repo {
+		if repo {
 			fmt.Fprintln(os.Stderr, "relevo will register this repository's sessions (relevo mastermind disable --repo to stop)")
 		}
 		return printDoc(mastermindDocOf(rec.ID, rec.Name, string(res), docRepo))
@@ -218,7 +221,7 @@ func cmdMasterMindEnableRun(args []string) error {
 	if !exported {
 		fmt.Printf("export RELEVO_MASTERMIND=%s\n", rec.ID)
 	}
-	if *repo {
+	if repo {
 		fmt.Println("relevo will register this repository's sessions (relevo mastermind disable --repo to stop)")
 	}
 	return nil
@@ -247,6 +250,28 @@ func mastermindDisableFlagSet(fs *flag.FlagSet) *mastermindDisableFlagValues {
 	return v
 }
 
+// disableRepoConsent answers no for the repository. A session's own yes would
+// outrank the repository's no, so the caller's answer is cleared when the
+// caller is known; a caller relevo cannot detect (a human in a plain
+// terminal) is left alone, and a half-given explicit pair is still an error.
+func disableRepoConsent(rt relevo.Runtime, cwd, kind, session string, asJSON bool) error {
+	if err := mastermindWriteConsent(rt, cwd, db.ConsentNo); err != nil {
+		return err
+	}
+	if caller, err := mastermindCaller(rt, cwd, kind, session); err == nil {
+		if err := mastermindWriteSessionConsent(rt, caller.Kind, caller.SessionID, db.ConsentUnset); err != nil {
+			return err
+		}
+	} else if kind != "" || session != "" {
+		return err
+	}
+	if asJSON {
+		return printDoc(mastermindDocOf("", "", "disabled", mastermindRepoLabel(rt, cwd)))
+	}
+	fmt.Println("relevo will not register this repository's sessions (relevo mastermind enable --repo to change)")
+	return nil
+}
+
 func cmdMasterMindDisable(args []string) error {
 	return outcomeError(cmdMasterMindDisableRun(args))
 }
@@ -269,25 +294,7 @@ func cmdMasterMindDisableRun(args []string) error {
 	}
 
 	if *repo {
-		if err := mastermindWriteConsent(rt, cwd, db.ConsentNo); err != nil {
-			return err
-		}
-		// A session's own yes would outrank the repository's no, so the
-		// caller's answer is cleared when the caller is known. A caller relevo
-		// cannot detect (a human in a plain terminal) is left alone; a
-		// half-given explicit pair is still an error.
-		if caller, err := mastermindCaller(rt, cwd, *kind, *session); err == nil {
-			if err := mastermindWriteSessionConsent(rt, caller.Kind, caller.SessionID, db.ConsentUnset); err != nil {
-				return err
-			}
-		} else if *kind != "" || *session != "" {
-			return err
-		}
-		if *asJSON {
-			return printDoc(mastermindDocOf("", "", "disabled", mastermindRepoLabel(rt, cwd)))
-		}
-		fmt.Println("relevo will not register this repository's sessions (relevo mastermind enable --repo to change)")
-		return nil
+		return disableRepoConsent(rt, cwd, *kind, *session, *asJSON)
 	}
 
 	// An explicit (kind, session) names the session a harness cannot detect
@@ -485,89 +492,11 @@ func cmdMasterMindGuide(args []string) error {
 
 	// No repository means no answer to give and none to ask for; the hook
 	// reads the same rule.
-	repoState := db.ConsentNo
-	repoLabel := ""
-	ref := mastermindRepoOf(context.Background(), rt, cwd)
-	d, _ := rt.Store.DB()
-	if mastermindRepoKnown(ref) {
-		if ref.OriginURL != nil {
-			repoLabel = *ref.OriginURL
-		} else {
-			repoLabel = *ref.CommonDir
-		}
-		repoState = db.ConsentUnset
-		if d != nil {
-			if c, err := d.RepoConsent(ref); err == nil {
-				repoState = c
-			}
-		}
-	}
+	repoState, repoLabel, d := guideRepoState(context.Background(), rt, cwd)
 
 	// The session's own answer outranks the repository's: a session `no` stays
 	// disabled inside a `yes` repository, and a session `yes` enables even
 	// where the repository is unset or says no.
-	sessionState := db.ConsentUnset
-	if *kind != "" && *session != "" && d != nil {
-		if c, err := d.SessionConsent(*kind, *session); err == nil {
-			sessionState = c
-		}
-	}
-	state := mastermind.EffectiveConsent(sessionState, repoState)
-
-	// The session's own record, when it has one, is reported for every state
-	// but no: a session that answered for itself (`relevo mastermind enable`)
-	// is briefed whatever the repository says, and one that answered no is not
-	// briefed at all. An enabled session creates the record here, so the
-	// identity sentence names the MasterMind the TUI shows; a registration
-	// failure leaves the text without the sentence rather than failing the
-	// session.
-	var rec *mastermind.Record
-	if *kind != "" && *session != "" && state != db.ConsentNo {
-		if reg, err := mastermindRegistry(rt); err == nil {
-			if r, err := reg.BySession(*kind, *session); err == nil {
-				rec = &r
-			}
-			if state == db.ConsentYes && rec == nil {
-				in := mastermind.InitInput{Kind: *kind, SessionID: *session, CWD: cwd, Now: rt.Now()}
-				in.PriorID = mastermindPriorIDFunc(d)
-				if r, _, err := mastermind.Init(reg, in); err == nil {
-					rec = &r
-				} else {
-					fmt.Fprintf(os.Stderr, "relevo mastermind guide: register %s: %v\n", *session, err)
-				}
-			}
-		}
-	}
-
-	text := mastermind.ConsentText(state, rec)
-	if !*asJSON {
-		if text != "" {
-			fmt.Println(text)
-		}
-		return nil
-	}
-
-	word := "disabled"
-	switch state {
-	case db.ConsentYes:
-		word = "enabled"
-	case db.ConsentUnset:
-		word = "ask"
-	}
-	out := struct {
-		State string `json:"state"`
-		Text  string `json:"text"`
-		Repo  string `json:"repo,omitempty"`
-		ID    string `json:"id,omitempty"`
-		Name  string `json:"name,omitempty"`
-	}{State: word, Text: text, Repo: repoLabel}
-	if rec != nil {
-		out.ID, out.Name = rec.ID, rec.Name
-	}
-	raw, err := json.Marshal(out)
-	if err != nil {
-		return err
-	}
-	fmt.Println(string(raw))
-	return nil
+	state, rec := guideSessionRecord(rt, d, cwd, *kind, *session, repoState)
+	return printGuideResult(state, rec, repoLabel, *asJSON)
 }

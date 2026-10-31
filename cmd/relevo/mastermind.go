@@ -212,7 +212,7 @@ func appendEnvLine(path, line string) error {
 	if err != nil {
 		return fmt.Errorf("append %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if _, err := io.WriteString(f, line); err != nil {
 		return fmt.Errorf("append %s: %w", path, err)
@@ -294,13 +294,13 @@ func cmdMasterMindList(args []string) error {
 	// tabwriter, not fixed widths: a 36-character session id or a long cwd
 	// would overflow its cell and shift every column after it.
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "name\tchat\tid\tkind\tsession\thost pid\tstate\tbindings\tcwd\tseen")
+	_, _ = fmt.Fprintln(w, "name\tchat\tid\tkind\tsession\thost pid\tstate\tbindings\tcwd\tseen")
 	for i, rec := range records {
 		host := "-"
 		if rec.HostPID > 0 {
 			host = strconv.Itoa(rec.HostPID)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
 			rec.Name, labels[i].String(), rec.ID, rec.HarnessKind, rec.SessionID, host,
 			mastermind.RecordState(rec, rt.ProcStart), counts[rec.ID], rec.CWD,
 			rec.SeenAt.UTC().Format(time.RFC3339))

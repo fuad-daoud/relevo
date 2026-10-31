@@ -313,10 +313,10 @@ func printClientKey(w io.Writer, pem []byte, enrollOnly bool) error {
 		return err
 	}
 	if enrollOnly {
-		fmt.Fprintln(w, client.EnrollLine(kp))
+		_, _ = fmt.Fprintln(w, client.EnrollLine(kp))
 		return nil
 	}
-	fmt.Fprintf(w, "client id %s\n", remote.IDOf(kp.Public))
-	fmt.Fprintln(w, client.EnrollLine(kp))
+	_, _ = fmt.Fprintf(w, "client id %s\n", remote.IDOf(kp.Public))
+	_, _ = fmt.Fprintln(w, client.EnrollLine(kp))
 	return nil
 }

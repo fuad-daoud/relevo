@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -63,18 +64,8 @@ func cmdClientAddServerRun(args []string) error {
 	}
 	name, rawURL := rest[0], rest[1]
 
-	set := 0
-	if *fingerprint != "" {
-		set++
-	}
-	if *ca != "" {
-		set++
-	}
-	if *insecure {
-		set++
-	}
-	if set > 1 {
-		return fail(codeUsage, "--fingerprint, --ca and --insecure are mutually exclusive")
+	if err := checkClientAuthExclusive(*fingerprint, *ca, *insecure); err != nil {
+		return err
 	}
 
 	entry := remote.ServerEntry{URL: rawURL, Fingerprint: *fingerprint, CA: *ca, Insecure: *insecure}
@@ -112,14 +103,39 @@ func cmdClientAddServerRun(args []string) error {
 	if _, err := rt.Config.As("cli", "config server add "+name).Put(config.Servers, body); err != nil {
 		return err
 	}
-	fmt.Fprintf(w, "added server %s (%s)\n", name, rawURL)
+	_, _ = fmt.Fprintf(w, "added server %s (%s)\n", name, rawURL)
 
 	if *fingerprint == "" {
 		// Pinned by --ca or plain --insecure: there is no fingerprint to pin
 		// the transport to, so there is nothing to enrollment-check yet.
 		return addServerDoc(*asJSON, name, rawURL)
 	}
+	return checkEnrolledClient(servers, pem, w, name, rawURL, *asJSON)
+}
 
+// checkClientAuthExclusive refuses more than one of --fingerprint, --ca and
+// --insecure: the transport pins, pools or skips, never two at once.
+func checkClientAuthExclusive(fingerprint, ca string, insecure bool) error {
+	set := 0
+	if fingerprint != "" {
+		set++
+	}
+	if ca != "" {
+		set++
+	}
+	if insecure {
+		set++
+	}
+	if set > 1 {
+		return fail(codeUsage, "--fingerprint, --ca and --insecure are mutually exclusive")
+	}
+	return nil
+}
+
+// checkEnrolledClient enrollment-checks a pinned server once with WhoAmI: a
+// 401 is not an error, it names the enrollment line the admin runs. The
+// enrolled line is the answer's last human line either way.
+func checkEnrolledClient(servers remote.Servers, pem []byte, w io.Writer, name, rawURL string, asJSON bool) error {
 	key, err := remote.ParsePrivate(pem)
 	if err != nil {
 		return err
@@ -130,13 +146,13 @@ func cmdClientAddServerRun(args []string) error {
 	if werr != nil {
 		var httpErr *client.HTTPError
 		if errors.As(werr, &httpErr) && httpErr.Status == 401 {
-			fmt.Fprintf(w, "not enrolled on %s: give the admin: %s\n", name, client.EnrollLine(key))
-			return addServerDoc(*asJSON, name, rawURL)
+			_, _ = fmt.Fprintf(w, "not enrolled on %s: give the admin: %s\n", name, client.EnrollLine(key))
+			return addServerDoc(asJSON, name, rawURL)
 		}
 		return fmt.Errorf("%s: %w", name, werr)
 	}
-	fmt.Fprintf(w, "enrolled as %s\n", who.Label)
-	return addServerDoc(*asJSON, name, rawURL)
+	_, _ = fmt.Fprintf(w, "enrolled as %s\n", who.Label)
+	return addServerDoc(asJSON, name, rawURL)
 }
 
 // addServerDoc prints config server add's document in --json mode, or nothing

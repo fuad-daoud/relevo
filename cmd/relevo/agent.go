@@ -71,9 +71,9 @@ func agentFlagSet(fs *flag.FlagSet) *agentFlagValues {
 	v.dryRun = fs.Bool("dry-run", false, "dry run")
 	v.asJSON = fs.Bool("json", false, "print the document the install produced")
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), "usage: relevo config agents [--kind <agy|claude|opencode>] [--agent <name>] [--force] [--dry-run]")
-		fmt.Fprintln(fs.Output(), "Installs relevo's shipped agents and the custom agents in your config.")
-		fmt.Fprintln(fs.Output(), "For opencode it also installs the relevo OpenCode plugin (~/.config/opencode/plugins/relevo).")
+		_, _ = fmt.Fprintln(fs.Output(), "usage: relevo config agents [--kind <agy|claude|opencode>] [--agent <name>] [--force] [--dry-run]")
+		_, _ = fmt.Fprintln(fs.Output(), "Installs relevo's shipped agents and the custom agents in your config.")
+		_, _ = fmt.Fprintln(fs.Output(), "For opencode it also installs the relevo OpenCode plugin (~/.config/opencode/plugins/relevo).")
 	}
 	return v
 }
@@ -124,6 +124,44 @@ func cmdAgentInstallRun(args []string) error {
 		fmt.Fprintf(os.Stderr, "relevo: custom agents not installed: %v\n", cfgErr)
 	}
 
+	results, err := installAgentTrees(env, cfg, loaded, sourceRole, *agent, opts, cfgErr)
+	if err != nil {
+		return err
+	}
+
+	// The human lines keep stdout in the default mode and move to stderr under
+	// --json, where stdout carries the document alone.
+	w := noticeWriter(*asJSON)
+
+	if len(results) == 0 {
+		_, _ = fmt.Fprintln(w, "no harness binaries on PATH (agy, claude, opencode); nothing to install")
+		if *asJSON {
+			return printDoc(configAgentsDocOf(nil))
+		}
+		return nil
+	}
+
+	failed := false
+	for _, r := range results {
+		_, _ = fmt.Fprintln(w, r.Line())
+		if r.Outcome == harness.OutcomeError {
+			failed = true
+		}
+	}
+	if failed {
+		return fail(codeInternal, "one or more agent definitions failed to install")
+	}
+	if *asJSON {
+		return printDoc(configAgentsDocOf(results))
+	}
+	return nil
+}
+
+// installAgentTrees installs the shipped definitions and the custom and
+// account-home ones: a source agent takes the custom path alone, otherwise
+// the shipped install runs first and the custom walk follows when no --agent
+// named one. Which walks run is the only thing cfgErr decides.
+func installAgentTrees(env harness.InstallEnv, cfg *config.Store, loaded config.Loaded, sourceRole bool, agent string, opts harness.InstallOptions, cfgErr error) ([]harness.InstallResult, error) {
 	var results []harness.InstallResult
 	if sourceRole {
 		// harness.Install refuses a name it does not ship, so a source agent
@@ -136,10 +174,10 @@ func cmdAgentInstallRun(args []string) error {
 	} else {
 		shipped, serr := harness.Install(env, opts)
 		if serr != nil {
-			return fail(codeUsage, "%v", serr)
+			return nil, fail(codeUsage, "%v", serr)
 		}
 		results = append(results, shipped...)
-		if cfgErr == nil && *agent == "" {
+		if cfgErr == nil && agent == "" {
 			// An --agent names exactly the one agent to install, so the custom
 			// walk runs only with no agent: it then installs every custom
 			// agent the kind and force flags select.
@@ -162,31 +200,5 @@ func cmdAgentInstallRun(args []string) error {
 		}
 		results = append(results, acct...)
 	}
-
-	// The human lines keep stdout in the default mode and move to stderr under
-	// --json, where stdout carries the document alone.
-	w := noticeWriter(*asJSON)
-
-	if len(results) == 0 {
-		fmt.Fprintln(w, "no harness binaries on PATH (agy, claude, opencode); nothing to install")
-		if *asJSON {
-			return printDoc(configAgentsDocOf(nil))
-		}
-		return nil
-	}
-
-	failed := false
-	for _, r := range results {
-		fmt.Fprintln(w, r.Line())
-		if r.Outcome == harness.OutcomeError {
-			failed = true
-		}
-	}
-	if failed {
-		return fail(codeInternal, "one or more agent definitions failed to install")
-	}
-	if *asJSON {
-		return printDoc(configAgentsDocOf(results))
-	}
-	return nil
+	return results, nil
 }

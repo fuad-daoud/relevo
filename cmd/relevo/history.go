@@ -90,6 +90,36 @@ func historyFlagSet(fs *flag.FlagSet) *historyFlagValues {
 	return v
 }
 
+// applyHereFilter scopes the history options to the caller's directory when
+// --here asked for it, resolving it before the filter runs.
+func applyHereFilter(here bool, opts *relevo.HistoryOptions) error {
+	if !here {
+		return nil
+	}
+	cwd, cerr := os.Getwd()
+	if cerr != nil {
+		return cerr
+	}
+	opts.Here = cwd
+	return nil
+}
+
+// filterHistoryRows runs the history filter over rt, mapping a bad query to
+// usage and any other failure to internal.
+func filterHistoryRows(opts *relevo.HistoryOptions, rt relevo.Runtime) (db.Filter, []string, error) {
+	f, notes, ferr := opts.Filter(context.Background(), rt, time.Now())
+	if ferr != nil {
+		var eq histq.ErrQuery
+		if errors.As(ferr, &eq) {
+			var none db.Filter
+			return none, nil, fail(codeUsage, "%v", ferr)
+		}
+		var none db.Filter
+		return none, nil, fail(codeInternal, "%v", ferr)
+	}
+	return f, notes, nil
+}
+
 // cmdHistory prints history as JSON across every binding relevo has ever
 // recorded, live or archived, newest first.
 func cmdHistory(args []string) error {
@@ -99,7 +129,7 @@ func cmdHistory(args []string) error {
 	mastermind, since, limit, by := v.mastermind, v.since, v.limit, v.by
 	query, withRows := v.query, v.withRows
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), historyUsage)
+		_, _ = fmt.Fprintln(fs.Output(), historyUsage)
 		fs.PrintDefaults()
 	}
 	if err := parseFlags(fs, args); err != nil {
@@ -117,7 +147,7 @@ func cmdHistory(args []string) error {
 	if err != nil {
 		return fail(codeInternal, "%v", err)
 	}
-	defer d.Close()
+	defer func() { _ = d.Close() }()
 	rt.DB = d
 
 	opts := relevo.HistoryOptions{
@@ -131,21 +161,13 @@ func cmdHistory(args []string) error {
 		Query:      *query,
 		By:         *by,
 	}
-	if *here {
-		cwd, cerr := os.Getwd()
-		if cerr != nil {
-			return cerr
-		}
-		opts.Here = cwd
+	if err := applyHereFilter(*here, &opts); err != nil {
+		return err
 	}
 
-	f, notes, ferr := opts.Filter(context.Background(), rt, time.Now())
+	f, notes, ferr := filterHistoryRows(&opts, rt)
 	if ferr != nil {
-		var eq histq.ErrQuery
-		if errors.As(ferr, &eq) {
-			return fail(codeUsage, "%v", ferr)
-		}
-		return fail(codeInternal, "%v", ferr)
+		return ferr
 	}
 	for _, n := range notes {
 		fmt.Fprintln(os.Stderr, n)

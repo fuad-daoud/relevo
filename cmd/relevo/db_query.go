@@ -155,51 +155,13 @@ func cmdDBQuery(args []string) error {
 		}
 	}()
 
-	var (
-		columns   []string
-		rows      [][]any
-		rowsCut   bool
-		bytesCut  bool
-		bytesHeld int
-	)
-	onRow := func(cols []string, values []any) error {
-		columns = cols
-		if len(rows) >= *v.limit {
-			// One extra row proves another follows, so the cut is real rather
-			// than the statement returning exactly --limit rows.
-			rowsCut = true
-			return errQueryLimitReached
-		}
-		add := dbQueryRowBytes(values)
-		if bytesHeld+add > *v.maxBytes {
-			// The row that would pass the budget is not appended at all, so
-			// one value larger than the whole budget stops the read before it
-			// is ever held.
-			bytesCut = true
-			return errQueryLimitReached
-		}
-		bytesHeld += add
-		rows = append(rows, values)
-		return nil
-	}
+	sink := &dbQuerySink{limit: *v.limit, maxBytes: *v.maxBytes}
 
-	// The read runs on its own goroutine so the deadline ends the command even
-	// when the engine ignores ctx inside a step. main's os.Exit then ends the
-	// process, and with it the direct flock the abandoned read still holds.
-	readErr := make(chan error, 1)
-	go func() { readErr <- dbQueryRead(ctx, d, positional[0], onRow) }()
-
-	select {
-	case rerr := <-readErr:
-		if rerr != nil && !errors.Is(rerr, errQueryLimitReached) {
-			if ctx.Err() != nil {
-				return dbQueryTimeout(*v.timeout)
-			}
-			return classifyDBQuery(rerr)
-		}
-	case <-ctx.Done():
-		return dbQueryTimeout(*v.timeout)
+	if err := drainDBQueryRead(ctx, d, positional[0], *v.timeout, sink.onRow); err != nil {
+		return err
 	}
+	columns, rows := sink.columns, sink.rows
+	rowsCut, bytesCut := sink.rowsCut, sink.bytesCut
 
 	// Release the file before the note and the rows go out: a stalled stdout --
 	// a pipe nobody drains, `| less` then Ctrl-Z -- must not hold relevo.db.lock
@@ -222,6 +184,62 @@ func cmdDBQuery(args []string) error {
 		return writeDBQueryJSON(out, columns, rows)
 	}
 	return writeDBQueryTable(out, columns, rows)
+}
+
+// dbQuerySink accumulates one db query's rows under its caps: one row past
+// the limit, or one value past the byte budget, ends the read with
+// errQueryLimitReached.
+type dbQuerySink struct {
+	limit     int
+	maxBytes  int
+	columns   []string
+	rows      [][]any
+	rowsCut   bool
+	bytesCut  bool
+	bytesHeld int
+}
+
+func (s *dbQuerySink) onRow(cols []string, values []any) error {
+	s.columns = cols
+	if len(s.rows) >= s.limit {
+		// One extra row proves another follows, so the cut is real rather
+		// than the statement returning exactly --limit rows.
+		s.rowsCut = true
+		return errQueryLimitReached
+	}
+	add := dbQueryRowBytes(values)
+	if s.bytesHeld+add > s.maxBytes {
+		// The row that would pass the budget is not appended at all, so
+		// one value larger than the whole budget stops the read before it
+		// is ever held.
+		s.bytesCut = true
+		return errQueryLimitReached
+	}
+	s.bytesHeld += add
+	s.rows = append(s.rows, values)
+	return nil
+}
+
+// drainDBQueryRead runs the statement and drains it: the read runs on its own
+// goroutine so the deadline ends the command even when the engine ignores ctx
+// inside a step. main's os.Exit then ends the process, and with it the direct
+// flock the abandoned read still holds.
+func drainDBQueryRead(ctx context.Context, d *db.DB, stmt string, timeout time.Duration, onRow func([]string, []any) error) error {
+	readErr := make(chan error, 1)
+	go func() { readErr <- dbQueryRead(ctx, d, stmt, onRow) }()
+
+	select {
+	case rerr := <-readErr:
+		if rerr != nil && !errors.Is(rerr, errQueryLimitReached) {
+			if ctx.Err() != nil {
+				return dbQueryTimeout(timeout)
+			}
+			return classifyDBQuery(rerr)
+		}
+	case <-ctx.Done():
+		return dbQueryTimeout(timeout)
+	}
+	return nil
 }
 
 // checkDBQueryBounds refuses a limit or byte cap below one and a timeout that
@@ -352,14 +370,14 @@ func writeDBQueryTable(w io.Writer, columns []string, rows [][]any) error {
 		for i, column := range columns {
 			header[i] = sanitize.Text(column)
 		}
-		fmt.Fprintln(tw, strings.Join(header, "\t"))
+		_, _ = fmt.Fprintln(tw, strings.Join(header, "\t"))
 	}
 	for _, row := range rows {
 		cells := make([]string, len(row))
 		for i, value := range row {
 			cells[i] = sanitize.Text(formatDBQueryValue(value))
 		}
-		fmt.Fprintln(tw, strings.Join(cells, "\t"))
+		_, _ = fmt.Fprintln(tw, strings.Join(cells, "\t"))
 	}
 	return tw.Flush()
 }

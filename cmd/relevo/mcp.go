@@ -58,44 +58,15 @@ func cmdMCP(args []string) error {
 		return err
 	}
 
-	// Resolve this mastermind, retrying while the hook may still be running.
-	// A bad --mastermind value is not a race: it is reported at once.
 	// An opencode server has no identity to resolve here: its calls name their
 	// session, and each tool call resolves then.
-	var (
-		rec     mastermind.Record
-		haveRec bool
-	)
-	if kind != "opencode" {
-		deadline := time.Now().Add(mcpResolveTimeout)
-		for {
-			r, _, rerr := resolveMCPMasterMind(rt, *mastermindFlag)
-			if rerr == nil {
-				rec, haveRec = r, true
-				break
-			}
-			if !errors.Is(rerr, mastermind.ErrNoMasterMind) {
-				fmt.Fprintf(os.Stderr, "relevo mcp: %v\n", rerr)
-				return exitCodeErr{code: 2}
-			}
-			if !time.Now().Before(deadline) {
-				break
-			}
-			time.Sleep(mcpResolveRetry)
-		}
+	rec, haveRec, err := mcpResolveRecord(rt, kind, *mastermindFlag)
+	if err != nil {
+		return err
 	}
 
 	version := buildVersion()
-	switch {
-	case haveRec:
-		fmt.Fprintf(os.Stderr, "relevo mcp: mastermind %s (%s) tools\n", rec.Name, rec.ID)
-	case kind == "opencode":
-		fmt.Fprintln(os.Stderr, "relevo mcp: opencode tools server; each tool call resolves its MasterMind")
-	default:
-		// No registration and no host match: the verbs still serve, so a
-		// mastermind whose hook never ran can still use the tools.
-		fmt.Fprintln(os.Stderr, `relevo mcp: no relevo mastermind for this session; tools-only (run "relevo mastermind init")`)
-	}
+	mcpAnnounce(kind, rec, haveRec)
 
 	verbs, err := mcpVerbs(rt, kind, rec.ID)
 	if err != nil {
@@ -131,6 +102,47 @@ func cmdMCP(args []string) error {
 		return serveErr
 	}
 	return nil
+}
+
+// mcpResolveRecord resolves this mastermind, retrying while the hook may
+// still be running. A bad --mastermind value is not a race: it is reported
+// at once.
+func mcpResolveRecord(rt relevo.Runtime, kind, mastermindFlag string) (mastermind.Record, bool, error) {
+	var rec mastermind.Record
+	if kind == "opencode" {
+		return rec, false, nil
+	}
+	deadline := time.Now().Add(mcpResolveTimeout)
+	for {
+		r, _, rerr := resolveMCPMasterMind(rt, mastermindFlag)
+		if rerr == nil {
+			return r, true, nil
+		}
+		if !errors.Is(rerr, mastermind.ErrNoMasterMind) {
+			fmt.Fprintf(os.Stderr, "relevo mcp: %v\n", rerr)
+			return rec, false, exitCodeErr{code: 2}
+		}
+		if !time.Now().Before(deadline) {
+			break
+		}
+		time.Sleep(mcpResolveRetry)
+	}
+	return rec, false, nil
+}
+
+// mcpAnnounce says which mastermind the server resolved for: the tools belong
+// to one session, to opencode's per-call resolution, or to no session yet.
+func mcpAnnounce(kind string, rec mastermind.Record, haveRec bool) {
+	switch {
+	case haveRec:
+		fmt.Fprintf(os.Stderr, "relevo mcp: mastermind %s (%s) tools\n", rec.Name, rec.ID)
+	case kind == "opencode":
+		fmt.Fprintln(os.Stderr, "relevo mcp: opencode tools server; each tool call resolves its MasterMind")
+	default:
+		// No registration and no host match: the verbs still serve, so a
+		// mastermind whose hook never ran can still use the tools.
+		fmt.Fprintln(os.Stderr, `relevo mcp: no relevo mastermind for this session; tools-only (run "relevo mastermind init")`)
+	}
 }
 
 // resolveMCPMasterMind is mastermind.Resolve as relevo mcp calls it: --mastermind,

@@ -81,29 +81,9 @@ func cmdWait(args []string) error {
 		return err
 	}
 
-	var names []string
-	chain := ""
-	if *anyFlag {
-		if *name != "" || len(fs.Args()) == 0 {
-			return fail(codeUsage, "--any takes one or more positional names, not --name")
-		}
-		names = fs.Args()
-	} else {
-		target, err := resolveBinding(rt, *name, fs.Args())
-		if err != nil {
-			return err
-		}
-		// A name that resolves to a chain waits on the chain -- unless the
-		// chain is no longer running and its builder has a manual round open,
-		// in which case the wait follows that round as any binding's would.
-		binding, isChain, err := relevo.ChainWaitTarget(rt, target)
-		if err != nil {
-			return waitFailure(err)
-		}
-		if isChain {
-			chain = target
-		}
-		names = []string{binding}
+	names, chain, err := resolveWaitNames(rt, *anyFlag, *name, fs.Args())
+	if err != nil {
+		return err
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -151,6 +131,32 @@ func cmdWait(args []string) error {
 		return nil
 	}
 	return exitCodeErr{res.Code}
+}
+
+// resolveWaitNames resolves the wait's targets: every positional with --any,
+// else the one binding --name or the positional names. A name that resolves
+// to a chain waits on the chain -- unless the chain is no longer running and
+// its builder has a manual round open, in which case the wait follows that
+// round as any binding's would.
+func resolveWaitNames(rt relevo.Runtime, anyFlag bool, name string, args []string) ([]string, string, error) {
+	if anyFlag {
+		if name != "" || len(args) == 0 {
+			return nil, "", fail(codeUsage, "--any takes one or more positional names, not --name")
+		}
+		return args, "", nil
+	}
+	target, err := resolveBinding(rt, name, args)
+	if err != nil {
+		return nil, "", err
+	}
+	binding, isChain, err := relevo.ChainWaitTarget(rt, target)
+	if err != nil {
+		return nil, "", waitFailure(err)
+	}
+	if isChain {
+		return []string{binding}, target, nil
+	}
+	return []string{binding}, "", nil
 }
 
 // waitFailure classifies a wait error: a missing binding is the caller's

@@ -5,11 +5,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/setup"
 )
@@ -59,31 +61,9 @@ func cmdInitRun(args []string) error {
 		return err
 	}
 
-	inv := setup.Probe(env)
-	rec := setup.RecommendedAnswers(inv, nil)
-	files, err := setup.Build(inv, rec)
-	if err != nil {
-		return initBuildError(err)
-	}
-	tier := ""
-	if t := rec["tier"]; len(t) == 1 {
-		tier = t[0]
-	}
-
-	hasCandidates, err := rt.Config.Has(config.Candidates)
+	files, tier, err := initProbeFiles(env, rt, *force)
 	if err != nil {
 		return err
-	}
-	hasPolicy, err := rt.Config.Has(config.Policy)
-	if err != nil {
-		return err
-	}
-	hasActors, err := rt.Config.Has(config.Actors)
-	if err != nil {
-		return err
-	}
-	if !*force && (hasCandidates || hasPolicy || hasActors) {
-		return fail(codeConflict, "candidates, policy or actors already configured; pass --force to overwrite")
 	}
 
 	// One PutDoc writes all three sections as one revision (A2 round 2 R5).
@@ -101,34 +81,19 @@ func cmdInitRun(args []string) error {
 	// --json, where stdout carries the document alone.
 	w := noticeWriter(*asJSON)
 
-	fmt.Fprintf(w, "wrote candidates (%d: %s)\n", len(files.CandidateNames), strings.Join(files.CandidateNames, ", "))
+	_, _ = fmt.Fprintf(w, "wrote candidates (%d: %s)\n", len(files.CandidateNames), strings.Join(files.CandidateNames, ", "))
 	summary, err := actorSummary(files.Actors, files.ActorOrder)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(w, "wrote actors (%s)\n", summary)
-	fmt.Fprintln(w, tierLine(tier))
+	_, _ = fmt.Fprintf(w, "wrote actors (%s)\n", summary)
+	_, _ = fmt.Fprintln(w, tierLine(tier))
 
-	if !*noAgents {
-		failed := false
-		for _, kind := range files.Kinds {
-			results, err := harness.Install(env, harness.InstallOptions{Kind: kind})
-			if err != nil {
-				return err
-			}
-			for _, r := range results {
-				fmt.Fprintln(w, r.Line())
-				if r.Outcome == harness.OutcomeError {
-					failed = true
-				}
-			}
-		}
-		if failed {
-			return fail(codeInternal, "one or more agent definitions failed to install")
-		}
+	if err := installInitAgents(env, files, w, *noAgents); err != nil {
+		return err
 	}
 
-	fmt.Fprintf(w, "next: edit the model names, then run: relevo doctor\n")
+	_, _ = fmt.Fprintf(w, "next: edit the model names, then run: relevo doctor\n")
 
 	if *asJSON {
 		version, err := rt.Config.Version()
@@ -136,6 +101,63 @@ func cmdInitRun(args []string) error {
 			return err
 		}
 		return printDoc(configImportDocOf(importSections(doc), warnings, version))
+	}
+	return nil
+}
+
+// initProbeFiles probes the harnesses and builds the seed files, refusing a
+// configured store without --force: the seed would overwrite it.
+func initProbeFiles(env setup.SetupEnv, rt relevo.Runtime, force bool) (setup.Files, string, error) {
+	inv := setup.Probe(env)
+	rec := setup.RecommendedAnswers(inv, nil)
+	files, err := setup.Build(inv, rec)
+	if err != nil {
+		return setup.Files{}, "", initBuildError(err)
+	}
+	tier := ""
+	if t := rec["tier"]; len(t) == 1 {
+		tier = t[0]
+	}
+
+	hasCandidates, err := rt.Config.Has(config.Candidates)
+	if err != nil {
+		return setup.Files{}, "", err
+	}
+	hasPolicy, err := rt.Config.Has(config.Policy)
+	if err != nil {
+		return setup.Files{}, "", err
+	}
+	hasActors, err := rt.Config.Has(config.Actors)
+	if err != nil {
+		return setup.Files{}, "", err
+	}
+	if !force && (hasCandidates || hasPolicy || hasActors) {
+		return setup.Files{}, "", fail(codeConflict, "candidates, policy or actors already configured; pass --force to overwrite")
+	}
+	return files, tier, nil
+}
+
+// installInitAgents installs the probed kinds' agent definitions after a
+// config init, reporting each result line. A failed install fails the init.
+func installInitAgents(env setup.SetupEnv, files setup.Files, w io.Writer, noAgents bool) error {
+	if noAgents {
+		return nil
+	}
+	failed := false
+	for _, kind := range files.Kinds {
+		results, err := harness.Install(env, harness.InstallOptions{Kind: kind})
+		if err != nil {
+			return err
+		}
+		for _, r := range results {
+			_, _ = fmt.Fprintln(w, r.Line())
+			if r.Outcome == harness.OutcomeError {
+				failed = true
+			}
+		}
+	}
+	if failed {
+		return fail(codeInternal, "one or more agent definitions failed to install")
 	}
 	return nil
 }

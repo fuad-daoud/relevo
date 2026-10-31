@@ -12,26 +12,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/availability"
-	"github.com/fuad-daoud/relevo/internal/classify"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/delivery"
-	"github.com/fuad-daoud/relevo/internal/git"
-	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/installation"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/proc"
-	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
-	"github.com/fuad-daoud/relevo/internal/serve"
 	"github.com/fuad-daoud/relevo/internal/setup"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/tmpdir"
-	"github.com/fuad-daoud/relevo/internal/uplink"
 )
 
 // hooksRunLog is the hook run log over d's machine-local file: the kv row every
@@ -317,153 +310,40 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 	// and the daemon logs each once.
 	configWarnings := L.Warnings
 
-	cls, _ := classify.Resolve(pol.Classify, L.Typesafe, os.Getenv)
-
-	reader, prices := newUsageReader(L.Prices)
-
-	gitClient := git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes)
+	var a runtimeAssembly
+	a.cls, a.reader, a.prices, a.gitClient = buildRuntimeSurfaces(L, pol)
 
 	// Gates and latency live in the store root's database.
 	// The push claims, the mastermind registry and the hooks run log live in
 	// the same database, so `relevo daemon --preflight`
 	// and `--check`, which pass openGates false, open no database at all.
-	var (
-		gates   db.KV
-		gatesDB *db.DB
-		history *db.DB
-		claims  delivery.ClaimStore
-		waits   delivery.WaitClaimStore
-		runLog  hooks.RunLog
-	)
+	var gates runtimeGateHandles
 	if openGates {
-		d, err := st.DB()
+		h, err := openRuntimeGates(st)
 		if err != nil {
 			return relevo.Runtime{}, err
 		}
-		// Gates, latency, the claims and the run log are all this machine's own
-		// records -- a pid, a listen address, a row about a round that ran here
-		// -- so they bind the machine-local file. The binding happens once, here,
-		// rather than in each surface, so a surface added later cannot reach the
-		// shared file by accident.
-		local := d.LocalOrSelf()
-		gates = local
-		// The gates document records a write's stamp and its export signal in
-		// this same file, so it needs the handle that can open a transaction
-		// rather than the bare kv surface the ledger reads and writes through.
-		gatesDB = local
-		claims = &delivery.KVClaims{KV: db.TxKV{DB: local}}
-		waits = &delivery.KVWaitClaims{KV: db.TxKV{DB: local}}
-		runLog = hooksRunLog(d)
-		// The one-time move of the two history documents into their tables runs
-		// here, where the runtime opens both files and before anything reads or
-		// writes either history. Every reader below -- the daemon, every verb, the
-		// join `db sync enable` performs on the daemon's side -- goes through
-		// this block, so one pass covers them all and none of them can see a
-		// document the tables have replaced. A failure warns and leaves the
-		// documents in place: the marker says the move did not happen, and the
-		// next start retries it.
-		if moved, err := availability.MigrateHistoryDocuments(local, d, d.Origin()); err != nil {
-			slog.Warn("availability history documents not migrated", "err", err)
-		} else if moved.Events+moved.Samples > 0 {
-			slog.Info("availability history documents moved into their tables",
-				"events", moved.Events, "samples", moved.Samples)
-		}
-		// The two history tables live in the shared file, so this is the handle
-		// every gate and latency display reads them through.
-		history = d
+		gates = h
 	}
 
-	hooksCfg, err := resolveHooksConfig(L.Hooks, runLog)
-	if err != nil {
-		return relevo.Runtime{}, err
-	}
-	dispatcher := newHooksDispatcher(hooksCfg, pol)
-
-	remoteClient, err := newRemoteClient(L.Servers, L.ClientKey)
+	var err error
+	a.dispatcher, a.remoteClient, err = buildRuntimeServices(L, gates.runLog, pol)
 	if err != nil {
 		return relevo.Runtime{}, err
 	}
 
-	var opencodeSession func(cwd string, now time.Time) (string, error)
-	var opencodeSessionDir func(sessionID string) (string, error)
-	if _, err := exec.LookPath("sqlite3"); err == nil {
-		finder := delivery.OpencodeSessionFinder{
-			Exec:   binExec{},
-			DBPath: opencodeDBPath(),
-		}
-		opencodeSession = finder.Find
-		opencodeSessionDir = finder.Directory
-	}
+	a.opencodeSession, a.opencodeSessionDir = opencodeSessionFuncs()
 
-	tmpDir, err := tmpdir.TempDir(root)
+	var runner *proc.Runner
+	runner, a.tmpDir, err = buildRuntimeRunner(root)
 	if err != nil {
 		return relevo.Runtime{}, err
 	}
+	a.runner = runner
 
-	// The runner's children keep their temp files under the same state tmp dir
-	// the transport writes bundles into, so a parallel round never fills the
-	// system temp a serve daemon happens to inherit.
-	runner := proc.New()
-	runner.TmpDir = tmpDir
-
-	rt := relevo.Runtime{
-		Git:            gitClient,
-		Runner:         runner,
-		Store:          st,
-		TmpRoot:        tmpDir,
-		Candidates:     L.Candidates,
-		Accounts:       L.Accounts,
-		OpencodeAuth:   relevo.OSOpencodeAuth(opencodeDBPath()),
-		Gates:          gates,
-		GatesDB:        gatesDB,
-		History:        history,
-		Policy:         pol,
-		Registry:       L.Registry,
-		ConfigWarnings: configWarnings,
-		Scope:          scopeFromPolicy(pol.ScopeFor(false)),
-		Classify:       cls,
-		Usage:          reader,
-		Prices:         prices,
-		Fetcher:        release.NewHTTPFetcher(release.Source(), 5*time.Second),
-		Now:            time.Now,
-		Hooks:          dispatcher,
-		Remote:         remoteClient,
-		// The transport depends only on the git client, not the servers
-		// section, so a server added while the daemon runs needs no rebuild.
-		Transport:          remote.NewBundleTransport(gitClient, tmpDir),
-		Roles:              harness.OSRoleChecker(),
-		Channels:           claims,
-		Waits:              waits,
-		ProcStart:          procStartUnix,
-		MuseHost:           mastermind.MuseHostSeam(museCommOf, musePPidOf),
-		OpencodeSession:    opencodeSession,
-		OpencodeSessionDir: opencodeSessionDir,
-		SessionReaper:      relevo.NewSessionReaper(binExec{}),
-	}
-	// Deliverers need the runtime's store, and a runtime with no database open
-	// (preflight, check) carries none at all: wiring one would open -- and
-	// migrate -- the very database the peek must leave alone.
-	if openGates {
-		rt.Deliverers = newDeliverers(st)
-	}
-	// The registry needs the runtime's own store and clock, so it is wired
-	// here rather than in the literal above. A runtime with no database open
-	// (preflight, check) keeps a nil registry, which every caller already
-	// treats as "no masterminds".
-	if openGates {
-		reg, rerr := mastermindRegistry(rt)
-		if rerr != nil {
-			return relevo.Runtime{}, rerr
-		}
-		rt.MasterMinds = reg
-	}
-	rt.CloseServedRound = serve.CloseServedRound
-	// The remote send runs above the engine: one wiring point here covers the
-	// CLI and the daemon, which share buildRuntime.
-	rt.RemoteSend = relevo.RemoteSendDeps{
-		Send:   uplink.SendRemote,
-		Ship:   uplink.Ship,
-		Record: uplink.Record,
+	rt := assembleRuntime(a, st, L, pol, configWarnings, gates)
+	if err := finishRuntimeWiring(&rt, st, openGates); err != nil {
+		return relevo.Runtime{}, err
 	}
 	return rt, nil
 }

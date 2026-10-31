@@ -92,35 +92,45 @@ func cmdSend(args []string) error {
 	}
 
 	if *dryRun {
-		d, err := relevo.SendDryRun(context.Background(), rt, target, *file, opts)
-		if err != nil {
-			return writeError(err)
-		}
-		if *asJSON {
-			return printDoc(d)
-		}
-		fmt.Print(relevo.RenderDryRun(d))
-		return nil
+		return reportSendDryRun(rt, target, *file, opts, *asJSON)
 	}
+	return finishSend(rt, target, *file, opts, *candidate, *tier, *asJSON)
+}
 
-	res, err := relevo.Send(context.Background(), rt, target, *file, opts)
+// reportSendDryRun prints the dry-run validation: the document under --json,
+// the rendered plan on the human surface.
+func reportSendDryRun(rt relevo.Runtime, target, file string, opts relevo.SendOptions, asJSON bool) error {
+	d, err := relevo.SendDryRun(context.Background(), rt, target, file, opts)
+	if err != nil {
+		return writeError(err)
+	}
+	if asJSON {
+		return printDoc(d)
+	}
+	fmt.Print(relevo.RenderDryRun(d))
+	return nil
+}
+
+// finishSend sends the round and prints the answer: the pick and drift lines
+// are notices, not the result, so --json moves them to stderr where stdout
+// carries the document alone.
+func finishSend(rt relevo.Runtime, target, file string, opts relevo.SendOptions, candidate, tier string, asJSON bool) error {
+	res, err := relevo.Send(context.Background(), rt, target, file, opts)
 	if err != nil {
 		return writeError(err)
 	}
 
-	// The pick and drift lines are notices, not the result: --json moves them
-	// to stderr, where stdout carries the document alone.
-	notices := noticeWriter(*asJSON)
+	notices := noticeWriter(asJSON)
 	if res.Pick != "" {
-		fmt.Fprintln(notices, res.Pick)
+		_, _ = fmt.Fprintln(notices, res.Pick)
 	}
 	if res.Drift != "" {
-		fmt.Fprintln(notices, res.Drift)
+		_, _ = fmt.Fprintln(notices, res.Drift)
 	}
-	if *asJSON {
+	if asJSON {
 		// The round's candidate and tier: the flags when given, else the
 		// binding's own values, which the send just stored.
-		cand, roundTier := *candidate, *tier
+		cand, roundTier := candidate, tier
 		if b, lerr := rt.Store.Load(target); lerr == nil {
 			cand = b.BuilderCandidate
 			if roundTier == "" {

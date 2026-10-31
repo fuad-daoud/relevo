@@ -29,7 +29,7 @@ func cmdHelp(args []string) error {
 	v := helpFlagSet(fs)
 	// -h on help itself still prints the text a human asked for rather than
 	// the flag package's own list.
-	fs.Usage = func() { fmt.Fprint(fs.Output(), usage) }
+	fs.Usage = func() { _, _ = fmt.Fprint(fs.Output(), usage) }
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}

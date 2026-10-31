@@ -22,22 +22,6 @@ import (
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
-// The R2 fields of the status document. They live here rather than in db_sync.go
-// so the fields, the reader that fills them and the renderer that prints them
-// are one file: a credential could only leak by someone adding a field beside
-// the reader, and there is now nowhere else to add one.
-//
-// R2Configured says whether this machine holds a complete set. R2Endpoint and
-// R2Bucket describe where bodies would go, which is what a reader needs to tell
-// this machine's bucket from another's. There is deliberately no field for the
-// key id or the secret: this document is printed on request and read aloud, and
-// a credential has no reason to be in either.
-type dbSyncR2Status struct {
-	R2Configured bool   `json:"r2_configured,omitempty"`
-	R2Endpoint   string `json:"r2_endpoint,omitempty"`
-	R2Bucket     string `json:"r2_bucket,omitempty"`
-}
-
 // dbSyncR2Usage is the R2 half of the enable line the usage text prints: the
 // three flags that name where bodies go, and the one that carries the secret.
 // It is its own constant so the sentence saying where the secret comes from can

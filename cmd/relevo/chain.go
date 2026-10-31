@@ -183,35 +183,56 @@ func cmdChain(args []string) error {
 // named chain (a positional is not a name), at least one non-empty plan, and
 // one security flag. A dry run skips the start-input requirements, because the
 // workflow's own inputs decide what it needs and the dry run validates them.
+// checkChainExclusive refuses the flag combinations chain cannot honour: one
+// feature flag, one security flag, one task source, and no start inputs with
+// --server. A dry run still validates them, because the workflow's own inputs
+// decide what the dry run needs.
+func checkChainExclusive(v *chainFlagValues) error {
+	if *v.security && *v.noSecurity {
+		return fail(codeUsage, "--security and --no-security are exclusive")
+	}
+	if *v.task != "" && *v.taskFile != "" {
+		return fail(codeUsage, "--task and --task-file are exclusive")
+	}
+	if *v.server != "" && (*v.workflow != "" || *v.task != "" || *v.taskFile != "" || *v.from != "") {
+		return fail(codeUsage, "relevo chain --server does not take --workflow, --task or --from: the server's workflow feature is not available yet")
+	}
+	if *v.from != "" {
+		return fail(codeUsage, "relevo chain --from applies with --resume: it re-enters a halted chain at another step")
+	}
+	return nil
+}
+
+// chainStartInput parses the start inputs chainOptions carries: the params
+// map, the correction and regate budgets, and the task body.
+func chainStartInput(fs *flag.FlagSet, v *chainFlagValues) (map[string]string, *int, *int, string, error) {
+	params, err := parseChainParams(v.params)
+	if err != nil {
+		return nil, nil, nil, "", err
+	}
+	maxCorrections, err := chainIntFlag(fs, "max-corrections", *v.maxCorrections)
+	if err != nil {
+		return nil, nil, nil, "", err
+	}
+	regate, err := regateFlag(fs, v.regate)
+	if err != nil {
+		return nil, nil, nil, "", err
+	}
+	task, err := chainTaskBody(v)
+	if err != nil {
+		return nil, nil, nil, "", err
+	}
+	return params, maxCorrections, regate, task, nil
+}
+
 func chainOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ChainOptions, error) {
 	if *v.name == "" {
 		return relevo.ChainOptions{}, fail(codeUsage, "relevo chain needs --name NAME")
 	}
-	if *v.security && *v.noSecurity {
-		return relevo.ChainOptions{}, fail(codeUsage, "--security and --no-security are exclusive")
-	}
-	if *v.task != "" && *v.taskFile != "" {
-		return relevo.ChainOptions{}, fail(codeUsage, "--task and --task-file are exclusive")
-	}
-	params, err := parseChainParams(v.params)
-	if err != nil {
+	if err := checkChainExclusive(v); err != nil {
 		return relevo.ChainOptions{}, err
 	}
-	if *v.server != "" && (*v.workflow != "" || *v.task != "" || *v.taskFile != "" || *v.from != "") {
-		return relevo.ChainOptions{}, fail(codeUsage, "relevo chain --server does not take --workflow, --task or --from: the server's workflow feature is not available yet")
-	}
-	if *v.from != "" {
-		return relevo.ChainOptions{}, fail(codeUsage, "relevo chain --from applies with --resume: it re-enters a halted chain at another step")
-	}
-	maxCorrections, err := chainIntFlag(fs, "max-corrections", *v.maxCorrections)
-	if err != nil {
-		return relevo.ChainOptions{}, err
-	}
-	regate, err := regateFlag(fs, v.regate)
-	if err != nil {
-		return relevo.ChainOptions{}, err
-	}
-	task, err := chainTaskBody(v)
+	params, maxCorrections, regate, task, err := chainStartInput(fs, v)
 	if err != nil {
 		return relevo.ChainOptions{}, err
 	}
@@ -242,6 +263,13 @@ func chainOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ChainOptions, er
 	if chainFlagGiven(fs, "security") || chainFlagGiven(fs, "no-security") {
 		opts.Security = v.security
 	}
+	return finishChainOptions(v, opts)
+}
+
+// finishChainOptions validates the start requirements chainOptions carries
+// past the flags: a dry run skips them, otherwise exactly one feature choice
+// and at least one non-empty plan.
+func finishChainOptions(v *chainFlagValues, opts relevo.ChainOptions) (relevo.ChainOptions, error) {
 	if opts.DryRun {
 		return opts, nil
 	}

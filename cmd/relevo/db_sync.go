@@ -257,6 +257,33 @@ type dbSyncCallDoc struct {
 //
 // The token is resolved here and nowhere else: --token-stdin beats
 // TURSO_TOKEN, and the value is handed straight to the verb request. It is not
+// dbSyncEnableSecrets resolves the join inputs the code names: the code, the
+// join it parses to, the token and the passphrase. The code is parsed here,
+// before anything is dialed: it is a pure function over the string, so a code
+// this build cannot read -- a version it does not know, a truncated paste,
+// something that is not a code at all -- is refused before a daemon is reached
+// or a worker is started, and the remote and token it names are the ones that
+// go on the wire.
+func dbSyncEnableSecrets(joinStdin bool, remoteURL string, tokenStdin, passphraseStdin bool) (join dbSyncJoin, token, pass []byte, err error) {
+	code, err := dbSyncReadJoinCode(joinStdin)
+	if err != nil {
+		return dbSyncJoin{}, nil, nil, err
+	}
+	join, err = dbSyncEnableJoin(code, remoteURL)
+	if err != nil {
+		return dbSyncJoin{}, nil, nil, err
+	}
+	token, err = dbSyncEnableToken(join, tokenStdin)
+	if err != nil {
+		return dbSyncJoin{}, nil, nil, err
+	}
+	pass, err = dbSyncEnablePassphrase(passphraseStdin, join.joining)
+	if err != nil {
+		return dbSyncJoin{}, nil, nil, err
+	}
+	return join, token, pass, nil
+}
+
 // stored, logged, formatted into an error or echoed: the daemon puts it into the
 // local file with its own handles, and the only thing this process ever holds
 // it for is the length of the call below.
@@ -279,24 +306,7 @@ func cmdDBSyncEnable(args []string) error {
 		return err
 	}
 
-	// The code is parsed here, before anything is dialed. It is a pure function
-	// over the string, so a code this build cannot read -- a version it does not
-	// know, a truncated paste, something that is not a code at all -- is refused
-	// before a daemon is reached or a worker is started, and the remote and
-	// token it names are the ones that go on the wire.
-	code, err := dbSyncReadJoinCode(*v.joinStdin)
-	if err != nil {
-		return err
-	}
-	join, err := dbSyncEnableJoin(code, *v.remoteURL)
-	if err != nil {
-		return err
-	}
-	token, err := dbSyncEnableToken(join, *v.tokenStdin)
-	if err != nil {
-		return err
-	}
-	pass, err := dbSyncEnablePassphrase(*v.passphraseStdin, join.joining)
+	join, token, pass, err := dbSyncEnableSecrets(*v.joinStdin, *v.remoteURL, *v.tokenStdin, *v.passphraseStdin)
 	if err != nil {
 		return err
 	}

@@ -171,7 +171,7 @@ func cmdShow(args []string) error {
 	stat, anchors, follow, after := v.stat, v.anchors, v.follow, v.after
 	asJSON, peek, owner, state := v.asJSON, v.peek, v.owner, v.state
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), showUsage)
+		_, _ = fmt.Fprintln(fs.Output(), showUsage)
 		fs.PrintDefaults()
 	}
 	if err := renamedShowFlag(args); err != nil {
@@ -191,45 +191,20 @@ func cmdShow(args []string) error {
 		return fail(codeUsage, "--state only applies with --owner")
 	}
 
-	section, serr := showSectionFlags(showSectionArgs{
+	section, serr := resolveShowSection(showSectionArgs{
 		prompt: *prompt, report: *report, diff: *diff, drift: *drift,
 		log: *logSection, transcript: *transcript, gate: *gateSection,
 		output: *output, artifacts: *artifacts,
 		trace:      *trace,
 		workflow:   *workflowSection,
 		findingsID: *findings, artifactRel: *artifact,
-	})
+	}, *owner)
 	if serr != nil {
-		// An --owner invocation runs the serve show body, so its section
-		// conflict keeps that route's name and a hint naming that form.
-		if *owner != "" {
-			return failNext(codeUsage, "relevo show --owner", "serve show: %v", serr)
-		}
-		return fail(codeUsage, "show: %v", serr)
+		return serr
 	}
 
-	// The absorbed flags are valid only with their own section:
-	// --stat/--anchors are diff's, --follow/--after are log's.
-	if *stat || *anchors {
-		if section != relevo.ShowDiff && section != relevo.ShowDrift {
-			bad := "--stat"
-			if *anchors {
-				bad = "--anchors"
-			}
-			return fail(codeUsage, "%s requires --diff or --drift", bad)
-		}
-	}
-	if *follow || flagGiven(fs, "after") {
-		if section != relevo.ShowLog {
-			bad := "--follow"
-			if !*follow {
-				bad = "--after"
-			}
-			return fail(codeUsage, "%s requires --log", bad)
-		}
-	}
-	if *after < 0 {
-		return fail(codeUsage, "--after must be >= 0")
+	if serr := checkShowSectionFlags(fs, section, *stat, *anchors, *follow, *after); serr != nil {
+		return serr
 	}
 
 	if *owner != "" {
@@ -259,6 +234,47 @@ func cmdShow(args []string) error {
 
 	opts := relevo.ShowOptions{Name: name, Round: *round, Section: section, JSON: *asJSON, Peek: *peek, FindingsID: *findings, ArtifactRel: *artifact}
 	return classifyReadErr(printShow(rt, opts, true, true, ""))
+}
+
+// resolveShowSection resolves the section flags, naming the `serve show`
+// route when an owner invocation's section conflicts: that body runs the
+// read, so the refusal carries its name and hint.
+func resolveShowSection(args showSectionArgs, owner string) (relevo.ShowSection, error) {
+	section, serr := showSectionFlags(args)
+	if serr != nil {
+		if owner != "" {
+			return "", failNext(codeUsage, "relevo show --owner", "serve show: %v", serr)
+		}
+		return "", fail(codeUsage, "show: %v", serr)
+	}
+	return section, nil
+}
+
+// checkShowSectionFlags refuses the absorbed flags with the wrong section:
+// --stat/--anchors are diff's, --follow/--after are log's.
+func checkShowSectionFlags(fs *flag.FlagSet, section relevo.ShowSection, stat, anchors, follow bool, after int) error {
+	if stat || anchors {
+		if section != relevo.ShowDiff && section != relevo.ShowDrift {
+			bad := "--stat"
+			if anchors {
+				bad = "--anchors"
+			}
+			return fail(codeUsage, "%s requires --diff or --drift", bad)
+		}
+	}
+	if follow || flagGiven(fs, "after") {
+		if section != relevo.ShowLog {
+			bad := "--follow"
+			if !follow {
+				bad = "--after"
+			}
+			return fail(codeUsage, "%s requires --log", bad)
+		}
+	}
+	if after < 0 {
+		return fail(codeUsage, "--after must be >= 0")
+	}
+	return nil
 }
 
 // classifyReadErr maps a read verb's failure onto the catalog: a binding the
@@ -312,7 +328,7 @@ func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB b
 		if dbErr != nil {
 			return fmt.Errorf("open %s: %w", rt.Store.DBPath(), dbErr)
 		}
-		defer d.Close()
+		defer func() { _ = d.Close() }()
 		rt.DB = d
 	} else {
 		live = true
@@ -330,7 +346,12 @@ func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB b
 	if err != nil {
 		return err
 	}
+	return printShowResult(res, opts, headerPrefix, stampViewed)
+}
 
+// printShowResult prints one ShowResult: the document under --json, else the
+// header and the section's own body.
+func printShowResult(res relevo.ShowResult, opts relevo.ShowOptions, headerPrefix string, stampViewed func()) error {
 	if opts.JSON {
 		if res.Trace != nil {
 			// --trace's document is the trace itself, not the round-shaped
@@ -355,11 +376,12 @@ func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB b
 	// A trace or a workflow names no round: the header says chain and the
 	// section instead.
 	var header string
-	if res.Section == relevo.ShowTrace {
+	switch res.Section {
+	case relevo.ShowTrace:
 		header = fmt.Sprintf("%s%s · trace", headerPrefix, res.Name)
-	} else if res.Section == relevo.ShowWorkflow {
+	case relevo.ShowWorkflow:
 		header = fmt.Sprintf("%s%s · workflow", headerPrefix, res.Name)
-	} else {
+	default:
 		header = fmt.Sprintf("%s%s round %d of %d · %s", headerPrefix, res.Name, res.Round, res.Rounds, res.Section)
 		if res.Archived {
 			header += " · archived " + res.ArchivedAt.Format("2006-01-02")
@@ -438,32 +460,7 @@ func printDiff(rt relevo.Runtime, name string, round int, stat, drift, anchors b
 	}
 
 	if stat {
-		entries, err := rt.Store.ReadLog(name)
-		if err != nil {
-			return err
-		}
-		targetKind := store.KindDiff
-		if drift {
-			targetKind = store.KindDrift
-		}
-		var found *store.LogEntry
-		for i := len(entries) - 1; i >= 0; i-- {
-			if entries[i].Round == targetRound && entries[i].Kind == targetKind {
-				found = &entries[i]
-				break
-			}
-		}
-		if found == nil || found.Note == "" {
-			if drift {
-				return fmt.Errorf("no drift recorded for round %d of %q (--drift): %w", targetRound, name, relevo.ErrNoArtifact)
-			}
-			return fmt.Errorf("no diff recorded for round %d of %q: %w", targetRound, name, relevo.ErrNoArtifact)
-		}
-		fmt.Println(found.Note)
-		// A successful print is what "viewed" means; the stamp is
-		// best-effort and must never fail a read command.
-		_ = rt.Store.MarkViewed(name, time.Now())
-		return nil
+		return printDiffStat(rt, name, targetRound, drift)
 	}
 
 	var patch []byte
@@ -495,6 +492,37 @@ func printDiff(rt relevo.Runtime, name string, round int, stat, drift, anchors b
 	}
 	// A successful print is what "viewed" means; the stamp is best-effort
 	// and must never fail a read command.
+	_ = rt.Store.MarkViewed(name, time.Now())
+	return nil
+}
+
+// printDiffStat prints the recorded diff or drift note for one round: the
+// same note `show --stat` always printed, stamped viewed on success.
+func printDiffStat(rt relevo.Runtime, name string, targetRound int, drift bool) error {
+	entries, err := rt.Store.ReadLog(name)
+	if err != nil {
+		return err
+	}
+	targetKind := store.KindDiff
+	if drift {
+		targetKind = store.KindDrift
+	}
+	var found *store.LogEntry
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].Round == targetRound && entries[i].Kind == targetKind {
+			found = &entries[i]
+			break
+		}
+	}
+	if found == nil || found.Note == "" {
+		if drift {
+			return fmt.Errorf("no drift recorded for round %d of %q (--drift): %w", targetRound, name, relevo.ErrNoArtifact)
+		}
+		return fmt.Errorf("no diff recorded for round %d of %q: %w", targetRound, name, relevo.ErrNoArtifact)
+	}
+	fmt.Println(found.Note)
+	// A successful print is what "viewed" means; the stamp is
+	// best-effort and must never fail a read command.
 	_ = rt.Store.MarkViewed(name, time.Now())
 	return nil
 }

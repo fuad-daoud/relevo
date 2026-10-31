@@ -176,9 +176,9 @@ func report(w io.Writer, err error, jsonMode bool) int {
 				Next:    ce.next,
 			}})
 		} else {
-			fmt.Fprintf(w, "relevo: %s: %s\n", ce.code, ce.message)
+			_, _ = fmt.Fprintf(w, "relevo: %s: %s\n", ce.code, ce.message)
 			if ce.next != "" {
-				fmt.Fprintf(w, "  next: %s\n", ce.next)
+				_, _ = fmt.Fprintf(w, "  next: %s\n", ce.next)
 			}
 		}
 		return catalogExit(ce.code)
@@ -194,7 +194,7 @@ func report(w io.Writer, err error, jsonMode bool) int {
 		return catalog[codeUsage].exit
 	}
 
-	fmt.Fprintf(w, "relevo: %v\n", err)
+	_, _ = fmt.Fprintf(w, "relevo: %v\n", err)
 	return 1
 }
 
@@ -211,7 +211,10 @@ func jsonRequested(args []string) bool {
 	return false
 }
 
-func run(args []string) error {
+// runGuards runs run's pre-dispatch guards: the bare-argv rewrite, the agy
+// credential capture with the peek-verb exception, the sandbox banner and
+// the active-verb record. It returns the argv the switch dispatches on.
+func runGuards(args []string) ([]string, error) {
 	if len(args) == 0 {
 		// A bare `relevo` on a terminal is `relevo ui`; it then falls through
 		// every guard below exactly as `ui` does.
@@ -219,7 +222,7 @@ func run(args []string) error {
 			args = uiArgs
 		} else {
 			fmt.Fprint(os.Stderr, usage)
-			return errUsagePrinted
+			return nil, errUsagePrinted
 		}
 	}
 
@@ -248,7 +251,30 @@ func run(args []string) error {
 		// A --json caller reads stderr as the error document alone.
 		activeVerb = ""
 	}
+	return args, nil
+}
 
+// removedVerbError refuses a removed or unknown subcommand, naming the
+// replacement the removed verb folded into.
+func removedVerbError(verb string) error {
+	// The verbs folded into `relevo config`, and the verbs merged
+	// into bind/show/unbind/status, name their replacement rather than the
+	// generic unknown-subcommand error.
+	if replacement, ok := removedVerbs[verb]; ok {
+		return failNext(codeUsage, replacement, "%q was removed; use %s", verb, replacement)
+	}
+	if verb == "ask" {
+		return failNext(codeUsage, "relevo bind --actor reviewer",
+			"relevo ask is gone: bind a reader actor (relevo bind --actor reviewer) and send it a plan")
+	}
+	return fail(codeUsage, "unknown subcommand %q; run \"relevo help\" for the command list", verb)
+}
+
+func run(args []string) error {
+	args, err := runGuards(args)
+	if err != nil {
+		return err
+	}
 	switch args[0] {
 	case "help", "-h", "--help":
 		return cmdHelp(args[1:])
@@ -265,8 +291,7 @@ func run(args []string) error {
 	case "send":
 		return cmdSend(args[1:])
 	case "ask":
-		return failNext(codeUsage, "relevo bind --actor reviewer",
-			"relevo ask is gone: bind a reader actor (relevo bind --actor reviewer) and send it a plan")
+		return removedVerbError(args[0])
 	case "status":
 		return cmdStatus(args[1:])
 	case "history":
@@ -314,13 +339,7 @@ func run(args []string) error {
 	case "sync-worker":
 		return cmdSyncWorker(args[1:])
 	default:
-		// The verbs folded into `relevo config`, and the verbs merged
-		// into bind/show/unbind/status, name their replacement rather than the
-		// generic unknown-subcommand error.
-		if replacement, ok := removedVerbs[args[0]]; ok {
-			return failNext(codeUsage, replacement, "%q was removed; use %s", args[0], replacement)
-		}
-		return fail(codeUsage, "unknown subcommand %q; run \"relevo help\" for the command list", args[0])
+		return removedVerbError(args[0])
 	}
 }
 
@@ -399,7 +418,7 @@ func cmdUI(args []string) error {
 		notice = fmt.Sprintf("no database: %v", dbErr)
 	} else {
 		rt.DB = d
-		defer d.Close()
+		defer func() { _ = d.Close() }()
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

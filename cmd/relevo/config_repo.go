@@ -255,6 +255,27 @@ func configRepoSet(args []string) error {
 	return nil
 }
 
+// clearRepoKey clears one field of a repos entry, reporting whether it was
+// set: an unset field is a refusal, and the caller drops an emptied entry.
+func clearRepoKey(entry config.RepoEntry, key string) (config.RepoEntry, bool) {
+	wasSet := false
+	switch key {
+	case "name":
+		wasSet = entry.Name != ""
+		entry.Name = ""
+	case "gate":
+		wasSet = entry.Gate != ""
+		entry.Gate = ""
+	case "board_theme":
+		wasSet = entry.BoardTheme != ""
+		entry.BoardTheme = ""
+	case "trimpath":
+		wasSet = entry.Trimpath != ""
+		entry.Trimpath = ""
+	}
+	return entry, wasSet
+}
+
 // configRepoUnset clears one field of the working directory's -- or --repo's --
 // own entry. A field that is not set is a refusal, the same answer
 // `config unset` gives; an entry the clear leaves empty is dropped.
@@ -298,21 +319,7 @@ func configRepoUnset(args []string) error {
 	if !ok {
 		return fail(codeConfigInvalid, "repos.%s.%s: not set", id, key)
 	}
-	wasSet := false
-	switch key {
-	case "name":
-		wasSet = entry.Name != ""
-		entry.Name = ""
-	case "gate":
-		wasSet = entry.Gate != ""
-		entry.Gate = ""
-	case "board_theme":
-		wasSet = entry.BoardTheme != ""
-		entry.BoardTheme = ""
-	case "trimpath":
-		wasSet = entry.Trimpath != ""
-		entry.Trimpath = ""
-	}
+	entry, wasSet := clearRepoKey(entry, key)
 	if !wasSet {
 		return fail(codeConfigInvalid, "repos.%s.%s: not set", id, key)
 	}

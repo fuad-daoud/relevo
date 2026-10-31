@@ -224,7 +224,7 @@ func regateFlag(fs *flag.FlagSet, regate *int) (*int, error) {
 // mode's notice writer: stdout for the human default, stderr under --json.
 func noteRegateNoGate(w io.Writer, b store.Binding) {
 	if b.Regate > 0 && b.Gate == "" {
-		fmt.Fprintf(w, "  regate %d (no gate configured)\n", b.Regate)
+		_, _ = fmt.Fprintf(w, "  regate %d (no gate configured)\n", b.Regate)
 	}
 }
 
@@ -251,85 +251,105 @@ func writeError(err error) error {
 	if errors.As(err, &ce) {
 		return err
 	}
+	if out, ok := writeErrorRefused(err); ok {
+		return out
+	}
+	if out, ok := writeErrorConflict(err); ok {
+		return out
+	}
+	if out, ok := writeErrorPolicy(err); ok {
+		return out
+	}
+	return fail(codeInternal, "%v", err)
+}
+
+// writeErrorRefused classifies the refusal family: a busy builder, a bare
+// refusal, a name or ticket the caller owns, and a missing round. The busy
+// family is checked first because each of its sentinels also unwraps to
+// refusal.ErrRefused.
+func writeErrorRefused(err error) (error, bool) {
+	switch {
+	case errors.Is(err, relevo.ErrBuilderBusy):
+		return failNext(codeRefused, "relevo done", "%v", err), true
+	case errors.Is(err, relevo.ErrReportPending):
+		return failNext(codeRefused, "relevo wait", "%v", err), true
+	case errors.Is(err, relevo.ErrScopeActive):
+		return failNext(codeRefused, "relevo stop", "%v", err), true
+	case errors.Is(err, refusal.ErrRefused):
+		return fail(codeRefused, "%v", err), true
+	case errors.Is(err, store.ErrInvalidName):
+		return fail(codeUsage, "%v", err), true
+	case errors.Is(err, store.ErrInvalidFeature), errors.Is(err, store.ErrInvalidTicket):
+		return fail(codeUsage, "%v", err), true
+	case errors.Is(err, refusal.ErrBadInput):
+		return fail(codeUsage, "%v", err), true
+	case errors.Is(err, refusal.ErrRoundNotFound):
+		return fail(codeRoundNotFound, "%v", err), true
+	}
+	return nil, false
+}
+
+// writeErrorConflict classifies the conflict family: a halted chain's stop
+// answer and the open-member failures, which name the stop that clears them.
+func writeErrorConflict(err error) (error, bool) {
 	var openMember *relevo.RoundOpenError
 	var candOpen *relevo.CandidateRoundOpenError
+	switch {
+	case errors.Is(err, store.ErrHandedOver), errors.Is(err, db.ErrWriterMoved):
+		return fail(codeRefused, "%v", err), true
+	case errors.Is(err, store.ErrCWDTaken), errors.Is(err, chain.ErrRunningMember), errors.Is(err, relevo.ErrChainRunning), errors.Is(err, relevo.ErrChainDone), errors.Is(err, relevo.ErrChainHalted):
+		return fail(codeConflict, "%v", err), true
+	case errors.As(err, &openMember):
+		return failNext(codeConflict, "relevo stop "+openMember.Member, "%v", err), true
+	case errors.As(err, &candOpen):
+		return failNext(codeConflict, "relevo stop "+candOpen.Name, "%v", err), true
+	}
+	return nil, false
+}
+
+// writeErrorPolicy classifies the policy family: placement, tier and gate
+// refusals, each with the config verb that resolves them, and the remote and
+// host states a caller fixes outside relevo.
+func writeErrorPolicy(err error) (error, bool) {
 	var envErr *relevo.EnvironmentError
 	switch {
-	// The busy family is checked before the bare refusal.ErrRefused case, because
-	// each of these sentinels also unwraps to refusal.ErrRefused: they are refusals
-	// first and a named reason second, and only the reason picks the next
-	// hint the caller should follow.
-	case errors.Is(err, relevo.ErrBuilderBusy):
-		return failNext(codeRefused, "relevo done", "%v", err)
-	case errors.Is(err, relevo.ErrReportPending):
-		return failNext(codeRefused, "relevo wait", "%v", err)
-	case errors.Is(err, relevo.ErrScopeActive):
-		return failNext(codeRefused, "relevo stop", "%v", err)
-	case errors.Is(err, refusal.ErrRefused):
-		return fail(codeRefused, "%v", err)
-	case errors.Is(err, store.ErrInvalidName):
-		// A binding name is the caller's own argument: a corrected --name is
-		// the whole way out, so this is usage (exit 2), never internal.
-		return fail(codeUsage, "%v", err)
-	case errors.Is(err, store.ErrInvalidFeature), errors.Is(err, store.ErrInvalidTicket):
-		// Same shape as a bad name: the flag value itself is what is wrong.
-		return fail(codeUsage, "%v", err)
-	case errors.Is(err, refusal.ErrBadInput):
-		// A flag pair that cannot both hold, a flag the shape does not
-		// honour, a name already taken: usage, not an internal failure.
-		return fail(codeUsage, "%v", err)
-	case errors.Is(err, refusal.ErrRoundNotFound):
-		return fail(codeRoundNotFound, "%v", err)
-	case errors.Is(err, store.ErrHandedOver), errors.Is(err, db.ErrWriterMoved):
-		return fail(codeRefused, "%v", err)
 	case errors.Is(err, store.ErrNotFound):
-		return fail(codeBindingNotFound, "%v", err)
+		return fail(codeBindingNotFound, "%v", err), true
 	case errors.Is(err, delivery.ErrAckForeignBinding):
-		return fail(codeMastermindMismatch, "%v", err)
+		return fail(codeMastermindMismatch, "%v", err), true
 	case errors.Is(err, delivery.ErrAckUnknownSeq):
-		return fail(codePushSeqNotFound, "%v", err)
+		return fail(codePushSeqNotFound, "%v", err), true
 	case errors.Is(err, delivery.ErrAckAlreadyConfirmed):
-		return fail(codePushAlreadyConfirm, "%v", err)
+		return fail(codePushAlreadyConfirm, "%v", err), true
 	case errors.Is(err, delivery.ErrAckNotAdmitted):
-		return fail(codePushNotAdmitted, "%v", err)
+		return fail(codePushNotAdmitted, "%v", err), true
 	case errors.Is(err, delivery.ErrAckNoClaim):
-		return fail(codePushNoClaim, "%v", err)
+		return fail(codePushNoClaim, "%v", err), true
 	case errors.Is(err, relevo.ErrSeedOverCap):
-		return failNext(codeUsage, "trim the seed or pass --force", "%v", err)
+		return failNext(codeUsage, "trim the seed or pass --force", "%v", err), true
 	case errors.Is(err, relevo.ErrRoundCap):
 		// A binding that used every round its cap allows needs a fresh
 		// builder; the cap is not an internal failure.
-		return failWrap(codeRoundCap, err, "%v", err)
-	case errors.Is(err, store.ErrCWDTaken), errors.Is(err, chain.ErrRunningMember), errors.Is(err, relevo.ErrChainRunning), errors.Is(err, relevo.ErrChainDone), errors.Is(err, relevo.ErrChainHalted):
-		// A halted chain's stop answer is a statement about the chain's own
-		// state -- stop it and nothing is running to stop -- so it is the
-		// conflict family, the same class its running and done siblings have.
-		// The message itself already names `relevo done`, so the catalog's
-		// next hint would only repeat it.
-		return fail(codeConflict, "%v", err)
-	case errors.As(err, &openMember):
-		return failNext(codeConflict, "relevo stop "+openMember.Member, "%v", err)
-	case errors.As(err, &candOpen):
-		return failNext(codeConflict, "relevo stop "+candOpen.Name, "%v", err)
+		return failWrap(codeRoundCap, err, "%v", err), true
 	case errors.Is(err, resolve.ErrNoViablePlacement):
-		return failNext(codePolicyRefused, "relevo config", "%v", err)
+		return failNext(codePolicyRefused, "relevo config", "%v", err), true
 	case errors.Is(err, relevo.ErrNoMasterMindSession):
-		return failNext(codeUsage, "relevo mastermind init", "%v", err)
+		return failNext(codeUsage, "relevo mastermind init", "%v", err), true
 	case errors.Is(err, resolve.ErrTierAboveMax), errors.Is(err, harness.ErrTierUnsupported):
-		return fail(codeTierCap, "%v", err)
+		return fail(codeTierCap, "%v", err), true
 	case errors.Is(err, resolve.ErrAllGated):
-		return fail(codeGateActive, "%v", err)
+		return fail(codeGateActive, "%v", err), true
 	case errors.Is(err, resolve.ErrCandidateCannotRun):
-		return failNext(codePolicyRefused, "relevo doctor", "%v", err)
+		return failNext(codePolicyRefused, "relevo doctor", "%v", err), true
 	case errors.Is(err, resolve.ErrNoCandidates), errors.Is(err, resolve.ErrRoleNotServed):
 		// `relevo config` shows each actor's candidate list and the pick, which
 		// is where a refused candidate gets added.
-		return failNext(codePolicyRefused, "relevo config", "%v", err)
+		return failNext(codePolicyRefused, "relevo config", "%v", err), true
 	case errors.Is(err, resolve.ErrAmbiguousCandidate),
 		errors.Is(err, resolve.ErrUnknownRole),
 		errors.Is(err, roles.ErrBadActors),
 		errors.Is(err, roles.ErrBadRoles):
-		return failNext(codePolicyRefused, "relevo config", "%v", err)
+		return failNext(codePolicyRefused, "relevo config", "%v", err), true
 	case errors.Is(err, candidate.ErrUnknownCandidate),
 		errors.Is(err, candidate.ErrBadRef),
 		errors.Is(err, availability.ErrUnknownProvider):
@@ -337,23 +357,22 @@ func writeError(err error) error {
 		// is their own argument: a corrected subject is the whole way out, so
 		// it is usage (exit 2) and never `relevo bugreport`. The message names
 		// the accepted forms so a typo does not have to be guessed at.
-		return fail(codeUsage, "%s", availability.UsageText(err))
+		return fail(codeUsage, "%s", availability.UsageText(err)), true
 	case errors.Is(err, client.ErrUnreachable):
-		return fail(codeRemoteUnreachable, "%v", err)
+		return fail(codeRemoteUnreachable, "%v", err), true
 	case errors.Is(err, errOwnerSandboxDenied):
 		// The host's sandbox refused the owner socket: the verb, the daemon
 		// and the socket are all fine and only the shell is not, so the
 		// catalog names the unsandboxed shell rather than `relevo bugreport`.
-		return fail(codeOwnerSandboxDenied, "%v", err)
+		return fail(codeOwnerSandboxDenied, "%v", err), true
 	case errors.Is(err, relevo.ErrRemoteUnavailable):
-		return fail(codeNotAvailable, "%v", err)
+		return fail(codeNotAvailable, "%v", err), true
 	case errors.As(err, &envErr):
 		// A machine short of disk is the host's state, not a relevo bug:
 		// doctor shows where the space went.
-		return failNext(codeNotAvailable, "relevo doctor", "%v", err)
-	default:
-		return fail(codeInternal, "%v", err)
+		return failNext(codeNotAvailable, "relevo doctor", "%v", err), true
 	}
+	return nil, false
 }
 
 // isTerminal reports whether f is a character device: the same
