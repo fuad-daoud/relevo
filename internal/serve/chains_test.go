@@ -952,8 +952,8 @@ func TestServedResumeRefusesAGateChangeOnAPlacedWriter(t *testing.T) {
 }
 
 // TestWriteChainResumeErrorMapsTheOpenRoundRefusal pins the wire shape: an open
-// member round on a resume is a 409 round_open, not the 500 the default arm
-// used to write, so the client can rebuild the typed refusal.
+// member round on a resume is a 409 round_open, not a 500 from the default arm,
+// so the client can rebuild the typed refusal.
 func TestWriteChainResumeErrorMapsTheOpenRoundRefusal(t *testing.T) {
 	rec := httptest.NewRecorder()
 	writeChainResumeError(rec, &relevo.RoundOpenError{Member: "x-plan", Round: 2})

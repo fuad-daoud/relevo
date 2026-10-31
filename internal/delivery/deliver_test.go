@@ -25,8 +25,7 @@ type fakeClaimStore struct {
 }
 
 // newFakeClaimStore returns a fake store holding claims, keyed by each claim's
-// MasterMind. It replaces the map literal the fake used to be, so every site
-// builds one through the constructor.
+// MasterMind. Every site builds one through the constructor.
 func newFakeClaimStore(claims ...*Claim) *fakeClaimStore {
 	f := &fakeClaimStore{m: map[string]*Claim{}}
 	for _, c := range claims {

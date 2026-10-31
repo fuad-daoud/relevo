@@ -47,8 +47,8 @@ type AckResult struct {
 }
 
 // AckPush confirms the binding's to-mastermind entry with seq, with route
-// "push": the one-shot form of the ack the long-lived holder used to read from
-// stdin. It resolves MasterMind ownership, the entry and its admit, and the
+// "push": the one-shot form of the holder's ack. It resolves MasterMind
+// ownership, the entry and its admit, and the
 // holder's live claim inside ONE Store.WithLock, so an entry cannot be cleared
 // or claimed by a reader between the check and the confirm.
 //

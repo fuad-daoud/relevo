@@ -1,6 +1,6 @@
 package e2e
 
-// TestChainServerE2E is slice 3 round 6's end-to-end pin: a chain started with
+// TestChainServerE2E is the end-to-end pin for a chain started with
 // --server runs entirely on the in-process server, with the client's daemon
 // never ticked after ChainStart returns. Two plans, no security phase and a
 // passing gate: plan 1's first review asks for changes, so the planner's
