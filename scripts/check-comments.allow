@@ -167,8 +167,6 @@ internal/relevo/usage.go
 internal/relevo/usage_test.go
 internal/relevo/verify.go
 internal/relevo/verify_test.go
-internal/relevo/wait.go
-internal/relevo/wait_test.go
 internal/remote/bundle_test.go
 internal/remote/proto.go
 internal/remote/proto_test.go
