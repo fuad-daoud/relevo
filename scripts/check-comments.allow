@@ -92,8 +92,6 @@ internal/relevo/edges.go
 internal/relevo/edges_test.go
 internal/relevo/escape.go
 internal/relevo/escape_test.go
-internal/relevo/fake_test.go
-internal/relevo/fixture_test.go
 internal/relevo/fork.go
 internal/relevo/fork_test.go
 internal/relevo/gate.go
