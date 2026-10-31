@@ -43,14 +43,6 @@ internal/e2e/fakes_test.go
 internal/e2e/headless_test.go
 internal/e2e/remote_test.go
 internal/e2e/tier_test.go
-internal/pick/confirm.go
-internal/pick/list.go
-internal/pick/model.go
-internal/pick/pick.go
-internal/pick/pick_test.go
-internal/pick/result.go
-internal/pick/verb.go
-internal/pick/verb_test.go
 internal/relevo/add.go
 internal/relevo/add_test.go
 internal/relevo/agy_creds.go
