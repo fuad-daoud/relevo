@@ -67,7 +67,7 @@ type tabContent struct {
 	// its raw bytes, artifactActor the binding's actor and artifactOutput
 	// the actor's output rel (whose file, or summary.md, is the final
 	// message), and artifactErr a failed read of the selected file.
-	artifacts      []relevo.ArtifactFile
+	artifacts      []view.ArtifactFile
 	artifactRel    string
 	artifactBody   string
 	artifactActor  string

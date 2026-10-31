@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // ErrNoCompletedRound is Show's error when no --round is given and every
@@ -95,7 +96,7 @@ type ShowResult struct {
 	Events []store.LogEntry
 	// Artifacts is filled for Section artifacts: the round's artifact files,
 	// output first, then summary.md, then by rel.
-	Artifacts []ArtifactFile `json:"artifacts,omitempty"`
+	Artifacts []view.ArtifactFile `json:"artifacts,omitempty"`
 	// Trace is filled for Section trace: the chain's state and its trace, the
 	// document the CLI encodes for --json. Text carries the same trace
 	// rendered for a human. Nil for every other section, and for no round.

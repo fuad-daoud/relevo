@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // resolveReaderRound resolves the binding and the closed reader round the
@@ -50,7 +51,7 @@ func (s *Server) resolveReaderRound(w http.ResponseWriter, r *http.Request) (sto
 }
 
 // artifactFiles is relevo's own listing as the wire type.
-func artifactFiles(files []relevo.ArtifactFile) []remote.ArtifactFile {
+func artifactFiles(files []view.ArtifactFile) []remote.ArtifactFile {
 	out := make([]remote.ArtifactFile, 0, len(files))
 	for _, f := range files {
 		out = append(out, remote.ArtifactFile{Rel: f.Rel, Size: f.Size, MTime: f.MTime})

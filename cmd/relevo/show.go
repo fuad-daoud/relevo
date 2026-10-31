@@ -389,7 +389,7 @@ func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB b
 
 	if res.Section == relevo.ShowArtifacts {
 		for _, f := range res.Artifacts {
-			fmt.Println(relevo.ArtifactLine(f))
+			fmt.Println(view.ArtifactLine(f))
 		}
 		stampViewed()
 		return nil
