@@ -45,7 +45,7 @@ func hooksRunLog(d *db.DB) hooks.RunLog {
 }
 
 // newHooksDispatcher wires the local hooks.d script dispatcher, and, when
-// config policy's notify.webhooks is non-empty, a WebhookSink beside it (#4):
+// config policy's notify.webhooks is non-empty, a WebhookSink beside it:
 // both receive every event, fanned out by a MultiDispatcher.
 func newHooksDispatcher(hooksCfg hooks.Config, pol policy.Policy) hooks.Dispatcher {
 	sinks := []hooks.Dispatcher{hooks.NewLocalDispatcher(hooksCfg, hooks.NewOSExecutor(hooksCfg.Log))}
@@ -88,10 +88,10 @@ func opencodeDBPath() string {
 }
 
 // captureAgyEnv persists the calling agy session's agentapi credentials, when
-// the environment carries them (#349). It runs for every verb rather than a
+// the environment carries them. It runs for every verb rather than a
 // chosen list, and it costs nothing when ANTIGRAVITY_* is absent: the machine
 // database is opened only when there is something to capture, because the
-// capture itself short-circuits on the same check (P3b round 2 §4.3).
+// capture itself short-circuits on the same check.
 //
 // Both failures are deliberately silent: capture is best-effort and must never
 // change a command's exit code or output, so a root relevo cannot resolve, a
@@ -111,8 +111,7 @@ func captureAgyEnv() {
 		return
 	}
 	secrets := db.SecretStore{DB: d}
-	// The credentials were files under masterminds/.agy before this round: a file
-	// that is present is imported, then removed (§4.3).
+	// A credential file that is present is imported, then removed.
 	_ = delivery.ImportAgyCreds(secrets, st.AgyCredsDir())
 	_, _ = delivery.CaptureAgyCreds(os.Getenv, secrets, time.Now().UTC())
 }
@@ -153,8 +152,8 @@ func newDeliverers(st *store.Store) map[string]delivery.MasterMindDeliverer {
 
 // newRuntime constructs the production runtime a CLI verb uses. Config and
 // secrets come from the machine database; any file present under
-// <userConfigRoot>/relevo is imported into it first and removed (#4.6).
-// aliases.json is never read (#80).
+// <userConfigRoot>/relevo is imported into it first and removed.
+// aliases.json is never read.
 //
 // The handle is opened through openDB, so a client reaches the machine database
 // through the owner once the route is installed, while the store the runtime
@@ -181,12 +180,11 @@ func newRuntimeOn(root string, d *db.DB) (relevo.Runtime, error) {
 	if err != nil {
 		return relevo.Runtime{}, err
 	}
-	// The one-time chain conversion, at daemon start: every row written before
-	// chains carried a workflow gains the default one and its engine state, so
-	// the new engine drives it. Each row converts in its own transaction; a row
-	// that cannot convert is halted with the failure as its reason and the rows
-	// after it still convert, so only a store-level read or write failure warns
-	// here.
+	// The chain conversion, at daemon start: every row without a workflow
+	// gains the default one and its engine state, so the engine drives it.
+	// Each row converts in its own transaction; a row that cannot convert is
+	// halted with the failure as its reason and the rows after it still
+	// convert, so only a store-level read or write failure warns here.
 	if err := relevo.ConvertLegacyChains(rt); err != nil {
 		slog.Warn("chains not converted to workflows", "err", err)
 	}
@@ -211,18 +209,18 @@ func newRuntimeWith(root string, d *db.DB, st *store.Store) (relevo.Runtime, err
 		}
 	} else {
 		// A schema a newer relevo wrote is never written by this binary: read
-		// what is there and skip the import (#4.6).
+		// what is there and skip the import.
 		slog.Warn("relevo.db schema is newer; config import skipped")
 	}
 
 	if !d.Newer() {
-		// A1's migration: write a name for every stored candidate. Names are
+		// Write a name for every stored candidate. Names are
 		// derived in memory by candidate.Parse either way, so a failure here
 		// is a warning, never a refusal to start.
 		if _, err := cs.EnsureCandidateNames(); err != nil {
 			slog.Warn("candidate names not written to config", "err", err)
 		}
-		// A2 round 2's one-time migration: a pre-actors config becomes actors
+		// One-time migration: a pre-actors config becomes actors
 		// plus agents, as a "migration" revision. An error is a warning too,
 		// and the old config keeps working.
 		if migrated, err := cs.MigrateToActors(); err != nil {
@@ -285,7 +283,7 @@ func openDBDirect(path string) (*db.DB, error) {
 // newRuntimePeek constructs the runtime `relevo daemon --preflight` and
 // `--check` need. It never creates, migrates or writes anything: it reads the
 // config files when any is present, else the database read-only when one
-// exists, else nothing at all (#4.6).
+// exists, else nothing at all.
 func newRuntimePeek() (relevo.Runtime, error) {
 	root, err := tmpdir.DefaultRoot()
 	if err != nil {
@@ -302,20 +300,20 @@ func newRuntimePeek() (relevo.Runtime, error) {
 	}
 
 	// buildRuntime with openGates false: preflight and check open no database
-	// and carry nil Gates/Latency, so they touch no gate record (P3b plan §4.5).
+	// and carry nil Gates/Latency, so they touch no gate record.
 	return buildRuntime(root, L, store.New(root), false)
 }
 
 // buildRuntime wires the Runtime from one loaded config and one store, the
 // shape newRuntimeWith uses. openGates opens the store's database for the gate,
-// availability and latency records (P3b plan §4.5): newRuntime passes true, and
+// availability and latency records: newRuntime passes true, and
 // a DB() error is fatal for the verb; newRuntimePeek passes false, so preflight
 // and check leave the root with no database, nil gates and no deliverers.
 func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool) (relevo.Runtime, error) {
 	pol := L.Policy
 
 	// Warnings are carried, never printed: every CLI command calls newRuntime,
-	// so printing here would be noise (#372 §4.4). `relevo doctor` renders them
+	// so printing here would be noise. `relevo doctor` renders them
 	// and the daemon logs each once.
 	configWarnings := L.Warnings
 
@@ -325,9 +323,9 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 
 	gitClient := git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes)
 
-	// Gates and latency live in the store root's database (P3b plan §4.5).
+	// Gates and latency live in the store root's database.
 	// The push claims, the mastermind registry and the hooks run log live in
-	// the same database (P3b round 2 §4.1-§4.4), so `relevo daemon --preflight`
+	// the same database, so `relevo daemon --preflight`
 	// and `--check`, which pass openGates false, open no database at all.
 	var (
 		gates   db.KV

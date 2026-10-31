@@ -18,7 +18,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/upgrade"
 )
 
-// updateFlagValues holds the pointers update parses into.
 type updateFlagValues struct {
 	check        *bool
 	to           *string
@@ -26,7 +25,6 @@ type updateFlagValues struct {
 	asJSON       *bool
 }
 
-// updateFlagSet defines those flags on fs and returns what they parse into.
 func updateFlagSet(fs *flag.FlagSet) *updateFlagValues {
 	v := &updateFlagValues{}
 	v.check = fs.Bool("check", false, "print what update would do; change nothing")
@@ -36,10 +34,10 @@ func updateFlagSet(fs *flag.FlagSet) *updateFlagValues {
 	return v
 }
 
-// cmdUpdate is `relevo update` (#293): it replaces a release binary with a
+// cmdUpdate is `relevo update`: it replaces a release binary with a
 // checksum-verified release binary of the target tag, or prints the command a
-// `go install` needs, or refuses a local build. It never restarts anything:
-// a running daemon follows a replaced binary on its own (#371).
+// `go install` build needs, or refuses a local build. It never restarts anything:
+// a running daemon follows a replaced binary on its own.
 func cmdUpdate(args []string) error {
 	return outcomeError(cmdUpdateRun(args))
 }
