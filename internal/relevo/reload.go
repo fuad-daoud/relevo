@@ -51,7 +51,7 @@ type ConfigWatcher struct {
 	warn      func(msg string, args ...any)                      // slog.Warn
 
 	// logged is the set of config warning texts already logged this process,
-	// so the daemon logs each distinct warning once (#372 §4.4).
+	// so the daemon logs each distinct warning once.
 	logged map[string]bool
 }
 
@@ -174,7 +174,7 @@ func (w *ConfigWatcher) now(rt Runtime) time.Time {
 
 // logWarnings logs each config warning once per distinct text for this
 // process, so an unchanged warning is not repeated on every successful
-// reload; a changed set logs the new texts (#372 §4.4).
+// reload; a changed set logs the new texts.
 func (w *ConfigWatcher) logWarnings(warnings []string) {
 	for _, msg := range warnings {
 		if w.logged[msg] {

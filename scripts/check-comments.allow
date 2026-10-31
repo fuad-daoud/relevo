@@ -128,8 +128,6 @@ internal/relevo/queue.go
 internal/relevo/queue_test.go
 internal/relevo/reconcile_hooks_test.go
 internal/relevo/reconcile_test.go
-internal/relevo/reload.go
-internal/relevo/reload_test.go
 internal/relevo/remote.go
 internal/relevo/remote_add.go
 internal/relevo/remote_gates.go
@@ -151,8 +149,6 @@ internal/relevo/runtime.go
 internal/relevo/seal_test.go
 internal/relevo/send.go
 internal/relevo/send_test.go
-internal/relevo/served.go
-internal/relevo/served_test.go
 internal/relevo/servers.go
 internal/relevo/session.go
 internal/relevo/show.go
