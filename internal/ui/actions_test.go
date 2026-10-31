@@ -39,7 +39,7 @@ type retryCall struct{ key, candidate string }
 type openCall struct{ path, kind string }
 
 // fakeActions is the double every key -> confirm -> action path is tested
-// against (§7): it records every call with its arguments and returns scripted
+// against: it records every call with its arguments and returns scripted
 // Results.
 type fakeActions struct {
 	stops   []string
@@ -87,7 +87,7 @@ type fakeActions struct {
 	// asked for.
 	opened []openCall
 
-	// The audit view (round 6) (§3.3): the revision rows, each revision's
+	// The audit view (round 6): the revision rows, each revision's
 	// changes, the scripted roll back preview and its error, and the
 	// revisions a roll back was asked for.
 	revs       []db.RevisionRow
@@ -244,7 +244,7 @@ func (f *fakeActions) Probe(_ context.Context, name string) widget.Result {
 	return f.result
 }
 
-// AgentFiles answers the scripted per-agent file states (§3): a name the
+// AgentFiles answers the scripted per-agent file states: a name the
 // fixture does not carry has none, as a custom agent does.
 func (f *fakeActions) AgentFiles(agent string) ([]harness.AgentFile, error) {
 	if f.filesErr != nil {
@@ -253,7 +253,7 @@ func (f *fakeActions) AgentFiles(agent string) ([]harness.AgentFile, error) {
 	return f.files[agent], nil
 }
 
-// ResetAgentFile records the (kind, agent) pair it was asked for (§3). The
+// ResetAgentFile records the (kind, agent) pair it was asked for. The
 // fake never touches $HOME: the files it scripts are strings.
 func (f *fakeActions) ResetAgentFile(_ context.Context, kind, agent string) widget.Result {
 	f.resets = append(f.resets, [2]string{kind, agent})
@@ -262,7 +262,7 @@ func (f *fakeActions) ResetAgentFile(_ context.Context, kind, agent string) widg
 
 // AgentEditor records the path the view opened and returns a command that
 // would run if the process ever ran it. It is exec.Command("true") so no test
-// starts a real editor (§7).
+// starts a real editor.
 func (f *fakeActions) AgentEditor(path string) (*exec.Cmd, error) {
 	f.edited = append(f.edited, path)
 	return exec.Command("true"), nil
@@ -275,7 +275,7 @@ func (f *fakeActions) OpenArtifact(path, kind string) (*exec.Cmd, error) {
 	return exec.Command("true"), nil
 }
 
-// ConfigLog answers the scripted revision rows (§3.3).
+// ConfigLog answers the scripted revision rows.
 func (f *fakeActions) ConfigLog() ([]db.RevisionRow, error) { return f.revs, nil }
 
 // ConfigChanges answers the scripted lines for rev: a revision the fixture does
@@ -284,12 +284,12 @@ func (f *fakeActions) ConfigChanges(rev int64) ([]relevo.ChangeLine, error) {
 	return f.changes[rev], nil
 }
 
-// RollbackPreview answers the scripted preview and its error (§3.3).
+// RollbackPreview answers the scripted preview and its error.
 func (f *fakeActions) RollbackPreview(rev int64) ([]relevo.ChangeLine, error) {
 	return f.preview, f.previewErr
 }
 
-// Rollback records the revision it was asked for (§3.3).
+// Rollback records the revision it was asked for.
 func (f *fakeActions) Rollback(_ context.Context, rev int64) widget.Result {
 	f.rollbacks = append(f.rollbacks, rev)
 	return f.result

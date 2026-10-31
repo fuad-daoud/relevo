@@ -12,32 +12,26 @@ import (
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
-// agentFilesMsg is one agentView load's reply (§4).
 type agentFilesMsg struct {
 	name  string
 	files []harness.AgentFile
 	err   error
 }
 
-// agentReloadMsg asks agentView to re-read its files, which is what the editor
-// exits with (§4).
 type agentReloadMsg struct{}
 
-// agentView is `agents › <name>` (§4): one row per harness with the definition
-// file's path, model pin and state, and the e and r keys.
 type agentView struct {
 	name   string
-	row    agentRow // the list row this view was pushed from
+	row    agentRow
 	doc    relevo.ConfigDoc
 	files  []harness.AgentFile
 	err    error
 	loaded bool
-	cur    int // cursor over rows()
-	top    int // first body line shown (page follows the cursor)
+	cur    int
+	top    int
 }
 
-// newAgentView pushes the agent's detail view (§4). env.Actions must be
-// non-nil: ':agents' refuses to open without it.
+// env.Actions must be non-nil: ':agents' refuses to open without it.
 func newAgentView(env widget.Env, doc relevo.ConfigDoc, r agentRow) (widget.View, tea.Cmd) {
 	v := agentView{name: r.name, row: r, doc: doc, files: r.files, loaded: true}
 	if env.Actions == nil {
@@ -46,7 +40,6 @@ func newAgentView(env widget.Env, doc relevo.ConfigDoc, r agentRow) (widget.View
 	return v, agentFilesCmd(env, r.name)
 }
 
-// agentFilesCmd reads one agent's definition states off the update loop.
 func agentFilesCmd(env widget.Env, name string) tea.Cmd {
 	return func() tea.Msg {
 		files, err := env.Actions.AgentFiles(name)
@@ -54,10 +47,6 @@ func agentFilesCmd(env widget.Env, name string) tea.Cmd {
 	}
 }
 
-// rows is the table: the loaded file states for a shipped agent and for a
-// custom agent relevo renders from a source; for a custom native agent, one
-// row per kind its native entry names, at the kind's convention path. A custom
-// agent whose entry cannot be read has no rows.
 func (v agentView) rows() []agentFileRow {
 	if v.row.source == "shipped" || relevo.IsSourceAgent(v.doc.Agents, v.name) {
 		out := make([]agentFileRow, 0, len(v.files))
@@ -69,9 +58,6 @@ func (v agentView) rows() []agentFileRow {
 	return customAgentRows(v.doc, v.name)
 }
 
-// agentFileLayout is the detail table's columns (§4): HARNESS 8, FILE taking
-// the rest of width-6 cells, MODEL 30 and STATE 12, every column followed by
-// two spaces.
 func agentFileLayout(width int) (int, []candCol) {
 	cw := width - 6
 	if cw < 0 {
@@ -91,7 +77,6 @@ func agentFileLayout(width int) (int, []candCol) {
 	return cw - fixed, cols
 }
 
-// agentFileHeaderLine is the detail table's header row (§4), in faint bold.
 func agentFileHeaderLine(nameW int, cols []candCol, cw int) string {
 	style := widget.FaintStyle.Bold(true)
 	cells := []candCell{{text: widget.Pad("HARNESS", 8), style: style}, {text: widget.Pad("FILE", nameW), style: style}}
@@ -101,8 +86,6 @@ func agentFileHeaderLine(nameW int, cols []candCol, cw int) string {
 	return candLine(cells, false, cw)
 }
 
-// agentStateStyle colours one row's STATE (§4): up to date muted, stale, your
-// edit and edit + newer amber, missing faint.
 func agentStateStyle(state harness.FileState) lipgloss.Style {
 	switch state {
 	case harness.FileUpToDate:
@@ -115,8 +98,6 @@ func agentStateStyle(state harness.FileState) lipgloss.Style {
 	return widget.MutedStyle
 }
 
-// agentFileLine is one definition file's row (§4). The cursor row's harness
-// name is bold; its path, model pin and state carry their own styles.
 func agentFileLineOf(f agentFileRow, sel bool, nameW int, cols []candCol, cw int) string {
 	nameStyle := widget.TextStyle
 	if sel {
@@ -137,8 +118,6 @@ func agentFileLineOf(f agentFileRow, sel bool, nameW int, cols []candCol, cw int
 	return candLine(cells, sel, cw)
 }
 
-// bodyLines is the whole detail body before it is windowed: a blank line under
-// the context row, then the table (§4).
 func (v agentView) bodyLines(env widget.Env, width int) []string {
 	rows := v.rows()
 	nameW, cols := agentFileLayout(width)
@@ -168,7 +147,6 @@ func (v agentView) bodyLines(env widget.Env, width int) []string {
 	return lines
 }
 
-// follow scrolls the page so the cursor's table row stays visible (§4).
 func (v *agentView) follow(env widget.Env) {
 	rows := v.rows()
 	if len(rows) == 0 {
@@ -193,12 +171,11 @@ func (v *agentView) follow(env widget.Env) {
 
 func (v agentView) Crumbs() []string { return []string{v.name} }
 
-// Capturing is always false: the view owns no text input of its own (§4).
+// The view owns no text input of its own.
 func (v agentView) Capturing() bool { return false }
 
-// Keys are the detail view's keys. A native custom agent's view has no `r`:
-// relevo writes no file for it, so a reset has nothing to restore. `esc back`
-// is left to the shell's own tail.
+// A native custom agent's view has no `r`: relevo writes no file for it, so a
+// reset has nothing to restore.
 func (v agentView) Keys() []widget.KeyHelp {
 	keys := []widget.KeyHelp{
 		{Key: "↑↓", Help: "move"},
@@ -210,11 +187,8 @@ func (v agentView) Keys() []widget.KeyHelp {
 	return keys
 }
 
-// HelpKeys is the help overlay's key list (§2.2): the same set.
 func (v agentView) HelpKeys() []widget.KeyHelp { return v.Keys() }
 
-// Context is the agent's summary line (§4): the source and shape, who uses it,
-// and how many harness kinds carry a file.
 func (v agentView) Context(env widget.Env) (string, string) {
 	rows := v.rows()
 	left := "   " + widget.MutedStyle.Render(v.row.source+" · "+v.row.shape+" · "+agentUsedText(v.row)) +
@@ -259,7 +233,7 @@ func (v agentView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 
 	case agentReloadMsg:
 		// The user's editor exited: read the file states again, which is
-		// what shows an edit (§4).
+		// what shows an edit.
 		return v, agentFilesCmd(env, v.name)
 
 	case statusMsg:
@@ -271,7 +245,6 @@ func (v agentView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	return v, nil
 }
 
-// updateKey is the detail view's own keys (§4).
 func (v agentView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	if env.Actions == nil {
 		return v, nil
@@ -311,9 +284,6 @@ func (v agentView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd
 	return v, nil
 }
 
-// editCmd is the e key (§4): the user's editor on the cursor file, run with
-// the terminal released. A file not on disk has nothing to open, and a failure
-// to build the command is a notice.
 func (v agentView) editCmd(env widget.Env, f agentFileRow) tea.Cmd {
 	if f.state == harness.FileMissing {
 		return notice(f.kind + " has no " + v.name + " file yet")
@@ -330,9 +300,6 @@ func (v agentView) editCmd(env widget.Env, f agentFileRow) tea.Cmd {
 	})
 }
 
-// copyNoun names the copy a reset writes, as a noun phrase without an article:
-// the one relevo ships for a shipped agent, or the one relevo renders from the
-// user's config for a custom source agent.
 func copyNoun(custom bool) string {
 	if custom {
 		return "copy relevo renders from your config"
@@ -340,8 +307,6 @@ func copyNoun(custom bool) string {
 	return "copy this relevo ships"
 }
 
-// resetCmd is the r key: a file the user edited, one relevo has a newer copy
-// of, or one relevo has never written can be reset; anything else is a notice.
 // A reset is a danger confirm, because the edit it discards cannot come back. A
 // missing file is a write rather than a reset: nothing is lost, the confirm's
 // title, label and note say so.

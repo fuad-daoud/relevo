@@ -26,7 +26,7 @@ func cmdEnv(rows ...string) widget.Env {
 	return widget.Env{Report: view.Report{Bindings: bs}, Loaded: true, Now: railNow}
 }
 
-// TestCmdLineMatchesRanks pins §4.7's matching and ranking: a
+// TestCmdLineMatchesRanks pins the matching and ranking: a
 // case-insensitive subsequence, prefix first, then shorter name, then
 // alphabetical, capped at 8.
 func TestCmdLineMatchesRanks(t *testing.T) {
@@ -65,7 +65,7 @@ func TestCmdLineMatchesRanks(t *testing.T) {
 
 // TestCommandMatchesLiveBeforeDone: 7 done bindings with short names and 1
 // live binding with a long name, typed `r`. The live entry survives the cap
-// of 8 because live bindings sort before done ones (§2.3, §5).
+// of 8 because live bindings sort before done ones.
 func TestCommandMatchesLiveBeforeDone(t *testing.T) {
 	var bindings []view.BindingStatus
 	for i := 1; i <= 7; i++ {
@@ -106,7 +106,7 @@ func TestCmdLineTabCompletes(t *testing.T) {
 	}
 }
 
-// TestCmdLineExecuteCommands walks §6's command table.
+// TestCmdLineExecuteCommands walks the command table.
 func TestCmdLineExecuteCommands(t *testing.T) {
 	env := cmdEnv("api")
 	p := prefs{Sort: "attention"}
@@ -184,7 +184,7 @@ func TestCmdLineExecuteCommands(t *testing.T) {
 }
 
 // TestOpenRoundNotFound: a jump whose name is in neither the fleet nor the
-// database is a notice (§5.4).
+// database is a notice.
 func TestOpenRoundNotFound(t *testing.T) {
 	st := store.New(t.TempDir())
 	env := testEnv(mastermindSource{relevo.Runtime{Store: st}}, view.Report{}, 140, 40)

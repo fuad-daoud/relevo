@@ -269,9 +269,9 @@ func TestStaleRoundReplyDiscardedForDiff(t *testing.T) {
 	}
 }
 
-// TestStaleRoundReplyDiscardedForReport pins #183's generalisation: report
-// is round-scoped exactly like diff, so a reply for a round that is no
-// longer on screen must be discarded.
+// TestStaleRoundReplyDiscardedForReport pins round-scoped report reads: a
+// report reply is round-scoped exactly like diff, so a reply for a round that
+// is no longer on screen must be discarded.
 func TestStaleRoundReplyDiscardedForReport(t *testing.T) {
 	st := store.New(t.TempDir())
 	if err := st.Save(newTestBinding("webshop")); err != nil {
@@ -405,9 +405,9 @@ func TestEmptyFleetEnterDoesNothing(t *testing.T) {
 	}
 }
 
-// TestStepRoundBackRefetchesEveryTab ports #183's round stepping: "[" and
-// "]" move detail.round within [1, detail.rounds], clamping at either edge,
-// and invalidate every tab's cache.
+// TestStepRoundBackRefetchesEveryTab ports round stepping: "[" and "]" move
+// detail.round within [1, detail.rounds], clamping at either edge, and
+// invalidate every tab's cache.
 func TestStepRoundBackRefetchesEveryTab(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
@@ -461,8 +461,8 @@ func TestStepRoundBackRefetchesEveryTab(t *testing.T) {
 	}
 }
 
-// TestStepRoundEdgesNoop ports #183's clamp: stepping past either edge of
-// [1, detail.rounds] changes nothing -- not the round, not the cache.
+// TestStepRoundEdgesNoop ports the stepping clamp: stepping past either edge
+// of [1, detail.rounds] changes nothing -- not the round, not the cache.
 func TestStepRoundEdgesNoop(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
@@ -495,8 +495,8 @@ func TestStepRoundEdgesNoop(t *testing.T) {
 	}
 }
 
-// TestPointDetailAtMarksViewed ports #143: opening a live binding's round
-// view stamps its viewed mark through the widget.Source.
+// TestPointDetailAtMarksViewed ports the viewed mark: opening a live binding's
+// round view stamps its viewed mark through the widget.Source.
 func TestPointDetailAtMarksViewed(t *testing.T) {
 	st := store.New(t.TempDir())
 	if err := st.Save(store.Binding{Name: "webshop", CWD: "/repo", Round: 2, State: store.StateActive}); err != nil {

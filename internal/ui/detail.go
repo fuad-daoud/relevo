@@ -12,27 +12,27 @@ import (
 
 type detailModel struct {
 	name      string // row key (BindingStatus.Key()) under inspection
-	round     int    // the round on screen; "[" / "]" step it (#183)
+	round     int    // the round on screen; "[" / "]" step it
 	rounds    int    // how many rounds round can step through: live row.Round (the open round included) or a hist row's Rounds (every round closed)
 	active    tab
 	vp        viewport.Model // the live viewport; only ever shows `active`
 	scroll    [tabCount]int  // parked offsets for INACTIVE tabs
 	cache     [tabCount]tabContent
-	lastLogTS time.Time // invalidation key -- see §5 rule 3
+	lastLogTS time.Time // invalidation key: the newest log timestamp seen; a move drops the caches
 
 	// headless is true when the builder is headless (row.Headless != nil).
 	// It selects the terminal tab's source (the round log rather than a
-	// captured pane) and, from #180, its styling.
+	// captured pane) and its styling.
 	headless bool
 
-	// follow is the terminal tab's tail rule (spec §3.4): while true the
+	// follow is the terminal tab's tail rule: while true the
 	// viewport is pinned to the bottom on every refresh; scrolling up clears
 	// it, scrolling back to the bottom sets it. True on every re-point; a
-	// hist row is never live, so it is always false there (#183).
+	// hist row is never live, so it is always false there.
 	follow bool
 
 	// live is false for a hist row's detail: every tab reads the database
-	// through fetchShow instead of live files (#172, §5.8).
+	// through fetchShow instead of live files.
 	live bool
 	// bindingID is the database row's id, set only when !live -- fetchShow
 	// does not need it (it re-resolves by name), but relevo.Show's ShowResult
@@ -57,8 +57,8 @@ func styleFor(c tabContent) lipgloss.Style {
 
 // bodyOf renders a tab's content for the viewport. The diff tab colours its
 // body (colourDiff); a rendered round log's terminal tab colours transcript
-// markers (colourTranscript, #180) -- a headless builder's always is one, and
-// so is a pane builder's once its session record is located (#184); the
+// markers (colourTranscript) -- a headless builder's always is one, and
+// so is a pane builder's once its session record is located; the
 // artifacts tab renders its table and selected file (round 5b); everything
 // else returns c.body as before.
 func bodyOf(t tab, c tabContent, headless bool) string {

@@ -14,10 +14,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
-// actorTierNames is the tier row's chip order (§3).
+// actorTierNames is the tier row's chip order.
 var actorTierNames = []string{"read", "edit", "yolo", "harness"}
 
-// actorAgents is the agents a form offers (§4): for a builtin actor name, only
+// actorAgents is the agents a form offers: for a builtin actor name, only
 // the agents whose shape equals the builtin's; for a custom actor, every
 // agent. The order is the shipped table's order, then custom agents by name.
 func actorAgents(doc relevo.ConfigDoc, name string) []string {
@@ -48,7 +48,7 @@ func actorAgents(doc relevo.ConfigDoc, name string) []string {
 	return append(out, custom...)
 }
 
-// actorForm is the e key's overlay (§3, §4): the actor's agent, tier and
+// actorForm is the e key's overlay: the actor's agent, tier and
 // check, each on a chip row. The check row is disabled for a reader agent.
 type actorForm struct {
 	ctx     context.Context
@@ -65,7 +65,7 @@ type actorForm struct {
 	focus   int // 0 agent, 1 tier, 2 check
 }
 
-// newActorForm builds the edit actor overlay (§4).
+// newActorForm builds the edit actor overlay.
 func newActorForm(env widget.Env, doc relevo.ConfigDoc, name string) actorForm {
 	a := doc.Actors[name]
 	_, builtin := harness.RoleByName(name)
@@ -99,7 +99,7 @@ func (f actorForm) selectedAgent() string {
 }
 
 // checkDisabled reports whether the check row is off limits: the selected
-// agent is a reader (§4).
+// agent is a reader.
 func (f actorForm) checkDisabled() bool {
 	return agentShapeOf(f.doc, f.selectedAgent()) == string(agentsrc.ShapeReader)
 }
@@ -112,7 +112,7 @@ func (f actorForm) checkSel() int {
 	return 1
 }
 
-// keys are the form's own keys, shown in the footer through overlayKeyer (§4).
+// keys are the form's own keys, shown in the footer through overlayKeyer.
 func (f actorForm) keys() []widget.KeyHelp {
 	return []widget.KeyHelp{{Key: "enter", Help: "save"}, {Key: "tab", Help: "next field"}, {Key: "esc", Help: "cancel"}}
 }
@@ -124,8 +124,7 @@ func (f actorForm) setFocus(i int) actorForm {
 	return f
 }
 
-// nextFocus is tab's focus move, skipping the check row when it is disabled
-// (§4).
+// nextFocus is tab's focus move, skipping the check row when it is disabled.
 func (f actorForm) nextFocus() actorForm {
 	switch f.focus {
 	case 0:
@@ -154,7 +153,7 @@ func (f actorForm) prevFocus() actorForm {
 	return f.setFocus(1)
 }
 
-// moveSelection is left/right on the focused row (§4): the agent and tier
+// moveSelection is left/right on the focused row: the agent and tier
 // chips wrap, the check row's selection moves between on and off.
 func (f actorForm) moveSelection(delta int) actorForm {
 	switch f.focus {
@@ -178,7 +177,7 @@ func (f actorForm) moveSelection(delta int) actorForm {
 	return f
 }
 
-// update handles one key (§4): esc cancels, tab moves focus, left/right move
+// update handles one key: esc cancels, tab moves focus, left/right move
 // the focused row's selection, enter submits.
 func (f actorForm) update(k tea.KeyMsg) (overlay, tea.Cmd, bool) {
 	switch k.String() {
@@ -198,7 +197,7 @@ func (f actorForm) update(k tea.KeyMsg) (overlay, tea.Cmd, bool) {
 	return f, nil, false
 }
 
-// submit is enter (§4): an unchanged actor closes with a notice, an invalid
+// submit is enter: an unchanged actor closes with a notice, an invalid
 // edit keeps the form open on its error, and a valid one closes and applies
 // it.
 func (f actorForm) submit() (overlay, tea.Cmd, bool) {
@@ -227,8 +226,8 @@ func (f actorForm) view(width int) []string {
 	return rows
 }
 
-// modal draws the form box (§4): title `edit <name>`, want 90, rows in the
-// order §4 lists.
+// modal draws the form box: title `edit <name>`, want 90, rows in the
+// listed order.
 func (f actorForm) modal(width int) (string, []string, int, bool) {
 	const want = 90
 	_ = modalInnerW(want, width)
@@ -252,7 +251,7 @@ func (f actorForm) modal(width int) (string, []string, int, bool) {
 	return "edit " + f.actor, rows, want, false
 }
 
-// addActorForm is the list's a key's overlay (§3, §4): the new actor's name
+// addActorForm is the list's a key's overlay: the new actor's name
 // and agent.
 type addActorForm struct {
 	ctx     context.Context
@@ -266,7 +265,7 @@ type addActorForm struct {
 	err     string
 }
 
-// newAddActorForm builds the add actor overlay (§4). Every agent is offered:
+// newAddActorForm builds the add actor overlay. Every agent is offered:
 // the name is new, so no builtin shape filters the list.
 func newAddActorForm(env widget.Env, doc relevo.ConfigDoc) addActorForm {
 	in := newFormInput(true)
@@ -288,7 +287,7 @@ func (f addActorForm) selectedAgent() string {
 	return f.agents[f.asel]
 }
 
-// keys are the form's own keys, shown in the footer through overlayKeyer (§4).
+// keys are the form's own keys, shown in the footer through overlayKeyer.
 func (f addActorForm) keys() []widget.KeyHelp {
 	return []widget.KeyHelp{{Key: "enter", Help: "add"}, {Key: "tab", Help: "next field"}, {Key: "esc", Help: "cancel"}}
 }
@@ -304,7 +303,7 @@ func (f addActorForm) setFocus(i int) addActorForm {
 	return f
 }
 
-// update handles one key (§4): esc cancels, tab moves focus, the name row
+// update handles one key: esc cancels, tab moves focus, the name row
 // takes every key, the agent row takes left/right, enter adds.
 func (f addActorForm) update(k tea.KeyMsg) (overlay, tea.Cmd, bool) {
 	switch k.String() {
@@ -333,7 +332,7 @@ func (f addActorForm) update(k tea.KeyMsg) (overlay, tea.Cmd, bool) {
 	return f, nil, false
 }
 
-// submit is enter (§4): AddActor validates the name and agent. A FieldError
+// submit is enter: AddActor validates the name and agent. A FieldError
 // shows red and keeps the form open; success closes and adds the actor.
 func (f addActorForm) submit() (overlay, tea.Cmd, bool) {
 	f.tried = true
@@ -353,7 +352,7 @@ func (f addActorForm) view(width int) []string {
 	return rows
 }
 
-// modal draws the form box (§4): title `add actor`, want 90, the name row, the
+// modal draws the form box: title `add actor`, want 90, the name row, the
 // agent chips, the error when there is one, and the keys.
 func (f addActorForm) modal(width int) (string, []string, int, bool) {
 	const want = 90

@@ -10,16 +10,16 @@ import (
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
-// command is one entry of the ':' command table (§4.7). done marks a
+// command is one entry of the ':' command table. done marks a
 // `round <key>` entry whose report row reads DONE, so live bindings sort
-// before done ones (§2.3).
+// before done ones.
 type command struct {
 	name, args, help string
 	done             bool
 }
 
-// commands is the table §4.7 fixes, in display order. The trailing false is
-// command.done: no fixed command is a done binding (§2.3).
+// commands is the fixed command table, in display order. The trailing false is
+// command.done: no fixed command is a done binding.
 var commands = []command{
 	{"fleet", "", "bindings on this machine", false},
 	{"rounds", "[query…]", "every round, filtered", false},
@@ -41,7 +41,7 @@ var commands = []command{
 }
 
 // cmdLine is the ':' command line: an open flag, its text input and the
-// index of the selected completion (§4.7).
+// index of the selected completion.
 type cmdLine struct {
 	open  bool
 	input textinput.Model
@@ -80,7 +80,7 @@ func (c cmdLine) matches(env widget.Env) []command {
 }
 
 // matchCount is how many completions match, before matches' cap of 8. It is
-// what the command modal's "+ N more match" row counts (§3.1).
+// what the command modal's "+ N more match" row counts.
 func (c cmdLine) matchCount(env widget.Env) int {
 	return len(c.allMatches(env))
 }
@@ -101,8 +101,8 @@ func (c cmdLine) allMatches(env widget.Env) []command {
 			done: env.Report.Bindings[i].Display == "DONE",
 		})
 	}
-	// `ungate` completes to the providers and names of the live gates
-	// (§4.3): the same subjects `relevo gate --clear` accepts.
+	// `ungate` completes to the providers and names of the live gates:
+	// the same subjects `relevo gate --clear` accepts.
 	for _, g := range env.Report.Gated {
 		subject := g.Token
 		if g.Name != "" {
@@ -135,7 +135,7 @@ func (c cmdLine) allMatches(env widget.Env) []command {
 	return out
 }
 
-// cmdSection names the modal section a completion belongs to (§3.1): the
+// cmdSection names the modal section a completion belongs to: the
 // commands table's own entries are VIEWS, `round <key>` entries are BINDINGS
 // and `ungate …` entries are GATES.
 func cmdSection(c command) string {
@@ -169,7 +169,7 @@ func subsequence(sub, s string) bool {
 
 // update handles one key while the command line is open: up/down move the
 // selection, tab completes, enter executes, esc closes, everything else goes
-// to the input (§4.7, §6).
+// to the input.
 func (c cmdLine) update(k tea.KeyMsg, env widget.Env, p prefs) (cmdLine, tea.Cmd) {
 	ms := c.matches(env)
 	switch k.String() {
@@ -208,7 +208,7 @@ func (c cmdLine) update(k tea.KeyMsg, env widget.Env, p prefs) (cmdLine, tea.Cmd
 }
 
 // execute runs the typed command: an exact name wins, otherwise the
-// selected completion (§6).
+// selected completion.
 func (c cmdLine) execute(env widget.Env, p prefs) (cmdLine, tea.Cmd) {
 	value := c.input.Value()
 	c.open = false
