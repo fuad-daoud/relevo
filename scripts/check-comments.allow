@@ -152,7 +152,6 @@ internal/relevo/served.go
 internal/relevo/served_test.go
 internal/relevo/servers.go
 internal/relevo/session.go
-internal/relevo/show_test.go
 internal/relevo/sort.go
 internal/relevo/sort_test.go
 internal/relevo/statsinputs.go
