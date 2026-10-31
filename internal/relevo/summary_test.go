@@ -12,6 +12,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // chainReviewerRound starts a chain, closes its builder and returns the
@@ -346,7 +347,7 @@ func TestWriteReaderSummaryFallsBackFromAnEmptyOutputFile(t *testing.T) {
 			if !strings.Contains(string(got), "The code is sound") {
 				t.Errorf("output = %q, want the stream's block-carrying message saved over it", got)
 			}
-			if present, empty := readerOutputPresent(out); !present || empty {
+			if present, empty := view.ReaderOutputPresent(out); !present || empty {
 				t.Errorf("readerOutputPresent = (%v, %v), want a present non-empty file after the fallback", present, empty)
 			}
 			// The stream message carried the block, so the close leaves it whole
@@ -394,19 +395,19 @@ func TestReaderFallbackIsMarkedForTheMasterMind(t *testing.T) {
 	t.Parallel()
 
 	// The header line a reader of the output is shown.
-	if !strings.HasPrefix(readerFallbackHeaderLine, "note: ") {
-		t.Errorf("the header line must read as a note, got %q", readerFallbackHeaderLine)
+	if !strings.HasPrefix(view.ReaderFallbackHeaderLine, "note: ") {
+		t.Errorf("the header line must read as a note, got %q", view.ReaderFallbackHeaderLine)
 	}
 
 	entries := []store.LogEntry{
 		{Round: 1, Note: "noreport"},
-		{Round: 2, Note: "unmarked/" + readerFallbackNote},
+		{Round: 2, Note: "unmarked/" + view.ReaderFallbackNote},
 		{Round: 2, Note: "escape"},
 	}
-	if got := readerFallbackHeader(entries, 2); got != readerFallbackHeaderLine {
-		t.Errorf("readerFallbackHeader(round 2) = %q, want %q", got, readerFallbackHeaderLine)
+	if got := view.ReaderFallbackHeader(entries, 2); got != view.ReaderFallbackHeaderLine {
+		t.Errorf("readerFallbackHeader(round 2) = %q, want %q", got, view.ReaderFallbackHeaderLine)
 	}
-	if got := readerFallbackHeader(entries, 1); got != "" {
+	if got := view.ReaderFallbackHeader(entries, 1); got != "" {
 		t.Errorf("readerFallbackHeader(round 1) = %q, want no header: that round did not fall back", got)
 	}
 
@@ -442,7 +443,7 @@ func TestReaderFallbackIsMarkedForTheMasterMind(t *testing.T) {
 		}
 	}
 
-	appendNote(readerFallbackNote)
+	appendNote(view.ReaderFallbackNote)
 	res, err := Show(ctx, rt, ShowOptions{Name: b.Name, Round: b.Round, Section: ShowOutput})
 	if err != nil {
 		t.Fatalf("Show(--output): %v", err)
@@ -450,8 +451,8 @@ func TestReaderFallbackIsMarkedForTheMasterMind(t *testing.T) {
 	if res.Missing {
 		t.Fatalf("Show(--output) = missing, want the saved output")
 	}
-	if !strings.HasPrefix(res.Text, readerFallbackHeaderLine) {
-		t.Errorf("--output = %q, want it headed with %q", res.Text, readerFallbackHeaderLine)
+	if !strings.HasPrefix(res.Text, view.ReaderFallbackHeaderLine) {
+		t.Errorf("--output = %q, want it headed with %q", res.Text, view.ReaderFallbackHeaderLine)
 	}
 	if !strings.Contains(res.Text, "# salvaged") {
 		t.Errorf("--output = %q, want the salvaged text under the header", res.Text)

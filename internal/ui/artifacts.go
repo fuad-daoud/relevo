@@ -7,8 +7,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // The artifacts table's column widths, from the approved board: FILE 30,
@@ -119,7 +119,7 @@ func artifactsBody(c tabContent) string {
 	b.WriteByte('\n')
 	for i, f := range c.artifacts {
 		rel := sanitizeText(f.Rel)
-		size := relevo.ArtifactSizeText(f.Size)
+		size := view.ArtifactSizeText(f.Size)
 		when := f.MTime.Local().Format("15:04")
 		opens := artifactOpensIn(c, f.Rel)
 		row := widget.Fit(rel, artifactFileWidth) + widget.Fit(size, artifactSizeWidth) +
@@ -169,7 +169,7 @@ func artifactCaption(c tabContent) string {
 // "binary file, <size>" line when it is not valid UTF-8.
 func artifactFileBody(c tabContent) string {
 	if !utf8.ValidString(c.artifactBody) {
-		return widget.MutedStyle.Render("binary file, " + relevo.ArtifactSizeText(artifactSizeOf(c)))
+		return widget.MutedStyle.Render("binary file, " + view.ArtifactSizeText(artifactSizeOf(c)))
 	}
 	text := sanitizeText(c.artifactBody)
 	if artifactOpenKind(c.artifactRel) == "pager" {

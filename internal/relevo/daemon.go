@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/sync/verb"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // minInterval keeps a misconfigured interval from spinning the tick.
@@ -696,7 +697,7 @@ func sealRounds(st *store.Store, tx *store.Tx, b store.Binding, artifactMaxBytes
 		if !store.Sealable(b, r, drained) {
 			continue
 		}
-		if over, total := artifactCapExceeded(st, b, r, artifactMaxBytes); over {
+		if over, total := view.ArtifactCapExceeded(st, b, r, artifactMaxBytes); over {
 			slog.Info("seal held: artifacts over the cap", "binding", b.Name, "round", r, "bytes", total)
 			continue
 		}

@@ -9,6 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/text"
 	"github.com/fuad-daoud/relevo/internal/transcript"
+	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -33,11 +34,11 @@ func readerDeliverablePresent(rt Runtime, b store.Binding) bool {
 	// while the tightened rule below would strand the chain running behind
 	// an exited-without-report binding halt, which is strictly worse.
 	if _, merr := rt.Store.ChainByMember(b.Name); merr == nil {
-		if present, empty := readerOutputPresent(reportPathFor(rt, b)); present && !empty {
+		if present, empty := view.ReaderOutputPresent(reportPathFor(rt, b)); present && !empty {
 			return true
 		}
 		stream, _ := rt.Store.ReadFile(rt.Store.StreamPath(b.Name, b.Round))
-		return transcript.LastWithBlock(lastStreamKind(b), stream) != ""
+		return transcript.LastWithBlock(view.LastStreamKind(b), stream) != ""
 	}
 	bodies := readerCandidateBodies(rt, b)
 	if len(bodies) == 0 {
@@ -60,13 +61,13 @@ func readerDeliverablePresent(rt Runtime, b store.Binding) bool {
 // else the stream's last message.
 func readerPlanBody(rt Runtime, b store.Binding) []byte {
 	path := reportPathFor(rt, b)
-	if present, empty := readerOutputPresent(path); present && !empty {
+	if present, empty := view.ReaderOutputPresent(path); present && !empty {
 		if body, err := os.ReadFile(path); err == nil {
 			return body
 		}
 	}
 	stream, _ := rt.Store.ReadFile(rt.Store.StreamPath(b.Name, b.Round))
-	texts := transcript.Texts(lastStreamKind(b), stream)
+	texts := transcript.Texts(view.LastStreamKind(b), stream)
 	if len(texts) == 0 {
 		return nil
 	}
@@ -96,7 +97,7 @@ func readerPlanNudgeDue(rt Runtime, b store.Binding, entries []store.LogEntry, c
 func readerCandidateBodies(rt Runtime, b store.Binding) [][]byte {
 	var bodies [][]byte
 	path := reportPathFor(rt, b)
-	if present, empty := readerOutputPresent(path); present && !empty {
+	if present, empty := view.ReaderOutputPresent(path); present && !empty {
 		if body, rerr := os.ReadFile(path); rerr == nil {
 			bodies = append(bodies, body)
 		}
@@ -114,10 +115,10 @@ func readerCandidateBodies(rt Runtime, b store.Binding) [][]byte {
 // fence exactly as it does in the outcome parse.
 func readerBlockText(rt Runtime, b store.Binding) string {
 	stream, _ := rt.Store.ReadFile(rt.Store.StreamPath(b.Name, b.Round))
-	if text := transcript.LastWithBlock(lastStreamKind(b), stream); text != "" {
+	if text := transcript.LastWithBlock(view.LastStreamKind(b), stream); text != "" {
 		return text
 	}
-	texts := transcript.Texts(lastStreamKind(b), stream)
+	texts := transcript.Texts(view.LastStreamKind(b), stream)
 	for i := len(texts) - 1; i >= 0; i-- {
 		if reporttail.HasFencelessBlock([]byte(texts[i])) {
 			return texts[i]
