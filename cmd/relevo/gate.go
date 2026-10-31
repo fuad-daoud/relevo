@@ -21,7 +21,7 @@ import (
 
 // parseFor turns --for into an absolute expiry. Empty means "until cleared"
 // (a zero time); anything else must be a positive Go duration -- relevo does
-// not know a provider's reset schedule, so it never invents one (spec §1).
+// not know a provider's reset schedule, so it never invents one.
 func parseFor(s string, now time.Time) (time.Time, error) {
 	if s == "" {
 		return time.Time{}, nil
@@ -56,13 +56,11 @@ func gateUntil(forFlag, reason string, now time.Time) (time.Time, error) {
 	return until, nil
 }
 
-// cmdGate is one verb for the gate operations that used to be four: the
-// top-level unavailable and available, and the serve gates|available|unavailable
-// subverbs (§4.3). With no positional it lists the active
-// gates; a positional gates a provider; --clear lifts a gate; --serve sends
-// the same three forms to the local serve daemon's own ledger.
-// gateFlagValues holds the pointers gate parses into. state is read back off
-// the FlagSet by the --serve route, so it has no pointer of its own.
+// cmdGate is the one verb for gate operations: the top-level unavailable and
+// available, and the serve gates|available|unavailable subverbs via --serve.
+// With no positional it lists the active gates; a positional gates a
+// provider; --clear lifts a gate; --serve sends the same three forms to the
+// local serve daemon's own ledger.
 type gateFlagValues struct {
 	forFlag   *string
 	reason    *string
@@ -71,9 +69,8 @@ type gateFlagValues struct {
 	asJSON    *bool
 }
 
-// gateFlagSet defines those flags on fs, in the usage text's order, and
-// returns what they parse into. state has no pointer of its own: the --serve
-// route reads it back off the FlagSet.
+// The state flag has no pointer of its own: the --serve route reads it back
+// off the FlagSet.
 func gateFlagSet(fs *flag.FlagSet) *gateFlagValues {
 	v := &gateFlagValues{}
 	v.forFlag = fs.String("for", "", "how long to gate the provider, as a Go `duration` (e.g. 2h); omit to leave it gated until relevo gate --clear")
@@ -110,8 +107,8 @@ func cmdGate(args []string) error {
 }
 
 // gateList prints this machine's active gates: the rendering `relevo serve
-// gates` printed for the serve root's ledger (§4.3), fed by relevo.Gates, or
-// the same ledger as a JSON document.
+// gates` uses for the serve root's ledger, fed by relevo.Gates, or the same
+// ledger as a JSON document.
 func gateList(asJSON bool) error {
 	rt, err := newRuntime()
 	if err != nil {
@@ -125,8 +122,7 @@ func gateList(asJSON bool) error {
 	return nil
 }
 
-// gateUnavailable records a provider rate limit: exactly today's
-// cmdUnavailable (§4.3).
+// gateUnavailable records a provider rate limit on this machine's ledger.
 func gateUnavailable(token, forFlag, reason string, asJSON bool) error {
 	rt, err := newRuntime()
 	if err != nil {
@@ -144,7 +140,7 @@ func gateUnavailable(token, forFlag, reason string, asJSON bool) error {
 	// group or a group@account key: the same subjects `gate --clear` accepts
 	// and the same ones the halt texts tell a reader to type. A configured
 	// candidate is resolved here, first, so the ledger and every server the
-	// bindings name see the canonical token, never the raw argument (A1 §4.2);
+	// bindings name see the canonical token, never the raw argument;
 	// a provider has no token of its own and travels as the subject it names.
 	canonical := token
 	provider, _, err := availability.GateProvider(rt.Candidates, availability.Ledger{}, token, nil)
@@ -167,7 +163,7 @@ func gateUnavailable(token, forFlag, reason string, asJSON bool) error {
 
 	// The gating line and the document both read provider, until and count, so
 	// they can never disagree; the daemon-switch line is a notice, which --json
-	// moves to stderr (§2.1).
+	// moves to stderr.
 	notices := noticeWriter(asJSON)
 	if asJSON {
 		if perr := printDoc(gateSetDocOf(provider, until, count)); perr != nil {
@@ -212,7 +208,7 @@ func askDaemonToSync() {
 }
 
 // gateAccounts reads the accounts the config loaded, or nil when there is no
-// config store to read: a host with no accounts behaves exactly as before.
+// config store to read: a host with no accounts gates on the bare group key.
 func gateAccounts(rt relevo.Runtime) account.Set {
 	if rt.Config == nil {
 		return nil
@@ -227,7 +223,7 @@ func gateAccounts(rt relevo.Runtime) account.Set {
 // gateKeys resolves the accounts `gate <token>` records and the names to print:
 // the account every open round on token draws from, or the account the pick
 // would use now. Both nil on a host with no accounts, so the gate stays a bare
-// group key exactly as before.
+// group key.
 func gateKeys(rt relevo.Runtime, deps availability.Deps, token, provider string) (keys, names []string) {
 	accounts := gateAccounts(rt)
 	if len(accounts) == 0 || deps.Gates == nil || rt.Store == nil {
@@ -265,7 +261,7 @@ func providerCandidateCount(rt relevo.Runtime, provider string) int {
 }
 
 // gateClear lifts a recorded rate limit locally and on every server the
-// bindings name: exactly today's cmdAvailable (§4.3).
+// bindings name.
 func gateClear(subject string, asJSON bool) error {
 	rt, err := newRuntime()
 	if err != nil {
@@ -316,8 +312,8 @@ func gateClear(subject string, asJSON bool) error {
 }
 
 // gateServe sends the three gate forms to the local serve daemon's own
-// ledger: today's `relevo serve gates`, `relevo serve unavailable` and
-// `relevo serve available`, via the serve root's ledgerRuntime (§4.3).
+// ledger: `relevo serve gates`, `relevo serve unavailable` and
+// `relevo serve available`, via the serve root's ledgerRuntime.
 func gateServe(fs *flag.FlagSet, positional []string, forFlag, reason, clear string, asJSON bool) error {
 	switch {
 	case clear != "":

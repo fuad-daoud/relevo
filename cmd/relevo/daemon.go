@@ -26,7 +26,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/upgrade"
 )
 
-// daemonFlagValues holds the pointers daemon parses into.
 type daemonFlagValues struct {
 	interval      *time.Duration
 	check         *bool
@@ -35,14 +34,13 @@ type daemonFlagValues struct {
 	autoExitAfter *time.Duration
 }
 
-// daemonFlagSet defines those flags on fs and returns what they parse into.
 func daemonFlagSet(fs *flag.FlagSet) *daemonFlagValues {
 	v := &daemonFlagValues{}
 	v.interval = fs.Duration("interval", 2*time.Second, "poll interval")
 	v.check = fs.Bool("check", false, "exit 0 if a daemon is running, 1 if not; print nothing")
 	v.pprof = fs.String("pprof", "", "serve net/http/pprof on this unix socket path (profiling only; off by default)")
 	// --preflight is internal: the daemon runs a candidate binary's own
-	// --preflight before re-exec'ing into it (#371 §4.4). It stays out of
+	// --preflight before re-exec'ing into it. It stays out of
 	// the usage text and the README, so it is defined but not printed.
 	v.preflight = fs.Bool("preflight", false, "validate the runtime configuration and exit (internal)")
 	// --auto-exit-after is internal: only the daemon this CLI spawns gets it,
@@ -75,15 +73,15 @@ func cmdDaemon(args []string) error {
 		return fail(codeUsage, "usage: relevo daemon [--interval D] [--check] [--pprof <path>]; relevo daemon stop")
 	}
 
-	// --preflight and --check are the read-only peek. §4.6: neither writes;
-	// each reads config files and a database read-only and opens nothing that
+	// --preflight and --check are the read-only peek: neither writes; each
+	// reads config files and a database read-only and opens nothing that
 	// migrates. They return here, before the daemon path resolves a root,
 	// takes the lock or opens the database.
 	if *preflight || *check {
 		rt, err := newRuntimePeek()
 		if err != nil {
 			if *preflight {
-				// §4.4: the error on stderr, exit 1. Returning rather than
+				// The error goes to stderr, exit 1. Returning rather than
 				// os.Exit keeps the path a plain function call a test can make.
 				fmt.Fprintf(os.Stderr, "relevo: %v\n", err)
 				return exitCodeErr{code: 1}
@@ -102,7 +100,7 @@ func cmdDaemon(args []string) error {
 		// either path: the exit status is the whole answer, and a hook that
 		// printed would only fill a log with noise on every server start.
 		// Returning exitCodeErr rather than calling os.Exit keeps the
-		// no-db-yet ordering a test can call (#372 §4.5): main maps the code
+		// no-db-yet ordering a test can call: main maps the code
 		// to the same exit status.
 		running, err := rt.Store.DaemonRunning()
 		if err != nil {
@@ -220,28 +218,28 @@ func cmdDaemon(args []string) error {
 	}
 
 	// Nowhere else: a CLI one-shot (any other command) must not relaunch a
-	// builder it merely happens to observe as "exited, code unknown" (#244).
+	// builder it merely happens to observe as "exited, code unknown".
 	rt.StartedAt = time.Now()
-	// The daemon's in-memory "seen alive" set (#370, spec §4.2): it tells a
-	// process this daemon actually watched from one that merely predates it,
-	// so a restart relaunches only what it really took down. Nothing else
-	// creates one; every CLI one-shot leaves Watched nil and keeps #244's
-	// rule exactly.
+	// The daemon's in-memory "seen alive" set: it tells a process this
+	// daemon actually watched from one that merely predates it, so a
+	// restart relaunches only what it really took down. Nothing else
+	// creates one; every CLI one-shot leaves Watched nil and keeps the
+	// rule above exactly.
 	rt.Watched = relevo.NewWatched()
-	// The daemon's per-binding auth grace (#373 §3): a transient 401 (clock
-	// skew after a reboot) is shown and warned about, and only halts a binding
-	// after 15 minutes. Every CLI one-shot leaves AuthGrace nil, so it never
-	// halts on one.
+	// The daemon's per-binding auth grace: a transient 401 (clock skew after
+	// a reboot) is shown and warned about, and only halts a binding after 15
+	// minutes. Every CLI one-shot leaves AuthGrace nil, so it never halts on
+	// one.
 	rt.AuthGrace = relevo.NewAuthGrace()
 	// The scope template newRuntime filled is logged once here, in the same
-	// shape `relevo serve` uses (#295). "off" is scope.enabled: false; the
-	// local daemon does not probe at startup, so there is no "unavailable"
-	// here -- a later probe failure is the runner's one-line warning (§3.1).
+	// shape `relevo serve` uses. "off" is scope.enabled: false; the local
+	// daemon does not probe at startup, so there is no "unavailable" here --
+	// a later probe failure is the runner's one-line warning.
 	slog.Info(fmt.Sprintf("scopes=%s", scopeStatusText(rt.Scope)))
 
 	// The reaper is built before anything can spawn a child, so it sees only
 	// processes inherited from the previous image across a re-exec. A child
-	// started after this point is never in its set (#371 §4.6).
+	// started after this point is never in its set.
 	reaper := proc.NewInheritedReaper(os.Getpid(), "/proc")
 
 	// Capture the executable and the identity of the image this process is
@@ -311,8 +309,8 @@ func cmdDaemon(args []string) error {
 	}
 
 	// Role definitions are refreshed once per image start, after the lock and
-	// daemon.json (#371 §4.10): an upgrade leaves the files relevo wrote for
-	// each harness on disk, and one nobody edited is stale. Never fatal.
+	// daemon.json: an upgrade leaves the files relevo wrote for each harness
+	// on disk, and one nobody edited is stale. Never fatal.
 	refreshRoles(rt.Config)
 	// The unit the supervisor starts this binary from is refreshed on the same
 	// beat, never restarting the daemon itself.
@@ -335,9 +333,9 @@ func cmdDaemon(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// The watcher and its hook are the daemon's whole upgrade decision
-	// (#371 §4.3): debounce the new identity over two ticks, preflight it,
-	// then either re-exec or refuse and record the refusal.
+	// The watcher and its hook are the daemon's whole upgrade decision:
+	// debounce the new identity over two ticks, preflight it, then either
+	// re-exec or refuse and record the refusal.
 	// The split guard refuses a candidate that cannot read the local split:
 	// following one would flap the visible config across re-execs. The
 	// marker cannot appear later in this process's life, so reading it once
@@ -351,7 +349,7 @@ func cmdDaemon(args []string) error {
 
 	hook := func(ctx context.Context) bool {
 		// Children inherited from the previous image are reaped here, once
-		// per tick: nothing else will ever wait for them (#371 §4.6).
+		// per tick: nothing else will ever wait for them.
 		reaper.Reap()
 		if !reexecOK {
 			return false
@@ -454,8 +452,8 @@ func cmdDaemon(args []string) error {
 // one handle the daemon opened and the owner serves. A schema a newer relevo
 // wrote is never migrated or written by this binary: rt.DB stays nil so every
 // ingest call site treats it as a machine with no database, and the reason is
-// said once (#372 §4.5). The owner still serves the handle, so a dialled client
-// gets its schema answer.
+// said once. The owner still serves the handle, so a dialled client gets its
+// schema answer.
 //
 // It is a function of its own so the tests drive the very branch the daemon
 // does; rt is a pointer because a Runtime is copied by value everywhere else.
@@ -469,8 +467,8 @@ func daemonRuntimeHandle(rt *relevo.Runtime, d *db.DB) {
 }
 
 // refreshRoles lands relevo's shipped agent definitions and the custom agents
-// the config renders, once per image start
-// (#371 §4.10). The kinds are the ones `relevo config agents` picks by default
+// the config renders, once per image start. The kinds are the ones `relevo
+// config agents` picks by default
 // -- harness.Install's own "every harness whose binary is on PATH" selection --
 // and the env is the same one that verb uses, so both read and write the one
 // manifest at <state root>/agents-manifest.json.
@@ -508,8 +506,7 @@ func refreshRoles(cfg *config.Store) {
 	}
 }
 
-// sameFileID reports whether two identity pointers name the same file. Both
-// nil is "no refusal"; one nil is a change.
+// Both nil is "no refusal"; one nil is a change.
 func sameFileID(a, b *store.FileID) bool {
 	if a == nil || b == nil {
 		return a == b
