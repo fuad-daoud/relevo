@@ -1,12 +1,5 @@
 cmd/relevo/bind.go
-cmd/relevo/main.go
-cmd/relevo/main_test.go
-cmd/relevo/mcp.go
-cmd/relevo/mcp_notice.go
-cmd/relevo/mcp_notice_test.go
 cmd/relevo/owner_reads_test.go
-cmd/relevo/mastermind.go
-cmd/relevo/mastermind_test.go
 cmd/relevo/read_verbs_test.go
 cmd/relevo/restart_notice.go
 cmd/relevo/restart_notice_test.go

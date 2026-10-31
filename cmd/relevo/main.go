@@ -139,7 +139,7 @@ var activeVerb string
 
 func main() {
 	// Every remote request carries this as Relevo-Client-Version, so a server's
-	// journal shows which client build asked (#373 §4.4). Set before any
+	// journal shows which client build asked. Set before any
 	// command runs, and informational only: it is never signed.
 	client.Version = buildVersion()
 
@@ -189,7 +189,7 @@ func report(w io.Writer, err error, jsonMode bool) int {
 		return ec.code
 	}
 	if errors.Is(err, errUsagePrinted) {
-		// Usage is a refusal (spec §2.6), so a bare `relevo` on a pipe exits 2
+		// Usage is a refusal, so a bare `relevo` on a pipe exits 2
 		// exactly like every other usage failure; the text is already on stderr.
 		return catalog[codeUsage].exit
 	}
@@ -223,8 +223,8 @@ func run(args []string) error {
 		}
 	}
 
-	// Every verb captures the calling agy session's agentapi credentials
-	// (#349): an agy mastermind runs relevo constantly (send, wait, pull,
+	// Every verb captures the calling agy session's agentapi credentials: an
+	// agy mastermind runs relevo constantly (send, wait, pull,
 	// status), and whichever verb it happens to run after an agy restart is
 	// the one that refreshes the session's agentapi credentials.
 	//
@@ -314,9 +314,9 @@ func run(args []string) error {
 	case "sync-worker":
 		return cmdSyncWorker(args[1:])
 	default:
-		// The verbs P2b folded into `relevo config`, and the verbs P4a merged
+		// The verbs folded into `relevo config`, and the verbs merged
 		// into bind/show/unbind/status, name their replacement rather than the
-		// generic unknown-subcommand error (§4.4, §4.6).
+		// generic unknown-subcommand error.
 		if replacement, ok := removedVerbs[args[0]]; ok {
 			return failNext(codeUsage, replacement, "%q was removed; use %s", args[0], replacement)
 		}
@@ -325,10 +325,9 @@ func run(args []string) error {
 }
 
 // removedVerbs names each removed verb and the form that replaces it: the
-// seven P2b folded into `relevo config` (§4.4), the seven P4a merged into
-// bind, show, unbind and status (§4.6), the P4a verbs folded into wait and
-// gate (§4.1, §4.3), and the three P3d folded into history and doctor
-// (P3d §4.6).
+// seven folded into `relevo config`, the seven merged into bind, show,
+// unbind and status, the verbs folded into wait and gate, and the three
+// folded into history and doctor.
 var removedVerbs = map[string]string{
 	"init":       "relevo config init",
 	"candidates": "relevo config",
@@ -351,8 +350,8 @@ var removedVerbs = map[string]string{
 	"tab":         "relevo ui :rounds",
 	"stats":       "relevo ui :stats",
 
-	// The rename (D5): the verb is `relevo mastermind` now, and the old
-	// spelling exits 2 through this map exactly like every other removed verb.
+	// The old spelling exits 2 through this map exactly like every other
+	// removed verb: the verb is `relevo mastermind`.
 	"planner": "relevo mastermind",
 }
 
@@ -361,12 +360,10 @@ var removedVerbs = map[string]string{
 // command cannot disagree about where the config root is.
 func userConfigRoot() (string, error) { return config.UserRoot() }
 
-// uiFlagValues holds the pointer the cockpit parses into.
 type uiFlagValues struct {
 	interval *time.Duration
 }
 
-// uiFlagSet defines that flag on fs and returns what it parses into.
 func uiFlagSet(fs *flag.FlagSet) *uiFlagValues {
 	v := &uiFlagValues{}
 	v.interval = fs.Duration("interval", 0, "refresh interval")
@@ -409,8 +406,8 @@ func cmdUI(args []string) error {
 	defer stop()
 
 	// Preferences live in the machine database rt.DB holds once openDB
-	// succeeded; a failed open leaves them disabled, as an empty PrefsPath did
-	// (P3b plan §4.4).
+	// succeeded; a failed open leaves them disabled, as an empty PrefsPath
+	// does.
 	var prefsKV db.KV
 	if rt.DB != nil {
 		prefsKV = rt.DB.LocalOrSelf()
@@ -446,10 +443,10 @@ func uiStart(args []string) (string, error) {
 	return strings.Join(parts, " "), nil
 }
 
-// runPick opens the interactive picker for one verb (#15). The three
-// non-zero outcomes have already been shown on screen, so they exit 1
-// silently: a second "relevo: ..." line would go to the plugin log, not to
-// the human (spec §3). Anything else is a startup failure and prints.
+// runPick opens the interactive picker for one verb. The three non-zero
+// outcomes have already been shown on screen, so they exit 1 silently: a
+// second "relevo: ..." line would go to the plugin log, not to the human.
+// Anything else is a startup failure and prints.
 func runPick(opts pick.Options) error {
 	rt, err := newRuntime()
 	if err != nil {
@@ -470,8 +467,8 @@ func runPick(opts pick.Options) error {
 	}
 }
 
-// pickNamesNothing is the spec §3 rule shared by the three verbs: --pick and
-// a binding name are mutually exclusive.
+// pickNamesNothing is the rule shared by the three verbs: --pick and a
+// binding name are mutually exclusive.
 func pickNamesNothing(nameFlag string, positional []string) error {
 	if nameFlag != "" || len(positional) > 0 {
 		return fail(codeRefused, "--pick chooses the binding; do not also name one")
