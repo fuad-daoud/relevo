@@ -267,7 +267,7 @@ func TestChainStopOnAChainTheServerNoLongerHoldsNamesDone(t *testing.T) {
 			}
 
 			_, err := ChainStop(context.Background(), rt, "shop")
-			var halted *ChainHaltedError
+			var halted *chain.ChainHaltedError
 			switch {
 			case arm.wantNothing && !errors.Is(err, ErrNothingToStop):
 				t.Fatalf("stop = %v, want ErrNothingToStop", err)

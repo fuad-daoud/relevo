@@ -153,13 +153,13 @@ func TestChainStopOnAHaltedChainNamesDone(t *testing.T) {
 	}
 
 	_, err := ChainStop(context.Background(), rt, "shop")
-	if !errors.Is(err, ErrChainHalted) {
+	if !errors.Is(err, chain.ErrChainHalted) {
 		t.Fatalf("ChainStop = %v, want the halted answer", err)
 	}
 	if errors.Is(err, ErrNothingToStop) {
 		t.Error("a halted chain answered ErrNothingToStop, the old answer this replaces")
 	}
-	if got, want := err.Error(), ChainHaltedStopText("shop"); got != want {
+	if got, want := err.Error(), chain.ChainHaltedStopText("shop"); got != want {
 		t.Errorf("answer = %q, want %q", got, want)
 	}
 	if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusHalted) {
