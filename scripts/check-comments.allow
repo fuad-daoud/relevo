@@ -138,11 +138,8 @@ internal/relevo/reporttail.go
 internal/relevo/reporttail_test.go
 internal/relevo/retry.go
 internal/relevo/retry_test.go
-internal/relevo/roles_gate_test.go
 internal/relevo/roles_list.go
 internal/relevo/roles_list_test.go
-internal/relevo/roles_runtime_test.go
-internal/relevo/roles_views_test.go
 internal/relevo/seal_test.go
 internal/relevo/send.go
 internal/relevo/send_test.go
