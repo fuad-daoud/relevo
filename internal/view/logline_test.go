@@ -1,4 +1,4 @@
-package relevo
+package view
 
 import (
 	"strings"
@@ -157,8 +157,8 @@ func TestLogLineTierOnPlanOnly(t *testing.T) {
 	}
 }
 
-// TestLogLineGateSuffix pins #132: a report entry with a Gate record appends
-// " gate=<Result>"; an entry with none carries no such suffix.
+// A report entry with a Gate record appends " gate=<Result>"; an entry
+// with none carries no such suffix.
 func TestLogLineGateSuffix(t *testing.T) {
 	t.Parallel()
 
@@ -180,9 +180,8 @@ func TestLogLineGateSuffix(t *testing.T) {
 	}
 }
 
-// TestLogLineSessionSuffix pins #147: a report entry with a BuilderSession
-// appends " session=<kind>:<id8>" (the id cut to eight characters); an entry
-// with none carries no suffix.
+// A report entry with a BuilderSession appends " session=<kind>:<id8>"
+// (the id cut to eight characters); an entry with none carries no suffix.
 func TestLogLineSessionSuffix(t *testing.T) {
 	t.Parallel()
 
@@ -209,10 +208,9 @@ func TestLogLineSessionSuffix(t *testing.T) {
 	}
 }
 
-// TestShortCPU pins #299: a round's CPU time at seconds resolution, from
-// tenths below a minute up through minutes and hours. The 8550 row is the
-// contract's own correction: 8550 ms is 8.55 s, an exact tie, and half-up
-// (ms+50)/100 gives 86 tenths -> "8.6s".
+// A round's CPU time at seconds resolution, from tenths below a minute up
+// through minutes and hours. The 8550 row documents the tie: 8550 ms is
+// 8.55 s, an exact tie, and half-up (ms+50)/100 gives 86 tenths -> "8.6s".
 func TestShortCPU(t *testing.T) {
 	t.Parallel()
 
@@ -241,8 +239,7 @@ func TestShortCPU(t *testing.T) {
 	}
 }
 
-// TestLogLineRusageUsesSecondsResolution pins #299's rendering: the report
-// line carries the cpu time at seconds resolution rather than
+// The report line carries the cpu time at seconds resolution rather than
 // usage.ShortDuration's "<1m", and shortBytes still renders peak memory.
 func TestLogLineRusageUsesSecondsResolution(t *testing.T) {
 	t.Parallel()

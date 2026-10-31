@@ -664,7 +664,7 @@ func fetchLog(ctx context.Context, src widget.Source, key string, round int) tea
 			if e.Round != round {
 				continue
 			}
-			b.WriteString(relevo.LogLine(e))
+			b.WriteString(view.LogLine(e))
 			b.WriteByte('\n')
 			n++
 		}
@@ -879,7 +879,7 @@ func fetchShow(ctx context.Context, rt relevo.Runtime, name string, round int, s
 			}
 			var b strings.Builder
 			for _, e := range res.Events {
-				b.WriteString(relevo.LogLine(e))
+				b.WriteString(view.LogLine(e))
 				b.WriteByte('\n')
 			}
 			content.body = b.String()
