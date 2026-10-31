@@ -1,11 +1,4 @@
 cmd/relevo/bind.go
-cmd/relevo/daemon.go
-cmd/relevo/daemon_notice.go
-cmd/relevo/done.go
-cmd/relevo/gate.go
-cmd/relevo/history.go
-cmd/relevo/history_test.go
-cmd/relevo/init_test.go
 cmd/relevo/main.go
 cmd/relevo/main_test.go
 cmd/relevo/mcp.go

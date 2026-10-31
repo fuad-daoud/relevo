@@ -21,7 +21,7 @@ import (
 // It runs the real subcommand, which is allowed only because cmdHistory
 // spawns no harness and makes no network call: it builds a runtime, opens
 // relevo.db and prints. XDG_STATE_HOME moves to a temp dir, so TestMain's root
-// and the user's state are never touched (#235).
+// and the user's state are never touched.
 func TestHistoryPlainListsRounds(t *testing.T) {
 	stateHome := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", stateHome)
@@ -117,7 +117,7 @@ func TestGroupJSONShape(t *testing.T) {
 	}
 }
 
-// TestHistoryJSONHasBuilderName pins A1 §4.4: each `relevo history --json`
+// TestHistoryJSONHasBuilderName pins that each `relevo history --json`
 // row keeps every token field where it always was and gains the candidate's
 // short name beside the token.
 func TestHistoryJSONHasBuilderName(t *testing.T) {
