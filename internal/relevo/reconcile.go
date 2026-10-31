@@ -722,7 +722,7 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	if fellBack {
 		// The runner left no output file, so the close saved its last message:
 		// recorded in the note the round's status row and `show --output` read.
-		note = joinNotes(note, readerFallbackNote)
+		note = joinNotes(note, view.ReaderFallbackNote)
 	}
 	if _, _, ok, _ := rt.Store.StatFile(reportPath); ok {
 		slog.Info("round closed by marker", "binding", b.Name, "round", b.Round)

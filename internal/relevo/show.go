@@ -359,7 +359,7 @@ func showSections(rt Runtime, name string, round int, actor, shape, output strin
 			if err == nil {
 				res.Text, res.Missing = string(text), text == nil
 				if !res.Missing {
-					res.Text = withFallbackHeader(entries, round, res.Text)
+					res.Text = view.WithFallbackHeader(entries, round, res.Text)
 				}
 			}
 		} else {

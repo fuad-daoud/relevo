@@ -988,7 +988,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			}
 			note := "unmarked"
 			if fellBack {
-				note = joinNotes(note, readerFallbackNote)
+				note = joinNotes(note, view.ReaderFallbackNote)
 			}
 			if escapeCheck(ctx, rt, b, true) == git.EscapeNote {
 				note = joinNotes(note, git.EscapedNote)
