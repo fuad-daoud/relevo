@@ -13,32 +13,25 @@ import (
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
-// actorView is `actors › <name>` (§4): the actor's candidate list, reordered,
-// turned on and off, added to from a picker and removed from, the placement
-// list beside it, its check line, and the edit form behind e.
 type actorView struct {
 	name     string
 	doc      relevo.ConfigDoc
-	err      error // the last ConfigDoc error; shown centred like candidates' error state
+	err      error
 	loaded   bool
-	cur      int // cursor over the actor's entries
-	placeCur int // cursor over the actor's placement entries
-	focus    int // focusCandidates or focusPlacement: which pane owns the keys
-	top      int // first body line shown (page follows the cursor)
+	cur      int
+	placeCur int
+	focus    int
+	top      int
 }
 
-// newActorView pushes the actor's detail view (§4).
 func newActorView(env widget.Env, doc relevo.ConfigDoc, name string) (widget.View, tea.Cmd) {
 	v := actorView{name: name, doc: doc, loaded: true}
 	return v, candDocCmd(env)
 }
 
-// actorCheckOn reports whether an actor's check is on: nil means on.
+// A nil check counts as on.
 func actorCheckOn(check *bool) bool { return check == nil || *check }
 
-// actorPickLayout is the detail table's columns (§4): the `#` column, then
-// CANDIDATE taking the rest of width-6 cells, HARNESS 8, PROVIDER 10 and
-// STATUS 20, every column followed by two spaces.
 func actorPickLayout(width int) (int, []actorCol) {
 	cw := width - 6
 	if cw < 0 {
@@ -59,7 +52,6 @@ func actorPickLayout(width int) (int, []actorCol) {
 	return cw - fixed, cols
 }
 
-// actorPickHeaderLine is the detail table's header row (§4), in faint bold.
 func actorPickHeaderLine(nameW int, cols []actorCol, cw int) string {
 	style := widget.FaintStyle.Bold(true)
 	cells := []candCell{
@@ -72,9 +64,6 @@ func actorPickHeaderLine(nameW int, cols []actorCol, cw int) string {
 	return candLine(cells, false, cw)
 }
 
-// actorPickLine is one entry's row (§4). An off row is faint throughout; the
-// cursor row's candidate name is bold; the entry that would be picked next
-// carries the `next pick` marker in its STATUS cell.
 func actorPickLine(doc relevo.ConfigDoc, env widget.Env, name string, i int, sel bool, nameW int, cols []actorCol, cw int) string {
 	a := doc.Actors[name]
 	e := a.Candidates[i]
@@ -102,9 +91,6 @@ func actorPickLine(doc relevo.ConfigDoc, env widget.Env, name string, i int, sel
 	return candLine(cells, sel, cw)
 }
 
-// actorCheckLine is the check line under the table (§4), for writer agents
-// only: ""
-// when the actor's agent is a reader.
 func actorCheckLine(doc relevo.ConfigDoc, name string, width int) (string, bool) {
 	a := doc.Actors[name]
 	if agentShapeOf(doc, a.Agent) != string(agentsrc.ShapeWriter) {
@@ -121,8 +107,6 @@ func actorCheckLine(doc relevo.ConfigDoc, name string, width int) (string, bool)
 		widget.TextStyle.Render(":settings"), true
 }
 
-// actorScopeText renders a writer's scope for the detail view: its path
-// entries, then "+ comments" when a comment-only edit is allowed.
 func actorScopeText(scope *pathscope.Scope) string {
 	parts := strings.Join(scope.Paths, ", ")
 	if scope.Comments {
@@ -134,8 +118,6 @@ func actorScopeText(scope *pathscope.Scope) string {
 	return parts
 }
 
-// bodyLines is the whole detail body before it is windowed: a blank line under
-// the context row, the table, two blank lines and the check line (§4).
 func (v actorView) bodyLines(env widget.Env, width int) []string {
 	a := v.doc.Actors[v.name]
 	nameW, cols := actorPickLayout(width)
@@ -161,7 +143,6 @@ func (v actorView) bodyLines(env widget.Env, width int) []string {
 	return lines
 }
 
-// follow scrolls the page so the cursor's table row stays visible (§4).
 func (v *actorView) follow(env widget.Env) {
 	avail := widget.BodyHeight(env)
 	if avail <= 0 {
@@ -187,11 +168,10 @@ func (v *actorView) follow(env widget.Env) {
 
 func (v actorView) Crumbs() []string { return []string{v.name} }
 
-// Capturing is always false: the view owns no text input of its own (§4).
+// The view owns no text input of its own.
 func (v actorView) Capturing() bool { return false }
 
-// Keys are the detail view's keys (§4), for the pane that owns them: a
-// placement entry has no on/off, and tab names the pane it would move to.
+// A placement entry has no on/off, so the placement pane offers no space key.
 func (v actorView) Keys() []widget.KeyHelp {
 	tab := widget.KeyHelp{Key: "tab", Help: "placement"}
 	if v.placementFocus() {
@@ -213,8 +193,7 @@ func (v actorView) Keys() []widget.KeyHelp {
 	)
 }
 
-// HelpKeys is the help overlay's key list (§2.2): both panes' keys, so the
-// overlay documents the pane that does not own them right now too.
+// Both panes' keys, so the overlay documents the pane that does not own them right now too.
 func (v actorView) HelpKeys() []widget.KeyHelp {
 	return []widget.KeyHelp{
 		{Key: "↑↓", Help: "move"},
@@ -228,8 +207,6 @@ func (v actorView) HelpKeys() []widget.KeyHelp {
 	}
 }
 
-// Context is the actor's summary line (§4): the agent and shape, the tier, the
-// candidate count and the next pick.
 func (v actorView) Context(env widget.Env) (string, string) {
 	a := v.doc.Actors[v.name]
 	tier, tierStyle := a.Tier, widget.TextStyle
@@ -285,7 +262,7 @@ func (v actorView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 
 	case statusMsg:
 		// A refresh from anywhere re-reads the config, which is what
-		// reloads the table after ApplyConfig's Refresh (§4).
+		// reloads the table after ApplyConfig's Refresh.
 		return v, candDocCmd(env)
 
 	case tea.KeyMsg:
@@ -294,10 +271,10 @@ func (v actorView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	return v, nil
 }
 
-// updateKey is the detail view's own keys (§4). While an edit of this actor is
-// in flight, every change key is ignored -- in both panes, since either one
-// would build a second edit on a list the first has not written yet. tab
-// changes nothing on its own, so it still moves the focus.
+// While an edit of this actor is in flight, every change key is ignored -- in
+// both panes, since either one would build a second edit on a list the first
+// has not written yet. tab changes nothing on its own, so it still moves the
+// focus.
 func (v actorView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	entries := v.doc.Actors[v.name].Candidates
 	n := len(entries)
@@ -384,14 +361,13 @@ func (v actorView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd
 	return v, nil
 }
 
-// copyActorEntries is a fresh copy of one actor's entry list: a change builds
-// its own list, so the doc the view holds is never mutated in place.
+// A change builds its own list, so the doc the view holds is never mutated in
+// place.
 func copyActorEntries(entries []roles.Entry) []roles.Entry {
 	return append([]roles.Entry(nil), entries...)
 }
 
-// withActorEntries is doc with the actor's candidate list replaced: a copied
-// map, so the next key builds on the list this one wrote (§4).
+// A copied map, so the next key builds on the list this one wrote.
 func withActorEntries(doc relevo.ConfigDoc, name string, entries []roles.Entry) relevo.ConfigDoc {
 	acts := make(map[string]roles.Actor, len(doc.Actors))
 	for k, a := range doc.Actors {
@@ -404,9 +380,6 @@ func withActorEntries(doc relevo.ConfigDoc, name string, entries []roles.Entry) 
 	return doc
 }
 
-// change is every entry change's one path (§4): validate next with
-// SetActorEntries, update the local doc, then apply the edit. A refused edit
-// is a notice.
 func (v actorView) change(env widget.Env, next []roles.Entry) (widget.View, tea.Cmd) {
 	edit, err := relevo.SetActorEntries(v.doc, v.name, next)
 	if err != nil {
@@ -418,8 +391,8 @@ func (v actorView) change(env widget.Env, next []roles.Entry) (widget.View, tea.
 	})
 }
 
-// pickCmd is the a key (§4): a listBox of the doc's candidates not already in
-// this actor's list, in stored order.
+// A listBox of the doc's candidates not already in this actor's list, in
+// stored order.
 func (v actorView) pickCmd(env widget.Env) tea.Cmd {
 	items := actorPickItems(v.doc, v.name, env)
 	if len(items) == 0 {
@@ -439,8 +412,6 @@ func (v actorView) pickCmd(env widget.Env) tea.Cmd {
 	})
 }
 
-// actorPickItems is the picker's rows (§4): each candidate not already in the
-// actor's list, its status the entry's own, its note `harness · provider`.
 func actorPickItems(doc relevo.ConfigDoc, name string, env widget.Env) []listItem {
 	inList := make(map[string]bool, len(doc.Actors[name].Candidates))
 	for _, e := range doc.Actors[name].Candidates {
@@ -464,8 +435,6 @@ func actorPickItems(doc relevo.ConfigDoc, name string, env widget.Env) []listIte
 	return out
 }
 
-// actorOrdinal is an ordinal word with its suffix (§4): 1st, 2nd, 3rd, 7th,
-// 11th, 21st.
 func actorOrdinal(n int) string {
 	suffix := "th"
 	if n%100 < 11 || n%100 > 13 {

@@ -11,8 +11,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
-// actorsFixtureList loads an actorsView over fa's doc, as the ':actors'
-// command's doc load would.
 func actorsFixtureList(t *testing.T, fa *fakeActions) actorsView {
 	t.Helper()
 	env := candActionEnv(fa, candGatedReport())
@@ -21,14 +19,12 @@ func actorsFixtureList(t *testing.T, fa *fakeActions) actorsView {
 	return next.(actorsView)
 }
 
-// actorFixtureView is the pushed detail view over fa's builder.
 func actorFixtureView(t *testing.T, fa *fakeActions, name string) actorView {
 	t.Helper()
 	v, _ := newActorView(candActionEnv(fa, candGatedReport()), fa.doc, name)
 	return v.(actorView)
 }
 
-// actorEditEntries decodes one edit's actor's entry list.
 func actorEditEntries(t *testing.T, e relevo.ConfigEdit, actor string) []roles.Entry {
 	t.Helper()
 	body, ok := e.Sections[config.Actors]
@@ -42,7 +38,6 @@ func actorEditEntries(t *testing.T, e relevo.ConfigEdit, actor string) []roles.E
 	return acts[actor].Candidates
 }
 
-// actorEntryRefs is the entry list's candidate references, in order.
 func actorEntryRefs(entries []roles.Entry) []string {
 	out := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -51,7 +46,6 @@ func actorEntryRefs(entries []roles.Entry) []string {
 	return out
 }
 
-// actorEditPlacement decodes one edit's actor's placement list.
 func actorEditPlacement(t *testing.T, e relevo.ConfigEdit, actor string) []string {
 	t.Helper()
 	body, ok := e.Sections[config.Actors]
@@ -65,17 +59,14 @@ func actorEditPlacement(t *testing.T, e relevo.ConfigEdit, actor string) []strin
 	return acts[actor].Placement
 }
 
-// actorPlaced puts entries on one actor's placement list in fa's doc: the
-// placement tests need a list of their own, and the fixture places the builder
-// on one server only.
+// The placement tests need a list of their own, and the fixture places the
+// builder on one server only.
 func actorPlaced(fa *fakeActions, name string, entries []string) {
 	a := fa.doc.Actors[name]
 	a.Placement = entries
 	fa.doc.Actors[name] = a
 }
 
-// actorPlacementView is the pushed detail view with the placement pane
-// focused, as one tab leaves it.
 func actorPlacementView(t *testing.T, fa *fakeActions, name string) actorView {
 	t.Helper()
 	v := actorFixtureView(t, fa, name)
@@ -83,7 +74,6 @@ func actorPlacementView(t *testing.T, fa *fakeActions, name string) actorView {
 	return next.(actorView)
 }
 
-// keyHelpHas reports whether one key list carries a key with that label.
 func keyHelpHas(keys []widget.KeyHelp, k, help string) bool {
 	for _, kh := range keys {
 		if kh.Key == k && kh.Help == help {
@@ -93,7 +83,6 @@ func keyHelpHas(keys []widget.KeyHelp, k, help string) bool {
 	return false
 }
 
-// actorFormKeys sends keys through the actor form, one at a time.
 func actorFormKeys(f actorForm, ks ...tea.KeyMsg) actorForm {
 	for _, k := range ks {
 		next, _, _ := f.update(k)
@@ -102,7 +91,6 @@ func actorFormKeys(f actorForm, ks ...tea.KeyMsg) actorForm {
 	return f
 }
 
-// addActorText types s's runes through the add form's name input.
 func addActorText(f addActorForm, s string) addActorForm {
 	for _, r := range s {
 		next, _, _ := f.update(key(r))
@@ -111,8 +99,6 @@ func addActorText(f addActorForm, s string) addActorForm {
 	return f
 }
 
-// actorOrder puts builder, reviewer and researcher first, then the rest by
-// name (§3).
 func TestActorOrder(t *testing.T) {
 	got := actorOrder(map[string]roles.Actor{
 		"zebra": {}, "reviewer": {}, "alpha": {}, "builder": {}, "researcher": {},
@@ -123,7 +109,6 @@ func TestActorOrder(t *testing.T) {
 	}
 }
 
-// nextPick skips an off entry and a gated one (§3).
 func TestActorNextPickSkipsOffAndGated(t *testing.T) {
 	doc := candFixtureDoc(t)
 	gated := candGatedReport().Gated
@@ -147,8 +132,6 @@ func TestActorNextPickSkipsOffAndGated(t *testing.T) {
 	}
 }
 
-// shift+down swaps the cursor entry with its neighbour, moves the cursor with
-// it, writes one edit and updates the local doc (§4, §5).
 func TestActorViewShiftDownReorders(t *testing.T) {
 	fa := &fakeActions{doc: candFixtureDoc(t)}
 	v := actorFixtureView(t, fa, "builder")
@@ -173,8 +156,6 @@ func TestActorViewShiftDownReorders(t *testing.T) {
 	}
 }
 
-// A second shift+down builds on the list the first one wrote, not on the doc
-// the view loaded: two edits, and the second one's list carries both swaps.
 func TestActorViewSecondEditBuildsOnLocalDoc(t *testing.T) {
 	fa := &fakeActions{doc: candFixtureDoc(t)}
 	v := actorFixtureView(t, fa, "builder")
@@ -198,8 +179,6 @@ func TestActorViewSecondEditBuildsOnLocalDoc(t *testing.T) {
 	}
 }
 
-// While this actor's edit is in flight every change key is ignored, so two
-// fast presses write one edit (§4).
 func TestActorViewIgnoresChangeKeysWhileRunning(t *testing.T) {
 	fa := &fakeActions{doc: candFixtureDoc(t)}
 	v := actorFixtureView(t, fa, "builder")
@@ -220,7 +199,6 @@ func TestActorViewIgnoresChangeKeysWhileRunning(t *testing.T) {
 	}
 }
 
-// space toggles Off on the cursor entry and writes it (§4).
 func TestActorViewSpaceTogglesOff(t *testing.T) {
 	fa := &fakeActions{doc: candFixtureDoc(t)}
 	v := actorFixtureView(t, fa, "builder")
@@ -241,7 +219,6 @@ func TestActorViewSpaceTogglesOff(t *testing.T) {
 	}
 }
 
-// d on an actor's last candidate is a notice, not an edit (§4).
 func TestActorViewRemoveLastNotices(t *testing.T) {
 	fa := &fakeActions{doc: candFixtureDoc(t)}
 	v := actorFixtureView(t, fa, "researcher")
@@ -263,8 +240,6 @@ func TestActorViewRemoveLastNotices(t *testing.T) {
 	}
 }
 
-// a opens the picker on the candidates the actor does not list yet; picking
-// one appends it, on (§4).
 func TestActorViewPickerAddsHaiku(t *testing.T) {
 	fa := &fakeActions{doc: candFixtureDoc(t)}
 	v := actorFixtureView(t, fa, "builder")
@@ -302,8 +277,6 @@ func TestActorViewPickerAddsHaiku(t *testing.T) {
 	}
 }
 
-// The actor form's agent chips for the builtin builder offer only the writer
-// agents, in shipped order (§4).
 func TestActorFormBuilderAgents(t *testing.T) {
 	fa := &fakeActions{doc: candFixtureDoc(t)}
 	f := newActorForm(candActionEnv(fa, candGatedReport()), fa.doc, "builder")
@@ -315,7 +288,6 @@ func TestActorFormBuilderAgents(t *testing.T) {
 	}
 }
 
-// A reader agent disables the check row, and tab skips it (§4).
 func TestActorFormCheckDisabledForReader(t *testing.T) {
 	fa := &fakeActions{doc: candFixtureDoc(t)}
 	env := candActionEnv(fa, candGatedReport())
@@ -339,8 +311,6 @@ func TestActorFormCheckDisabledForReader(t *testing.T) {
 	}
 }
 
-// d on a builtin actor in the list is a notice: the actor cannot be deleted
-// (§4).
 func TestActorsListDeleteBuiltinNotices(t *testing.T) {
 	fa := &fakeActions{doc: candFixtureDoc(t)}
 	v := actorsFixtureList(t, fa)
@@ -362,8 +332,6 @@ func TestActorsListDeleteBuiltinNotices(t *testing.T) {
 	}
 }
 
-// A bad name in the add form shows its FieldError and keeps the form open
-// (§4).
 func TestAddActorFormBadNameShowsError(t *testing.T) {
 	fa := &fakeActions{doc: candFixtureDoc(t)}
 	f := addActorText(newAddActorForm(candActionEnv(fa, candGatedReport()), fa.doc), "Bad Name")
@@ -390,8 +358,6 @@ func TestAddActorFormBadNameShowsError(t *testing.T) {
 	}
 }
 
-// tab moves the keys between the candidate table and the placement list, both
-// ways (§4).
 func TestActorViewTabTogglesFocus(t *testing.T) {
 	fa := &fakeActions{doc: candFixtureDoc(t)}
 	v := actorFixtureView(t, fa, "builder")
@@ -412,8 +378,6 @@ func TestActorViewTabTogglesFocus(t *testing.T) {
 	}
 }
 
-// shift+down on the placement list swaps the cursor entry with its neighbour,
-// follows it, writes one edit and leaves the candidates alone (§4, §5).
 func TestActorViewPlacementShiftDownReorders(t *testing.T) {
 	fa := &fakeActions{doc: candFixtureDoc(t)}
 	actorPlaced(fa, "builder", []string{"zen", "backup", "local"})
@@ -446,8 +410,6 @@ func TestActorViewPlacementShiftDownReorders(t *testing.T) {
 	}
 }
 
-// d on the last placement entry clears the list, which is a valid config, and
-// d in the middle removes one entry (§4).
 func TestActorViewPlacementRemove(t *testing.T) {
 	t.Run("the last entry clears", func(t *testing.T) {
 		fa := &fakeActions{doc: candFixtureDoc(t)}
@@ -490,9 +452,6 @@ func TestActorViewPlacementRemove(t *testing.T) {
 	})
 }
 
-// a opens the placement picker: the sentinel first, then the servers the actor
-// does not list; a pick appends and writes, and with nothing left to add it is
-// the notice (§4).
 func TestActorViewPlacementPicker(t *testing.T) {
 	fa := &fakeActions{doc: candFixtureDoc(t)}
 	v := actorPlacementView(t, fa, "builder")
@@ -548,8 +507,6 @@ func TestActorViewPlacementPicker(t *testing.T) {
 	}
 }
 
-// space toggles candidates off and on; a placement entry has no such state, so
-// in the placement pane it is inert (§4).
 func TestActorViewPlacementSpaceIsInert(t *testing.T) {
 	fa := &fakeActions{doc: candFixtureDoc(t)}
 	actorPlaced(fa, "builder", []string{"zen", "backup", "local"})
@@ -569,8 +526,6 @@ func TestActorViewPlacementSpaceIsInert(t *testing.T) {
 	}
 }
 
-// e opens the actor form from either pane: the form owns the scalar fields the
-// placement list does not (§4).
 func TestActorViewPlacementEditOpensTheForm(t *testing.T) {
 	fa := &fakeActions{doc: candFixtureDoc(t)}
 	v := actorPlacementView(t, fa, "builder")
@@ -592,8 +547,6 @@ func TestActorViewPlacementEditOpensTheForm(t *testing.T) {
 	}
 }
 
-// An actor that names no placement reads as the default: one muted line, not
-// an error and not a zero-row table (§4).
 func TestActorViewEmptyPlacementRendersTheDefault(t *testing.T) {
 	fa := &fakeActions{doc: candFixtureDoc(t)}
 	actorPlaced(fa, "builder", nil)
@@ -621,8 +574,6 @@ func TestActorViewEmptyPlacementRendersTheDefault(t *testing.T) {
 	}
 }
 
-// While an edit of this actor is in flight the placement change keys are
-// ignored too, and tab still moves the focus (§4).
 func TestActorViewPlacementIgnoresChangeKeysWhileRunning(t *testing.T) {
 	fa := &fakeActions{doc: candFixtureDoc(t)}
 	actorPlaced(fa, "builder", []string{"zen", "backup"})
@@ -651,7 +602,6 @@ func TestActorViewPlacementIgnoresChangeKeysWhileRunning(t *testing.T) {
 	}
 }
 
-// A reload that shortens the placement list clamps its cursor (§4).
 func TestActorViewPlacementCursorClampsOnDocMsg(t *testing.T) {
 	fa := &fakeActions{doc: candFixtureDoc(t)}
 	actorPlaced(fa, "builder", []string{"zen", "backup", "local"})
@@ -668,8 +618,6 @@ func TestActorViewPlacementCursorClampsOnDocMsg(t *testing.T) {
 	}
 }
 
-// Keys list the focused pane's keys and HelpKeys both panes', so ? always
-// documents the key the current pane does not offer (§2.2, §4).
 func TestActorViewKeysFollowThePane(t *testing.T) {
 	fa := &fakeActions{doc: candFixtureDoc(t)}
 	v := actorFixtureView(t, fa, "builder")
