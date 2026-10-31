@@ -14,7 +14,7 @@ import (
 )
 
 // gateTailLines is how much of the gate's log a failing result carries in
-// the payload: enough to see why it failed, not enough to flood it (#132).
+// the payload: enough to see why it failed, not enough to flood it.
 const gateTailLines = 5
 
 // gateStep advances the gate for a round whose marker exists. Pure with
@@ -102,8 +102,7 @@ func gateTimeoutFor(b store.Binding, pol policy.Policy) time.Duration {
 
 // gateLine is the payload line describing a gate's result. name and round are
 // the binding and the round the gate ran for, so the line points the mastermind
-// at `relevo show <name> --round <round> --gate` rather than the log's path
-// (P4a round 2 §4.2):
+// at `relevo show <name> --round <round> --gate` rather than the log's path:
 //
 //	"Gate: make check -- PASS (exit 0, 1m40s). Output: relevo show webshop --round 1 --gate"
 //

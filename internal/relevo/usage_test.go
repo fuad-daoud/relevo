@@ -164,9 +164,9 @@ func TestRecordUsageFoldsWithRuntimePrices(t *testing.T) {
 }
 
 // TestRecordUsageAttachesStepStats pins that a round's step figures come
-// from its builder stream at close (#323, #324): the stream's step and
-// tool-call counts land on the Usage even when no reader is wired, and a
-// stream that cannot be read leaves them zero without failing the round.
+// from its builder stream at close: the stream's step and tool-call counts
+// land on the Usage even when no reader is wired, and a stream that cannot
+// be read leaves them zero without failing the round.
 func TestRecordUsageAttachesStepStats(t *testing.T) {
 	t.Parallel()
 

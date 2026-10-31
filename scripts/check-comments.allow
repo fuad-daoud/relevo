@@ -1,16 +1,3 @@
-internal/relevo/gate.go
-internal/relevo/gatekv_test.go
-internal/relevo/gate_test.go
-internal/relevo/headless.go
-internal/relevo/headless_test.go
-internal/relevo/limit_test.go
-internal/relevo/livestat.go
-internal/relevo/off_test.go
-internal/relevo/stop.go
-internal/relevo/stop_test.go
-internal/relevo/transcript.go
-internal/relevo/usage.go
-internal/relevo/usage_test.go
 scripts/testdata/check-comments/cites-issue.go
 scripts/testdata/check-comments/cites-section.go
 scripts/testdata/check-comments/in-string.go

@@ -25,21 +25,19 @@ import (
 // a failure.
 var ErrNothingToStop = errors.New("no round is open; nothing to stop")
 
-// DefaultStopGrace is the historical pane wrap-up grace (#138). Pane builders
-// were removed in #303; the constant survives only because a stored binding
-// may still carry StopGraceMS.
+// DefaultStopGrace is the pane wrap-up grace. Pane builders are gone, but the
+// constant survives because a stored binding may still carry StopGraceMS.
 const DefaultStopGrace = 5 * time.Minute
 
-// StopOptions is what a stop request may add. Empty since #303: the pane
-// wrap-up (--grace/--now) went with pane builders, and a headless round is
-// killed at once.
+// StopOptions is what a stop request may add. Empty: a headless round is
+// killed at once, with no wrap-up to tune.
 type StopOptions struct{}
 
 // StopResult is what Stop did.
 type StopResult struct {
 	Round  int
 	Action string        // "killed" | "reaped" | "gone" | "dequeued" | "nothing"
-	Grace  time.Duration // always zero since #303; the pane wrap-up is gone
+	Grace  time.Duration // always zero; there is no wrap-up to wait out
 	// Shape is the stopped binding's shape, so StopText can word the close
 	// without a second store read.
 	Shape string
@@ -54,18 +52,16 @@ const (
 	stopNothing                   // no round is open
 )
 
-// stopDecision says whether a binding has an open round to stop. Pure. A
-// local builder is always headless since #303, so an open round is killed at
-// once: the pane wrap-up, its grace and its abandonment are gone. A queued
-// round is checked first, since it has a zero RoundStartedAt: it is dropped
-// from the queue rather than killed (#285, #344).
+// stopDecision says whether a binding has an open round to stop. Pure. An
+// open round is killed at once: there is no pane wrap-up, grace or
+// abandonment. A queued round is checked first, since it has a zero
+// RoundStartedAt: it is dropped from the queue rather than killed.
 //
-// The log decides whether a round is open, not the timestamps. Keying on them
-// made `stop` disagree with the status and history that read the log: a round
-// whose RoundStartedAt was cleared or never stamped (a resend over a halt, a
-// binding restored from a backup, a round the close advanced past) was open to
-// every reader and yet had nothing to stop. store.RoundOpen is the shared
-// definition all three read, so the three now agree by construction.
+// The log decides whether a round is open, not the timestamps: a round whose
+// RoundStartedAt was cleared or never stamped (a resend over a halt, a
+// binding restored from a backup, a round the close advanced past) is open
+// to every other reader. store.RoundOpen is the shared definition all three
+// read, so the three agree by construction.
 func stopDecision(b store.Binding, entries []store.LogEntry, now time.Time) stopAction {
 	if !store.RoundOpen(entries, b.Round) {
 		return stopNothing
@@ -76,7 +72,7 @@ func stopDecision(b store.Binding, entries []store.LogEntry, now time.Time) stop
 	return stopKill
 }
 
-// Stop ends an open round on purpose (#138), so the work in it is not lost: a
+// Stop ends an open round on purpose, so the work in it is not lost: a
 // headless builder has no stdin to type into, so it is killed now and its
 // round is closed without a report (`noreport stopped`). A stop is not a
 // failure, so this path never switches builders.
@@ -192,7 +188,7 @@ func Stop(ctx context.Context, rt Runtime, name string, opts StopOptions) (StopR
 			}
 		case stopDequeue:
 			// Nothing to kill: the server's queue is derived from QueuedAt, so
-			// clearing it drops the round (#285).
+			// clearing it drops the round.
 			b.QueuedAt = time.Time{}
 			how = "dequeued"
 		}
@@ -261,7 +257,7 @@ func stopPayload(how, name string, round int, where string, haveReport bool, cla
 	return fmt.Sprintf("The runner was stopped (%s) for round %d%s; no %s was written.", how, round, where, text.OutputWord(shape == store.ShapeReader)), "noreport stopped"
 }
 
-// closeStopped closes an open round whose builder was stopped (#138): the
+// closeStopped closes an open round whose builder was stopped: the
 // report is queued if one is on disk, and the round closes without the
 // switch a builder's own exit-without-report would trigger -- a stop is not
 // a failure. how names the close for the log ("killed", "reaped", "gone" or
