@@ -48,7 +48,7 @@ func (f fakeView) Body(env widget.Env, w, h int) string {
 	return strings.Repeat("\n", h-1)
 }
 
-// TestKeyRoutingRules is §5.2's key routing, one case per rule.
+// TestKeyRoutingRules is the key routing, one case per rule.
 func TestKeyRoutingRules(t *testing.T) {
 	newShell := func() Model {
 		return splitModel(t, 140, 40,
@@ -190,7 +190,7 @@ type fakeOverlay struct{}
 func (fakeOverlay) update(tea.KeyMsg) (overlay, tea.Cmd, bool) { return fakeOverlay{}, nil, false }
 func (fakeOverlay) view(width int) []string                    { return nil }
 
-// TestWheelRouting is §4's wheel routing: a wheel event becomes wheelStep
+// TestWheelRouting is the wheel routing: a wheel event becomes wheelStep
 // arrow keys for the top view, and every other mouse event is dropped before
 // it ever reaches updateStack.
 func TestWheelRouting(t *testing.T) {
@@ -336,7 +336,7 @@ func TestWheelRouting(t *testing.T) {
 }
 
 // TestSnapshotRoutingForwardsToEveryView: a tabMsg reaches a round view
-// that is under a pushed view (§5.2's bottom-to-top forwarding).
+// that is under a pushed view (bottom-to-top forwarding).
 func TestSnapshotRoutingForwardsToEveryView(t *testing.T) {
 	st := store.New(t.TempDir())
 	if err := st.Save(newTestBinding("webshop")); err != nil {

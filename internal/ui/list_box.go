@@ -15,7 +15,7 @@ type listItem struct {
 	disabled           bool
 }
 
-// listBox is a single-column list overlay (§3.5): ↑↓ move to the next enabled
+// listBox is a single-column list overlay: ↑↓ move to the next enabled
 // item, enter picks it, esc cancels.
 type listBox struct {
 	kind, submit string
@@ -25,7 +25,7 @@ type listBox struct {
 	onPick       func(name string) tea.Cmd
 }
 
-// keys is the list's footer (§3.5).
+// keys is the list's footer.
 func (l listBox) keys() []widget.KeyHelp {
 	submit := l.submit
 	if submit == "" {
@@ -84,7 +84,7 @@ func (l listBox) view(width int) []string {
 	return rows
 }
 
-// modal renders the list (§3.5): the header, one row per item, the note and
+// modal renders the list: the header, one row per item, the note and
 // the buttons. A row is the name (26 cells), the status (16 cells, in its
 // style) and the note in faint; a disabled row is faint throughout.
 func (l listBox) modal(width int) (string, []string, int, bool) {
@@ -113,7 +113,7 @@ func (l listBox) modal(width int) (string, []string, int, bool) {
 		case i == l.sel:
 			// The band covers the whole row: build the selected row from plain
 			// text and render it once, as modalRow does, so no inner reset ends
-			// the band (§2.2).
+			// the band.
 			row = widget.SelBandStyle.Foreground(widget.TextStyle.GetForeground()).Bold(true).
 				Render(widget.Fit(name+" "+status+" "+item.note, innerW))
 		default:
@@ -133,8 +133,7 @@ func (l listBox) modal(width int) (string, []string, int, bool) {
 	return l.kind, rows, want, false
 }
 
-// gateProvider is a gate's provider: the second '/'-segment of its token
-// (§3.5).
+// gateProvider is a gate's provider: the second '/'-segment of its token.
 func gateProvider(token string) string {
 	parts := strings.Split(token, "/")
 	if len(parts) >= 2 {

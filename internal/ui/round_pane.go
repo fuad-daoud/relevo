@@ -15,7 +15,7 @@ import (
 )
 
 // roundPane is one binding's round detail: its state, its fetch
-// orchestration and its rendering, lifted out of Model (§4.4, §5.1). Model
+// orchestration and its rendering, lifted out of Model. Model
 // holds exactly one and lends it the fields it cannot own -- src, ctx, now,
 // report, width and rows -- through syncPane on every call.
 type roundPane struct {
@@ -76,7 +76,7 @@ func (p roundPane) headRows() int {
 }
 
 // contentWidth is the width allocated for viewport content, accounting for the
-// 5-space left indent (§2.5).
+// 5-space left indent.
 func (p roundPane) contentWidth() int {
 	cw := p.width - 6
 	if cw < 20 {
@@ -86,7 +86,7 @@ func (p roundPane) contentWidth() int {
 }
 
 // viewportHeight is the rows left for the viewport after the pane's own
-// furniture, floored at 0 (§2.5).
+// furniture, floored at 0.
 func (p roundPane) viewportHeight() int {
 	h := p.rows - p.headRows()
 	if h < 0 {
@@ -203,7 +203,7 @@ func (p roundPane) pointDetailAt(key string) (roundPane, tea.Cmd) {
 	if r == nil {
 		return p, nil
 	}
-	// #143: opening a binding's detail pane is what "viewed" means; the
+	// Opening a binding's detail pane is what "viewed" means; the
 	// stamp is best-effort (each widget.Source swallows its own errors) and must
 	// never block re-targeting the pane.
 	p.src.MarkViewed(key)
@@ -254,7 +254,7 @@ func (p roundPane) pointDetailAt(key string) (roundPane, tea.Cmd) {
 }
 
 // pointDetailAtHist re-targets the pane at h, a database row not in the
-// live report (#172, §5.8): live false, round the newest -- every one of
+// live report: live false, round the newest -- every one of
 // h's rounds is closed, unlike a live row's round-1 rule -- rounds h.Rounds,
 // archivedAt from h, follow false (a hist row's terminal is transcript
 // rows, never tailed). Every cache cleared, the active tab kept, exactly
@@ -341,7 +341,7 @@ func (p roundPane) invalidate() (roundPane, tea.Cmd, bool) {
 }
 
 // stepRound moves detail.round by delta, clamped to [1, detail.rounds] --
-// "[" and "]" step a binding's rounds, live and archived alike (#183). At
+// "[" and "]" step a binding's rounds, live and archived alike. At
 // either edge it is a no-op with no notice. Every tab's cache is
 // invalidated (a round-keyed fetch is meaningless against the old round's
 // reply) and the active tab is re-fetched.
@@ -370,7 +370,7 @@ func (p roundPane) onTab(msg tabMsg) roundPane {
 	if msg.name != p.detail.name {
 		return p
 	}
-	// Every tab is round-keyed now (#183): prompt, report, terminal and
+	// Every tab is round-keyed: prompt, report, terminal and
 	// log all read the specific round fetchFor was called with, the
 	// same way diff always has. A reply for a round that is no longer
 	// the one on screen -- a slow fetch outlived by two presses of "]"
@@ -437,7 +437,7 @@ func (p roundPane) switchTab(next tab) (roundPane, tea.Cmd) {
 	return p, nil
 }
 
-// detailHeader is the detail pane's identity line (#183): name and round N
+// detailHeader is the detail pane's identity line: name and round N
 // of M, plus "archived <date>" for a hist row the database recorded as
 // archived, plus "live" when the round on screen is a live binding's own
 // open (not yet closed) round.
@@ -540,7 +540,7 @@ func (p roundPane) sourceLine() string {
 }
 
 // hintLine is the one rendered line under a blocked builder's dialog on
-// the terminal tab: the verb that resolves it (spec §3.4). The ui runs
+// the terminal tab: the verb that resolves it. The ui runs
 // nothing; it names the command.
 func (p roundPane) hintLine(b *view.BindingStatus) (string, bool) {
 	if b == nil || b.Waiting == nil || b.Waiting.Cause != "blocked" || p.detail.active != tabTerminal {
@@ -549,7 +549,7 @@ func (p roundPane) hintLine(b *view.BindingStatus) (string, bool) {
 	return widget.AccentStyle.Render("relevo: ") + widget.TextStyle.Render(b.Waiting.Hint), true
 }
 
-// view draws exactly rows rows at width (§2.5, §5).
+// view draws exactly rows rows at width.
 func (p roundPane) view(width int) string {
 	b := row(p.report, p.detail.name)
 	out := []string{p.tokensLine(b), "", p.tabsRow(), ""}

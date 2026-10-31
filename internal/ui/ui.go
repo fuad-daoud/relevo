@@ -1,3 +1,5 @@
+// Package ui is the fleet cockpit: the shell model, its views, forms and
+// overlays, reading through a widget.Source and writing through widget.Actions.
 package ui
 
 import (
@@ -18,15 +20,14 @@ type Options struct {
 	// match the daemon tick.
 	Interval time.Duration
 
-	// Prefs is where the ui keeps its own preferences (spec §6.0; P3b plan
-	// §4.4). A zero Prefs (KV nil) keeps the ui stateless -- nothing loaded,
-	// nothing saved.
+	// Prefs is where the ui keeps its own preferences. A zero Prefs (KV nil)
+	// keeps the ui stateless -- nothing loaded, nothing saved.
 	Prefs PrefsStore
 
 	// Notice is shown once, on the first frame, and cleared on the first
 	// keypress like any other notice -- cmdUI's own db-open failure
 	// ("no database: <err>") lands here so the ui still runs, in live
-	// scope, rather than ever failing to start over it (§6).
+	// scope, rather than ever failing to start over it.
 	Notice string
 
 	// PipeHint is the full refusal line RunSource prints when stdout is
@@ -38,17 +39,17 @@ type Options struct {
 	// e.g. `rounds harness:agy`. "" starts at :fleet.
 	Start string
 
-	// widget.Actions is the cockpit's write seam (§1, §4.2). Nil hides every
+	// widget.Actions is the cockpit's write seam. Nil hides every
 	// action key and makes one do nothing when pressed: `relevo serve ui`
 	// passes none, and `relevo ui` gets the mastermind adapter Run builds.
 	Actions widget.Actions
 
-	// ProbeExec is what widget.Actions.Probe runs a candidate's harness through
-	// (§4.2): cmd/relevo passes its os/exec seam so a probe spawns a real
-	// harness from the cockpit.
+	// ProbeExec is what widget.Actions.Probe runs a candidate's harness through:
+	// cmd/relevo passes its os/exec seam so a probe spawns a real harness from
+	// the cockpit.
 	ProbeExec availability.LineExec
 
-	// Version is the running binary's version string (§2.2). "" hides the
+	// Version is the running binary's version string. "" hides the
 	// version in the header.
 	Version string
 }
@@ -62,7 +63,7 @@ var stdoutStat = os.Stdout.Stat
 
 // Run renders relevo's state until the user quits or ctx is cancelled.
 // It never mutates state on its own: every write goes through widget.Actions, which
-// Run fills with the real mastermind adapter when the caller passed none (§1).
+// Run fills with the real mastermind adapter when the caller passed none.
 //
 // Preconditions:  stdout is a character device; rt.Store non-nil.
 // Postconditions: the terminal is restored, including on panic.
@@ -82,7 +83,7 @@ func Run(ctx context.Context, rt relevo.Runtime, opts Options) error {
 }
 
 // repoRoot is the directory bind would create a worktree of: os.Getwd(), or
-// "" when it cannot be read or is not inside a git repository (§4.2). A nil
+// "" when it cannot be read or is not inside a git repository. A nil
 // Git can tell nothing, so it counts as not a repo.
 func repoRoot(ctx context.Context, rt relevo.Runtime) string {
 	cwd, err := os.Getwd()

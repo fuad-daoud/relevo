@@ -5,7 +5,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/histq"
 )
 
-// updateEditing is the `/` editor's key map (§4): enter applies the parsed
+// updateEditing is the `/` editor's key map: enter applies the parsed
 // query and fetches; esc cancels and keeps the previous query; every other
 // key belongs to the textinput.
 func (m Model) updateEditing(msg tea.KeyMsg) (Model, tea.Cmd) {
@@ -14,7 +14,7 @@ func (m Model) updateEditing(msg tea.KeyMsg) (Model, tea.Cmd) {
 		q, err := histq.ParseAt(m.input.Value(), m.now())
 		if err != nil {
 			// Parse error: the message goes under the input, the previous
-			// query and its rows stay, nothing is re-queried (§6).
+			// query and its rows stay, nothing is re-queried.
 			m.parseErr = err.Error()
 			return m, nil
 		}

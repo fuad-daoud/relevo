@@ -57,7 +57,7 @@ const formSubRowIndent = 11
 
 // formSubRow puts a row that sits under a form field -- its chips, its `new
 // provider` chip or its error -- in the value column, so it lines up with the
-// field's value above it (§1, round 6). An empty row stays empty, so the form
+// field's value above it. An empty row stays empty, so the form
 // adds no blank row for a field with nothing to show.
 func formSubRow(s string) string {
 	if s == "" {

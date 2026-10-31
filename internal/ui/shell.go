@@ -11,7 +11,7 @@ import (
 )
 
 // Model is the cockpit shell: a stack of views, status polling, global keys
-// and message routing (§4.2). It keeps its name because RunSource and the
+// and message routing. It keeps its name because RunSource and the
 // tests construct it.
 type Model struct {
 	src  widget.Source
@@ -45,25 +45,25 @@ type Model struct {
 	cmd  cmdLine // the command line; cmd.open shows it
 	help bool    // help overlay shown
 
-	// overlay is the one modal box the shell holds (§3): while it is set,
-	// every key goes to it first (rule 2.5, §5.2).
+	// overlay is the one modal box the shell holds: while it is set,
+	// every key goes to it first.
 	overlay overlay
 
-	// running is the actions in flight, keyed by the binding they act on
-	// (§4.3): the footer shows them, and a second action on the same binding
+	// running is the actions in flight, keyed by the binding they act on:
+	// the footer shows them, and a second action on the same binding
 	// is refused.
 	running map[string]string
 
 	// actionLog is ':log': every action result this session, newest last, no
-	// persistence (§4.3).
+	// persistence.
 	actionLog []widget.ActionEntry
 
 	// noticeErr and noticeFaint pick the notice's style: a red failure, a
-	// faint captured stderr line, or the amber default (§4.3, §4.4).
+	// faint captured stderr line, or the amber default.
 	noticeErr   bool
 	noticeFaint bool
 
-	prefs prefs // the reduced prefs struct (§4.6); saved on every widget.PrefMsg
+	prefs prefs // the reduced prefs struct; saved on every widget.PrefMsg
 }
 
 // newModel builds the shell at ':fleet'.
@@ -121,7 +121,7 @@ func (m Model) setPref(key, value string) Model {
 // top is the top view.
 func (m Model) top() widget.View { return m.stack[len(m.stack)-1] }
 
-// env is what the shell lends a view on every call (§4.1).
+// env is what the shell lends a view on every call.
 func (m Model) env() widget.Env {
 	return widget.Env{
 		Ctx:       m.ctx,
@@ -162,8 +162,8 @@ func (m Model) Init() tea.Cmd {
 	)
 }
 
-// Update routes one message (§5.2). It stays under the 70-line cap by
-// delegating keys to updateKey and the stack-wide cases to updateStack.
+// Update routes one message. It delegates keys to updateKey and the
+// stack-wide cases to updateStack.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -258,7 +258,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // updateStatus stores a statusMsg as today, then runs the start command
-// once the first one has arrived (§5.2). A status the watchdog called slow
+// once the first one has arrived. A status the watchdog called slow
 // refetches on landing rather than waiting out the tick interval, so the
 // first paint is never followed by an interval of stale rows.
 func (m Model) updateStatus(msg statusMsg) (tea.Model, tea.Cmd) {
@@ -298,7 +298,7 @@ func (m Model) onWatchdog() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// finishAction applies one actionMsg (§4.3, §6): the notice is the first
+// finishAction applies one actionMsg: the notice is the first
 // line of Text, or the error in widget.ErrorStyle; the whole text -- or the error --
 // is appended to ':log'; and a Refresh refetches status immediately.
 func (m Model) finishAction(msg actionMsg) (tea.Model, tea.Cmd) {
@@ -338,7 +338,7 @@ func firstLine(s string) string {
 	return s
 }
 
-// updateKey is §5.2's key routing, the first rule that applies.
+// updateKey is the key routing, the first rule that applies.
 func (m Model) updateKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.notice = ""
 	if k.String() == "ctrl+c" {
@@ -349,7 +349,7 @@ func (m Model) updateKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cmd, cmd = m.cmd.update(k, m.env(), m.prefs)
 		return m, cmd
 	}
-	// Rule 2.5: a modal overlay owns every key while it is set (§3, §5.2).
+	// A modal overlay owns every key while it is set.
 	if m.overlay != nil {
 		ov, cmd, closed := m.overlay.update(k)
 		if closed {
@@ -397,7 +397,7 @@ func (m Model) updateKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 const wheelStep = 3
 
 // updateMouse turns one wheel event into wheelStep arrow keys for the top
-// view (§4), and throws away every other mouse event. It is never forwarded
+// view, and throws away every other mouse event. It is never forwarded
 // to updateStack.
 func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	var k tea.KeyMsg
@@ -437,7 +437,7 @@ func (m Model) updateTop(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // updateStack forwards one message to every view, bottom to top, replacing
-// each at its index and batching their commands (§5.2).
+// each at its index and batching their commands.
 func (m Model) updateStack(msg tea.Msg) (tea.Model, tea.Cmd) {
 	env := m.env()
 	var cmds []tea.Cmd
@@ -454,8 +454,7 @@ func (m Model) updateStack(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// widget.View draws the frame: header, context, error block, body, rule, keys
-// (§5.3).
+// widget.View draws the frame: header, context, error block, body, rule, keys.
 func (m Model) View() string {
 	if !m.ready {
 		return "loading…"

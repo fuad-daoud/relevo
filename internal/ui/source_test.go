@@ -13,8 +13,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// serverTestDB opens a temp machine database for a serve.Server under test
-// (P5 §4.3: serve.New takes the machine database from its caller now).
+// serverTestDB opens a temp machine database for a serve.Server under test:
+// serve.New takes the machine database from its caller.
 func serverTestDB(t *testing.T) *db.DB {
 	t.Helper()
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
@@ -106,7 +106,7 @@ func TestServerSourceRuntimeRefusesBadKeys(t *testing.T) {
 }
 
 // TestMasterMindSourceBaseIsRuntime pins the contract: on a mastermind Base is
-// the runtime itself, so scope all reads the mastermind's own database (§2).
+// the runtime itself, so scope all reads the mastermind's own database.
 func TestMasterMindSourceBaseIsRuntime(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
@@ -118,7 +118,7 @@ func TestMasterMindSourceBaseIsRuntime(t *testing.T) {
 
 // TestServerSourceBaseHasNoDB pins the contract: a server's Base carries
 // no database -- the server box does not run relevo.db, so scope all is
-// refused there with the existing "no database" notice (§2).
+// refused there with the existing "no database" notice.
 func TestServerSourceBaseHasNoDB(t *testing.T) {
 	root := t.TempDir()
 	srv, err := serve.New(serve.Config{Root: root, DB: serverTestDB(t), Now: time.Now})

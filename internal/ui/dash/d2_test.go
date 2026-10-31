@@ -261,8 +261,7 @@ func TestGroupNoneLast(t *testing.T) {
 
 // TestGroupShareHeaderAligned asserts the "% TOKENS" group header is
 // right-aligned over its cell: the header's final "S" sits over the "%" of
-// every group's percentage, at 132 and 200 columns (round 5, cockpit D2
-// share-header fix).
+// every group's percentage, at 132 and 200 columns.
 func TestGroupShareHeaderAligned(t *testing.T) {
 	for _, w := range []int{132, 200} {
 		m := newTestModel(t, "by:binding")
@@ -372,7 +371,7 @@ func TestRunningAndSummary(t *testing.T) {
 		t.Errorf("word with nil Running = %q, want open", wordNil)
 	}
 
-	// Summary().ByWord counts done/halted as §3.5 says
+	// Summary().ByWord counts done/halted.
 	s := m.Summary()
 	if s.ByWord["done"] != 2 {
 		t.Errorf("ByWord[done] = %d, want 2", s.ByWord["done"])
