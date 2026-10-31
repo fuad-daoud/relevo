@@ -62,7 +62,6 @@ internal/relevo/authgrace.go
 internal/relevo/authgrace_test.go
 internal/relevo/available.go
 internal/relevo/available_test.go
-internal/relevo/bind.go
 internal/relevo/bind_test.go
 internal/relevo/builder_change.go
 internal/relevo/builder_change_test.go
