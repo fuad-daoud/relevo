@@ -75,7 +75,7 @@ func TestAuthGraceClearRestartsTheClock(t *testing.T) {
 	}
 }
 
-// TestAuthGraceNilIsSafe pins §3's nil case: a CLI one-shot carries no grace,
+// TestAuthGraceNilIsSafe pins the nil case: a CLI one-shot carries no grace,
 // so it never expires -- and none of the methods panic.
 func TestAuthGraceNilIsSafe(t *testing.T) {
 	t.Parallel()

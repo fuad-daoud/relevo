@@ -56,8 +56,6 @@ internal/relevo/agy_creds_test.go
 internal/relevo/archive_mirror_test.go
 internal/relevo/ask.go
 internal/relevo/ask_test.go
-internal/relevo/authgrace.go
-internal/relevo/authgrace_test.go
 internal/relevo/available.go
 internal/relevo/available_test.go
 internal/relevo/candidate.go
@@ -84,8 +82,6 @@ internal/relevo/drain_test.go
 internal/relevo/drift.go
 internal/relevo/edges.go
 internal/relevo/edges_test.go
-internal/relevo/escape.go
-internal/relevo/escape_test.go
 internal/relevo/fake_test.go
 internal/relevo/fixture_test.go
 internal/relevo/fork.go
@@ -98,8 +94,6 @@ internal/relevo/headless.go
 internal/relevo/headless_test.go
 internal/relevo/history.go
 internal/relevo/history_test.go
-internal/relevo/injection.go
-internal/relevo/installenv.go
 internal/relevo/land.go
 internal/relevo/land_test.go
 internal/relevo/ledger.go

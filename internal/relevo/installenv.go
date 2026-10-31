@@ -27,7 +27,7 @@ func AgentInstallEnv() (harness.InstallEnv, error) {
 		return nil, err
 	}
 	// The role manifest names this machine's role files, so it lives in the
-	// machine-local file the split moved it into.
+	// machine-local file.
 	return harness.OSInstallEnvKV(d.LocalOrSelf()), nil
 }
 

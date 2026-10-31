@@ -176,8 +176,8 @@ func composeFlagged(regexLines []int, kept []classify.Paragraph, probs []float64
 	return flagged, by, above, max
 }
 
-// flaggedParenthetical moves here from reconcile.go. With rec == nil or
-// rec.Note != "" it is #139's text unchanged:
+// flaggedParenthetical is the caveat the two scan sites append to the text
+// they record for the round. With rec == nil or rec.Note != "" it is:
 //
 //	" (N instruction-shaped line[s] flagged; see relevo show --log)"
 //
