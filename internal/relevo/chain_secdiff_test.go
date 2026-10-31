@@ -129,7 +129,8 @@ func TestChainSecuritySeedNamesTheWholeChainDiff(t *testing.T) {
 	}
 
 	// The seed names neither the old closing reader's report nor the round diff
-	// keyed to that reader's round: the value used to be one builder round.
+	// keyed to that reader's round: the seed carries the whole-chain diff, not
+	// one builder round's.
 	if oldCopy, ok := rt.Store.ChainInputPath("shop", rt.Store.DiffPath("shop", sec.Round)); ok && strings.Contains(got, oldCopy) {
 		t.Errorf("the security seed names the old round-diff copy %s:\n%s", oldCopy, got)
 	}
