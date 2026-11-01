@@ -27,8 +27,8 @@ const (
 )
 
 // Mode is the shape of a builder: a process relevo runs itself, or one hosted
-// on a remote relevo server. "" is a binding from before pane builders were
-// removed, kept loadable so an old bind.json still reads back unchanged.
+// on a remote relevo server. "" is the pane-shape binding, kept loadable so an
+// old bind.json still reads back unchanged.
 type Mode string
 
 const (

@@ -185,7 +185,7 @@ func (s *Store) ReportPath(name string, round int) string {
 
 // DonePath is the builder's completion marker for a round: an empty file it
 // creates as its last action. relevo only ever stats it. It resolves the same
-// way ReportPath does: out/ when it exists, else the old flat path, else out/.
+// way ReportPath does.
 func (s *Store) DonePath(name string, round int) string {
 	return s.resolveRunnerOutput(name, round, "done", "")
 }
@@ -215,8 +215,7 @@ func (s *Store) BuilderStreamPath(name string, round int) string {
 // StreamPath returns the path of a round's stream file: the new name when that
 // file exists (on disk or as a sealed row), the old name when only that exists,
 // or the new name when neither exists (the name a fresh round starts on).
-// Total: errors and misses are both treated as not-found; the resolver never
-// returns an error.
+// Total, like PromptPath.
 func (s *Store) StreamPath(name string, round int) string {
 	newPath := s.RunnerStreamPath(name, round)
 	if _, _, ok, _ := s.StatFile(newPath); ok {
@@ -257,10 +256,8 @@ func (s *Store) ServedCheckLogPath(name string, round int) string {
 }
 
 // CheckLogTarget resolves a check log path built by CheckLogPath back to the
-// member and round it was keyed with, so a seal reuses the round the row was
-// written under instead of recomputing one. It uses the store's own round-file
-// rules, so a check log path always resolves; ok is false for a path outside
-// the state root or a name that carries no round.
+// member and round it was keyed with, through RoundFileTarget; ok is false for
+// a path outside the state root or a name that carries no round.
 func (s *Store) CheckLogTarget(path string) (member string, round int, ok bool) {
 	return s.RoundFileTarget(path)
 }
@@ -303,17 +300,15 @@ func (s *Store) DiffPath(name string, round int) string {
 	return s.roundFile(name, round, "diff", ".patch")
 }
 
-// PlanDiffPath is a round_file key for a plan's cumulative diff, stored with
-// Tx.PutRoundFile and never written to disk; read it with Store.ReadFile. It is
-// keyed to the closing round, beside the round diff.
+// PlanDiffPath is a round_file key for a plan's cumulative diff, like DiffPath.
+// It is keyed to the closing round, beside the round diff.
 func (s *Store) PlanDiffPath(name string, round int) string {
 	return s.roundFile(name, round, "plan-diff", ".patch")
 }
 
-// ChainDiffPath is a round_file key for the whole branch's diff, stored with
-// Tx.PutRoundFile and never written to disk; read it with Store.ReadFile. It is
-// a row-only key like the round and plan diffs, keyed to the builder's newest
-// closed round.
+// ChainDiffPath is a round_file key for the whole branch's diff, like DiffPath.
+// It is a row-only key like the round and plan diffs, keyed to the builder's
+// newest closed round.
 func (s *Store) ChainDiffPath(name string, round int) string {
 	return s.roundFile(name, round, "chain-diff", ".patch")
 }

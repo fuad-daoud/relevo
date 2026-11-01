@@ -109,13 +109,13 @@ func SameBindingSynced(a, b Binding) bool {
 	return SameBinding(sa, sb)
 }
 
-// syncedUnchanged reports whether a save may skip the shared row: the
-// stripped JSON of the caller's binding is byte-identical to the stored row.
-// Every shared-row write from this binary's save paths is produced by
-// strippedJSON, so a row they wrote compares against itself exactly, and a
-// row that predates the overlay (a legacy record carrying live keys)
-// compares different and migrates on its next save. A stored row that does
-// not decode is not unchanged: the full save path validates and refuses it.
+// syncedUnchanged reports whether a save may skip the shared row, comparing the
+// caller's binding as SameBindingSynced does: every shared-row write from this
+// binary's save paths is produced by strippedJSON, so a row they wrote compares
+// against itself exactly. A row that predates the overlay (a legacy record
+// carrying live keys) compares different and migrates on its next save. A stored
+// row that does not decode is not unchanged: the full save path validates and
+// refuses it.
 func syncedUnchanged(rawJSON string, b Binding) bool {
 	strip, err := strippedJSON(b)
 	if err != nil {

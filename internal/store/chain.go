@@ -10,7 +10,6 @@ import (
 // name or by any of its member bindings, and writes run under the state lock.
 // The owner is the store's own, and every row is scoped to the store's origin.
 
-// Chain returns the chain named name.
 func (s *Store) Chain(name string) (db.ChainRow, error) {
 	var c db.ChainRow
 	err := s.read(name, func(tx *Tx) error {
@@ -51,7 +50,6 @@ func (s *Store) SameChain(a, b string) bool {
 	return ca.ID == cb.ID
 }
 
-// Chains returns every chain, by name.
 func (s *Store) Chains() ([]db.ChainRow, error) {
 	var chains []db.ChainRow
 	err := s.readAll(func(tx *Tx) error {
@@ -62,7 +60,6 @@ func (s *Store) Chains() ([]db.ChainRow, error) {
 	return chains, err
 }
 
-// ChainEvents returns the named chain's trace, in seq order.
 func (s *Store) ChainEvents(name string) ([]db.ChainEventRow, error) {
 	var events []db.ChainEventRow
 	err := s.read(name, func(tx *Tx) error {
@@ -93,8 +90,6 @@ func (t *Tx) ChainPut(c db.ChainRow) error {
 	return t.withDB(func(dtx *db.Tx) error { return dtx.ChainPut(c) })
 }
 
-// ChainEventPut stores one trace row on the named chain under the seq the row
-// names, and reports whether it was new.
 func (t *Tx) ChainEventPut(name string, e db.ChainEventRow) (bool, error) {
 	c, err := t.s.chain(name)
 	if err != nil {
@@ -109,8 +104,6 @@ func (t *Tx) ChainEventPut(name string, e db.ChainEventRow) (bool, error) {
 	return added, err
 }
 
-// ChainEventAppend appends one trace row to the named chain, with the seq the
-// database allocates.
 func (t *Tx) ChainEventAppend(name string, e db.ChainEventRow) error {
 	c, err := t.s.chain(name)
 	if err != nil {
@@ -152,12 +145,10 @@ func (t *Tx) CreateChain(c db.ChainRow, members []Binding) error {
 	})
 }
 
-// ChainDelete removes the chain and its trace and member rows from the store.
 func (t *Tx) ChainDelete(name string) error {
 	return t.withDB(func(dtx *db.Tx) error { return dtx.ChainDelete(t.s.owner, name) })
 }
 
-// ChainDelete removes the chain and its trace and member rows under the state lock.
 func (s *Store) ChainDelete(name string) error {
 	return s.WithLock(func(tx *Tx) error { return tx.ChainDelete(name) })
 }
@@ -198,7 +189,6 @@ func (t *Tx) ChainMembersPut(name string, members []db.ChainMemberRow) error {
 	return t.withDB(func(dtx *db.Tx) error { return dtx.ChainMembersPut(c.ID, members) })
 }
 
-// ChainMemberDelete removes the named chain's member row for binding.
 func (t *Tx) ChainMemberDelete(name, binding string) error {
 	c, err := t.s.chain(name)
 	if err != nil {
@@ -207,7 +197,6 @@ func (t *Tx) ChainMemberDelete(name, binding string) error {
 	return t.withDB(func(dtx *db.Tx) error { return dtx.ChainMemberDelete(c.ID, binding) })
 }
 
-// ChainCheck returns the named chain's check run.
 func (s *Store) ChainCheck(name string, run int) (db.ChainCheckRow, error) {
 	var row db.ChainCheckRow
 	err := s.read(name, func(tx *Tx) error {
@@ -237,7 +226,6 @@ func (t *Tx) ChainCheck(name string, run int) (db.ChainCheckRow, error) {
 	return row, nil
 }
 
-// ChainCheckPut writes one check run for the named chain.
 func (t *Tx) ChainCheckPut(name string, row db.ChainCheckRow) error {
 	c, err := t.s.chain(name)
 	if err != nil {
@@ -283,7 +271,6 @@ func (t *Tx) ChainSaveWithEvent(c db.ChainRow, e db.ChainEventRow) error {
 	})
 }
 
-// withDB runs fn in one database transaction on the store's write handle.
 func (t *Tx) withDB(fn func(*db.Tx) error) error {
 	d, err := t.s.dbForWrite()
 	if err != nil {

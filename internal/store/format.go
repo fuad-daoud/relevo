@@ -5,53 +5,35 @@ import (
 	"fmt"
 )
 
-// BindingFormat is the format of the Binding JSON this binary writes. It is 18
-// because round_repo_baseline_tree is the source checkout's snapshot at send:
-// an older relevo that drops it from an open round would judge that round's
-// close against a plain dirty check, and halt on a worktree escape that never
-// happened. It is 17
-// because subdir records where inside the tree a round's processes run: an
-// older relevo that drops it would run the round at the tree root, the wrong
-// directory, silently. It is 16
-// because remote_halt_kind names the remote halt episode a binding is carrying:
-// the text reaches a binding from the server as well as from here, so an older
-// relevo reading the episode from the text would take a halt it did not write
-// for one it did. It is 15
-// because owed_halt records a halt notification a round close could not write:
-// a build that knows 14 would load the binding and rewrite it without that
-// field, so the owed entry would be lost rather than retried. It is 14
-// because check_run records a served binding's check run: a build that knows 13
-// would load the binding and rewrite it without that field, and the check the
-// daemon is advancing would vanish from under it. (13 was oom_requeue gaining
-// peak_bytes, 12 the runner-writable state layout: a round's report, done marker
-// and artifact directories live under the binding's out/ directory, and relevo
-// migrates an older binding's files into it on the first tick. The file names
-// and the round_file row names are unchanged, so that format bump exists only
-// to lock an older relevo out: it does not know the out/ layout and would name,
-// read and seal the old paths. That refusal is the intended clean break.)
+// BindingFormat is the format of the Binding JSON this binary writes: 18 drops
+// round_repo_baseline_tree, so an older relevo judges that round's close
+// against a plain dirty check and halts on a worktree escape that never
+// happened. 17 drops subdir, so an older relevo runs the round at the tree
+// root, the wrong directory, silently. 16 drops remote_halt_kind, so an older
+// relevo reading the episode from the text takes a halt it did not write for
+// one it did. 15 drops owed_halt, so the owed entry is lost. 14 drops
+// check_run, so the check the daemon is advancing vanishes. 13 and 12 are the
+// out/ layout lock-out, the intended break: an older relevo does not know the
+// out/ layout and would name, read and seal the old paths.
 //
 // Later fields (abandoned_sessions, oom_requeue, round_oom_kills, link,
 // remote_bundle_failures, check_run, round_closed_baseline_head, builder_pinned,
-// serve's trimpath, and
-// progress's resumed_at, cpu_ticks and cpu_ticks_at) are fields
-// recordFormat never stamps: an older relevo
-// that drops abandoned_sessions loses only pending session deletes, one that
-// drops oom_requeue or round_oom_kills loses only oom-kill tracking for
-// in-flight rounds, one that drops link loses only the name of a remote
-// binding's other copy, and one that drops remote_bundle_failures loses only a
-// failure run, which restarts from zero. One that drops builder_pinned never
-// re-picks for a window, so losing the pin is harmless. One that drops serve's
-// trimpath builds trimmed, the intended default, so losing the opt-out is harmless.
-// One that drops progress's resumed_at,
-// cpu_ticks or cpu_ticks_at loses only the resumed-idle and model-silence
-// labels for the round in flight. One that drops
+// serve's trimpath, and progress's resumed_at, cpu_ticks and cpu_ticks_at) are
+// fields recordFormat never stamps: an older relevo that drops
+// abandoned_sessions loses only pending session deletes, one that drops
+// oom_requeue or round_oom_kills loses only oom-kill tracking for in-flight
+// rounds, one that drops link loses only the name of a remote binding's other
+// copy, and one that drops remote_bundle_failures loses only a failure run,
+// which restarts from zero. One that drops builder_pinned loses only the pin.
+// One that drops serve's trimpath builds trimmed. One that drops progress's
+// resumed_at, cpu_ticks or cpu_ticks_at loses only the resumed-idle and
+// model-silence labels for the round in flight. One that drops
 // round_closed_baseline_head leaves the uncommitted-work recovery without a
 // starting commit, and the recovery then refuses rather than advances. subdir
-// is not one of these: a dropped
-// subdirectory changes where a round's own files are written, not just one
-// tracked fact. Stamping a field would lock that older
-// relevo out of loading the binding. Bump BindingFormat whenever Binding's JSON
-// shape changes in a way that must lock an older relevo out.
+// is not one of these: a dropped subdirectory changes where a round's own files
+// are written, not just one tracked fact. Stamping a field would lock that
+// older relevo out of loading the binding. Bump BindingFormat whenever
+// Binding's JSON shape changes in a way that must lock an older relevo out.
 const BindingFormat = 18
 
 // recordFormat is the format to write b at. Every record is format 18: the

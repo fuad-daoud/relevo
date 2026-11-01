@@ -123,11 +123,12 @@ func (s *Store) admitIndex(name string, idx int) error {
 // putting a payload no read-back ever found back into the pending and claimable
 // scans.
 //
-// It is admitIndex's exact mirror -- same JSON map patch, so a key a newer
-// relevo wrote survives, same first-line name refusal, same no-op on a
-// confirmed entry -- with the key deleted instead of written. The admit lives
-// only in the entry JSON, so clearing it needs no column and no migration. It is
-// idempotent, so a tick that retries the clear cannot stamp anything.
+// It is admitIndex's exact mirror with the key deleted instead of written: the
+// same JSON map patch, so a key a newer relevo wrote survives, the same
+// first-line name refusal and the same no-op on a confirmed entry. The
+// admit lives only in the entry JSON, so clearing it needs no column and no
+// migration. It is idempotent, so a tick that retries the clear cannot stamp
+// anything.
 //
 // Clearing is how a bounded admit ends: the entry stops being invisible to every
 // reader, which is what lets the push path offer it again and lets the

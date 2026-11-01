@@ -342,8 +342,8 @@ func (s *Store) sealRead(root *os.Root, binding, path string) ([]byte, fs.FileIn
 	return body, info, false, nil
 }
 
-// sealRemove removes a sealed round file: through the out/ root when it is in
-// out/, raw otherwise.
+// sealRemove removes a sealed round file, through the out/ root or raw like
+// sealRead.
 func (s *Store) sealRemove(root *os.Root, binding, path string) error {
 	if rel, ok := s.outRelOf(binding, path); ok && root != nil {
 		return root.Remove(rel)
@@ -408,9 +408,8 @@ func removeEmptyDirsBelowRoot(root *os.Root, dir string) {
 	}
 }
 
-// removeEmptyDirsBelow removes dir's empty subdirectories and then dir itself,
-// bottom up, never following a symlink and never returning an error: a removal
-// that fails is logged.
+// removeEmptyDirsBelow is removeEmptyDirsBelowRoot for the binding directory,
+// skipping symlinks instead of refusing through the out/ root.
 func removeEmptyDirsBelow(dir string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {

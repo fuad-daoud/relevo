@@ -56,10 +56,7 @@ func (s *Store) ReadFile(path string) ([]byte, error) {
 }
 
 // readRunnerOutput reads a runner-output name from its two homes, out/ first,
-// and then from the sealed row. The out/ home is read through an os.Root, so a
-// nested NNN-<actor> directory or file swapped for a symlink out of out/ is
-// refused; the flat home stays raw because the binding directory is root-owned.
-// A regular disk file wins over a row, as it always did.
+// and then from the sealed row. A regular disk file wins over a row.
 func (s *Store) readRunnerOutput(binding, name, path string) ([]byte, error) {
 	data, ok, err := s.readOutRegularFile(binding, name)
 	if err != nil {
@@ -87,10 +84,11 @@ func (s *Store) readRunnerOutput(binding, name, path string) ([]byte, error) {
 	return body, nil
 }
 
-// readOutRegularFile reads name from the binding's out/ home through its root.
-// A missing out/ directory, and a missing name inside it, are both not-found:
-// (nil, false, nil). Any other error, including a refusal of a symlink that
-// escapes out/, is returned.
+// readOutRegularFile reads name from the binding's out/ home through its root,
+// so a nested NNN-<actor> directory or file swapped for a symlink out of out/
+// is refused rather than followed; the flat home stays raw because the binding
+// directory is root-owned. A missing out/ directory, and a missing name inside
+// it, are both not-found: (nil, false, nil). Any other error is returned.
 func (s *Store) readOutRegularFile(binding, name string) ([]byte, bool, error) {
 	root, err := s.OutRoot(binding)
 	if err != nil {
@@ -170,9 +168,7 @@ func (s *Store) StatFile(path string) (size int64, mtime time.Time, ok bool, err
 }
 
 // statRunnerOutput stats a runner-output name's two homes, out/ first,
-// refusing a non-regular file, then falls back to the sealed row. The out/ home
-// is statted through its os.Root, so a nested symlink that escapes out/ is
-// refused; the flat home stays raw because the binding directory is root-owned.
+// refusing a non-regular file, then falls back to the sealed row.
 func (s *Store) statRunnerOutput(binding, name, path string) (int64, time.Time, bool, error) {
 	if fi, ok, err := s.statOutRegularFile(binding, name); err != nil {
 		return 0, time.Time{}, false, err
@@ -200,9 +196,11 @@ func (s *Store) statRunnerOutput(binding, name, path string) (int64, time.Time, 
 	return int64(len(body)), mt, true, nil
 }
 
-// statOutRegularFile stats name in the binding's out/ home through its root. A
-// missing out/ directory and a missing name are both not-found; a refusal of an
-// escaping symlink is an error.
+// statOutRegularFile stats name in the binding's out/ home through its root,
+// so a nested symlink that escapes out/ is refused; the flat home stays raw
+// because the binding directory is root-owned. A missing out/ directory and a
+// missing name are both not-found; a refusal of an escaping symlink is an
+// error.
 func (s *Store) statOutRegularFile(binding, name string) (fs.FileInfo, bool, error) {
 	root, err := s.OutRoot(binding)
 	if err != nil {
