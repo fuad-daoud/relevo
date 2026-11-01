@@ -1,8 +1,10 @@
 package remote
 
-// The server keeps the uncommitted work and prior tokens of the round it last
-// closed on the binding view, so an entry for that round is completed from the
-// view; every other round's entry is the whole record and is returned untouched.
+// ChainRoundFacts completes one closed-round entry from the member's binding
+// view for the round that view itself describes: the server keeps the
+// uncommitted work and prior tokens of the round it last closed on the
+// binding view, so an entry for that round is completed from the view; every
+// other round's entry is the whole record and is returned untouched.
 func ChainRoundFacts(cr ClosedRoundView, view BindingView) ClosedRoundView {
 	if cr.Round != view.ClosedRound {
 		return cr

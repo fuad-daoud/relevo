@@ -80,7 +80,8 @@ type WhoAmI struct {
 	// launches at when the client sends none
 	MaxTier string `json:"max_tier,omitempty"` // policy.MaxTierOrDefault()
 
-	// Nil from a server without queuing.
+	// Builders is the server's builder census; nil from a server without
+	// queuing.
 	Builders *BuildersView `json:"runners,omitempty"`
 
 	// Installation and InstallationLabel name the server's own installation,
@@ -187,14 +188,17 @@ type BindingView struct {
 	// "reaped", "gone" or "dequeued". It is "" when that round closed any
 	// other way, on a pre-stop server, or when ClosedRound is 0.
 	Stopped string `json:"stopped,omitempty"`
-	// A client keys a round's completion marker off the tokens in it, so a
-	// client that cannot see it reads an unmarked close as a marked one.
-	// Empty on a server whose close wrote no note, and from a client older
-	// than the field.
+	// ReportNote is the closed round's report entry note verbatim, the one
+	// the server's own log holds. A client keys a round's completion marker
+	// off the tokens in it, so a client that cannot see it reads an unmarked
+	// close as a marked one. Empty on a server whose close wrote no note, and
+	// from a client older than the field.
 	ReportNote string `json:"report_note,omitempty"`
-	// They are the round's whole switch history, so a rotation and an A-B-A
-	// leave two entries here where the client's own poll can only ever see
-	// the last one. Nil from a server that sends none.
+	// Switches are the closed round's switch reasons in log order: every
+	// switch entry for ClosedRound, each one the note the server wrote. They
+	// are the round's whole switch history, so a rotation and an A-B-A leave
+	// two entries here where the client's own poll can only ever see the last
+	// one. Nil from a server that sends none.
 	Switches []string `json:"switches,omitempty"`
 	// Shape is the binding's actor shape: "reader" for a reader binding, ""
 	// for a writer -- the default, and what an older server sends.
@@ -221,25 +225,32 @@ type BindingView struct {
 	Feature string `json:"feature,omitempty"`
 	Ticket  string `json:"ticket,omitempty"`
 
-	// Nil from a pre-usage server, or when the closed round has no report entry.
+	// Usage is the closed round's usage as the server recorded it on its
+	// report entry. Nil from a pre-usage server, or when the closed round has
+	// no report entry.
 	Usage *usage.Usage `json:"usage,omitempty"`
 
-	// Nil from a server without scopes, a round that was not a scope, or
-	// when the closed round has no report entry.
+	// Rusage is the closed round's cgroup measurement as the server recorded
+	// it on its report entry. Nil from a server without scopes, a round that
+	// was not a scope, or when the closed round has no report entry.
 	Rusage *store.Rusage `json:"rusage,omitempty"`
 
-	// Nil when zero or when ClosedRound is 0.
+	// PriorTokens is the tokens the server's earlier builders in ClosedRound
+	// used. Nil when zero or when ClosedRound is 0.
 	PriorTokens *usage.Tokens `json:"prior_tokens,omitempty"`
 
-	// Zero from a pre-stall server, and zero when the round is not stalled.
+	// StalledSince is the server's stall stamp for a live-but-quiet headless
+	// round, copied onto the client binding for a running round. Zero from a
+	// pre-stall server, and zero when the round is not stalled.
 	StalledSince time.Time `json:"stalled_since,omitempty"`
 
 	// Queue is this round's place in the server's builder queue;
 	// non-nil iff RoundState == RoundQueued.
 	Queue *QueueView `json:"queue,omitempty"`
 
-	// Non-nil only when RoundState == RoundRunning on a server that sends
-	// it; nil from an older server.
+	// Live is the running round's live facts as the server's own status row
+	// sees it. Non-nil only when RoundState == RoundRunning on a server that
+	// sends it; nil from an older server.
 	Live *LiveView `json:"live,omitempty"`
 
 	// ID is the server's binding_record id and Installation the server's own

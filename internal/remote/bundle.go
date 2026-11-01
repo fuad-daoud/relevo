@@ -28,7 +28,9 @@ type BundleTransport struct {
 
 type BundleOption func(*BundleTransport)
 
-// A none-mode transport takes no option.
+// WithOwnerTmp makes the transport user-mode: its temp bundle files are
+// created in dir and Lchown'ed to uid/gid before git touches them. A
+// none-mode transport takes no option.
 func WithOwnerTmp(dir string, uid, gid uint32) BundleOption {
 	return func(t *BundleTransport) {
 		if dir != "" {
@@ -57,7 +59,8 @@ func NewBundleTransport(g *git.Client, tmpDir string, opts ...BundleOption) *Bun
 	return t
 }
 
-// A none-mode transport leaves the bundle as the serve uid.
+// chownTemp hands a freshly created temp bundle to the tenant. A none-mode
+// transport leaves it as the serve uid.
 func (t *BundleTransport) chownTemp(path string) error {
 	if !t.hasOwner {
 		return nil

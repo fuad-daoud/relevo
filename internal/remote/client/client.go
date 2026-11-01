@@ -274,6 +274,7 @@ func responseError(resp *http.Response) error {
 	}
 }
 
+// isGatewayStatus covers Cloudflare's 520-527 and 530 beside 502, 503 and 504.
 func isGatewayStatus(status int) bool {
 	switch status {
 	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:

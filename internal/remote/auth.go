@@ -23,11 +23,14 @@ const (
 
 	HeaderSignature = "Relevo-Signature"
 
-	// It is also part of the signed string, so rewriting it breaks the signature.
+	// HeaderAudience is the header carrying the audience the request is signed
+	// for. It is also part of the signed string, so rewriting it breaks the
+	// signature.
 	HeaderAudience = "Relevo-Audience"
 
-	// A client that knows the scheme can tell an old server's refusal from a
-	// wrong-audience one.
+	// HeaderAuthScheme is the response header a server sets on every response,
+	// whatever its status, naming its audience scheme. A client that knows the
+	// scheme can tell an old server's refusal from a wrong-audience one.
 	HeaderAuthScheme = "Relevo-Auth"
 
 	AuthSchemeAudience = "audience"
@@ -121,7 +124,9 @@ func NewNonceWindow(ttl time.Duration) *NonceWindow {
 	}
 }
 
-// Seen is safe for concurrent use.
+// Seen reports whether nonce was already present and unexpired, and records
+// it with expiry now+ttl. Expired entries are pruned on every call. Safe for
+// concurrent use.
 func (w *NonceWindow) Seen(nonce string, now time.Time) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()

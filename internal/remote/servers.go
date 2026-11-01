@@ -46,8 +46,9 @@ func ParseServers(data []byte) (Servers, error) {
 	return s, nil
 }
 
-// The port is dropped -- whoever runs a host controls all of its ports, and
-// the server cannot know which default port the client's scheme implied.
+// HostAudience returns "host:" plus the host's lower-case hostname. The port
+// is dropped -- whoever runs a host controls all of its ports, and the server
+// cannot know which default port the client's scheme implied.
 func HostAudience(host string) string {
 	return "host:" + strings.ToLower(host)
 }

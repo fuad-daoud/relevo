@@ -25,8 +25,9 @@ const CodeChainRunning Code = "chain_running"
 // round, so the answer is the one that names `relevo done`.
 const CodeChainHalted Code = "chain_halted"
 
-// It mirrors chain.Settings; internal/remote does not import internal/chain,
-// so the two are converted at the edges.
+// ChainSettings is a chain create request's resolved configuration. It
+// mirrors chain.Settings; internal/remote does not import internal/chain, so
+// the two are converted at the edges.
 type ChainSettings struct {
 	MaxCorrections int    `json:"max_corrections,omitempty"`
 	ReviewerActor  string `json:"reviewer_actor,omitempty"`
@@ -69,17 +70,23 @@ type ClosedRoundView struct {
 	DiffNote      string   `json:"diff_note,omitempty"`
 	DiffCommits   int      `json:"diff_commits,omitempty"`
 	DiffTree      string   `json:"diff_tree,omitempty"`
-	// The server retains it for the round it last closed only, so an older
+	// DirtyCommit is the round's uncommitted work at
+	// refs/relevo/<name>/round-<Round>, "" when the round closed clean. The
+	// server retains it for the round it last closed only, so an older
 	// round ships "" rather than another round's commit.
 	DirtyCommit string        `json:"dirty_commit,omitempty"`
 	Usage       *usage.Usage  `json:"usage,omitempty"`
 	Rusage      *store.Rusage `json:"rusage,omitempty"`
-	// Nil when zero, and nil from a server older than the field.
+	// PriorTokens is the tokens the server's earlier builders in this round
+	// used. Nil when zero, and nil from a server older than the field.
 	PriorTokens *usage.Tokens `json:"prior_tokens,omitempty"`
-	// The binding-level RoundStartedAt answers only for the binding's current
-	// round, so a per-round stamp is the only way a client learns when an
-	// older round of this member began. Zero from a server older than the
-	// field, and zero for a round the server never recorded a start for.
+	// RoundStartedAt is when the round's builder actually began on the server:
+	// the admit that spawned it, or the prompt handoff for a round that was
+	// never queued. The binding-level RoundStartedAt answers only for the
+	// binding's current round, so a per-round stamp is the only way a client
+	// learns when an older round of this member began. Zero from a server
+	// older than the field, and zero for a round the server never recorded a
+	// start for.
 	RoundStartedAt time.Time `json:"round_started_at,omitempty"`
 	// QueuedAt is when the server accepted this round into its builder queue,
 	// zero for a round that was handed straight to a builder. Paired with

@@ -5,7 +5,9 @@ import (
 	"strings"
 )
 
-// In the order the refusal names them.
+// MissingChainFeatures names the features a server must advertise to run a
+// whole chain for a client, in the order the refusal names them: it drives
+// the chain itself, and it runs reader members.
 func MissingChainFeatures(who WhoAmI) []string {
 	var missing []string
 	if !HasFeature(who, FeatureChain) {

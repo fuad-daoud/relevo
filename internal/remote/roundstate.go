@@ -4,8 +4,11 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
+// RoundStateOf returns the execution state of an owned binding.
+//
 // An un-acked close outranks later state because the client fetches catch-up
-// by this word.
+// by this word: a needs_you view makes the client skip the fetch, so the
+// round would never close.
 func RoundStateOf(b store.Binding, entries []store.LogEntry) RoundState {
 	if b.Serve != nil && b.Serve.ClosedRound > b.Serve.AckedRound {
 		return RoundClosed
@@ -35,11 +38,17 @@ func RoundStateOf(b store.Binding, entries []store.LogEntry) RoundState {
 	return RoundIdle
 }
 
-// The daemon brings a switchable builder back by itself, which is the only
-// thing that excuses a broken binding from owing its MasterMind an entry. A
-// mid-round switch whose spawn failed looks switchable while having no
-// process, and no tick retries it, so with no process it is not switchable:
-// the failed resolve already gated the bad candidate, so self-healing holds.
+// BindingSwitchable reports whether the daemon will bring a builder back by
+// itself, which is the only thing that excuses a broken binding from owing
+// its MasterMind an entry. It mirrors view.WaitingOn's own test, and the two
+// must agree: a switchable break is not waiting on a human.
+//
+// The PID clause is what makes that agreement reachable: a round's candidate
+// and RoundStartedAt survive the switch that failed to replace them, so a
+// mid-round switch whose spawn failed only looks switchable while having no
+// process at all. No tick retries it, so with no process it is not
+// switchable: the failed resolve already gated the bad candidate, so
+// self-healing holds.
 func BindingSwitchable(b store.Binding) bool {
 	return b.BuilderCandidate != "" && !b.RoundStartedAt.IsZero() && b.Builder.PID != 0
 }

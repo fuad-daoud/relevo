@@ -15,15 +15,17 @@ type Snapshot struct {
 
 // TreeTransport defines the interface for moving git ref snapshots between repositories.
 type TreeTransport interface {
-	// Since "" means "everything reachable". Since must be a commit that is
-	// an ancestor of every ref; otherwise ErrSinceUnknown.
+	// Snapshot packages every ref in refs relative to since: since "" means
+	// "everything reachable", and since must be a commit that is an ancestor
+	// of every ref; otherwise ErrSinceUnknown.
 	Snapshot(ctx context.Context, repo string, refs []string, since string) (Snapshot, error)
 
-	// Every ref the body carries must be in refs (else ErrUnexpectedRef);
-	// every ref in refs the body carries is fast-forwarded (else
-	// git.ErrNotFastForward); a ref in refs the body does not carry is left
-	// as it is. Returns ref -> new sha for the refs it moved. A zero-length
-	// body is a no-op returning an empty map.
+	// Absorb applies a body of contentType to repo. Every ref the body
+	// carries must be in refs (else ErrUnexpectedRef); every ref in refs the
+	// body carries is fast-forwarded (else git.ErrNotFastForward); a ref in
+	// refs the body does not carry is left as it is. Returns ref -> new sha
+	// for the refs it moved. A zero-length body is a no-op returning an
+	// empty map.
 	Absorb(ctx context.Context, repo, contentType string, body io.Reader, refs []string) (map[string]string, error)
 }
 

@@ -26,7 +26,8 @@ type Delivery struct {
 
 // Queue records a mastermind-bound payload as pending before any delivery, so
 // a crash before confirmation restarts as unconfirmed. It takes the caller's
-// tx: Reconcile appends inside the same critical section as its round advance.
+// tx: Reconcile appends inside the same critical section as its round advance,
+// and Go mutexes are not reentrant.
 func Queue(_ context.Context, d Deps, tx *store.Tx, name string, e store.LogEntry) error {
 	if e.Direction != store.DirToMasterMind {
 		return fmt.Errorf("queue expects a mastermind-bound entry, got %q", e.Direction)
@@ -47,7 +48,8 @@ func Queue(_ context.Context, d Deps, tx *store.Tx, name string, e store.LogEntr
 // the routes, in order:
 //
 //  1. the push claim: the holder's own loop writes and confirms the entry, so
-//     this returns without touching the log.
+//     this returns without touching the log -- confirming here would empty
+//     the mailbox before the push holder wrote it.
 //  2. d.Deliverers[b.MasterMind.Kind]: OutcomeNotMine leaves the entry pending
 //     with its reason; there is no pane to fall through to.
 //  3. otherwise the entry stays pending with Route "pull": the normal path for
@@ -57,7 +59,8 @@ func Queue(_ context.Context, d Deps, tx *store.Tx, name string, e store.LogEntr
 // admit (dead holder, no deliverer) is cleared here so it is claimable again.
 //
 // The caller holds the state lock across pending -> deliver -> confirm and
-// passes tx in: `relevo wait` runs the same sequence from another process.
+// passes tx in: `relevo wait` runs the same sequence from another process,
+// and unserialised both could deliver the same payload.
 func DeliverPending(ctx context.Context, d Deps, tx *store.Tx, b store.Binding) (store.Binding, Delivery, error) {
 	pending, idx, found, err := tx.PendingForMasterMind(b.Name)
 	if err != nil {
@@ -93,11 +96,13 @@ func DeliverPending(ctx context.Context, d Deps, tx *store.Tx, b store.Binding) 
 	}, nil
 }
 
-// ConfirmAdmitted settles an entry admitted before the binding's state changed.
-// It reads the route's queue back once and never pushes, so a done or paused
-// binding gets no new payload. An unadmitted entry is left untouched, and an
-// admit past the horizon is cleared for the background wait before the same
-// one read-back runs.
+// ConfirmAdmitted settles an entry admitted before the binding's state
+// changed. It reads the route's queue back once and never pushes, so a done
+// or paused binding gets no new payload. A done or paused binding's tick
+// reaches delivery only through this call: without it an admitted entry
+// stays pending forever, because an admitted entry is not claimable. An
+// unadmitted entry is left untouched, and an admit past the horizon is
+// cleared for the background wait before the same one read-back runs.
 func ConfirmAdmitted(ctx context.Context, d Deps, tx *store.Tx, b store.Binding) (store.Binding, Delivery, error) {
 	pending, idx, found, err := tx.PendingForMasterMind(b.Name)
 	if err != nil {

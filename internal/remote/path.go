@@ -5,7 +5,8 @@ import (
 	"strings"
 )
 
-// It is how a rel that escapes the artifact directory is refused.
+// ContainsDotDotRel reports whether any element of rel is "..": it is how a
+// rel that escapes the artifact directory is refused.
 func ContainsDotDotRel(rel string) bool {
 	for _, part := range strings.FieldsFunc(rel, func(r rune) bool {
 		return r == '/' || r == '\\' || r == filepath.Separator

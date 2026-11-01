@@ -52,7 +52,8 @@ type OpencodeDeliverer struct {
 	gaveUp giveUpLog
 }
 
-// opencodeService is $XDG_CONFIG_HOME/opencode/service.json.
+// opencodeService is $XDG_CONFIG_HOME/opencode/service.json. Verified shape
+// on opencode 2.0.12: {"id","version","url","pid","password"}.
 type opencodeService struct {
 	URL      string `json:"url"`
 	Password string `json:"password"`
