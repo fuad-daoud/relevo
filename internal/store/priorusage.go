@@ -31,9 +31,7 @@ func PriorUsageOf(entries []LogEntry, round int) usage.Usage {
 	return total
 }
 
-// PriorTokensOf returns the sum of tokens from earlier segments in the given
-// round: outgoing switch entries that recorded usage, plus any PriorTokens
-// carried on the newest report entry (for closed remote rounds). Pure; no I/O.
+// PriorTokensOf returns PriorUsageOf's tokens for the round.
 func PriorTokensOf(entries []LogEntry, round int) usage.Tokens {
 	return PriorUsageOf(entries, round).Tokens
 }

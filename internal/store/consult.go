@@ -67,9 +67,9 @@ type Consult struct {
 // consultAlias is Consult without its methods, for the ordinary decode.
 type consultAlias Consult
 
-// UnmarshalJSON reads a consult written by this relevo or by one before the
-// A4 rename, mapping a legacy "role" key onto Actor. The new "actor" key wins
-// when both are present.
+// UnmarshalJSON reads a consult written by this relevo or by one with the
+// legacy "role" key, mapping it onto Actor. The new "actor" key wins when both
+// are present.
 func (c *Consult) UnmarshalJSON(raw []byte) error {
 	var alias consultAlias
 	if err := json.Unmarshal(raw, &alias); err != nil {

@@ -30,7 +30,7 @@ func (s *Store) WorktreeRoot() (*os.Root, error) {
 
 // outRelOf resolves path into the name an OutRoot root takes, when path lies
 // under the binding's out/ directory. ok is false for the binding directory's
-// own home -- the legacy flat layout, which stays raw because that directory is
+// own home -- the flat layout, which stays raw because that directory is
 // root-owned -- and for any path outside the binding.
 func (s *Store) outRelOf(name, path string) (string, bool) {
 	return RelWithin(s.OutDir(name), path)
@@ -87,8 +87,8 @@ func rootRegularFile(root *os.Root, name string) (f *os.File, info fs.FileInfo, 
 	return f, hfi, true, nil
 }
 
-// rootReadRegularFile reads name inside root when it is a regular file. ok is
-// false with a nil error when name is absent.
+// rootReadRegularFile reads name inside root as a regular file: absent is
+// (nil, false, nil).
 func rootReadRegularFile(root *os.Root, name string) ([]byte, bool, error) {
 	f, _, ok, err := rootRegularFile(root, name)
 	if err != nil || !ok {
@@ -102,9 +102,8 @@ func rootReadRegularFile(root *os.Root, name string) ([]byte, bool, error) {
 	return body, true, nil
 }
 
-// rootStatRegularFile stats name inside root when it is a regular file,
-// refusing a symlink or any other non-regular file. ok is false with a nil
-// error when name is absent.
+// rootStatRegularFile stats name inside root as a regular file: absent is
+// (nil, false, nil).
 func rootStatRegularFile(root *os.Root, name string) (fs.FileInfo, bool, error) {
 	fi, err := root.Lstat(name)
 	if err != nil {

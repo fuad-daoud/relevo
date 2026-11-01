@@ -22,10 +22,6 @@ type diskRoundFile struct {
 	round int
 }
 
-// roundFilesOfDir returns the binding's round files whose leading NNN- is
-// round: the flat files and the files under NNN-*/ artifact directories of
-// that round, in the binding directory and in its out/ child, sorted by
-// round_file name.
 func (s *Store) roundFilesOfDir(name string, round int) ([]diskRoundFile, error) {
 	files, err := s.diskFiles(name)
 	if err != nil {
@@ -47,17 +43,16 @@ func (s *Store) roundFilesOfDir(name string, round int) ([]diskRoundFile, error)
 // under <binding>/out/NNN-<actor>/ has the name NNN-<actor>/<rel>. out/ wins
 // when a name is present in both homes. It returns them sorted by round_file
 // name. A missing directory is an empty list, not an error. A flat file whose
-// name has no NNN- prefix has round 0; a file under an NNN-* directory takes
-// that directory's round.
+// name has no NNN- prefix has round 0, listed but sealed by no round; a file
+// under an NNN-* directory takes that directory's round.
 //
 // Security: the out/ home is walked through an os.Root, so a nested directory
 // swapped for a symlink out of out/ is refused, and a planted symlink or
 // reserved name there is reported so the read paths refuse it. The flat home
-// stays raw and keeps the older skips: a reserved round-file name is skipped
-// with one warning per path, because relevo authors those keys only as rows and
-// a file with one of those names is a plant or a stale copy; a symlink, file or
-// dir, is skipped with one warning per path; a dot-file or dot-dir is skipped; a
-// relative path containing ".." is refused.
+// stays raw: a reserved round-file name is row-only, so a file with one is a
+// plant or a stale copy and never a round file, skipped with one warning per
+// path; a symlink, file or dir, is skipped with one warning per path; a
+// dot-file or dot-dir is skipped; a relative path containing ".." is refused.
 func (s *Store) diskFiles(name string) ([]diskRoundFile, error) {
 	byName := map[string]diskRoundFile{}
 	add := func(f diskRoundFile) { byName[f.name] = f }
@@ -77,11 +72,9 @@ func (s *Store) diskFiles(name string) ([]diskRoundFile, error) {
 	return out, nil
 }
 
-// regularDiskFiles returns the disk round files that are regular files in
-// their home. A plant the out/ walk reports -- a symlink, a fifo -- is dropped,
-// matching the walk's older skip, so the listings (RoundFiles, RoundsOnDisk)
-// never name it. SealRound takes the unfiltered list so it can refuse and skip
-// a plant explicitly.
+// regularDiskFiles drops a plant the out/ walk reports -- a symlink, a fifo --
+// so the listings (RoundFiles, RoundsOnDisk) never name it. SealRound takes the
+// unfiltered list so it can refuse and skip a plant explicitly.
 func (s *Store) regularDiskFiles(name string) ([]diskRoundFile, error) {
 	files, err := s.diskFiles(name)
 	if err != nil {
@@ -172,8 +165,7 @@ func walkOutEntries(root *os.Root, dir string, entries []fs.DirEntry, fn func(di
 // walkOutArtifact walks one NNN-<actor>/ directory and everything below it
 // through the out/ root, naming each file NNN-<actor>/<rel> with forward
 // slashes. Dot entries are skipped and a relative path containing ".." is
-// refused. A planted symlink is reported, not followed: the read paths refuse
-// it.
+// refused.
 func walkOutArtifact(root *os.Root, dir, prefix string, round int, entries []fs.DirEntry, fn func(diskRoundFile)) error {
 	for _, e := range entries {
 		base := e.Name()
@@ -247,14 +239,10 @@ func walkRoundDir(dir string, fn func(diskRoundFile)) error {
 			}
 			continue
 		}
-		// A reserved name is row-only: relevo never writes one to disk, so a
-		// file with it is a plant or a stale copy and never a round file.
 		if reservedRoundFile(base) {
 			slog.Warn("round walk: skipping reserved round file", "path", path)
 			continue
 		}
-		// round is 0 for a flat file that is not a round file: it is listed,
-		// but it is not sealed by any round.
 		round, _ := roundOfFile(base)
 		fn(diskRoundFile{path: path, name: base, round: round})
 	}
