@@ -982,8 +982,10 @@ func TestStatuslinePushClaimStepsAsideText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newRuntime: %v", err)
 	}
+	// SeenAt lies an hour ahead so the claim outlives delivery.ClaimTTL
+	// however slowly a loaded machine reaches the status calls below.
 	now := time.Now()
-	if err := rt.Channels.Write(delivery.Claim{MasterMind: fx.mastermindID, PID: os.Getpid(), StartedAt: now, SeenAt: now}, now); err != nil {
+	if err := rt.Channels.Write(delivery.Claim{MasterMind: fx.mastermindID, PID: os.Getpid(), StartedAt: now, SeenAt: now.Add(time.Hour)}, now); err != nil {
 		t.Fatalf("Write claim: %v", err)
 	}
 

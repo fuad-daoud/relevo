@@ -74,7 +74,9 @@ func seedPushAckEntry(t *testing.T, name, mastermindID string) {
 
 	// The claim is what makes the ack's liveness check pass. It is written
 	// straight to the kv rows the CLI's own ClaimStore reads, so no holder
-	// process is needed.
+	// process is needed. Its SeenAt lies an hour ahead so it outlives
+	// delivery.ClaimTTL however slowly a loaded machine runs the test: these
+	// tests pin the ack, not the claim's expiry.
 	rt, err := newRuntime()
 	if err != nil {
 		t.Fatalf("newRuntime: %v", err)
@@ -84,7 +86,7 @@ func seedPushAckEntry(t *testing.T, name, mastermindID string) {
 		MasterMind: mastermindID,
 		PID:        os.Getpid(),
 		StartedAt:  now,
-		SeenAt:     now,
+		SeenAt:     now.Add(time.Hour),
 	}, now); err != nil {
 		t.Fatalf("write claim: %v", err)
 	}
