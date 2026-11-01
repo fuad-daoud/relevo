@@ -11,12 +11,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
-// binExec is usage.Exec over the real PATH. Stderr rides on the error so
-// the reader can quote its first line.
-//
-// It optionally runs the child as a tenant (credential) with the tenant's
-// environment (deny/extra, from isolate.UserSpec's rule), which is how a
-// user-mode server's session reaper deletes a session as the tenant.
+// binExec is usage.Exec over the real PATH, with stderr folded into the
+// error. It optionally runs the child as a tenant, which is how a user-mode
+// server's session reaper deletes a session as the tenant.
 type binExec struct {
 	credential *spawn.Credential
 	deny       []string
@@ -43,10 +40,8 @@ func (e binExec) Run(ctx context.Context, bin string, args ...string) ([]byte, e
 	return out, nil
 }
 
-// binEnvExec is binExec with an environment: delivery.EnvExec over the real PATH,
-// with stderr folded into the error the same way. extraEnv is appended to the
-// parent environment, never replacing it, so agy still finds its own PATH and
-// HOME; there is no shell, so no value here can be re-interpreted.
+// binEnvExec is binExec with an environment, appended to the parent's so agy
+// still finds its PATH and HOME; there is no shell, so no value is re-interpreted.
 type binEnvExec struct{}
 
 func (binEnvExec) Run(ctx context.Context, extraEnv []string, bin string, args ...string) ([]byte, error) {

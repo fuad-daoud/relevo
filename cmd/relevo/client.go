@@ -16,11 +16,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/uplink"
 )
 
-// cmdClientAddServer records a server entry in the servers section, and, when
-// --fingerprint pins it, checks enrollment once with WhoAmI. A 401
-// here is not an error: it means the admin has not enrolled this client's key
-// yet, and the reply names the enrollment line to hand them. When no client
-// key exists yet it first generates one, and prints the enrollment line.
+// cmdClientAddServer records a server entry, checking enrollment once when
+// --fingerprint pins it. A 401 is not an error, and a missing client key is
+// generated first, since the check cannot succeed without it.
 type clientAddServerFlagValues struct {
 	fingerprint *string
 	ca          *string
@@ -148,10 +146,9 @@ func addServerDoc(asJSON bool, name, url string) error {
 	return printDoc(configServerAddDocOf(name, url))
 }
 
-// cmdClientRmServer refuses while any binding in the store still names the
-// server (uplink.ServerInUse is the pure rule this checks; it is tested in
-// internal/relevo so this thin wrapper needs no harness or network access to
-// test the refusal shape -- see CLAUDE.md's CI rule).
+// cmdClientRmServer refuses while any binding still names the server;
+// uplink.ServerInUse is the pure rule this checks, so this wrapper needs no
+// harness or network to test the refusal shape.
 type clientRmServerFlagValues struct {
 	asJSON *bool
 }
@@ -229,10 +226,9 @@ func serversFlagSet(fs *flag.FlagSet) *serversFlagValues {
 	return v
 }
 
-// cmdServers prints one row per configured server: name, url, and this
-// client's enrollment on it, via the same relevo.ProbeServers doctor's
-// per-server checks use. A machine with no client key probes every server
-// "no key" without dialling; the same probe feeds the human table and --json.
+// cmdServers prints one row per configured server with this client's
+// enrollment, via the same probe the doctor's checks use. With no client key
+// every server probes "no key" without dialling.
 func cmdServers(args []string) error {
 	fs := flag.NewFlagSet("relevo config server list", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)

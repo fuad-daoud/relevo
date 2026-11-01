@@ -8,38 +8,13 @@ import (
 )
 
 // daemonEnablePath runs the two run-once passes a database must finish before
-// its rows may leave this machine, and which the enable preflight names by name
-// when it refuses. Both are idempotent, so a start that finds their markers
-// already written logs nothing and takes no backup.
-//
-// The split runs first. It is the only pass here that moves rows and the only
-// one that backs the file up, so a backup taken before anything has been stamped
-// is a backup of the database a long-lived installation actually left behind. It
-// moves every machine-local row out of the shared file into the machine-local
-// file beside it -- the secret table above all, along with the pids, paths and
-// offsets nothing else on another machine could read. That move is the whole of
-// the fix the shared-secrets refusal names, so until this pass runs the refusal
-// has nothing the user can do about it.
-//
-// The backfill runs second: it stamps this installation's id on every row
-// written before the origin column existed, one table at a time, and records
-// itself in kv last, only once nothing anywhere is left unstamped. So a start
-// that halted partway leaves no marker and the next one resumes: it stamps only
-// what is left and neither re-stamps nor skips what already moved. A stale row
-// whose stamp would collide with a row this installation already stamped is
-// settled before the table is stamped -- dropped for the live row on a mirror
-// table, left for a person on the record table -- so one colliding pair cannot
-// roll back the rest. It is additive and needs no backup of its own.
-//
-// Neither failure stops the daemon. A machine with no database still runs, and a
-// pass that failed is retried on the next start.
-//
-// What it reports is whether this machine's rows may leave it. Both passes record
-// themselves only once they finished -- the split's marker is written last, after
-// every row has moved, and the backfill's only once the origin gate counts nothing
-// anywhere -- so a pass that returned an error left no marker, and the caller
-// answers no. That answer is what keeps the sync verb uninstalled on a database
-// whose secrets are still sitting in the shared file.
+// its rows may leave, which the enable preflight names when it refuses. The
+// split moves every machine-local row into the machine-local file, backing
+// the file up first; the backfill stamps every unstamped row and records
+// itself last, so a halted start resumes where it left off. A colliding pair
+// is settled per table rather than rolling back the rest. Neither failure
+// stops the daemon, and both record themselves only once finished, so an
+// error keeps the sync verb uninstalled.
 func daemonEnablePath(d *db.DB, backupDir, origin string, now time.Time) (rowsMayLeave bool) {
 	sstats, sran, serr := db.SplitOnce(d, backupDir, now)
 	if serr != nil {
@@ -51,10 +26,8 @@ func daemonEnablePath(d *db.DB, backupDir, origin string, now time.Time) (rowsMa
 			"rows_moved", sstats.RowsMoved,
 			"kv_keys_moved", sstats.KVKeysMoved,
 			"conflicts", sstats.Conflicts)
-		// A conflict is a shared stray the pass would not overwrite with:
-		// the local row stayed, so names what kept its value and where the
-		// pre-split backup holds the stray it converged away. Names only,
-		// never contents: a conflicting row may be a secret.
+		// A conflict names only which row kept its value and which backup holds
+		// the stray: a conflicting row may be a secret, so never its contents.
 		for _, name := range sstats.ConflictKeys {
 			slog.Warn("relevo daemon: local split kept a local row over a shared stray",
 				"row", name, "backup_path", sstats.BackupPath)
@@ -64,20 +37,14 @@ func daemonEnablePath(d *db.DB, backupDir, origin string, now time.Time) (rowsMa
 		}
 	}
 
-	// Both lines name the table and the counts, never a row's contents: a stale
-	// twin is reported as how many rows in which table were dropped for the
-	// stamped live row, and a halt as which table still holds how many. What a
-	// row held is a working tree path or a record body, and neither belongs in a
-	// journal that may be uploaded.
+	// Both lines name tables and counts, never a row's contents: a row holds a
+	// working tree path or a record body, and neither belongs in a journal
+	// that may be uploaded.
 	bstats, bran, berr := db.BackfillOriginOnce(d, origin, now)
 	if berr != nil {
-		// A pass that stopped on rows it will not decide alone is not the same
-		// event as a pass that had nothing to do, and one line for both is what
-		// let a halt over referenced rows read as a pass that settled nothing:
-		// stamped=0 and dropped=0 look alike whichever it was. So a pass that
-		// halted gets its own line, naming the tables and how many rows in each
-		// are waiting on a person, and the stall it really was keeps the skip
-		// line it always had.
+		// A halted pass gets its own line: stamped=0 and dropped=0 read alike,
+		// so one line for both would let a halt over referenced rows read as
+		// a pass that settled nothing.
 		if bstats.Halted() > 0 {
 			slog.Warn("relevo daemon: origin backfill halted on rows a person must decide",
 				"err", berr,
