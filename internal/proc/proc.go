@@ -28,10 +28,9 @@ import (
 const DefaultKillGrace = 5 * time.Second
 
 // ReapFragment and supervisorScript are aliases of the spawn package's
-// exported script fragments. The script itself lives in internal/spawn so the
-// cross-platform isolate core can name it without importing this unix-only
-// package; the names stay here so this package's buildArgv and its tests read
-// unchanged.
+// exported script fragments, which live in internal/spawn so the cross-platform
+// isolate core can name them without importing this unix-only package. The
+// names stay so this package's buildArgv and its tests read unchanged.
 const (
 	ReapFragment     = spawn.ReapFragment
 	supervisorScript = spawn.SupervisorScript
@@ -49,23 +48,18 @@ const (
 // Start retries it, so one transient failure costs at most this long.
 const ScopeReprobeAfter = 5 * time.Minute
 
-// Runner is the local spawn.Runner.
 type Runner struct {
 	// KillGrace is the SIGTERM-to-SIGKILL grace; zero means DefaultKillGrace.
 	KillGrace time.Duration
 
 	// TmpDir is where a child's temporary files go when the spec names none: a
-	// spec's own directory, an extra that sets a name, and -- for a spec that
-	// names none -- a non-empty inherited value all win over it. Zero means no
-	// default, which leaves a caller's own environment exactly as it was. It is
-	// a directory the child can already write -- the state root's own temp dir,
-	// or the tenant's, never a root-owned one the child cannot enter.
+	// spec's own directory, an Env entry, and a non-empty inherited value all
+	// win over it. Zero means no default. It must be a directory the child can enter.
 	TmpDir string
 
 	// probeMu guards the probe state below: one probe on the first scoped
 	// Start, retried after a failure at least ScopeReprobeAfter later.
-	probeMu sync.Mutex
-	// scopes is the probe's verdict, and scopesFailedAt when it failed.
+	probeMu        sync.Mutex
 	scopes         probeState
 	scopesFailedAt time.Time
 	// probe runs the scope probe; nil means ProbeScopes, tests inject one.
@@ -102,9 +96,7 @@ func (r *Runner) grace() time.Duration {
 }
 
 // scopesUsable reports whether a scoped spawn may run in its own scope right
-// now: the probe is taken when the verdict is unknown or a failure is at least
-// ScopeReprobeAfter old, and a success is sticky. A failure is logged once,
-// when it is taken.
+// now; a success is sticky and a failure is retried once ScopeReprobeAfter old.
 func (r *Runner) scopesUsable(ctx context.Context, slice string) bool {
 	r.probeMu.Lock()
 	defer r.probeMu.Unlock()
@@ -149,7 +141,6 @@ func (r *Runner) scopeTakesNoExpand(ctx context.Context) bool {
 	return r.noExpand
 }
 
-// nowTime is the probe clock: the injected one in tests, else time.Now.
 func (r *Runner) nowTime() time.Time {
 	if r.now != nil {
 		return r.now()
@@ -159,7 +150,7 @@ func (r *Runner) nowTime() time.Time {
 
 // buildArgv builds the argv Start execs: bin under supervisorScript, wrapped in
 // a systemd scope when spec.Scope is set. The supervisor's first argument is the
-// scope unit Start expects to be running in, or "" for a plain spawn.
+// scope unit, or "" for a plain spawn.
 func buildArgv(spec spawn.ProcSpec, bin string) []string {
 	var want string
 	if spec.Scope != nil {
@@ -172,13 +163,9 @@ func buildArgv(spec spawn.ProcSpec, bin string) []string {
 	return inner
 }
 
-// buildCmd assembles the exec.Cmd for a spec resolved against bin: the argv,
-// the working directory, the filtered child environment and the process
-// attributes. tmpDir is the runner's default temporary directory, empty for a
-// runner that names none; the spec's own TmpDir beats it. It is pure -- no file
-// is opened and no process started -- so the credential and environment rules
-// can be pinned without spawning. Start sets the stdout and stderr file handles
-// the caller opened; everything else about the command is decided here.
+// buildCmd assembles the exec.Cmd for a spec resolved against bin: the spec's
+// own TmpDir beats tmpDir. It is pure -- no file is opened and no process
+// started -- so the credential and environment rules can be pinned without spawning.
 func buildCmd(spec spawn.ProcSpec, bin, tmpDir string) *exec.Cmd {
 	argv := buildArgv(spec, bin)
 	cmd := exec.Command(argv[0], argv[1:]...)
@@ -191,8 +178,7 @@ func buildCmd(spec spawn.ProcSpec, bin, tmpDir string) *exec.Cmd {
 
 // sysProcAttr is the process attribute block a spec starts with: a new session
 // always, so Kill's process group is the child's own, and the tenant credential
-// only when one was asked for. A nil credential leaves the process running as
-// the serve uid -- the none-mode default.
+// only when one was asked for.
 func sysProcAttr(spec spawn.ProcSpec) *syscall.SysProcAttr {
 	attr := &syscall.SysProcAttr{Setsid: true}
 	if spec.Credential != nil {
@@ -235,8 +221,8 @@ func (r *Runner) Start(ctx context.Context, spec spawn.ProcSpec) (spawn.ProcHand
 	return handleFor(ctx, pid), nil
 }
 
-// checkSpawnSpec validates spec and resolves the binary Start will exec; every
-// check runs before either file is created, so a refused Start leaves nothing.
+// checkSpawnSpec validates spec before either file is created, so a refused
+// Start leaves nothing.
 func checkSpawnSpec(spec spawn.ProcSpec) (string, error) {
 	if len(spec.Argv) == 0 {
 		return "", errors.New("proc: empty argv")
@@ -258,7 +244,6 @@ func checkSpawnSpec(spec spawn.ProcSpec) (string, error) {
 	return bin, nil
 }
 
-// openSpawnFiles opens the builder's log and stream for append.
 func openSpawnFiles(spec spawn.ProcSpec) (logf, streamf *os.File, err error) {
 	logf, err = openAppend(spec.LogPath)
 	if err != nil {
@@ -272,18 +257,13 @@ func openSpawnFiles(spec spawn.ProcSpec) (logf, streamf *os.File, err error) {
 	return logf, streamf, nil
 }
 
-// oNoFollow is O_NOFOLLOW where the platform has it: the state directory that
-// holds a round's log and stream is runner-writable, and the flag is the race
-// backstop behind the Lstat refusal, so a link swapped in after the check
-// cannot be followed.
+// oNoFollow is O_NOFOLLOW where the platform has it: the race backstop behind
+// the Lstat refusal, so a link swapped in after the check cannot be followed.
 const oNoFollow = syscall.O_NOFOLLOW
 
 // openRegular opens path with the given flags, refusing anything that is not a
-// regular file. The state directory that holds a round's log, stream and kill
-// record is runner-writable, so a symlink planted at any of them must not be
-// followed out of it: the Lstat is the refusal and O_NOFOLLOW the race backstop
-// behind it. The Lstat also keeps a planted fifo from blocking the open, which
-// would wait for a reader that never comes.
+// regular file: the Lstat is the refusal and O_NOFOLLOW the race backstop, so a
+// planted symlink is never followed, and a planted fifo never blocks the open.
 func openRegular(path string, flags int) (*os.File, error) {
 	if fi, err := os.Lstat(path); err == nil {
 		if !fi.Mode().IsRegular() {
@@ -300,9 +280,8 @@ func openAppend(path string) (*os.File, error) {
 }
 
 // requireScope refuses a spawn that requires its scope when the scope cannot
-// be taken: no scope was given, or the probe fails. The refusal precedes any
-// file creation, so a refused Start spawns nothing and leaves nothing behind.
-// A spawn that does not require its scope keeps the silent fallback below.
+// be taken. The refusal precedes any file creation, so a refused Start leaves
+// nothing. A spawn that does not require its scope keeps the silent fallback.
 func (r *Runner) requireScope(ctx context.Context, spec spawn.ProcSpec) error {
 	if !spec.RequireScope {
 		return nil
@@ -317,10 +296,8 @@ func (r *Runner) requireScope(ctx context.Context, spec spawn.ProcSpec) error {
 }
 
 // resolveScope applies the lazy probes and their fallbacks: a scope whose probe
-// fails is dropped, so the builder runs unscoped, a systemd-run that takes the
-// switch is told not to expand the command line, and a refused AllowedCPUs is
-// cleared while the scope and its quota stay. The pin fallback re-points a
-// copied ScopeSpec, since Start took spec by value but Scope is a pointer.
+// fails is dropped, the switch is set when taken, and a refused AllowedCPUs is
+// cleared while the scope and its quota stay.
 func (r *Runner) resolveScope(ctx context.Context, spec spawn.ProcSpec) spawn.ProcSpec {
 	if spec.Scope == nil {
 		return spec
@@ -354,11 +331,8 @@ func (r *Runner) resolveScope(ctx context.Context, spec spawn.ProcSpec) spawn.Pr
 }
 
 // spawnEnv adds the GOMAXPROCS, temp-dir and fsmonitor entries and filters the
-// parent so the child sees exactly one of each; the full-slice expressions
-// copy, so the caller's Env array, the DeniedEnv var and the spec's DenyEnv are
-// never written in place. specDeny names extra variables the spec itself
-// refuses, specDir is the process's own temporary directory, and runnerDir is
-// the runner's default for a spec that names none.
+// parent so the child sees exactly one of each; the full-slice expressions copy,
+// so the caller's slices are never written in place.
 func spawnEnv(parent, extra []string, scope *spawn.ScopeSpec, specDeny []string, specDir, runnerDir string) []string {
 	add := goMaxProcsEnv(parent, extra, scope)
 	tmpAdd, tmpDeny := tmpDirEnv(parent, extra, specDir, runnerDir)
@@ -406,13 +380,11 @@ func (r *Runner) ExitCode(_ context.Context, h spawn.ProcHandle, logPath string)
 	return code, true
 }
 
-// Kill sends SIGTERM to the supervisor's process group -- the supervisor and the
-// builder under it -- waits up to the grace for Alive to turn false, then
-// SIGKILLs the group. Alive's start-time check runs first, so a reused pid is
-// never signalled. The record precedes the signal, because a reader only ever
-// reads a dead handle, so the record is in place before the process could die.
-// A record that cannot be written is warned about, never a reason to leave a
-// process alive.
+// Kill sends SIGTERM to the supervisor's process group, waits up to the grace
+// for Alive to turn false, then SIGKILLs. Alive's start-time check runs first,
+// so a reused pid is never signalled. The record precedes the signal, so it is
+// in place before the process could die. A record that cannot be written is
+// warned about, never a reason to leave a process alive.
 func (r *Runner) Kill(ctx context.Context, h spawn.ProcHandle, streamPath string) error {
 	alive, err := r.Alive(ctx, h)
 	if err != nil {
@@ -463,9 +435,7 @@ func (r *Runner) Rusage(_ context.Context, _ spawn.ProcHandle, streamPath string
 var errNoProcess = errors.New("proc: no such process")
 
 // StartTime reports when a process started, via the same `ps -o lstart=` read
-// psInfo uses. `relevo mastermind init` needs it to defend a mastermind record against
-// pid reuse, as a binding's endpoint does. A missing pid is an error, not the
-// zero time: the caller decides what a host it cannot measure means.
+// psInfo uses. A missing pid is an error, not the zero time.
 func StartTime(ctx context.Context, pid int) (time.Time, error) {
 	started, _, err := psInfo(ctx, pid)
 	if err != nil {
@@ -508,7 +478,6 @@ func psInfo(ctx context.Context, pid int) (started time.Time, state string, err 
 	return started, fields[0], nil
 }
 
-// lastLine returns the file's final line, ignoring trailing newlines.
 func lastLine(path string) (string, bool) {
 	lines, ok := lastLines(path, 1)
 	if !ok {

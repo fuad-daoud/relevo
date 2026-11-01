@@ -57,34 +57,20 @@ type ScopeSpec struct {
 	// process sees it. The Runner sets it when systemd-run takes the switch.
 	NoExpand bool
 
-	// GateCPUQuota is the gate's own CPU ceiling, template only. It is set on
-	// Runtime.Scope from policy and read only by scopeFor when it builds a
-	// gate's spec: scopeFor copies the template, moves this value into
-	// CPUQuota, and always returns a spec with GateCPUQuota zeroed. The local
-	// Runner (proc.ScopeArgv) never reads it, so a spec handed to Start must
-	// have it empty.
+	// GateCPUQuota is the gate's own CPU ceiling, template only: scopeFor copies
+	// the template, moves this value into CPUQuota, and always returns a spec
+	// with GateCPUQuota zeroed. The local Runner never reads it, so a spec
+	// handed to Start must have it empty.
 	GateCPUQuota string
 }
 
 // GoMaxProcsFor reports the GOMAXPROCS a process launched under s should get:
 // the number of CPUs that scope may run on. ok false means the scope limits
-// nothing, and the caller sets nothing.
-//
-// It counts AllowedCPUs with ParseCPUList (a pinned round's pool is one
-// core) and CPUQuota as ceil(percent/100) with a minimum of 1; with both it is
-// the smaller of the two. It reads nothing else: GateCPUQuota is template-only
-// and is always zeroed on a launched spec. A malformed AllowedCPUs or CPUQuota
-// contributes nothing, as if it were unset -- impossible after policy.Load, but
-// the rule must not panic. Pure.
-//
-// The value is Go-only, and relevo sets it even though Go already derives its
-// default GOMAXPROCS from the CPU affinity mask (sched_getaffinity): for a
-// pinned round that is redundant but harmless, and it is correct when the pin
-// was refused and the round floated. It matters for quota-only rounds, and for
-// every Go binary whose main module is below Go 1.25 -- only a 1.25+ main
-// module reads the cgroup CPU bandwidth limit (containermaxprocs), so such a
-// binary would otherwise size itself for the whole machine. The go command's
-// -p and `go test -parallel` defaults follow GOMAXPROCS.
+// nothing, and the caller sets nothing. It is the smaller of the AllowedCPUs
+// count and ceil(quota/100) with a minimum of 1; a malformed value contributes
+// nothing instead of panicking, and GateCPUQuota is never read. It is set even
+// though Go derives its default from the affinity mask: that misses quota-only
+// rounds and binaries whose main module is below Go 1.25.
 func GoMaxProcsFor(s ScopeSpec) (int, bool) {
 	var (
 		n    int
@@ -134,18 +120,12 @@ type ProcHandle struct {
 	StartedAt time.Time
 }
 
-// Runner starts, observes and stops one process on behalf of a binding. It
-// knows nothing about rounds, reports or harnesses. The local implementation is
-// internal/proc; a remote one would be ssh.
-//
-// Start returns as soon as the pid exists; the caller never waits on it.
-// Alive is true iff a process with the handle's pid exists AND its start
-// time matches within one second -- a reused pid is false, and a missing
-// pid is (false, nil), not an error. ExitCode reports the code the runner's
-// supervisor left as the stream's last line (the caller passes the stream path),
-// ok false when there is none (the process is still running, was killed before
-// it could write one, or a kill was recorded for this handle). Kill stops the
-// process group, escalating after a grace; not alive is nil. A kill is recorded
+// Runner starts, observes and stops one process on behalf of a binding. Start
+// returns as soon as the pid exists; the caller never waits on it. Alive is
+// true iff a process with the handle's pid exists AND its start time matches
+// within one second. ExitCode reports the code the supervisor left as the
+// stream's last line, ok false when there is none. Kill stops the process
+// group, escalating after a grace; not alive is nil. A kill is recorded
 // against the stream so a trailer written after the signal is never read as
 // that process's code.
 type Runner interface {
@@ -160,52 +140,41 @@ type Runner interface {
 }
 
 // AliveFact is what a batch liveness probe reports about one process: the start
-// time and state ps read for it. A handle is alive against a fact by the same
-// rule Alive applies -- same start time within a second, not a zombie -- so a
-// caller that batches gets the answers it would have got one handle at a time.
+// time and state ps read for it, judged by the same rule Alive applies, so a
+// caller that batches gets the same answers.
 type AliveFact struct {
 	StartedAt time.Time
 	State     string
 }
 
 // AliveBatchProber is the optional half of a Runner that answers Alive for many
-// handles with one probe. A status refresh paints every headless row at once and
-// each Alive is a ps fork, so the fleet path batches them into a single fork.
-// Callers type-assert Runtime.Runner to it; a Runner that lacks it falls back to
-// one Alive call per handle, which is slower but answers identically.
+// handles with one probe. A Runner that lacks it falls back to one Alive call
+// per handle, which answers identically.
 type AliveBatchProber interface {
 	// AliveBatch reports a fact per pid ps listed. A pid ps did not list is
-	// absent from the map, which reads as not alive -- the same answer the
-	// single-handle path gives for a missing process. An error means the probe
-	// itself failed (ps did not run), not that a process is gone: callers that
-	// cannot batch, or whose batch failed, must fall back to Alive so a broken
-	// ps is never read as a dead builder.
+	// absent from the map, which reads as not alive. An error means the probe
+	// itself failed, not that a process is gone: callers must fall back to
+	// Alive, so a broken ps is never read as a dead builder.
 	AliveBatch(ctx context.Context, handles []ProcHandle) (map[int]AliveFact, error)
 }
 
 // ScopeProber is the optional half of a Runner that can say whether a systemd
-// scope unit is still occupying its name. Callers type-assert Runtime.Runner to
-// it; a Runner that lacks it, or whose probe errors, is treated as "no scope is
-// active".
+// scope unit is still occupying its name. A Runner that lacks it, or whose
+// probe errors, is treated as "no scope is active".
 type ScopeProber interface {
 	// ScopeActive reports whether the scope unit <unit>.scope is loaded and not
-	// yet gone: ActiveState is active, activating, deactivating or reloading.
-	// unit is the base name scopeUnitName returns (no ".scope").
-	// An error means "could not tell"; callers treat it as not active.
+	// yet gone. An error means "could not tell"; callers treat it as not active.
 	ScopeActive(ctx context.Context, unit string) (bool, error)
 }
 
 // ScopeStopper is the optional half of a Runner that can end a systemd scope
-// and everything still in it. Callers type-assert Runtime.Runner to it; a
-// Runner that lacks it can see a scope but not end one.
+// and everything still in it. A Runner that lacks it can see a scope but not
+// end one.
 type ScopeStopper interface {
 	// StopScope ends the scope unit <unit>.scope and every process still in
-	// its cgroup, so a straggler a harness abandoned cannot hold the unit
-	// open. It signals first and kills after the runner's own grace, and
-	// returns only once the unit is gone; an error means it may still be
-	// there. unit is the base name scopeUnitName returns (no ".scope"). A
-	// unit that is not loaded, and a host with no systemctl, are not errors:
-	// there is nothing to end.
+	// its cgroup. It returns only once the unit is gone; an error means it may
+	// still be there. A unit that is not loaded, and a host with no systemctl,
+	// are not errors.
 	StopScope(ctx context.Context, unit string) error
 }
 
@@ -218,20 +187,14 @@ type ScopeResult struct {
 }
 
 // ScopeResultProber is the optional half of a Runner that can report the
-// final systemd Result of a scope unit from its journal. Callers type-assert
-// Runtime.Runner to it; a Runner that lacks it, or whose probe errors, is
-// treated as "not oom-killed".
-//
-// A transient scope that failed is collected at once, so systemctl no longer
-// holds its result; the journal is where the unit's UNIT_RESULT survives.
+// final systemd Result of a scope unit from its journal: a collected scope's
+// result survives only there. A Runner that lacks it, or whose probe errors,
+// is treated as "not oom-killed".
 type ScopeResultProber interface {
 	// ScopeResult reads the user journal for the scope unit <unit>.scope,
-	// considering only entries at or after since. Result carries the unit's
-	// UNIT_RESULT ("success", "oom-kill", ...) and PeakBytes its
-	// MEMORY_PEAK. The unit is the base name scopeUnitName returns (no
-	// ".scope"). A missing journalctl, and a journal that holds no entry
-	// for the unit, are not errors; an error means "could not tell", and
-	// callers treat it as not oom-killed.
+	// considering only entries at or after since. A missing journalctl, and a
+	// journal with no entry for the unit, are not errors; an error means
+	// "could not tell", treated as not oom-killed.
 	ScopeResult(ctx context.Context, unit string, since time.Time) (ScopeResult, error)
 }
 

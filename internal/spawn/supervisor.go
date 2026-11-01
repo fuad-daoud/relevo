@@ -1,11 +1,10 @@
 package spawn
 
-// ReapFragment is the supervisor's scope reap: a POSIX sh function
-// relevo_reap_scope <procs_file> <self_pid> that TERMs, then KILLs, every other
-// pid in the scope's cgroup, so a straggler the harness abandoned cannot keep
-// the scope alive. The file is read with the builtin read, never cat -- a cat
-// subprocess would join the cgroup being reaped -- and every error is
-// discarded, so an unemptiable scope never costs the builder its exit trailer.
+// ReapFragment is the supervisor's scope reap: it TERMs, then KILLs, every
+// other pid in the scope's cgroup, so no straggler keeps the scope alive. The
+// file is read with the builtin read, never cat -- a cat subprocess would join
+// the cgroup being reaped -- and every error is discarded, so an unemptiable
+// scope never costs the exit trailer.
 const ReapFragment = `relevo_reap_scope() {
   procs=$1
   self=$2
@@ -31,14 +30,14 @@ const ReapFragment = `relevo_reap_scope() {
 
 // SupervisorScript runs the builder with stdin closed and appends the trailer
 // whatever happens to it; plain sh, no bash-isms. Its first argument is the
-// scope unit Start expects this process to run in, or "" for a plain spawn.
-// It raises oom_score_adj so the kernel prefers a builder over the daemon under
-// memory pressure, and keeps the builder a child (no exec) so an OOM kill still
-// leaves a trailer. Only when its own cgroup matches that unit does it print a
-// rusage line and reap the scope: a plain spawn from inside a round's scope
-// inherits that cgroup too. The reap's self pid comes from /proc/self/stat,
-// never $$, which systemd-run's unit syntax rewrites to a single $ and which
-// would make the supervisor reap itself; a TERM exits 143 before the trailer.
+// scope unit, or "" for a plain spawn. It raises oom_score_adj so the kernel
+// prefers a builder over the daemon under memory pressure, and keeps the
+// builder a child (no exec) so an OOM kill still leaves a trailer. Only when
+// its own cgroup matches that unit does it print a rusage line and reap the
+// scope: a plain spawn from inside a round's scope inherits that cgroup too.
+// The reap's self pid comes from /proc/self/stat, never $$, which systemd-run's
+// unit syntax rewrites and which would make the supervisor reap itself; a TERM
+// exits 143 before the trailer.
 const SupervisorScript = ReapFragment + `want=$1
 shift
 trap 'exit 143' TERM
@@ -58,7 +57,6 @@ fi
 printf '\nrelevo-exit:%s\n' "$rc"`
 
 // ContainerSupervisorScript is SupervisorScript with one added line: it exits
-// with the builder's own code. A container round runs this script as the
-// container command, so `podman run` returns that code to the outer supervisor,
-// whose last-line trailer is then the builder's code rather than sh's zero.
+// with the builder's own code, so podman's trailer carries the builder's code
+// rather than sh's zero.
 const ContainerSupervisorScript = SupervisorScript + "\nexit \"$rc\""

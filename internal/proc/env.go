@@ -10,17 +10,14 @@ import (
 // TmpDirEnv names the variables that decide where a child puts its temporary
 // files. relevo points them at the process's own directory, or at the runner's
 // default when the process names none, so parallel builds keep their scratch
-// off a shared system temp instead of filling a shared quota. tmpDirEnv states
-// which source wins for each name.
+// off a shared system temp instead of filling a shared quota.
 var TmpDirEnv = []string{"TMPDIR", "GOTMPDIR"}
 
-// DeniedEnv names the variables relevo never passes to a child it spawns. They
-// are relevo's own -- a secret and its identities -- not the harness's, which
-// needs its provider credentials; a user who wants a builder to hold one sets
-// it in the harness's own config. The identity names are denied so a spawned
-// child cannot inherit a MasterMind, planner or runner it is not: a round's own
-// marker is appended after this filter and therefore survives, while a parent's
-// stale one cannot shadow it.
+// DeniedEnv names the variables relevo never passes to a child it spawns: its
+// own secret and identities, not the harness's provider credentials. The
+// identity names are denied so a spawned child cannot inherit a MasterMind,
+// planner or runner it is not: a round's own marker is appended after this
+// filter and therefore survives, while a parent's stale one cannot shadow it.
 var DeniedEnv = []string{"TYPESAFE_API_KEY", "RELEVO_MASTERMIND", "RELEVO_PLANNER", "RELEVO_RUNNER", "RELEVO_BASE"}
 
 // ChildEnv returns parent with every denied name removed, then extra appended
@@ -64,10 +61,8 @@ func goMaxProcsEnv(parent, extra []string, scope *spawn.ScopeSpec) []string {
 // tmpDirEnv returns the temp-dir entries a child needs and the names those
 // entries replace in the parent. Each name is decided on its own: an extra
 // entry wins, then the spec's own directory, then a non-empty inherited value,
-// and only a name nothing of these sets takes runnerDir. specDir is chosen for
-// this process alone, so it outranks the environment the process was launched
-// in; an empty spec and runner default nothing, so a caller that names neither
-// keeps its children's environment untouched.
+// and only a name none of these sets takes runnerDir. An empty spec and runner
+// default nothing, so a caller that names neither keeps its children untouched.
 //
 // The entry is appended after the parent's and the name is denied there, so the
 // child's only copy is the default: a parent carrying an empty "TMPDIR=" would

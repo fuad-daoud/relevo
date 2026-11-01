@@ -11,10 +11,10 @@ import (
 )
 
 // StopScope ends unit's transient scope and every process still in its cgroup,
-// so a straggler a harness abandoned cannot hold the unit open. It signals
-// first and kills after the runner's grace, and returns once the unit is gone;
-// an error means it may still be loaded. A unit that is not loaded, and a host
-// with no systemctl, are not errors: there is nothing to end.
+// so a straggler cannot hold the unit open. It signals first and kills after
+// the runner's grace, returning once the unit is gone; an error means it may
+// still be loaded. A unit that is not loaded, and a host with no systemctl,
+// are not errors.
 func (r *Runner) StopScope(ctx context.Context, unit string) error {
 	file := ScopeUnitFileName(unit)
 	if err := r.stopScope(ctx, file); err != nil {

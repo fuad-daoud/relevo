@@ -4,7 +4,6 @@ package diskfree
 
 import "golang.org/x/sys/unix"
 
-// Free reads the space left under path.
 func Free(path string) (uint64, error) {
 	var st unix.Statfs_t
 	if err := unix.Statfs(path, &st); err != nil {
