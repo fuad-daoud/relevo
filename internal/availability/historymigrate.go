@@ -10,13 +10,8 @@ import (
 )
 
 // The one-time move of the two history documents into the tables that replaced
-// them.
-//
-// Until schema 29 both histories were one rewritten kv document per machine, in
-// the machine-local file. They are now one row per observation in the shared
-// file, so a peer can hold the window and an append no longer rewrites it. This
-// is the pass that takes what the documents hold and writes it as rows, once,
-// behind a local marker, and then deletes the documents.
+// them: what the documents hold is written as rows, once, behind a local
+// marker, and then the documents are deleted.
 //
 // Migrated rows are ordinary rows: own origin, a fresh ULID each, the same at
 // the document carried, and therefore exported like any other history. Nothing
@@ -29,16 +24,16 @@ const availabilityKey = "availability"
 
 // historyRowsMarker is the local kv row that records the documents have moved.
 // It is local, like every other run-once marker, because two machines sharing
-// it would each believe the other had moved its own documents -- and a machine's
-// documents are its own, so there is nothing for a peer to move.
+// it would each believe the other had moved its own documents -- and a
+// machine's documents are its own, so there is nothing for a peer to move.
 //
 // The name follows the run-once markers already in the file
 // (mirror-dedupe.v1, zstd-compress.v1): the migration it belongs to, then a
 // version.
 const historyRowsMarker = "sync.history_rows.v1"
 
-// MigratedHistory is what one migration pass moved, and what a second pass
-// moved: nothing.
+// MigratedHistory is what one migration pass moved; a second pass moves
+// nothing.
 type MigratedHistory struct {
 	Events  int
 	Samples int
@@ -58,8 +53,8 @@ type MigratedHistory struct {
 // says the move happened, and a document already deleted is not read again.
 //
 // The order is rows, then the marker, then the deletes. Rows before the marker
-// means the marker never claims a move that did not happen -- a pass that failed
-// halfway leaves the documents in place and is retried.
+// means the marker never claims a move that did not happen -- a pass that
+// failed halfway leaves the documents in place and is retried.
 func MigrateHistoryDocuments(local db.KV, shared *db.DB, origin string) (MigratedHistory, error) {
 	if local == nil || shared == nil {
 		return MigratedHistory{}, nil
@@ -103,9 +98,9 @@ func MigrateHistoryDocuments(local db.KV, shared *db.DB, origin string) (Migrate
 	return moved, nil
 }
 
-// readHistoryDoc decodes the retired availability document. An absent document
-// is not an error: a machine that recorded nothing has nothing to move, and one
-// already migrated has none left.
+// readHistoryDoc decodes the retired availability document, and readLatencyDoc
+// the retired latency one. An absent document is not an error: a machine that
+// recorded nothing has nothing to move, and one already migrated has none left.
 func readHistoryDoc(local db.KV) (History, bool, error) {
 	data, ok, err := local.KVGet(availabilityKey)
 	if err != nil || !ok {
@@ -118,8 +113,6 @@ func readHistoryDoc(local db.KV) (History, bool, error) {
 	return h, true, nil
 }
 
-// readLatencyDoc decodes the retired latency document, under the same rule
-// readHistoryDoc decodes the availability one.
 func readLatencyDoc(local db.KV) (LatencyHistory, bool, error) {
 	data, ok, err := local.KVGet(latencyKey)
 	if err != nil || !ok {
@@ -133,9 +126,10 @@ func readLatencyDoc(local db.KV) (LatencyHistory, bool, error) {
 }
 
 // insertEventRows writes every event of one document as its own row, oldest
-// first. The order is the document's own and the ids are derived, so the rows
-// read back exactly as they read before: same values, same sequence, same
-// identities on every pass.
+// first, and insertSampleRows every sample under the same rule. The order is
+// the document's own and the ids are derived, so the rows read back exactly
+// as they read before: same values, same sequence, same identities on every
+// pass.
 func insertEventRows(shared *db.DB, origin string, h History) (int, error) {
 	events := append([]Event(nil), h.Events...)
 	sort.SliceStable(events, func(i, j int) bool { return events[i].At.Before(events[j].At) })
@@ -166,8 +160,6 @@ func insertEventRows(shared *db.DB, origin string, h History) (int, error) {
 	return len(events), nil
 }
 
-// insertSampleRows writes every sample of one document as its own row, oldest
-// first, under the same rule insertEventRows writes events.
 func insertSampleRows(shared *db.DB, origin string, h LatencyHistory) (int, error) {
 	samples := append([]Sample(nil), h.Samples...)
 	sort.SliceStable(samples, func(i, j int) bool { return samples[i].At.Before(samples[j].At) })
@@ -197,12 +189,9 @@ func insertSampleRows(shared *db.DB, origin string, h LatencyHistory) (int, erro
 // json -- the entry re-encoded from the struct the document decoded into, not
 // the bytes the document happened to be written in.
 //
-// Deriving it rather than minting it is what makes the move repeatable. A pass
-// that crashes between the row writes and the marker is retried, and the retry
-// has to write the rows that are already there rather than a second copy of the
-// window under new identities; with the insert an INSERT OR IGNORE, the retry
-// leaves the tables exactly as the crashed pass left them. The same document
-// migrated twice yields the same ids.
+// Deriving it rather than minting it is what makes the move repeatable: a pass
+// retried after a crash writes the rows already there rather than a second copy
+// under new identities, with the insert an INSERT OR IGNORE.
 //
 // The byte layout is db.NewID's -- six bytes of big-endian milliseconds, then
 // the ten bytes the hash supplies in place of the random ones.

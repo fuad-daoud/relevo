@@ -10,8 +10,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 )
 
-// ErrUnknownProvider is returned when a clear names a provider that no
-// configured candidate uses and the ledger does not gate.
 var ErrUnknownProvider = errors.New("unknown provider")
 
 // Who cleared a gate, as recorded in the history event's Source.
@@ -24,27 +22,11 @@ const (
 // refuses a subject relevo knows nothing about. Pure: the caller passes the
 // configured set (possibly nil) and the already-pruned ledger.
 //
-//	subject is a group@account account gate key:
-//	  provider := the group half
-//	  known if group is in set.Providers(),
-//	     or if l has a RateLimited entry whose group half is group
-//	subject is a configured candidate name:
-//	  provider := that candidate's provider
-//	subject parses as a candidate token (candidate.ParseRef succeeds):
-//	  provider := ref.Provider
-//	  known if set != nil and set.Lookup(ref) succeeds,
-//	     or if l has a RateLimited entry whose Subject == provider
-//	  otherwise: return set.Lookup's error unchanged (it wraps
-//	     candidate.ErrUnknownCandidate); when set is nil, return
-//	     fmt.Errorf("candidate %q not found (no candidates configured): %w",
-//	     subject, candidate.ErrUnknownCandidate)
-//	  a trailing "#effort" on the token is stripped before it is read, so the
-//	    same candidate answers with and without it
-//	otherwise (a bare provider):
-//	  provider := subject
-//	  known if provider is in set.Providers(),
-//	     or if l has a RateLimited entry whose Subject == provider
-//	  otherwise: return an error wrapping ErrUnknownProvider
+// A group@account key clears its group half; a candidate name clears that
+// candidate's provider; a token clears its provider when the set holds it or
+// the ledger gates it, else Lookup's error stands; a bare provider clears
+// itself when configured or gated, else an error wrapping ErrUnknownProvider.
+// A trailing "#effort" is stripped before the token is read.
 func ResolveClearSubject(set *candidate.Set, l Ledger, subject string) (provider string, err error) {
 	// An account gate key names its group; the account half is the caller's to
 	// clear. Recognised first because a candidate name and a candidate token
@@ -221,7 +203,6 @@ func normProvider(x string) string {
 	return sb.String()
 }
 
-// editDistance is Levenshtein distance over runes. Pure, unexported.
 func editDistance(a, b string) int {
 	ar, br := []rune(a), []rune(b)
 	if len(ar) == 0 {

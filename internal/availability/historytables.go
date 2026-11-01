@@ -7,15 +7,12 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// The row half of the two histories. Each observation is one row of
-// availability_event or latency_sample, and the kv documents the rows replaced
-// are gone: MigrateHistoryDocuments moved what they held into the tables and
-// deleted them, and nothing writes or reads either since.
-//
-// A row is written with this machine's own installation id and a fresh ULID, and
-// with its time as Unix milliseconds rather than as RFC3339 text. The rows are
-// append-only, so the insert trigger beside them is the only trigger they have:
-// the prune below deletes without recording, and nothing is ever updated.
+// The row half of the two histories: each observation is one row of
+// availability_event or latency_sample, and the kv documents are gone. A row
+// carries this machine's own installation id, a fresh ULID and its time as
+// Unix milliseconds. The rows are append-only, so the insert trigger beside
+// them is the only trigger they have: the prune below deletes without
+// recording, and nothing is ever updated.
 
 // recordEvent commits one availability observation as one row of
 // availability_event. A failure is printed and dropped, the same rule
@@ -29,10 +26,8 @@ func recordEvent(d Deps, ev Event) {
 	}
 }
 
-// insertEventRow is one INSERT of one observation into availability_event. It is
-// a separate step from the document write rather than part of it: the two live in
-// different tables of the same file, and a row that failed to insert must not
-// stop the document from being written.
+// insertEventRow is one INSERT of one observation into availability_event. A
+// row that failed to insert must not fail the ledger write.
 func insertEventRow(d Deps, ev Event) error {
 	if d.History == nil {
 		return nil
@@ -57,13 +52,12 @@ func insertEventRow(d Deps, ev Event) error {
 
 // recordSample commits one probe result as one row of latency_sample, under the
 // same rule recordEvent commits an observation: a failure is returned rather
-// than failed, because a probe that measured a candidate must not be reported as
-// broken because its history could not be written.
+// than failed, because a probe that measured a candidate must not be reported
+// as broken because its history could not be written.
 func recordSample(d Deps, s Sample) error {
 	return insertSampleRow(d, s)
 }
 
-// insertSampleRow is one INSERT of one probe result into latency_sample.
 func insertSampleRow(d Deps, s Sample) error {
 	if d.History == nil {
 		return nil
@@ -87,8 +81,8 @@ func insertSampleRow(d Deps, s Sample) error {
 //
 // The rows it removes are not recorded anywhere: the tables carry an insert
 // trigger alone, so an age delete exports nothing and no importer has to
-// reproduce it. Every machine prunes on its own clock, which is why the window is
-// a window rather than a set.
+// reproduce it. Every machine prunes on its own clock, which is why the window
+// is a window rather than a set.
 func PruneHistory(d Deps) (db.HistoryPruned, error) {
 	if d.History == nil {
 		return db.HistoryPruned{}, nil

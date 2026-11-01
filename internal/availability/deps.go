@@ -23,27 +23,23 @@ type Deps struct {
 	Accounts account.Set
 	Gates    db.KV
 	// History is the shared file the availability_event and latency_sample rows
-	// are written into, read from and pruned from. It is the shared file rather
-	// than the one Gates binds, because a history row travels through the outbox
-	// like every other shared row while a ledger row travels as a document. Nil
-	// means this machine keeps no shared file, so it records no history rows and
-	// reads an empty history -- a machine with no database, rather than a second
-	// place the window lives.
+	// are written into, read from and pruned from. It is the shared file, not
+	// the one Gates binds, because a history row travels through the outbox
+	// while a ledger row travels as a document. Nil means this machine keeps no
+	// shared file, so it records no history rows and reads an empty history.
 	History      *db.DB
 	Now          func() time.Time
 	Roles        harness.RoleChecker
 	RoleRegistry func() *roles.Registry
 	// Local is the machine-local file the gates document records its write
-	// stamps and its export signal in, when the ledger is bound to that file
-	// itself. Nil when it is not: the serve-wide ledger lives under its own
-	// prefix beside the server's other records and is nobody's gates document,
-	// so a write there is stamped nowhere and signals nothing.
+	// stamps and its export signal in. Nil when the ledger is not bound to that
+	// file: the serve-wide ledger is nobody's gates document, so a write there
+	// is stamped nowhere and signals nothing.
 	Local *db.DB
 	// SyncNow asks for an attempt now rather than at the end of the export
-	// debounce, because a gate a person just recorded is worth the other
-	// machines seeing in seconds rather than in a quarter of a minute. Nil is
-	// the normal case for a caller with no daemon behind it: the gate is written
-	// and the next ordinary trigger exports it.
+	// debounce, so the other machines see a gate a person just recorded in
+	// seconds. Nil is the normal case for a caller with no daemon behind it:
+	// the gate is written and the next ordinary trigger exports it.
 	SyncNow func()
 	// InFlight counts the rounds live on each candidate token, leaving out the
 	// binding named by except. Nil means no count is available, so every

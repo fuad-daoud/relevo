@@ -21,53 +21,49 @@ import (
 type Kind string
 
 const (
-	// SpawnFailed records that relevo failed to start a candidate process or
-	// that the process died during initialization. Subject is a candidate token.
+	// SpawnFailed gates a candidate that failed to start or died during
+	// initialization. Subject is a candidate token.
 	SpawnFailed Kind = "spawn_failed"
 
 	// RateLimited records that a provider is currently rejecting requests
 	// due to quota or concurrency limits. Subject is a provider name.
 	RateLimited Kind = "rate_limited"
 
-	// ExitedNoReport records that a headless builder exited without a
-	// report during the current round. It is never written to the ledger
-	// file: it is synthesised in memory, per round, by switchBuilder from
-	// Binding.RoundExcluded, so Load never needs to validate it.
+	// ExitedNoReport is never written to the ledger file: it is synthesised in
+	// memory, per round, by switchBuilder from Binding.RoundExcluded, so Load
+	// never needs to validate it.
 	ExitedNoReport Kind = "exited_no_report"
 
-	// RolesMissing records that a candidate's harness kind is missing role
-	// files (definitions) relevo needs to run it as a builder. Like
-	// ExitedNoReport, it is never written to the ledger file: it is
+	// RolesMissing gates a candidate whose harness kind lacks role definitions.
+	// Like ExitedNoReport, it is never written to the ledger file: it is
 	// synthesised in memory by relevo.Gates from an injectable
 	// Runtime.Roles checker, so Load never needs to validate it.
 	RolesMissing Kind = "roles_missing"
 
-	// SkillMissing records that a candidate's harness cannot see a skill its
-	// actor needs. Synthesised in memory by relevo, never written to the
+	// SkillMissing gates a candidate whose harness cannot see a skill its actor
+	// needs. Synthesised in memory by relevo, never written to the
 	// ledger file; its Note is the whole reason.
 	SkillMissing Kind = "skill_missing"
 
-	// Scheduled records that a candidate's configured window excludes it (or,
-	// with Demote, moves it last) at the moment of the read. It is never
-	// written to the ledger file: windowGates synthesises it from config and
-	// the clock, so Load never needs to validate it. Subject is a candidate
-	// token.
+	// Scheduled gates a candidate its configured window excludes at the moment
+	// of the read (or, with Demote, moves last). It is never written to the
+	// ledger file: windowGates synthesises it from config and the clock, so
+	// Load never needs to validate it. Subject is a candidate token.
 	Scheduled Kind = "scheduled"
 
-	// ConcurrencyLimit records that a candidate's pool is at its configured
+	// ConcurrencyLimit gates a candidate whose pool is at its configured
 	// max_concurrency. Like Scheduled it is never written to the ledger file:
 	// concurrencyGates synthesises it from the live round count. Subject is a
 	// candidate token, and the provider is not gated.
 	ConcurrencyLimit Kind = "concurrency_limit"
 
-	// AllowanceExhausted records that a muse candidate's provider account is
-	// at or above the allowance pick threshold. Like ConcurrencyLimit it is
-	// never written to the ledger file: allowanceGates synthesises it from
-	// the machine-local allowance document. Subject is a candidate token.
+	// AllowanceExhausted gates a muse candidate whose provider account is at or
+	// above the allowance pick threshold. Like ConcurrencyLimit it is never
+	// written to the ledger file: allowanceGates synthesises it from the
+	// machine-local allowance document. Subject is a candidate token.
 	AllowanceExhausted Kind = "allowance_exhausted"
 )
 
-// ErrBadEntry reports a ledger entry that fails validation.
 var ErrBadEntry = errors.New("bad ledger entry")
 
 // Entry records a single availability event for a candidate or provider.
@@ -81,14 +77,11 @@ type Entry struct {
 	Binding string    `json:"binding,omitempty"`
 }
 
-// Expired reports whether the entry has expired at the given time.
-// An entry with a zero Until never expires automatically.
+// Expired never expires on a zero Until.
 func (e Entry) Expired(now time.Time) bool {
 	return !e.Until.IsZero() && !now.Before(e.Until)
 }
 
-// Ledger holds an ordered collection of availability entries.
-//
 // Entries are the ones this binary understands. Other holds entries with an
 // unknown kind or source, preserved verbatim so an older relevo never erases a
 // newer one's records: they are invisible to every reader, never
@@ -98,9 +91,9 @@ type Ledger struct {
 	Other   []json.RawMessage `json:"-"`
 }
 
-// knownKind reports whether k is a kind this binary reads from the ledger
-// file. ExitedNoReport, RolesMissing and SkillMissing are synthesised in memory, never
-// written, so they are not known here either.
+// knownKind reports whether k is a kind this binary reads from the ledger file.
+// ExitedNoReport, RolesMissing and SkillMissing are synthesised in memory,
+// never written, so they are not known here either.
 func knownKind(k Kind) bool {
 	return k == SpawnFailed || k == RateLimited
 }
@@ -112,14 +105,11 @@ func knownSource(s string) bool {
 	return s == "relevo" || s == "planner"
 }
 
-// ledgerKey is the kv row the ledger document lives in.
 const ledgerKey = "ledger"
 
-// LoadLedger reads and validates the availability ledger from the store database's
-// kv row "ledger". An absent row returns an
-// empty Ledger without error, as a fresh install records no events yet. LoadLedger
-// validates entry schema but does not prune expired entries; callers prune
-// against their own notion of time.
+// LoadLedger reads the ledger from kv row "ledger". An absent row returns an
+// empty Ledger without error. Entry schema is validated but expired entries
+// are not pruned; callers prune against their own notion of time.
 //
 // An entry whose kind or source is unknown to this binary is preserved raw in
 // Other rather than rejected, so a ledger written by a newer relevo survives a
@@ -135,8 +125,7 @@ func LoadLedger(kv db.KV) (Ledger, error) {
 	return decode(data)
 }
 
-// decode parses and validates one ledger document. It is today's file Load body
-// factored out unchanged: the medium moved to the kv row, the document did not.
+// decode parses and validates one ledger document from the kv row.
 func decode(data []byte) (Ledger, error) {
 	var doc struct {
 		Entries []json.RawMessage `json:"entries"`
@@ -175,9 +164,8 @@ func decode(data []byte) (Ledger, error) {
 	return l, nil
 }
 
-// SaveLedger writes the whole ledger document to the kv row "ledger". The known
-// entries are marshalled as before; Other's raw bytes follow verbatim
-// The row holds the same JSON document the file did.
+// SaveLedger writes the ledger to kv row "ledger". Other's raw bytes follow
+// verbatim.
 func SaveLedger(kv db.KV, l Ledger) error {
 	var entries []json.RawMessage
 	for _, e := range l.Entries {
@@ -201,9 +189,8 @@ func SaveLedger(kv db.KV, l Ledger) error {
 	return kv.KVPut(ledgerKey, data)
 }
 
-// Prune returns a new Ledger containing every non-expired entry, in order.
-// It does not mutate the receiver's slice. Other is carried through untouched:
-// it is never pruned.
+// Prune keeps every non-expired entry, in order. It does not mutate the
+// receiver's slice. Other is carried through untouched: it is never pruned.
 func (l Ledger) Prune(now time.Time) Ledger {
 	var kept []Entry
 	for _, e := range l.Entries {
@@ -214,16 +201,16 @@ func (l Ledger) Prune(now time.Time) Ledger {
 	return Ledger{Entries: append([]Entry(nil), kept...), Other: append([]json.RawMessage(nil), l.Other...)}
 }
 
-// Append returns a new Ledger with e added to the end.
-// It performs no deduplication: two spawn failures are two events; step 7 counts them.
-// It does not mutate the receiver's slice. Other is carried through untouched.
+// Append adds e to the end. It performs no deduplication: two spawn failures
+// are two events. It does not mutate the receiver's slice. Other is carried
+// through untouched.
 func (l Ledger) Append(e Entry) Ledger {
 	cp := append([]Entry(nil), l.Entries...)
 	return Ledger{Entries: append(cp, e), Other: append([]json.RawMessage(nil), l.Other...)}
 }
 
-// Clear returns a new Ledger without every entry whose Kind == kind and Subject == subject.
-// It does not mutate the receiver's slice. Other is never cleared.
+// Clear drops every entry with Kind == kind and Subject == subject. It does
+// not mutate the receiver's slice. Other is never cleared.
 func (l Ledger) Clear(kind Kind, subject string) Ledger {
 	var kept []Entry
 	for _, e := range l.Entries {
@@ -261,10 +248,9 @@ type Gate struct {
 	Demote bool `json:"Demote,omitempty"`
 }
 
-// Gated is the one view every renderer uses: for each live entry, which
-// configured candidates it gates. A spawn failure gates its own token; a
-// rate limit gates every candidate of its provider, because the quota is
-// the provider's, not the model's.
+// Gated projects each live entry onto configured candidates. A spawn failure
+// gates its own token; a rate limit gates every candidate of its provider,
+// because the quota is the provider's, not the model's.
 //
 // With accounts, a group@account entry gates its group only once every account
 // in the group's pool is gated: until then the pick has somewhere to go, so a
