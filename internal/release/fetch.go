@@ -15,7 +15,6 @@ import (
 // endpoint: no answer, as opposed to a malformed one.
 var ErrOffline = errors.New("release check: offline")
 
-// DefaultEndpoint is the GitHub releases API for relevo's newest release.
 const DefaultEndpoint = "https://api.github.com/repos/fuad-daoud/relevo/releases/latest"
 
 // defaultTimeout is the whole budget for one check: the daemon ticks every
@@ -24,7 +23,6 @@ const defaultTimeout = 5 * time.Second
 
 const maxBody = 1 << 20
 
-// Fetcher returns the latest published release tag.
 type Fetcher interface {
 	Latest(ctx context.Context) (string, error)
 }
@@ -34,7 +32,6 @@ type httpFetcher struct {
 	client   *http.Client
 }
 
-// Source is the endpoint a fetch reads: RELEVO_RELEASE_API when set, else DefaultEndpoint.
 func Source() string {
 	if endpoint := os.Getenv("RELEVO_RELEASE_API"); endpoint != "" {
 		return endpoint
@@ -42,7 +39,7 @@ func Source() string {
 	return DefaultEndpoint
 }
 
-// NewHTTPFetcher reads the GitHub releases API. The endpoint is overridable
+// NewHTTPFetcher reads the GitHub releases API; the endpoint is overridable
 // with RELEVO_RELEASE_API, so tests and air-gapped installs can point it elsewhere.
 func NewHTTPFetcher(endpoint string, timeout time.Duration) Fetcher {
 	if endpoint == "" {
@@ -54,8 +51,7 @@ func NewHTTPFetcher(endpoint string, timeout time.Duration) Fetcher {
 	return &httpFetcher{endpoint: endpoint, client: &http.Client{Timeout: timeout}}
 }
 
-// Latest GETs the endpoint and returns its tag_name. No auth, no retry: a
-// failure is the caller's to swallow and try again later.
+// Latest GETs the endpoint and returns its tag_name. No auth, no retry.
 func (f *httpFetcher) Latest(ctx context.Context) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.endpoint, nil)
 	if err != nil {

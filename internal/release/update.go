@@ -2,8 +2,7 @@ package release
 
 import "fmt"
 
-// UpdateAction is what `relevo update` should do, decided by DecideUpdate
-// before anything touches the network or the disk.
+// UpdateAction is what `relevo update` should do.
 type UpdateAction int
 
 const (
@@ -14,7 +13,6 @@ const (
 	UpdateInvalid                            // a bad --to value: a usage error
 )
 
-// String names the action for `--check` output.
 func (a UpdateAction) String() string {
 	switch a {
 	case UpdateCurrent:
@@ -31,7 +29,6 @@ func (a UpdateAction) String() string {
 	return "unknown"
 }
 
-// UpdateRequest is every fact DecideUpdate reads.
 type UpdateRequest struct {
 	Kind         Kind   // release.Detect's classification of the running binary
 	Running      string // buildVersion(): a clean tag, a describe string or "(devel)"
@@ -40,8 +37,6 @@ type UpdateRequest struct {
 	ForceRelease bool   // --release: replace a local or unknown build anyway
 }
 
-// UpdateDecision is the pure outcome: what to do, the normalised tag to
-// install or print, and the one sentence the CLI prints as is.
 type UpdateDecision struct {
 	Action  UpdateAction
 	Target  string
@@ -65,7 +60,7 @@ func DecideUpdate(req UpdateRequest) UpdateDecision {
 		}
 	} else if req.Latest != "" && !IsReleaseTag(req.Latest) {
 		// The latest tag becomes a URL path segment, so a malformed one is
-		// refused here for every kind, before it can be downloaded or printed.
+		// refused here, before it can be downloaded or printed.
 		return UpdateDecision{
 			Action:  UpdateRefuse,
 			Message: fmt.Sprintf("the latest release tag %q is not a release tag like v0.13.0; nothing was downloaded", req.Latest),
@@ -96,8 +91,7 @@ func DecideUpdate(req UpdateRequest) UpdateDecision {
 			return UpdateDecision{Action: UpdateRefuse, Message: "no release tag to update to"}
 		}
 		if req.To != "" {
-			// An explicit --to allows a downgrade, so equal versions (numbers
-			// and suffix) is the only case that is a no-op.
+			// An explicit --to allows a downgrade, so only equal versions are a no-op.
 			rv, rok := ParseVersion(req.Running)
 			tv, tok := ParseVersion(target)
 			if rok && tok && rv == tv {
@@ -114,7 +108,6 @@ func DecideUpdate(req UpdateRequest) UpdateDecision {
 	return UpdateDecision{Action: UpdateRefuse, Message: localBuildRefusal(req.Running)}
 }
 
-// localBuildRefusal is the one sentence rule 3a and rule 5 share.
 func localBuildRefusal(running string) string {
 	return fmt.Sprintf("relevo %s is a local build; relevo update replaces only release binaries. relevo update --release replaces it with the latest release binary.", running)
 }
