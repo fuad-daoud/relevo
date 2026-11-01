@@ -17,11 +17,12 @@ import (
 
 // The hooks section carries the scripts themselves and not only the argv rows
 // that name them. Three rules shape the bodies: the shared half holds only the
-// scripts a stored argv row names, root-relative under relevo's config directory,
-// signed not encrypted since naming a script is consent to publish it; an argv
-// row outside the config root is split into the machine field `local` and never
-// travels; the file map and argv rows stay apart so editing a script exports on
-// its own.
+// scripts a stored argv row names, root-relative under relevo's config directory
+// so a peer that stores them under a different root still applies them to the
+// right directory, signed not encrypted since naming a script is consent to
+// publish it; an argv row outside the config root is split into the machine field
+// `local` and never travels; the file map and argv rows stay apart so editing a
+// script exports on its own.
 
 // The reserved members of the hooks value. Anything else in the object is an
 // event name, so a bare argv map with no wrapper still reads.
@@ -246,10 +247,10 @@ func HookParts(rel string) (event, file string, err error) {
 	return event, base, nil
 }
 
-// ValidateHookDoc refuses one rule per refusal: a non-plain-component event or
-// file name, a path the directory rule does not compute, a script over the
-// per-file cap, a value over the whole-item cap, and a shared argv row outside
-// the config root.
+// ValidateHookDoc refuses a doc that breaks a rule, one refusal per rule: a
+// non-plain-component event or file name, a path the directory rule does not
+// compute, a script over the per-file cap, a value over the whole-item cap,
+// and a shared argv row outside the config root.
 func ValidateHookDoc(doc HookDoc) error {
 	if doc.Root == "" {
 		// Nothing on this machine to be relative to: the shared half cannot be

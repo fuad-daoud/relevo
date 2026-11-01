@@ -19,7 +19,8 @@ import (
 // bytes, one per kind. Three rules shape the member: a kind is a harness kind and an
 // agent is one plain component, with the directory computed here and in the applier
 // so an entry cannot steer a write; only the kinds the `native` map names may carry
-// a file; a kind the entry names and the member does not is filled in by the capture.
+// a file, so the map and the bodies cannot disagree; a kind the entry names and
+// the member does not is filled in by the capture.
 // A source agent carries no file: its definitions derive from its source text.
 
 // agentsFilesMember is the reserved member of an agents item that carries the
@@ -76,8 +77,8 @@ func (d AgentEntryDoc) Kinds() []string {
 	return names
 }
 
-// ParseAgentEntryDoc reads one agents item. An unnamed member stays in the body
-// untouched: the item's other members are the config's business.
+// ParseAgentEntryDoc reads one agents item. A member the shape does not name
+// stays in the body untouched: the item's other members are the config's business.
 func ParseAgentEntryDoc(name string, body json.RawMessage) (AgentEntryDoc, error) {
 	doc := AgentEntryDoc{Name: name, Files: map[string]AgentFile{}}
 	if len(body) == 0 {
@@ -180,9 +181,10 @@ func checkAgentItemSize(name string, body []byte) (json.RawMessage, error) {
 	return body, nil
 }
 
-// ValidateAgentEntryDoc refuses one rule per refusal: a non-harness kind, a
-// non-plain-component agent name, a file whose kind the native map does not name,
-// a file over the per-file cap and an item over the whole-item cap.
+// ValidateAgentEntryDoc refuses a doc that breaks a rule, one refusal per rule:
+// a non-harness kind, a non-plain-component agent name, a file whose kind the
+// native map does not name, a file over the per-file cap and an item over the
+// whole-item cap.
 func ValidateAgentEntryDoc(doc AgentEntryDoc) error {
 	if err := safeAgentComponent(doc.Name); err != nil {
 		return fmt.Errorf("%s: %w", Agents, err)

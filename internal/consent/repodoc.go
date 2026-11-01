@@ -98,7 +98,9 @@ func (d *RepoDoc) apply(key string, value json.RawMessage) error {
 // The write goes to this machine's own row for the URL. An arriving answer
 // records no write stamp -- the peer wrote it over there -- but it records the
 // export signal, so the machines that took this machine's earlier answer from
-// the row log see the key move.
+// the row log see the key move. That is a plain signal rather than a stamp:
+// what it exports is decided by the value and the export state, not by the
+// signal's own timestamp.
 func (d *RepoDoc) ApplyIn(tx *db.Tx, key string, value json.RawMessage, label string) (refusal error, err error) {
 	if err := validURL(key); err != nil {
 		return err, nil

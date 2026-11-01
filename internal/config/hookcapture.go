@@ -512,7 +512,7 @@ func sameFileHashes(a, b map[string]fileHash) bool {
 	return true
 }
 
-// captureAfterFilesWrite runs the captures after a write of file-carrying sections
+// captureAfterHooksWrite runs the captures after a write of file-carrying sections
 // has committed, so a write adding a hook row or native agent also brings the named
 // file. A capture that cannot read the disk leaves the document as the write made it.
 func (s *Store) captureAfterHooksWrite(sec Section) {
@@ -563,8 +563,9 @@ func (s *Store) normalizeSectionBody(sec Section, body json.RawMessage) (json.Ra
 	return mergePatch(shared, local)
 }
 
-// validateHooksBody refuses a hooks body against this store's config root: the caps
-// and every non-plain-component name outside its own event's directory.
+// validateHooksBody refuses a hooks body against this store's config root: the caps,
+// and every name that is not one plain component under the directory its own
+// event name computes.
 func (s *Store) validateHooksBody(body json.RawMessage) error {
 	hooks, err := ParseHookDoc(body)
 	if err != nil {

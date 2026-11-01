@@ -247,7 +247,7 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 
 // chainPrepareCreate is the create's first locked pass: an existing chain of
 // this name is a retry decision, and a fresh name goes through the read-only
-// preflight.
+// preflight. done is true when it has already written the response.
 func (s *Server) chainPrepareCreate(w http.ResponseWriter, rt relevo.Runtime, caller remote.ClientID, bare string, req remote.CreateChainRequest) (done bool) {
 	if _, err := rt.Store.Chain(req.Name); err == nil {
 		s.writeChainRetry(w, rt, req)
@@ -269,7 +269,8 @@ func (s *Server) chainPrepareCreate(w http.ResponseWriter, rt relevo.Runtime, ca
 }
 
 // chainCreateSeam parks a chain create between the worktree cut and the chain
-// row write when non-nil; nil in production.
+// row write when non-nil. Nil in production; the prune-race tests set it to
+// run the tick's prune inside the pin-to-row-save window deterministically.
 var chainCreateSeam func()
 
 // chainFinishCreate is the create's second half, after the bundle was absorbed.
@@ -379,10 +380,6 @@ func (s *Server) cutChainWorktree(ctx context.Context, w http.ResponseWriter, g 
 	return true
 }
 
-// chainInitAndAbsorb creates the owner's bare repo, then absorbs the shipped
-// base bundle into refs/relevo/<name>/out. It reports the response itself and
-// returns false when it wrote a failure. Both steps run through the owner's
-// runtime: a user-mode owner's git and bundle transport run as the tenant.
 // initOwnerBare creates the owner's bare repo under that owner's section, so two
 // identical creates for one owner take the init one at a time: InitBare's own
 // existence check and its mkdir are not one step, and the loser of that race
@@ -393,6 +390,10 @@ func (s *Server) initOwnerBare(ctx context.Context, rt relevo.Runtime, caller re
 	return rt.Git.InitBare(ctx, bare)
 }
 
+// chainInitAndAbsorb creates the owner's bare repo, then absorbs the shipped
+// base bundle into refs/relevo/<name>/out. It reports the response itself and
+// returns false when it wrote a failure. Both steps run through the owner's
+// runtime: a user-mode owner's git and bundle transport run as the tenant.
 func (s *Server) chainInitAndAbsorb(w http.ResponseWriter, r *http.Request, rt relevo.Runtime, caller remote.ClientID, bare, outRef string, bundle io.Reader) bool {
 	ctx := r.Context()
 	// The init is one mkdir-and-git-init step whose own existence check is not

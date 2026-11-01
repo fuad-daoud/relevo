@@ -18,8 +18,9 @@ import (
 
 // agentHashMarker is the local kv row of the capture's hash cache for files
 // outside the config root: one absolute harness-file path to the digest, size
-// and modification time last seen on disk. It is separate from the hooks' cache
-// because the two describe different trees.
+// and modification time last seen on disk. It is a separate row from the hooks'
+// cache because the two describe different trees, and one row for both would
+// make a section's capture rewrite the other's entries.
 //
 // It is only ever a shortcut: an entry that disagrees with the disk costs one
 // read and is replaced.
@@ -125,8 +126,9 @@ func (s *Store) captureAgents() (*capturedAgents, error) {
 
 // readAgentFiles fills doc's files and hashes with what the disk holds for one
 // agent, and reports whether the item moved. It stats first, so an unchanged
-// definition costs one stat and no read. A gone path records nothing rather than
-// failing the capture; a non-regular file is left out rather than followed.
+// definition costs one stat and no read. A gone path records nothing, for the
+// reasons readHookScript gives; a non-regular file is left out rather than
+// followed.
 func (s *Store) readAgentFiles(doc AgentEntryDoc, cache, hashes map[string]agentFileValue) (bool, error) {
 	changed := false
 	for _, kind := range doc.Kinds() {

@@ -8,11 +8,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// The theme seed: the release's palettes written into the themes section
-// once per database. The write is a raw migration write, like the
-// local-layer move: it records no revision, and the local kv marker beside
-// it is what a later open reads, so a palette a user unsets after the seed
-// stays unset.
+// themeSeedMarker records the theme seed: the release's palettes written into
+// the themes section once per database. The seed is a raw migration write, like
+// the local-layer move: it records no revision, and this marker is what a later
+// open reads, so a palette a user unsets after the seed stays unset.
 const themeSeedMarker = "board.themes.seeded.v1"
 
 // themeSeeded is the marker's value. It is a JSON string because a kv row

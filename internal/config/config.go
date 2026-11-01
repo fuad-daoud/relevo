@@ -16,8 +16,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
-// Section names one config_doc row. Hooks, Agents, Actors and Accounts are stored
-// as a JSON body.
+// Section names one config_doc row. Only the sections in sectionFile have an
+// import file, and FileName returns "" for the rest.
 type Section string
 
 const (
@@ -227,7 +227,8 @@ func loadAgents(doc Doc, L *Loaded) (map[string]roles.AgentEntry, error) {
 }
 
 // loadActors parses the actors section and, when present, rebuilds the roles file
-// from it: actors win and the roles keys stop being read.
+// from it: actors win, and the roles section and the legacy policy.order/tier
+// and candidate roles/tier keys stop being read.
 func loadActors(doc Doc, L *Loaded, agents map[string]roles.AgentEntry, rolesPresent bool, candBody []byte, candOK bool, polBody []byte, polOK bool) error {
 	body, ok := doc[Actors]
 	if !ok {

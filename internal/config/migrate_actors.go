@@ -253,8 +253,8 @@ func actorForRole(name string, role roles.Role, row roles.Row, set *candidate.Se
 			notes = append(notes, fmt.Sprintf("actor %s: candidate %q is not configured; kept", name, raw))
 		}
 		if seen[display] {
-			// Two raw entries resolving to one candidate dedupe on the
-			// ranked token, so the actor names the candidate once.
+			// Two raw entries resolving to one candidate: file mode dedupes
+			// them on the ranked token, so the actor names the candidate once.
 			continue
 		}
 		seen[display] = true
@@ -354,8 +354,8 @@ func shippedAgentFor(role roles.Role) (string, bool) {
 	return spec.Definition, true
 }
 
-// nativeAgentName is the claude agent's name, or <role>-agent when the kinds
-// disagree.
+// nativeAgentName is the claude agent's name, or <role>-agent when there is no
+// claude definition or the kinds disagree.
 func nativeAgentName(role roles.Role) string {
 	claude, ok := role.Definitions["claude"]
 	if !ok {

@@ -1,6 +1,7 @@
 // Package consent carries the two consent documents: repository answers keyed
-// by remote URL, session answers keyed by kind and id. A *db.DB method cannot
-// return a synclog document without an import cycle.
+// by remote URL, session answers keyed by kind and id. The package exists
+// because a *db.DB method cannot return a synclog document without an import
+// cycle.
 package consent
 
 import (
@@ -13,7 +14,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// Both documents carry the same shape, because both carry the same thing.
+// value is one key's answer and when it was given; both documents carry it,
+// and stay separate because their stores and key rules differ, so neither's
+// keys can be read as the other's.
 type value struct {
 	Answer db.Consent `json:"answer"`
 	At     time.Time  `json:"at"`
@@ -29,10 +32,12 @@ func encode(c db.Consent, at time.Time) (json.RawMessage, error) {
 
 // decodeValue reads one arriving answer and refuses every shape this build has
 // no reader for. An answer outside yes and no is a value no code here can act
-// on. An absent or unparseable time is a value whose order is unknown, so
+// on, and storing it would put a row before every reader that treats it as a
+// decision. An absent or unparseable time is a value whose order is unknown, so
 // accepting one would let a peer place a key at a moment of its own choosing.
 // An unknown field is a peer's rule this build has not read, and ignoring it
-// would apply the answer on the wrong terms. Unset is not a value either:
+// would apply the answer on the wrong terms -- the same refusal the log makes
+// on a body carrying a field it does not know. Unset is not a value either:
 // clearing is a tombstone.
 func decodeValue(doc, key string, raw json.RawMessage) (value, error) {
 	var v value

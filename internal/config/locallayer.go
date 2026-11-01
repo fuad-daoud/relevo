@@ -17,10 +17,11 @@ import (
 // holding this machine's overrides. The fields landing there -- an account's
 // config dir and home, the policy's serve block -- name things existing only
 // here, so a merged read is the only view any caller sees.
-
-// A patch is stored rather than a whole value so a shared edit to a
-// neighbouring key still reaches this machine, one row per doc key.
 //
+// A patch is stored rather than a whole value so a shared edit that touches a
+// neighbouring key still reaches this machine, and one row per doc key holds
+// every field that key overrides.
+
 // readLocalPatches returns every override whose key belongs to sec, keyed by
 // doc key. It reads through the transaction so a validated prospective
 // document is one snapshot rather than two.

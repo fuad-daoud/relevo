@@ -33,8 +33,8 @@ type Client struct {
 	UnixUser string `json:"unix_user,omitempty"`
 }
 
-// Clients is the enrolled-client list. Every public method re-reads the row,
-// so another process's enroll or revoke is seen live.
+// Clients is the enrolled-client list. Every public method re-reads the
+// clientsKVKey row, so another process's enroll or revoke is seen live.
 type Clients struct {
 	kv         db.KV
 	mu         sync.Mutex

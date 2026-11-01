@@ -180,7 +180,8 @@ func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 }
 
 // bindCreateSeam parks a plain bind between InitBare and the row save when
-// non-nil; nil in production.
+// non-nil. Nil in production; the prune-race tests set it to run the tick's
+// prune inside the pin-to-row-save window deterministically.
 var bindCreateSeam func()
 
 // buildServedBinding resolves the request's role against this server's own

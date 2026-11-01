@@ -167,7 +167,9 @@ func (d *SharedDoc) Apply(key string, value json.RawMessage) error {
 // applyKey writes one key's value in one transaction: the prospective shared
 // document is merged with the local layer and validated as the reader would see
 // it, so a write the reader would refuse is refused here. A refusal still commits,
-// because the record of why the entry lost must outlive the reporting call.
+// because the record of why the entry lost must outlive the reporting call: the
+// refusal is returned after the commit, never from inside the transaction, where
+// it would roll the record back.
 func (s *Store) applyKey(sec Section, name string, value json.RawMessage) error {
 	var refusal error
 	err := s.db.Tx(func(t *db.Tx) error {

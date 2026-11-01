@@ -57,7 +57,7 @@ func NewSecretDoc(s *Store, now func() time.Time) *SecretDoc {
 	return &SecretDoc{store: s, now: now}
 }
 
-// Doc returns the secrets document of this store, for the sync runtime to
+// SecretsDoc returns the secrets document of this store, for the sync runtime to
 // register once it has one.
 func (s *Store) SecretsDoc() *SecretDoc { return NewSecretDoc(s, nil) }
 

@@ -27,8 +27,8 @@ var machineFields = map[Section][]string{
 func stripsMachineFields(sec Section) bool { return len(machineFields[sec]) > 0 }
 
 // splitMachineFields divides one section body into the staying shared half
-// and the describing overrides, keyed by doc key. The split is total: no
-// machine field survives shared and no shared field diverts, so a peer
+// and the overrides describing this machine, keyed by doc key. The split is
+// total: no machine field survives shared and no shared field diverts, so a peer
 // receives the whole of what means the same everywhere.
 func splitMachineFields(sec Section, body json.RawMessage) (shared json.RawMessage, patches map[string]json.RawMessage, err error) {
 	if !stripsMachineFields(sec) {

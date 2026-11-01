@@ -36,7 +36,8 @@ import (
 
 type Config struct {
 	Root string // <state>/serve
-	// DB is the machine database the caller opens and closes.
+	// DB is the machine database, which the caller opens and closes; the server
+	// opens none of its own under Root.
 	DB         *db.DB
 	Candidates *candidate.Set
 	// Accounts is the server's own login pool, from its own config. Empty
@@ -58,9 +59,10 @@ type Config struct {
 	Registry *roles.Registry
 	// MaxBuilders caps headless builders at once across all owners; 0 means the policy default.
 	MaxBuilders int
-	// Reloader refreshes the restart-independent config sections once per
-	// tick, so a config edit takes effect on the next tick or admission.
-	// Nil keeps the copy loaded at startup for the process's life.
+	// Reloader refreshes the config sections a serve restart does not govern --
+	// the candidates, the policy, the roles registry and the accounts pool --
+	// once per tick, so a config edit takes effect on the next tick or
+	// admission. Nil keeps the copy loaded at startup for the process's life.
 	Reloader *ConfigRefresher
 	// Hooks dispatches lifecycle events; nil means none.
 	Hooks hooks.Dispatcher
@@ -103,8 +105,10 @@ type Config struct {
 type Server struct {
 	cfg Config
 	// reloaded is cfg as of the last successful tick refresh, guarded by s.mu.
-	// Readers copy the whole struct out under the lock, so no request sees a
-	// mix of two reloads.
+	// It differs from cfg only in the four sections a config edit may replace --
+	// candidates, policy, roles registry and accounts -- and every reader copies
+	// the whole struct out under the lock, so a request or a tick step sees one
+	// consistent config for all of its work and never a mix of two reloads.
 	reloaded     Config
 	clients      *Clients
 	nonces       *remote.NonceWindow // ttl = remote.MaxClockSkew
@@ -123,10 +127,11 @@ type Server struct {
 	// gates is a `serve.`-prefixed view of the machine database, so a server-wide
 	// gate never collides with this machine's own rows.
 	gates db.KV
-	// gatesLocal is that machine's own ledger surface. Served runtimes read
-	// the union of the two (relevo.GatesLocal, gateunion.go), so a host gate
-	// steers served picks and switches; served writes still land in the
-	// prefixed row alone.
+	// gatesLocal is that machine's own ledger surface -- the unprefixed row
+	// `relevo gate <token>` records on this host, which the synced gates document
+	// applies. Served runtimes read the union of the two (relevo.GatesLocal,
+	// gateunion.go), so a host gate steers served picks and switches; served
+	// writes still land in the prefixed row alone.
 	gatesLocal db.KV
 	// stores is one Store per owner root, guarded by s.mu. The map only ever
 	// grows; the *Store values are immutable after creation and are safe to
@@ -197,8 +202,8 @@ func New(cfg Config) (*Server, error) {
 	if err := os.MkdirAll(tmpDir, tmpdir.StateRootMode); err != nil {
 		return nil, err
 	}
-	// Drop the request temp files a previous process left behind. A sweep
-	// error is a Warn and startup continues.
+	// Before anything listens, drop the request temp files a previous process left
+	// behind. A sweep error is a Warn and startup continues.
 	if removed, err := sweepTmp(tmpDir, time.Hour, cfg.Now()); err != nil {
 		slog.Warn("temp sweep failed", "dir", tmpDir, "removed", removed, "err", err)
 	}
@@ -423,9 +428,12 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 }
 
 // applyContainer rewires rt for one container-mode owner: its runner starts
-// every process as a rootless podman container bound to the owner's repo, so
-// no round runs as the serve uid. A runner that is not a Boundary is wrapped
-// to refuse every Start, so container mode never falls back to the serve uid.
+// every process as a rootless podman container bound to the owner's repo, so a
+// round, gate, consult or owner-path git runs confined by the container rather
+// than directly as the serve uid. There is no tenant chown and no tenant root:
+// the container runs as the serve uid on the host via keep-id. A runner that is
+// not a Boundary is wrapped to refuse every Start, so container mode never falls
+// back to the serve uid.
 func (s *Server) applyContainer(root string, rt *relevo.Runtime) {
 	repo, err := s.repoRoot(ownerIDOf(root))
 	if err != nil {
