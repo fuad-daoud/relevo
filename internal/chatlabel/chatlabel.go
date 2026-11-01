@@ -54,7 +54,8 @@ func firstNonEmptyLine(s string) string {
 	return ""
 }
 
-// truncate cuts s to at most max runes, replacing the last rune with an ellipsis.
+// truncate cuts s to at most max runes, replacing the last rune with an ellipsis
+// when it cuts.
 func truncate(s string, max int) string {
 	runes := []rune(s)
 	if len(runes) <= max {

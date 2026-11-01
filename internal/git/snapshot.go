@@ -66,9 +66,10 @@ func (c *Client) SnapshotTree(ctx context.Context, dir string) (string, error) {
 }
 
 // prepareTempIndex copies the repository index to tempIndex, keeping the index's
-// mtime: git re-reads an entry newer than the index file's own, and io.Copy's
-// fresh mtime would let a same-size edit written in the index's timestamp tick be
-// taken from the cached stat. A repository with no index yet needs no copy.
+// mtime: git re-reads an entry whose mtime is not older than the index file's own
+// (racy-clean), and io.Copy's fresh mtime would let a same-size edit written in
+// the index's timestamp tick be taken from the cached stat. A repository with no
+// index yet needs no copy.
 func (c *Client) prepareTempIndex(gitDir, tempIndex string) error {
 	repoIndex := filepath.Join(gitDir, "index")
 	src, err := os.Open(repoIndex)

@@ -96,8 +96,8 @@ func waitOutcomeWord(code int) string {
 // peekRef is the non-claiming command that prints e whole: delivery's `relevo
 // show` form with --peek appended. A plain `show` claims the round's oldest
 // pending payload, so it would hand the reader the NEXT pending payload as a
-// side effect; --peek avoids that. A halt entry, which carries its own pointer,
-// is pointed at the round's log, which claims nothing.
+// side effect; --peek avoids that. A kind delivery names no section for, such
+// as a halt entry, is pointed at the round's log, which claims nothing.
 func peekRef(b store.Binding, e store.LogEntry) string {
 	if ref := delivery.LogRef(b, e); ref != "" {
 		return ref + " --peek"
@@ -106,8 +106,10 @@ func peekRef(b store.Binding, e store.LogEntry) string {
 }
 
 // oversizeWaitBody renders the over-cap result: one item per confirmed entry, in
-// confirmation order so the waited round is last, every entry represented whole
-// or cut to budget, or reduced to its peek pointer. A halt entry is the
+// confirmation order so the waited round is last, every entry whole or cut to
+// budget, or reduced to its peek pointer when too little of the budget is left
+// for a useful fragment, since confirming every entry while printing only paths
+// would drop the content of each one the caller never sees. A halt entry is the
 // exception: its text is the reason a human is needed, so it is written whole
 // whatever budget is left and spends none the report still needs.
 func oversizeWaitBody(st *store.Store, name string, round int, res relevo.WaitResult) string {

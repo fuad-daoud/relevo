@@ -170,9 +170,9 @@ func (c *Client) BundleHeads(ctx context.Context, dir, path string) (map[string]
 // leading '+', so every update is a fast-forward. A failed update stops the loop
 // and refs already moved stay moved: callers treat a partial absorb as retryable,
 // and a re-run is idempotent because a ref already at its target SHA is a no-op.
-// Auto-maintenance is off: a round-close fetch must
-// not trigger a repack, which rewrites refs while the fetch reads them and dies
-// on a bad object for a round held.
+// Auto-maintenance is off: a repack triggered by a round-close fetch rewrites
+// refs while the fetch reads them, and the fetch then dies on a bad object for a
+// round the store already holds.
 func (c *Client) FetchBundle(ctx context.Context, dir, path string, refs []string) (map[string]string, error) {
 	_, err := c.run(ctx, dir, nil, "bundle", "verify", path)
 	if err != nil {

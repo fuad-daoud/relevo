@@ -144,11 +144,13 @@ func Baseline(ctx context.Context, d Deps, b store.Binding) (tree, head string) 
 // round_file row when there is a body worth keeping. With no baseline it makes
 // no git calls at all, checked ahead of the snapshot because the snapshot is
 // the expensive half and this runs with the state lock held. It NEVER returns
-// an error: a round advance must not be blocked by a failed diff, so every
-// failure lands in DiffResult.Reason. When Available is true Stat is exact and
-// Path resolves through Store.ReadFile (a round_file row, no file on disk)
-// unless the diff was empty or truncated; EndTree is the snapshotted tree
-// whenever the snapshot succeeded, empty otherwise, independently of Available.
+// an error: a round advance must not be blocked by a failed diff. Available is
+// false with an empty Reason when d.Git is nil or the tree is not a repository,
+// false with "no baseline" without a baseline, and false with a Reason when git
+// failed. When Available is true Stat is exact and Path resolves through
+// Store.ReadFile (a round_file row, no file on disk) unless the diff was empty
+// or truncated; EndTree is the snapshotted tree whenever the snapshot succeeded,
+// empty otherwise, independently of Available.
 func RoundDiff(ctx context.Context, d Deps, tx *store.Tx, b store.Binding) DiffResult {
 	if d.Git == nil {
 		return DiffResult{Available: false}
@@ -203,9 +205,12 @@ type PlanDiffSpec struct {
 // against the plan-start commit, stored at spec.Path. It is RoundDiff's twin for
 // a span crossing rounds. It NEVER returns an error, exactly as RoundDiff does,
 // and takes its trees as given rather than snapshotting, so it makes no
-// SnapshotTree call and adds no git method to the Git seam. When Available is
-// true Stat is exact and Path resolves through Store.ReadFile unless the diff
-// was empty or truncated.
+// SnapshotTree call and adds no git method to the Git seam. Available is false
+// with an empty Reason when d.Git is nil or the tree is not a repository, false
+// with "no baseline" without a From or End, false with "no path" when a patch
+// needs storing but no path was given, and false with a Reason when git failed.
+// When Available is true Stat is exact and Path resolves through Store.ReadFile
+// unless the diff was empty or truncated.
 func PlanDiff(ctx context.Context, d Deps, tx *store.Tx, spec PlanDiffSpec) DiffResult {
 	if d.Git == nil {
 		return DiffResult{Available: false}
@@ -323,9 +328,9 @@ func DiffLine(res DiffResult, facts CommitResult, branch, name string, round int
 // stored facts rather than a fresh DiffResult: the shape a remote binding's
 // catchUp writes, since the wire carries the server's note and commit facts,
 // never a patch. It reuses commitClause so the two never drift on wording, and
-// reproduces DiffLine exactly when the note alone says everything it would; for
-// every other shape it keeps the note's own wording, since the Stat and patch
-// path never crossed the wire.
+// reproduces DiffLine exactly when the note alone says everything it would
+// ("no changes", "unavailable[: reason]"); for every other shape it keeps the
+// note's own wording, since the Stat and patch path never crossed the wire.
 func DiffLineFromNote(note string, commits int, tree, branch string) string {
 	if note == "" {
 		return ""

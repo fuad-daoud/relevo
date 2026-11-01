@@ -53,7 +53,8 @@ func canonicalRequest(req *http.Request, payloadHash string, names []string) str
 }
 
 // canonicalURI is the escaped path, always with a leading slash: a bucket-root
-// request has an empty path, which would otherwise sign as an empty line.
+// request has an empty path, which would otherwise sign as an empty line where
+// the endpoint signs the root.
 func canonicalURI(req *http.Request) string {
 	path := req.URL.EscapedPath()
 	if path == "" {

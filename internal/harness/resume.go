@@ -100,9 +100,10 @@ func (h Harness) ResumeBuild(sessionID string, l Launch, prompt string, budget t
 	return append(l.PrintArgs(prompt, budget, dir, writableRoot, promptFile, chainDir, definition), selector...), nil
 }
 
-// DeleteSession renders the argv that deletes a harness session, as for Resume.
-// opencode's --standalone matters: the background service could start and resume
-// every session marked running. A kind whose sessions end with their process has
+// DeleteSession renders the argv that deletes an existing harness session. The
+// returned slice is the argv after the binary, as for Resume. opencode's
+// --standalone matters: the background service could start and resume every
+// session marked running. A kind whose sessions end with their process has
 // nothing to delete.
 func (h Harness) DeleteSession(sessionID string) ([]string, error) {
 	if err := checkResumeSessionID(sessionID); err != nil {

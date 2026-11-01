@@ -33,10 +33,11 @@ func MissingDefinitions(env InstallEnv, kind string, definitions []string) []str
 	return missing
 }
 
-// MissingDefinitionsIn roots MissingDefinitions at one account home (a
-// per-process home variable: CLAUDE_CONFIG_DIR, CODEX_HOME), each definition
-// resolving through AccountDefinitionPath. Returned paths keep DefinitionPath's
-// $HOME-relative spelling, so a note renders as the default check does.
+// MissingDefinitionsIn roots MissingDefinitions at one account home: home is the
+// directory a per-process home variable (CLAUDE_CONFIG_DIR, CODEX_HOME) names,
+// each definition resolving through AccountDefinitionPath. Returned paths keep
+// DefinitionPath's $HOME-relative spelling, so a note renders as the default
+// check does.
 func MissingDefinitionsIn(env InstallEnv, home, kind string, definitions []string) []string {
 	if _, ok := Lookup(kind); !ok {
 		return nil

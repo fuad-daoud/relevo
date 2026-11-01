@@ -29,14 +29,15 @@ func cursorSourceKey(src Source, member string) string {
 }
 
 // readAppendOnly returns every complete line added since cur, plus the cursor to
-// save. A trailing partial line waits for the next read; startSeq numbers the
-// returned lines, zero when none was returned. The reader is seeked, never read
-// whole: the rewrite check hashes only the confirmed prefix --
-// min(headSampleBytes, cur.ByteOffset) -- counted in place only when a complete
-// new line arrived. The check never hashes the member's own first headSampleBytes:
-// below that length every ordinary append would read as a rewrite. reset is true
-// when the content shrank below cur.ByteOffset or that prefix's hash changed; it
-// is not an error, since the UNIQUE keys make re-appending known rows a no-op.
+// save. A trailing partial line waits for the next read; startSeq counts the
+// complete lines before the first returned one, zero when none was returned. The
+// reader is seeked, never read whole: the rewrite check hashes only the confirmed
+// prefix -- min(headSampleBytes, cur.ByteOffset) -- counted in place only when a
+// complete new line arrived. The check never hashes the member's own first
+// headSampleBytes: below that length every ordinary append would read as a
+// rewrite. reset is true when the content shrank below cur.ByteOffset or that
+// prefix's hash changed; it is not an error, since the UNIQUE keys on event and
+// transcript make re-appending known rows a no-op.
 func readAppendOnly(opener func() (io.ReadSeekCloser, error), sourceKey string, cur db.Cursor, hasCursor bool) (lines [][]byte, startSeq int, next db.Cursor, reset bool, err error) {
 	rc, err := opener()
 	if err != nil {

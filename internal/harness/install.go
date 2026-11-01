@@ -65,8 +65,9 @@ type InstallResult struct {
 	Path    string
 	Outcome InstallOutcome
 	Err     string
-	// NewerShipped reports the kept difference sits on an older copy, so a reset
-	// brings a newer definition rather than only undoing the user's edit.
+	// NewerShipped reports the kept difference sits on an older copy: the manifest's
+	// last-written definition is not the one relevo ships now, so a reset brings a
+	// newer definition rather than only undoing the user's edit.
 	NewerShipped bool
 }
 

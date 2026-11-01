@@ -10,7 +10,8 @@ import (
 // ShimSource is POSIX sh. Every worktree of one repository shares a single
 // stash stack, so a builder's `git stash pop` can take another lane's work. A
 // push gets pushInsteadOf rewrites turning every network URL into an unknown
-// scheme, so it fails before connecting: publishing is the MasterMind's. A push
+// scheme, so it fails before connecting: publishing is the MasterMind's, and a
+// round that pushed has put unreviewed commits on a PR. A push
 // to a local path still runs, for test suites pushing to temporary bare
 // repositories. A remote with an explicit pushurl is not rewritten; git applies
 // pushInsteadOf to url only, and insteadOf would break fetch too. It finds the

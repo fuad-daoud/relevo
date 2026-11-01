@@ -30,8 +30,10 @@ type ContainerSpec struct {
 
 // ContainerArgv renders spec into the ProcSpec a container round runs: the
 // podman command that starts the builder under the container supervisor. Scope
-// and Credential are cleared -- the container runs as the invoking user via
-// keep-id -- and Argv is replaced; a spec's TmpDir is inert on this path.
+// is cleared because container rounds run under no systemd scope, Credential
+// because the container runs as the invoking user via keep-id, and Argv is
+// replaced; a spec's TmpDir is inert on this path because the container's
+// environment is only what the Env entries name.
 func ContainerArgv(spec spawn.ProcSpec, c ContainerSpec) spawn.ProcSpec {
 	out := spec
 	out.Scope = nil
@@ -42,7 +44,9 @@ func ContainerArgv(spec spawn.ProcSpec, c ContainerSpec) spawn.ProcSpec {
 
 // containerCommand builds the podman argv: the run flags, the mounts, the
 // environment, the scope bounds, the image and the in-container supervisor
-// command, then the builder's own argv.
+// command, then the builder's own argv. The in-container supervisor exits with
+// the builder's code, so podman returns it and the outer supervisor's trailer
+// carries it.
 func containerCommand(spec spawn.ProcSpec, c ContainerSpec) []string {
 	argv := []string{
 		"podman", "run", "--rm", "--userns=keep-id",
@@ -58,8 +62,9 @@ func containerCommand(spec spawn.ProcSpec, c ContainerSpec) []string {
 	return append(argv, spec.Argv...)
 }
 
-// containerMounts renders every bind in a fixed order: the round tree, the
-// binding's out/ directory, the owner's bare repo, harness homes, the git shim
+// containerMounts renders every bind in the fixed order the contract names: the
+// round tree, the binding's out/ directory, the owner's bare repo, the owner's
+// harness homes, then the round's Env-derived harness homes, then the git shim
 // directory, then a private /tmp. Host and container paths are identical, so
 // the round tree's absolute paths stay valid inside the container.
 func containerMounts(spec spawn.ProcSpec, c ContainerSpec) []string {
@@ -99,8 +104,9 @@ func containerMounts(spec spawn.ProcSpec, c ContainerSpec) []string {
 }
 
 // shimOnPath reports whether env's PATH starts with the git shim directory.
-// Only then is the directory known to exist: podman refuses to bind a missing
-// path, so it is mounted only then.
+// Only a writer round's PATH carries it, and only then is the directory known to
+// exist: podman refuses to bind a missing path, so a reader round on a server
+// that never wrote the shim must not mount it.
 func shimOnPath(env []string, dir string) bool {
 	if dir == "" {
 		return false
@@ -144,8 +150,9 @@ func sanitizeContainerName(s string) string {
 	return name
 }
 
-// Bounds renders a scope's resource limits as podman run flags: --memory,
-// --cpus and --pids-limit. An empty field is omitted; Slice, CPUWeight and
+// Bounds renders a scope's resource limits as podman run flags: --memory from
+// MemoryMax, --cpus from CPUQuota (a percentage rendered as a decimal), and
+// --pids-limit from TasksMax. An empty field is omitted; Slice, CPUWeight and
 // AllowedCPUs have no podman equivalent and are dropped.
 func Bounds(scope *spawn.ScopeSpec) []string {
 	if scope == nil {

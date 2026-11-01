@@ -1,6 +1,7 @@
 // Package isolate is the seam a served builder's process crosses to run under
 // a tenant boundary: the isolation modes, the per-tenant spec, and the
-// boundary Runner that translates a round's spawn before the base starts it.
+// boundary Runner that translates a round's spawn.ProcSpec before the base runner
+// starts it.
 package isolate
 
 import (
@@ -91,14 +92,14 @@ var InheritedHomeVars = append([]string{
 
 // TenantIdentityVars names the login identity a user-mode round must carry
 // exactly once: HOME, USER and LOGNAME, denied from the inheritance so a
-// first-match reader can never see the daemon's. The deny applies to
-// user-mode specs only, so a none-mode spec stays byte-identical.
+// first-match reader can never see the daemon's home or login. The deny applies
+// to user-mode specs only, so a none-mode spec stays byte-identical.
 var TenantIdentityVars = []string{"HOME", "USER", "LOGNAME"}
 
 // UserSpec translates spec into the spec a user-mode round runs as t: the
-// tenant credential, the tenant's HOME/USER/LOGNAME appended last, the home
-// variables denied, and no scope. When sharedLogins is false, an account-home
-// entry the caller added is removed too.
+// tenant credential, the tenant's HOME/USER/LOGNAME appended last, so the later
+// entry wins over any inherited one, the home variables denied, and no scope.
+// When sharedLogins is false, an account-home entry the caller added is removed too.
 func UserSpec(spec spawn.ProcSpec, t Tenant, sharedLogins bool) spawn.ProcSpec {
 	spec.Credential = &spawn.Credential{UID: t.UID, GID: t.GID}
 	spec.Scope = nil
@@ -192,8 +193,9 @@ func (r refuseRunner) Rusage(ctx context.Context, h spawn.ProcHandle, streamPath
 type Boundary interface {
 	spawn.Runner
 	// ForTenant returns the runner that serves one owner. A nil tenant refuses
-	// every Start with an error wrapping spawn.ErrBoundarySetup; a non-nil
-	// tenant starts each process under its credential with UserSpec.
+	// every Start with an error wrapping spawn.ErrBoundarySetup and carrying
+	// setupErr's text; a non-nil tenant starts each process under its
+	// credential with UserSpec.
 	ForTenant(t *Tenant, setupErr error) spawn.Runner
 	// ForContainer returns the runner that serves one owner in container mode,
 	// bound to that owner's container spec. With no spec bound it refuses
@@ -371,8 +373,8 @@ func (b *boundary) ExitCode(ctx context.Context, h spawn.ProcHandle, logPath str
 }
 
 // Kill removes a container round's container first (when one is bound), then
-// delegates to the base: the container does not share the base's process group,
-// so it needs an explicit remove.
+// delegates to the base: podman is the process the base signals, and the container
+// does not share its process group, so it needs an explicit remove.
 func (b *boundary) Kill(ctx context.Context, h spawn.ProcHandle, streamPath string) error {
 	if b.mode == ModeContainer && b.hasContainer {
 		b.killContainer(ctx, streamPath)
@@ -419,7 +421,8 @@ func defaultPodmanImageExists(ctx context.Context, image string) error {
 }
 
 // ScopeActive delegates to a base that can probe scope units, and answers "no
-// scope is active" for a base that cannot.
+// scope is active" for a base that cannot, the same answer scopeRunning gives a
+// runner without ScopeProber.
 func (b *boundary) ScopeActive(ctx context.Context, unit string) (bool, error) {
 	if p, ok := b.base.(spawn.ScopeProber); ok {
 		return p.ScopeActive(ctx, unit)
@@ -428,7 +431,8 @@ func (b *boundary) ScopeActive(ctx context.Context, unit string) (bool, error) {
 }
 
 // StopScope delegates to a base that can end scope units; a base that cannot
-// is refused, since the caller could not otherwise free the unit.
+// is refused, as endScope refuses a runner that can see a scope but not end it,
+// since the caller could not otherwise free the unit.
 func (b *boundary) StopScope(ctx context.Context, unit string) error {
 	if s, ok := b.base.(spawn.ScopeStopper); ok {
 		return s.StopScope(ctx, unit)
@@ -437,7 +441,8 @@ func (b *boundary) StopScope(ctx context.Context, unit string) error {
 }
 
 // ScopeResult delegates to a base that can read a scope's journal result, and
-// reports the zero result for a base that cannot.
+// reports the zero result for a base that cannot, read as not OOM-killed, as
+// housekeep.OOMKilled reads a runner without the result prober.
 func (b *boundary) ScopeResult(ctx context.Context, unit string, since time.Time) (spawn.ScopeResult, error) {
 	if p, ok := b.base.(spawn.ScopeResultProber); ok {
 		return p.ScopeResult(ctx, unit, since)
@@ -447,7 +452,8 @@ func (b *boundary) ScopeResult(ctx context.Context, unit string, since time.Time
 
 // translate maps a round's ProcSpec to the spec the base runner starts for
 // mode. ModeNone is identity, so a none server is byte-identical to a server
-// with no boundary.
+// with no boundary. User and container modes never reach here: Start translates
+// them first through UserSpec and ContainerArgv.
 func translate(spec spawn.ProcSpec, mode Mode) spawn.ProcSpec {
 	return spec
 }

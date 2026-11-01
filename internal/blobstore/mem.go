@@ -92,8 +92,9 @@ func (m *MemBlobStore) List(_ context.Context, prefix string) ([]Object, error) 
 	return out, nil
 }
 
-// Delete drops key. An absent key is not an error: the weekly cleanup asks by
-// deleting, and a body another run removed is the outcome it wanted.
+// Delete drops key. An absent key is not an error: the weekly cleanup asks
+// whether an object is still referenced by deleting it, and a body another run
+// removed is the outcome it wanted.
 func (m *MemBlobStore) Delete(_ context.Context, key string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -79,8 +79,8 @@ func DriftSummary(res DriftResult) string {
 
 // DriftLine renders the stdout line for drift detected between rounds, or ""
 // when there is nothing worth telling the mastermind. round is the opening
-// round; the prose names round-1 and points at `relevo show --drift` instead of
-// the patch's path.
+// round; the prose names round-1 and points at
+// `relevo show <name> --round <round> --drift` instead of the patch's path.
 func DriftLine(res DriftResult, name string, round int) string {
 	if !res.Available {
 		if res.Reason == "" {

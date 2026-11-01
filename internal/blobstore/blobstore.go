@@ -33,7 +33,8 @@ type BlobStore interface {
 	// a body of a different length is refused rather than stored under a digest
 	// that no longer describes it.
 	Put(ctx context.Context, key string, body io.Reader, size int64) error
-	// Get writes the body under key to w, or ErrNotFound when it is not there.
+	// Get writes the body under key to w and returns how many bytes it wrote,
+	// or ErrNotFound when the key is not there.
 	Get(ctx context.Context, key string, w io.Writer) (int64, error)
 	// Has reports whether key is in the store, without its body.
 	Has(ctx context.Context, key string) (bool, error)

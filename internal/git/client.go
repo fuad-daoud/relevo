@@ -33,7 +33,7 @@ type Client struct {
 }
 
 // NewClient returns a Client invoking bin, defaulting to "git", a 10s timeout
-// and DefaultMaxPatchBytes.
+// and DefaultMaxPatchBytes. Every call it makes is bounded by timeout.
 func NewClient(bin string, timeout time.Duration, maxPatchBytes int) *Client {
 	if bin == "" {
 		bin = "git"

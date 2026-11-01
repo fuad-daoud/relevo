@@ -30,7 +30,8 @@ type Verbs interface {
 // RelevoVerbs adapts internal/relevo's functions to Verbs. MasterMind is the
 // fallback identity for a harness that carries none per call (Claude Code);
 // ResolveSession, when set, maps a call's harness session to a MasterMind id
-// (opencode sends its session in _meta under ai.opencode/sessionID).
+// (opencode sends its session in _meta under ai.opencode/sessionID). Only Status
+// consults either; send, done, show and gate address a binding by name.
 type RelevoVerbs struct {
 	RT             relevo.Runtime
 	MasterMind     string
