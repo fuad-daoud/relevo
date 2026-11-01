@@ -27,9 +27,10 @@ func CompactDue(lastAt time.Time, lastEntries, entries int, now time.Time) bool 
 
 // compactDrops is the sequences a compaction to floor removes: an entry at or
 // below floor superseded by a later entry for the same row, also at or below
-// floor. The later entry must sit below floor too, or a reader to the floor
-// would miss the parent of a row it applies. Deletes are never dropped: a reader
-// missing a removal still removes it, and a delete is a few bytes.
+// floor. The later entry must sit at or below floor too, or a reader to the floor
+// would miss the parent of a row it applies. A delete is never dropped for being
+// a delete: a reader that missed a removal still removes it, and a delete is a
+// few bytes.
 func compactDrops(entries []Entry, floor int) map[int]bool {
 	latest := make(map[rowKey]int)
 	for _, e := range entries {

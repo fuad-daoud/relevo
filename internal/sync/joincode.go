@@ -110,7 +110,8 @@ func ParseJoinCode(code string) (JoinCode, error) {
 const maxShownVersion = 16
 
 // shownVersion renders the unreadable version segment for a terminal: cut short and
-// made inert, newlines replaced, since the segment is attacker-chosen text.
+// made inert, since the segment is attacker-chosen text; a newline, which sanitize
+// keeps, is replaced too.
 func shownVersion(version string) string {
 	suffix := ""
 	if len(version) > maxShownVersion {

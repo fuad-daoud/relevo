@@ -9,8 +9,9 @@ import (
 )
 
 // sweepEntries applies entries in order in the current transaction. ErrInvalid is
-// an immediate refusal, rolling back and dropping the entry; db.ErrInvalid is a
-// constraint refusal, deferred with its error; any other error halts.
+// an immediate refusal, returned for the caller to roll back and drop; db.ErrInvalid
+// (FK or UNIQUE) leaves the transaction open and is deferred with its error;
+// any other error halts.
 func sweepEntries(tx *db.Tx, entries []Entry, transport LogTransport, now time.Time) (applied int, deferred []Entry, defErrs []error, refusal *entryRefusal, err error) {
 	for n, e := range entries {
 		handled, aerr := applyEntry(tx, e, transport, now)
@@ -32,8 +33,8 @@ func sweepEntries(tx *db.Tx, entries []Entry, transport LogTransport, now time.T
 	return applied, deferred, defErrs, nil, nil
 }
 
-// retryPasses retries deferred entries while each pass lands something; the
-// remainder is dropped individually.
+// retryPasses retries deferred entries while each pass lands something and maxPasses
+// is not reached; the remainder is dropped individually.
 func retryPasses(tx *db.Tx, deferred []Entry, defErrs []error, maxPasses int, transport LogTransport, now time.Time) (applied int, remaining []Entry, remainingErrs []error, refusal *entryRefusal, err error) {
 	cur := deferred
 	curErrs := defErrs
@@ -143,6 +144,7 @@ func indexOfEntry(entries []Entry, target Entry) int {
 	return -1
 }
 
+// applyEntry writes one entry and reports whether it took effect.
 func applyEntry(tx *db.Tx, e Entry, transport LogTransport, now time.Time) (bool, error) {
 	if IsCtlTable(e.Table) {
 		if e.Table != CtlTakeover {

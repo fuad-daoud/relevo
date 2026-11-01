@@ -24,9 +24,10 @@ type Importer struct {
 	known     int
 	mover     BlobMover
 	staging   string
-	// chunk bounds a snapshot transaction's entries.
+	// chunk bounds a snapshot transaction's entries; zero is the default.
 	chunk int
-	// regionRows and passes bound a snapshot's rows and retry passes.
+	// regionRows and passes bound a snapshot's rows and retry passes; zero is
+	// the default.
 	regionRows int
 	passes     int
 	// signedFrom is the sequence each origin must be signed from, localSigned

@@ -96,7 +96,9 @@ func readDocSecretsBookkeeping(l Local) (docSecretsBookkeeping, error) {
 
 // restoreDocSecretsBookkeeping puts the secrets document's bookkeeping back as read.
 // A signal carried at read time stands -- an echo of this enable's caller write,
-// not the restored state -- while a signal the clear planted is struck.
+// not the restored state -- while a signal the clear planted is struck, since it
+// points at exactly the state these rows stand for. It runs in its own transaction,
+// so a caller that just ran the join's clear keeps the bookkeeping over it.
 func restoreDocSecretsBookkeeping(l Local, kept docSecretsBookkeeping) error {
 	err := l.Tx(func(t *db.Tx) error {
 		if err := restoreSecretsDocBookkeeping(t, kept); err != nil {
@@ -121,7 +123,8 @@ type heldRow struct {
 
 // KeyClientKeyReplaced is the machine-local row saying an arriving client key took
 // a held one's place, spelled here not imported: the config package imports this
-// one, and a refused join's restore owes the machine -- as SecretClientKey does.
+// one, and its restore is part of what a refused join owes the machine -- as
+// SecretClientKey does.
 const KeyClientKeyReplaced = "config/client_key_replaced"
 
 // SnapshotJoin reads every row an enable --join stages or its document apply writes;

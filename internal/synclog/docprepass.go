@@ -15,10 +15,11 @@ import (
 )
 
 // PrepassDocs applies the named documents' entries from every other origin,
-// newest-wins, without moving any mark. Locked is a no-op: an unverifiable entry
-// is parked by the ordinary import, and this pass must not be the one path
-// trusting it. An unfollowable origin, an unverifiable entry and a newer-schema
-// writer are left to the import, which reports them.
+// newest-wins, without moving any mark. It answers with how many entries it
+// applied. Locked is a no-op: an unverifiable entry is parked by the ordinary
+// import, and this pass must not be the one path trusting it. An unfollowable
+// origin, an unverifiable entry and a newer-schema writer are left to the
+// import, which reports them.
 func (i *Importer) PrepassDocs(names ...string) (int, error) {
 	if len(i.key) == 0 || len(names) == 0 {
 		return 0, nil

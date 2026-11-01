@@ -12,7 +12,8 @@ import (
 
 // BodyHash is the hex sha256 `head` carries for a row. It runs over the canonical
 // encoding, not arrival bytes: same columns in another order hash equal, while one
-// changed byte still hashes different.
+// changed byte still hashes different. Hashing arrival bytes would re-export the
+// row on every reconcile forever.
 func BodyHash(body json.RawMessage) (string, error) {
 	row, err := DecodeBody(body)
 	if err != nil {

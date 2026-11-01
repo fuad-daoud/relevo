@@ -18,7 +18,8 @@ import (
 // the token goes after the mark so no live credential outlives the mark for the
 // next enable to inherit; the worker stops before its file goes because a held-open
 // replica cannot be removed. Nothing else is touched: the shared file stays
-// servable and the remote is left alone.
+// servable and the remote is left alone, for Turso's own tooling to delete, so
+// a typo cannot destroy a record.
 
 // The steps turn-off runs, in order: named so a reporter says which step it was.
 const (

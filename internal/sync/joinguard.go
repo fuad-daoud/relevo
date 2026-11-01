@@ -18,8 +18,8 @@ import (
 // ErrJoinOverQuota reports a join estimated past the month's left Turso traffic.
 var ErrJoinOverQuota = errors.New("sync: the join would use more Turso traffic than this month has left")
 
-// maxSizeObject bounds a published log size to a few dozen bytes; larger is not
-// ours and ignores rather than reads.
+// maxSizeObject bounds a published log size object, which is really a few dozen
+// bytes; a larger one is not ours and is ignored rather than read.
 const maxSizeObject = 4096
 
 // The bucket is written by untrusted other machines, so the estimate bounds both

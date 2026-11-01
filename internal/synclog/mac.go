@@ -20,10 +20,10 @@ func isV2(e Entry) bool {
 	return e.After != nil || strings.HasPrefix(e.Table, "ctl:")
 }
 
-// EntryMAC is the entry's HMAC-SHA256 over its canonical encoding: both halves
-// must hash exactly the same bytes. Seq and Batch are left out: the transport
-// assigns them after signing, so covering them would make every entry
-// unverifiable.
+// EntryMAC is the entry's HMAC-SHA256 over its canonical encoding: signing and
+// verifying must hash exactly the same bytes, or a signed log stops verifying.
+// Seq and Batch are left out: the transport assigns them after signing, so
+// covering them would make every entry unverifiable.
 func EntryMAC(key []byte, e Entry) []byte {
 	var buf bytes.Buffer
 	domain := macDomainV1
@@ -111,9 +111,10 @@ func writeMACField(buf *bytes.Buffer, field []byte) {
 }
 
 // writeMacBody appends the body as the log holds it, through the pipe's own
-// re-encoding on both sides so both agree. A ref entry is signed as the
-// reference, never the content behind it, or the signature would depend on an
-// unreadable bucket.
+// re-encoding on both sides so both agree: the pipe compacts the body and escapes
+// <, > and &, so returned bytes differ from signed ones unless both sides apply it.
+// A ref entry is signed as the reference, never the content behind it, or the
+// signature would depend on an unreadable bucket.
 func writeMacBody(buf *bytes.Buffer, body json.RawMessage) {
 	if len(body) == 0 {
 		writeMACField(buf, nil)

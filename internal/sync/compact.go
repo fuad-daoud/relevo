@@ -25,8 +25,9 @@ type compactState struct {
 // compact drops this machine's superseded log entries when one is due. It runs
 // after the import and the marks publish, so the floor reflects the marks the
 // readers last published. A failure is logged and left for the next tick: the
-// exchange itself succeeded and compaction is housekeeping. The floor is
-// skipped unless above the recorded one, so a quiet log does no work.
+// exchange itself succeeded and compaction is housekeeping. It reports whether
+// it compacted. The floor is skipped unless above the recorded one, so a quiet
+// log does no work.
 func (r *Runner) compact(shared *db.DB, t *StopTransport, now time.Time) bool {
 	if r.Local == nil {
 		return false

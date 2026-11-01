@@ -173,7 +173,8 @@ func uploadPending(m BlobMover, stagingDir string, blobs []pendingBlob) error {
 func uploadOne(m BlobMover, stagingDir string, b pendingBlob) error {
 	path := filepath.Join(stagingDir, b.Ref.SHA256)
 	// The folder holds bodies existing nowhere else until the put lands, so the
-	// file is owner-only: it outlives this call inside a 0700 folder.
+	// file is owner-only even inside the 0700 folder: it outlives this call, and
+	// its mode is what a folder listing shows.
 	if err := os.WriteFile(path, b.Bytes, 0o600); err != nil {
 		return fmt.Errorf("synclog: stage %s: %w", path, err)
 	}
@@ -186,7 +187,8 @@ func uploadOne(m BlobMover, stagingDir string, b pendingBlob) error {
 }
 
 // checkBlobSizes refuses a row holding a value past MaxBlobBytes. Every importer
-// refuses that large a ref, so the export stops on it, naming the row.
+// refuses that large a ref, so exporting it would drop the row on every other
+// machine; the export stops on it instead, naming the row.
 func checkBlobSizes(table, pk string, blobs []pendingBlob) error {
 	for _, b := range blobs {
 		if len(b.Bytes) > MaxBlobBytes {

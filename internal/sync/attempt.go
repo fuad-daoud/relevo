@@ -25,7 +25,8 @@ type Attempt struct {
 func (a Attempt) Failed() bool { return a.Error != "" }
 
 // RecordAttempt writes the attempt that began at start and ended with out. The
-// error text is the error's own, so no credential is recorded here.
+// error text is the error's own: a render sanitizes it, and nothing here puts a
+// credential in an error.
 func (r *Runner) RecordAttempt(start time.Time, out SteadyResult) {
 	a := Attempt{
 		Start:     start.UTC(),

@@ -50,8 +50,9 @@ func RefFor(stored []byte, codec int) BlobRef {
 func EncodeRef(r BlobRef) json.RawMessage {
 	tagged, err := json.Marshal(map[string]BlobRef{refTag: r})
 	if err != nil {
-		// BlobRef holds a string and two numbers that cannot fail to marshal;
-		// no caller could act on it.
+		// BlobRef holds a string and two numbers that cannot fail to marshal; a body
+		// that cannot be encoded here is one this machine cannot write at all, which
+		// no caller could act on.
 		panic("blobref: encode: " + err.Error())
 	}
 	return tagged

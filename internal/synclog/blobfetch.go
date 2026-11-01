@@ -23,8 +23,9 @@ import (
 const fetchWorkers = 4
 
 // ErrBlobMismatch reports a fetched object that is not the one its ref names.
-// It is transient on purpose, so the origin is held and retried rather than
-// latched or applied.
+// It is transient on purpose -- a store that served a truncated or tampered
+// object may serve the right one next time -- so the origin is held and retried
+// rather than latched or applied.
 var ErrBlobMismatch = errors.New("synclog: the fetched body is not the one its ref names")
 
 var errNoMover = errors.New("synclog: this machine has no blob store to fetch a body from")
@@ -42,8 +43,10 @@ func (m *missingBlob) Error() string {
 
 func (m *missingBlob) Unwrap() error { return ErrBlobMissing }
 
-// Stall is one origin held for a run with nothing applied and the mark unmoved,
-// so the next attempt reads the same entries. Reason says which.
+// Stall is one origin held for a run: a body its batch refers to could not be
+// fetched and checked, or the snapshot up to its floor could not be applied.
+// Nothing of it applied and the mark did not move, so the next attempt reads the
+// same entries again. Reason says which.
 type Stall struct {
 	Origin string
 	// Label is the name that installation's own file carries.

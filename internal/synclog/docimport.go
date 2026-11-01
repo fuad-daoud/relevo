@@ -89,7 +89,8 @@ func (k *keyed) parseDocs(entries []Entry) ([]docItem, error) {
 
 // takeDocs applies a locked-or-unlocked reader's doc entries, reporting how many
 // handled. Unlocked applies, locked parks what it cannot yet verify as honest.
-// The clock observes every stamp first, outside the transaction it persists through.
+// The clock observes every stamp first, whether applied, superseded or parked,
+// outside the transaction because it persists through its own write.
 func (i *Importer) takeDocs(origin string, docs []Entry) (int, error) {
 	if len(docs) == 0 {
 		return 0, nil
@@ -256,7 +257,8 @@ func stampBeats(stamp Stamp, origin string, other Stamp, otherOrigin string) boo
 	return stamp > other || (stamp == other && origin > otherOrigin)
 }
 
-// recordExported leaves export state holding what was just applied.
+// recordExported leaves export state holding what was just applied, so the
+// exporter finds nothing to send back.
 func recordExported(tx *db.Tx, p DocEntry, value json.RawMessage) error {
 	if value == nil {
 		return tx.ClearDocExported(p.Name, p.Key)
@@ -346,7 +348,8 @@ func (i *Importer) DrainPending() (ImportResult, error) {
 	return res, nil
 }
 
-// verifyParked rechecks a parked entry like an arriving one; empty reason may apply.
+// verifyParked rechecks a parked entry like an arriving one; the returned reason
+// is empty when the entry may be applied.
 func (i *Importer) verifyParked(row db.PendingDoc) (docItem, string) {
 	var e Entry
 	if err := json.Unmarshal([]byte(row.Entry), &e); err != nil {

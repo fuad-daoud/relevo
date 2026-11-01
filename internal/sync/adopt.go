@@ -43,15 +43,16 @@ const adoptQuietFor = 24 * time.Hour
 // same allowance synclog gives a mark.
 const adoptSkew = time.Hour
 
-// adoptIgnoredDocs are the document signals a fresh machine always carries, never a
-// change made under its old identity.
+// adoptIgnoredDocs are the document signals a fresh machine always carries: every
+// open signals the config document, and the enable's own store step signals the
+// secrets one; neither is a change the machine made under its old identity.
 var adoptIgnoredDocs = []string{"config", SecretsDocName}
 
 var (
 	// ErrAdoptionLive is an adoption of an identity active within the day.
 	ErrAdoptionLive = errors.New("sync: that identity was active within the last 24 hours: wait, or run relevo db sync disable on the machine that holds it")
-	// ErrAdoptionStampAhead is an adoption stamped further in the future than the
-	// skew allows: a wrong clock or forged stamp, never quiet.
+	// ErrAdoptionStampAhead is an adoption of an identity whose log or marks are stamped
+	// further ahead than the skew allows: a wrong clock or forged stamp, never quiet.
 	ErrAdoptionStampAhead = errors.New("sync: that identity's log or marks are stamped in the future: its clock is wrong or the stamp is forged; fix that clock or run relevo db sync disable on the machine that holds it")
 	// ErrAdoptionSelf is an adoption of the identity already held.
 	ErrAdoptionSelf = errors.New("sync: this machine already is that installation: run relevo db sync enable without --as")
@@ -90,8 +91,8 @@ func AdoptionRefusal(now, lastEntryAt, lastMarkAt time.Time) error {
 type Adoption struct {
 	// ID is the installation to continue as.
 	ID string
-	// Identity writes the new identity beside the database, after the swap and
-	// unread by the daemon here.
+	// Identity writes the new identity beside the database, after the swap;
+	// nothing here depends on the daemon having read it.
 	Identity func(id string) error
 	// NewToken makes the claim's random token; nil draws one.
 	NewToken func() string
