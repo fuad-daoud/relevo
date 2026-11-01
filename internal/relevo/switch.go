@@ -22,12 +22,10 @@ import (
 
 // gatedBuilder reports the first live rate-limit gate on b's own builder
 // candidate, if any. Pure over the ledger and b's own token: a token the
-// configured set does not hold (the candidate was edited or deleted
-// mid-round) is still checked, because the running process is on that triple.
-//
-// SpawnFailed gates are ignored: a running builder is not a failed spawn, so
-// a spawn-failure gate recorded against this same token by an earlier switch
-// attempt must not itself trigger another switch.
+// configured set no longer holds is still checked, because the running
+// process is on that triple. SpawnFailed gates are ignored: a running
+// builder is not a failed spawn, so a spawn-failure gate an earlier switch
+// recorded against this same token must not itself trigger another switch.
 func gatedBuilder(rt Runtime, b store.Binding) (availability.Gate, bool) {
 	for _, g := range availability.LedgerGates(AvailabilityDeps(rt), []string{b.BuilderCandidate}) {
 		if g.Token == b.BuilderCandidate && g.Kind == availability.RateLimited {
@@ -37,14 +35,12 @@ func gatedBuilder(rt Runtime, b store.Binding) (availability.Gate, bool) {
 	return availability.Gate{}, false
 }
 
-// roundExclusionGates is one ledger.Gate per token in b.RoundExcluded --
-// candidates that exited without a report during the CURRENT round.
-// Pure. switchBuilder folds these into the live ledger gates it passes to
-// resolveCandidate, so a mid-round switch never lands the pick back on a
-// builder that already proved it cannot finish this round. gatedBuilder is
-// NOT changed to look at these: it looks only at RateLimited, so an
-// exclusion never triggers a switch by itself -- only the switch's own
-// resolution sees it.
+// roundExclusionGates is one ledger.Gate per token in b.RoundExcluded: the
+// candidates that exited without a report during the current round. Pure.
+// switchBuilder folds these into the gates it passes to resolveCandidate, so
+// a mid-round switch never lands back on a builder that already proved it
+// cannot finish this round. gatedBuilder still looks only at RateLimited, so
+// an exclusion never triggers a switch by itself.
 func roundExclusionGates(b store.Binding) []availability.Gate {
 	gates := make([]availability.Gate, 0, len(b.RoundExcluded))
 	for _, t := range b.RoundExcluded {
@@ -61,9 +57,8 @@ func roundExclusionGates(b store.Binding) []availability.Gate {
 // nextBuilder returns the same candidate on the next ungated account of its
 // pool, when a limit gated the account the binding is on and another login is
 // free. The walk starts after the current login and wraps, so a pool rotates
-// through its logins rather than restarting at the first one. It is decided
-// before the actor order is walked, so a limit rotates within the pool before
-// it ever changes candidate. Pure.
+// through its logins. It is decided before the actor order is walked, so a
+// limit rotates within the pool before it ever changes candidate. Pure.
 func nextBuilder(b store.Binding, pick resolve.AccountPick) (account.Account, bool) {
 	if len(pick.Set) == 0 || b.BuilderAccount == "" {
 		return account.Account{}, false
@@ -76,7 +71,7 @@ func nextBuilder(b store.Binding, pick resolve.AccountPick) (account.Account, bo
 	cur, ok := accountByName(pool, b.BuilderAccount)
 	if !ok || !account.Gated(cur, pick.Gates) {
 		// The login in use is not gated: this switch has another cause and
-		// the actor order decides it as it always did.
+		// the actor order decides it.
 		return account.Account{}, false
 	}
 	start := 0
@@ -121,13 +116,11 @@ func payloadNamesSwitches(payload string) bool {
 }
 
 // switchLine renders one switch entry's report line from that entry's own
-// note -- the reason and the resolution switchEntry already stores, and nothing
-// else. Every path that records a switch (a rate limit, an exit without a
-// report, a lost daemon, a nudge's resume, a remote server's own switch) writes
-// the whole fact into the note, so rendering the note renders the switch
-// whatever shape it took; a note this round has never seen is still named rather
-// than dropped. "" for an entry with no note: a switch with nothing recorded
-// about it has nothing to say.
+// note: the reason and the resolution switchEntry already stores. Every path
+// that records a switch writes the whole fact into the note, so rendering the
+// note renders the switch whatever shape it took, and a note this round has
+// never seen is still named rather than dropped. "" for an entry with no
+// note: a switch with nothing recorded about it has nothing to say.
 func switchLine(note string) string {
 	if note == "" {
 		return ""
@@ -136,22 +129,17 @@ func switchLine(note string) string {
 }
 
 // switchLines renders the switch entries of one round, in log order, as the
-// lines queueReport appends to that round's report payload. A round that
-// switched twice reports both switches, in the order they happened.
-//
-// Only the round being closed counts: a switch on an earlier round was named in
-// that round's report, and one on a later round is not this payload's fact.
-// Nudge entries are excluded by note, the same exclusion store.HasKind applies,
-// so a nudge is never mistaken for a switch.
-//
-// A remote round's switches are the server's record, not the log's: the closed
-// round's view carries the round's whole history and the caller's payload has
-// already named it. The entry a poll writes when it observes the server running
-// a different candidate is that same switch as this client happened to see it,
-// so naming it here too says the switch twice -- an A-B-A four times. Such an
-// entry is excluded by note prefix, the way the nudge is excluded by note, and
-// only when the payload already names a switch: a server that ships no switch
-// history leaves the poll's entry as the only record there is. Pure.
+// lines queueReport appends to that round's report payload. Only the round
+// being closed counts: a switch on an earlier round was named in that round's
+// report, and one on a later round is not this payload's fact. Nudge entries
+// are excluded by note, the same exclusion store.HasKind applies, so a nudge
+// is never mistaken for a switch. A remote round's switches are the server's
+// record, not the log's: the closed round's view carries the round's whole
+// history and the caller's payload has already named it, so naming the poll's
+// entry for the same switch too says it twice. Such an entry is excluded by
+// note prefix, the way the nudge is excluded by note, but only when the payload
+// already names a switch: a server that ships no switch history leaves the
+// poll's entry as the only record there is. Pure.
 func switchLines(entries []store.LogEntry, round int, serverSwitch bool) []string {
 	var out []string
 	for _, e := range entries {
@@ -169,18 +157,12 @@ func switchLines(entries []store.LogEntry, round int, serverSwitch bool) []strin
 }
 
 // switchEntry is the log record of one builder switch: why the switch
-// happened, and what ExplainResolution says about the pick that replaced
-// the builder. Always Confirmed and DirToMasterMind, the same
-// reasoning as pickEntry: a switch is never a pending payload.
-//
-// The rule that follows from Confirmed is the whole of a switch's delivery: a
-// switch needs no action, because the round already moved on to the new
-// builder and the next tick continues from there. Queuing one anyway would buy
-// a mid-round turn on a runner and a second payload in the same delivery the
-// report arrives in, for a fact the report already carries. So a switch entry
-// is status, and its trace to the mastermind is the switch line in the closing
-// round's report -- switchLine below, appended by queueReport. No new stored
-// fact is added for it: the note written here is what that line renders.
+// happened, and what ExplainResolution says about the replacement pick.
+// Always Confirmed and DirToMasterMind, the same reasoning as pickEntry: a
+// switch is never a pending payload, so it needs no action -- the round
+// already moved on and the next tick continues from there. Its trace to the
+// mastermind is the switch line in the closing round's report: no new stored
+// fact is added for it, since the note written here is what that line renders.
 func switchEntry(now time.Time, round int, reason string, res resolve.Resolution, u *usage.Usage) store.LogEntry {
 	return store.LogEntry{
 		TS: now.UTC(), Round: round, Direction: store.DirToMasterMind,
@@ -191,36 +173,27 @@ func switchEntry(now time.Time, round int, reason string, res resolve.Resolution
 }
 
 // switchBuilder replaces b's builder mid-round with the next candidate the
-// policy order and the ledger's live gates pick, and hands it the SAME
-// round's plan. The round number does not change -- the new builder
-// inherits the partial diff capture.RoundDiff already handles -- but
-// RoundStartedAt is restarted, so the replacement gets its own startGrace
-// before a nudge and its own round budget, exactly like a fresh handoff.
+// policy order and the ledger's live gates pick, on the SAME round's plan:
+// the round number does not change, but RoundStartedAt is restarted, so the
+// replacement gets its own startGrace before a nudge and its own round
+// budget, exactly like a fresh handoff. closeOld kills the process it
+// replaces; the gone trigger has nothing left to kill and passes false, the
+// gated trigger's process is still running and passes true.
 //
-// The replacement is a new process started on the same round's prompt.
-// closeOld kills the process it replaces; the gone trigger has nothing left
-// to kill and passes closeOld=false, the gated trigger's process is still
-// running and passes true.
-//
-// resolveBuilder's own resolve.Resolution is always resolve.HowExplicit -- it is handed the
-// already-chosen token -- and is discarded. The resolve.Resolution switchBuilder
-// records in the switch log entry is the one it makes itself, by calling
-// resolveCandidate with an omitted token, so the audit trail explains the
-// real policy decision rather than the trivial "explicit" one. This is the
-// same rule Add and Fork follow.
-//
-// A switch tick returns without deliverAndSettle, like the halt paths in
-// Reconcile: replacing a builder is the only thing that tick does to this
-// binding.
+// resolveBuilder's own resolve.Resolution is always resolve.HowExplicit and is
+// discarded; the switch log entry records the one switchBuilder makes itself
+// with an omitted token, so the audit trail explains the real policy decision
+// rather than the trivial "explicit" one, the same rule Add and Fork follow. A
+// switch tick returns without deliverAndSettle, like the halt paths in
+// Reconcile: replacing a builder is the only thing that tick does here.
 //
 // counted controls whether the switch advances b.RoundSwitches. A rate-limit
-// switch -- whether the gate came from a pattern match or from a human's
-// `relevo gate <token>` -- passes false: max_switches counts builders that
-// fail, not providers that close, and counting one trigger but not the
-// other would make the halt depend on who noticed the gate first. The
-// `>= limit` check above is unaffected either way: `0` still disables
-// switching, and a binding already at the limit still halts instead of
-// switching again.
+// switch -- from a pattern match or a human's `relevo gate <token>` -- passes
+// false: max_switches counts builders that fail, not providers that close, and
+// counting one trigger but not the other would make the halt depend on who
+// noticed the gate first. The `>= limit` check above is unaffected either way:
+// `0` still disables switching, and a binding already at the limit still halts
+// instead of switching again.
 func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, reason string, closeOld, counted bool) (store.Binding, error) {
 	limit := rt.Policy.SwitchLimit()
 	if b.RoundSwitches >= limit {
@@ -309,13 +282,12 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}, b.Name)
 	if err != nil {
 		// resolveBuilder already recorded spawn_failed for the pick, which
-		// gates it for the next resolution -- so the next human send picks a
-		// different candidate. What does not happen is a retry: with the old
-		// process closed (or already gone) and no replacement process, the next
-		// tick returns at reconcileHeadless' PID == 0 branch without acting,
-		// and view.WaitingOn reads the binding as broken rather than waiting
-		// on the daemon. So this binding stops here, and the spawn_failed
-		// entry is what keeps the bad candidate out of the next send.
+		// gates it for the next resolution, so the next human send picks a
+		// different candidate. There is no retry: with no replacement process
+		// the next tick returns at reconcileHeadless' PID == 0 branch without
+		// acting, and view.WaitingOn reads the binding as broken. So this
+		// binding stops here, and the spawn_failed entry is what keeps the bad
+		// candidate out of the next send.
 		if counted && !rotated {
 			b.RoundSwitches++
 		}
@@ -327,16 +299,15 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		// still switch, and without a process this is not one of them.
 		next, queued, qerr := queueBrokenHalt(ctx, rt, tx, b, reason)
 		if qerr != nil {
-			// The switch reason rides the error: the entry cannot be queued
-			// here, so Admit's own spawn-failure halt is what runs, and a bare
-			// queue error left that halt naming only the failed append rather
-			// than the switch the round actually broke on.
-			//
-			// Halt is written only once the entry is queued. A binding that
-			// came back halted with the entry unwritten is one Admit reads as
-			// already halted -- it keeps its reason and queues nothing -- and
-			// nothing else retries it, so the reason the switch recorded would
-			// be the only account of the fault, in the state word alone.
+			// The switch reason rides the error: the entry cannot be queued here,
+			// so Admit's own spawn-failure halt is what runs, and a bare queue
+			// error left that halt naming only the failed append rather than the
+			// switch the round actually broke on. Halt is written only once the
+			// entry is queued: a binding that came back halted with the entry
+			// unwritten is one Admit reads as already halted -- it keeps its
+			// reason and queues nothing, and nothing else retries it, so the
+			// switch's recorded reason would be the only account of the fault,
+			// in the state word alone.
 			return b, fmt.Errorf("%s: %w", reason, qerr)
 		}
 		// The binding keeps the reason, name-stripped the way haltBinding
@@ -368,14 +339,13 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	b.BuilderScreen = ""
 	b.BuilderScreenAt = time.Time{}
 	b.State = store.StateActive
-	// The round is running again, so the halt the previous attempt in it left
-	// goes with it, every field: the notification key it still carries dedups
-	// the next halt of this same round, so leaving it behind means the round's
-	// next halt is silently swallowed. OwedHalt is left alone -- it is a pending
-	// notification for an already closed round, still owed -- exactly as the
-	// other human revive paths leave it (bind.go). A startRound failure below
-	// halts fresh on the way out, which is correct: this halt really is the
-	// round's current reason.
+	// The round is running again, so the halt the previous attempt left goes
+	// with it, every field: the notification key it still carries dedups the
+	// next halt of this same round, so leaving it behind means the round's
+	// next halt is silently swallowed. OwedHalt is left alone -- a pending
+	// notification for an already closed round, still owed -- as the other
+	// human revive paths leave it. A startRound failure below halts fresh on
+	// the way out: this halt really is the round's current reason.
 	b = ClearHaltFields(b)
 
 	if err := tx.AppendLog(b.Name, switchEntry(now, b.Round, reason, res, prior)); err != nil {
@@ -386,14 +356,12 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	started, err := startRound(ctx, rt, tx, b, text, false)
 	if err != nil {
 		// A host that refuses the Start is not a builder that failed. The pick
-		// stays -- the switch entry above already recorded it, and reverting
-		// would report a switch that the log does not show -- but the halt says
-		// the replacement NEVER STARTED and names the host cause, so a human, or
-		// `relevo chain --resume`, retries the right candidate rather than
-		// reading a candidate fault where the host is at fault. Nothing is added
-		// to RoundExcluded: the candidate never got to prove anything about this
-		// round, and excluding it would keep it out of the resume that should
-		// pick it.
+		// stays -- the switch entry above already recorded it -- but the halt
+		// says the replacement NEVER STARTED and names the host cause, so a
+		// human, or `relevo chain --resume`, retries the right candidate.
+		// Nothing is added to RoundExcluded: the candidate never got to prove
+		// anything about this round, and excluding it would keep it out of the
+		// resume that should pick it.
 		if hostStartError(err) {
 			return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf(
 				"%s: switched builder to %s, which never started -- the host refused it: %v",
@@ -405,12 +373,11 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 	b = started
 
-	// The budget is spent by a builder that failed, so it is counted only once
-	// the replacement is running. A start the host refused costs the round
-	// nothing: counting it would halt the round on the second such host refusal
-	// with a switch that never began. A rotation never counts either -- the pool
-	// bounds it naturally, every login it leaves is gated -- so it must not
-	// consume the max_switches budget.
+	// The budget counts builders that failed, so it is spent only once the
+	// replacement is running: a start the host refused costs nothing, or the
+	// second such refusal would halt the round on a switch that never began. A
+	// rotation never counts either -- the pool bounds it naturally, since every
+	// login it leaves is gated.
 	if counted && !rotated {
 		b.RoundSwitches++
 	}
@@ -424,16 +391,13 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 }
 
 // hostStartError reports whether a startRound failure is the host refusing the
-// spawn rather than the candidate failing to run: the three classes that
-// startProcess already declines to record as a spawn failure -- a scope-unit
-// collision, a tenant-boundary refusal and a runner that is gone -- plus the
-// lost-builder resume path's own refusal. Each is an operator's problem, so a
-// switch that hits one must not spend the round's switch budget or exclude the
-// candidate it picked.
+// spawn rather than the candidate failing to run: a scope-unit collision, a
+// tenant-boundary refusal, a runner that is gone, and the lost-builder resume
+// path's own refusal. Each is an operator's problem, so a switch that hits one
+// must not spend the round's switch budget or exclude the candidate it picked.
 //
-// startProcess wraps all of these in a plain (non-spawnFailure) error, which is
-// what makes this checkable at all: the classes are not distinguishable
-// by type at the call site, only by what the error says.
+// startProcess wraps all of these in a plain (non-spawnFailure) error, so the
+// classes are distinguishable at the call site only by what the error says.
 func hostStartError(err error) bool {
 	if err == nil {
 		return false
@@ -450,33 +414,26 @@ func hostStartError(err error) bool {
 // limitText is the text a decision point scans for rate-limit patterns: the
 // tail of the current builder process's output -- its log when the round has
 // one, otherwise the bytes it appended to the round's stream -- keeping only
-// the lines the harness itself wrote. A local builder is always headless.
+// the lines the harness itself wrote.
 func limitText(ctx context.Context, rt Runtime, b store.Binding) string {
 	text, _ := limitScan(ctx, rt, b)
 	return text
 }
 
-// gateOnLimit is the one helper every decision point calls.
-// Preconditions: the round is open and the caller holds the store lock.
-//
-// It applies the switchable guard itself -- the same one the existing
-// gatedBuilder triggers use -- and returns handled=false without reading the
-// ledger when it fails: an adopted builder is never gated by relevo, and no
-// call site has to repeat the check.
-//
-// It checks the credit class before MatchLimit, because the two differ in kind
-// and not only in duration: a credit exhaustion gates until a human tops the
-// account up and clears it, while every other limit gates until a reset the
-// provider named. Everything after the match is the same either way -- one
-// rate_limited ledger entry, the report-on-disk branch, then an uncounted
-// switch -- so a credit tail that also carries a reset, a clock or a date takes
-// the credit gate and never the timed one.
-//
-// On a match it records one rate_limited ledger entry (source relevo), warns,
-// marks a headless builder's log, then checks whether this round already has
-// a report on disk: if so the gate is recorded but the round is left for the
-// caller to close as it would have (handled=false, m.Line set); otherwise it
-// switches the builder uncounted (handled=true) and returns the replacement.
+// gateOnLimit is the one helper every decision point calls. Preconditions:
+// the round is open and the caller holds the store lock. It applies the
+// switchable guard itself and returns handled=false without reading the ledger
+// when it fails: an adopted builder is never gated by relevo, and no call
+// site repeats the check. It checks the credit class before MatchLimit,
+// because the two differ in kind and not only in duration: a credit exhaustion
+// gates until a human tops the account up and clears it, while every other
+// limit gates until a reset the provider named -- so a credit tail that also
+// carries a reset, a clock or a date takes the credit gate and never the timed
+// one. On a match it records one rate_limited ledger entry (source relevo),
+// warns, marks a headless builder's log, then checks whether this round
+// already has a report on disk: if so the gate is recorded but the round is
+// left for the caller to close as it would have (handled=false, m.Line set);
+// otherwise it switches the builder uncounted (handled=true).
 func gateOnLimit(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, text string, resetMS int64, closeOld bool) (next store.Binding, m availability.LimitMatch, handled bool, err error) {
 	switchable := b.BuilderCandidate != "" && !b.RoundStartedAt.IsZero()
 	if !switchable {
@@ -541,23 +498,16 @@ func gateOnLimit(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 
 // gateOnOutage is the exit path's answer to a provider-side outage: the
 // builder's own tail says the PROVIDER failed, not the builder, so the exit
-// earns the same timed gate a rate limit earns -- one rate_limited ledger entry
-// whose note keeps the cause, then the builder switched uncounted, for the same
-// reason gateOnLimit does not count: a provider that cannot serve is not a
-// builder that failed, so it must not spend the round's switch budget. The
-// candidate stays eligible once the provider recovers, where the until-cleared
-// exclusion would keep locking it out of the round.
-//
-// handled is false when the tail names no provider outage. That is the whole
-// point of the split: the caller's own classification of the exit -- for the
-// headless path, the until-cleared exclusion a genuine crash earns -- is
-// left exactly as it was, which is why the gate is offered only at that
-// decision and never earlier in the precedence order.
-//
-// Unlike gateOnLimit there is no report-on-disk branch: every call site is
-// already past the report close, so a report never reaches here and the same
-// observation cannot be recorded twice. A ledger write that fails is reported
-// and the switch proceeds anyway, exactly as gateOnLimit does.
+// earns the same timed gate a rate limit earns -- one rate_limited ledger
+// entry whose note keeps the cause, then the builder switched uncounted. A
+// provider that cannot serve is not a builder that failed, so it must not
+// spend the round's switch budget, and the candidate stays eligible once the
+// provider recovers. handled is false when the tail names no provider outage,
+// so the caller's own classification of the exit is left exactly as it was,
+// which is why the gate is offered only at that decision. Unlike gateOnLimit
+// there is no report-on-disk branch: every call site is already past the
+// report close, so the same observation cannot be recorded twice. A ledger
+// write that fails is reported and the switch proceeds anyway.
 func gateOnOutage(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, text string) (next store.Binding, handled bool, err error) {
 	switchable := b.BuilderCandidate != "" && !b.RoundStartedAt.IsZero()
 	if !switchable {

@@ -12,8 +12,8 @@ import (
 
 // WorkflowEditProblemMarker is the fixed first line relevo puts above the
 // problem lines it reopens a workflow edit with. It is a YAML comment, so a
-// buffer the user saves unchanged still parses, and it is the marker that lets
-// the block be stripped again before a reopen or a save.
+// buffer the user saves unchanged still parses, and the block can be stripped
+// again before a reopen or a save.
 const WorkflowEditProblemMarker = "# relevo: fix these problems before saving"
 
 // WorkflowEditReopen is the buffer the edit loop opens the editor on after a
@@ -49,19 +49,17 @@ func StripWorkflowEditProblems(edited []byte) []byte {
 }
 
 // WorkflowEditRound is one pass of the edit loop. It returns the definition to
-// store and done=true when edited is a valid workflow, or when edited equals old,
-// or is empty: those last two are the loop's no-op ends, with nothing to store.
-// Otherwise it returns the problems of an invalid workflow, each prefixed with
-// "# " so the caller can reopen the buffer with them at the top as comments.
-//
-// The problem block a previous reopen prepended is stripped first, so the saved
-// source never carries relevo's own comments. saved is the workflow as stored:
-// the source the user wrote beside the definition add embedded its file: seeds
-// into. A step whose edited source keeps the file: reference the stored source
-// carried takes that embedded seed, so an edit never replaces embedded contents
-// with the dangling reference. A file: reference the stored source never carried
-// is refused, because the file is read when a workflow is added and nowhere
-// else.
+// store and done=true when edited is a valid workflow, or when edited equals
+// old or is empty: those last two are the loop's no-op ends, with nothing to
+// store. Otherwise it returns the problems of an invalid workflow, each
+// prefixed with "# " so the caller can reopen the buffer with them at the top
+// as comments. The problem block a previous reopen prepended is stripped first,
+// so the saved source never carries relevo's own comments. saved is the
+// workflow as stored, file: seeds embedded at add time: a step whose edited
+// source keeps the file: reference the stored source carried takes that
+// embedded seed, so an edit never replaces embedded contents with the dangling
+// reference. A file: reference the stored source never carried is refused,
+// because the file is read when a workflow is added and nowhere else.
 func WorkflowEditRound(old, edited []byte, saved config.StoredWorkflow, actors map[string]workflow.ActorInfo) (stored []byte, def workflow.Definition, problems []string, done bool) {
 	edited = StripWorkflowEditProblems(edited)
 	if bytes.Equal(old, edited) || strings.TrimSpace(string(edited)) == "" {
@@ -93,8 +91,8 @@ func WorkflowEditRound(old, edited []byte, saved config.StoredWorkflow, actors m
 
 // carryFileSeeds keeps the seed add embedded for each edited step whose source
 // still names the file: reference the stored source carried. A file: reference
-// the stored source never carried -- a new step, or a changed path -- has no
-// embedded seed to keep, so it is refused with one problem line per step.
+// the stored source never carried has no embedded seed to keep, so it is
+// refused with one problem line per step.
 func carryFileSeeds(def workflow.Definition, saved config.StoredWorkflow) (workflow.Definition, []string) {
 	from, err := workflow.Parse([]byte(saved.Source))
 	if err != nil {

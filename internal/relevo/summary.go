@@ -28,18 +28,16 @@ func reportPathFor(rt Runtime, b store.Binding) string {
 	return rt.Store.ReportPath(b.Name, b.Round)
 }
 
-// writeReaderSummary records a reader round's report. The reader writes its own
-// output file (<label>.md) and that file is what the close keeps: a regular
-// file with content in it is left verbatim and the stream is not read for a
-// non-chain reader. Only a file that is missing or empty falls back to the
-// stream -- the last message that carried a relevo block, kept whole so the
-// close can parse its tail and strip it afterwards, else the stream's last
-// assistant text -- and the fallback is reported so the caller can mark the
-// round. Either is rendered with the harness kind of the last segment that ran,
-// which a mid-round switch can change. A runner that wrote only summary.md does
-// not keep it as the report: the old file stays an extra artifact. The caller no
-// longer calls it when no deliverable exists; an absent deliverable falls
-// through to the continuation or halt path. A writer is untouched: it writes its
+// writeReaderSummary records a reader round's report. The runner's own output
+// file (<label>.md) is what the close keeps when it is a regular file with
+// content in it, left verbatim without reading the stream; only a missing or
+// empty file falls back to the stream -- the last message that carried a
+// relevo block, kept whole so the close can parse its tail and strip it
+// afterwards, else the stream's last assistant text -- and the fallback is
+// reported so the caller can mark the round. Either is rendered with the
+// harness kind of the last segment that ran, which a mid-round switch can
+// change. A runner that wrote only summary.md does not keep it as the report:
+// the old file stays an extra artifact. A writer is untouched: it writes its
 // own report.
 //
 // A chain's reviewer and security members keep a file that has content in it
@@ -110,8 +108,8 @@ func writeReaderSummary(rt Runtime, b store.Binding) (string, bool, error) {
 
 // stripKeptChainBlock removes a fenced relevo block from a chain reader's kept
 // findings file, but only when the final stream message carries its own block:
-// without one the file's block is the only verdict and the file stays as is. A
-// file the strip would leave empty is also left as is.
+// without one the file's block is the only verdict. A file the strip would
+// leave empty is also left as is.
 func stripKeptChainBlock(st *store.Store, b store.Binding, path string, stream []byte) error {
 	if !strings.Contains(transcript.FinalText(view.LastStreamKind(b), stream), "```relevo") {
 		return nil
@@ -133,9 +131,9 @@ func stripKeptChainBlock(st *store.Store, b store.Binding, path string, stream [
 }
 
 // readerOutputRoot opens the os.Root a reader's output path lives under: the
-// binding's out/ root for the new layout, the binding directory's own root for
-// a legacy artifact path. out/ is created first when it is the home, and the
-// name the root takes is returned; the caller closes the root.
+// binding's out/ root for the new layout, the binding directory's own root
+// for a legacy artifact path. out/ is created first when it is the home; the
+// caller closes the root.
 func readerOutputRoot(st *store.Store, b store.Binding, path string) (*os.Root, string, error) {
 	if rel, ok := store.RelWithin(st.OutDir(b.Name), path); ok {
 		if err := st.EnsureOutDir(b.Name); err != nil {
@@ -159,11 +157,11 @@ func readerOutputRoot(st *store.Store, b store.Binding, path string) (*os.Root, 
 }
 
 // readerHasReport reports whether a reader round already has something to
-// close with: an output file the runner wrote itself that has content in it, or
-// text the close would take from the stream. An empty file is neither -- the
-// close falls back to the stream for it -- so it does not hold a round open.
-// A round with neither is the noreport case the marker hold keeps open inside
-// the grace, so this reads the two sources the close writes from and no others.
+// close with: an output file the runner wrote itself that has content in it,
+// or text the close would take from the stream. An empty file is neither --
+// the close falls back to the stream for it -- so it does not hold a round
+// open. A round with neither is the noreport case the marker hold keeps open
+// inside the grace, so this reads the two sources the close writes from.
 func readerHasReport(rt Runtime, b store.Binding) bool {
 	if present, _ := view.ReaderOutputPresent(reportPathFor(rt, b)); present {
 		return true
@@ -188,9 +186,9 @@ func chainReaderPart(rt Runtime, name string) bool {
 }
 
 // writeReaderOutput creates name inside root and writes text with a trailing
-// newline. The Lstat checks in writeReaderSummary are the refusal; O_EXCL and
-// O_NOFOLLOW are the race backstop behind them, so a link swapped in after the
-// check cannot be followed either.
+// newline. O_EXCL and O_NOFOLLOW are the race backstop behind the Lstat
+// refusal in writeReaderSummary, so a link swapped in after the check cannot
+// be followed either.
 func writeReaderOutput(root *os.Root, name, text string) error {
 	f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL|housekeep.NoFollow, 0o644)
 	if err != nil {
@@ -206,10 +204,10 @@ func writeReaderOutput(root *os.Root, name, text string) error {
 // replaceReaderOutput truncates an existing regular file in place inside root
 // and writes data over it. A close only reaches here for an output it just
 // read, so a missing path, a symlink, a directory or a fifo is refused rather
-// than followed or recreated, and nothing is created. The Lstat is the refusal
-// and O_NOFOLLOW the race backstop behind it; the check also keeps a fifo open
-// from blocking. Without O_CREATE the mode is inert, so an existing file's mode
-// and owner are left as they were.
+// than followed or recreated. The Lstat is the refusal and O_NOFOLLOW the race
+// backstop behind it; the check also keeps a fifo open from blocking. Without
+// O_CREATE the mode is inert, so an existing file's mode and owner are left as
+// they were.
 func replaceReaderOutput(root *os.Root, name string, data []byte) error {
 	fi, err := root.Lstat(name)
 	if err != nil {
@@ -230,9 +228,9 @@ func replaceReaderOutput(root *os.Root, name string, data []byte) error {
 }
 
 // removeReaderScratch takes a reader round's throwaway worktree away. Every
-// failure is logged and swallowed: cleanup never fails the close, the stop, the
-// done or the unbind it runs from. A writer has no scratch, and a Runtime with
-// no Git has none to remove.
+// failure is logged and swallowed: cleanup never fails the close, the stop,
+// the done or the unbind it runs from. A writer has no scratch, and a Runtime
+// with no Git has none to remove.
 func removeReaderScratch(ctx context.Context, rt Runtime, b store.Binding, round int) {
 	if b.Shape != store.ShapeReader || rt.Git == nil {
 		return

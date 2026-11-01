@@ -49,11 +49,10 @@ func peekUsage(ctx context.Context, rt Runtime, b store.Binding, now time.Time) 
 	return &u
 }
 
-// roundSource is everything the usage reader needs for the binding's
-// current round: the builder that closed it, its candidate's provider and
-// model when it was spawned from one, the round's stream file, the worktree
-// and the window. A local builder is always headless, so the mode defaults
-// to headless.
+// roundSource is everything the usage reader needs for the binding's current
+// round: the builder that closed it, its candidate's provider and model when
+// spawned from one, the round's stream file, the worktree and the window. A
+// local builder is always headless, so the mode defaults to headless.
 func roundSource(rt Runtime, b store.Binding, start, end time.Time) usage.Source {
 	src := usage.Source{
 		Harness:  b.Builder.Kind,
@@ -72,9 +71,8 @@ func roundSource(rt Runtime, b store.Binding, start, end time.Time) usage.Source
 }
 
 // consultSource returns the usage source for one consult: its own process
-// stream, the binding's worktree, its spawn as the window's start. A consult
-// is always a process, so the mode is headless and the stream path is the
-// process's log.
+// stream, the binding's worktree, its spawn as the window's start. A consult is
+// always a process, so the mode is headless and the stream path is its log.
 func consultSource(rt Runtime, b store.Binding, c store.Consult, end time.Time) usage.Source {
 	return usage.Source{
 		Harness:    c.Endpoint.Kind,
@@ -104,10 +102,10 @@ func fillCandidate(src *usage.Source, rt Runtime, token, accountName string) {
 	src.Provider, src.Model, src.Plan = c.Provider, c.Model, c.Plan
 }
 
-// remoteNoUsage is what the client records for a remote round whose
-// server's view carried no usage: the same shape recordUsage returns for
-// an unreadable round, with an honest note instead of a figure guessed
-// from a record the client does not have.
+// remoteNoUsage is what the client records for a remote round whose server's
+// view carried no usage: the same shape recordUsage returns for an unreadable
+// round, with an honest note instead of a figure guessed from a record the
+// client does not have.
 func remoteNoUsage(rt Runtime, b store.Binding, start, end time.Time) *usage.Usage {
 	src := roundSource(rt, b, start, end)
 	u := usage.Fold(nil, rt.Prices, src.Plan, "remote: server sent no usage")
@@ -168,14 +166,14 @@ func recordUsage(ctx context.Context, rt Runtime, src usage.Source) *usage.Usage
 	return &u
 }
 
-// recordAllowance parses the round stream's last muse allowance and records
-// it against the round's provider account, so the next pre-round pick can
-// skip an exhausted login. The caller holds the store lock; the sibling kv
-// document is loaded, merged and saved under it. A muse harness is the only
-// one whose streams carry allowance, so anything else, an unreadable stream,
-// a stream with no allowance, a round with no provider, and a runtime with no
-// gates store all record nothing. A write failure is printed and dropped: the
-// round already closed, and bookkeeping must not fail it.
+// recordAllowance parses the round stream's last muse allowance and records it
+// against the round's provider account, so the next pre-round pick can skip an
+// exhausted login. The caller holds the store lock; the sibling kv document is
+// loaded, merged and saved under it. Only muse streams carry allowance, so
+// anything else, an unreadable stream, a stream with no allowance, a round
+// with no provider, and a runtime with no gates store all record nothing. A
+// write failure is printed and dropped: the round already closed, and
+// bookkeeping must not fail it.
 func recordAllowance(rt Runtime, src usage.Source) {
 	if rt.Store == nil || src.Harness != "muse" || src.Provider == "" || src.StreamPath == "" {
 		return

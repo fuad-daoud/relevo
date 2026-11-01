@@ -8,10 +8,9 @@ import (
 )
 
 // UnusedProviderGates returns the live rate limits on providers outside the
-// configured candidate set. A missing gates store or candidate set is nil:
-// with nothing to compare against there are no unused providers. A ledger load
-// failure reads as nil too, because Gates reports that error once on stderr
-// already and a bookkeeping file must not take status down.
+// configured candidate set. A missing gates store or candidate set, or a ledger
+// load failure, reads as nil: Gates reports that error once on stderr already,
+// and a bookkeeping file must not take status down.
 func UnusedProviderGates(rt Runtime) []view.ProviderGate {
 	if rt.Gates == nil || rt.Candidates == nil {
 		return nil
@@ -26,9 +25,8 @@ func UnusedProviderGates(rt Runtime) []view.ProviderGate {
 }
 
 // UnusedProviderGatesFrom is UnusedProviderGates with the ledger already
-// loaded: a status report that also builds the candidate gates reads the kv row
-// once and projects both from the one Ledger. A nil gates store or candidate
-// set is still nil.
+// loaded, so a status report that also builds the candidate gates reads the kv
+// row once and projects both from the one Ledger.
 func UnusedProviderGatesFrom(rt Runtime, l availability.Ledger) []view.ProviderGate {
 	if rt.Gates == nil || rt.Candidates == nil {
 		return nil

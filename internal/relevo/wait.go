@@ -66,8 +66,6 @@ const (
 	WaitTimeout = 124
 )
 
-// lastReportEntry returns the last to_planner/report log entry for round, if one
-// exists.
 func lastReportEntry(entries []store.LogEntry, round int) (store.LogEntry, bool) {
 	var last store.LogEntry
 	found := false
@@ -80,9 +78,8 @@ func lastReportEntry(entries []store.LogEntry, round int) (store.LogEntry, bool)
 }
 
 // DefaultWaitRound is the round `relevo wait` waits on when --round is not
-// given: the highest round among to_builder/prompt entries (a nudge is not a
-// send, so entries noted nudgeNote are excluded, as HasPromptEntry excludes
-// them); b.Round when there is none.
+// given: the highest round among to_builder/prompt entries, excluding nudges
+// the way HasPromptEntry does; b.Round when there is none.
 func DefaultWaitRound(b store.Binding, entries []store.LogEntry) int {
 	round := 0
 	for _, e := range entries {
@@ -96,12 +93,11 @@ func DefaultWaitRound(b store.Binding, entries []store.LogEntry) int {
 	return round
 }
 
-// noteClaims reads a report entry's space-joined note once and reports the two
-// claims it can make about the round's artifacts: unmarked, that the round
-// closed without its completion marker, and noReport, that no report file
-// exists at all, so Wait prints "-" instead of a path. Both come from one
-// Fields scan because a joined "noreport" still means there is no file on disk
-// -- printing the entry's Path for it would point at nothing.
+// noteClaims reads a report entry's space-joined note once and reports its two
+// claims about the round's artifacts: unmarked, that the round closed without
+// its completion marker, and noReport, that no report file exists at all, so
+// Wait prints "-" instead of a path. Both come from one Fields scan, because a
+// joined "noreport" still means there is no file on disk.
 func noteClaims(note string) (unmarked, noReport bool) {
 	for _, tok := range strings.Fields(note) {
 		switch tok {
@@ -116,50 +112,39 @@ func noteClaims(note string) (unmarked, noReport bool) {
 }
 
 // unmarkedNote reports whether a report entry's note says the round closed
-// without its completion marker, which is what WaitUnmarked (2) means.
-//
-// A note is only ever that claim when it carries one of the no-marker tokens
-// themselves: "unmarked" (the builder exited after its report but never wrote
-// the marker), "scraped" (the body is a terminal capture, not the builder's
-// own file), "noreport" (the marker is there but no report), or "stopped"
-// (the runner was stopped). Notes are space-joined, so each token is matched as
-// a whole word and a join like "noreport stopped" still reads as unmarked.
-//
-// "stopped" is the one token whose round did leave a report on disk, and it is
-// unmarked all the same: a stopped round never wrote its done marker --
-// closeStopped only runs on an open round -- so that report is unconfirmed and
-// possibly partial, killed mid-write. That is a weaker guarantee than
+// without its completion marker, which is what WaitUnmarked (2) means. Only
+// the no-marker tokens themselves ever make that claim: "unmarked" (the
+// builder exited after its report but never wrote the marker), "scraped" (the
+// body is a terminal capture, not the builder's own file), "noreport" (the
+// marker is there but no report), or "stopped" (the runner was stopped). Notes
+// are space-joined, so each token is matched as a whole word. "stopped" is the
+// one token whose round may have left a report on disk, and it is unmarked all
+// the same: a stopped round never wrote its done marker, so that report is
+// unconfirmed and possibly partial, killed mid-write -- a weaker guarantee than
 // "unmarked", where an exited process cannot be mid-write. Reading it as closed
-// would certify a final report nothing confirmed. It matches how "noreport
-// stopped" has always read, so an accident of a partial file being on disk
-// cannot flip the verdict.
-//
-// It cannot misclassify a marked close. The only production writer of the
-// "stopped" report note is stopPayload's haveReport arm, always marker-less by
-// construction, and queueReport's stopRequested join is write-dead:
-// StopRequestedAt is only ever cleared in production (send, remote send, round
-// close) and only tests ever set it. Every other note an annotated marked
-// close carries -- "gate=<result>", "scope=ok", "escaped", "uncommitted work
-// at refs/relevo/...", "consumed by chain ..." -- describes a close that did
-// happen, so a non-empty note alone is never enough to call a round unmarked.
+// would certify a final report nothing confirmed, and an accident of a partial
+// file being on disk cannot flip the verdict. It cannot misclassify a marked
+// close: the only production writer of the "stopped" report note is
+// stopPayload's haveReport arm, always marker-less by construction, the
+// stopRequested join queueReport adds is write-dead in production, and every
+// other annotated marked-close note describes a close that did happen.
 func unmarkedNote(note string) bool {
 	unmarked, _ := noteClaims(note)
 	return unmarked
 }
 
 // noreportNote reports whether a report entry's note says no report file was
-// written, which is what the "-" Line means. Matched as a whole word, so a
-// joined "noreport" -- "noreport stopped", "noreport gate=fail", "noreport
-// escaped" -- prints the dash too: every one of those closes wrote no file.
+// written, which is what the "-" Line means. See noteClaims for the token
+// rule: every joined "noreport" close wrote no file.
 func noreportNote(note string) bool {
 	_, noReport := noteClaims(note)
 	return noReport
 }
 
 // WaitOutcome classifies one binding's round into a WaitResult, pure apart
-// from questionOf. The report entry for round is checked
-// before State == done and before view.WaitingOn, so an earlier round's close is
-// reported regardless of what the binding is doing now.
+// from questionOf. The report entry for round is checked before State == done
+// and before view.WaitingOn, so an earlier round's close is reported
+// regardless of what the binding is doing now.
 func WaitOutcome(b store.Binding, entries []store.LogEntry, round int, questionOf func(name string, round int) string) WaitResult {
 	if e, ok := lastReportEntry(entries, round); ok {
 		code := WaitClosed
@@ -185,8 +170,8 @@ func WaitOutcome(b store.Binding, entries []store.LogEntry, round int, questionO
 		return WaitResult{Code: WaitNeedsYou, Line: w.Line, Done: true}
 	}
 
-	// Nothing in flight: the round was never sent, so no later poll can see
-	// it close. A nudge is not a send, so HasPromptEntry excludes it, as
+	// Nothing in flight: the round was never sent, so no later poll can see it
+	// close. A nudge is not a send, so HasPromptEntry excludes it, as
 	// DefaultWaitRound does.
 	if !HasPromptEntry(entries, round) {
 		return WaitResult{
@@ -199,7 +184,6 @@ func WaitOutcome(b store.Binding, entries []store.LogEntry, round int, questionO
 	return WaitResult{}
 }
 
-// waitReader covers the store reads wait needs: loading a binding and reading its log.
 type waitReader interface {
 	Load(name string) (store.Binding, error)
 	ReadLog(name string) ([]store.LogEntry, error)
@@ -253,9 +237,8 @@ func initialWaitRounds(rdr waitReader, opts WaitOptions) (map[string]int, error)
 }
 
 // waitRegistration is one `relevo wait` process's hold on the bindings it is
-// polling, in the store the status path reads. Its zero value is a
-// registration that holds nothing, so a Runtime with no wait store needs no
-// branch at the call site.
+// polling, in the store the status path reads. Its zero value holds nothing,
+// so a Runtime with no wait store needs no branch at the call site.
 type waitRegistration struct {
 	store     delivery.WaitClaimStore
 	names     []string
@@ -264,12 +247,10 @@ type waitRegistration struct {
 }
 
 // registerWait writes a registration for names, and returns the handle that
-// removes it again.
-//
-// Every write is best-effort and its failure is swallowed: this records who is
-// polling, and the wait's actual job is to collect the payload. A store that
-// refuses the row must not stop the wait -- the status row falls back to its
-// grace, which is the direction that still escalates a payload nobody collects.
+// removes it again. Every write is best-effort and its failure is swallowed:
+// the wait's actual job is to collect the payload, and a store that refuses
+// the row must not stop it -- the status row falls back to its grace, which
+// still escalates a payload nobody collects.
 func registerWait(rt Runtime, names []string, now time.Time) waitRegistration {
 	reg := waitRegistration{store: rt.Waits, names: names, pid: os.Getpid(), startedAt: now}
 	reg.refresh(now)
@@ -292,22 +273,15 @@ func (r waitRegistration) refresh(now time.Time) {
 }
 
 // keepLiveDuring runs sync with the registration re-stamped on a ticker for as
-// long as sync takes, then stops ticking.
-//
-// The ticker exists because one remote sync can outlast the registration's whole
-// TTL on its own -- a single remote request is allowed half a minute -- so
-// refreshing between passes is not enough: a pass that runs long leaves the row
-// unreadable while the wait is plainly still running, and the statusline
-// escalates a payload that is about to be collected. Ticking under the sync
-// makes the registration describe the wait rather than the pass.
-//
-// The ticker stops when sync returns, so the wait holds no goroutine after its
-// own loop is done, and it is not started at all for a registration that holds
-// nothing: a --peek wait registers nothing, and a Runtime with no wait store has
-// nothing to keep fresh.
-//
-// Writes stay best-effort, as refresh's are: the registration records who is
-// polling, and a store that refuses a re-stamp must not fail the wait.
+// long as sync takes, then stops ticking. The ticker exists because one remote
+// sync can outlast the registration's whole TTL on its own -- a single remote
+// request is allowed half a minute -- so refreshing between passes is not
+// enough: a long pass leaves the row unreadable while the wait is plainly still
+// running, and the statusline escalates a payload about to be collected. The
+// ticker stops when sync returns, so the wait holds no goroutine after its loop
+// is done, and it never starts for a registration that holds nothing. Writes
+// stay best-effort, as refresh's are: a store that refuses a re-stamp must not
+// fail the wait.
 func (r waitRegistration) keepLiveDuring(now func() time.Time, every time.Duration, sync func()) {
 	if r.store == nil || len(r.names) == 0 {
 		sync()
@@ -339,12 +313,10 @@ func syncRemoteKeepingWaitLive(ctx context.Context, rt Runtime, reg waitRegistra
 	reg.keepLiveDuring(rt.Now, every, func() { _, _, _ = SyncRemoteUnlessDaemon(ctx, rt) })
 }
 
-// waitSyncRefreshEvery is how often keepLiveDuring re-stamps under a sync.
-//
-// A third of delivery.WaitTTL, because the TTL is the deadline a registration
-// has to beat and a tick a whole TTL wide races the expiry it exists to stay
-// ahead of. A third leaves two missed ticks of slack for a slow write before
-// the row reads as dead.
+// waitSyncRefreshEvery is how often keepLiveDuring re-stamps under a sync: a
+// third of delivery.WaitTTL, because a tick a whole TTL wide races the expiry
+// it exists to stay ahead of, and a third leaves two missed ticks of slack for
+// a slow write before the row reads as dead.
 func waitSyncRefreshEvery(set time.Duration) time.Duration {
 	if set > 0 {
 		return set
@@ -352,9 +324,8 @@ func waitSyncRefreshEvery(set time.Duration) time.Duration {
 	return delivery.WaitTTL / 3
 }
 
-// release drops the registration. It is deferred for the whole wait, so every
-// exit path -- a delivered round, a timeout, an error -- leaves no row behind
-// that would read as a live wait.
+// release drops the registration. Deferred for the whole wait, so a delivered
+// round, a timeout or an error leaves no row behind that reads as a live wait.
 func (r waitRegistration) release() {
 	if r.store == nil {
 		return
@@ -364,16 +335,13 @@ func (r waitRegistration) release() {
 	}
 }
 
-// Wait polls the store until one of opts.Names closes its
-// round, needs a human, or is gone, or opts.Timeout elapses.
-// On an exit that delivers (every code but WaitTimeout and WaitGone) it then
-// prints the binding's oldest pending payload for the mastermind: the
-// returned WaitResult carries the text in Payload and marks the entry
-// delivered with route "wait", unless opts.Peek suppresses that. A delivery
-// failure is returned in DeliverErr and never changes Code.
-//
-// Every name is loaded once up front, so a name that does not exist is an
-// error before the loop starts (exit 1 from cmd/relevo); a name that
+// Wait polls the store until one of opts.Names closes its round, needs a
+// human, or is gone, or opts.Timeout elapses. On an exit that delivers (every
+// code but WaitTimeout and WaitGone) it prints the binding's oldest pending
+// payload for the mastermind and marks the entry delivered with route "wait",
+// unless opts.Peek suppresses that; a delivery failure is returned in
+// DeliverErr and never changes Code. Every name is loaded once up front, so a
+// name that does not exist errors before the loop starts; a name that
 // disappears mid-wait is WaitGone instead. The first pass always runs before
 // any sleep, so a round that already closed returns immediately.
 func Wait(ctx context.Context, rt Runtime, opts WaitOptions) (name string, res WaitResult, err error) {
@@ -399,15 +367,10 @@ func Wait(ctx context.Context, rt Runtime, opts WaitOptions) (name string, res W
 	// The registration is held for the whole poll loop and dropped on the way
 	// out, including on every error return, so a crashed or timed-out wait
 	// cannot leave a row that reads as live. It is written from the clock read
-	// the loop already makes, so registering costs no extra read: a wait that
-	// resolves on its first pass still holds a registration, because the write
-	// happens before the loop and the release after it.
-	//
-	// A --peek wait does not register at all: it never collects (see the
-	// delivery arm below), so it is not the wait a status row's WaitLive means.
-	// Only a wait that will collect counts as live, and a peeking script or loop
-	// must not hold a stranded pull payload at REPORT IN instead of NEEDS YOU.
-	// The zero registration holds nothing, so release and refresh stay no-ops.
+	// the loop already makes, so registering costs no extra read. A --peek
+	// wait does not register at all: it never collects, so it is not the wait
+	// a status row's WaitLive means, and a peeking script must not hold a
+	// stranded pull payload at REPORT IN instead of NEEDS YOU.
 	var registration waitRegistration
 	if !opts.Peek {
 		registration = registerWait(rt, opts.Names, start)
@@ -435,11 +398,8 @@ func Wait(ctx context.Context, rt Runtime, opts WaitOptions) (name string, res W
 				return n, WaitResult{}, err
 			}
 			if r := WaitOutcome(b, entries, rounds[n], qf); r.Done {
-				// Every exit except the timeout and a gone binding prints
-				// the pending payload, after the outcome line, and marks it
-				// delivered with route "wait". --peek reports the outcome
-				// only. A delivery failure never changes the exit code; the
-				// CLI prints DeliverErr to stderr.
+				// Deliver the pending payload unless --peek suppresses it; a
+				// delivery failure never changes the exit code.
 				if waitDeliverable(r.Code) && !opts.Peek {
 					delivered, derr := delivery.PullPendingThroughEntries(ctx, rt.Store, n, "wait", rounds[n])
 					if derr != nil {

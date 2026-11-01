@@ -10,9 +10,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// The pick-able verbs' result lines live here, not in cmd/relevo: the
-// picker's result screen prints the same text the terminal does, so each
-// returns the exact bytes cmd/relevo printed, without a trailing newline.
+// The pick-able verbs' result lines live here, not in cmd/relevo: the picker's
+// result screen prints the same text the terminal does, so each returns the
+// exact bytes cmd/relevo printed, without a trailing newline.
 
 // DoneText is what `relevo done` says on success: one line for the binding,
 // then at most one for its worktree.
@@ -44,11 +44,10 @@ func RestoreText(res resolve.Resolution) string {
 	return strings.Join(lines, "\n")
 }
 
-// PlacementText is the clause a fresh create's line appends when the actor's own
-// placement list chose the server: exactly the bytes the pick note already
-// appends. A placement a flag named, and one nothing named, render nothing.
-// placementClause stays unexported and unedited, which is what keeps the pick
-// note byte-identical.
+// PlacementText is the clause a fresh create's line appends when the actor's
+// own placement list chose the server: exactly the bytes the pick note already
+// appends. placementClause stays unexported and unedited, which is what keeps
+// the pick note byte-identical.
 func PlacementText(p resolve.PlacementResolution) string {
 	if p.How != resolve.PlacementActor {
 		return ""
@@ -102,8 +101,8 @@ func RenderDryRun(d DryRun) string {
 }
 
 // dryRunBuilderLine is the builder line's value: the mode and candidate, with
-// the advisory gate note in parentheses when one applies. The candidate's
-// short name is printed when it has one.
+// the advisory gate note in parentheses when one applies and the candidate's
+// short name when it has one.
 func dryRunBuilderLine(d DryRun) string {
 	candidate := d.Candidate
 	if d.CandidateName != "" {

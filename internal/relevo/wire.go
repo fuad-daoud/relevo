@@ -12,23 +12,21 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// OpencodeAuth is the install-global opencode credential row. opencode keeps
-// one active login per integration for the whole install, so relevo cannot
-// select a login per process the way claude and codex select a home; it reads
-// which login is active and, when a limit leaves that login unusable, flips the
-// row. The seam exists so tests drive a fake and nothing is spawned.
+// OpencodeAuth is the install-global opencode credential row: one active login
+// per integration for the whole install, so relevo cannot select a login per
+// process the way claude and codex select a home. It reads which login is
+// active and, when a limit leaves that login unusable, flips the row. The seam
+// exists so tests drive a fake and nothing is spawned.
 type OpencodeAuth interface {
 	// Active returns the label of the credential row opencode currently uses
 	// for integration, or "" when none is recorded.
 	Active(ctx context.Context, integration string) (label string, err error)
-	// Switch makes label the active credential for integration.
 	Switch(ctx context.Context, integration, label string) error
 }
 
 // OSOpencodeAuth returns the production seam, backed by the opencode binary on
-// PATH and its own database. It runs `opencode auth switch` to flip a row and
-// `sqlite3 -readonly` to see which row is active; nothing else on the host
-// changes.
+// PATH and its own database: `opencode auth switch` flips a row,
+// `sqlite3 -readonly` shows which row is active, and nothing else changes.
 func OSOpencodeAuth(dbPath string) OpencodeAuth { return osOpencodeAuth{dbPath: dbPath} }
 
 // osOpencodeAuth runs the opencode CLI. Active reads the credential table: the
@@ -43,7 +41,6 @@ func opencodeActiveQuery(integration string) string {
 	return "select label from credential where active = 1 and integration_id = " + sqlQuote(integration) + " limit 1"
 }
 
-// sqlQuote renders a value as a single-quoted SQL literal.
 func sqlQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
 
 func (o osOpencodeAuth) Active(ctx context.Context, integration string) (string, error) {
@@ -62,7 +59,6 @@ func (osOpencodeAuth) Switch(ctx context.Context, integration, label string) err
 	return err
 }
 
-// opencodeRun runs one opencode subcommand and returns its combined output.
 func opencodeRun(ctx context.Context, args ...string) (string, error) {
 	out, err := exec.CommandContext(ctx, "opencode", args...).CombinedOutput()
 	if err != nil {
@@ -150,9 +146,9 @@ func switchOpencodeActive(ctx context.Context, rt Runtime, to account.Account, p
 }
 
 // ensureOpencodeActive restores the recorded account before a round resumes on
-// it: a session id only resolves under the login that wrote it, so a row a
-// human moved meanwhile must be put back. A gated recorded account is left
-// alone -- resuming onto a limited login would only re-limit the round.
+// it: a session id only resolves under the login that wrote it. A gated
+// recorded account is left alone -- resuming onto a limited login would only
+// re-limit the round.
 func ensureOpencodeActive(ctx context.Context, rt Runtime, rec account.Account, gates []string) {
 	if rt.OpencodeAuth == nil || rec.Harness != account.OpenCode {
 		return
@@ -188,7 +184,6 @@ func accountByLabel(pool []account.Account, label string) (account.Account, bool
 	return account.Account{}, false
 }
 
-// accountByName finds the pool account a binding recorded by its name.
 func accountByName(pool []account.Account, name string) (account.Account, bool) {
 	for _, a := range pool {
 		if a.Name == name {

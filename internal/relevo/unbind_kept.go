@@ -6,7 +6,6 @@ import (
 	"strings"
 )
 
-// worktreeKeptError is ErrWorktreeKept with the wording of one refusal.
 type worktreeKeptError struct {
 	msg    string
 	reason string
@@ -47,8 +46,8 @@ const keptMarker = " kept ("
 // server's force hints carry none, so the last ")" already cuts them.
 var keptTailMarkers = []string{"; its builder process"}
 
-// KeptReason extracts the bare reason from a server's kept message, whether
-// it is the short form or the old long form with hints.
+// KeptReason extracts the bare reason from a server's kept message, short
+// form or long form with hints.
 func KeptReason(msg string) string {
 	text := strings.TrimSpace(msg)
 	start := strings.Index(text, keptMarker)

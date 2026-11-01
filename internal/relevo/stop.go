@@ -25,8 +25,8 @@ import (
 // a failure.
 var ErrNothingToStop = errors.New("no round is open; nothing to stop")
 
-// DefaultStopGrace is the pane wrap-up grace. Pane builders are gone, but the
-// constant survives because a stored binding may still carry StopGraceMS.
+// DefaultStopGrace is the pane wrap-up grace. It survives because a stored
+// binding may still carry StopGraceMS.
 const DefaultStopGrace = 5 * time.Minute
 
 // StopOptions is what a stop request may add. Empty: a headless round is
@@ -43,7 +43,6 @@ type StopResult struct {
 	Shape string
 }
 
-// stopAction is what a binding's stop bookkeeping implies should happen next.
 type stopAction int
 
 const (
@@ -55,13 +54,9 @@ const (
 // stopDecision says whether a binding has an open round to stop. Pure. An
 // open round is killed at once: there is no pane wrap-up, grace or
 // abandonment. A queued round is checked first, since it has a zero
-// RoundStartedAt: it is dropped from the queue rather than killed.
-//
-// The log decides whether a round is open, not the timestamps: a round whose
-// RoundStartedAt was cleared or never stamped (a resend over a halt, a
-// binding restored from a backup, a round the close advanced past) is open
-// to every other reader. store.RoundOpen is the shared definition all three
-// read, so the three agree by construction.
+// RoundStartedAt: it is dropped from the queue rather than killed. The log
+// decides whether a round is open, not the timestamps, and store.RoundOpen is
+// the shared definition all three readers use, so they agree by construction.
 func stopDecision(b store.Binding, entries []store.LogEntry, now time.Time) stopAction {
 	if !store.RoundOpen(entries, b.Round) {
 		return stopNothing
@@ -75,10 +70,8 @@ func stopDecision(b store.Binding, entries []store.LogEntry, now time.Time) stop
 // Stop ends an open round on purpose, so the work in it is not lost: a
 // headless builder has no stdin to type into, so it is killed now and its
 // round is closed without a report (`noreport stopped`). A stop is not a
-// failure, so this path never switches builders.
-//
-// It runs entirely under the state lock (the Done/Pause pattern), with
-// refusals first so a refusal changes nothing.
+// failure, so this path never switches builders. It runs entirely under the
+// state lock, with refusals first so a refusal changes nothing.
 func Stop(ctx context.Context, rt Runtime, name string, opts StopOptions) (StopResult, error) {
 	var out StopResult
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
@@ -215,12 +208,11 @@ func Stop(ctx context.Context, rt Runtime, name string, opts StopOptions) (StopR
 }
 
 // stopOpenRound stops what an open headless round still has running: its
-// recorded process when that is alive, then its scope when that is still
-// loaded, which is where a straggler the runner abandoned holds on. It reports
-// what it did -- killed for a live process signalled, reaped for a scope ended
-// -- so the close can say what happened instead of claiming a kill that never
-// was. An error means the round may still have something running and the
-// caller leaves the round open.
+// recorded process when alive, then its still-loaded scope, where a straggler
+// the runner abandoned holds on. It reports what it did -- killed for a live
+// process signalled, reaped for a scope ended -- so the close says what
+// happened instead of claiming a kill that never was. An error means the round
+// may still have something running and the caller leaves the round open.
 func stopOpenRound(ctx context.Context, rt Runtime, b store.Binding) (killed, reaped bool, err error) {
 	if b.Builder.PID != 0 {
 		if rt.Runner == nil {
@@ -245,11 +237,7 @@ func stopOpenRound(ctx context.Context, rt Runtime, b store.Binding) (killed, re
 }
 
 // stopPayload is the report payload and note a stopped close writes, local or
-// remote. how names the close ("killed", "reaped", "gone" or "dequeued"),
-// where is "" for a local stop and " on <server>" for a remote one,
-// haveReport says whether a report file was on disk, clause is the artifact
-// clause closeClause resolved for the close's binding, and shape picks the
-// noun the missing-artifact arm names. Pure.
+// remote, where "" names a local stop and " on <server>" a remote one. Pure.
 func stopPayload(how, name string, round int, where string, haveReport bool, clause, shape string) (payload, note string) {
 	if haveReport {
 		return fmt.Sprintf("The runner was stopped (%s) for round %d%s. %s", how, round, where, clause), "stopped"
@@ -257,12 +245,9 @@ func stopPayload(how, name string, round int, where string, haveReport bool, cla
 	return fmt.Sprintf("The runner was stopped (%s) for round %d%s; no %s was written.", how, round, where, text.OutputWord(shape == store.ShapeReader)), "noreport stopped"
 }
 
-// closeStopped closes an open round whose builder was stopped: the
-// report is queued if one is on disk, and the round closes without the
-// switch a builder's own exit-without-report would trigger -- a stop is not
-// a failure. how names the close for the log ("killed", "reaped", "gone" or
-// "dequeued").
-//
+// closeStopped closes an open round whose builder was stopped: the report is
+// queued if one is on disk, and the round closes without the switch a
+// builder's own exit-without-report would trigger -- a stop is not a failure.
 // queueReport does the round advance and clears the stop bookkeeping, so the
 // entry appended after it is filed under the round that was stopped.
 func closeStopped(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, how string) (store.Binding, error) {
@@ -301,12 +286,11 @@ func closeStopped(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 }
 
 // closeDeadMemberRound closes the round of the member a halted chain awaits
-// when resumeMayCloseRound admits it. A halted member's round is the human's to
-// end, and a resume is that human asking -- the `relevo stop <member>` the
-// refusal tells them to run -- so the same close a stop writes is performed
-// here, and the resume's send can then open the next round. Stop kills a live
-// process on the way. A member the predicate leaves, or whose close already
-// exists, is left to the resume's own refusal.
+// when resumeMayCloseRound admits it. A halted member's round is the human's
+// to end and a resume is that human asking, so the same close a stop writes
+// is performed here -- Stop kills a live process on the way -- and the
+// resume's send can then open the next round. A member the predicate leaves,
+// or whose close already exists, is left to the resume's own refusal.
 func closeDeadMemberRound(ctx context.Context, rt Runtime, c db.ChainRow) error {
 	member, _, ok := chain.Awaited(rt.Store, c)
 	if !ok {
@@ -331,12 +315,11 @@ func closeDeadMemberRound(ctx context.Context, rt Runtime, c db.ChainRow) error 
 
 // resumeMayCloseRound reports whether a resume may close b's open round. A
 // halted member's round is the human's to end and a resume is that human
-// asking, so NEEDS YOU -- the state the halt writes -- is closed whatever pid
-// it kept and whether its process is still running; Stop kills a live one. Past
-// that, a pid is the only evidence either way: a pid that answers dead is gone
-// whatever state the member is in, while a round with no pid at all is never
-// evidence. A live process, a probe error, or a state Stop refuses (done,
-// paused, queued, or remote) is left to the resume's own refusal.
+// asking, so NEEDS YOU is closed whatever pid it kept and whether its process
+// is still running. Past that, a pid is the only evidence either way: a pid
+// that answers dead is gone whatever state the member is in, while a round
+// with no pid at all is never evidence. A live process, a probe error, or a
+// state Stop refuses is left to the resume's own refusal.
 func resumeMayCloseRound(ctx context.Context, rt Runtime, b store.Binding) bool {
 	if b.State == store.StateDone || b.State == store.StatePaused {
 		return false

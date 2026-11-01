@@ -11,9 +11,9 @@ import (
 )
 
 // sameSessionRecovery resumes an opencode builder whose exit without a report
-// follows a transport-class error or a stall abort, in the same session.
-// Anything else is not handled and takes the caller's exit path. A transport
-// error in the tail names the cause ahead of a stall note.
+// follows a transport-class error or a stall abort, in the same session; anything
+// else takes the caller's exit path. A transport error in the tail names the
+// cause ahead of a stall note.
 func sameSessionRecovery(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, now time.Time) (store.Binding, bool, error) {
 	if b.Builder.Kind != "opencode" {
 		return b, false, nil
@@ -34,7 +34,7 @@ func sameSessionRecovery(ctx context.Context, rt Runtime, tx *store.Tx, b store.
 }
 
 // stalledSince reports whether this round logged a provider stall after the
-// current process started, which is the process the stall aborted.
+// current process started.
 func stalledSince(b store.Binding, entries []store.LogEntry) bool {
 	started := time.Unix(b.Builder.StartedAt, 0)
 	for _, e := range entries {

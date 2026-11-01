@@ -5,20 +5,15 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 )
 
-// verifyTier is the reviewer's permission tier: in file mode, the
-// reviewer row's tier when roles.json set one, else yolo; otherwise
-// policy.json tier.reviewer when set, else the candidate's own tier, else
-// yolo.
-//
-// yolo is deliberate and it is why verify is not an ordinary `relevo ask`:
-// the consult runs in a throwaway worktree at the builder's HEAD that relevo
-// created for it and removes afterwards, so letting it execute tests there
-// costs nothing the builder or the mastermind owns. A review that cannot run
-// anything is not the review this feature promises. The role definition
-// still tells it not to edit; relevo cannot observe writes.
-//
-// It is deliberately not capped by max_tier: this consult only, in this
-// tree only.
+// verifyTier is the reviewer's permission tier: in file mode, the reviewer
+// row's tier when roles.json set one, else yolo; otherwise policy.json
+// tier.reviewer when set, else the candidate's own tier, else yolo. yolo is
+// deliberate: the consult runs in a throwaway worktree at the builder's HEAD
+// that relevo created for it and removes afterwards, so letting it execute
+// tests there costs nothing either side owns -- though the role definition
+// still tells it not to edit, since relevo cannot observe writes. A review
+// that cannot run anything is not the review this feature promises. It is
+// deliberately not capped by max_tier: this consult only, in this tree only.
 func verifyTier(rt Runtime, c candidate.Candidate) harness.Tier {
 	reg := rt.RoleRegistry()
 	if reg.FileMode() {
