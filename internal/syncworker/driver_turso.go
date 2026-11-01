@@ -8,19 +8,17 @@ import (
 	turso "turso.tech/database/tursogo"
 )
 
-// The two transfer bounds docs/sync-driver-panic.md measured: a bootstrap
-// download is fetched in threshold-sized pieces, and a push is split on
-// transaction boundaries once it has grown that large, so one driver call never
-// moves an unbounded amount over the wire. A driver bump has to revisit them
-// deliberately rather than inherit whatever the new default is.
+// The two transfer bounds: a bootstrap download is fetched in threshold-sized
+// pieces, and a push is split on transaction boundaries once it has grown that
+// large, so one driver call never moves an unbounded amount over the wire. A
+// driver bump revisits them deliberately rather than inheriting the new default.
 const (
 	pushOperationsThreshold = 4096
 	pullBytesThreshold      = 4 << 20
 )
 
-// syncDb is the driver's own handle on the replica, named as an interface so the
-// seam above it can be driven by a double. The production implementation is the
-// sync constructor's wrapper.
+// syncDb is the driver's own handle on the replica, named as an interface so
+// the seam above it can be driven by a double.
 type syncDb interface {
 	Connect(ctx context.Context) (*sql.DB, error)
 	Push(ctx context.Context) error
@@ -29,32 +27,30 @@ type syncDb interface {
 	Checkpoint(ctx context.Context) error
 }
 
-// newSyncDb is the sync constructor as a variable so a test can stand in for it:
-// the real one reaches the network, and no CI test may. Nothing else replaces it.
+// newSyncDb is the sync constructor as a variable so a test can stand in for
+// it: the real one reaches the network, and no CI test may.
 var newSyncDb = func(ctx context.Context, cfg turso.TursoSyncDbConfig) (syncDb, error) {
 	return turso.NewTursoSyncDb(ctx, cfg)
 }
 
 // tursoDriver is the replica driver production uses. It opens relevo-sync.db
 // only through the sync constructor and hands every statement back through
-// Connect(), which is the one rule that keeps the engine's own view of the file
-// from being invalidated by a second opener.
+// Connect(), which keeps the engine's view of the file from being invalidated
+// by a second opener.
 type tursoDriver struct {
 	path string
 	sdb  syncDb
 }
 
-// newTursoDriver returns the driver for one replica path. The path is held here
-// and nowhere else: the backend above never names a file.
+// newTursoDriver returns the driver for one replica path, held here and nowhere
+// else: the backend above never names a file.
 func newTursoDriver(path string) *tursoDriver {
 	return &tursoDriver{path: path}
 }
 
 // Open bootstraps the replica from the remote and connects to it.
-//
 // BootstrapIfEmpty is true so an empty remote yields an empty replica this
-// worker then teaches the log's schema; the thresholds bound the one open that
-// can move a whole database.
+// worker then teaches the log's schema.
 func (d *tursoDriver) Open(ctx context.Context, spec Spec) (*sql.DB, error) {
 	if d.sdb != nil {
 		return nil, fmt.Errorf("syncworker: replica %s is already open", d.path)
@@ -91,10 +87,8 @@ func (d *tursoDriver) Pull(ctx context.Context) error {
 	return err
 }
 
-// Stats is the engine's own health call, and its network counters come back
-// with it. The counters are what the byte totals are built from, so discarding
-// them here would have left the daemon with no exact measure of what a push or
-// a pull actually cost.
+// Stats is the engine's own health call, and the network counters come back
+// with it: they are what the byte totals are built from.
 func (d *tursoDriver) Stats(ctx context.Context) (turso.TursoSyncDbStats, error) {
 	return d.sdb.Stats(ctx)
 }
@@ -105,18 +99,10 @@ func (d *tursoDriver) Checkpoint(ctx context.Context) error {
 }
 
 // bytesDelta returns what one push or pull moved, from the engine's own totals
-// before and after it.
-//
-// The engine's counters are cumulative over the replica's life and monotonic
-// between two reads, so a difference is the transfer. They do reset: the engine
-// re-creates a replica's counters after a long disconnect or when the replica
-// is re-bootstrapped, and a negative difference is that rather than a lost
-// transfer. A counter that went down is therefore read as a reset and counted
-// as `after` alone -- the bytes of the transfer just made, with nothing
-// subtracted from before it.
-//
-// A zero difference is a transfer that moved nothing, which is ordinary: a
-// push with an empty outbox and a pull with no remote changes both report it.
+// before and after it. The counters reset when the engine re-creates them
+// after a long disconnect or a re-bootstrap, so a negative difference reads as
+// a reset and counts `after` alone. A zero difference is a transfer that moved
+// nothing: an empty outbox and a pull with no remote changes both report it.
 func bytesDelta(before, after turso.TursoSyncDbStats) (sent, recv int64) {
 	sent, recv = after.NetworkSentBytes-before.NetworkSentBytes,
 		after.NetworkReceivedBytes-before.NetworkReceivedBytes

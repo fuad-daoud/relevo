@@ -11,10 +11,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/blobstore"
 )
 
-// Spec is what hello tells the worker, and the only way it ever learns what it
-// is working for: the origin it appends as, and the remote it reaches. The
-// token arrives here and nowhere else, so the worker process holds it without
-// its command line or its environment naming it.
+// Spec is what hello tells the worker: the origin it appends as, and the remote
+// it reaches. The token arrives here and nowhere else, so the worker holds it
+// without its command line or its environment naming it.
 type Spec struct {
 	// Version is the pipe version the daemon speaks.
 	Version int
@@ -44,12 +43,9 @@ type boundaryBackend interface {
 }
 
 // Backend is what the worker serves the pipe with: the log itself, behind the
-// replica this process owns.
-//
-// Open comes before every other call, and only hello reaches it, so a backend
-// never holds a remote handle for a request that did not name one. Close runs
-// when the loop ends for any reason, including a pipe the daemon walked away
-// from, because a replica left open is the next worker locked out of it.
+// replica this process owns. Open comes before every other call, and only hello
+// reaches it; Close runs when the loop ends for any reason, because a replica
+// left open locks out the next worker.
 type Backend interface {
 	// Open takes the remote for the rest of this worker's life.
 	Open(Spec) error
@@ -59,9 +55,8 @@ type Backend interface {
 	// refused: an installation appends only for the rows it owns.
 	Append(entries []Entry) ([]Entry, error)
 	// Pull returns one page per origin of every other origin's entries past the
-	// mark given for it, in sequence order and in whole batches. The importer
-	// calls Pull once per run, so a backlog larger than a page drains one page
-	// per sync tick. An origin with no mark is read from the start of its log.
+	// mark given for it, in sequence order and in whole batches. An origin with
+	// no mark is read from the start of its log.
 	Pull(marks map[string]int) ([]Entry, error)
 	// Head returns a page of one origin's latest entry per row, starting after
 	// the given key. An empty after starts at the beginning and a limit of zero
@@ -70,56 +65,50 @@ type Backend interface {
 	// Stats reports what the log holds.
 	Stats() (Stats, error)
 	// PublishMarks records how far this worker has applied of each origin, and
-	// when. The reader is the worker's own origin from hello, never a field of
-	// the call: a mark is what a compaction floor is computed from, so naming
-	// another reader's would be choosing what the log may drop on a machine
-	// that does not hold the entries it speaks for.
+	// when. The reader is the worker's own origin from hello, never a call
+	// field: a mark is what a compaction floor is computed from.
 	PublishMarks(marks map[string]int, at time.Time) error
 	// ReadMarks answers with every published mark, the floors the remote has
 	// recorded, and each origin's head and entry count.
 	ReadMarks() (MarkState, error)
 	// PullRange reads one page of origin's entries with after < seq <= upto from
-	// the replica as it stands, without pulling the remote first: the floor a
-	// caller read with ReadMarks belongs to that same state, and a newer
-	// compaction pulled in between would drop entries the range needs.
+	// the replica as it stands, without pulling first: a newer compaction pulled
+	// in between could drop entries the range needs.
 	PullRange(origin string, after, upto int) ([]Entry, error)
-	// Compact drops this worker's own superseded entries up to floor and
-	// records the floor, in one transaction and one push.
+	// Compact drops this worker's own superseded entries up to floor and records
+	// the floor, in one transaction and one push.
 	Compact(floor int) (CompactResult, error)
 	// KeyMeta reads the passphrase material the remote holds, answering
 	// Present false on a remote that has none.
 	KeyMeta() (KeyMeta, error)
-	// KeyInit writes that material where the remote holds none and answers
-	// with what it holds afterwards, so two machines racing the first one both
-	// learn which salt the other chose rather than each keeping its own.
+	// KeyInit writes that material where the remote holds none and answers with
+	// what it holds afterwards, so two machines racing the first one both learn
+	// the winner's salt.
 	KeyInit(key KeyMeta) (KeyMeta, error)
 	// KeyRekey rotates the log's key to the epoch the spec names, in one
-	// transaction that also writes the key it replaced sealed and every
-	// origin's cut, and refuses whole on a moved head or a moved epoch.
+	// transaction that also writes the sealed key it replaced and every origin's
+	// cut, and refuses whole on a moved head or a moved epoch.
 	KeyRekey(spec KeyRekeySpec) (KeyMeta, error)
-	// PublishEpochCut extends this worker's own origin's cut, forward only
-	// and within the log. The origin is the worker's own from hello, never a
-	// field of the call, because vouching for history is deciding what
-	// another reader may refuse above the fence.
+	// PublishEpochCut extends this worker's own origin's cut, forward only and
+	// within the log. The origin is the worker's own from hello, never a call
+	// field: vouching for history decides what another reader may refuse.
 	PublishEpochCut(cut EpochCut) error
 	// ClaimIdentity writes the claim token for origin where the remote holds
-	// none, holds the caller's own or holds one older than synclog's TTL, then
-	// pushes, pulls and answers with the claim the remote holds. An empty token
-	// only reads.
+	// none, holds the caller's own, or holds one older than synclog's TTL, then
+	// answers with the claim the remote holds. An empty token only reads.
 	ClaimIdentity(origin, token string, at time.Time) (string, time.Time, error)
 	// Close releases the remote and the replica.
 	Close() error
 }
 
 // server is one worker's state between requests: the backend, and the spec
-// hello filled in. It holds nothing before hello, so a verb that arrives early
-// has no origin to append as and no remote to answer from.
+// hello filled in. Before hello it holds nothing, so an early verb has no
+// origin to append as and no remote to answer from.
 type server struct {
 	backend Backend
 	spec    *Spec
 	// blobs is the store hello configured, built on the first blob verb and kept
-	// for the rest of the pipe. It is nil until then, which is also what a verb
-	// sent before the handshake finds.
+	// for the rest of the pipe; nil until then, as a pre-handshake verb finds.
 	blobs blobstore.BlobStore
 	// r2 is what the blob verbs have moved over this pipe's life, added to the
 	// backend's own totals when stats answers.
@@ -127,21 +116,18 @@ type server struct {
 }
 
 // Serve answers requests from in until the pipe ends, writing one reply per
-// request to out.
-//
-// The loop ends three ways, and all three close the backend: stdin closes (the
-// daemon went away or asked to stop), a verb says shutdown, or a line arrives
-// that is not a request this pipe speaks. The last is the only one that is not
-// an ordinary exit, because a line that cannot be read has no id to answer, so
-// the caller has to learn about it by the worker dying.
+// request to out. The loop ends three ways, and all three close the backend:
+// stdin closes, a verb says shutdown, or a line arrives that is not a request
+// this pipe speaks. The last is no ordinary exit: an unreadable line has no id
+// to answer, so the caller learns of it by the worker dying.
 func Serve(in io.Reader, out io.Writer, b Backend) error {
 	r := bufio.NewReader(in)
 	w := bufio.NewWriter(out)
 	s := &server{backend: b}
 
 	err := s.loop(r, w)
-	// The close error is reported only when the loop itself ended cleanly, so a
-	// pipe that failed is not reported as a replica that would not shut.
+	// The close error reports only when the loop ended cleanly, so a failed pipe
+	// is not reported as a replica that would not shut.
 	if cerr := b.Close(); cerr != nil && err == nil {
 		return fmt.Errorf("syncworker: close backend: %w", cerr)
 	}
@@ -169,8 +155,8 @@ func (s *server) loop(r *bufio.Reader, w *bufio.Writer) error {
 
 // verbHandlers is every request verb this pipe speaks, mapped to the method that
 // serves it. The set lives in one table so it is enumerable: the server
-// dispatches from it, and a caller that has to classify every verb can walk it
-// rather than keep a second list in step.
+// dispatches from it, and a caller classifying every verb walks it rather than
+// keeping a second list in step.
 var verbHandlers = map[Verb]func(*server, Request) Response{
 	VerbHello:          (*server).hello,
 	VerbExport:         (*server).export,
@@ -192,9 +178,8 @@ var verbHandlers = map[Verb]func(*server, Request) Response{
 	VerbShutdown:       (*server).shutdown,
 }
 
-// Verbs returns every request verb this pipe speaks, sorted for a stable order.
-// It is derived from the dispatch table rather than written beside it, so a verb
-// the worker serves is always one this list names.
+// Verbs returns every request verb this pipe speaks, sorted for a stable order,
+// derived from the dispatch table rather than written beside it.
 func Verbs() []Verb {
 	out := make([]Verb, 0, len(verbHandlers))
 	for verb := range verbHandlers {
@@ -204,9 +189,8 @@ func Verbs() []Verb {
 	return out
 }
 
-// dispatch answers one request. A verb it refuses is answered with a reply and
-// the pipe carries on: the daemon asked a question, and a question with an
-// answer it did not expect is not a broken pipe.
+// dispatch answers one request. A refused verb is answered with a reply and the
+// pipe carries on: an unexpected answer is not a broken pipe.
 func (s *server) dispatch(req Request) Response {
 	if s.spec == nil && req.Verb != VerbHello {
 		return refuse(req, ErrNoHello)
@@ -222,9 +206,8 @@ func (s *server) dispatch(req Request) Response {
 func (s *server) shutdown(req Request) Response { return Response{ID: req.ID, OK: true} }
 
 // hello opens the backend for the rest of the pipe and takes the origin every
-// later request is checked against. A version the worker does not speak is
-// refused here rather than answered into: every answer after it would be in a
-// vocabulary the daemon would read wrongly.
+// later request is checked against. An unspoken version is refused here rather
+// than answered into: every answer after it would read wrongly.
 func (s *server) hello(req Request) Response {
 	if req.Version != ProtocolVersion {
 		return refuse(req, fmt.Errorf("%w: pipe version %d, this worker speaks %d",
@@ -245,9 +228,8 @@ func (s *server) hello(req Request) Response {
 }
 
 // export appends one batch, after refusing anything the log would not take. The
-// refusals happen here rather than in the backend so they are the worker's own
-// rule, stated once: the batch is this origin's, and every entry in it has the
-// shape the log defines.
+// refusals live here rather than in the backend so the rule is stated once:
+// the batch is this origin's, and every entry has the shape the log defines.
 func (s *server) export(req Request) Response {
 	for _, e := range req.Entries {
 		if e.Origin != s.spec.Origin {
@@ -270,8 +252,8 @@ func (s *server) export(req Request) Response {
 	return Response{ID: req.ID, OK: true, Entries: written}
 }
 
-// pull answers with the entries of every origin but this one that follow the
-// marks given.
+// pull answers with the entries of every origin but this one past the marks
+// given.
 func (s *server) pull(req Request) Response {
 	entries, err := s.backend.Pull(req.Marks)
 	if err != nil {
@@ -290,11 +272,9 @@ func (s *server) head(req Request) Response {
 }
 
 // stats answers with what the log holds, and with what this worker has moved.
-//
-// The two halves are added rather than read from one place because they are
-// counted by different things: the backend measures the replica's traffic and
-// the verbs measure the bucket's. A caller asking what the month has cost reads
-// both from this one reply.
+// The halves are added rather than read from one place because they are counted
+// by different things: the backend measures the replica's traffic and the verbs
+// measure the bucket's.
 func (s *server) stats(req Request) Response {
 	stats, err := s.backend.Stats()
 	if err != nil {
@@ -306,9 +286,8 @@ func (s *server) stats(req Request) Response {
 }
 
 // checkEntry refuses an entry the log has no room for: an unknown op, a delete
-// carrying a body, or an upsert carrying none. Both directions are refused here,
-// because an entry that reached the backend with the wrong shape has already
-// been read off a pipe and would be written before anything looked again.
+// carrying a body, or an upsert carrying none. Wrong shapes are refused here,
+// before the backend could write one read off the pipe.
 func checkEntry(e Entry) error {
 	switch e.Op {
 	case "upsert":
@@ -329,9 +308,9 @@ func checkEntry(e Entry) error {
 }
 
 // refuse turns an error into the reply that carries it. The daemon reads the
-// reason off the pipe rather than out of the worker's stderr, which is the
-// daemon's log and is not a channel it reads back. The class travels beside the
-// reason so a refusal that will repeat is acted on without parsing its words.
+// reason off the pipe rather than out of the worker's stderr, which it never
+// reads back. The class travels beside the reason so a repeating refusal is
+// acted on without parsing its words.
 func refuse(req Request, err error) Response {
 	return Response{ID: req.ID, OK: false, Error: err.Error(), Code: RefusalCodeOf(err)}
 }

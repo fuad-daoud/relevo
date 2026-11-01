@@ -1,8 +1,8 @@
 package syncworker
 
 // The marks table is the log's one piece of state written by readers rather
-// than by the origin that owns the entries: each machine publishes how far it
-// has applied of every other origin, and nothing else writes those rows.
+// than by the entry's owner: each machine publishes how far it has applied of
+// every other origin, and nothing else writes those rows.
 
 import (
 	"context"
@@ -13,12 +13,9 @@ import (
 )
 
 // createMarksStatement is the marks table: one row per reader per origin, the
-// sequence that reader has applied of that origin's log.
-//
-// The key is the pair rather than the origin alone because every machine
-// publishes its own position and none may overwrite another's, and `at` is a
-// column rather than something derived from a row because a mark's age is what
-// decides whether its reader still counts towards a floor.
+// sequence that reader has applied. The key is the pair because no machine may
+// overwrite another's position, and `at` is a column because a mark's age is
+// what decides whether its reader still counts towards a floor.
 const createMarksStatement = "CREATE TABLE marks (" +
 	"reader TEXT NOT NULL, origin TEXT NOT NULL, seq INTEGER NOT NULL, " +
 	"at TEXT NOT NULL, " +
@@ -28,18 +25,12 @@ const createMarksStatement = "CREATE TABLE marks (" +
 // the floors finds them without a second table.
 const floorPrefix = "floor."
 
-// PublishMarks writes this reader's own rows and pushes them.
-//
-// The reader is this worker's own origin rather than anything the request
-// names, so a caller on this machine cannot move another reader's position: a
-// mark is what a floor is computed from, and a caller that could write another
-// reader's would be choosing where the log drops what. An origin's own mark is
-// not written, because a reader never needs one and the floor ignores it.
-//
-// A mark only grows, so the write never moves a row backwards. A caller that
-// published a lower mark than the row holds is repeating an older fact rather
-// than reporting a rollback, and taking it would let a stale publish raise a
-// floor above entries a live reader still needs.
+// PublishMarks writes this reader's own rows and pushes them. The reader is this
+// worker's own origin rather than anything the request names, so no caller can
+// move another reader's position: a mark is what a floor is computed from. An
+// origin's own mark is not written, because the floor ignores it. A mark only
+// grows, so a lower publish is an older fact, not a rollback, and taking it
+// could raise a floor above entries a live reader still needs.
 func (b *TursoBackend) PublishMarks(marks map[string]int, at time.Time) error {
 	if err := b.ready(); err != nil {
 		return err
@@ -57,10 +48,8 @@ func (b *TursoBackend) PublishMarks(marks map[string]int, at time.Time) error {
 	return nil
 }
 
-// writeMarks records one row per origin in a single transaction, so a reader's
-// own set is all published or none is. A publish is not partial: a reader whose
-// half its positions landed would leave the log holding marks that no machine
-// published and none would retract.
+// writeMarks records one row per origin in a single transaction: a reader's set
+// is all published or none is, never half a set no machine published.
 func (b *TursoBackend) writeMarks(ctx context.Context, marks map[string]int, at time.Time) error {
 	tx, err := b.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -79,12 +68,9 @@ func (b *TursoBackend) writeMarks(ctx context.Context, marks map[string]int, at 
 }
 
 // writeMark moves one reader's position for one origin forward, inserting the
-// row when there is none.
-//
-// An update then an insert, rather than one upsert, for the same reason the head
-// row takes that shape: on a sync connection the engine can refuse an upsert
-// that lands on an existing row as a corrupt record, and a mark is rewritten on
-// every publish after the first.
+// row when there is none. An update then an insert rather than one upsert, for
+// the same reason the head row takes that shape: on a sync connection the
+// engine can refuse an upsert landing on an existing row as a corrupt record.
 func writeMark(ctx context.Context, tx *sql.Tx, reader, origin string, seq int, at time.Time) error {
 	res, err := tx.ExecContext(ctx,
 		"UPDATE marks SET seq = ?, at = ? WHERE reader = ? AND origin = ?",
@@ -108,16 +94,12 @@ func writeMark(ctx context.Context, tx *sql.Tx, reader, origin string, seq int, 
 }
 
 // ReadMarks answers with every reader's published position, the floors recorded
-// so far, and each origin's head and entry count.
-//
-// The counts are what a compaction's trigger is measured against and the heads
-// are what a floor is clamped to, so they are read here rather than left to the
-// caller to derive: a caller that recomputed a head from a log it had not
-// pulled would floor an origin at a sequence the log never reached.
-//
-// The replica is not pulled first. A read of marks is a read of what this
-// replica already holds, and a caller that wanted the remote's latest marks
-// asks for it over the exchange the marks are published along.
+// so far, and each origin's head and entry count. The counts are what a
+// compaction's trigger is measured against and the heads are what a floor is
+// clamped to, so they are read here: a caller recomputing a head from a log it
+// had not pulled would floor an origin at a sequence the log never reached.
+// The replica is not pulled first: a read of marks reads what this replica
+// already holds.
 func (b *TursoBackend) ReadMarks() (MarkState, error) {
 	if err := b.ready(); err != nil {
 		return MarkState{}, err
@@ -142,8 +124,7 @@ func (b *TursoBackend) ReadMarks() (MarkState, error) {
 	return out, nil
 }
 
-// readMarkRows reads every published mark, in reader then origin order so a
-// reader walking the answer sees the same row every time.
+// readMarkRows reads every published mark, in reader then origin order.
 func (b *TursoBackend) readMarkRows(ctx context.Context, out *MarkState) error {
 	rows, err := b.db.QueryContext(ctx,
 		"SELECT reader, origin, seq, at FROM marks ORDER BY reader, origin")
@@ -151,9 +132,9 @@ func (b *TursoBackend) readMarkRows(ctx context.Context, out *MarkState) error {
 		return err
 	}
 	defer func() { _ = rows.Close() }()
-	// Every column is read as text and a row that does not parse is skipped:
-	// the table is written by other machines, and one malformed row must not
-	// stop every reader from reading the rest.
+	// Every column reads as text and a row that does not parse is skipped: the
+	// table is written by other machines, and one malformed row must not stop
+	// every reader from reading the rest.
 	for rows.Next() {
 		var reader, origin, seq, at sql.NullString
 		if err := rows.Scan(&reader, &origin, &seq, &at); err != nil {
@@ -170,22 +151,16 @@ func (b *TursoBackend) readMarkRows(ctx context.Context, out *MarkState) error {
 	return nil
 }
 
-// readFloors reads the floor a compaction recorded for each origin.
-//
-// Nothing writes them yet, so the map comes back empty until compaction runs;
-// it is read here because the meta rows are the remote's own record of what it
-// has already dropped, and a caller that recomputed one would floor an origin
-// below what the remote has in fact discarded.
+// readFloors reads the floor a compaction recorded for each origin. The meta
+// rows are the remote's own record of what it has dropped, and a caller that
+// recomputed one could floor an origin below what the remote discarded.
 func (b *TursoBackend) readFloors(ctx context.Context, out *MarkState) error {
 	return b.readMetaPositions(ctx, floorPrefix, &out.Floors)
 }
 
-// publishMarks records this worker's own applied positions.
-//
-// The reader is taken from hello rather than from the request, so the reply is
-// empty whatever the request named: a caller that could publish another
-// reader's mark would be choosing what the log may drop, on a machine that
-// does not hold the entries those marks speak for.
+// publishMarks records this worker's own applied positions. The reader comes
+// from hello rather than the request: a caller that could publish another
+// reader's mark would be choosing what the log may drop.
 func (s *server) publishMarks(req Request) Response {
 	if req.At == nil {
 		return refuse(req, fmt.Errorf("%w: publish_marks with no time", ErrProtocol))
@@ -216,11 +191,9 @@ func (s *server) readMarks(req Request) Response {
 	return Response{ID: req.ID, OK: true, Marks: &state}
 }
 
-// readSizes reads each origin's highest sequence and how many entries it holds.
-//
-// One query rather than two: the two are read from the same rows, and a second
-// pass over the log would be a second scan of the table compaction is about to
-// make smaller.
+// readSizes reads each origin's highest sequence and how many entries it holds,
+// in one query rather than two: a second pass would rescan the table compaction
+// is about to make smaller.
 func (b *TursoBackend) readSizes(ctx context.Context, out *MarkState) error {
 	rows, err := b.db.QueryContext(ctx,
 		"SELECT origin, COALESCE(MAX(seq), 0), COUNT(*), "+
