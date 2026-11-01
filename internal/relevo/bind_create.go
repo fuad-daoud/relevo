@@ -15,25 +15,37 @@ import (
 )
 
 func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP store.Endpoint, placement resolve.PlacementResolution) (store.Binding, resolve.Resolution, error) {
+	name, shape, repoSet, err := createValidateBind(ctx, rt, opts)
+	if err != nil {
+		return store.Binding{}, resolve.Resolution{}, err
+	}
+	builder, res, ticket, repoRef, err := createResolveBuilderTier(ctx, rt, &opts, name, shape, repoSet, placement)
+	if err != nil {
+		return store.Binding{}, resolve.Resolution{}, err
+	}
+	return createPersistBinding(rt, opts, mastermindEP, name, shape, builder, res, ticket, repoRef)
+}
+
+func createValidateBind(ctx context.Context, rt Runtime, opts BindOptions) (string, string, RepoSettings, error) {
 	// The repository's own settings are read before anything is resolved: the
 	// gate tier reads them, and a directory that is not a repository reads as
 	// "no settings" rather than a failure.
 	repoSet, err := RepoSettingsFor(ctx, rt, opts.CWD)
 	if err != nil {
-		return store.Binding{}, resolve.Resolution{}, err
+		return "", "", RepoSettings{}, err
 	}
 	shape, err := resolve.ActorShape(rt.RoleRegistry(), opts.Role)
 	if err != nil {
-		return store.Binding{}, resolve.Resolution{}, err
+		return "", "", RepoSettings{}, err
 	}
 	// A reader round has no check, so the writer-only knobs are refused at
 	// bind, naming the flag.
 	if shape == store.ShapeReader {
 		if opts.Gate != "" {
-			return store.Binding{}, resolve.Resolution{}, refusal.BadInputf("--gate: a reader round has no check")
+			return "", "", RepoSettings{}, refusal.BadInputf("--gate: a reader round has no check")
 		}
 		if opts.Regate != nil {
-			return store.Binding{}, resolve.Resolution{}, refusal.BadInputf("--regate: a reader round has no check")
+			return "", "", RepoSettings{}, refusal.BadInputf("--regate: a reader round has no check")
 		}
 	}
 	name := opts.Name
@@ -41,11 +53,11 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		name = SanitizeName(baseName(opts.CWD))
 	}
 	if err := store.ValidName(name); err != nil {
-		return store.Binding{}, resolve.Resolution{}, err
+		return "", "", RepoSettings{}, err
 	}
 	if opts.Feature != "" {
 		if err := store.ValidFeature(opts.Feature); err != nil {
-			return store.Binding{}, resolve.Resolution{}, err
+			return "", "", RepoSettings{}, err
 		}
 	}
 
@@ -54,13 +66,16 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 	// session's round 1 and read its report entry as already handled,
 	// silently.
 	if _, err := rt.Store.Load(name); err == nil {
-		return store.Binding{}, resolve.Resolution{}, refusal.BadInputf(
+		return "", "", RepoSettings{}, refusal.BadInputf(
 			"binding %q already exists: `relevo unbind %s` to start fresh, or `relevo bind --resume --name %s` to adopt it",
 			name, name, name)
 	} else if !errors.Is(err, store.ErrNotFound) {
-		return store.Binding{}, resolve.Resolution{}, err
+		return "", "", RepoSettings{}, err
 	}
+	return name, shape, repoSet, nil
+}
 
+func createResolveBuilderTier(ctx context.Context, rt Runtime, opts *BindOptions, name string, shape string, repoSet RepoSettings, placement resolve.PlacementResolution) (store.Endpoint, resolve.Resolution, string, *store.RepoRef, error) {
 	// Check the working tree before spawning anything: Save re-checks under the
 	// lock and stays authoritative, but without this a refused bind would
 	// leave a started builder stranded with nothing pointing at it.
@@ -70,10 +85,10 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 	if shape == store.ShapeWriter {
 		other, found, err := rt.Store.FindByCWD(opts.CWD)
 		if err != nil && !errors.Is(err, store.ErrAmbiguousCWD) {
-			return store.Binding{}, resolve.Resolution{}, err
+			return store.Endpoint{}, resolve.Resolution{}, "", nil, err
 		}
 		if found && other.Name != name && other.State != store.StateDone && other.Shape == store.ShapeWriter && !rt.Store.SameChain(name, other.Name) {
-			return store.Binding{}, resolve.Resolution{}, fmt.Errorf("%s is driven by binding %q (builder %s, round %d): %w",
+			return store.Endpoint{}, resolve.Resolution{}, "", nil, fmt.Errorf("%s is driven by binding %q (builder %s, round %d): %w",
 				opts.CWD, other.Name, other.BuilderCandidate, other.Round, store.ErrCWDTaken)
 		}
 	}
@@ -82,23 +97,23 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 	roleName := store.Binding{Role: resolve.NormRole(opts.Role)}.WriterRole()
 	resCandidate, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, resolve.WithSkillGates(ResolveDeps(rt), availability.Gates(AvailabilityDeps(rt)), opts.CWD, nil), opts.Candidate, roleName)
 	if err != nil {
-		return store.Binding{}, resolve.Resolution{}, err
+		return store.Endpoint{}, resolve.Resolution{}, "", nil, err
 	}
 	tier = resolve.ResolveTier(opts.Tier, resCandidate.Candidate, rt.RoleRegistry(), roleName)
 	if shape == store.ShapeReader {
 		tier, err = resolve.ReaderTier(tier, resCandidate.Candidate.Harness, rt.Policy)
 		if err != nil {
-			return store.Binding{}, resolve.Resolution{}, err
+			return store.Endpoint{}, resolve.Resolution{}, "", nil, err
 		}
 	}
 	if err := resolve.CheckTierCap(tier, rt.Policy, opts.AllowYolo); err != nil {
-		return store.Binding{}, resolve.Resolution{}, err
+		return store.Endpoint{}, resolve.Resolution{}, "", nil, err
 	}
 	opts.Tier = string(tier)
 
-	builder, res, err := resolveBuilder(ctx, rt, nil, opts, name)
+	builder, res, err := resolveBuilder(ctx, rt, nil, *opts, name)
 	if err != nil {
-		return store.Binding{}, resolve.Resolution{}, err
+		return store.Endpoint{}, resolve.Resolution{}, "", nil, err
 	}
 	// The placement rides on the resolution, so the pick note says where the
 	// binding landed.
@@ -113,9 +128,12 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 	repoRef := captureRepo(ctx, rt, opts.CWD)
 	ticket, err := parseTicket(opts.Ticket, repoRef)
 	if err != nil {
-		return store.Binding{}, resolve.Resolution{}, err
+		return store.Endpoint{}, resolve.Resolution{}, "", nil, err
 	}
+	return builder, res, ticket, repoRef, nil
+}
 
+func createPersistBinding(rt Runtime, opts BindOptions, mastermindEP store.Endpoint, name string, shape string, builder store.Endpoint, res resolve.Resolution, ticket string, repoRef *store.RepoRef) (store.Binding, resolve.Resolution, error) {
 	b := store.Binding{
 		Name:             name,
 		CWD:              opts.CWD,
@@ -127,10 +145,10 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		BuilderPinned:    res.How == resolve.HowExplicit,
 		Round:            1,
 		State:            store.StateActive,
-		Tier:             string(tier),
+		Tier:             opts.Tier,
 		Role:             resolve.NormRole(opts.Role),
 		Shape:            shape,
-		Gate:             gateRes.Command,
+		Gate:             res.Gate.Command,
 		Regate:           ResolveRegate(opts.Regate, rt.Policy),
 		RepoRef:          repoRef,
 		Feature:          opts.Feature,
@@ -140,7 +158,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		b.RoundTimeoutMS = int(opts.RoundTimeout / time.Millisecond)
 	}
 
-	err = rt.Store.WithLock(func(tx *store.Tx) error {
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
 		if err := tx.Save(b); err != nil {
 			return err
 		}

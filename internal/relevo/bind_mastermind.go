@@ -42,8 +42,8 @@ func resolveVerbMasterMindHeal(rt Runtime, ref string, heal bool) (mastermind.Re
 		OpencodeSession: rt.OpencodeSession,
 		Heal:            heal,
 	})
-	switch {
-	case err == nil:
+	switch err {
+	case nil:
 		return rec, true, nil
 	default:
 		var unreg mastermind.ErrUnregisteredSession
