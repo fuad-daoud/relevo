@@ -89,9 +89,9 @@ func switchesForRound(events []store.LogEntry, n int) int {
 // skipped. candidateTok is verbatim; ref has a trailing "#..." stripped, since a
 // ":effort" suffix belongs to the model.
 func candidateForRound(events []store.LogEntry, n int, b store.Binding) (candidateTok string, ref candidate.Ref, ok bool) {
-	tok := lastBuilderToken(events, actorOf(b), func(round int) bool { return round == n })
+	tok := lastBuilderToken(events, b.WriterRole(), func(round int) bool { return round == n })
 	if tok == "" {
-		tok = lastBuilderToken(events, actorOf(b), func(round int) bool { return round > 0 && round < n })
+		tok = lastBuilderToken(events, b.WriterRole(), func(round int) bool { return round > 0 && round < n })
 	}
 	if tok == "" {
 		tok = b.BuilderCandidate
@@ -145,15 +145,6 @@ func isOtherActorPick(note, actor string) bool {
 	}
 	role := rolePart[:ci]
 	return role != "" && role != actor && strings.IndexByte(role, ' ') < 0
-}
-
-// actorOf is the actor a binding's runner plays: b.Role, or "builder" when it is
-// empty (records from before the actor split, and the seeded writer actor).
-func actorOf(b store.Binding) string {
-	if b.Role == "" {
-		return "builder"
-	}
-	return b.Role
 }
 
 func parseBuilderNote(kind store.Kind, note string) string {

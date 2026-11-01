@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -121,7 +120,7 @@ func SortArtifacts(files []ArtifactFile, output string) {
 // ArtifactDirSize returns the total size in bytes of round's artifact files
 // for b's actor, live or sealed.
 func ArtifactDirSize(st *store.Store, b store.Binding, round int) (int64, error) {
-	files, err := RoundArtifacts(st, b.Name, round, resolve.BindingRole(b), "")
+	files, err := RoundArtifacts(st, b.Name, round, b.WriterRole(), "")
 	if err != nil {
 		return 0, err
 	}

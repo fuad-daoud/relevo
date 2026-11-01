@@ -158,15 +158,7 @@ func (v *agentView) follow(env widget.Env) {
 		v.top = 0
 		return
 	}
-	lines := v.bodyLines(env, env.Width)
-	sel := 2 + v.cur // the blank line, the header row, then the rows
-	if sel < v.top {
-		v.top = sel
-	}
-	if sel >= v.top+avail {
-		v.top = sel - avail + 1
-	}
-	v.top = widget.Clamp(v.top, 0, max(0, len(lines)-avail))
+	v.top = followCursor(v.top, v.cur, len(v.bodyLines(env, env.Width)), avail)
 }
 
 func (v agentView) Crumbs() []string { return []string{v.name} }

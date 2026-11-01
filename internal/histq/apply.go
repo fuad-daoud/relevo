@@ -70,7 +70,7 @@ func numHolds(r db.RoundRow, n NumCond) bool {
 		}
 		return compareNum(n.Op, *r.CostUSD, n.Value)
 	case "tokens":
-		return compareNum(n.Op, float64(rowTokens(r)), n.Value)
+		return compareNum(n.Op, float64(RowTokens(r)), n.Value)
 	case "commits":
 		if r.Commits == nil {
 			return false
@@ -103,7 +103,8 @@ func compareNum(op string, have, want float64) bool {
 	return false
 }
 
-func rowTokens(r db.RoundRow) int64 {
+// RowTokens is the sum of a row's four token columns, nil counting zero.
+func RowTokens(r db.RoundRow) int64 {
 	var n int64
 	for _, p := range []*int64{r.InTokens, r.CacheTokens, r.WriteTokens, r.OutTokens} {
 		if p != nil {

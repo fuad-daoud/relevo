@@ -262,17 +262,8 @@ func stopConfirmLines(b view.BindingStatus, now time.Time) []string {
 	return lines
 }
 
-// doneConfirmLines is D's confirm body.
-func doneConfirmLines(b view.BindingStatus) []string {
-	var lines []string
-	if l := mastermindConfirmLine(b, "owns this binding"); l != "" {
-		lines = append(lines, l)
-	}
-	return lines
-}
-
-// unbindConfirmLines is u's confirm body.
-func unbindConfirmLines(b view.BindingStatus) []string {
+// ownershipConfirmLines is D and u's confirm body: the ownership line.
+func ownershipConfirmLines(b view.BindingStatus) []string {
 	var lines []string
 	if l := mastermindConfirmLine(b, "owns this binding"); l != "" {
 		lines = append(lines, l)
@@ -314,7 +305,7 @@ func doneCmd(env widget.Env, b view.BindingStatus) tea.Cmd {
 		yes:    "mark done",
 		danger: false,
 		title:  fmt.Sprintf("Mark %s done?", key),
-		lines:  doneConfirmLines(b),
+		lines:  ownershipConfirmLines(b),
 		onYes: runAction(env.Ctx, "done", key, func(ctx context.Context) widget.Result {
 			return env.Actions.Done(ctx, key)
 		}),
@@ -329,7 +320,7 @@ func unbindCmd(env widget.Env, b view.BindingStatus) tea.Cmd {
 		yes:    "unbind and archive",
 		danger: true,
 		title:  fmt.Sprintf("Unbind %s? The binding is archived; its branch %s is kept.", key, b.Branch),
-		lines:  unbindConfirmLines(b),
+		lines:  ownershipConfirmLines(b),
 		onYes: runAction(env.Ctx, "unbind", key, func(ctx context.Context) widget.Result {
 			return env.Actions.Unbind(ctx, key)
 		}),

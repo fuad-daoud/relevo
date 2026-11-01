@@ -641,7 +641,7 @@ func TestCandidateKind(t *testing.T) {
 	t.Parallel()
 
 	set := candidateSet(t, testCandidatesJSON)
-	d := resolveTestDeps(set, legacyRegistry(set, policy.Policy{}))
+	d := resolveTestDeps(set, LegacyRegistry(set, policy.Policy{}))
 	if got := CandidateKind(d, testClaudeRef); got != "claude" {
 		t.Errorf("CandidateKind(%q) = %q, want claude", testClaudeRef, got)
 	}
@@ -671,7 +671,7 @@ func TestRolesMissingSkipsInOrder(t *testing.T) {
 
 	set := candidateSet(t, testCandidatesJSON)
 	pol := orderOf("builder", testOpencodeRef, testClaudeRef)
-	d := resolveTestDeps(set, legacyRegistry(set, pol))
+	d := resolveTestDeps(set, LegacyRegistry(set, pol))
 	d.Roles = fakeRoleChecker{"opencode": {".config/opencode/agents/researcher.md"}}
 
 	res, err := Resolve(set, pol, availability.Gates(d.Deps), "", "builder")
@@ -705,7 +705,7 @@ func TestRolesMissingRefusesExplicit(t *testing.T) {
 
 	set := candidateSet(t, testCandidatesJSON)
 	pol := policy.Policy{}
-	d := resolveTestDeps(set, legacyRegistry(set, pol))
+	d := resolveTestDeps(set, LegacyRegistry(set, pol))
 	d.Roles = fakeRoleChecker{"opencode": {".config/opencode/agents/researcher.md"}}
 
 	_, err := Resolve(set, pol, availability.Gates(d.Deps), testOpencodeRef, "builder")

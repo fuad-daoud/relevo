@@ -49,7 +49,7 @@ func BindResolved(ctx context.Context, rt Runtime, opts BindOptions) (store.Bind
 	// decides. A remote result is created through add's own path, so the wire
 	// and the client's record keep one implementation.
 	placement, perr := resolve.CreatePlacement(ctx, ResolveDeps(rt),
-		resolve.BindingRole(store.Binding{Role: resolve.NormRole(opts.Role)}), opts.Candidate, "", opts.Local,
+		store.Binding{Role: resolve.NormRole(opts.Role)}.WriterRole(), opts.Candidate, "", opts.Local,
 		resolve.PlacementFlags{Tier: opts.Tier, Feature: opts.Feature, Ticket: opts.Ticket})
 	if perr != nil {
 		return store.Binding{}, resolve.Resolution{}, perr

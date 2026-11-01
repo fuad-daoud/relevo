@@ -16,7 +16,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
-	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -150,7 +149,7 @@ func chainBuilderClose(t *testing.T, rt Runtime, name string, body string) store
 func chainReaderClose(t *testing.T, rt Runtime, name string, body string) store.Binding {
 	t.Helper()
 	b := chainBinding(t, rt, name)
-	path := rt.Store.OutputPath(name, b.Round, resolve.BindingRole(b), readerOutputLabel(rt, b))
+	path := rt.Store.OutputPath(name, b.Round, b.WriterRole(), readerOutputLabel(rt, b))
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("mkdir artifact dir: %v", err)
 	}
@@ -2024,7 +2023,7 @@ func TestChainCorrectionSeedNamesTheReviewersOutputFile(t *testing.T) {
 	got := string(text)
 
 	rev := chainBinding(t, rt, "shop-rev")
-	output := seedCopy(t, rt, rt.Store.OutputPath("shop-rev", reviewerRound, resolve.BindingRole(rev), readerOutputLabel(rt, rev)))
+	output := seedCopy(t, rt, rt.Store.OutputPath("shop-rev", reviewerRound, rev.WriterRole(), readerOutputLabel(rt, rev)))
 	if !strings.Contains(got, "Reviewer's output: "+output+".") {
 		t.Errorf("correction seed does not name the reviewer's output %s:\n%s", output, got)
 	}
@@ -2202,7 +2201,7 @@ func TestReviewerRecapAfterTheBlockKeepsTheBlockMessage(t *testing.T) {
 	if row.Status != string(chain.StatusDone) {
 		t.Fatalf("chain status = %q, want done: the verdict must come from the stream", row.Status)
 	}
-	outPath := rt.Store.OutputPath("shop-rev", rev.Round, resolve.BindingRole(rev), readerOutputLabel(rt, rev))
+	outPath := rt.Store.OutputPath("shop-rev", rev.Round, rev.WriterRole(), readerOutputLabel(rt, rev))
 	out, err := rt.Store.ReadFile(outPath)
 	if err != nil {
 		t.Fatalf("read the reviewer output: %v", err)
@@ -2246,7 +2245,7 @@ func TestSecurityRecapAfterTheBlockStillYieldsTheFindings(t *testing.T) {
 	if !HasPromptEntry(chainLog(t, rt, "shop-plan"), planner.Round) {
 		t.Error("the planner must be seeded with a fix plan")
 	}
-	outPath := rt.Store.OutputPath("shop-sec", sec.Round, resolve.BindingRole(sec), readerOutputLabel(rt, sec))
+	outPath := rt.Store.OutputPath("shop-sec", sec.Round, sec.WriterRole(), readerOutputLabel(rt, sec))
 	out, err := rt.Store.ReadFile(outPath)
 	if err != nil {
 		t.Fatalf("read the security output: %v", err)

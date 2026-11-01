@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 	"github.com/fuad-daoud/relevo/internal/transcript"
 )
 
@@ -127,14 +128,14 @@ func reconcileExited(ctx context.Context, d Deps, tx *store.Tx, b store.Binding,
 	}
 
 	stream, _ := d.Store.ReadFile(c.Endpoint.LogPath)
-	text := transcript.FinalText(c.Endpoint.Kind, stream)
-	if text == "" {
+	final := transcript.FinalText(c.Endpoint.Kind, stream)
+	if final == "" {
 		return finishConsult(ctx, d, tx, b, i, store.ConsultSilent,
 			fmt.Sprintf("process exited (code %s) with no final message; see %s", strconv.Itoa(code), c.Endpoint.LogPath))
 	}
 
-	if err := tx.PutRoundFile(b.Name, c.Round, c.FindingsPath, []byte(text+"\n")); err != nil {
-		return finishConsult(ctx, d, tx, b, i, store.ConsultSilent, "could not record findings: "+brief(err))
+	if err := tx.PutRoundFile(b.Name, c.Round, c.FindingsPath, []byte(final+"\n")); err != nil {
+		return finishConsult(ctx, d, tx, b, i, store.ConsultSilent, "could not record findings: "+text.Brief(err))
 	}
 	return finishConsult(ctx, d, tx, b, i, store.ConsultDone, "")
 }

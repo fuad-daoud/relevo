@@ -22,22 +22,22 @@ func TestResolveTier(t *testing.T) {
 	candEmpty := candidate.Candidate{}
 
 	// explicit wins
-	if got := ResolveTier("yolo", candWithTier, legacyRegistry(nil, pol), "builder"); got != harness.TierYolo {
+	if got := ResolveTier("yolo", candWithTier, LegacyRegistry(nil, pol), "builder"); got != harness.TierYolo {
 		t.Errorf("explicit yolo: got %v, want yolo", got)
 	}
 
 	// candidate over policy
-	if got := ResolveTier("", candWithTier, legacyRegistry(nil, pol), "builder"); got != harness.TierEdit {
+	if got := ResolveTier("", candWithTier, LegacyRegistry(nil, pol), "builder"); got != harness.TierEdit {
 		t.Errorf("candidate edit over policy read: got %v, want edit", got)
 	}
 
 	// policy over harness
-	if got := ResolveTier("", candEmpty, legacyRegistry(nil, pol), "builder"); got != harness.TierRead {
+	if got := ResolveTier("", candEmpty, LegacyRegistry(nil, pol), "builder"); got != harness.TierRead {
 		t.Errorf("policy read over harness: got %v, want read", got)
 	}
 
 	// all empty -> harness
-	if got := ResolveTier("", candEmpty, legacyRegistry(nil, policy.Policy{}), "builder"); got != harness.TierHarness {
+	if got := ResolveTier("", candEmpty, LegacyRegistry(nil, policy.Policy{}), "builder"); got != harness.TierHarness {
 		t.Errorf("all empty: got %v, want harness", got)
 	}
 }

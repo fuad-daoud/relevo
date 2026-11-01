@@ -19,20 +19,20 @@ func uiBuilderRow(candidates ...string) roles.Row {
 	}
 }
 
-// TestBindingRole pins one accessor naming the writer role a binding runs. An
+// TestWriterRoleAndNormRole pins one accessor naming the writer role a binding runs. An
 // empty stored role and the literal "builder" both mean builder, and NormRole
 // is the inverse for the stored form.
-func TestBindingRole(t *testing.T) {
+func TestWriterRoleAndNormRole(t *testing.T) {
 	t.Parallel()
 
-	if got := BindingRole(store.Binding{}); got != "builder" {
-		t.Errorf("BindingRole(Role \"\") = %q, want builder", got)
+	if got := (store.Binding{}).WriterRole(); got != "builder" {
+		t.Errorf("WriterRole(Role \"\") = %q, want builder", got)
 	}
-	if got := BindingRole(store.Binding{Role: "builder"}); got != "builder" {
-		t.Errorf("BindingRole(Role builder) = %q, want builder", got)
+	if got := (store.Binding{Role: "builder"}).WriterRole(); got != "builder" {
+		t.Errorf("WriterRole(Role builder) = %q, want builder", got)
 	}
-	if got := BindingRole(store.Binding{Role: "ui-builder"}); got != "ui-builder" {
-		t.Errorf("BindingRole(Role ui-builder) = %q, want ui-builder", got)
+	if got := (store.Binding{Role: "ui-builder"}).WriterRole(); got != "ui-builder" {
+		t.Errorf("WriterRole(Role ui-builder) = %q, want ui-builder", got)
 	}
 
 	if got := NormRole("builder"); got != "" {

@@ -5,7 +5,6 @@ import (
 	"log/slog"
 
 	"github.com/fuad-daoud/relevo/internal/pathscope"
-	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/text"
 )
@@ -19,7 +18,7 @@ import (
 // scope but whose round cannot be judged (no baseline, no git, a git error)
 // is refused with the reason: refuse, never guess.
 func judgeRoundScope(ctx context.Context, rt Runtime, b store.Binding) pathscope.Verdict {
-	role := resolve.BindingRole(b)
+	role := b.WriterRole()
 	r, ok := rt.RoleRegistry().Role(role)
 	if !ok {
 		slog.Warn("round close: actor not in the registry; treating as unscoped",

@@ -157,7 +157,7 @@ func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 		return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: repair round %d could not start: %v", b.Name, b.Round, err))
 	}
 	if res != nil {
-		if err := tx.AppendLog(b.Name, resolve.PickEntry(rt.Now().UTC(), b.Round, resolve.BindingRole(b), *res)); err != nil {
+		if err := tx.AppendLog(b.Name, resolve.PickEntry(rt.Now().UTC(), b.Round, b.WriterRole(), *res)); err != nil {
 			return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: repair round %d could not start: %v", b.Name, b.Round, err))
 		}
 	}

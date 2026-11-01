@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // VerifyRole is the consult Role a verify round's reviewer is recorded under.
@@ -267,7 +268,7 @@ func (v verifyStart) launch(wt, diff, gateLog string) (store.Binding, error) {
 	b.Consults = append(b.Consults, consult)
 	if err := v.tx.Save(b); err != nil {
 		b.Consults = b.Consults[:len(b.Consults)-1]
-		return v.fail("stage consult: " + brief(err))
+		return v.fail("stage consult: " + text.Brief(err))
 	}
 
 	return v.start(b, consult, askPath, prompt, wt, c, role, tier)
@@ -282,7 +283,7 @@ func (v verifyStart) start(b store.Binding, consult store.Consult, askPath, prom
 		if saveErr := v.tx.Save(b); saveErr != nil {
 			return b, saveErr
 		}
-		return v.fail("ensure out dir: " + brief(err))
+		return v.fail("ensure out dir: " + text.Brief(err))
 	}
 	argv, err := candidate.HeadlessLaunch(c, role, tier, Timeout, prompt, wt, v.d.Store.OutDir(v.b.Name), "", "")
 	if err != nil {
@@ -290,7 +291,7 @@ func (v verifyStart) start(b store.Binding, consult store.Consult, askPath, prom
 		if saveErr := v.tx.Save(b); saveErr != nil {
 			return b, saveErr
 		}
-		return v.fail("spawn failed: " + brief(err))
+		return v.fail("spawn failed: " + text.Brief(err))
 	}
 
 	// The consult's Dir is the throwaway worktree, not b.CWD: the reviewer
@@ -308,7 +309,7 @@ func (v verifyStart) start(b store.Binding, consult store.Consult, askPath, prom
 		if saveErr := v.tx.Save(b); saveErr != nil {
 			return b, saveErr
 		}
-		return v.fail("spawn failed: " + brief(err))
+		return v.fail("spawn failed: " + text.Brief(err))
 	}
 	// The daemon has now seen the reviewer alive: a later tick never judges it
 	// lost to its own restart.

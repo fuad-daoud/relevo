@@ -439,13 +439,16 @@ func (osInstallEnv) LookPath(binary string) (string, error) {
 	return exec.LookPath(binary)
 }
 
-func (osInstallEnv) HomePath(rel string) (string, error) {
+// HomePath joins rel under the user's home directory.
+func HomePath(rel string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(home, rel), nil
 }
+
+func (osInstallEnv) HomePath(rel string) (string, error) { return HomePath(rel) }
 
 func (osInstallEnv) ReadFile(path string) ([]byte, error) {
 	return os.ReadFile(path)

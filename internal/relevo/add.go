@@ -195,7 +195,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	// passes its choice in, so nothing is probed twice.
 	if opts.Placement.How == "" {
 		placement, perr := resolve.CreatePlacement(ctx, ResolveDeps(rt),
-			resolve.BindingRole(store.Binding{Role: resolve.NormRole(opts.Role)}), opts.Candidate, "", opts.Local,
+			store.Binding{Role: resolve.NormRole(opts.Role)}.WriterRole(), opts.Candidate, "", opts.Local,
 			resolve.PlacementFlags{Tier: opts.Tier, Feature: opts.Feature, Ticket: opts.Ticket})
 		if perr != nil {
 			return AddResult{}, perr
@@ -250,7 +250,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	}
 	// Resolve before AddWorktree for the same reason builderAgentName runs
 	// here -- a refused add must leave no worktree.
-	roleName := resolve.BindingRole(store.Binding{Role: resolve.NormRole(opts.Role)})
+	roleName := store.Binding{Role: resolve.NormRole(opts.Role)}.WriterRole()
 	// The repository's own settings, read before anything is created: the
 	// gate tier reads them, and opts.Repo -- not cwd -- is the tree they key.
 	repoSet, err := RepoSettingsFor(ctx, rt, opts.Repo)

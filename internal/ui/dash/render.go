@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/histq"
 	"github.com/fuad-daoud/relevo/internal/stats"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // ShortRepo trims prefixes, suffixes, and returns the last two segments
@@ -105,7 +106,7 @@ func (m Model) Summary() Summary {
 	}
 	var durations []int64
 	for _, r := range m.rows {
-		s.Tokens += tokenValue(r)
+		s.Tokens += histq.RowTokens(r)
 		word, _ := m.outcomeWord(r)
 		s.ByWord[word]++
 		if r.DurationMS != nil {
@@ -224,7 +225,7 @@ func (m Model) visible() []line {
 			run := rows[i:j]
 			var runTokens int64
 			for _, r := range run {
-				runTokens += tokenValue(r)
+				runTokens += histq.RowTokens(r)
 			}
 			lbl := m.dayLabel(run[0].StartedAt)
 			out = append(out, line{
@@ -310,7 +311,7 @@ func (m Model) dayRuleLine(d dayRule) string {
 		cw = 0
 	}
 	label := d.label
-	rightText := " " + plural(d.rounds, "round") + " · " + shortTokens(d.tokens)
+	rightText := " " + text.Plural(d.rounds, "round") + " · " + shortTokens(d.tokens)
 	leftWidth := lipgloss.Width(label) + 1
 	rightWidth := lipgloss.Width(rightText)
 	fill := cw - leftWidth - rightWidth
@@ -347,7 +348,7 @@ func (m Model) headerLine() string {
 
 	var content string
 	if cw >= 120 {
-		content = fit(spread(left, right, cw), cw)
+		content = fit(Spread(left, right, cw), cw)
 	} else {
 		content = fit(left, cw)
 	}
@@ -408,13 +409,6 @@ func DayLabel(t, now time.Time, loc *time.Location) string {
 
 func (m Model) dayLabel(t time.Time) string {
 	return DayLabel(t, m.now(), m.loc)
-}
-
-func plural(n int, unit string) string {
-	if n == 1 {
-		return fmt.Sprintf("1 %s", unit)
-	}
-	return fmt.Sprintf("%d %ss", n, unit)
 }
 
 func shortTokens(n int64) string {
@@ -481,7 +475,10 @@ func fit(s string, width int) string {
 	return lipgloss.NewStyle().MaxWidth(width).Render(s)
 }
 
-func spread(left, right string, width int) string {
+// Spread puts right at the right edge of a width-wide line, after left,
+// dropping the gap when they would overlap (left wins; the caller decides
+// what is important enough for the right).
+func Spread(left, right string, width int) string {
 	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {
 		return left

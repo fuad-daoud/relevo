@@ -87,14 +87,14 @@ func formatActor(L config.Loaded, reg *roles.Registry, name string, a roles.Acto
 		b.WriteString("\n  placement  " + strings.Join(a.Placement, ", "))
 	}
 	if a.Scope != nil {
-		b.WriteString("\n  scope  " + formatScope(a.Scope))
+		b.WriteString("\n  scope  " + ScopeText(a.Scope))
 	}
 	return b.String()
 }
 
-// formatScope renders a writer's scope for the listings: its path entries,
+// ScopeText renders a writer's scope for the listings: its path entries,
 // then "+ comments" when a comment-only edit is allowed.
-func formatScope(scope *pathscope.Scope) string {
+func ScopeText(scope *pathscope.Scope) string {
 	parts := strings.Join(scope.Paths, ", ")
 	if scope.Comments {
 		if parts == "" {

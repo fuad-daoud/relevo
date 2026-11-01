@@ -13,17 +13,6 @@ import (
 // is roundPane.paneHead.
 var sep = widget.FaintStyle.Render(" · ")
 
-// spread puts right at the right edge of a width-wide line, after left,
-// dropping the gap when they would overlap (left wins; the caller decides
-// what is important enough for the right).
-func spread(left, right string, width int) string {
-	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
-	if gap < 1 {
-		return left
-	}
-	return left + strings.Repeat(" ", gap) + right
-}
-
 // diffStat counts a patch the way `git diff --stat` would summarise it:
 // files by `diff --git` headers, added and removed by leading +/- that
 // are not the ---/+++ file markers.

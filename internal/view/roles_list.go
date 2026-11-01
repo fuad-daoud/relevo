@@ -63,7 +63,7 @@ func formatRole(reg *roles.Registry, role roles.Role) string {
 	}
 
 	if role.Scope != nil {
-		b.WriteString("\n  scope  " + formatScope(role.Scope))
+		b.WriteString("\n  scope  " + ScopeText(role.Scope))
 	}
 
 	for _, kind := range sortedDefinitionKinds(role.Definitions) {

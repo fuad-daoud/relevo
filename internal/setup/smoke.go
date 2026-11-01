@@ -19,6 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
@@ -73,7 +74,7 @@ func smokeStepDoc(err error) error {
 	if errors.As(err, &ce) {
 		return err
 	}
-	return &StepError{Message: firstLine(err.Error()), Next: "relevo doctor"}
+	return &StepError{Message: text.FirstLine(err.Error()), Next: "relevo doctor"}
 }
 
 // classifyTransport shapes a smoke-transport failure through the Deps hook;
@@ -136,7 +137,7 @@ func smokeGit(dir string, args ...string) error {
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("git %s: %s", strings.Join(args, " "), firstLine(string(out)))
+		return fmt.Errorf("git %s: %s", strings.Join(args, " "), text.FirstLine(string(out)))
 	}
 	return nil
 }
@@ -222,7 +223,7 @@ func setupSmokeFinish(ctx context.Context, deps Deps, rt relevo.Runtime, b store
 		if lerr := SmokeLimitFailure(ctx, rt, smokeDir); lerr != nil {
 			return SetupStepDoc{}, lerr
 		}
-		return SetupStepDoc{}, &StepError{Message: firstLine(res.Line), Next: next}
+		return SetupStepDoc{}, &StepError{Message: text.FirstLine(res.Line), Next: next}
 	}
 	if herr := smokeHelloOkay(b.CWD); herr != nil {
 		return SetupStepDoc{}, &StepError{Message: fmt.Sprintf("%s", herr), Next: next}
@@ -286,7 +287,7 @@ func smokeHelloOkay(repo string) error {
 func smokeProof(repo string) string {
 	proof := ""
 	if body, err := os.ReadFile(filepath.Join(repo, "HELLO.md")); err == nil {
-		proof += "\n  HELLO.md: " + firstLine(strings.TrimSpace(string(body)))
+		proof += "\n  HELLO.md: " + text.FirstLine(strings.TrimSpace(string(body)))
 	}
 	cmd := exec.Command("git", "log", "-2", "--format=%h %s")
 	cmd.Dir = repo

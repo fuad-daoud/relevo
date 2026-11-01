@@ -7,7 +7,6 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
-	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -169,7 +168,7 @@ func roundPrompt(rt Runtime, tx *store.Tx, b store.Binding, promptPath, reportPa
 // chainReaderPromptFor renders chainReaderPrompt for one chain reader round,
 // resolving the output label and path exactly as readerPromptFor does.
 func chainReaderPromptFor(rt Runtime, b store.Binding, promptPath, donePath, block string) string {
-	actor := resolve.BindingRole(b)
+	actor := b.WriterRole()
 	label := readerOutputLabel(rt, b)
 	outputPath := rt.Store.OutputPath(b.Name, b.Round, actor, label)
 	return fmt.Sprintf(chainReaderPrompt, housekeep.RoundTree(HousekeepDeps(rt), b), b.CWD, promptPath, label, outputPath, donePath, block)
@@ -182,7 +181,7 @@ func chainReaderPromptFor(rt Runtime, b store.Binding, promptPath, donePath, blo
 // gets its own label. The saved path is the output path reportPathFor records,
 // so the prompt and the close cannot drift.
 func readerPromptFor(rt Runtime, b store.Binding, promptPath, donePath string) string {
-	actor := resolve.BindingRole(b)
+	actor := b.WriterRole()
 	label := readerOutputLabel(rt, b)
 	outputPath := rt.Store.OutputPath(b.Name, b.Round, actor, label)
 	return fmt.Sprintf(readerPrompt, housekeep.RoundTree(HousekeepDeps(rt), b), b.CWD, promptPath, label, outputPath, donePath)
