@@ -73,7 +73,7 @@ func loadConfigFromFile(path string) (config.Loaded, error) {
 func loadConfigFromOwner(root string, lockErr error) (config.Loaded, error) {
 	d, err := dialOwner(context.Background(), root, verbDialBudget)
 	if err != nil {
-		return config.Loaded{}, fmt.Errorf("relevo.db is held by the daemon and the owner did not answer: %w (the file open failed with: %v)", err, lockErr)
+		return config.Loaded{}, fmt.Errorf("relevo.db is held by the daemon and the owner did not answer: %w (the file open failed with: %w)", err, lockErr)
 	}
 	defer func() { _ = d.Close() }()
 	return config.Open(d).Load()

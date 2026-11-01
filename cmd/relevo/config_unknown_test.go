@@ -156,7 +156,7 @@ func TestConfigSetWithPreExistingStrayKeySucceeds(t *testing.T) {
 	_, _, err = captureOutput(t, func() error {
 		return run([]string{"config", "set", "agents.x.role", `"reviewer"`})
 	})
-	requireCLIError(t, err, codeConfigInvalid, "")
+	_ = requireCLIError(t, err, codeConfigInvalid, "")
 
 	afterBody, _, err := captureOutput(t, func() error {
 		return run([]string{"config", "get", "agents"})

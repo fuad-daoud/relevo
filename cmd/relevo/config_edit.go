@@ -292,64 +292,78 @@ func configEdit(args []string) error {
 		return err
 	}
 	tmpPath := tmp.Name()
-	tmp.Close()
-	defer os.Remove(tmpPath)
+	_ = tmp.Close()
+	defer func() { _ = os.Remove(tmpPath) }()
 
 	for {
-		if err := os.WriteFile(tmpPath, doc, 0o600); err != nil {
-			return err
-		}
-
-		code, err := runEditor(tmpPath)
+		next, done, err := editConfigRound(rt, tmpPath, doc, *v.local)
 		if err != nil {
 			return err
 		}
-		if code != 0 {
-			fmt.Fprintf(os.Stderr, "relevo config edit: editor exited %d; nothing changed\n", code)
-			return exitCodeErr{code: 1}
-		}
-
-		edited, err := os.ReadFile(tmpPath)
-		if err != nil {
-			return err
-		}
-		if strings.TrimSpace(string(edited)) == "" {
-			fmt.Println("aborted; nothing changed")
+		if done {
 			return nil
 		}
-		if bytes.Equal(edited, doc) {
-			fmt.Println("no changes")
-			return nil
-		}
-
-		parsed, perr := decodeDoc(edited)
-		if perr == nil {
-			perr = validateDoc(parsed)
-		}
-		if perr != nil {
-			fmt.Fprintf(os.Stderr, "relevo config edit: %v\n", perr)
-			doc = edited
-			continue
-		}
-
-		warnings, err := putEditedDoc(rt.Config.As("cli", "config edit"), parsed, *v.local)
-		if err != nil {
-			return err
-		}
-		for _, w := range warnings {
-			fmt.Fprintln(os.Stderr, "relevo: "+w)
-		}
-		v, err := rt.Config.Version()
-		if err != nil {
-			return err
-		}
-		var rev int64
-		if rows, err := rt.Config.Log(1); err == nil && len(rows) > 0 {
-			rev = rows[0].Rev
-		}
-		fmt.Printf("saved (config version %d, revision #%d)\n", v, rev)
-		return nil
+		doc = next
 	}
+}
+
+// editConfigRound runs one editor pass over doc: it writes the buffer, runs
+// the editor, and stores the result, or reports the buffer to reopen with when
+// the edit needs another pass. done is false only for the invalid-document
+// retry, where the loop reopens the editor on the returned buffer.
+func editConfigRound(rt relevo.Runtime, tmpPath string, doc []byte, local bool) (next []byte, done bool, err error) {
+	if err := os.WriteFile(tmpPath, doc, 0o600); err != nil {
+		return nil, true, err
+	}
+
+	code, err := runEditor(tmpPath)
+	if err != nil {
+		return nil, true, err
+	}
+	if code != 0 {
+		fmt.Fprintf(os.Stderr, "relevo config edit: editor exited %d; nothing changed\n", code)
+		return nil, true, exitCodeErr{code: 1}
+	}
+
+	edited, err := os.ReadFile(tmpPath)
+	if err != nil {
+		return nil, true, err
+	}
+	if strings.TrimSpace(string(edited)) == "" {
+		fmt.Println("aborted; nothing changed")
+		return nil, true, nil
+	}
+	if bytes.Equal(edited, doc) {
+		fmt.Println("no changes")
+		return nil, true, nil
+	}
+
+	parsed, perr := decodeDoc(edited)
+	if perr == nil {
+		perr = validateDoc(parsed)
+	}
+	if perr != nil {
+		fmt.Fprintf(os.Stderr, "relevo config edit: %v\n", perr)
+		return edited, false, nil
+	}
+
+	warnings, err := putEditedDoc(rt.Config.As("cli", "config edit"), parsed, local)
+	if err != nil {
+		return nil, true, err
+	}
+	for _, w := range warnings {
+		fmt.Fprintln(os.Stderr, "relevo: "+w)
+	}
+	v, err := rt.Config.Version()
+	if err != nil {
+		return nil, true, err
+	}
+	var rev int64
+	if rows, err := rt.Config.Log(1); err == nil && len(rows) > 0 {
+		rev = rows[0].Rev
+	}
+	fmt.Printf("saved (config version %d, revision #%d)\n", v, rev)
+	return nil, true, nil
 }
 
 // configWriter is the part of a config store a verb writes through, so the
