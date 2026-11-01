@@ -581,7 +581,7 @@ func TestWriteReaderOutputRefusesEscapingArtifactDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	t.Cleanup(func() { _ = root.Close() })
 
 	if err := writeReaderOutput(root, filepath.Join("001-reviewer", "out.md"), "hello"); err == nil {
 		t.Fatal("writeReaderOutput followed an escaping artifact dir")
@@ -617,7 +617,7 @@ func TestReplaceReaderOutputRefusesEscapingArtifactDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	t.Cleanup(func() { _ = root.Close() })
 
 	if err := replaceReaderOutput(root, filepath.Join("001-reviewer", "out.md"), []byte("pwned\n")); err == nil {
 		t.Fatal("replaceReaderOutput followed an escaping artifact dir")
