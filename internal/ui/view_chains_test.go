@@ -391,7 +391,7 @@ func TestChainsViewSanitizesPeerFields(t *testing.T) {
 					Name:      "hostile-chain",
 					Status:    "run\ning\x1b[2J",
 					Step:      "build\rstep",
-					Reason:    "reviewer said nobell",
+					Reason:    "reviewer said no\abell",
 					PlanPos:   1,
 					PlanTotal: 1,
 					Where:     "server us-east",
@@ -421,7 +421,7 @@ func TestChainStepsViewSanitizesPeerFields(t *testing.T) {
 		}
 		c := &doc.Chains[i]
 		c.Step = "review\rstep"
-		c.Reason = "haltedbell"
+		c.Reason = "halted\abell"
 		for j := range c.Steps {
 			s := &c.Steps[j]
 			s.ID = "build\x1b[2J"

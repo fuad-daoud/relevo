@@ -588,7 +588,7 @@ func dumpSyncSnapshot(s widget.SyncSnapshot) string {
 	b.WriteString(s.Settings.RemoteURL + " " + s.Settings.Namespace + "\n")
 	b.WriteString(s.Attention + "\n")
 	b.WriteString(s.OwnID + "\n")
-	b.WriteString(fmt.Sprintf("tokenSet=%t measured=%t unknown=%t\n", s.TokenSet, s.Measured, s.Unknown))
+	_, _ = fmt.Fprintf(&b, "tokenSet=%t measured=%t unknown=%t\n", s.TokenSet, s.Measured, s.Unknown)
 	for _, in := range s.Installation {
 		b.WriteString(in.ID + " " + in.Label + "\n")
 	}
