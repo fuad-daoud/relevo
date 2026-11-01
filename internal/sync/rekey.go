@@ -1,19 +1,17 @@
 package sync
 
-// The rekey: one act that rotates the log's key to a new epoch, cuts every
-// origin's history at the head the rekeyer observed, stores the whole keyring
-// on this machine, and signals the secrets document so the values it holds are
-// re-sealed under the newest key on the next export.
+// The rekey: one act rotating the log's key to a new epoch, cutting every
+// origin's history at the observed head, storing the whole keyring here, and
+// signaling the secrets document so its values re-seal under the newest key on
+// the next export.
 //
-// The order is the contract. The machine must be syncing and unlocked; the
-// current passphrase is checked against the remote's check before anything is
-// written, so a wrong one changes nothing anywhere; the new one may not be the
-// current one, because rotation answers a leaked passphrase and the same
-// passphrase against the new public salt lets the leak re-derive the new key;
-// and the write itself is the transport's one transaction -- fresh material,
-// the key it replaced sealed for the machines still holding it, and one cut per
-// origin -- which refuses whole when another machine rekeyed first or a head
-// moved under the caller.
+// The order is the contract: the current passphrase is checked against the
+// remote's check before anything is written, so a wrong one changes nothing;
+// the new one may not be the current one, because rotation answers a leaked
+// passphrase and the same passphrase against the new public salt lets the leak
+// re-derive the new key; and the write is the transport's one transaction,
+// which refuses whole when another machine rekeyed first or a head moved under
+// the caller.
 
 import (
 	"bytes"
@@ -41,15 +39,12 @@ var ErrEpochRace = errors.New("sync: another machine rekeyed first, this machine
 // would spend the epoch without retiring anything.
 var ErrSamePassphrase = fmt.Errorf("sync: the new passphrase is the current one: rotation needs a different passphrase: %w", db.ErrInvalid)
 
-// ErrEmptyPassphrase is a rotation to the empty passphrase.
 var ErrEmptyPassphrase = fmt.Errorf("sync: the new passphrase is empty: %w", db.ErrInvalid)
 
 // Rekey rotates the log's key from the epoch the remote holds to the next one.
 // It stores nothing until the remote's transaction has accepted the whole
-// write, and it stores everything -- the newest key, every older key the
-// remote's chain unwraps to, and the facts about the remote -- as one act, so
-// a crash between the remote and the local store leaves the machine stale, the
-// ordinary state, and unlock recovers it.
+// write, and then everything as one act, so a crash between the remote and the
+// local store leaves the machine stale, and unlock recovers it.
 func Rekey(ctx context.Context, local Local, transport synclog.LogTransport, current, newPass []byte, rand io.Reader) error {
 	if len(newPass) == 0 {
 		return ErrEmptyPassphrase
@@ -84,8 +79,7 @@ func Rekey(ctx context.Context, local Local, transport synclog.LogTransport, cur
 }
 
 // rotateKey writes the new epoch: the fresh material, the sealed old key, and
-// one cut per origin at the head this machine observed, then the keyring, the
-// facts, and the signal that re-seals this machine's secrets.
+// one cut per origin at the observed head, then the keyring and the re-seal signal.
 func rotateKey(ctx context.Context, local Local, transport synclog.LogTransport, meta synclog.KeyMeta, old, newPass []byte, rand io.Reader) error {
 	salt := make([]byte, saltLen)
 	if _, err := io.ReadFull(rand, salt); err != nil {
@@ -114,11 +108,11 @@ func rotateKey(ctx context.Context, local Local, transport synclog.LogTransport,
 	return storeNewKeyring(local, answer, newKey)
 }
 
-// rekeySpec is what the transport is asked to write: the epoch it is rotating
-// from, the new material with the key it replaced sealed for holders of it,
-// and one cut per origin in the log, at the head given, tagged under the new
-// key. The transport verifies every cut against the log's own heads before
-// anything is written, so a stale observation refuses whole.
+// rekeySpec is what the transport is asked to write: the epoch it rotates from,
+// the new material with the replaced key sealed for its holders, and one cut
+// per origin at the head given, tagged under the new key. The transport verifies
+// every cut against the log's own heads first, so a stale observation refuses
+// whole.
 func rekeySpec(meta synclog.KeyMeta, newKey, salt, wrapped []byte, heads map[string]int) synclog.KeyRekeySpec {
 	epoch := meta.Epoch + 1
 	cuts := make(map[string]synclog.EpochCut, len(heads))
@@ -154,11 +148,10 @@ func rekeyRefused(ctx context.Context, transport synclog.LogTransport, from int,
 }
 
 // storeNewKeyring lands what the accepted rekey earned: the whole chain the
-// remote's answer unwraps to -- which is also the check that the chain the
-// remote holds actually opens -- the facts about the remote, and the signal
-// that re-seals this machine's secrets under the newest key on the next
-// export. The signal carries no stamp: the document's next export decides
-// every key's rank, and the stamp rule is the exporter's.
+// remote's answer unwraps to -- unwrapping is also the check that the remote's
+// chain actually opens -- the facts about the remote, and the signal that
+// re-seals this machine's secrets on the next export. The signal carries no
+// stamp: the document's next export decides every key's rank.
 func storeNewKeyring(local Local, answer synclog.KeyMeta, newKey []byte) error {
 	ring, err := unwrapKeyring(answer, newKey)
 	if err != nil {

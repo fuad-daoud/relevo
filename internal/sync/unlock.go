@@ -22,7 +22,6 @@ var ErrNoKDF = errors.New("sync: the remote holds no key yet: run `relevo db syn
 // remote's check. Nothing is stored when it is returned.
 var ErrWrongPassphrase = errors.New("sync: that passphrase does not match the remote's key")
 
-// ErrSyncOff is an unlock on a machine that is not syncing.
 var ErrSyncOff = fmt.Errorf("sync: sync is off on this machine: %w", db.ErrInvalid)
 
 const saltLen = 16
@@ -127,8 +126,7 @@ func initKey(ctx context.Context, transport synclog.LogTransport, passphrase []b
 	return held, bytes.Equal(held.Salt, salt), nil
 }
 
-// checkedKey derives the key from the remote's salt and parameters and returns
-// it only when it reproduces the remote's check.
+// checkedKey returns the derived key only when it reproduces the remote's check.
 func checkedKey(meta synclog.KeyMeta, passphrase []byte) ([]byte, error) {
 	if !meta.Present || len(meta.Salt) == 0 {
 		return nil, fmt.Errorf("%w: the remote's key has no salt", ErrKDFParams)
@@ -144,20 +142,17 @@ func checkedKey(meta synclog.KeyMeta, passphrase []byte) ([]byte, error) {
 	return key, nil
 }
 
-// VerifyJoinKey is the check an enable --join runs before it stores anything: it
-// reads the remote's key material and returns the keyring the remote's chain
-// unwraps to, only when the passphrase reproduces the remote's check.
+// VerifyJoinKey is the check an enable --join runs before it stores anything:
+// the keyring the remote's chain unwraps to, only when the passphrase
+// reproduces the remote's check.
 //
 // It exists rather than reusing Unlock because Unlock refuses a machine that is
-// not syncing -- ErrSyncOff -- and a joiner is by definition not syncing yet: it
-// is the thing that turns sync on. What the two share is checkedKey, which is
-// where the passphrase is actually compared, so the answer to "is this the right
-// passphrase" is written once.
+// not syncing and a joiner is by definition not syncing yet. What the two share
+// is checkedKey, where the passphrase is actually compared, so the answer is
+// written once.
 //
-// A remote holding no key is ErrNoKDF, the same refusal `unlock` gives. A joiner
-// that was handed such a remote could not unlock what it imported and would end
-// up holding nothing, so it is refused here rather than after a join that
-// appeared to work.
+// A remote holding no key is ErrNoKDF here, not after a join that appeared to
+// work: a joiner handed such a remote could not unlock what it imported.
 func VerifyJoinKey(ctx context.Context, local Local, transport synclog.LogTransport, passphrase []byte) (Keyring, error) {
 	meta, err := transport.KeyMeta(ctx)
 	if err != nil {

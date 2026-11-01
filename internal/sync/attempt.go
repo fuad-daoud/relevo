@@ -22,12 +22,10 @@ type Attempt struct {
 	Attention bool      `json:"attention,omitempty"`
 }
 
-// Failed reports whether the attempt ended in an error.
 func (a Attempt) Failed() bool { return a.Error != "" }
 
 // RecordAttempt writes the attempt that began at start and ended with out. The
-// error text is the error's own: a render sanitizes it, and nothing here puts a
-// credential in an error.
+// error text is the error's own, so no credential is recorded here.
 func (r *Runner) RecordAttempt(start time.Time, out SteadyResult) {
 	a := Attempt{
 		Start:     start.UTC(),
@@ -52,8 +50,7 @@ func failedAttempt(err error) SteadyResult {
 	return SteadyResult{Err: err}
 }
 
-// RecordFailure records an attempt that stopped before the pipeline ran, such
-// as one that could not open its transport.
+// RecordFailure records an attempt that stopped before the pipeline ran.
 func (r *Runner) RecordFailure(start time.Time, err error) {
 	r.RecordAttempt(start, failedAttempt(err))
 }

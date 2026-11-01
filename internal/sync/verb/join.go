@@ -1,22 +1,19 @@
 package verb
 
 // The passphrase half of an enable: stage what the worker is built from, check
-// the passphrase against the remote's key_check, and only then let the enable go
-// on to import anything.
+// the passphrase against the remote's key_check, and only then let the enable
+// import anything.
 //
-// The order is the whole point. A wrong passphrase has to be refused before the
-// machine is left holding a remote or a token it cannot use, because a machine
-// pointed at somebody else's remote does something on its next attempt that the
-// operator never asked for. What makes the ordering more than an intention is
-// where the check has to sit relative to the worker: the daemon builds its
-// worker from the machine-local rows, because that is the only place the worker's
-// assembly lives, so the remote and the token have to be in those rows before one
-// can be opened. They are staged, the passphrase is checked, and every row the
-// staging touched is put back byte-for-byte when the check fails.
+// The order is the whole point: a wrong passphrase is refused before the
+// machine holds a remote or token it cannot use, because a machine pointed at
+// somebody else's remote acts on its next attempt in a way the operator never
+// asked for. The worker is built from the machine-local rows, so the remote and
+// the token must be staged before one opens, and every staged row is put back
+// byte-for-byte when the check fails.
 //
 // A --join needs this and a plain enable may need it: a joiner cannot unlock
-// without a key, while a plain enable on a machine that is already unlocked has
-// nothing to verify. That difference is the whole of the required flag below.
+// without a key, while a plain enable on an unlocked machine has nothing to
+// verify.
 
 import (
 	"bytes"
@@ -30,13 +27,11 @@ import (
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
-// errNoPassphrase is a join that arrived without one.
-//
-// A joiner that cannot unlock would import every entry and hold none of them: the
-// machine would read as joined while sharing nothing with the fleet. Refusing
-// here costs one command; discovering it later costs an operator a sync that
-// looks fine and is not. It is one fixed line, because the passphrase itself
-// never appears in a message and there is nothing here worth varying per caller.
+// errNoPassphrase is a join that arrived without one: a joiner that cannot
+// unlock would import every entry and hold none, reading as joined while
+// sharing nothing. Refusing here costs one command; discovering it later costs
+// a sync that looks fine and is not. It is one fixed line, because the
+// passphrase never appears in a message.
 var errNoPassphrase = errors.New("sync: enable --join: no passphrase: pass --passphrase-stdin or set RELEVO_SYNC_PASSPHRASE")
 
 // verified is an enable that has staged its rows, opened a worker against them
@@ -63,13 +58,13 @@ type verified struct {
 // stageAndVerify stages what the worker is built from, opens it, and stores the
 // key the passphrase derives.
 //
-// required decides whether a missing passphrase is a refusal. A --join needs one
-// -- a joiner that cannot unlock would join holding nothing -- while a plain
-// enable that was handed none has nothing to verify and goes on as it always did.
+// required decides whether a missing passphrase is a refusal: a --join needs
+// one, while a plain enable handed none has nothing to verify and goes on as it
+// always did.
 //
-// A plain enable stages its bucket credentials too: its worker is opened from
-// the stored set, and on a fresh machine the only set is the one this enable
-// carries. A join's arrive in the fleet's secrets document instead.
+// A plain enable stages its bucket credentials too, because its worker opens
+// from the stored set and on a fresh machine the only set is the one this
+// enable carries; a join's arrive in the fleet's secrets document instead.
 func (v *Runner) stageAndVerify(ctx context.Context, remote string, token, passphrase []byte, required bool, r2 relevosync.R2Intake) (*verified, error) {
 	if required && len(bytes.TrimSpace(passphrase)) == 0 {
 		return nil, errNoPassphrase
@@ -177,11 +172,10 @@ func (v *Runner) stageR2(r2 relevosync.R2Intake) error {
 
 // unstageJoin puts the staged rows back.
 //
-// It runs on every path that opened a worker to check the passphrase and did not
-// get a key back, which is the only way a machine ends up worse off than it was.
-// The refusal that sent us here already says the enable did not happen; when the
-// restore itself fails, the log says it may not be entirely as it was, which is
-// the other half of the truth and the one an operator has to hear.
+// It runs on every path that opened a worker to check the passphrase and got no
+// key back, the only way a machine ends up worse off than it was. When the
+// restore itself fails, the log says the machine may not be entirely as it was,
+// which an operator has to hear.
 func (v *Runner) unstageJoin(snapshot relevosync.JoinSnapshot) {
 	if err := snapshot.Restore(v.Local, time.Now()); err != nil {
 		slog.Warn("sync: enable: the staged rows could not be restored", "err", err)
@@ -194,11 +188,9 @@ func (v *Runner) unstageJoin(snapshot relevosync.JoinSnapshot) {
 // joining decides the opener: a joiner's stored rows hold no bucket yet -- the
 // credentials arrive in the fleet's secrets document, which only the worker is
 // opened to read -- so the wiring can install an opener that starts the worker
-// with none instead of refusing. Every other enable opens through Open, whose
-// refusal an incomplete set is, because what it would import needs the bucket
-// in hand. bucketless is the opener's answer about the worker it built -- a
-// worker started with no bucket stored, which the rest of the enable must
-// answer for.
+// with none instead of refusing. Every other enable opens through Open.
+// bucketless is the opener's answer about the worker it built, which the rest
+// of the enable must answer for.
 func (v *Runner) openJoinTransport(ctx context.Context, joining bool) (synclog.LogTransport, bool, bool, error) {
 	var transport synclog.LogTransport
 	var err error
@@ -322,15 +314,12 @@ func (v *Runner) enablePipeline(ctx context.Context, verb *wire.SyncVerb, token 
 //
 // A verify worker opened with no bucket cannot carry the import, which fetches
 // `$ref` bodies: the stored set after the secrets pre-pass is merged with the
-// flags the joiner passed -- the same lenient resolve the join preflight runs,
-// where a flag beats the stored value it would fill -- and neither side
-// completing it is the fleet granting none. That is refused before the enable
-// opens a worker for an import no bucket could carry, and the rows put back the
-// way staging found them. A merged set that is complete ends the question: a
-// verify worker started with none is closed and the enable builds a fresh one
-// through Open, now that the rows name a bucket (the Enabler stores flags
-// before it opens its transport, and the pre-pass stored what the document
-// applied). One opened with a bucket keeps driving.
+// flags the joiner passed -- a flag beats the stored value it would fill -- and
+// neither side completing it is the fleet granting none, refused before the
+// enable opens a worker no bucket could carry. A merged set that is complete
+// ends the question: a verify worker started with none is closed and the enable
+// builds a fresh one through Open, now that the rows name a bucket. One opened
+// with a bucket keeps driving.
 //
 // The refusal error is returned; the caller puts the staged rows back.
 //
@@ -363,8 +352,6 @@ func (v *Runner) settleImportBucket(r2 relevosync.R2Intake, staged *verified) er
 	return nil
 }
 
-// releaseStagedWorker closes the worker the passphrase check ran on and clears
-// it from the join's publication.
 func releaseStagedWorker(v *Runner, staged *verified) {
 	v.clearJoin(staged.transport)
 	closeTransport(staged.transport)

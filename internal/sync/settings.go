@@ -35,15 +35,12 @@ const (
 	defaultQuotaR2Storage    int64 = 10_000_000_000
 )
 
-// TursoSyncQuota is the monthly Turso sync allowance in bytes.
 func (s Settings) TursoSyncQuota() int64 { return orDefault(s.QuotaTursoSync, defaultQuotaTursoSync) }
 
-// TursoStorageQuota is the Turso storage allowance in bytes.
 func (s Settings) TursoStorageQuota() int64 {
 	return orDefault(s.QuotaTursoStorage, defaultQuotaTursoStorage)
 }
 
-// R2StorageQuota is the bucket's storage allowance in bytes.
 func (s Settings) R2StorageQuota() int64 { return orDefault(s.QuotaR2Storage, defaultQuotaR2Storage) }
 
 func orDefault(v, def int64) int64 {

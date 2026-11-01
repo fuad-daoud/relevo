@@ -17,24 +17,15 @@ import (
 
 // Runner runs one sync verb against handles a process already holds.
 //
-// It is what the owner's OnSyncVerb hook calls and what the cockpit's sync
-// actions call, so there is exactly one set of verbs' semantics in the tree and
-// no caller opens the database itself to run one. It runs against the daemon's
-// shared and machine-local handles -- the pair already open under the lock --
-// so a client asking for a verb never opens a file and never competes for the
-// lock the daemon is holding.
-//
-// Enable runs whole: the preflight decides the remote and the token, the runner
-// opens the log transport, and the join bootstraps, imports and reconcile-
-// exports before the mark goes on. Push and pull are the two halves of the
-// steady exchange, each run alone. Retry clears a breaker latch. The turn-off
-// runs whole, deleting the replica the worker owns; status is not a verb at all
-// -- it is a read of the same local rows.
+// It is what the owner's OnSyncVerb hook and the cockpit's sync actions call,
+// so one set of verbs' semantics serves every caller and no caller opens the
+// database itself. It runs against the daemon's shared and machine-local
+// handles, already open under the lock, so a verb never opens a file or
+// competes for that lock.
 //
 // A verb is serialized against the daemon's own sync triggers through the same
 // guard: one push-then-pull at a time per daemon, whatever asked for it.
 type Runner struct {
-	// Shared is the daemon's direct shared handle.
 	Shared *db.DB
 	// Local is the machine-local file beside it, where the settings, the token
 	// and the mark live.
@@ -55,18 +46,16 @@ type Runner struct {
 	// verb, so the remote and the token it is built from are the ones just
 	// stored.
 	Open func(context.Context) (synclog.LogTransport, error)
-	// OpenNoBucket builds the transport a join's passphrase check drives, where
-	// the stored bucket set may be incomplete: the credentials arrive in the
-	// fleet's secrets document, and that document is only on the remote the
-	// worker is opened to reach. A caller that installs it makes a join open
-	// through it while the machine holds no bucket; every other enable opens
-	// through Open, whose refusal an incomplete set is. Nil means no second
-	// opener is installed and a join opens through Open as well.
+	// OpenNoBucket builds the transport a join's passphrase check drives, where the
+	// stored bucket set may be incomplete: the credentials arrive in the fleet's
+	// secrets document, which is only on the remote the worker is opened to
+	// reach. Every other enable opens through Open, whose refusal an incomplete
+	// set is. Nil means no second opener is installed and a join opens through
+	// Open too.
 	//
 	// The bool is the opener's answer about the worker it built: whether it
 	// started that worker with no bucket stored. It is trusted as it stands,
-	// because the opener built the worker and nothing re-reads the rows after
-	// the fact to guess again.
+	// because nothing re-reads the rows after the fact to guess again.
 	OpenNoBucket func(context.Context) (synclog.LogTransport, bool, error)
 	// Serialize runs fn under the daemon's in-flight sync guard. Nil runs it
 	// inline, which is what a cockpit wants: it is not the daemon and has no
@@ -147,12 +136,9 @@ func (v *Runner) Run(ctx context.Context, verb *wire.SyncVerb, token []byte) *wi
 
 // runGuarded runs fn under the daemon's serialization when one is installed.
 //
-// The guard is the daemon's own: a write and a trigger must not interleave,
-// because both record the same markers and both hold the same local file.
-// queueSync drops a trigger that arrives while another is in flight because a
-// tick is cheap to lose; a verb does not take that path -- a caller asked for it
-// explicitly, so it waits its turn rather than being answered "nothing
-// happened".
+// The guard is the daemon's own: a write and a trigger must not interleave. A
+// verb waits its turn rather than dropping like queueSync does a trigger,
+// because a caller asked for it explicitly.
 func (v *Runner) runGuarded(fn func() *wire.SyncResult) *wire.SyncResult {
 	if v.Serialize == nil {
 		return fn()
@@ -213,11 +199,9 @@ func (v *Runner) beginJoin() {
 // preempt releases whatever transport this runner has in flight, so a disable or
 // a retry does not queue behind a call that can run for the whole data-call
 // bound. It reaches two transports: the join an enable is driving, and the
-// runner's steady worker, which is what a push, pull or steady tick drives. It
-// marks a join stopped before cancelling it, so an enable the release lets
-// finish its last step still leaves the mark off; a runner with neither in
-// flight is left alone, which keeps every other verb on the daemon's ordinary
-// serialization.
+// runner's steady worker. It marks a join stopped before cancelling it, so an
+// enable the release lets finish still leaves the mark off; a runner with
+// neither in flight is left alone.
 func (v *Runner) preempt() {
 	v.joinMu.Lock()
 	join := v.joinClient
@@ -261,16 +245,14 @@ func (v *Runner) setClient(transport synclog.LogTransport) {
 	v.clientMu.Unlock()
 }
 
-// retry clears a latched breaker and drops the worker, so the next attempt
-// tries a fresh process rather than the one that stopped answering.
+// retry clears a latched breaker and drops the worker, so the next attempt tries
+// a fresh process rather than the one that stopped answering.
 //
 // With rebuild set it then moves the replica and its driver files aside, the
 // manual answer to a replica this machine cannot read. The move ignores the
-// window an automatic rebuild waits out -- the human asked for it, and it is
-// the way out the latch names -- and it writes the record that restarts that
-// window, so a machine that keeps going corrupt is not answered with a move on
-// every tick. The next attempt bootstraps a fresh replica from the remote with
-// the stored token and key.
+// window an automatic rebuild waits out -- the human asked for it -- and it
+// writes the record that restarts that window, so a machine that keeps going
+// corrupt is not answered with a move on every tick.
 func (v *Runner) retry(rebuild bool) *wire.SyncResult {
 	if v.Runner == nil {
 		return Refusal(wire.SyncCodeInvalid,
@@ -295,9 +277,8 @@ func (v *Runner) retry(rebuild bool) *wire.SyncResult {
 }
 
 // probe is the test-connection verb: it drives the same worker a verb does and
-// reads its stats, which moves no change set in this file. It is a verb rather
-// than a direct call so the cockpit reaches it over the owner socket like every
-// other action, and the daemon's one worker is the one that answers.
+// reads its stats, moving no change set. It is a verb rather than a direct call
+// so the cockpit reaches it over the owner socket like every other action.
 func (v *Runner) probe(ctx context.Context) *wire.SyncResult {
 	if err := v.probeConn(ctx); err != nil {
 		return Refusal(Classify(err), err)
@@ -305,8 +286,6 @@ func (v *Runner) probe(ctx context.Context) *wire.SyncResult {
 	return &wire.SyncResult{OK: true}
 }
 
-// probeConn asks the log whether it answers: it drives the same worker a verb
-// does and reads its stats, which moves no change set in this file.
 func (v *Runner) probeConn(ctx context.Context) error {
 	transport, err := v.drive(ctx)
 	if err != nil {
@@ -316,9 +295,8 @@ func (v *Runner) probeConn(ctx context.Context) error {
 	return err
 }
 
-// drive returns the log a one-shot drives. A worker an enable left on the
-// runner is reused, so a push or pull after an enable drives the same process;
-// a machine whose runner holds only the placeholder opens one through the
+// drive returns the log a one-shot drives. A worker an enable left on the runner
+// is reused; a machine holding only the placeholder opens one through the
 // wiring's opener and keeps it, so the next call and the tick share it.
 func (v *Runner) drive(ctx context.Context) (synclog.LogTransport, error) {
 	if v.Shared == nil {
@@ -336,8 +314,7 @@ func (v *Runner) drive(ctx context.Context) (synclog.LogTransport, error) {
 }
 
 // EnsureTransport leaves the runner holding a transport opened from the stored
-// rows, opening one when it holds only the placeholder. The daemon's tick calls
-// it before each steady attempt.
+// rows. The daemon's tick calls it before each steady attempt.
 func (v *Runner) EnsureTransport(ctx context.Context) error {
 	_, err := v.drive(ctx)
 	return err
@@ -352,16 +329,16 @@ func transportReady(transport synclog.LogTransport) bool {
 	return !ok || r.Ready()
 }
 
-// enable runs one enable through the sync package.
+// enable runs one enable through the sync package: the preflight decides the
 // remote and the token, the runner opens the log transport, and the pipeline
 // bootstraps, imports every other origin and reconcile-exports this origin's
 // history before the mark goes on.
 //
 // The transport is opened after the preflight and only for a run that passed
-// it, so a machine with no token, no remote or a failing origin gate never
-// starts a worker. A run that fails closes the transport it opened, because a
-// worker left behind holds the replica open against the next one; a run that
-// finishes leaves it on the runner, where the daemon can drive it again.
+// it, so a machine with no token, no remote or a failing gate never starts a
+// worker. A failed run closes the transport it opened, because a worker left
+// behind holds the replica open against the next one; a finished run leaves it
+// on the runner.
 func (v *Runner) enable(ctx context.Context, verb *wire.SyncVerb, tail []byte) *wire.SyncResult {
 	token, passphrase, r2, err := EnableIntake(verb, tail)
 	if err != nil {
@@ -480,14 +457,13 @@ func (v *Runner) disableTransport(ctx context.Context) synclog.LogTransport {
 	return transport
 }
 
-// exportThrough adapts one log export to the turn-off's single best-effort
-// call. A machine with no shared file or no transport yields nil, which the
-// turn-off reads as nothing to hand over through.
+// exportThrough adapts one log export to the turn-off's single best-effort call.
+// A machine with no shared file or no transport yields nil, which the turn-off
+// reads as nothing to hand over.
 //
-// The export runs under the turn-off's own bound: when it ends, the export's
-// transport is stopped, which cancels the call in flight and refuses the
-// batches after it, so a slow remote costs the turn-off its bound rather than
-// a data call's.
+// The export runs under the turn-off's own bound: when it ends the transport
+// is stopped, so a slow remote costs the turn-off its bound rather than a data
+// call's.
 func exportThrough(shared *db.DB, transport synclog.LogTransport) func(context.Context) error {
 	if shared == nil || transport == nil {
 		return nil
@@ -510,7 +486,6 @@ func exportThrough(shared *db.DB, transport synclog.LogTransport) func(context.C
 	}
 }
 
-// stopTransport stops the worker behind a transport, when there is one.
 func stopTransport(transport synclog.LogTransport) func() error {
 	if transport == nil {
 		return nil

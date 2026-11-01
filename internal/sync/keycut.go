@@ -12,17 +12,17 @@ import (
 
 // The own cut extension: how a machine vouches for the tail it appended before
 // it learned of a rekey. The head it vouches to is the own-head fact, written
-// after every append its transport confirmed; the vouch is forward only and
-// the log's own head bounds it from above.
+// after every confirmed append; the vouch is forward only and the log's own
+// head bounds it from above.
 
-// PublishOwnCut extends this origin's cut to the vouch target recorded
-// when the machine unlocked from being stale. It publishes at most up to that
-// target (never the live own head), and only while this origin's record is below
-// it; once the record reaches the target, the target fact is cleared.
+// PublishOwnCut extends this origin's cut to the vouch target recorded at
+// unlock from stale. It publishes at most up to that target, never the live own
+// head, and only while this origin's record is below it; once the record
+// reaches the target, the fact is cleared.
 //
-// A machine that was never stale, or a fleet at epoch 1, records no vouch
-// target and publishes no extension. The steady-path call stays only as the
-// retry of a vouch whose publish failed.
+// A machine never stale, or a fleet at epoch 1, records no target and publishes
+// nothing. The steady-path call stays as the retry of a vouch whose publish
+// failed.
 func PublishOwnCut(ctx context.Context, shared *db.DB, kv db.KV, t synclog.LogTransport) {
 	if shared == nil || t == nil || kv == nil {
 		return
@@ -75,8 +75,7 @@ func PublishOwnCut(ctx context.Context, shared *db.DB, kv db.KV, t synclog.LogTr
 }
 
 // vouchTarget reads the sequence up to which this origin vouches for its
-// pre-unlock tail, recorded at unlock when the machine recovered from being
-// stale.
+// pre-unlock tail, recorded at unlock from stale.
 func vouchTarget(kv db.KV) (int, bool, error) {
 	value, ok, err := kv.KVGet(SyncVouchTarget)
 	if err != nil || !ok {
@@ -89,11 +88,10 @@ func vouchTarget(kv db.KV) (int, bool, error) {
 	return target, true, nil
 }
 
-// BindVerifier sets an importer's verification to the machine's stored
-// keyring, newest epoch first. It is what every verification site binds with:
-// an import runs on the whole ring's trial, and a machine set through the old
-// one-key path verifies exactly as it did, because its ring is one epoch
-// deep -- which is every epoch-1 log, until a rekey writes its first cut.
+// BindVerifier sets an importer's verification to the machine's stored keyring,
+// newest epoch first. Every verification site binds with it, and a machine set
+// through the old one-key path verifies exactly as it did, because its ring is
+// one epoch deep.
 func BindVerifier(imp *synclog.Importer, kv db.KV) error {
 	ring, ok, err := heldKeyring(kv)
 	if err != nil {

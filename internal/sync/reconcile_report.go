@@ -35,7 +35,6 @@ func FormatPreview(p synclog.Preview) string {
 	return b.String()
 }
 
-// FormatReconcile renders what a reconcile appended for a terminal.
 func FormatReconcile(r synclog.ReconcileResult) string {
 	if r.Batches == 0 {
 		return "in step with the log; nothing to append\n"

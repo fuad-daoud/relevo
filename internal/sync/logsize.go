@@ -1,8 +1,7 @@
 package sync
 
 // What the daemon measures for other machines and for status: this machine's
-// log size, published to the bucket for the join guard, and the storage in use,
-// kept for status.
+// log size, published to the bucket for the join guard, and the storage in use.
 
 import (
 	"bytes"
@@ -28,7 +27,6 @@ const (
 	measureTimeout = 2 * time.Minute
 )
 
-// NewR2Store builds the in-process bucket store from the machine's credentials.
 func NewR2Store(r R2Secrets) blobstore.BlobStore {
 	return blobstore.NewS3Store(blobstore.S3Config{
 		Endpoint: r.Endpoint, Bucket: r.Bucket, KeyID: r.KeyID, Secret: r.Secret,
@@ -54,7 +52,7 @@ func (r *Runner) bucket() blobstore.BlobStore {
 
 // publishSize writes this machine's log size to the bucket after a compaction,
 // and otherwise at most once a day after an export that appended something.
-// Another machine's join guard reads it before it opens a worker. A failure is
+// Another machine's join guard reads it before opening a worker. A failure is
 // logged: the size is advice and the next tick tries again.
 func (r *Runner) publishSize(origin string, t *StopTransport, compacted, appended bool, now time.Time) {
 	store := r.bucket()
@@ -107,10 +105,10 @@ func ReadStorage(kv db.KV) (Storage, error) {
 // measureStorage records what the remote log holds and the bucket's total, at
 // most once a day.
 //
-// Turso is measured as the sum of every origin's log size the remote reports,
-// the same figure the join guard compares against the quota. The local replica
-// file is not that: it is a partial copy plus the driver's write-ahead files, so
-// its size says nothing about what the cloud database bills.
+// Turso is the sum of every origin's log size the remote reports, the figure the
+// join guard compares against the quota. The local replica file is not that: a
+// partial copy plus write-ahead files says nothing about what the cloud
+// database bills.
 func (r *Runner) measureStorage(t *StopTransport, now time.Time) {
 	store := r.bucket()
 	if store == nil {
@@ -152,11 +150,10 @@ func FormatQuotas(c ByteCounters, q QuotaReading, s Settings, st Storage) string
 		share(st.Turso, s.TursoStorageQuota()), share(st.R2, s.R2StorageQuota()))
 }
 
-// FormatAccount is the account clause of the month: what every machine's
-// published row plus this machine's counters say the account spent against
-// the shared quota. The pace part is dropped while the month is too young to
-// project. A snapshot never read says so rather than a total that would read
-// as a quiet month.
+// FormatAccount is the account clause of the month: every machine's published
+// row plus this machine's counters against the shared quota. The pace part is
+// dropped while the month is too young to project. A snapshot never read says
+// so rather than a total that would read as a quiet month.
 func FormatAccount(q QuotaReading) string {
 	if q.Account.ReadAt.IsZero() {
 		return "account: not read yet"

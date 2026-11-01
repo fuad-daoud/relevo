@@ -1,13 +1,10 @@
 package sync
 
-// Draining one origin's page at a time. The importer reads one page per origin
-// per run, so a backlog larger than a page is drained by running Import again
-// while a run moved a mark; a run that moved nothing -- an empty pull, a held
-// origin, a gap -- stops the loop rather than re-reading the same entries.
-//
-// The two pipelines share the loop because they share the predicate, and the
-// only difference is what bounds a step: the join has no tick to keep, the
-// steady pipeline runs each Import under the step bound it already had.
+// Draining one origin's page at a time: a backlog larger than a page is drained
+// by running Import again while a run moved a mark, and a run that moved
+// nothing stops the loop rather than re-reading the same entries. The two
+// pipelines share the loop because they share the predicate; only the step
+// bound differs, since the join has no tick to keep.
 
 import (
 	"time"
@@ -15,10 +12,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
-// drainImport runs step in a loop until a run moves no mark or the loop's own
-// deadline passes. The marks a run moved stand and the loop's deadline is not an
-// error: it exists so a backlog larger than one whole transfer stops a tick
-// rather than holding it, and the next tick continues from where this one
+// drainImport runs step until a run moves no mark or the loop's deadline passes.
+// The deadline is not an error: a backlog larger than one whole transfer stops
+// a tick rather than holding it, and the next tick continues where this one
 // stopped.
 func drainImport(step func() (synclog.ImportResult, error), deadline time.Time, now func() time.Time) (synclog.ImportResult, error) {
 	var total synclog.ImportResult

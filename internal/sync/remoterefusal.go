@@ -2,17 +2,14 @@ package sync
 
 // A remote that refused the SQL this machine sent it.
 //
-// The driver's push and pull report a remote-side refusal in its own words --
-// the sync engine failed, executing this statement, because of that constraint
-// -- and none of those words is a class this tree can branch on. So the refusal
-// is recognised here, once, and re-raised as a sentinel a caller can classify
-// by: a remote that refuses a statement is answering, not failing, and the
-// answer says which of the two faults it is.
+// The driver reports a remote-side refusal in its own words, and none of those
+// words is a class this tree can branch on, so the refusal is recognised here,
+// once, and re-raised as a sentinel a caller classifies by: a refusing remote
+// is answering, not failing.
 //
-// Nothing of the remote's own text reaches the message. The reason is fixed text
-// written in this repository, one sentence per reason the driver reports, so a
-// remote cannot choose what a reader is told -- the same rule every other
-// refusal on this surface follows.
+// Nothing of the remote's own text reaches the message: the reason is fixed
+// text written in this repository, so a remote cannot choose what a reader is
+// told.
 
 import (
 	"errors"
@@ -27,24 +24,21 @@ import (
 // own way out.
 var ErrRemoteRefused = errors.New("sync: the remote refused the SQL in this change set")
 
-// ErrRemoteSchema is the one refusal the order of a change set cannot fix: the
-// remote has no table to write to. It is its own sentinel because it is a
-// different fault with a different fix -- a remote the engine never taught this
-// schema needs the DDL pushed over the sync connection, not a re-recorded row --
-// so a caller handed one of the two can tell which it has rather than reading a
-// message to find out.
+// ErrRemoteSchema is the one refusal the change set's order cannot fix: the
+// remote has no table to write to. It is its own sentinel because the fix
+// differs -- a remote never taught this schema needs the DDL pushed over the
+// sync connection, not a re-recorded row -- so a caller can tell which of the
+// two it holds without reading a message.
 var ErrRemoteSchema = errors.New("sync: the remote has no table for this machine's change set")
 
 // ErrQuotaReached reports a remote that refused because the plan's quota is
 // used up. It repeats until the billing month turns, so it is permanent.
 var ErrQuotaReached = errors.New("sync: the Turso plan quota is reached")
 
-// IsPermanentRefusal reports whether err is a remote refusal that will repeat on
-// every attempt: the remote has no table for this machine's rows, it refused
-// the change set in a way that re-sending it cannot fix, or a body an entry names
-// is gone from the store. A breaker latches the
-// machine on one of these rather than waiting out three deaths it can already
-// predict.
+// IsPermanentRefusal reports whether err is a remote refusal that repeats on
+// every attempt: no table for this machine's rows, a change set re-sending
+// cannot fix, or a body an entry names gone from the store. A breaker latches
+// on one of these rather than waiting out three predictable deaths.
 func IsPermanentRefusal(err error) bool {
 	return errors.Is(err, ErrRemoteSchema) || errors.Is(err, ErrRemoteRefused) ||
 		errors.Is(err, synclog.ErrBlobMissing) || errors.Is(err, ErrQuotaReached)
@@ -87,12 +81,11 @@ func RefusedVerb(err error) (string, bool) {
 // classifyRemoteRefusal turns a driver's refusal into the class this package
 // reports, and returns every other error unchanged.
 //
-// It matches on the driver's shape rather than on its whole sentence: the sync
-// engine's prefix says a call failed, the execute clause says the remote refused
-// a statement rather than the network refusing the call, and the SQLite code
-// inside says which refusal it was. Anything that is not all of that is left for
-// the caller to report as it is, because a failure that is not a remote refusal
-// has a different answer.
+// It matches on the driver's shape rather than its sentence: the engine prefix
+// says a call failed, the execute clause says the remote refused a statement
+// rather than the network refusing the call, and the SQLite code says which
+// refusal. Anything less is left for the caller, because a failure that is not
+// a remote refusal has a different answer.
 func classifyRemoteRefusal(verb string, err error) error {
 	if err == nil || !isRemoteRefusal(err) {
 		return err
@@ -101,8 +94,6 @@ func classifyRemoteRefusal(verb string, err error) error {
 	return &remoteRefusal{verb: verb, class: class, reason: reason, cause: err}
 }
 
-// isRemoteRefusal reports whether err is the driver saying a remote refused a
-// statement.
 func isRemoteRefusal(err error) bool {
 	for e := err; e != nil; e = errors.Unwrap(e) {
 		text := e.Error()
@@ -113,13 +104,11 @@ func isRemoteRefusal(err error) bool {
 	return false
 }
 
-// isMissingTable reports whether the refusal is the remote having no table.
 func isMissingTable(text string) bool { return strings.Contains(text, "no such table") }
 
 // remoteRefusalClass is the fixed sentence for this refusal and the class under
-// it. Each sentence names the verb and the reason, so a reader is told which call
-// the remote refused and why without the message ever carrying a word the remote
-// chose.
+// it. Each sentence names the verb and the reason, so a reader learns which call
+// the remote refused and why without a word the remote chose.
 func remoteRefusalClass(verb, text string) (string, error) {
 	name := refusalVerb(verb)
 	switch {

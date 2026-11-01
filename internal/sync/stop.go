@@ -1,10 +1,9 @@
 package sync
 
-// Stopping work that spans several transport calls. A worker cancel releases
-// the one call in flight, but the supervisor starts a fresh worker for the next
-// call, so an export, a reconcile or a join cancelled between two calls would
-// carry on. A StopTransport makes the stop stick for the work it wraps: every
-// call after the stop refuses at once, and the work ends at its next call.
+// Stopping work that spans several transport calls: a worker cancel releases
+// only the call in flight and the supervisor starts a fresh worker for the next
+// call, so work cancelled between calls would carry on. A StopTransport makes
+// the stop stick: every call after the stop refuses at once.
 
 import (
 	"context"
@@ -65,7 +64,6 @@ func (s *StopTransport) Append(entries []synclog.Entry) ([]synclog.Entry, error)
 	return s.inner.Append(entries)
 }
 
-// AppendSigned is Append with the boundary the exporter predicted.
 func (s *StopTransport) AppendSigned(entries []synclog.Entry, boundary synclog.Boundary) ([]synclog.Entry, error) {
 	if s.stopped.Load() {
 		return nil, ErrStopped
@@ -159,7 +157,6 @@ func (s *StopTransport) KeyInit(ctx context.Context, key synclog.KeyMeta) (syncl
 	return s.inner.KeyInit(ctx, key)
 }
 
-// KeyRekey rotates the log's key to the epoch the spec names.
 func (s *StopTransport) KeyRekey(ctx context.Context, spec synclog.KeyRekeySpec) (synclog.KeyMeta, error) {
 	if s.stopped.Load() {
 		return synclog.KeyMeta{}, ErrStopped
@@ -167,7 +164,6 @@ func (s *StopTransport) KeyRekey(ctx context.Context, spec synclog.KeyRekeySpec)
 	return s.inner.KeyRekey(ctx, spec)
 }
 
-// PublishEpochCut extends this installation's own cut to the one named.
 func (s *StopTransport) PublishEpochCut(ctx context.Context, cut synclog.EpochCut) error {
 	if s.stopped.Load() {
 		return ErrStopped
@@ -175,7 +171,6 @@ func (s *StopTransport) PublishEpochCut(ctx context.Context, cut synclog.EpochCu
 	return s.inner.PublishEpochCut(ctx, cut)
 }
 
-// ClaimIdentity records or reads the claim on an identity.
 func (s *StopTransport) ClaimIdentity(ctx context.Context, origin, token string, at time.Time) (string, time.Time, error) {
 	if s.stopped.Load() {
 		return "", time.Time{}, ErrStopped

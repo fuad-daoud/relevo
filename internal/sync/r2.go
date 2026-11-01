@@ -1,15 +1,11 @@
 package sync
 
 // The R2 credentials, machine-local beside the token. Four secrets rather than
-// one setting because they are four independent things to rotate: an endpoint and
-// a bucket name are not secret, but the key that signs a request to them is, and
-// a machine should be able to be moved to another bucket without its access key
-// being reissued.
+// one setting because they rotate independently: a machine moves buckets without
+// its access key being reissued.
 //
-// Nothing here decides anything about sync. It stores four values, reads them
-// back, and says whether an enable may go ahead with what is on hand -- the
-// worker builds the actual store from what hello carries, out of reach of this
-// package.
+// Nothing here decides anything about sync: the worker builds the actual store
+// from what hello carries, out of this package's reach.
 
 import (
 	"bytes"
@@ -46,17 +42,15 @@ var ErrNoR2 = errors.New("sync: no R2 credentials on this machine: pass " +
 
 // EnvR2Secret is the environment variable the R2 secret is read from when
 // --r2-secret-stdin is not given. Its name is the tool's own rather than a
-// vendor's, because R2's secret is minted by the account and shared with this
-// program, and a shell exporting one for another purpose should not be picked up
-// by accident.
+// vendor's, because a shell exporting one for another purpose must not be picked
+// up by accident.
 const EnvR2Secret = "RELEVO_R2_SECRET"
 
-// R2Secrets is the four machine-local R2 credentials as one value, which is what
-// the preflight reasons about and what the handshake is built from.
+// R2Secrets is the four machine-local R2 credentials as one value, which the
+// preflight reasons about and the handshake is built from.
 //
 // It is a struct rather than four arguments because they are never used apart:
-// a caller that had one of them and not the others has nothing it can do with
-// the one.
+// a caller holding one without the others has nothing it can do with the one.
 type R2Secrets struct {
 	Endpoint string
 	Bucket   string
@@ -120,21 +114,18 @@ func SetR2(l Local, r R2Secrets, now time.Time) error {
 				return fmt.Errorf("sync: set %s: %w", s.name, err)
 			}
 		}
-		// A person typing the flags is the only way an R2 credential arrives
-		// here, so the write stamps and signals: a joiner is owed the
-		// credentials without the owner re-running enable. A credential that
-		// came from a peer's secrets document is written by that document's
-		// apply path instead, which does not stamp.
+		// Only a person typing the flags reaches this write, so it stamps and
+		// signals: a joiner is owed the credentials without the owner re-running
+		// enable. A credential from a peer's secrets document arrives through
+		// that document's apply path instead, which does not stamp.
 		return StampSecretWrites(t, r2Names(), func() time.Time { return now })
 	})
 }
 
-// ReadR2 returns the four credentials this machine holds. A machine with none is
-// a zero R2Secrets and no error: a machine that never configured R2 has nothing
-// to report, which is the ordinary case until bodies are enabled. An individual
-// value that will not decode is a failure rather than an absent one, for the
-// same reason a join marker that will not parse is: a half-readable credential
-// set must not read as a configured machine.
+// ReadR2 returns the four credentials this machine holds. A machine with none
+// is a zero R2Secrets and no error: R2 unconfigured is the ordinary case until
+// bodies are enabled. A value that will not decode is a failure rather than an
+// absent one: a half-readable set must not read as configured.
 func ReadR2(l Local) (R2Secrets, error) {
 	var out R2Secrets
 	for _, s := range []struct {
