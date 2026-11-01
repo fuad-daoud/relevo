@@ -10,7 +10,6 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/remote"
-	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	relevoview "github.com/fuad-daoud/relevo/internal/view"
 )
@@ -139,7 +138,7 @@ func fetchCatchUpArtifacts(ctx context.Context, rt Runtime, b store.Binding, vie
 // the binding's artifact directory.
 func fetchArtifactFiles(ctx context.Context, rt Runtime, b store.Binding, view remote.BindingView, list remote.ArtifactList, cf *catchUpFetch) bool {
 	server, name, n := b.Builder.Server, b.Name, view.ClosedRound
-	dir := rt.Store.ArtifactDir(name, n, resolve.BindingRole(b))
+	dir := rt.Store.ArtifactDir(name, n, b.WriterRole())
 	for _, f := range list.Files {
 		final := filepath.Join(dir, filepath.FromSlash(f.Rel))
 		if f.Rel == list.Output {

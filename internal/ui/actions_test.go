@@ -491,15 +491,11 @@ func TestConfirmNamesTheOwningMasterMind(t *testing.T) {
 		t.Errorf("stop confirm must name the waiting mastermind:\n%s", got)
 	}
 	if got := strings.Join(ownershipConfirmLines(owned), "\n"); !strings.Contains(got, "MasterMind architect-1 owns this binding") {
-		t.Errorf("done confirm must name the owning mastermind:\n%s", got)
-	}
-	if got := strings.Join(ownershipConfirmLines(owned), "\n"); !strings.Contains(got, "MasterMind architect-1 owns this binding") {
-		t.Errorf("unbind confirm must name the owning mastermind:\n%s", got)
+		t.Errorf("done and unbind confirms must name the owning mastermind:\n%s", got)
 	}
 
 	for _, got := range []string{
 		strings.Join(stopConfirmLines(yours, railNow), "\n"),
-		strings.Join(ownershipConfirmLines(yours), "\n"),
 		strings.Join(ownershipConfirmLines(yours), "\n"),
 		strings.Join(stopConfirmLines(view.BindingStatus{}, railNow), "\n"),
 	} {

@@ -61,7 +61,7 @@ func resolveSendBuilder(rt Runtime, role, current, token, dir string) (*resolve.
 // re-derived tier is above max_tier without allowYolo is refused with
 // ErrBadBuilder, leaving the binding unchanged. Pure.
 func applyBuilder(b store.Binding, res resolve.Resolution, reg *roles.Registry, pol policy.Policy, allowYolo bool) (store.Binding, error) {
-	tier := resolve.ResolveTier("", res.Candidate, reg, resolve.BindingRole(b))
+	tier := resolve.ResolveTier("", res.Candidate, reg, b.WriterRole())
 	if err := resolve.CheckTierCap(tier, pol, allowYolo); err != nil {
 		return b, fmt.Errorf("%w %s: %w", ErrBadBuilder, res.Token(), err)
 	}

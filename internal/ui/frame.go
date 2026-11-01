@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/fuad-daoud/relevo/internal/ui/dash"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -65,7 +66,7 @@ func (m Model) headerView(env widget.Env) string {
 	rightParts = append(rightParts, widget.MutedStyle.Render(env.Now.Local().Format("15:04")))
 	right := strings.Join(rightParts, "    ") + "  "
 
-	return widget.Fit(spread(left, right, env.Width), env.Width)
+	return widget.Fit(dash.Spread(left, right, env.Width), env.Width)
 }
 
 // syncAttention is the header's sync phrase, or "" when there is nothing to
@@ -91,7 +92,7 @@ func (m Model) syncAttention() string {
 // contextView is row 2: the top view's context, spread to width.
 func (m Model) contextView(env widget.Env) string {
 	left, right := m.top().Context(env)
-	return widget.Fit(spread(left, right, env.Width), env.Width)
+	return widget.Fit(dash.Spread(left, right, env.Width), env.Width)
 }
 
 // errorBlock is the optional rows under the context: the refresh error,
@@ -165,7 +166,7 @@ func (m Model) keysView(env widget.Env) string {
 		}
 		left = lipgloss.NewStyle().MaxWidth(room).Render(left)
 	}
-	return widget.Fit(spread(left, right, env.Width), env.Width)
+	return widget.Fit(dash.Spread(left, right, env.Width), env.Width)
 }
 
 // modalKeys is the keys of whichever overlay is up, and whether one is: the

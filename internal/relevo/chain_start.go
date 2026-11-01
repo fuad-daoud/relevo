@@ -318,7 +318,7 @@ func chainResolveActors(rt Runtime, members []chainMember) (map[string]resolve.R
 			return nil, fmt.Errorf("chain %s actor %q must be a %s actor, not a %s", m.part, m.actor, m.shape, shape)
 		}
 		res, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates,
-			availability.Gates(AvailabilityDeps(rt)), "", resolve.BindingRole(store.Binding{Role: resolve.NormRole(m.actor)}), resolve.PickFor(ResolveDeps(rt)))
+			availability.Gates(AvailabilityDeps(rt)), "", store.Binding{Role: resolve.NormRole(m.actor)}.WriterRole(), resolve.PickFor(ResolveDeps(rt)))
 		if err != nil {
 			return nil, err
 		}
@@ -338,7 +338,7 @@ func chainBuildMembers(ctx context.Context, rt Runtime, members []chainMember, r
 	for _, m := range members {
 		res := resolutions[m.part]
 		c := res.Candidate
-		role := resolve.BindingRole(store.Binding{Role: resolve.NormRole(m.actor)})
+		role := store.Binding{Role: resolve.NormRole(m.actor)}.WriterRole()
 		tier := resolve.ResolveTier("", c, reg, role)
 		if !m.writer {
 			var err error

@@ -348,7 +348,7 @@ func (m Model) headerLine() string {
 
 	var content string
 	if cw >= 120 {
-		content = fit(spread(left, right, cw), cw)
+		content = fit(Spread(left, right, cw), cw)
 	} else {
 		content = fit(left, cw)
 	}
@@ -475,7 +475,10 @@ func fit(s string, width int) string {
 	return lipgloss.NewStyle().MaxWidth(width).Render(s)
 }
 
-func spread(left, right string, width int) string {
+// Spread puts right at the right edge of a width-wide line, after left,
+// dropping the gap when they would overlap (left wins; the caller decides
+// what is important enough for the right).
+func Spread(left, right string, width int) string {
 	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {
 		return left

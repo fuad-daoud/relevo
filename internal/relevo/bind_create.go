@@ -80,7 +80,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 	}
 
 	var tier harness.Tier
-	roleName := resolve.BindingRole(store.Binding{Role: resolve.NormRole(opts.Role)})
+	roleName := store.Binding{Role: resolve.NormRole(opts.Role)}.WriterRole()
 	resCandidate, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, resolve.WithSkillGates(ResolveDeps(rt), availability.Gates(AvailabilityDeps(rt)), opts.CWD, nil), opts.Candidate, roleName)
 	if err != nil {
 		return store.Binding{}, resolve.Resolution{}, err
@@ -187,7 +187,7 @@ func builderAgentName(name string) (string, error) {
 //
 // The second return is the resolution, for the pick line.
 func resolveBuilder(ctx context.Context, rt Runtime, tx *store.Tx, opts BindOptions, name string) (store.Endpoint, resolve.Resolution, error) {
-	roleName := resolve.BindingRole(store.Binding{Role: opts.Role})
+	roleName := store.Binding{Role: opts.Role}.WriterRole()
 	res, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, resolve.WithSkillGates(ResolveDeps(rt), availability.Gates(AvailabilityDeps(rt)), opts.CWD, nil), opts.Candidate, roleName, resolve.PickFor(ResolveDeps(rt)))
 	if err != nil {
 		return store.Endpoint{}, resolve.Resolution{}, err

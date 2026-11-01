@@ -5,7 +5,6 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -90,9 +89,9 @@ func switchesForRound(events []store.LogEntry, n int) int {
 // skipped. candidateTok is verbatim; ref has a trailing "#..." stripped, since a
 // ":effort" suffix belongs to the model.
 func candidateForRound(events []store.LogEntry, n int, b store.Binding) (candidateTok string, ref candidate.Ref, ok bool) {
-	tok := lastBuilderToken(events, resolve.BindingRole(b), func(round int) bool { return round == n })
+	tok := lastBuilderToken(events, b.WriterRole(), func(round int) bool { return round == n })
 	if tok == "" {
-		tok = lastBuilderToken(events, resolve.BindingRole(b), func(round int) bool { return round > 0 && round < n })
+		tok = lastBuilderToken(events, b.WriterRole(), func(round int) bool { return round > 0 && round < n })
 	}
 	if tok == "" {
 		tok = b.BuilderCandidate

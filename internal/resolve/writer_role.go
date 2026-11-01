@@ -8,14 +8,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// BindingRole is the writer role b runs: b.Role, or "builder" when it is "".
-func BindingRole(b store.Binding) string {
-	if b.Role == "" {
-		return "builder"
-	}
-	return b.Role
-}
-
 // NormRole is the stored form of a requested role: "" and "builder" both give
 // "", because a builder binding never records the word "builder".
 func NormRole(role string) string {
@@ -28,7 +20,7 @@ func NormRole(role string) string {
 // ActorShape returns store.ShapeWriter or store.ShapeReader for role in reg. A
 // name no role has is an error wrapping ErrUnknownRole.
 func ActorShape(reg *roles.Registry, role string) (string, error) {
-	r, ok := reg.Role(BindingRole(store.Binding{Role: NormRole(role)}))
+	r, ok := reg.Role(store.Binding{Role: NormRole(role)}.WriterRole())
 	if !ok {
 		return "", fmt.Errorf("unknown actor %q (known: %v): %w", role, reg.Names(), ErrUnknownRole)
 	}
@@ -53,7 +45,7 @@ func RoleChecks(reg *roles.Registry, role string) bool {
 // role's definition for kind. A role the registry does not define is an error
 // wrapping ErrUnknownRole, never a fallback to builder.
 func BindingSpec(reg *roles.Registry, b store.Binding, kind string) (harness.RoleSpec, error) {
-	role := BindingRole(b)
+	role := b.WriterRole()
 	if _, ok := reg.Role(role); !ok {
 		return harness.RoleSpec{}, fmt.Errorf("binding %s runs actor %q, which config actors no longer defines: %w", b.Name, role, ErrUnknownRole)
 	}

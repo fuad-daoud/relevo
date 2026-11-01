@@ -9,7 +9,6 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
-	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -386,7 +385,7 @@ func chainDocOf(res relevo.ChainResult) ChainDoc {
 	for _, m := range res.Members {
 		doc.Members = append(doc.Members, ChainMemberDoc{
 			Name:      m.Name,
-			Actor:     resolve.BindingRole(m),
+			Actor:     m.WriterRole(),
 			Placement: chainMemberPlacement(m),
 		})
 	}
@@ -424,7 +423,7 @@ func chainStartedText(rt relevo.Runtime, res relevo.ChainResult) {
 		res.Chain.Name, res.Plans, res.Chain.Status)
 	builderPlacement := ""
 	for _, m := range res.Members {
-		actor := resolve.BindingRole(m)
+		actor := m.WriterRole()
 		if m.BuilderCandidate != "" {
 			actor = fmt.Sprintf("%s (%s)", actor, candidateLabel(rt, m.BuilderCandidate))
 		}
@@ -460,7 +459,7 @@ func chainResumedText(res relevo.ChainResult) {
 	fmt.Printf("resumed chain %s: status %s, step %s\n",
 		c.Name, c.Status, c.Step)
 	for _, m := range res.Members {
-		fmt.Printf("  %-8s %-16s %-8s %s\n", chainPartOf(c, m.Name), m.Name, chainMemberPlacement(m), resolve.BindingRole(m))
+		fmt.Printf("  %-8s %-16s %-8s %s\n", chainPartOf(c, m.Name), m.Name, chainMemberPlacement(m), m.WriterRole())
 	}
 	fmt.Printf("  awaiting %s round %d\n", c.AwaitingMember, c.AwaitingRound)
 	fmt.Printf("  relevo wait --name %s\n", c.Name)

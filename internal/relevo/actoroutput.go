@@ -44,7 +44,7 @@ func actorOutput(rt Runtime, actor, definition string) string {
 // The prompt that words the reader's artifact directory and the close line
 // that names the artifact both call this, so the two labels cannot drift.
 func readerOutputLabel(rt Runtime, b store.Binding) string {
-	actor := resolve.BindingRole(b)
+	actor := b.WriterRole()
 	definition := actor
 	if spec, err := resolve.BindingSpec(rt.RoleRegistry(), b, b.Builder.Kind); err == nil {
 		definition = spec.Definition
