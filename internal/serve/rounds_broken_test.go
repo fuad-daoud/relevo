@@ -95,8 +95,8 @@ func TestRoundStartBrokenSamePlanIs200(t *testing.T) {
 // for a round that is still open is round_open, exactly as it is for a running
 // one, and it is answered from the fast path -- nothing absorbed, no ref moved.
 //
-// This used to fall through to the second half of the start, absorb the bundle
-// and move the server worktree, and only then be refused by Send.
+// Answering it later would absorb the bundle and move the server worktree
+// before Send refused it.
 func TestRoundStartBrokenDifferentPlanIs409(t *testing.T) {
 	env := setupTestEnv(t)
 

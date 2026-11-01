@@ -13,10 +13,10 @@ import (
 // because subdir records where inside the tree a round's processes run: an
 // older relevo that drops it would run the round at the tree root, the wrong
 // directory, silently. It is 16
-// because remote_halt_kind names the remote halt episode a binding is carrying,
-// where the halt text used to name it: the text reaches a binding from the
-// server as well as from here, so an older relevo reading it would take a halt
-// it did not write for one it did. It is 15
+// because remote_halt_kind names the remote halt episode a binding is carrying:
+// the text reaches a binding from the server as well as from here, so an older
+// relevo reading the episode from the text would take a halt it did not write
+// for one it did. It is 15
 // because owed_halt records a halt notification a round close could not write:
 // a build that knows 14 would load the binding and rewrite it without that
 // field, so the owed entry would be lost rather than retried. It is 14

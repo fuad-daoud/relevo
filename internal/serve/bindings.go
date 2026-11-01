@@ -127,8 +127,8 @@ func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 	}
 	// A cheap unlocked precheck, so the common duplicate create is refused
 	// before any git work. The authoritative check-then-save is the one under
-	// the owner's store lock below; that pair is what has to be atomic now that
-	// s.mu no longer spans it.
+	// the owner's store lock below; that pair is what has to be atomic: s.mu
+	// does not span it.
 	if _, err := rt.Store.Load(req.Name); err == nil {
 		writeErr(w, http.StatusConflict, remote.CodeInvalid, "binding exists")
 		return

@@ -466,8 +466,8 @@ func TestARemoteCloseNamesEachServerSwitchOnce(t *testing.T) {
 
 // TestARemoteABAStillNamesEveryServerSwitchOnce: the round rotated and came
 // back to its first candidate, which one poll can never see whole. The server
-// ships all three switches and the payload names each of them once -- the
-// duplication used to double every one of them, and to quadruple an A-B-A.
+// ships all three switches and the payload names each of them once: any
+// duplication would double every one of them, and quadruple an A-B-A.
 func TestARemoteABAStillNamesEveryServerSwitchOnce(t *testing.T) {
 	t.Parallel()
 

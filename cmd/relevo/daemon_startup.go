@@ -16,16 +16,16 @@ import (
 // daemonStartup is a daemon start's order: the owner is served first, the
 // one-time passes run after it, and the sync verb executor is installed last.
 //
-// Serving first is what the pass order used to cost. The listener was bound
-// early but nothing accepted on it until every pass had finished, so a client
-// that connected in the meantime met a socket with a backlog and no server: it
-// spent its whole start wait on an owner that was never given the chance to
-// answer, and then failed. On a large database the passes are open-ended, so the
-// window was open-ended too, and a plain read -- which needs no write lock and
-// would succeed against a serving owner -- failed anyway. Served first, that same
-// client is answered the moment it connects and its statement queues behind the
-// pass's own transaction on the one shared pool, under the same busy mapping and
-// begin-retry every other write already gets.
+// Serving first is what bounds a client's wait. A listener that is bound but
+// has nothing accepting on it is a socket with a backlog and no server: a
+// client that connects in the meantime spends its whole start wait on an owner
+// that is never given the chance to answer, and then fails. On a large
+// database the passes are open-ended, so that window is open-ended too, and a
+// plain read -- which needs no write lock and would succeed against a serving
+// owner -- fails anyway. Served first, a client is answered the moment it
+// connects and its statement queues behind the pass's own transaction on the
+// one shared pool, under the same busy mapping and begin-retry every other
+// write already gets.
 //
 // The passes run unchanged underneath that: the same rows move, in the same
 // order, out of the same place. What changes is what they can no longer do --

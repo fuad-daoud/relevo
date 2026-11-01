@@ -494,9 +494,9 @@ func (s *Store) PruneWorktreeDirs() {
 }
 
 // EnsureScratchDir creates .worktrees/.scratch when it is absent, the directory
-// a reader's throwaway worktree is cut into. It replaces the raw MkdirAll the
-// scratch path used to call, so a user-mode server reaches the same tenant
-// chown callback EnsureOutDir uses. A symlink or any other non-directory
+// a reader's throwaway worktree is cut into. It goes through the same tenant
+// chown callback EnsureOutDir uses, so a user-mode server reaches it. A symlink
+// or any other non-directory
 // already at the path is refused: the tenant owns this directory, and a link
 // planted there must not redirect relevo's writes.
 func (s *Store) EnsureScratchDir() error {

@@ -244,8 +244,7 @@ func TestJoinStdinWithURLKeepsTheTwoRemotesRefusal(t *testing.T) {
 	}
 }
 
-// The old argv form is gone: the flag set no longer knows --join, so no code
-// can ride the command line.
+// The flag set does not know --join, so no code can ride the command line.
 func TestJoinOnArgvFailsAtFlagParse(t *testing.T) {
 	t.Parallel()
 	fs := flag.NewFlagSet("db sync enable", flag.ContinueOnError)

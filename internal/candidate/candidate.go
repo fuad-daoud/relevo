@@ -53,7 +53,7 @@ type Candidate struct {
 	Tree          string   `json:"tree,omitempty"`
 	ExtraArgs     []string `json:"extra_args,omitempty"`
 	LimitPatterns []string `json:"limit_patterns,omitempty"`
-	// DialogPatterns is no longer used: pane dialogs were deleted. The field
+	// DialogPatterns is unused: there are no pane dialogs to match. The field
 	// stays decodable so existing candidates.json files still load.
 	DialogPatterns []string `json:"dialog_patterns,omitempty"`
 	// Tier is the candidate's default permission tier; "" means the role default

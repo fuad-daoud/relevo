@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// A pass that used to run before the owner served anything now runs under it,
-// so a client can be writing while it works. These pin what that costs each
+// A pass that runs under the serving owner, so a client can be writing while
+// it works. These pin what that costs each
 // pass, and each one fails if the guard it names is removed.
 
 // TestSplitKeepsAWriteThatRacesTheMove pins the rule the move turns on: the

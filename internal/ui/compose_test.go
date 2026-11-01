@@ -95,7 +95,7 @@ func TestModalInteriorHasNoBackground(t *testing.T) {
 	defer lipgloss.SetColorProfile(orig)
 	lipgloss.SetColorProfile(termenv.TrueColor)
 
-	// The escape the deleted panelStyle used to paint behind every row.
+	// The panel background escape no row may still carry.
 	oldBG := strings.Split(lipgloss.NewStyle().Background(lipgloss.Color("#161a21")).Render("·"), "·")[0]
 
 	rows := []string{widget.TextStyle.Render("one"), widget.AccentStyle.Render("two"), ""}

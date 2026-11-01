@@ -88,7 +88,7 @@ func (s *Store) WithFiles(files FileApplier, root string) *Store {
 // AgentRerenderer re-renders one agent's files on every harness kind on PATH.
 // It is called once the transaction that applied the agent has committed,
 // because the render reads the config the apply wrote and a render that read
-// the state before it would render the agent as it used to be.
+// the state before the commit would write files from the stale config.
 //
 // It reports nothing: a render that cannot run is a warning, exactly as
 // refreshRoles treats a definition it could not write.

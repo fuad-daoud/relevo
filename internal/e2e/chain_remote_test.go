@@ -1,6 +1,6 @@
 package e2e
 
-// TestChainRemoteBuilderE2E is slice 2 round 5's end-to-end pin: a chain whose
+// TestChainRemoteBuilderE2E is the end-to-end pin for a chain whose
 // builder is a remote member on the in-process server. Plan 1 ships through the
 // pending-send step; the served builder runs (the script runner) and the server
 // runs the chain's gate. Round 1's gate exits non-zero, so the chain's red check

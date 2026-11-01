@@ -8,7 +8,7 @@ import (
 )
 
 // The read seam of the two histories: what LoadHistory and LoadLatency read
-// now that the kv documents are gone.
+// from the history tables.
 //
 // A read combines every origin's rows inside the retention window, because the
 // file holds a peer's history as soon as it imports it and what a display shows

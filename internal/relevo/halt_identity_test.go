@@ -38,11 +38,10 @@ func haltEntriesFor(t *testing.T, rt Runtime, name string) []store.LogEntry {
 // through-pull PullPendingThroughEntries(N) then claims every unconfirmed
 // entry of round <= N.
 //
-// This is the whole of the defect-1 claim in one helper: before the fix the
-// halt was filed under N+1 and the through-pull never saw it, so the text a
-// human is waiting on was invisible. Asserting on the through-pull rather than
-// on a raw log scan is deliberate -- the log entry existing was never the
-// question; whether the wait could reach it was.
+// This is the whole claim in one helper: a halt filed under N+1 is invisible
+// to the through-pull, so the text a human is waiting on never arrives.
+// Asserting on the through-pull rather than on a raw log scan is deliberate
+// -- the log entry existing is not the question; the wait reaching it is.
 func waitOnClosedRoundHaltText(t *testing.T, rt Runtime, name string, b store.Binding) string {
 	t.Helper()
 	entries, err := rt.Store.ReadLog(name)

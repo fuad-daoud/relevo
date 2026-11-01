@@ -111,10 +111,10 @@ func takeFields(obj map[string]json.RawMessage, fields []string) map[string]json
 }
 
 // clearedFields returns the overrides a write must add to clear the machine
-// fields it no longer carries: one null per field the stored body had and the
-// written body does not. Without them a field unset on this machine would keep
-// coming back from the row the previous write left, and `relevo config unset`
-// on it would report success while changing nothing.
+// fields the written body does not carry: one null per field the stored body
+// holds and the written body does not. Without them a field unset on this
+// machine would keep coming back from the row the previous write left, and
+// `relevo config unset` on it would report success while changing nothing.
 func clearedFields(sec Section, stored, body json.RawMessage, patches map[string]json.RawMessage) map[string]json.RawMessage {
 	fields, ok := machineFields[sec]
 	if !ok {

@@ -14,8 +14,7 @@ const TTL = 24 * time.Hour
 const cacheKey = "release-check"
 
 // Cache is the last answer relevo got from the release endpoint, stored in
-// the machine database's kv row "release-check" (formerly the file
-// <state>/release-check.json).
+// the machine database's kv row "release-check".
 type Cache struct {
 	Latest    string    `json:"latest"`
 	CheckedAt time.Time `json:"checked_at"`

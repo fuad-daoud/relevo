@@ -288,7 +288,7 @@ func remoteEpoch(l db.KV) (int, bool, error) {
 }
 
 // DrainParkedDocs applies the doc entries parked while this machine held no
-// key, now that Unlock has stored one. It verifies each against the key and
+// key, once it holds one. It verifies each against the key and
 // refuses what does not verify, so the unlock is when a forged entry parked
 // earlier is found out rather than when the next tick happens to run.
 func DrainParkedDocs(shared *db.DB, local Local, transport synclog.LogTransport) (synclog.ImportResult, error) {
