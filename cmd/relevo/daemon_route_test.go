@@ -21,7 +21,7 @@ func TestDaemonStopOrUsageRoutesStopAndRefusesTheRest(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			stop, err := daemonStopOrUsage(tc.positional, tc.check, tc.preflight)
 			if tc.wantUsage {
-				requireCLIError(t, err, codeUsage, "")
+				_ = requireCLIError(t, err, codeUsage, "")
 				return
 			}
 			if err != nil {
