@@ -741,10 +741,10 @@ func TestSwitchDefersWhileTheOldScopeIsBusy(t *testing.T) {
 	}
 }
 
-// scopeCollisionErr is systemd-run's own refusal text, verbatim in
+// errScopeCollision is systemd-run's own refusal text, verbatim in
 // shape: the transient scope could not be started because the unit was already
 // loaded -- the old round's scope, still reaping.
-var scopeCollisionErr = errors.New("Failed to start transient scope unit: Unit relevo-round-local-webshop-1.scope was already loaded: hostfailure")
+var errScopeCollision = errors.New("failed to start transient scope unit: Unit relevo-round-local-webshop-1.scope was already loaded: hostfailure")
 
 // TestScopeCollisionStartDoesNotGateTheCandidate pins that a Start the host
 // refused for a scope collision records no spawn_failed gate
@@ -766,7 +766,7 @@ func TestScopeCollisionStartDoesNotGateTheCandidate(t *testing.T) {
 	}
 	// The replacement's own Start is the one the host refuses.
 	fr := runnerOf(t, rt)
-	fr.startErr = scopeCollisionErr
+	fr.startErr = errScopeCollision
 
 	var got store.Binding
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
