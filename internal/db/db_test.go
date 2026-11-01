@@ -672,6 +672,8 @@ func recordCreateMode(t *testing.T) func() os.FileMode {
 // the post-hoc chmod. The creation mode is read through the seam because that
 // chmod runs immediately after.
 func TestOpenCreatesPrivateFiles(t *testing.T) {
+	// A seeded file arrives by copy, so the creation this pins would not run.
+	swapFreshTemplate(t, "")
 	path := filepath.Join(t.TempDir(), "relevo.db")
 	recorded := recordCreateMode(t)
 
