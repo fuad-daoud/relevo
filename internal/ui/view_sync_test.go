@@ -390,7 +390,7 @@ func TestSyncKeysRecordOneCall(t *testing.T) {
 			// what is pinned here is that the key made exactly one verb call.
 			fa.syncs = nil
 			res, cmd := m.Update(key(k.r))
-			m = drain(t, res.(Model), cmd)
+			drain(t, res.(Model), cmd)
 			if len(fa.syncs) != 1 {
 				t.Fatalf("key %q made %d calls, want 1: %v", k.r, len(fa.syncs), fa.syncs)
 			}

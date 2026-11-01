@@ -83,7 +83,7 @@ func seedArchivedHistBinding(t *testing.T) (relevo.Runtime, relevo.HistoryBindin
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
-	t.Cleanup(func() { d.Close() })
+	t.Cleanup(func() { _ = d.Close() })
 
 	if _, err := ingest.Ingest(context.Background(), ingest.ArchivedSource(s, archived[0].RecordID), d, ingest.Deps{}); err != nil {
 		t.Fatalf("archive Ingest: %v", err)
@@ -290,14 +290,14 @@ func TestHistRowReportLeavesSameNameLiveBindingPending(t *testing.T) {
 	rv := newTestHistRound(t, rt, h, 0)
 	// Round 3 has no report, so step to round 2 -- the round both the archived
 	// and the live binding have a report for.
-	next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}}, testEnv(mastermindSource{rt}, view.Report{}, 140, 40))
+	next, _ := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}}, testEnv(mastermindSource{rt}, view.Report{}, 140, 40))
 	rv = next.(roundView)
 	if rv.pane.detail.round != 2 {
 		t.Fatalf("round = %d, want 2", rv.pane.detail.round)
 	}
 
 	rv.pane.tabInFlight = false
-	next, cmd = rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}}, testEnv(mastermindSource{rt}, view.Report{}, 140, 40))
+	next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}}, testEnv(mastermindSource{rt}, view.Report{}, 140, 40))
 	rv = next.(roundView)
 	if cmd == nil {
 		t.Fatal("expected a fetch command for the report tab")

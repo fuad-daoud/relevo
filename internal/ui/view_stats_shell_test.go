@@ -123,7 +123,7 @@ func statsShellOn(t *testing.T, width, height int, window string, rt relevo.Runt
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
-	t.Cleanup(func() { d.Close() })
+	t.Cleanup(func() { _ = d.Close() })
 	rt.Store = store.New(t.TempDir())
 	rt.DB = d
 	m := newModel(context.Background(), mastermindSource{rt},
@@ -381,7 +381,7 @@ func TestStatsRefreshThrottle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
-	t.Cleanup(func() { d.Close() })
+	t.Cleanup(func() { _ = d.Close() })
 	env := widget.Env{
 		Ctx:    context.Background(),
 		Src:    mastermindSource{relevo.Runtime{Store: store.New(t.TempDir()), DB: d}},
