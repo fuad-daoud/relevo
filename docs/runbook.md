@@ -35,7 +35,12 @@ This is an ops step, not code.
   untracked Go files, `go vet`, golangci-lint, the comment/size/name guards,
   and a `go mod tidy` check).
 - The default local gate is `make check-affected`: `make check-static`, then
-  `go test` over only the packages the change reaches. CI is the judge.
+  `go test -cover` over only the packages the change reaches, then
+  `scripts/check-coverage-delta.sh`. That script tests each package whose own
+  files changed once more at the base commit, on the same machine, and fails
+  a drop of more than one point. It costs one extra test run of those packages,
+  and it is the only coverage check off CI: the baseline file is CI's. CI is
+  the judge.
 - The full local run is optional -- the static checks, then `make check-test`,
   the modernc leg, and `make e2e`. The suite runs on zen, not on contabo:
   contabo (7G) OOM-kills it, and its `dev run` output vanishes silently. `git
@@ -124,3 +129,15 @@ This is an ops step, not code.
   builders did not.
 - End plans for builders that skip gofmt with: "`gofmt -l` changed files,
   `make check-affected`, commit, then report".
+- A change that only edits comments still changes meaning: a trimmed comment
+  can drop the reason behind a rule, a consequence, or what a nil or empty
+  value means. Read the whole diff before merging one. Chain reviewers and the
+  builder's own audit passed every such loss in the comment pass, and the
+  compiler and tests cannot see it.
+- A lane that brings a package under a check (lint, comments, file size)
+  deletes that package's exclusion or allow-list entry in its first plan, not
+  its last. While the entry stands, the chain gate cannot see what is left, so
+  the lane can report done with the package still failing.
+- Keep at most two whole-repo gates running on zen at once. Above that its
+  load passes 60 and the slowest suites time out, which reads as a failed
+  change.

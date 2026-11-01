@@ -36,8 +36,10 @@ follows is what is specific to this machine and this repo.
 
 Do not trust the report. Gate a builder round on `make check-affected` yourself
 -- it is stricter than `go test ./...` alone, adding `gofmt` over every tracked
-`.go` file, `go vet`, and a `go mod tidy` check, and it tests every package your
-change reaches -- and compare `git diff --stat` against the plan's
+`.go` file, `go vet`, and a `go mod tidy` check, it tests every package your
+change reaches, and it fails a changed package whose coverage drops more than
+a point below the same package at the base, measured on the same machine --
+and compare `git diff --stat` against the plan's
 declared scope. `make check` is the same static set over
 `go test -race -count=1 -cover ./...` and the coverage check, and stays the
 full local run. PR CI is the judge: `-race`, every package and

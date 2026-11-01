@@ -1,9 +1,10 @@
 #!/bin/sh
 # scripts/affected-packages.sh -- list Go packages affected by changes against a base ref.
 #
-# Usage: affected-packages.sh [--base REF] [--direct]
-#   --base REF  git commit or ref to compare against (default: see precedence)
-#   --direct    list only the packages whose own files changed, not their importers
+# Usage: affected-packages.sh [--base REF] [--direct | --print-base]
+#   --base REF    git commit or ref to compare against (default: see precedence)
+#   --direct      list only the packages whose own files changed, not their importers
+#   --print-base  print the base commit the precedence picks, or ./... when there is none
 # Env:   BASE        fallback override for base ref; the --base flag takes precedence
 #        RELEVO_BASE the commit a relevo round was cut from, set by relevo; used when
 #                    neither --base nor BASE is given, skipped with a note if unresolvable
@@ -218,11 +219,12 @@ compute_closure() {
 }
 
 usage() {
-	echo "usage: affected-packages.sh [--base REF] [--direct]" >&2
+	echo "usage: affected-packages.sh [--base REF] [--direct | --print-base]" >&2
 }
 
 base_arg=""
 direct=0
+print_base=0
 if [ -n "${BASE:-}" ]; then
 	base_arg="$BASE"
 fi
@@ -243,6 +245,10 @@ while [ $# -gt 0 ]; do
 			;;
 		--direct)
 			direct=1
+			shift
+			;;
+		--print-base)
+			print_base=1
 			shift
 			;;
 		*)
@@ -271,6 +277,10 @@ fi
 # resolve_base runs in a command substitution, so its exit only ends that
 # subshell: the fallback reaches here as the base itself.
 base=$(resolve_base "$base_arg")
+if [ "$print_base" -eq 1 ]; then
+	echo "$base"
+	exit 0
+fi
 if [ "$base" = "./..." ]; then
 	echo "./..."
 	exit 0

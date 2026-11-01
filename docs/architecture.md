@@ -43,6 +43,11 @@ and `e2e` (end-to-end rounds against a fake harness).
 
 ## The import rule
 
+`scripts/check-layers.sh` (part of `make check-static`) reads the band table
+above and fails a package that is in no band, imports a higher band, or is a
+Foundations package importing any relevo package. Test files are not held.
+A new package goes into the table in the same change.
+
 - A package imports only packages in a lower layer. A cycle does not compile;
   an upward import that happens not to cycle is still wrong, because it pulls
   the upper package's dependencies into everything below.
