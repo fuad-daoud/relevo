@@ -1,14 +1,10 @@
 package sync
 
-// The two checks a join runs that a plain enable does not, because a join is the
-// one enable that arrives without its bucket credentials: the code has nowhere
-// to carry them, so they are owed in the secrets document, and both questions --
-// "do we have them yet" and "can the rows be fetched" -- are only answerable
-// around that document rather than before it.
-//
-// A plain enable has them in hand from its flags, so neither check touches it:
-// its own preflight already refused for their absence, before anything was
-// stored, and saying so again here would only repeat a decision it has made.
+// The two checks a join runs that a plain enable does not: a join arrives without
+// bucket credentials -- the code carries none, the secrets document owes them -- so
+// "have them yet" and "fetchable" answer only around that document. A plain enable
+// holds them from its flags, preflight-refused before storing, so neither check
+// touches it.
 
 import (
 	"errors"
@@ -19,25 +15,18 @@ import (
 )
 
 // ErrNoR2AfterJoin reports a join whose document import brought no bucket
-// credentials. The enable did not refuse for it: a code has nowhere to carry
-// them, so they were owed in the secrets document and their absence is a fact
-// about the fleet rather than about this command. It is refused here rather
-// than left to the first body fetch, because a joiner that turns sync on
-// without them reads as a working machine and then holds every origin it could
-// not fetch.
-//
-// The two fixes are named because either one clears it, and which one applies is
-// a fact this machine cannot see: the inviter may never have configured a bucket
-// (so its own machines cannot move bodies either), or it may have and this
-// machine's document import simply did not reach them.
+// credentials: owed in the secrets document, so absence is the fleet's fact, not
+// this command's. Refused here rather than at first body fetch, since a joiner
+// syncing on without them reads working while holding every unfetchable origin.
+// Both fixes are named and either clears: the inviter never configured a bucket, or
+// this import never reached it -- unseen from here.
 var ErrNoR2AfterJoin = errors.New("sync: enable --join: the fleet's secrets document carried no " +
 	SecretR2Endpoint + ", " + SecretR2Bucket + ", " + SecretR2KeyID + " and " + SecretR2Secret +
 	": either run `relevo db sync enable --r2-endpoint ... --r2-bucket ... --r2-key-id ... --r2-secret-stdin` " +
 	"on this machine, or fix the machine that ran `relevo db sync invite`, whose own secrets have not been shared")
 
-// prepassSecrets applies the fleet's secrets document ahead of the join's rows.
-// A plain enable has nothing to unblock -- its credentials are stored by the
-// time it imports -- so only a join runs the walk.
+// prepassSecrets applies the fleet's secrets document ahead of the join's rows; a
+// plain enable already stores its credentials by import, so only a join walks.
 func (e *Enabler) prepassSecrets(transport synclog.LogTransport) error {
 	if !e.Request.Join {
 		return nil
@@ -45,22 +34,13 @@ func (e *Enabler) prepassSecrets(transport synclog.LogTransport) error {
 	return PrepassSecrets(e.Request.Shared, e.Request.Local, transport)
 }
 
-// PrepassSecrets applies the fleet's secrets document ahead of the join's rows,
-// for a join whose R2 credentials are not stored. Both an enable's importer and
-// the worker the passphrase check ran on reach it, so the document is applied
-// once behind whichever transport first could -- the check's worker exists
-// before an importer does.
-//
-// It is a no-op when the stored set is complete, and a no-op on a machine with
-// no key either: a locked machine parks what it cannot verify, which is the
-// existing path and needs no help from here.
-//
-// A failure is the caller's failure. The pre-pass reads the log the caller is
-// about, so a log that will not answer fails the caller rather than letting it
-// continue into the same refusal one step later.
-//
-// Nothing here moves an import mark: the entries the import reaches later are
-// redeliveries it applies as no-ops.
+// PrepassSecrets applies the fleet's secrets document ahead of the join's rows, for
+// a join whose R2 credentials are not stored; importer and passphrase-check worker
+// both reach it, so it applies once behind whichever transport first could. Complete
+// stored set or keyless machine is a no-op: a locked machine parks the unverifiable
+// on the existing path. A failure is the caller's: the pre-pass reads the caller's
+// log, so a silent log fails the caller rather than deferring one step. No import
+// mark moves: later entries are redeliveries applied as no-ops.
 func PrepassSecrets(shared *db.DB, l Local, transport synclog.LogTransport) error {
 	stored, err := ReadR2(l)
 	if err != nil {
@@ -80,13 +60,10 @@ func PrepassSecrets(shared *db.DB, l Local, transport synclog.LogTransport) erro
 	return nil
 }
 
-// checkJoinR2 is the completeness check a join owes its operator: the document
-// import has run, so either the credentials arrived or they did not, and a join
-// that turned the machine on without them would read as a working machine.
-//
-// A machine that was already configured is left alone. The join's contract is
-// that a code carries the credentials, not that a code is the only way to have
-// them, and a machine that set them up by hand has nothing to be told.
+// checkJoinR2 is the completeness check a join owes its operator after the document
+// import: arrived or not, since turning on without them reads as working. An
+// already-configured machine is left alone: a code carries the credentials but is
+// not the only way to have them.
 func (e *Enabler) checkJoinR2() error {
 	if !e.Request.Join {
 		return nil

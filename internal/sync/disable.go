@@ -12,22 +12,15 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// Turning sync off is seven steps in a fixed order, and the order is the whole
-// contract: make one last attempt to hand the remote what this machine holds,
-// mark the machine off, forget the token and the key, stop the worker, delete the replica
-// and the driver's files beside it, and drop the client. The attempt comes
-// first because a machine that leaves with an unsent round is a machine whose
-// cloud copy silently lacks it, the token goes after the mark because a machine
-// marked off with a live token is a machine the next enable would inherit a
-// credential for without being asked, and the worker stops before its file goes
-// because a replica a running worker holds open cannot be removed.
-//
-// Nothing else is touched. The shared file keeps every row it holds and stays
-// servable, and the remote is left alone: the user deletes that with Turso's own
-// tooling, because a typo must not be able to destroy a record.
+// Turning sync off is seven steps in a fixed order: final export, mark off, delete
+// token and key, stop the worker, delete the replica and its driver files, drop
+// the client. The attempt comes first so no unsent round is silently left behind;
+// the token goes after the mark so no live credential outlives the mark for the
+// next enable to inherit; the worker stops before its file goes because a held-open
+// replica cannot be removed. Nothing else is touched: the shared file stays
+// servable and the remote is left alone.
 
-// The steps turn-off runs, in order. They are named rather than numbered in the
-// message so a caller reporting one can say which step it was.
+// The steps turn-off runs, in order: named so a reporter says which step it was.
 const (
 	stepFinalPush     = "final export"
 	stepMarkOff       = "mark off"
@@ -38,59 +31,49 @@ const (
 	stepDropClient    = "drop client"
 )
 
-// Disabler runs one turn-off. Every input it cannot answer for itself is a
-// field, so the whole path is drivable with no remote and no handle.
+// Disabler runs one turn-off; every unanswerable input is a field, so the path is
+// drivable with no remote and no handle.
 type Disabler struct {
-	// Local is the machine-local file: the section, the mark and the token all
-	// live there.
+	// Local is the machine-local file holding section, mark and token.
 	Local Local
-	// Shared is the file the signed-from records live in; nil skips clearing
-	// them.
+	// Shared is the file the signed-from records live in; nil skips clearing them.
 	Shared *db.DB
-	// FinalExport is the one call the turn-off's final attempt makes: drain
-	// this machine's pending rows into the log before the mark goes off. It is
-	// a single call rather than a whole transport because the turn-off reads
-	// and lists nothing else; nil means this machine has nothing to hand over
-	// through and the attempt is skipped rather than failed.
+	// FinalExport is the turn-off's one final-attempt call: drain pending rows into
+	// the log before the mark goes off. Nil means nothing to hand over, so the
+	// attempt is skipped rather than failed.
 	FinalExport func(ctx context.Context) error
-	// Stop stops the worker that owns the replica, so the file can be deleted
-	// rather than held open. Nil means no worker was started and the step is
-	// recorded and skipped so the order still reads whole.
+	// Stop stops the worker owning the replica so the file deletes rather than held
+	// open. Nil means no worker was started; the step is recorded and skipped.
 	Stop func() error
-	// ReplicaPath names the replica file. It and every driver file named after
-	// it go; empty means this machine never opened a worker and there is
-	// nothing to delete.
+	// ReplicaPath names the replica file; it and every driver file named after it
+	// go. Empty means no worker was ever opened and nothing deletes.
 	ReplicaPath string
-	// StagingDir is the folder bodies pass through on their way to and from
-	// the bucket. It goes with the replica; empty means there is none.
+	// StagingDir is the folder bodies pass through to and from the bucket; it goes
+	// with the replica, empty meaning none.
 	StagingDir string
-	// Drop releases the client the worker was driven through. Nil means the
-	// caller keeps no client and the step is skipped.
+	// Drop releases the client the worker ran through. Nil means no client to drop.
 	Drop func() error
-	// Cancel releases any data call in flight, so a turn-off issued while a
-	// pull is hung does not wait it out. Nil means no worker is reachable. A
-	// cancelled call is a deliberate stop rather than a death, so the breaker
-	// count is unchanged.
+	// Cancel releases any data call in flight, so a hung pull never stalls the
+	// turn-off. Nil means no worker is reachable; a cancelled call is a deliberate
+	// stop, not a death, leaving the breaker count unchanged.
 	Cancel func()
 	// Now stamps the mark. Nil means time.Now.
 	Now func() time.Time
-	// Timeout bounds the final export. It is the reason the attempt is
-	// best-effort rather than merely ignored: a remote that never answers costs
-	// one bounded wait and not a hung turn-off. Zero means DefaultTimeout.
+	// Timeout bounds the final export, making the attempt best-effort: a silent
+	// remote costs one bounded wait, not a hung turn-off. Zero means DefaultTimeout.
 	Timeout time.Duration
 }
 
-// DisableResult is what one turn-off did. Steps is the order it ran in, which
-// is the contract a caller and a test read the same way.
+// DisableResult is what one turn-off did; Steps is the order it ran in, the
+// contract caller and test read the same way.
 type DisableResult struct {
 	// Steps is the order the turn-off took, one name per step.
 	Steps []string
-	// FinalPush is whether the final export attempt reported success. It is
-	// false on a machine with nothing to export through, which is not a failure.
+	// FinalPush is whether the final export reported success; false with nothing to
+	// export through, which is not a failure.
 	FinalPush bool
-	// FinalPushErr is what the final export hit, kept so the caller can report
-	// it as a warning. It never decides anything: a remote that cannot be
-	// reached is the reason a machine leaves, not a reason it stays.
+	// FinalPushErr is what the final export hit, kept as a warning only: an
+	// unreachable remote is why a machine leaves, not why it stays.
 	FinalPushErr error
 	// Stopped is whether a worker was stopped.
 	Stopped bool
@@ -100,21 +83,15 @@ type DisableResult struct {
 	Dropped bool
 }
 
-// Disable runs the seven steps in order. The final export is the only step whose
-// failure is kept rather than returned, and it is kept precisely so the other
-// five still run: a machine that cannot reach its remote has the strongest
-// reason of all to stop syncing, and refusing to stop would leave it pushing at
-// a remote it cannot reach.
-//
-// Every later step is a refusal that returns. That is deliberate: a machine
-// whose mark was not written would keep ticking, and a machine whose token was
-// not deleted would keep a live credential past the point it needs one. Either
-// is worth telling the user about rather than reporting a clean turn-off.
+// Disable runs the seven steps in order. Only the final export's failure is kept
+// rather than returned, so the rest still run: a machine that cannot reach its
+// remote has the strongest reason to stop. Every later step returns on failure:
+// an unwritten mark would keep ticking, an undeleted token would keep a live
+// credential past need.
 func (d *Disabler) Disable(ctx context.Context) (DisableResult, error) {
 	var out DisableResult
-	// A data call already in flight is released before anything else: the final
-	// export cannot run while a pull holds the worker, and a disable issued
-	// while a join runs is exactly the stop that join has to honour.
+	// A data call in flight releases first: the final export cannot run while a pull
+	// holds the worker, and a disable during a join is the stop the join honours.
 	d.cancel()
 	out.Steps = append(out.Steps, stepFinalPush)
 	d.finalPush(ctx, &out)
@@ -123,9 +100,8 @@ func (d *Disabler) Disable(ctx context.Context) (DisableResult, error) {
 	if err := MarkEnabled(d.Local, false, d.now()); err != nil {
 		return out, fmt.Errorf("sync: disable: %w", err)
 	}
-	// The join marker goes with the mark: a machine that is off is not joining,
-	// and a marker left behind would have status show a join on a machine that
-	// is not moving.
+	// The join marker goes with the mark: off is not joining, and a leftover would
+	// show a join on a machine that is not moving.
 	if err := ClearJoin(d.Local); err != nil {
 		return out, fmt.Errorf("sync: disable: clear the join marker: %w", err)
 	}
@@ -138,10 +114,8 @@ func (d *Disabler) Disable(ctx context.Context) (DisableResult, error) {
 	if err := DeleteKey(d.Local); err != nil {
 		return out, fmt.Errorf("sync: disable: %w", err)
 	}
-	// The R2 credentials go with the token, and on the same reasoning: a machine
-	// marked off with a live bucket credential is one the next enable would
-	// inherit credentials for without being asked, and a bucket key outlives the
-	// machine's right to sync.
+	// The R2 credentials go with the token, on the same reasoning: no live bucket
+	// credential outlives the mark for the next enable to inherit.
 	if err := DeleteR2(d.Local); err != nil {
 		return out, fmt.Errorf("sync: disable: %w", err)
 	}
@@ -177,9 +151,8 @@ func (d *Disabler) Disable(ctx context.Context) (DisableResult, error) {
 	return out, nil
 }
 
-// finalPush makes the one attempt the turn-off gets, under the bound. It
-// records what happened either way and returns nothing: whatever went wrong
-// here is a warning for the caller, not a decision for this path.
+// finalPush makes the turn-off's one attempt under the bound, recording either
+// way and returning nothing: a failure here warns the caller, never decides.
 func (d *Disabler) finalPush(ctx context.Context, out *DisableResult) {
 	if d.FinalExport == nil {
 		return
@@ -194,11 +167,9 @@ func (d *Disabler) finalPush(ctx context.Context, out *DisableResult) {
 	out.FinalPush = true
 }
 
-// ReplicaFiles lists the replica and every driver file named after it: the
-// driver derives each of its files from the replica's own name, so the prefix
-// is what identifies them. A directory that is not there lists nothing, because
-// a machine that never opened a worker has no files. The turn-off deletes
-// exactly this set and the daemon's start tightens exactly this set.
+// ReplicaFiles lists the replica and every driver file named after it by prefix; a
+// missing directory lists nothing. The turn-off deletes exactly this set and the
+// daemon's start tightens it.
 func ReplicaFiles(path string) ([]string, error) {
 	if path == "" {
 		return nil, nil
@@ -228,9 +199,8 @@ func ReplicaFiles(path string) ([]string, error) {
 	return files, nil
 }
 
-// deleteReplica removes the replica and every driver file named after it. A
-// file that is not there is not a failure, and the main file goes with its
-// siblings rather than before them.
+// deleteReplica removes the replica and every driver file named after it; a missing
+// file is not a failure.
 func deleteReplica(path string) ([]string, error) {
 	files, err := ReplicaFiles(path)
 	if err != nil {
@@ -246,7 +216,7 @@ func deleteReplica(path string) ([]string, error) {
 	return deleted, nil
 }
 
-// cancel releases any data call in flight, when the caller installed a cancel.
+// cancel releases any data call in flight when the caller installed one.
 func (d *Disabler) cancel() {
 	if d.Cancel != nil {
 		d.Cancel()
@@ -267,10 +237,8 @@ func (d *Disabler) timeout() time.Duration {
 	return DefaultTimeout
 }
 
-// Enabled reports whether this machine is syncing, read out of the local mark
-// and nothing else. It is what a status verb answers with, and answering it
-// costs no remote and no handle: a machine whose remote is down still says what
-// it is set to be.
+// Enabled reports whether this machine is syncing, from the local mark alone: a
+// machine whose remote is down still says what it is set to be.
 func Enabled(l Local) (bool, error) {
 	if l == nil {
 		return false, fmt.Errorf("sync: no local file beside the shared database: %w", db.ErrInvalid)

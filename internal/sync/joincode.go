@@ -1,19 +1,11 @@
 package sync
 
-// The join code: the one line a machine that already syncs prints, and the only
-// thing a new machine needs before it can point itself at the same remote.
-//
-// It is a fixed prefix, a version, and a base64url body -- nothing else -- so a
-// reader can tell what a string is before it decodes it, and so a code can be
-// pasted through a terminal, a chat window or a shell history without a single
-// character needing an escape. The body carries the remote and the bearer
-// credential and nothing more: the passphrase, the bucket credentials and every
-// other secret arrive through the signed log, so a code copied into a ticket is
-// one credential rather than the whole machine.
-//
-// Every function here is pure. Parsing a code is a function of the string alone
-// and reaches no network, which is what lets an enable refuse a malformed code
-// before it dials anything.
+// The join code: the one line a syncing machine prints, the only thing a new
+// machine needs to point at the same remote. Fixed prefix, version, and base64url
+// body, pastable anywhere without escaping: remote and bearer only, every other
+// secret arriving through the signed log -- one credential, not the whole machine.
+// Every function here is pure, parsing from the string alone with no network, so
+// a malformed code refuses before dialing.
 
 import (
 	"bytes"
@@ -29,52 +21,40 @@ import (
 )
 
 const (
-	// JoinCodeVersion is the code shape this build reads. It is part of the
-	// prefix rather than a field in the body, so a reader can refuse a version it
-	// does not know without decoding anything: a body whose layout changed is not
-	// something to guess at.
+	// JoinCodeVersion is the code shape this build reads, in the prefix not the body,
+	// so an unknown version refuses without decoding: a changed layout is never guessed.
 	JoinCodeVersion = "v1"
 
-	// JoinCodePrefix is what every code starts with. The version is part of it, so
-	// a v2 code does not share a prefix with this one and is refused here rather
-	// than reaching the decoder.
+	// JoinCodePrefix is what every code starts with, version included, so a v2 code
+	// refuses here rather than reaching the decoder.
 	JoinCodePrefix = "relevo-join-" + JoinCodeVersion + "-"
 
-	// joinCodeFamily is the prefix without the version. It is what distinguishes
-	// "this is a join code in some version" from "this is not a join code", and
-	// the two are refused differently because only one of them can be a version
-	// mistake.
+	// joinCodeFamily is the prefix without the version, distinguishing a wrong version
+	// from not-a-code: only the first can be a version mistake, so they refuse
+	// differently.
 	joinCodeFamily = "relevo-join-"
 )
 
-// ErrJoinCode is any code this build will not read: one that is not a code, one
-// in a version it does not know, one whose body does not decode, and one carrying
-// a field it does not know. The message says which, because the four have
-// different causes and a reader holding a code copied from somewhere else needs
-// to know whether to ask for a fresh one.
+// ErrJoinCode is any code this build will not read -- not a code, unknown version,
+// undecodable body, unknown field -- saying which, so a holder knows whether to ask
+// for a fresh one.
 var ErrJoinCode = errors.New("sync: that is not a join code this build reads")
 
-// ErrInviteSyncOff is an invite on a machine that is not syncing. There is no
-// remote to name in a code from such a machine, so the refusal names the verb
-// that would give it one rather than printing an empty code.
+// ErrInviteSyncOff is an invite on a machine that is not syncing: no remote to name,
+// so the refusal names the verb that would give it one rather than printing empty.
 var ErrInviteSyncOff = errors.New("sync: this machine is not syncing: run `relevo db sync enable` first")
 
-// JoinCode is what a code carries. The two fields are the whole of it: where the
-// remote is, and the bearer credential that reaches it. A third field is a change
-// to the contract, and the decoder refuses unknown fields precisely so one added
-// later cannot be read as something this build means by one of these.
+// JoinCode is what a code carries: remote and bearer only. A third field changes
+// the contract, so the decoder refuses unknown fields rather than misreading one.
 type JoinCode struct {
 	// URL is the remote a joiner syncs with.
 	URL string `json:"url"`
-	// Token is the bearer credential that reaches it.
+	// Token is the bearer reaching the remote.
 	Token string `json:"token"`
 }
 
-// NewJoinCode builds the one line a machine that already syncs prints.
-//
-// A remote or a token that is empty is refused rather than encoded: a code
-// carrying one without the other cannot point a joiner anywhere, and printing it
-// would hand the reader a line that fails on the machine it is meant for.
+// NewJoinCode builds the one line a syncing machine prints; an empty remote or
+// bearer refuses rather than encodes, since one without the other points nowhere.
 func NewJoinCode(remote string, token []byte) (string, error) {
 	if strings.TrimSpace(remote) == "" {
 		return "", fmt.Errorf("sync: join code: no remote: %w", db.ErrInvalid)
@@ -86,21 +66,15 @@ func NewJoinCode(remote string, token []byte) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("sync: join code: encode: %w", err)
 	}
-	// The unpadded URL alphabet, not the padded standard one: a code is meant to
-	// be copied by hand, and '=' and '+' are the two characters a paste is most
-	// likely to mangle.
+	// The unpadded URL alphabet, not the padded standard one: a hand-copied code
+	// mangles '=' and '+' first.
 	return JoinCodePrefix + base64.RawURLEncoding.EncodeToString(body), nil
 }
 
-// ParseJoinCode reads a code back into the remote and the token. It is the whole
-// of what `--join <code>` does before anything is dialed.
-//
-// Surrounding whitespace is trimmed rather than refused, because a code arrives
-// by copy-paste and the newline a terminal adds is not part of what the writer
-// meant. Anything else that does not match is refused: a version this build does
-// not read says so rather than reaching the decoder, because a body written for
-// another version may hold fields with other meanings and guessing at them is how
-// a joiner ends up pointed somewhere its operator did not choose.
+// ParseJoinCode reads a code back into remote and bearer, the whole of what
+// `--join <code>` does before dialing. Surrounding whitespace trims as copy-paste
+// residue; anything else refuses: an unknown version says so before decoding, since
+// a body from another version may hold other-meaning fields no guess may resolve.
 func ParseJoinCode(code string) (JoinCode, error) {
 	trimmed := strings.TrimSpace(code)
 	if !strings.HasPrefix(trimmed, joinCodeFamily) {
@@ -118,10 +92,8 @@ func ParseJoinCode(code string) (JoinCode, error) {
 	if err != nil {
 		return JoinCode{}, fmt.Errorf("%w: its body is not base64url", ErrJoinCode)
 	}
-	// The decoder is closed: a field this build does not know is refused rather
-	// than ignored. Ignoring it would let a code carrying something extra be read
-	// as though it had not, which is the one behaviour a versioned envelope exists
-	// to prevent.
+	// The decoder is closed: an unknown field is refused rather than ignored, so
+	// extra never reads as absent under a versioned envelope.
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	var out JoinCode
@@ -134,12 +106,11 @@ func ParseJoinCode(code string) (JoinCode, error) {
 	return out, nil
 }
 
-// maxShownVersion bounds how much of a code's version segment a refusal quotes.
+// maxShownVersion bounds how much of a refusal-quoted version segment shows.
 const maxShownVersion = 16
 
-// shownVersion renders the version segment of a code this build does not read.
-// The segment is attacker-chosen text that reaches a terminal, so it is cut
-// short and made inert; a newline, which sanitize keeps, is replaced too.
+// shownVersion renders the unreadable version segment for a terminal: cut short and
+// made inert, newlines replaced, since the segment is attacker-chosen text.
 func shownVersion(version string) string {
 	suffix := ""
 	if len(version) > maxShownVersion {
