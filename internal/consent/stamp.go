@@ -27,7 +27,6 @@ func (k txKV) KVGet(key string) ([]byte, bool, error) { return k.t.KVGet(key) }
 func (k txKV) KVPut(key string, v []byte) error       { return k.t.KVPut(key, v) }
 func (k txKV) KVDelete(key string) error              { return k.t.KVDelete(key) }
 
-// stampNow issues the next stamp for a write inside tx.
 func stampNow(tx *db.Tx) (string, error) {
 	stamp, err := synclog.NewHybridClockAt(txKV{tx}, time.Now).Now()
 	if err != nil {

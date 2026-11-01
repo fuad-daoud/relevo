@@ -77,7 +77,7 @@ func (s *Server) handleUnavailable(w http.ResponseWriter, r *http.Request) {
 	// A group@account token is an account gate key, not a candidate token: the
 	// provider half names the group, and the whole key is what gets recorded,
 	// so a server whose client forwards an account gate keeps the same
-	// per-account ledger. A bare token records the provider exactly as before.
+	// per-account ledger. A bare token records the provider.
 	token := req.Token
 	var keys []string
 	if group, name, ok := account.ParseGateKey(req.Token); ok && name != "" {

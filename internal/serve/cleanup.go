@@ -26,8 +26,7 @@ const ackedGrace = time.Hour
 
 // settled reports whether a served binding may be collected: DONE with Serve
 // facts, no builder process, consult or gate, and either acked and quiet for
-// ackedGrace or quiet for settledGrace. now is a parameter so tests can pin the
-// boundary.
+// ackedGrace or quiet for settledGrace.
 func settled(b store.Binding, now time.Time) bool {
 	if b.State != store.StateDone || b.Serve == nil {
 		return false
@@ -166,8 +165,7 @@ func teardownServed(ctx context.Context, rt relevo.Runtime, b store.Binding) err
 	return releaseServedRefs(ctx, rt, b)
 }
 
-// unusedRepos returns the entries of repos that no live binding references: a
-// binding references p when its Serve.BareRepo (or Repo) cleans to p, in order.
+// unusedRepos returns the entries of repos that no live binding references.
 func unusedRepos(repos []string, live []store.Binding) []string {
 	var unused []string
 	for _, p := range repos {

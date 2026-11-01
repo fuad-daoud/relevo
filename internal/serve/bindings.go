@@ -66,7 +66,6 @@ func validAuthor(a remote.GitIdentity) bool {
 	return validAuthorPart(a.Name) && validAuthorPart(a.Email)
 }
 
-// validAuthorPart reports whether one half of a wire author is storable.
 func validAuthorPart(s string) bool {
 	if len(s) == 0 || len(s) > 256 {
 		return false
@@ -111,7 +110,7 @@ func parseCreateRequest(r *http.Request) (remote.CreateBindingRequest, string) {
 // across either would block every other owner's poll. The bare repo the create
 // makes is pinned from before InitBare until this handler returns, so the
 // tick's prune cannot delete it in the window between the init and the row
-// save (the pin's release is deferred, which covers the error paths too).
+// save.
 func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 	req, bad := parseCreateRequest(r)
 	if bad != "" {
@@ -181,8 +180,7 @@ func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 }
 
 // bindCreateSeam parks a plain bind between InitBare and the row save when
-// non-nil. Nil in production; the prune-race tests set it to run the tick's
-// prune inside the pin-to-row-save window deterministically.
+// non-nil; nil in production.
 var bindCreateSeam func()
 
 // buildServedBinding resolves the request's role against this server's own
@@ -473,8 +471,7 @@ func (s *Server) handleUnbind(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{})
 }
 
-// handleStop ends the binding's open round, leaving the binding in place: an
-// idle or closed one is 409 nothing_to_stop.
+// handleStop ends the binding's open round, leaving the binding in place.
 func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 	caller := callerOf(r)
 	name := r.PathValue("name")

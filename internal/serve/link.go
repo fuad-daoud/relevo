@@ -10,7 +10,7 @@ import (
 
 // servedLink is the link a create request records on the server's own row: the
 // client's installation id and the record id that client pre-minted for its
-// copy. A request carrying neither -- an old client -- records no link.
+// copy. A request carrying neither records no link.
 func servedLink(req remote.CreateBindingRequest) *store.RemoteLink {
 	if req.ClientInstallation == "" && req.ClientBindingID == "" {
 		return nil

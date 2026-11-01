@@ -15,8 +15,7 @@ import (
 )
 
 // resumeSeam parks a resume between the worktree checkout and the
-// re-activation save when non-nil. Nil in production; the prune-race tests set
-// it to run the tick's prune inside the pin window deterministically.
+// re-activation save when non-nil; nil in production.
 var resumeSeam func()
 
 // handleResume checks a released binding's worktree back out and re-activates
@@ -58,7 +57,6 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else if isMatchingWorktree(r.Context(), rt, b.Worktree, b.Serve.BareRepo, b.Branch) {
-		// Adopt the existing worktree without checking it out again.
 	} else {
 		msg := fmt.Sprintf("%s already exists but is not a worktree of %s on %s; move the directory aside or relevo unbind", b.Worktree, b.Serve.BareRepo, b.Branch)
 		writeErr(w, http.StatusConflict, remote.CodeInvalid, msg)

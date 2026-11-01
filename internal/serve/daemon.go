@@ -68,8 +68,6 @@ func (s *Server) Tick(ctx context.Context) error {
 	return nil
 }
 
-// ownerRoot is one owner the tick walks: the client id its directory names and
-// the root its Store is rooted at.
 type ownerRoot struct {
 	id   remote.ClientID
 	root string

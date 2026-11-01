@@ -17,9 +17,9 @@ var barePins = struct {
 
 // pinBareRepo takes one reference on bare and returns its release. A bind path
 // pins before it creates or absorbs into the bare repo and unpins only after
-// the row that references it is saved -- defer covers every error path -- so
-// the tick's prune, which reads the pins and the rows under the same mutex,
-// sees either the pin or the row, never neither.
+// the row that references it is saved, so the tick's prune, which reads the
+// pins and the rows under the same mutex, sees either the pin or the row,
+// never neither.
 func pinBareRepo(bare string) func() {
 	key := filepath.Clean(bare)
 	barePins.Lock()

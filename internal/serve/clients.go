@@ -20,7 +20,6 @@ var (
 	ErrNoSuchClient    = errors.New("no such client")
 )
 
-// clientsKVKey is the kv row holding the enrolled clients.
 const clientsKVKey = "serve.clients"
 
 type Client struct {
@@ -34,9 +33,8 @@ type Client struct {
 	UnixUser string `json:"unix_user,omitempty"`
 }
 
-// Clients is the enrolled-client list, read from the serve.clients kv row.
-// Every public method re-reads the row, so another process's enroll or revoke
-// is seen live.
+// Clients is the enrolled-client list. Every public method re-reads the row,
+// so another process's enroll or revoke is seen live.
 type Clients struct {
 	kv         db.KV
 	mu         sync.Mutex
@@ -44,8 +42,8 @@ type Clients struct {
 	warnLogged map[string]bool
 }
 
-// refresh reads the whole document from the kv row. An absent row is an empty
-// list.
+// refresh reads the whole document from the kv row; an absent row is an
+// empty list.
 func (c *Clients) refresh() error {
 	if c.kv == nil {
 		return nil
@@ -238,7 +236,6 @@ func (c *Clients) LabelOf(id remote.ClientID) string {
 	return s
 }
 
-// saveLocked writes the whole document to the kv row.
 func (c *Clients) saveLocked() error {
 	if c.kv == nil {
 		return nil

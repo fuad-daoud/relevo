@@ -20,7 +20,6 @@ import (
 
 var ErrTLSExists = errors.New("server key or certificate already exists")
 
-// ErrNoCertificate reports that the secrets hold no server certificate.
 var ErrNoCertificate = errors.New("no server certificate")
 
 const (
@@ -117,8 +116,8 @@ func selfSignedCert(priv *ecdsa.PrivateKey, hosts []string, now time.Time) (cert
 	return certPEM, certDER, nil
 }
 
-// InitTLS generates a server key and self-signed certificate into the secrets.
-// If either is already set it returns ErrTLSExists without modifying either.
+// InitTLS generates a server key and self-signed certificate into the secrets;
+// if either is already set it returns ErrTLSExists without modifying either.
 func InitTLS(secrets SecretStore, hosts []string, now time.Time) (string, error) {
 	if _, ok, err := secrets.SecretGet(tlsKeySecret); err != nil {
 		return "", err

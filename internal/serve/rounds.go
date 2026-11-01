@@ -98,7 +98,6 @@ func parseRoundRequest(r *http.Request) (req roundRequest, close func(), bad str
 	return req, close, ""
 }
 
-// roundStartDecision is what the open-round checks say about a start request.
 type roundStartDecision int
 
 const (
@@ -108,8 +107,6 @@ const (
 	startStarted                    // another round's plan differs
 )
 
-// write answers a non-proceed round start: a retry is the 200 view, an open or
-// started round a named 409.
 func (d roundStartDecision) write(w http.ResponseWriter, view remote.BindingView, msg string) {
 	switch d {
 	case startRetry:
@@ -121,9 +118,7 @@ func (d roundStartDecision) write(w http.ResponseWriter, view remote.BindingView
 	}
 }
 
-// roundStartDecisionOf classifies a start request against the binding's log: an
-// identical retry is a no-op, a different plan for the open round is
-// 409 round_open, and a different round's plan is 409 round_started.
+// roundStartDecisionOf classifies a start request against the binding's log.
 func roundStartDecisionOf(rt relevo.Runtime, b store.Binding, entries []store.LogEntry, reqRound int, planText string) (roundStartDecision, string) {
 	st := remote.RoundStateOf(b, entries)
 	// A broken round is an open round: the server holds it and there is no
@@ -310,8 +305,7 @@ func writePlanTemp(root, planText string) (string, error) {
 	return path, nil
 }
 
-// writeSendError maps a Send failure to its response: a halted binding gets 409
-// round_halted, anything unrecognised a 500.
+// writeSendError maps a Send failure to its response.
 func writeSendError(w http.ResponseWriter, rt relevo.Runtime, name string, b store.Binding, sendErr error) {
 	switch {
 	case errors.Is(sendErr, spawn.ErrRunnerUnavailable):

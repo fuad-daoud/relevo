@@ -151,8 +151,7 @@ func writeChainPreflightError(w http.ResponseWriter, err error) {
 	}
 }
 
-// servedChainView is relevo.ServedChainView with the server's own facts: each
-// member's server binding_record id and this server's installation id.
+// servedChainView is relevo.ServedChainView with the server's own facts.
 func (s *Server) servedChainView(rt relevo.Runtime, name string) (remote.ChainView, error) {
 	recordID := func(member string) string {
 		id, err := rt.Store.RecordID(member)
@@ -181,8 +180,7 @@ func (s *Server) chainRuntime(w http.ResponseWriter, r *http.Request) (relevo.Ru
 	return rt, name, true
 }
 
-// writeChainReadError maps a chain read or verb failure: a missing chain is
-// 404, anything else is 500.
+// writeChainReadError maps a chain read or verb failure.
 func (s *Server) writeChainReadError(w http.ResponseWriter, err error) {
 	if errors.Is(err, store.ErrNotFound) {
 		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")

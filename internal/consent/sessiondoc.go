@@ -11,17 +11,9 @@ import (
 // SessionDoc is the session consent document as a synclog document: one key per
 // harness kind and session id, one value per that session's own answer.
 //
-// It carries the answer and the time it was written, and nothing else. The
-// told baseline sits in the same row and does not travel: it says what this
-// machine has already shown this session here, which is true of this session on
-// this host and of no other, so sending it would tell a peer about a delivery it
-// never made and could make that peer believe it had already told the session
-// something. An apply therefore writes the answer alone and leaves the local
-// baseline exactly as it found it.
-//
-// Every table it touches is machine-local, so a write, its stamp and its signal
-// are one transaction and a stamp is never spent on an answer that failed to
-// keep.
+// The told baseline sits in the same row and does not travel: sending it would
+// tell a peer about a delivery it never made. Every table it touches is
+// machine-local, so a write, its stamp and its signal are one transaction.
 type SessionDoc struct {
 	local *db.DB
 }
@@ -74,9 +66,9 @@ func (d *SessionDoc) Apply(key string, value json.RawMessage) error {
 	return d.local.Tx(func(tx *db.Tx) error { return d.applyIn(tx, key, value) })
 }
 
-// applyIn is the write itself, against the file the session rows live in. The
-// answer and its time are written; told and told_at are not named, so the
-// local baseline this machine has for the session survives an arriving answer.
+// applyIn writes the answer and its time; told and told_at are not named, so
+// the local baseline this machine has for the session survives an arriving
+// answer.
 func (d *SessionDoc) applyIn(tx *db.Tx, key string, value json.RawMessage) error {
 	kind, sessionID, err := sessionKey(key)
 	if err != nil {
@@ -95,10 +87,8 @@ func (d *SessionDoc) applyIn(tx *db.Tx, key string, value json.RawMessage) error
 
 // ApplyIn is Apply for an item that arrived from another machine, inside the
 // importer's own transaction. The value is checked before anything is written,
-// so an answer this machine has no reader for leaves the row as it was.
-//
-// An arriving answer records no write stamp: the stamp says this machine last
-// wrote the key, and the peer wrote it over there.
+// so an answer this machine has no reader for leaves the row as it was. An
+// arriving answer records no write stamp: the peer wrote it over there.
 func (d *SessionDoc) ApplyIn(tx *db.Tx, key string, value json.RawMessage, label string) (refusal error, err error) {
 	if _, _, kerr := sessionKey(key); kerr != nil {
 		return kerr, nil
