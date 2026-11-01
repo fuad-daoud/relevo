@@ -1,7 +1,7 @@
 #!/bin/sh
 # scripts/check-filesize.sh -- fails on a non-test .go file over 600 lines.
 #
-# The target in CLAUDE.md's "Code style" is around 500 lines; 600 is the
+# The target in docs/style.md is around 500 lines; 600 is the
 # enforced ceiling, with slack for one long table. Test files are not counted:
 # tests are allowed to be as large as the code they pin.
 #

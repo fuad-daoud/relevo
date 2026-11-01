@@ -78,34 +78,23 @@ versions corrupt each other and there is no rollback. Two flows exist:
 
 ### Code style
 
-- A package comment is 1-3 lines saying what the package owns. A comment says
-  *why*, and only where the code cannot: a non-obvious constraint, where a
-  number comes from, an ordering that matters, a hazard. It never restates the
-  code, and a doc comment on an exported name is written only when it adds
-  something the name and signature do not.
-- No history in the code: no issue or PR numbers, no spec sections, no
-  "round N", "used to", "pre-#NNN". Git and the issues hold history. Tests
-  follow the same rules, and a test's name says what it pins.
-- The dexpace Go styleguide applies, with two exceptions: no "two assertions
-  per function" rule, and no mandatory doc comment on an exported name.
-  Functions are at most 70 lines; non-test files at most 600; one package per
-  concept.
-- `make check` enforces this with golangci-lint (`.golangci.yml`) and
-  `scripts/check-comments.sh` / `scripts/check-filesize.sh`. Packages and files
-  not yet cleaned are listed as exclusions; a round that finishes a package
-  removes its entries, and a new exclusion is never added to get a round green.
-- CI's coverage job fails when a package's statement coverage drops more than
-  one point below `testdata/coverage-baseline.txt`. On a PR it holds only the
-  packages whose own files the PR changed (a drop elsewhere is printed, not
-  failed); a push to main holds every package. A round that moves code
-  between packages regenerates the baseline with
-  `sh scripts/check-coverage.sh --write` and says so in its report, and no
-  round lowers a baseline to get green. The baseline is tied to the Go minor
-  version and platform recorded in its header and is enforced only by that
-  job (`RELEVO_REQUIRE_COVERAGE=1`): elsewhere `make check` prints `skipped`,
-  because another build of the same Go minor can measure a package several
-  points apart. Set `RELEVO_REQUIRE_COVERAGE=1` to compare locally; a Go
-  upgrade on CI's go-stable leg means regenerating it.
+The rules are in `docs/style.md`, the package layers and where new code goes
+in `docs/architecture.md`, and how docs are written in `docs/docs-standard.md`.
+The ones a round most often breaks:
+
+- A comment says *why*, only where the code cannot, and never restates it. No
+  history in code or tests: no issue or PR numbers, spec sections, "round N",
+  "used to".
+- Functions at most 70 lines, non-test files at most 600, one package per
+  concept. A package imports only packages below it; a shared helper lives in
+  the lower package, never copied.
+- `make check` enforces lint, comments and file size. Packages not yet cleaned
+  are listed as exclusions; a round that finishes one removes its entries, and
+  no exclusion is ever added to get green.
+- CI fails when a package's coverage drops more than a point below
+  `testdata/coverage-baseline.txt`. A round that moves code between packages
+  regenerates it with `sh scripts/check-coverage.sh --write` and says so; no
+  round lowers a baseline to get green.
 
 ## Merging and CI
 

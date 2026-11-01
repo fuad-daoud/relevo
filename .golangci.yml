@@ -20,7 +20,7 @@ linters:
       min-complexity: 30
   exclusions:
     # One rule per Go package directory as it is today; every linter is
-    # excluded for that path. Phase 3 deletes one rule per finished package.
+    # excluded for that path. A change that cleans a package deletes its rule.
     rules:
       - path: '^cmd/relevo/'
         text: '.*'

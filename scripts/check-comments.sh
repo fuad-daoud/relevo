@@ -1,7 +1,7 @@
 #!/bin/sh
 # scripts/check-comments.sh -- fails on a comment that cites history (#NNN or §).
 #
-# The rules are in CLAUDE.md's "Code style": a comment says why, and never
+# The rules are in docs/style.md: a comment says why, and never
 # where a change came from -- git and the issues hold that history. This is a
 # text match over tracked .go files, not a Go parse. A line whose only // sits
 # inside a string literal (a URL, say) is therefore a known false positive; the
