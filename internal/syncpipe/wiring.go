@@ -48,7 +48,8 @@ func OpenNoBucketSupervisor(shared *db.DB, local relevosync.Local) (*Supervisor,
 // nothing outside ever holds them and the handshake assembles in one place.
 // refuseIncomplete is the caller's answer to an incomplete set: the enable's
 // preflight should have caught it, while the join's first worker opens for exactly
-// the enable bringing them.
+// the enable bringing them, so none gathered is none needed and its blob verbs
+// refuse.
 func workerConfig(shared *db.DB, local relevosync.Local, refuseIncomplete bool) (Config, error) {
 	if shared == nil || local == nil {
 		return Config{}, fmt.Errorf("syncpipe: no database to sync: %w", db.ErrInvalid)

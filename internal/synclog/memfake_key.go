@@ -101,8 +101,9 @@ func (m *memLog) checkCuts(cuts map[string]EpochCut) error {
 }
 
 // PublishEpochCut extends this handle's own cut, forward only and within the log:
-// beyond head vouches for unappended history, and a backward extension is refused
-// rather than ignored so the caller learns it did not land.
+// beyond head vouches for unappended history, and a backward extension could only
+// move the fence over entries readers were told to refuse, so it is refused rather
+// than ignored and the caller learns it did not land.
 func (m *MemTransport) PublishEpochCut(_ context.Context, cut EpochCut) error {
 	m.log.mu.Lock()
 	defer m.log.mu.Unlock()

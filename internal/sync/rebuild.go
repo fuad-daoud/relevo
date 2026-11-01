@@ -21,14 +21,16 @@ import (
 )
 
 // WorkerRefusedText is the fixed sentence the sync pipe's refusal carries. Only a
-// worker's answer can be about the replica's own file -- the daemon's own file
-// reports the same driver words -- so the sentence lives here and the pipe builds
-// its sentinel from it: the two cannot drift with only one text.
+// worker's answer can be about the replica's own file: a "database is corrupt"
+// from the daemon's own file reports the same driver words and must never move
+// the replica aside. syncpipe imports this package, so the sentence lives here and
+// the pipe builds its sentinel from it: the two cannot drift with only one text.
 const WorkerRefusedText = "the sync worker refused"
 
 // ErrNoReplica is what a rebuild with no replica file to move reports: an empty
-// path never opened a worker, a missing file keeps no evidence. Neither is a
-// fault; the next attempt bootstraps fresh either way.
+// path means this machine never opened a worker, and a missing file leaves nothing
+// to keep as evidence. Neither is a fault; the next attempt bootstraps fresh
+// either way.
 var ErrNoReplica = errors.New("sync: no replica file to move aside")
 
 // corruptNeedle is one shape the replica's unreadability arrives in: the fragments
@@ -49,9 +51,10 @@ var corruptNeedles = []corruptNeedle{
 }
 
 // IsReplicaCorrupt reports whether err is the replica's own file unreadable rather
-// than a remote or network failure. Both are text-matched: the chain must carry
-// the worker's refusal marker, so only a sync worker's answer classifies, and one
-// link must match a needle whole -- every fragment of one entry.
+// than a remote or network failure. Two things must hold, and both are text-matched:
+// these are the driver's words, not error classes this tree raises. The chain must
+// carry the worker's refusal marker, so only a sync worker's answer classifies, and
+// one link must match a needle whole -- every fragment of one entry.
 func IsReplicaCorrupt(err error) bool {
 	if err == nil {
 		return false
@@ -104,7 +107,8 @@ const (
 )
 
 // ReadRebuild returns the last recorded rebuild, the zero value when never. An
-// unparsable record reads as none: too corrupt to pace with, at most one move.
+// unparsable record reads as none: a corrupt record must not wedge the machine,
+// and it costs at most one move the cap should have paced.
 func ReadRebuild(kv db.KV) (Rebuild, error) {
 	body, ok, err := kv.KVGet(KeyRebuild)
 	if err != nil {

@@ -235,7 +235,8 @@ func (r *Reconciler) repairs() int {
 // The order is the exporter's: an importer applies with foreign keys on, so a
 // parent precedes its child and a child precedes its removed parent. Cutting to
 // the chunk size only shortens that order. Every chunk reads in one transaction,
-// so the compared rows are one moment's state.
+// so the compared rows are one moment's state and a row cannot arrive before a
+// parent it references.
 func (r *Reconciler) differences(limit int) ([]Entry, error) {
 	if err := r.ensureHead(); err != nil {
 		return nil, err

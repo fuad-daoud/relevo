@@ -14,7 +14,8 @@ const markLifetime = 30 * 24 * time.Hour
 type Mark struct {
 	Reader string
 	Origin string
-	Seq    int
+	// Seq is the highest sequence of that origin the reader has applied.
+	Seq int
 	// At is when the reader reached that sequence, deciding whether it still
 	// counts.
 	At time.Time

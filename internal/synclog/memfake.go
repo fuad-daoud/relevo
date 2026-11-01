@@ -31,8 +31,9 @@ type memLog struct {
 	mu      sync.Mutex
 	entries []Entry
 	head    map[string][]HeadRow
-	// marks is keyed by reader then origin, so one reader's rows are visible to a
-	// second handle on the same log: the rule the remote enforces by key.
+	// marks is keyed by reader then origin: a handle records only its own reader's
+	// rows, and a second handle on the same log sees them, which is the rule the
+	// remote enforces by key.
 	marks map[string]map[string]Mark
 	// floors is what each origin has compacted to.
 	floors map[string]int
@@ -139,7 +140,7 @@ func (m *memLog) pull(origin string, marks map[string]int) []Entry {
 	return out
 }
 
-// head returns one origin's latest state per row, table then key order, so a
+// headOf returns one origin's latest state per row, table then key order, so a
 // page walk sees the same sequence every time.
 func (m *memLog) headOf(origin string) []HeadRow {
 	m.mu.Lock()
@@ -229,7 +230,7 @@ func (m *memLog) origins() []string {
 }
 
 // originsOtherThan is the origins a pull returns: everyone but the caller, whose
-// own writes are already in its file.
+// own writes are already in its file and reading them back would apply them twice.
 func (m *memLog) originsOtherThan(self string) []string {
 	var out []string
 	for _, origin := range m.origins() {
@@ -275,7 +276,8 @@ func (m *MemTransport) Stats() (Stats, error) {
 }
 
 // PublishMarks records this reader's position in each origin given. The reader
-// is the transport's own, so one installation's handle cannot write another's rows.
+// is the transport's own, so one installation's handle cannot write another's
+// rows: the rule the remote enforces by key.
 func (m *MemTransport) PublishMarks(marks map[string]int, at time.Time) error {
 	m.log.publishMarks(m.origin, marks, at)
 	return nil
@@ -287,7 +289,8 @@ func (m *MemTransport) ReadMarks() (MarkState, error) {
 }
 
 // PublishTraffic records this installation's traffic row and answers with
-// every origin's row. The origin is the transport's own, as PublishMarks requires.
+// every origin's row. The origin is the transport's own, the same rule
+// PublishMarks has.
 func (m *MemTransport) PublishTraffic(row TrafficRow) (map[string]TrafficRow, error) {
 	return m.log.publishTraffic(m.origin, row), nil
 }

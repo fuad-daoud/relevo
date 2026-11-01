@@ -37,6 +37,7 @@ var (
 	errCancelled = errors.New("the call was cancelled")
 )
 
+// Call bounds sized for a ~300 MB first export; see docs/sync-driver-panic.md.
 const (
 	dataCallTimeout    = 10 * time.Minute
 	controlCallTimeout = 30 * time.Second

@@ -115,7 +115,8 @@ func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) 
 	// The stale stop reads the two local epoch facts and nothing else: a machine
 	// whose held newest epoch is below the recorded remote epoch neither exports
 	// nor imports until its owner unlocks with the new passphrase, because a
-	// stale exporter appends entries current readers refuse.
+	// stale exporter appends entries current readers refuse, and a stale importer
+	// would apply them.
 	if err := r.epochGate(); err != nil {
 		if !errors.Is(err, synclog.ErrEpochMoved) && !errors.Is(err, ErrEpochReplaced) {
 			// An unreadable key is this machine's own failure: the attempt reports
@@ -133,8 +134,9 @@ func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) 
 	// The extension vouching for this origin's confirmed tail goes out before the
 	// import reads the cuts, so this attempt's own reads see the fence believed in.
 	PublishOwnCut(ctx, shared, r.Local, t)
-	imported, err := r.drainImport(ctx, shared, t) // The settles run after the import: what they render is the
-	// config the import wrote, only true once committed.
+	imported, err := r.drainImport(ctx, shared, t)
+	// The settles run after the import: what they render is the config the
+	// import wrote, only true once committed.
 	SettleFiles(shared)
 	if err != nil {
 		return r.failed(out, err)
@@ -229,7 +231,7 @@ func (r *Runner) publishMarks(shared *db.DB, t *StopTransport, moved bool) {
 
 // marksDue reports whether a publish is due: due when the marker is absent, and
 // again once marksEvery has passed. An unparsable marker reads as due: the worst
-// it costs is one skipped publish, against marks never published again.
+// it costs is one publish the throttle would have skipped.
 func (r *Runner) marksDue(now time.Time) bool {
 	var last time.Time
 	if err := marker(r.Local, KeyMarksPublished, &last); err != nil {

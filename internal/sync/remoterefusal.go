@@ -37,8 +37,9 @@ var ErrQuotaReached = errors.New("sync: the Turso plan quota is reached")
 
 // IsPermanentRefusal reports whether err is a remote refusal that repeats on
 // every attempt: no table for this machine's rows, a change set re-sending
-// cannot fix, or a body an entry names gone from the store. A breaker latches
-// on one of these rather than waiting out three predictable deaths.
+// cannot fix, a body an entry names gone from the store, or a plan quota used
+// up. A breaker latches on one of these rather than waiting out three predictable
+// deaths.
 func IsPermanentRefusal(err error) bool {
 	return errors.Is(err, ErrRemoteSchema) || errors.Is(err, ErrRemoteRefused) ||
 		errors.Is(err, synclog.ErrBlobMissing) || errors.Is(err, ErrQuotaReached)

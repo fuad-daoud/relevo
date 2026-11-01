@@ -74,8 +74,9 @@ func SharedDocNames() []string {
 	return names
 }
 
-// IsDocTable reports whether a table name names a doc entry, which the importer
-// routes on before asking whether a table is shared.
+// IsDocTable reports whether a table name names a doc entry. SharedTable keeps
+// refusing these, so the importer routes on the prefix before asking whether a
+// table is shared.
 func IsDocTable(tbl string) bool {
 	return strings.HasPrefix(tbl, DocPrefix)
 }

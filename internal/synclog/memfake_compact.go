@@ -27,8 +27,8 @@ func (m *MemTransport) CompactOwn(floor int) (CompactResult, error) {
 
 // Compact drops origin's superseded entries to floor and raises its recorded
 // floor, under one lock so no reader sees one without the other. The floor only
-// rises. A floor past head is refused; one inside a batch moves down to the batch
-// before, as the worker does.
+// rises; a lower one drops what it covers and records nothing. A floor past head is
+// refused; one inside a batch moves down to the batch before, as the worker does.
 func (m *MemTransport) Compact(origin string, floor int) (int, error) {
 	l := m.log
 	l.mu.Lock()

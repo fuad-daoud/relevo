@@ -69,7 +69,8 @@ func (i *Importer) loadSigned(state MarkState) error {
 // loadCuts computes per origin the highest acted-on cut: the highest of the local
 // record and every remote cut verifying under the cut's epoch key. Only the newest
 // held epoch is acted on, so a leaked old key cannot re-bless history; a verifying
-// cut is recorded at once and never regresses.
+// cut is recorded at once and never regresses. A cut that does not verify, or one
+// naming a retired epoch, holds its origin for the run.
 func (i *Importer) loadCuts(state MarkState) error {
 	if len(i.ring) == 0 {
 		return nil
@@ -107,8 +108,9 @@ func (i *Importer) loadCuts(state MarkState) error {
 	return nil
 }
 
-// requiresSigned reports whether an entry must carry a signature: rules 3 and 5,
-// any After-bearing entry, or any ctl: entry.
+// requiresSigned reports whether an entry must carry a signature: a binding or
+// binding_record upsert naming a writer other than its origin, any After-bearing
+// entry, or any ctl: entry.
 func requiresSigned(e Entry) bool {
 	if e.After != nil || strings.HasPrefix(e.Table, "ctl:") {
 		return true

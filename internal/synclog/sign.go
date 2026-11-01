@@ -19,16 +19,18 @@ var ErrEpochMoved = errors.New("sync: the remote's key moved to a newer epoch; t
 // unsigned where its origin signs.
 var ErrBadSignature = errors.New("synclog: an entry's signature was refused")
 
-// ErrBoundary refuses a signed batch on an unpredicted boundary. Nothing is
-// written; the exporter predicts again next attempt.
+// ErrBoundary refuses a signed batch on an unpredicted boundary, or one naming
+// none where the origin has no boundary. Nothing is written; the exporter predicts
+// again next attempt.
 var ErrBoundary = errors.New("synclog: the signed-from boundary was not the one predicted; it is retried on the next attempt")
 
 // keyed is the key an exporter, reconciler or importer works with; no key is a
 // locked machine.
 type keyed struct {
 	key []byte
-	// ring is every epoch key held, for trial verification; nil reads as a
-	// one-key machine, which every epoch-1 log is.
+	// ring is every epoch key held, keyed by epoch, for trial verification; nil
+	// reads as a one-key machine, which every epoch-1 log is. key is always the
+	// newest epoch's entry.
 	ring map[int][]byte
 	// boundaryKnown is set once the remote is known to hold this origin's
 	// boundary, so later appends do not read it again.
@@ -74,8 +76,10 @@ func (k *keyed) SetKey(key []byte) { k.key = key }
 // Keyring is every epoch key a verifier holds, handed across by the local
 // keyring's reader so this package never reaches for secrets.
 type Keyring struct {
+	// Epoch is the newest epoch in Keys.
 	Epoch int
-	Keys  map[int][]byte
+	// Keys maps each epoch this machine holds to its key.
+	Keys map[int][]byte
 }
 
 // SetKeyring sets the trial ring, carrying the newest key into the signing key.

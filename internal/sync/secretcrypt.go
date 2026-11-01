@@ -70,7 +70,8 @@ func StampSecretWrites(t *db.Tx, names []string, now func() time.Time) error {
 
 // ErrNoKey marks a caller needing the sync key on a machine holding none. The
 // secrets document answers with it rather than empty, because an exporter reads
-// empty as holding no secrets and would send a removal for every one held.
+// empty as holding no secrets and would send a removal for every secret the fleet
+// has.
 var ErrNoKey = errors.New("sync: this machine holds no sync key")
 
 // ErrSecretEnvelope marks a value this build cannot read as a sealed secret: a
@@ -99,7 +100,9 @@ const SecretEnvelopeMax = 8 << 10
 const secretKeyLabel = "relevo-sync-secret-v1"
 
 // secretNonceLabel is the HKDF info separating the nonce-hashing key from the
-// AEAD key itself, so distinct uses of one key take labels, not discipline.
+// AEAD key itself: reusing the AEAD key as the HMAC key would make the nonce a
+// second output of the same derivation, so distinct uses of one key take labels,
+// not discipline.
 const secretNonceLabel = "relevo-sync-secret-nonce-v1"
 
 // secretSubkeyLen is the derived key's length: one XChaCha20-Poly1305 key.
@@ -207,7 +210,8 @@ func sealNonceKey(subkey []byte, name string) ([]byte, error) {
 
 // SealSecret seals one allow-listed secret value under the newest epoch's key.
 // Epoch 1 seals v1; newer seals v2 naming its epoch. An over-cap value is refused
-// rather than sent, so no peer reads a shape this build would truncate.
+// rather than sent, as an unreadable ledger is: the caller keeps its signal and
+// reports, and no peer reads a shape this build would truncate.
 func SealSecret(ring Keyring, name string, value []byte) (json.RawMessage, error) {
 	if !AllowSecret(name) {
 		return nil, secretNameRefusal(name)

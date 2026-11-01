@@ -111,9 +111,11 @@ type LogTransport interface {
 	// ClaimIdentity records that a machine is adopting origin's identity under
 	// token, where nobody holds a live claim: the row is written when absent,
 	// when it is the caller's own token, or when it is older than ClaimTTL at
-	// the time given. It answers with the claim the log holds afterwards and the
-	// caller compares the token: two machines racing one claim can each read
-	// their own token back before the later write lands, so a mismatch is the loss.
+	// the time given. It answers with the claim the log holds afterwards, read back
+	// after the write, and the caller compares the token rather than trusting its
+	// own write stuck: two machines racing one claim can each read their own token
+	// back before the later write lands, so the claim is read again later and a
+	// mismatch then is the loss.
 	//
 	// An empty token writes nothing and only reads the claim, which is how a
 	// steady attempt checks the identity is still its own. An origin with
@@ -247,8 +249,9 @@ type TrafficRow struct {
 // LogTransport method so one addition does not churn every fake; a caller asks
 // for it with a type assertion and skips the publish elsewhere.
 type TrafficPublisher interface {
-	// PublishTraffic writes this installation's own row, as PublishMarks requires,
-	// and answers with every origin's row as the log holds it after the write.
+	// PublishTraffic writes this installation's own row -- the origin is the
+	// transport's own, the rule PublishMarks states -- and answers with every
+	// origin's row as the log holds it after the write.
 	PublishTraffic(row TrafficRow) (map[string]TrafficRow, error)
 }
 

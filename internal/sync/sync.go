@@ -82,7 +82,8 @@ type attention struct {
 }
 
 // Times is when the steady pipeline last finished each half, recorded together
-// because one attempt runs both; never completed carries neither.
+// because one attempt runs both; a machine that never completed an attempt
+// carries neither.
 type Times struct {
 	Export time.Time `json:"export"`
 	Import time.Time `json:"import"`
@@ -284,8 +285,9 @@ func ClearInCall(kv db.KV) error {
 	return nil
 }
 
-// ReadInCall returns the in-call marker left behind; an unreadable marker is a
-// failure rather than absent, so no machine reads as having no call in flight.
+// ReadInCall returns the in-call marker a call left behind and whether one is
+// set. An unreadable marker is a failure, not an absent one, so a machine whose
+// marker cannot be read is never reported as having no call in flight.
 func ReadInCall(kv db.KV) (InCall, bool, error) {
 	body, ok, err := kv.KVGet(KeyInCall)
 	if err != nil {

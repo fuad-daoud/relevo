@@ -95,7 +95,9 @@ func (c *Client) PublishMarks(marks map[string]int, at time.Time) error {
 
 // ReadMarks answers with every published mark and each origin's size. An empty
 // reply is a refusal, not an empty log: the worker always fills the field, so a
-// missing one did not do what was asked.
+// missing one did not do what was asked. Read as "no reader has published", it
+// would floor every origin at its head and let compaction drop what readers
+// still need.
 func (c *Client) ReadMarks() (synclog.MarkState, error) {
 	resp, err := c.call(syncworker.Request{Verb: syncworker.VerbReadMarks})
 	if err != nil {
@@ -345,8 +347,8 @@ func headFromWire(rows []syncworker.HeadRow) []synclog.HeadRow {
 }
 
 // statsFromWire reads back what the log holds and moved. Byte counters carry
-// through: already cumulative, summing again would count every worker call twice
-// per stats reply.
+// through: already cumulative, summing again would re-count every worker call on
+// each stats reply.
 func statsFromWire(s syncworker.Stats) synclog.Stats {
 	return synclog.Stats{
 		Entries:       s.Entries,
