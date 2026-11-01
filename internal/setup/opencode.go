@@ -5,17 +5,14 @@ import (
 	"strings"
 )
 
-// opencodeShortlist is the OpenRouter lineup: the builder, lite-planner and
-// security reviewer the owner runs, listed for a reader who picks
-// openrouter and recommended nowhere else.
+// opencodeShortlist is the OpenRouter lineup, recommended nowhere else.
 var opencodeShortlist = []string{
 	"openrouter/z-ai/glm-5.3-flash",
 	"openrouter/deepseek/deepseek-v4.1-flash",
 	"openrouter/xiaomi/mimo-v2.6-flash",
 }
 
-// opencodeBuilder and opencodePlanner are the lineup's builder and planner;
-// the planner runs at the lineup's own variant.
+// opencodeBuilder and opencodePlanner are the lineup's builder and planner.
 const (
 	opencodeBuilder        = "openrouter/z-ai/glm-5.3-flash"
 	opencodePlanner        = "openrouter/deepseek/deepseek-v4.1-flash"
@@ -25,7 +22,6 @@ const (
 // opencodeFree is the provider whose models need no login.
 const opencodeFree = "opencode"
 
-// OpencodeNone is the opencode answer that picks no models at all.
 const OpencodeNone = "none"
 
 // probeOpencode lists the models opencode can run: `opencode models
@@ -50,9 +46,7 @@ func probeOpencode(env SetupEnv) []string {
 	return models
 }
 
-// opencodeShortlistIn are the lineup models a catalog lists: a starting
-// list for a reader browsing openrouter, never a recommendation -- opencode
-// contributes only the models its question was answered with.
+// opencodeShortlistIn are the lineup models a catalog lists, never a recommendation.
 func opencodeShortlistIn(catalog []string) []string {
 	var out []string
 	for _, m := range opencodeShortlist {
@@ -69,8 +63,8 @@ func opencodeProvider(model string) string {
 }
 
 // opencodeQuestion asks which opencode models relevo may use. It recommends
-// none: its choices list the lineup and none, and the whole catalog is
-// accepted, most of it unlisted, because it runs to hundreds of models.
+// none: the whole catalog is accepted, most of it unlisted, because it runs
+// to hundreds of models.
 func opencodeQuestion(s HarnessStatus) Question {
 	q := Question{
 		ID:       "opencode",
@@ -99,15 +93,13 @@ func opencodeChoice(model string) Choice {
 	}
 }
 
-// OpencodeCatalog is every model the opencode question accepts, listed and
-// not, in opencode's own order: what a front end browses by provider.
+// OpencodeCatalog is every model the opencode question accepts, in opencode's own order.
 func OpencodeCatalog(q Question) []Choice {
 	return q.more
 }
 
 // withOpencodePicks narrows opencode's offer to the models the opencode
-// answer picked, so every other question lists those alone; no answer
-// leaves opencode offering nothing.
+// answer picked; no answer leaves opencode offering nothing.
 func withOpencodePicks(inv Inventory, answers map[string][]string) Inventory {
 	picked := answers["opencode"]
 	if len(picked) == 0 {
@@ -135,7 +127,6 @@ func withOpencodePicks(inv Inventory, answers map[string][]string) Inventory {
 	return out
 }
 
-// opencodeChoices are opencode's picked models as candidate choices.
 func opencodeChoices(s HarnessStatus) []Choice {
 	out := make([]Choice, 0, len(s.Models))
 	for _, m := range s.Models {

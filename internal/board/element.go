@@ -7,13 +7,13 @@ import (
 	"strings"
 )
 
-// lineHeight is Cascadia's line metric in the vendored Excalidraw bundle: the
-// ratio of a line's box height to its font size. TextSize multiplies by it.
+// lineHeight is Cascadia's line metric in the vendored Excalidraw bundle:
+// the ratio of a line's box height to its font size.
 const lineHeight = 1.2
 
 // narrowEm is the per-rune em advance TextSize charges a narrow character.
-// Cascadia's own advance is 1200/2048 ≈ 0.586 em, so 0.6 is a ceiling that
-// never underestimates a line's width.
+// Cascadia's own advance is 1200/2048, so 0.6 is a ceiling that never
+// underestimates a line's width.
 const narrowEm = 0.6
 
 // TextElement is the vendored 0.18.1 text element, with its JSON fields in the
@@ -78,9 +78,8 @@ type TextOptions struct {
 	Marker      *CommentMarker
 }
 
-// NewTextElement builds a font-safe text element: autoResize on, an explicit
-// width and height from TextSize, Cascadia's font family. The id is twenty
-// random URL-safe characters.
+// NewTextElement builds a font-safe text element: an explicit size from
+// TextSize and Cascadia's font family.
 func NewTextElement(opts TextOptions) (TextElement, error) {
 	fontSize := opts.FontSize
 	if fontSize <= 0 {
@@ -179,7 +178,6 @@ func wideRune(r rune) bool {
 	return false
 }
 
-// randomID mints n random URL-safe characters.
 func randomID(n int) (string, error) {
 	b := make([]byte, (n*3+3)/4)
 	if _, err := rand.Read(b); err != nil {

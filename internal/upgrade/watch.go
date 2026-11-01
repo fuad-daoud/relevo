@@ -12,7 +12,6 @@ import (
 // preflight cannot wedge the daemon.
 const PreflightTimeout = 30 * time.Second
 
-// Action is what Check decided about the watched file.
 type Action int
 
 const (
@@ -98,7 +97,7 @@ func (w *Watcher) Check(ctx context.Context) Decision {
 func (w *Watcher) Refused() *store.FileID { return w.refused }
 
 // reasonText is a preflight failure's first line, capped at 300 bytes: this
-// goes into daemon.json for a human, not a full stderr dump.
+// goes into daemon.json for a human.
 func reasonText(err error) string {
 	s := err.Error()
 	if i := strings.IndexByte(s, '\n'); i >= 0 {

@@ -8,8 +8,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/sanitize"
 )
 
-// The placeholders a rule writes. Only the secret placeholder is shared: it is
-// the same bytes every renderer of a credential already uses.
+// The placeholders a rule writes; only the secret one is shared with other renderers.
 const (
 	userToken   = "<user>"
 	hostToken   = "<host>"
@@ -18,9 +17,9 @@ const (
 	gitMailTok  = "<git-email>"
 )
 
-// Redactor is the bundle's privacy pass: the machine facts the rules need, and
-// Raw, which turns every rule off for --raw. The zero value redacts nothing it
-// does not know, which is the safe half of the pass.
+// Redactor is the bundle's privacy pass: the machine facts the rules need,
+// and Raw, which turns every rule off for --raw. The zero value redacts
+// nothing it does not know.
 type Redactor struct {
 	Home string
 	User string
@@ -32,9 +31,8 @@ type Redactor struct {
 	Raw      bool
 }
 
-// NewRedactor reads the machine facts from the process: the home directory, the
-// user name and the host name. A fact it cannot read stays empty, and an empty
-// name is never replaced.
+// NewRedactor reads the machine facts from the process. A fact it cannot
+// read stays empty, and an empty name is never replaced.
 func NewRedactor() Redactor {
 	home, _ := os.UserHomeDir()
 	host, _ := os.Hostname()
@@ -58,7 +56,7 @@ func (r Redactor) Text(s string) string {
 
 // redactGitIdentity removes the git email and name by value. The email goes
 // first so a name that is part of it cannot leave half an address behind; a
-// name of one word is a whole-token match so it never eats a longer word.
+// one-word name matches whole tokens only, so it never eats a longer word.
 func (r Redactor) redactGitIdentity(s string) string {
 	if len(r.GitEmail) >= 3 {
 		s = strings.ReplaceAll(s, r.GitEmail, gitMailTok)
@@ -72,9 +70,8 @@ func (r Redactor) redactGitIdentity(s string) string {
 	return replaceToken(s, r.GitName, gitNameTok)
 }
 
-// Redact returns b with every string it carries rewritten, and the lines the
-// header prints about the pass filled in. A raw redactor marks the bundle raw
-// and leaves every byte as it was.
+// Redact returns b with every string it carries rewritten. A raw redactor
+// marks the bundle raw and leaves every byte as it was.
 func Redact(b Bundle, r Redactor) Bundle {
 	out := b
 	out.Raw = r.Raw
@@ -95,7 +92,6 @@ func Redact(b Bundle, r Redactor) Bundle {
 	return out
 }
 
-// section rewrites every string one section carries.
 func (r Redactor) section(s Section) Section {
 	out := Section{
 		Name:    s.Name,
@@ -120,9 +116,8 @@ func (r Redactor) section(s Section) Section {
 	return out
 }
 
-// privacy is what the header states about the pass: the placeholders it wrote,
-// and which name it left alone because replacing a name that short would take
-// ordinary words with it.
+// privacy is what the header states about the pass: the placeholders it wrote
+// and which short name it left alone.
 func (r Redactor) privacy() []string {
 	lines := []string{"redacted: home paths to ~, the user name to " + userToken +
 		", the host name to " + hostToken + ", remotes and secret-shaped strings to placeholders"}
@@ -138,12 +133,12 @@ func (r Redactor) privacy() []string {
 	return lines
 }
 
-// homeRe matches the home prefix of any account, not just this one: /home/<u>
-// or /Users/<u>, so a path recorded on another machine shortens too.
+// homeRe matches the home prefix of any account, not just this one, so a
+// path recorded on another machine shortens too.
 var homeRe = regexp.MustCompile(`(^|[^A-Za-z0-9_.-])(?:/Users|/home)/[A-Za-z0-9._-]+`)
 
-// redactPaths shortens every home path to ~. The literal $HOME is shortened
-// too: a report that quotes a shell command names the home directory either way.
+// redactPaths shortens every home path to ~; the literal $HOME is shortened
+// too, since a report may quote a shell command naming the home either way.
 func (r Redactor) redactPaths(s string) string {
 	if r.Home != "" {
 		s = strings.ReplaceAll(s, r.Home, "~")
@@ -152,8 +147,7 @@ func (r Redactor) redactPaths(s string) string {
 	return homeRe.ReplaceAllString(s, "${1}~")
 }
 
-// tokenBytes are the bytes a whole name is made of: a name is only replaced
-// when a run of these equals it, so "fuad" never eats "fuad-daoud".
+// tokenByte reports whether b is a byte a whole name is made of.
 func tokenByte(b byte) bool {
 	switch {
 	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':
@@ -164,9 +158,9 @@ func tokenByte(b byte) bool {
 	return false
 }
 
-// replaceToken replaces every whole occurrence of name. A name shorter than
-// three characters is not replaced at all: two letters are ordinary words, and
-// replacing them would mangle the bundle it is meant to protect.
+// replaceToken replaces every whole occurrence of name; a name shorter than
+// three characters is not replaced at all, since two letters are ordinary
+// words and replacing them would mangle the bundle.
 func replaceToken(s, name, repl string) string {
 	if len(name) < 3 || !strings.Contains(s, name) {
 		return s
@@ -193,7 +187,6 @@ func replaceToken(s, name, repl string) string {
 	return b.String()
 }
 
-// remoteRe matches a git remote or a URL, credentials included.
 var remoteRe = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s"'<>]+|[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:[^\s"'<>]+`)
 
 // redactRemotes replaces every remote and URL, keeping the one exception: the
@@ -207,8 +200,8 @@ func redactRemotes(s string) string {
 	})
 }
 
-// secretRe are the secret shapes: one rule per shape, in the order they must
-// run -- a shape that is a special case of a later one comes first.
+// secretRe are the secret shapes, in the order they must run: a shape that
+// is a special case of a later one comes first.
 var secretRe = []*regexp.Regexp{
 	regexp.MustCompile(`sk-ant-[A-Za-z0-9_-]{8,}`),
 	regexp.MustCompile(`sk-[A-Za-z0-9_-]{20,}`),
@@ -222,13 +215,12 @@ var secretRe = []*regexp.Regexp{
 }
 
 // runRe matches a run long enough to be a base64 or base62 secret. A run never
-// spans a path separator: a long path segment is one segment, so a state root
-// under /tmp that happens to mix case and digits is not mistaken for a token.
+// spans a path separator, so a long path segment is not mistaken for a token.
 var runRe = regexp.MustCompile(`[A-Za-z0-9+]{40,}={0,2}`)
 
 // redactSecrets replaces every secret-shaped string. A long run is only a
 // secret when it cannot be a commit id: hex of 40 characters or fewer is kept,
-// which is what lets a bundle name the commit it was built from.
+// so a bundle can still name the commit it was built from.
 func redactSecrets(s string) string {
 	for _, re := range secretRe {
 		s = re.ReplaceAllString(s, sanitize.Redacted)
@@ -245,7 +237,6 @@ func redactSecrets(s string) string {
 	})
 }
 
-// isHex reports whether s is hexadecimal.
 func isHex(s string) bool {
 	for i := 0; i < len(s); i++ {
 		c := s[i]

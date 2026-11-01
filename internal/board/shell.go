@@ -5,10 +5,10 @@ import (
 	"io/fs"
 )
 
-// shell is the embedded shell page: the no-token page the browser loads, and its
-// script. It lives outside assets/ on purpose -- assets/ is the built
-// Excalidraw page with an integrity manifest CI checks, and the shell is
-// hand-written with no build step.
+// shellTree is the embedded shell page: the no-token page the browser loads,
+// and its script. It lives outside assets/ on purpose: assets/ is the built
+// page with an integrity manifest CI checks, and the shell is hand-written
+// with no build step.
 //
 //go:embed shell
 var shellTree embed.FS
@@ -23,8 +23,8 @@ func Shell() fs.FS {
 }
 
 // readShellFile reads one file out of the embedded shell. It is a seam the
-// offline check runs against: the shell must have no external reference of its
-// own, which is a property of the bytes we ship.
+// offline check runs against: the shell must have no external reference of
+// its own.
 func readShellFile(name string) ([]byte, error) {
 	return fs.ReadFile(Shell(), name)
 }

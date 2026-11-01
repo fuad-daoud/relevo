@@ -8,8 +8,7 @@ import (
 	"strings"
 )
 
-// RunningProc is one local process a daemon restart could kill: the binding
-// it belongs to, which of the round's roles it plays, and its pid.
+// RunningProc is one local process a daemon restart could kill.
 type RunningProc struct {
 	Binding string
 	Kind    string // "builder", "gate" or "consult"
@@ -37,10 +36,9 @@ func inOwnScope(cgroupPath string) bool {
 }
 
 // RestartSafety is the doctor row that says whether a daemon restart right
-// now would kill anything. It never fails: a not-exist cgroup read means the
-// process exited and is skipped, and any other unreadable host (macOS, a
-// cgroup v1 host) degrades to `cannot tell on this host`. The Warn detail
-// names at most three offenders, then `and K more`.
+// now would kill anything. It never fails: an exited process is skipped and
+// any other unreadable host degrades to `cannot tell on this host`. The Warn
+// detail names at most three offenders, then `and K more`.
 func RestartSafety(procs []RunningProc, readCgroup func(pid int) (string, error)) Check {
 	c := Check{Group: "", Name: "restart"}
 	if len(procs) == 0 {
@@ -96,8 +94,6 @@ func restartCannotTell(c Check) Check {
 	return c
 }
 
-// offendersText lists at most three offenders, summarising the rest as `and
-// K more`.
 func offendersText(offenders []string) string {
 	const max = 3
 	if len(offenders) <= max {

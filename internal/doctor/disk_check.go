@@ -34,9 +34,8 @@ func execRun(ctx context.Context, name string, args ...string) ([]byte, error) {
 // answer for go instead of starting it.
 var DiskRun = execRun
 
-// diskChecks returns the tmp root row, the Go cache row, and, when the working
-// directory is a Go tree, the effective -trimpath row. A go that cannot answer
-// is never an error: its cache row is informational.
+// diskChecks returns the tmp root row, the Go cache row and, in a Go tree,
+// the -trimpath row. A go that cannot answer is never an error.
 func diskChecks(ctx context.Context, in diskInputs) []Check {
 	var out []Check
 	if in.TmpRoot != "" {

@@ -81,10 +81,10 @@ func ValidateSVG(body []byte) error {
 // a crash before the rename leaves the old file and no temp file.
 var renameFile = os.Rename
 
-// Save writes scene to path and its companion svg beside it, atomically. The
-// If-Match must equal the etag of the bytes on disk (empty for a new file) or
-// the save is refused with ErrConflict. The scene is renamed into place first,
-// then the svg; the scene's new etag is returned.
+// Save writes scene to path and its companion svg beside it, atomically.
+// If-Match must equal the etag of the bytes on disk (empty for a new file)
+// or the save is refused with ErrConflict. The scene is renamed into place
+// first, then the svg. It returns the scene's new etag.
 func Save(path string, scene, svg []byte, ifMatch string) (string, error) {
 	current := ""
 	if old, err := os.ReadFile(path); err == nil {
@@ -106,8 +106,6 @@ func Save(path string, scene, svg []byte, ifMatch string) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// svgPath is the companion svg's path: the scene's path with .svg for
-// .excalidraw.
 func svgPath(scene string) string {
 	return strings.TrimSuffix(scene, sceneExt) + ".svg"
 }

@@ -10,7 +10,6 @@ func AssetURLs(tag, goos, goarch string) (archive, checksums string) {
 	return assetURLsFrom(DownloadBase, tag, goos, goarch)
 }
 
-// assetURLsFrom is AssetURLs against an arbitrary base, so tests can pass an httptest URL.
 func assetURLsFrom(base, tag, goos, goarch string) (archive, checksums string) {
 	root := base + "/" + tag
 	return root + "/relevo_" + tag + "_" + goos + "_" + goarch + ".tar.gz",

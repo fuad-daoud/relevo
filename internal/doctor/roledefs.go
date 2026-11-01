@@ -7,7 +7,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 )
 
-// roleCheck probes one shipped role definition on disk.
 func roleCheck(env Env, kind string, r harness.Role) Check {
 	homeRel := "~/" + r.Path
 	fullPath, err := env.HomePath(r.Path)
@@ -74,9 +73,8 @@ func pinMismatchCheck(kind string, r harness.Role, model, detail string) (Check,
 	}, true
 }
 
-// customRoleCheck probes one custom role definition on disk: the user's own
-// file, so no model-pin or drift check, and a missing file's fix offers the
-// install verb and the by-hand path.
+// customRoleCheck probes one custom role definition on disk: the user's
+// own file, so no model-pin or drift check.
 func customRoleCheck(env Env, kind, name string) Check {
 	path, _ := harness.DefinitionPath(kind, name)
 	homeRel := "~/" + path
@@ -124,9 +122,8 @@ func (e roleInstallEnv) ReadFile(path string) ([]byte, error) {
 func (e roleInstallEnv) LoadManifest() (map[string]string, error) { return e.manifest, nil }
 func (e roleInstallEnv) SaveManifest(map[string]string) error     { return nil }
 
-// rolesCheck is the role-staleness row: a dry-run install with the manifest
-// says whether the daemon will refresh anything on its next start, whether
-// the user's own edits are being kept, or whether everything is current.
+// rolesCheck is the role-staleness row: a dry-run install with the
+// manifest.
 func rolesCheck(env Env, kind string) Check {
 	manifest, err := env.LoadManifest()
 	if err != nil {

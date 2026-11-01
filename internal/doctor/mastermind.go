@@ -12,8 +12,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/release"
 )
 
-// The relevo Claude Code plugin's install facts. The user's files sit under
-// Claude Code's config directory and the project's settings under the repo.
 const (
 	claudeSettingsRel     = ".claude/settings.json"
 	claudePluginStateRel  = "plugins/installed_plugins.json"
@@ -55,16 +53,15 @@ func HasMCPChild(children []ChildProcess) bool {
 type MasterMindCheckInput struct {
 	Claude bool   // a claude candidate or mastermind record exists; gates the plugin rows
 	Home   string // $HOME, so a test can point it at a temp dir
-	// ClaudeDir is CLAUDE_CONFIG_DIR, where Claude Code keeps its settings
-	// and plugins when it is set; "" means Home/.claude.
+	// ClaudeDir is CLAUDE_CONFIG_DIR; "" means Home/.claude.
 	ClaudeDir string
-	Repo      string // the repository `relevo doctor` runs in
+	Repo      string
 
 	Detected  bool               // mastermind.Detect: relevo runs inside a Claude Code session
 	Resolved  *mastermind.Record // the mastermind Resolve found; nil on a miss
 	Chat      string             // the resolved mastermind's chatlabel (opencode only); "" when Resolved is nil
-	ClaimLive bool               // a live push claim exists for Resolved
-	MCPChild  bool               // a `relevo mcp` process is a child of the mastermind's host; false is FAIL
+	ClaimLive bool
+	MCPChild  bool // a `relevo mcp` process is a child of the mastermind's host; false is FAIL
 
 	Stale   []string // mastermind records seen over 7 days ago with no live binding
 	Running string   // relevo's own version, compared with the installed plugin's; "" skips it
@@ -77,19 +74,16 @@ type MasterMindCheckInput struct {
 
 	// Muse says a muse candidate or mastermind record exists; it gates the
 	// muse plugin rows. MuseSession mirrors Detected for a muse session, and
-	// MuseInspect is the injected `muse plugins inspect relevo --json`
-	// reader: cmd/relevo wires it to Env.Command, tests stub it. The rows
-	// probe through it rather than the disk because muse's on-disk
-	// runtime_capabilities stores only trusted definition hashes -- whether
-	// they still match the installed package is muse's own computation.
+	// MuseInspect is the injected `muse plugins inspect
+	// relevo --json` reader: the rows probe through it because muse's
+	// on-disk runtime_capabilities stores only trusted definition hashes.
 	Muse        bool
 	MuseSession bool
 	MuseInspect MuseInspectFn
 }
 
-// MasterMindChecks reports the plugin rows for Claude Code and muse, the
-// installed plugin's SessionStart hook, this session's mastermind, the
-// repository's consent answer, and the stale-record note. Leaving every
+// MasterMindChecks reports the plugin rows, this session's mastermind, the
+// repository's consent answer and the stale-record note. Leaving every
 // field zero reports nothing.
 func MasterMindChecks(in MasterMindCheckInput) []Check {
 	var checks []Check
@@ -161,10 +155,9 @@ func consentCheck(in MasterMindCheckInput) Check {
 	}
 }
 
-// mastermindSessionCheck is the mastermind row for a detected Claude Code session:
-// FAIL when Resolve missed or no relevo mcp child serves its tools, INFO while
-// no push claim is live (reports arrive through the blocking wait tool), OK once
-// the push claim is live.
+// mastermindSessionCheck is the mastermind row for a detected session: FAIL
+// when Resolve missed or no relevo mcp child serves its tools, INFO while
+// no push claim is live, OK once the push claim is live.
 func mastermindSessionCheck(in MasterMindCheckInput) Check {
 	switch {
 	case in.Resolved == nil:
@@ -351,7 +344,7 @@ func pluginVersionCheck(claudeDir, running string) Check {
 }
 
 // installedRelevoPlugin finds the relevo@* entry in an installed_plugins.json
-// and returns its version.
+// and returns its version; several entries report the first.
 func installedRelevoPlugin(raw []byte) (version string, found bool, err error) {
 	// {"version":2,"plugins":{"relevo@relevo":[{"version":"0.8.0",...}]}}
 	var state struct {
@@ -393,8 +386,6 @@ func installedPluginDirs(raw []byte) []string {
 	return out
 }
 
-// hookRunsMasterMindInit reports whether a hooks.json has a SessionStart entry
-// whose command runs `relevo mastermind init`.
 func hookRunsMasterMindInit(raw []byte) bool {
 	var v any
 	if err := json.Unmarshal(raw, &v); err != nil {

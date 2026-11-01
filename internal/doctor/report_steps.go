@@ -21,10 +21,8 @@ import (
 )
 
 // serverProbeChecks builds the pre-run rows for the configured servers and
-// reports whether any server is configured. One doctor row per configured
-// server: reachable and enrolled, not enrolled (with the line to give the
-// admin), unreachable, or a changed certificate. No servers section means
-// no rows.
+// reports whether any server is configured. No servers section means no
+// rows.
 func serverProbeChecks(rt relevo.Runtime, L config.Loaded) (checks []Check, hasServers bool) {
 	if len(L.Servers) == 0 {
 		return nil, false
@@ -36,16 +34,13 @@ func serverProbeChecks(rt relevo.Runtime, L config.Loaded) (checks []Check, hasS
 	return serverChecks(relevo.ProbeServers(context.Background(), rt, L.Servers, enrollLine)), true
 }
 
-// appendInfraRows adds the machine-local global rows: restart, database,
-// sync quota, open rounds, engine, client key, sandbox and owner, plus the
-// bindings row when the store could not be listed.
+// appendInfraRows adds the machine-local global rows.
 func appendInfraRows(rep *Report, rt relevo.Runtime, env Env, deps Deps, stateRoot string, storeErr error) {
-	// Whether a restart right now would kill anything, read from the
-	// cgroup every running local process actually sits in. One call, placed
-	// directly after the daemon row.
+	// Whether a restart right now would kill anything, read from the cgroup
+	// every local process sits in; one call, placed directly after the
+	// daemon row.
 	rep.Checks = deps.InsertRestartRow(rep.Checks, deps.RestartCheck(rt))
-	// One `database` row carries the migrated state: every open migrates,
-	// so the row reports the path, size, schema version and counts directly.
+	// One `database` row carries the migrated state: every open migrates.
 	rep.Checks = InsertGlobalCheck(rep.Checks, databaseCheck(rt.Store))
 	// The sync quota row, read from the local file; no reading, no row.
 	if check, ok := syncQuotaRow(rt, deps.SyncMeter); ok {
@@ -56,22 +51,20 @@ func appendInfraRows(rep *Report, rt relevo.Runtime, env Env, deps Deps, stateRo
 			rep.Checks = InsertGlobalCheck(rep.Checks, openRoundsCheck(rounds, bindings))
 		}
 	}
-	// The engine row sits next to the database row, so a library the
-	// engine cannot load is visible beside the database it would open.
+	// The engine row sits next to the database row, so an unloadable
+	// library is visible beside the database it would open.
 	rep.Checks = InsertGlobalCheck(rep.Checks, engineCheck(db.EngineStatus(stateRoot)))
-	// The client-id row: a fleet's stamped key replacing this machine's own is a
-	// deliberate choice, and the consequence is that the servers this machine is
-	// enrolled on cease to recognise it. Read from the machine's own file, so
-	// it answers with the network blackholed.
+	// The client-id row: a fleet's stamped key replacing this machine's own
+	// means the enrolled servers cease to recognise it. Read from the
+	// machine's own file, so it answers with the network blackholed.
 	if check, ok := ClientKeyCheck(clientKeyReplaced(rt.Config)); ok {
 		rep.Checks = InsertGlobalCheck(rep.Checks, check)
 	}
 	// The sandbox rows: the xdg one for every user, the linger and port ones
 	// only where the state root carries a dev-sandbox marker.
 	rep.Checks = sandboxChecks(env, serveMachineDB(rt), stateRoot, deps.ConfigRoot, rep.Checks)
-	// The owner row dials the socket the daemon serves, the way the database
-	// row reads the file: a missing socket warns with the fix, and a socket
-	// that answers names its pid, protocol and open connections.
+	// The owner row dials the socket the daemon serves the way the database
+	// row reads the file: a missing socket warns with the fix.
 	if sock, sockErr := owner.SocketPath(stateRoot); sockErr != nil {
 		rep.Checks = InsertGlobalCheck(rep.Checks, ownerCheck(db.OwnerStatus{}, sockErr))
 	} else {
@@ -88,11 +81,9 @@ func appendInfraRows(rep *Report, rt relevo.Runtime, env Env, deps Deps, stateRo
 	}
 }
 
-// appendIdentityRows adds the git-identity row and the no-candidates row. A
-// remote builder commits as the client, so a repo whose effective
-// user.name/user.email is unset makes `relevo bind --server` refuse. The row
-// exists only where a server is configured and the cwd is inside a repo; a
-// git failure (no repo, no git) is not established, so it is no row.
+// appendIdentityRows adds the git-identity row and the no-candidates row.
+// The identity row exists only where a server is configured and the cwd is
+// inside a repo; a git failure is no row.
 func appendIdentityRows(rep *Report, rt relevo.Runtime, hasServers bool) {
 	identity := GitIdentityInput{HasServers: hasServers}
 	if rt.Git != nil {
@@ -113,9 +104,8 @@ func appendIdentityRows(rep *Report, rt relevo.Runtime, hasServers bool) {
 }
 
 // appendServeScopeRows adds the serve rows and the scope rows. The serve
-// checks read the machine database. It is the same database rt.Store holds;
-// a store whose open failed leaves the serve rows off, as every other
-// best-effort row does.
+// checks read the same database rt.Store holds; a store whose open failed
+// leaves the serve rows off.
 func appendServeScopeRows(rep *Report, rt relevo.Runtime, env Env) {
 	if stateRoot, err := tmpdir.DefaultRoot(); err == nil {
 		serveRoot := filepath.Join(stateRoot, "serve")
@@ -123,11 +113,10 @@ func appendServeScopeRows(rep *Report, rt relevo.Runtime, env Env) {
 		rep.Checks = append(rep.Checks, ServeChecks(env, serveDB, serveRoot, time.Now(), rt.Policy.ServeIsolation(), rt.Policy.ServeIsolationImage(), rt.Policy.ServeIsolationSharedLogins())...)
 	}
 
-	// When a scope block asks for cpu pinning, doctor confirms the user
-	// manager has cpuset delegated (a silently ignored AllowedCPUs shows no
-	// exit code anywhere else) and that the pool names only this host's cores.
-	// A block whose scope is off is skipped, the same rule scopeFromPolicy
-	// applies.
+	// When a scope block asks for cpu pinning, doctor confirms cpuset is
+	// delegated (a silently ignored AllowedCPUs shows no exit code anywhere
+	// else) and the pool names only this host's cores. A block whose scope
+	// is off is skipped.
 	var scopeBlocks []ScopeBlock
 	if sc := enabledScope(rt.Policy.Scope); sc != nil {
 		scopeBlocks = append(scopeBlocks, scopeBlock("scope.allowed_cpus", sc))
@@ -143,8 +132,7 @@ func appendServeScopeRows(rep *Report, rt relevo.Runtime, env Env) {
 // appendPolicyRows adds the ledger, policy, role-source, skill,
 // binding-role, classify and refusal rows, and records the builder refusal
 // on the report. A binding whose role is missing from roles.json fails at
-// round start, so doctor names it. A store error skips the rows silently,
-// as mastermindCheckInput treats its own store read.
+// round start, so doctor names it. A store error skips the rows silently.
 func appendPolicyRows(rep *Report, rt relevo.Runtime, env Env, L config.Loaded) {
 	rep.Checks = append(rep.Checks, ledgerChecks(availability.Gates(relevo.AvailabilityDeps(rt)))...)
 	rep.Checks = append(rep.Checks, policyChecks(resolve.PolicyWarningsFor(rt.RoleRegistry(), rt.Candidates, rt.Policy))...)
@@ -169,9 +157,8 @@ func appendPolicyRows(rep *Report, rt relevo.Runtime, env Env, L config.Loaded) 
 }
 
 // appendSessionRows adds the mastermind, account and login rows. The muse
-// plugin rows probe through this Env's Command, never a muse spawned at
-// another layer: the same seam every other command-backed row uses, so tests
-// stub the inspect answer.
+// plugin rows probe through this Env's Command, the same seam every other
+// command-backed row uses.
 func appendSessionRows(rep *Report, rt relevo.Runtime, env Env, kinds []string, deps Deps) {
 	masterMindIn := mastermindCheckInput(rt, kinds, deps)
 	masterMindIn.MuseInspect = env.Command
@@ -182,15 +169,11 @@ func appendSessionRows(rep *Report, rt relevo.Runtime, env Env, kinds []string, 
 	// which account was checked. No accounts means no rows.
 	rep.Checks = append(rep.Checks, accountChecks(context.Background(), rt.Accounts, env)...)
 
-	// The login rows: whether each configured harness is logged in on this
-	// machine, from local files only.
 	rep.Checks = append(rep.Checks, LoginChecks(env, kinds, WithHomeEnv(accountHomes(rt.Accounts), os.Getenv))...)
 }
 
-// appendHookRows adds the hooks, hook-files and agent-files rows. The hooks
-// row carries how many runs the machine database's run log holds, how many
-// failed in the last day and what the last failure was. A database relevo
-// cannot read leaves the row off, as every other best-effort row does.
+// appendHookRows adds the hooks, hook-files and agent-files rows. A
+// database relevo cannot read leaves the row off.
 func appendHookRows(rep *Report, rt relevo.Runtime) {
 	d, derr := rt.Store.DB()
 	if derr != nil {
@@ -200,11 +183,10 @@ func appendHookRows(rep *Report, rt relevo.Runtime) {
 		rep.Checks = append(rep.Checks, HooksCheck(HooksCheckInput{Runs: runs, Now: rt.Now()}))
 	}
 	// The hook-files row: the scripts this machine's config carries and the
-	// ones a person edited on disk and the applier kept. Nothing else would
-	// ever say so.
+	// ones a person edited on disk and the applier kept.
 	rep.Checks = append(rep.Checks, hookFileCheck(relevo.MachineConfig))
 	// The agent-files row: the harness files this machine's config carries
-	// and the ones a person edited on disk, which neither the applier nor
-	// the re-render overwrites.
+	// and the ones a person edited, which neither the applier nor the
+	// re-render overwrites.
 	rep.Checks = append(rep.Checks, agentFileCheck(relevo.MachineConfig))
 }

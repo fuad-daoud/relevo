@@ -1,9 +1,7 @@
 package setup
 
-// opencode_cli.go asks the opencode question on a terminal: a catalog runs
-// to hundreds of models, so the reader picks providers first, then models
-// -- a short provider's whole list, a long one's recommended shortlist and
-// a name search.
+// opencode_setup.go asks the opencode question on a terminal: a catalog runs
+// to hundreds of models, so the reader picks providers first, then models.
 
 import (
 	"bufio"
@@ -13,12 +11,10 @@ import (
 	"strings"
 )
 
-// opencodeListMax is the longest model list shown whole; a longer provider
-// gets its shortlist and a search instead.
+// opencodeListMax is the longest model list shown whole.
 const opencodeListMax = 30
 
-// opencodeProviderModels is one provider's models, in catalog order, by the
-// model's id under the provider.
+// opencodeProviderModels is one provider's models, in catalog order.
 type opencodeProviderModels struct {
 	name   string
 	models []string
@@ -40,13 +36,12 @@ func opencodeProviders(q Question) []opencodeProviderModels {
 	return out
 }
 
-// opencodeValue is the opencode answer value for one provider's model.
 func opencodeValue(provider, model string) string {
 	return "opencode/" + provider + "/" + model
 }
 
 // askOpencodeModels walks the providers and returns the picked models as
-// opencode answer values, or none.
+// opencode answer values, or [OpencodeNone] when none is picked.
 func askOpencodeModels(w io.Writer, sc *bufio.Scanner, q Question) ([]string, error) {
 	providers := opencodeProviders(q)
 	pq := Question{
@@ -85,8 +80,7 @@ func askOpencodeModels(w io.Writer, sc *bufio.Scanner, q Question) ([]string, er
 	return picks, nil
 }
 
-// shortlistValues are the lineup models the opencode question lists: the
-// starting list a long provider offers once the reader picked it.
+// shortlistValues are the lineup models the opencode question lists.
 func shortlistValues(q Question) []string {
 	var out []string
 	for _, c := range q.Choices {
@@ -106,8 +100,7 @@ func trimOpencode(values []string) []string {
 }
 
 // askProviderModels picks one provider's models: the whole list when it is
-// short, else a few lineup models to start from, then a search. Nothing is
-// pre-picked: Enter adds none.
+// short, else a shortlist plus a search. Enter adds none.
 func askProviderModels(w io.Writer, sc *bufio.Scanner, p opencodeProviderModels, lineup []string) ([]string, error) {
 	var shortlist []string
 	for _, m := range p.models {
@@ -149,9 +142,9 @@ func askProviderModels(w io.Writer, sc *bufio.Scanner, p opencodeProviderModels,
 	return out, nil
 }
 
-// searchProviderModels adds models from a long provider by name: a typed
-// word lists the models holding it to pick from, a typed full id is taken
-// as it is, and an empty line ends the search.
+// searchProviderModels adds models from a long provider by name: a word
+// lists the models holding it, a full id is taken as is, and an empty line
+// ends the search.
 func searchProviderModels(w io.Writer, sc *bufio.Scanner, p opencodeProviderModels, have []string) ([]string, error) {
 	var added []string
 	for {
@@ -209,8 +202,7 @@ func matchingModels(models []string, word string) []string {
 }
 
 // opencodeInventoryText is opencode's part of the probe line: each provider
-// with its model count, since opencode is never asked for a login and the
-// list is what it can run.
+// with its model count, since opencode is never asked for a login.
 func opencodeInventoryText(s HarnessStatus) string {
 	counts := map[string]int{}
 	var order []string

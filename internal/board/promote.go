@@ -5,16 +5,15 @@ import (
 	"path/filepath"
 )
 
-// PromoteToRepo copies a live board into the repo. It is a peek verb: the only
-// database contact is the read-only registry lookup Mastermind already
+// PromoteToRepo copies a live board into the repo. It is a peek verb: the
+// only database contact is the read-only registry lookup Mastermind already
 // does, and there is no daemon, no listener, no server.json and no pointer
-// write -- promoting is not opening the board, so the pointer still names the
-// live board the user is looking at.
+// write -- promoting is not opening the board, so the pointer still names
+// the live board the user is looking at.
 //
 // The destination is <repo>/docs/boards/<name>/board.html and the copy is
-// atomic. A missing source is refused (exit 2), an existing destination without
-// --force is refused naming both the target and the flag, a bad slug and a run
-// outside a repository are usage.
+// atomic. A missing source is refused, an existing destination without
+// --force is refused, and a bad slug or a run outside a repository is usage.
 func PromoteToRepo(deps Deps, cwd, ref, boardName, to string, force bool) error {
 	repoRoot, err := deps.RepoRoot(cwd)
 	if err != nil {

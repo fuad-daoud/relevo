@@ -12,11 +12,10 @@ import (
 )
 
 // LastErrorFile is the state-root slot the failure record lives in: one file,
-// replaced by the next failure rather than appended to.
+// replaced by the next failure.
 const LastErrorFile = "last-error.json"
 
-// LastError is what one coded `internal` failure left behind: enough for a
-// bundle to carry the failing command without a person retyping it.
+// LastError is what one coded `internal` failure left behind.
 type LastError struct {
 	Time    time.Time `json:"time"`
 	Version string    `json:"version"`
@@ -27,10 +26,9 @@ type LastError struct {
 	Next    string    `json:"next"`
 }
 
-// WriteLastError writes e to <root>/last-error.json, replacing whatever was
-// there: the slot holds the newest failure, not a log. The write is a temp file
-// in the same directory and then a rename, owner-only, so a reader never sees
-// half a record. The root itself is created owner-only when it is missing.
+// WriteLastError writes e to <root>/last-error.json: the slot holds the
+// newest failure, not a log. The write is a temp file in the same directory
+// and then a rename, owner-only, so a reader never sees half a record.
 func WriteLastError(root string, e LastError) error {
 	if root == "" {
 		return errors.New("last error: no state root")
@@ -69,8 +67,7 @@ func WriteLastError(root string, e LastError) error {
 	return nil
 }
 
-// ReadLastError reads the slot. A missing file is (LastError{}, false, nil):
-// most runs, and most machines, have never failed.
+// ReadLastError reads the slot; a missing file is (LastError{}, false, nil).
 func ReadLastError(root string) (LastError, bool, error) {
 	if root == "" {
 		return LastError{}, false, nil

@@ -5,25 +5,21 @@ import (
 	"strings"
 )
 
-// Kind is how the running binary was installed.
 type Kind string
 
 const (
 	KindGoInstall  Kind = "go-install"
 	KindLocalBuild Kind = "local-build"
 	// KindRelease is a binary built by release.yml and unpacked from a
-	// published archive, the only kind carrying the distribution stamp with a
-	// clean tag.
+	// published archive.
 	KindRelease Kind = "release"
 	KindUnknown Kind = "unknown"
 )
 
-// DistributionRelease is the only value of main.distribution Detect
-// recognises; any other non-empty value falls through to the existing rules.
+// DistributionRelease is the only main.distribution value Detect recognises.
 const DistributionRelease = "release"
 
-// Inputs is every fact Detect reads; Detect touches no disk and no
-// environment, so this is the whole truth about the decision.
+// Inputs is every fact Detect reads.
 type Inputs struct {
 	Version    string // buildVersion(): a git describe, a module version, or "(devel)"
 	ExeDir     string // filepath.Dir of the resolved executable path
@@ -36,18 +32,15 @@ type Inputs struct {
 	Distribution string
 }
 
-// Detect classifies the install. Pure.
 func Detect(in Inputs) Kind {
-	// Rule 1: the module supplied the version -- a VCS stamp or "(devel)"
-	// means a checkout, not the module cache.
+	// A VCS stamp or "(devel)" means a checkout, not the module cache.
 	if in.FromModule {
 		if in.VCS || in.Version == "(devel)" {
 			return KindLocalBuild
 		}
 		return KindGoInstall
 	}
-	// Rule 2: the release stamp with a clean tag; a dirty or suffixed version
-	// falls through to rule 3 as a local build.
+	// The release stamp with a clean tag; a dirty or suffixed version falls through as a local build.
 	if in.Distribution == DistributionRelease {
 		if v, ok := ParseVersion(in.Version); ok && v.Suffix == "" {
 			return KindRelease
@@ -63,8 +56,8 @@ func Detect(in Inputs) Kind {
 }
 
 // HasVCSRevision reports whether settings carries a non-empty vcs.revision:
-// the signal that separates `go build` in a checkout from `go install
-// ...@v0.13.0` from the module cache, which has no settings at all.
+// the signal that separates `go build` in a checkout from `go install` from
+// the module cache.
 func HasVCSRevision(settings []debug.BuildSetting) bool {
 	for _, s := range settings {
 		if s.Key == "vcs.revision" && s.Value != "" {

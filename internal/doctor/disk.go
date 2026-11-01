@@ -13,9 +13,7 @@ const DefaultTmpWarnBytes int64 = 10 << 30
 
 // TmpRootCheck builds the disk row for one relevo tmp root from the numbers
 // a bounded walk measured. They arrive as plain integers so internal/doctor
-// never imports internal/relevo: the walker lives there, this is where the
-// row is judged. truncated says the walk ran out of budget, which makes every
-// number a floor rather than a reading.
+// never imports internal/relevo; truncated says every number is a floor.
 func TmpRootCheck(rounds, checks, loose int64, truncated bool, warnBytes int64) Check {
 	c := Check{
 		Name:   "tmp root",

@@ -7,10 +7,10 @@ import (
 	"strconv"
 )
 
-// CommentInput is what one `board comment` asks for: the resolution (the
-// --mastermind value, the --board name, an optional scene path), the comment
-// text and author, and the optional position. A nil X/Y places the comment
-// below the scene.
+// CommentInput is what one `board comment` asks for: Ref is the --mastermind
+// value, BoardName the --board name, Arg an optional scene path, and the
+// comment text, author and position. A nil X/Y places the comment below the
+// scene.
 type CommentInput struct {
 	Ref       string
 	BoardName string
@@ -20,10 +20,9 @@ type CommentInput struct {
 	X, Y      *float64
 }
 
-// Comments prints every comment in the resolved scene in scene order:
-// one compact JSON array with asJSON, otherwise one tab-separated row each. It
-// is read-only: a missing scene is no comments, exit 0, nothing created, and
-// the pointer is never written.
+// Comments prints every comment in the resolved scene in scene order. It is
+// read-only: a missing scene is no comments, exit 0, nothing created, and the
+// pointer is never written.
 func Comments(deps Deps, cwd, ref, boardName, arg string, asJSON bool) error {
 	res, err := ResolveScene(deps, cwd, ref, boardName, arg)
 	if err != nil {
@@ -48,8 +47,8 @@ func Comments(deps Deps, cwd, ref, boardName, arg string, asJSON bool) error {
 }
 
 // WriteComment appends one comment to the resolved scene and prints
-// comment: <id>  <path>. It selects like `board`: a live scene whose name did
-// not come from the pointer writes the pointer; a repo scene never does.
+// comment: <id>  <path>. A live scene whose name did not come from the
+// pointer writes the pointer; a repo scene never does.
 func WriteComment(deps Deps, cwd string, in CommentInput) error {
 	if in.Text == "" {
 		return usagef("relevo board comment: --text is required and must not be empty")
@@ -89,7 +88,6 @@ func WriteComment(deps Deps, cwd string, in CommentInput) error {
 	return nil
 }
 
-// number renders one position without a trailing zero, for the text row.
 func number(f float64) string {
 	return strconv.FormatFloat(f, 'f', -1, 64)
 }

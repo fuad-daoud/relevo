@@ -14,8 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// The caps every projection applies. A bundle carries tails, never records: the
-// newest rows of a log, and one line of any free text it keeps.
+// The caps every projection applies: a bundle carries tails, never records.
 const (
 	roundEntries = 5
 	hookRuns     = 20
@@ -23,9 +22,8 @@ const (
 	noteRunes    = 200
 )
 
-// The --logs caps: one round's report and diff body, and the transcript tail's
-// line count. They live here because they are the bundle's budget for a body,
-// not the verb's.
+// The --logs caps: the bundle's budget for one round's body and the
+// transcript tail.
 const (
 	LogReportBytes = 16 << 10
 	LogDiffBytes   = 64 << 10
@@ -33,14 +31,12 @@ const (
 )
 
 // DescriptionSection is the --body file as the bundle's first section: the
-// caller's own lines, ahead of every diagnostic section. The flag was given, so
-// the section is here even when the file held no text.
+// flag was given, so the section is here even when the file held no text.
 func DescriptionSection(lines []string) Section {
 	return Section{Name: SectionDescription, Lines: lines}
 }
 
-// EnvFacts is what the environment section projects: the build's own facts,
-// never a dump of the process environment.
+// EnvFacts is what the environment section projects: the build's own facts.
 type EnvFacts struct {
 	Version      string
 	Distribution string
@@ -50,8 +46,6 @@ type EnvFacts struct {
 	StateRoot    string
 }
 
-// EnvironmentSection names the binary that produced the bundle and the machine
-// it ran on.
 func EnvironmentSection(f EnvFacts) Section {
 	return Section{
 		Name:    SectionEnvironment,
@@ -67,7 +61,6 @@ func EnvironmentSection(f EnvFacts) Section {
 	}
 }
 
-// LastErrorSection projects the recorded failure, or says there is none.
 func LastErrorSection(e LastError, ok bool) Section {
 	if !ok {
 		return Section{Name: SectionLastError, Lines: []string{"no failure recorded"}}
@@ -86,8 +79,7 @@ func LastErrorSection(e LastError, ok bool) Section {
 	}
 }
 
-// DoctorDoc mirrors the document `relevo doctor --json` prints, so this package
-// projects a doctor report without importing the command that runs one.
+// DoctorDoc mirrors the document `relevo doctor --json` prints.
 type DoctorDoc struct {
 	UsableBuilder  bool          `json:"usable_builder"`
 	NoCandidates   bool          `json:"no_candidates"`
@@ -97,8 +89,7 @@ type DoctorDoc struct {
 	Checks         []DoctorCheck `json:"checks"`
 }
 
-// DoctorCheck is one doctor row: the four facts the human table renders, plus
-// the group it belongs to and whether the probe could not answer at all.
+// DoctorCheck is one doctor row.
 type DoctorCheck struct {
 	Group       string
 	Name        string
@@ -108,8 +99,6 @@ type DoctorCheck struct {
 	ProbeFailed bool
 }
 
-// DoctorSection projects the doctor run: its verdict counts, then one row per
-// check with the fix the doctor printed.
 func DoctorSection(d DoctorDoc) Section {
 	sec := Section{
 		Name: SectionDoctor,
@@ -130,9 +119,8 @@ func DoctorSection(d DoctorDoc) Section {
 	return sec
 }
 
-// StatusSection projects the status rows the bundle carries: identity, routing
-// and the pending payload's kind. The free text a row also holds -- the tail,
-// the detail, the labels -- is never taken.
+// StatusSection projects the status rows the bundle carries; the free text a
+// row also holds is never taken.
 func StatusSection(rep view.Report) Section {
 	sec := Section{
 		Name:    SectionStatus,
@@ -148,8 +136,8 @@ func StatusSection(rep view.Report) Section {
 	return sec
 }
 
-// where is the one word the bundle carries about a binding's builder: the plan
-// says local or remote, and a server that is named means remote.
+// where is the one word the bundle carries about a binding's builder: a
+// server that is named means remote.
 func where(server string) string {
 	if server != "" {
 		return "remote"
@@ -157,7 +145,6 @@ func where(server string) string {
 	return "local"
 }
 
-// pendingKind is the one fact the bundle keeps about a waiting payload.
 func pendingKind(p *view.PendingInfo) string {
 	if p == nil {
 		return ""
@@ -172,7 +159,8 @@ type BindingLog struct {
 }
 
 // RoundsSection projects the newest entries of the selected bindings' logs:
-// five per binding, one binding with name, one round with round.
+// five per binding; a non-empty name keeps only that binding, and a non-zero
+// round only that round.
 func RoundsSection(logs []BindingLog, name string, round int) Section {
 	sec := Section{
 		Name: SectionRounds,
@@ -209,10 +197,8 @@ func tailRound(entries []store.LogEntry, round, n int) []store.LogEntry {
 	return out
 }
 
-// roundRow is one log entry as the bundle keeps it. The payload and the paths
-// the entry also holds are left out: the entry's facts are the report, its
-// bodies are content. The note is kept, cut to noteRunes, because it carries
-// the reason a report was rejected.
+// roundRow is one log entry as the bundle keeps it; the note is kept, cut to
+// noteRunes, because it carries the reason a report was rejected.
 func roundRow(name string, e store.LogEntry) []string {
 	var tokens usage.Tokens
 	if e.Usage != nil {
@@ -228,7 +214,6 @@ func roundRow(name string, e store.LogEntry) []string {
 	}
 }
 
-// HooksSection projects the newest hook runs, with the output left out.
 func HooksSection(runs []hooks.HookRun) Section {
 	sec := Section{
 		Name:    SectionHooks,
@@ -243,7 +228,6 @@ func HooksSection(runs []hooks.HookRun) Section {
 	return sec
 }
 
-// tailRuns keeps the newest n runs.
 func tailRuns(runs []hooks.HookRun, n int) []hooks.HookRun {
 	if len(runs) > n {
 		return runs[len(runs)-n:]
@@ -259,7 +243,6 @@ func hookName(argv []string) string {
 	return filepath.Base(argv[0])
 }
 
-// GatesSection projects the live gates, then the newest ledger entries.
 func GatesSection(gates []availability.Gate, ledger availability.Ledger) Section {
 	sec := Section{
 		Name:    SectionGates,
@@ -284,7 +267,6 @@ func GatesSection(gates []availability.Gate, ledger availability.Ledger) Section
 	return sec
 }
 
-// DaemonSection projects the daemon lock's answer and the daemon's own record.
 func DaemonSection(running bool, info store.DaemonInfo, found bool) Section {
 	sec := Section{Name: SectionDaemon, Columns: []string{"fact", "value"}}
 	add := func(k, v string) { sec.Rows = append(sec.Rows, []string{k, v}) }
@@ -311,8 +293,7 @@ func Truncate(text string, limit int) string {
 	return text[:cut] + "\n… truncated at " + strconv.Itoa(limit) + " bytes"
 }
 
-// TailLines keeps the newest n lines of text: the transcript tail --logs
-// carries is the last lines of the stream, never the whole of it.
+// TailLines keeps the newest n lines of text.
 func TailLines(text string, n int) string {
 	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
 	if n > 0 && len(lines) > n {
@@ -321,7 +302,6 @@ func TailLines(text string, n int) string {
 	return strings.Join(lines, "\n")
 }
 
-// truncateRunes caps s at n runes and marks the cut.
 func truncateRunes(s string, n int) string {
 	if utf8.RuneCountInString(s) <= n {
 		return s

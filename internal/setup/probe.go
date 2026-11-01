@@ -22,19 +22,19 @@ type Runner interface {
 	Run(name string, args ...string) (stdout []byte, exit int, err error)
 }
 
-// SetupEnv is both seams setup reads: the agent-install files management the
-// install step walks, plus the runner the probe commands run through.
+// SetupEnv is both seams setup reads: the agent-install files and the
+// runner the probe commands run through.
 type SetupEnv interface {
 	harness.InstallEnv
 	Runner
 }
 
-// probeDeadline bounds one probe command: a hung CLI must not stall setup.
+// probeDeadline bounds one probe command so a hung CLI cannot stall setup.
 const probeDeadline = 10 * time.Second
 
 var errProbeTimeout = errors.New("probe command timed out")
 
-// runnerEnv is an install env with the OS runner added. The deadline sits in
+// runnerEnv is an install env with the OS runner added; the deadline sits in
 // the exec context, so a hung CLI's process dies instead of lingering.
 type runnerEnv struct{ harness.InstallEnv }
 
@@ -72,10 +72,8 @@ type HarnessStatus struct {
 	Catalog       []string
 }
 
-// Inventory is everything a probe produced: the wizard harnesses' statuses
-// plus the notes the front end prints as they are. Only the harnesses the
-// wizard can configure -- agy, claude, codex, muse and opencode -- get
-// status entries.
+// Inventory is everything a probe produced: the statuses of the harnesses
+// the wizard can configure plus the notes the front end prints as they are.
 type Inventory struct {
 	Harnesses []HarnessStatus
 	Notes     []string
@@ -91,24 +89,21 @@ var loginCommands = map[string]string{
 	"agy":    "run agy once to sign in",
 }
 
-// claudeAliases are the only candidate models claude ever names, because
-// claude has no model-list command and the aliases always resolve.
+// claudeAliases are the only candidate models claude ever names: claude has
+// no model-list command and the aliases always resolve.
 var claudeAliases = []string{"sonnet", "opus", "haiku"}
 
 // museModels is muse's whole fixed catalog, in default order: muse names no
-// model-list command either, the first entry is the offer's default pick,
-// and these always resolve.
+// model-list command either; the first entry is the offer's default pick,
+// and all of these always resolve.
 var museModels = []string{"muse-spark-1.3", "muse-spark-1.2", "muse-wonder-1.0"}
 
-// museEfforts is every effort each muse model runs at, lightest first.
 var museEfforts = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
 
-// museDefaultEffort is the effort a muse model runs at when none is picked.
 const museDefaultEffort = "high"
 
 // Probe runs each harness's status and model commands through the env's
-// runner and reports what it found. A harness not on PATH gets no status at
-// all.
+// runner and reports what it found.
 func Probe(env SetupEnv) Inventory {
 	var inv Inventory
 	var kinds []string
@@ -118,8 +113,7 @@ func Probe(env SetupEnv) Inventory {
 		}
 		kinds = append(kinds, h.Kind)
 	}
-	// Each CLI takes seconds to answer, so the harnesses probe side by side;
-	// the statuses keep harness order.
+	// Each CLI takes seconds to answer, so the harnesses probe side by side.
 	inv.Harnesses = make([]HarnessStatus, len(kinds))
 	var wg sync.WaitGroup
 	for i, kind := range kinds {
@@ -133,8 +127,8 @@ func Probe(env SetupEnv) Inventory {
 	return inv
 }
 
-// probeTimeoutFor is how long one probe command may take. An env may name a
-// shorter value so a test can bound its own clock on a blocking fake.
+// probeTimeoutFor is how long one probe command may take; an env may name a
+// shorter value so a test can bound its own clock.
 func probeTimeoutFor(env SetupEnv) time.Duration {
 	if t, ok := env.(interface{ ProbeTimeout() time.Duration }); ok {
 		return t.ProbeTimeout()
@@ -142,10 +136,8 @@ func probeTimeoutFor(env SetupEnv) time.Duration {
 	return probeDeadline
 }
 
-// getenvFor is how a probe reads one environment variable. An env may
-// inject its own values so a test sets XDG_CONFIG_HOME or META_API_KEY on
-// the fake instead of the real process environment; otherwise the process's
-// own environment answers.
+// getenvFor is how a probe reads one environment variable; an env may inject
+// its own values so a test need not touch the process environment.
 func getenvFor(env SetupEnv) func(string) string {
 	if g, ok := env.(interface{ Getenv(string) string }); ok {
 		return g.Getenv
@@ -153,9 +145,8 @@ func getenvFor(env SetupEnv) func(string) string {
 	return os.Getenv
 }
 
-// runProbe runs one command through env.Run under the probe timeout. The
-// guard keeps a runner that blocks instead of timing out -- a wrapper on a
-// remote call, say -- from stalling Probe too.
+// runProbe runs one command through env.Run under the probe timeout; a runner
+// that blocks instead of timing out must not stall Probe either.
 func runProbe(env SetupEnv, name string, args ...string) (stdout []byte, exit int, err error) {
 	type outcome struct {
 		out  []byte
@@ -175,7 +166,6 @@ func runProbe(env SetupEnv, name string, args ...string) (stdout []byte, exit in
 	}
 }
 
-// probeHarness fills one wizard harness's status from its own commands.
 func probeHarness(env SetupEnv, kind string) HarnessStatus {
 	s := HarnessStatus{Harness: kind, OnPath: true, Login: loginCommands[kind]}
 	switch kind {
@@ -198,9 +188,8 @@ func probeHarness(env SetupEnv, kind string) HarnessStatus {
 	return s
 }
 
-// probeClaude asks `claude auth status`: logged in is its JSON's loggedIn
-// flag. Anything else -- a bad exit, or stdout that does not parse -- is not
-// logged in.
+// probeClaude asks `claude auth status`; anything but its JSON's loggedIn
+// flag is not logged in.
 func probeClaude(env SetupEnv) (bool, []string) {
 	out, exit, err := runProbe(env, "claude", "auth", "status")
 	if err != nil || exit != 0 {
@@ -225,8 +214,7 @@ type codexEntry struct {
 	} `json:"supported_reasoning_levels"`
 }
 
-// probeCodex asks `codex login status` -- exit 0 is logged in -- and then
-// `codex debug models` for the offer.
+// probeCodex asks `codex login status`, then `codex debug models` for the offer.
 func probeCodex(env SetupEnv) (bool, []codexEntry) {
 	_, exit, err := runProbe(env, "codex", "login", "status")
 	if err != nil || exit != 0 {
@@ -262,9 +250,8 @@ func codexOffer(listed []codexEntry) ([]string, map[string][]string, map[string]
 	return models, efforts, defaults
 }
 
-// codexModels keeps the "list" entries and orders them by ascending
-// priority. Stdout malformed, or a models command that says nothing, is no
-// offer rather than a failed login.
+// codexModels keeps the "list" entries, ordered by ascending priority.
+// Malformed stdout is no offer rather than a failed login.
 func codexModels(stdout []byte) []codexEntry {
 	var entries []codexEntry
 	if json.Unmarshal(stdout, &entries) != nil {
@@ -286,8 +273,7 @@ func codexModels(stdout []byte) []codexEntry {
 	return listed
 }
 
-// museAuthPath is where muse keeps its login file: $XDG_CONFIG_HOME/muse/
-// auth.json when XDG_CONFIG_HOME is set, else the home-relative default.
+// museAuthPath is where muse keeps its login file.
 func museAuthPath(env SetupEnv) (string, error) {
 	if xdg := getenvFor(env)("XDG_CONFIG_HOME"); xdg != "" {
 		return filepath.Join(xdg, "muse", "auth.json"), nil
@@ -296,10 +282,9 @@ func museAuthPath(env SetupEnv) (string, error) {
 }
 
 // probeMuse reports whether muse can run a session: META_API_KEY set wins
-// outright, else the auth file's presence decides. A file read failing with
-// anything other than not-exist follows the ReadFile contract -- present,
-// differs -- and reads as logged in; a file no path can be found for reads
-// as logged out. No muse command runs: this is a local check only.
+// outright, else the auth file's presence decides, any read failure but
+// not-exist reading as logged in. No muse command runs: this is a local
+// check only.
 func probeMuse(env SetupEnv) bool {
 	if getenvFor(env)("META_API_KEY") != "" {
 		return true
@@ -339,8 +324,8 @@ func probeAgy(env SetupEnv) (bool, []string) {
 	return false, nil
 }
 
-// agyModels keeps each line's first tab-separated field, skipping the
-// "Fetching ..." progress line and blanks.
+// agyModels keeps each line's first tab-separated field, skipping blanks and
+// the "Fetching ..." progress line.
 func agyModels(stdout []byte) []string {
 	var models []string
 	for _, line := range strings.Split(string(stdout), "\n") {

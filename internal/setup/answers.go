@@ -5,12 +5,10 @@ import (
 	"strings"
 )
 
-// ParseAnswer validates one raw value against q's choices and returns the
-// values that flow on. A multi question splits on commas, keeping the order;
-// a candidate question takes each token as a choice value or a choice value
-// plus a trailing `:`-reasoning effort; a yes/no question also takes the
-// y/n a TTY prompt produces and hands back the spelled value. A token naming
-// no choice is an error that lists the valid values.
+// ParseAnswer validates one raw value against q's choices. A multi question
+// splits on commas, keeping the order; a candidate token may carry a `:`-effort;
+// a yes/no question also takes a TTY's y/n. A token naming no choice errors,
+// listing the valid values.
 func ParseAnswer(q Question, raw string) ([]string, error) {
 	var tokens []string
 	if q.Multi {
@@ -31,11 +29,9 @@ func ParseAnswer(q Question, raw string) ([]string, error) {
 	return out, nil
 }
 
-// matchChoice reports the canonical value one raw token names: a choice
-// value verbatim; on a yes/no pair, also the y/n a prompt abbreviates; on a
-// candidate question, also a choice with one of its efforts after the model.
-// A model answered without an effort runs bare where it can, and at its
-// default where agy names no model without one.
+// matchChoice reports the canonical value one raw token names. A model
+// answered without an effort runs bare where it can, and at its default
+// where agy names no model without one.
 func matchChoice(q Question, token string) (string, bool) {
 	if token == "" {
 		return "", false
@@ -56,7 +52,6 @@ func matchChoice(q Question, token string) (string, bool) {
 	return valueAt(c, effort), true
 }
 
-// yesNoPair reports whether a question's choices are just the yes/no pair.
 func yesNoPair(q Question) bool {
 	if len(q.Choices) != 2 {
 		return false
@@ -69,7 +64,6 @@ func yesNoPair(q Question) bool {
 	return true
 }
 
-// validValues lists a question's choice values for an error that names them.
 func validValues(q Question) string {
 	vals := make([]string, 0, len(q.Choices))
 	for _, c := range q.Choices {

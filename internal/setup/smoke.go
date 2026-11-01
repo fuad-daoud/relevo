@@ -1,9 +1,8 @@
 package setup
 
-// smoke.go owns the smoke round: a throwaway git repository under the state
-// root, one real builder round bound to it with the current MasterMind, and
-// proof from HELLO.md before the pass cleans up. A failure keeps everything
-// in place for the transcript.
+// smoke.go owns the smoke round: a throwaway git repository, one real builder
+// round bound to it, and proof from HELLO.md. A failure keeps everything in
+// place for the transcript.
 
 import (
 	"context"
@@ -23,17 +22,15 @@ import (
 	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
-// SmokeName is the binding and the repo name the smoke round uses: one
-// run's state, reusable by name for the next run.
+// SmokeName is the binding and the repo name the smoke round uses.
 const SmokeName = "setup-smoke"
 
 // smokeBudget bounds the wait: a healthy machine closes the round in about a
-// minute, so ten of them means a builder that is stuck, not slow.
+// minute, so ten minutes means a builder that is stuck, not slow.
 const smokeBudget = 10 * time.Minute
 
-// smokePlanText is the plan the smoke round sends. Its artifact means
-// "the builder ran and closed" and "the builder did the plan" are one check:
-// HELLO.md holding the line.
+// smokePlanText is the plan the smoke round sends; HELLO.md holding the line
+// proves the builder ran and did the plan.
 func smokePlanText() string {
 	return "Create HELLO.md in this repository's root containing exactly one line:\n\n" +
 		"relevo works\n\n" +
@@ -42,8 +39,8 @@ func smokePlanText() string {
 }
 
 // runSetupSmoke drives one round on a throwaway tree. Errors before the
-// round was sent name the doctor; errors after it was sent name the
-// transcript, and everything stays on disk.
+// round was sent name the doctor, errors after it name the transcript, and
+// everything stays on disk.
 func runSetupSmoke(ctx context.Context, deps Deps, builderToken string) (SetupStepDoc, error) {
 	started := time.Now()
 	rt, err := deps.Refresh()
@@ -61,10 +58,8 @@ func runSetupSmoke(ctx context.Context, deps Deps, builderToken string) (SetupSt
 	return setupSmokeFinish(ctx, deps, rt, b, round, started, smokeDir)
 }
 
-// smokeStepDoc renders a smoke failure that happened before or during the
-// round as its step row: a roundless tree is what `relevo doctor` inspects,
-// so that is the next the row names. A failure the caller already shaped
-// passes through like a StepError, keeping its own message and exit.
+// smokeStepDoc renders a smoke failure as its step row; a failure the caller
+// already shaped passes through, keeping its own message and exit.
 func smokeStepDoc(err error) error {
 	var se *StepError
 	if errors.As(err, &se) {
@@ -78,7 +73,7 @@ func smokeStepDoc(err error) error {
 }
 
 // classifyTransport shapes a smoke-transport failure through the Deps hook;
-// a nil hook keeps the raw error, whose row truncates and exits internal.
+// a nil hook keeps the raw error.
 func classifyTransport(deps Deps, err error) error {
 	if deps.ClassifyTransport != nil {
 		return deps.ClassifyTransport(err)
@@ -87,7 +82,7 @@ func classifyTransport(deps Deps, err error) error {
 }
 
 // setupSmokePrepare frees a leftover smoke binding, then rebuilds the
-// throwaway repository with one committed README from scratch.
+// throwaway repository from scratch.
 func setupSmokePrepare(ctx context.Context, rt relevo.Runtime) (string, error) {
 	root, err := tmpdir.DefaultRoot()
 	if err != nil {
@@ -110,9 +105,8 @@ func setupSmokePrepare(ctx context.Context, rt relevo.Runtime) (string, error) {
 	return smokeDir, nil
 }
 
-// smokeRepo gives the round's tree the one committed README a fresh clone
-// would have; the commit's identity comes from flags because the repo is
-// throwaway and the machine's own name must not leak into it.
+// smokeRepo gives the round's tree one committed README; the commit's identity
+// comes from flags so the machine's own name never leaks into it.
 func smokeRepo(repo string) error {
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		return err
@@ -142,8 +136,8 @@ func smokeGit(dir string, args ...string) error {
 	return nil
 }
 
-// setupSmokeRound binds the throwaway tree to the first builder candidate,
-// hands it the plan, and returns the round it opened.
+// setupSmokeRound binds the throwaway tree, hands it the plan, and returns
+// the round it opened.
 func setupSmokeRound(ctx context.Context, deps Deps, rt relevo.Runtime, smokeDir, builderToken string) (int, store.Binding, error) {
 	repo := filepath.Join(smokeDir, "repo")
 	b, err := setupSmokeBind(ctx, deps, rt, repo, builderToken)
@@ -162,7 +156,7 @@ func setupSmokeRound(ctx context.Context, deps Deps, rt relevo.Runtime, smokeDir
 }
 
 // setupSmokeBind is one bind without a feature flag; when no MasterMind
-// resolves for this process, setup registers its own named setup first.
+// resolves, setup registers its own named setup first.
 func setupSmokeBind(ctx context.Context, deps Deps, rt relevo.Runtime, repo, builderToken string) (store.Binding, error) {
 	opts := relevo.BindOptions{
 		Name:      SmokeName,
@@ -185,10 +179,9 @@ func setupSmokeBind(ctx context.Context, deps Deps, rt relevo.Runtime, repo, bui
 	return b, nil
 }
 
-// setupRegisterMasterMind is the MasterMind setup registers as itself when
-// no record resolves: the wizard runs from a shell, not from a session to
-// detect, so it names an explicit kind and session the way `mastermind init
-// --kind --session` does.
+// setupRegisterMasterMind is the MasterMind setup registers as itself when no
+// record resolves: the wizard runs from a shell, so it names an explicit
+// kind and session.
 func setupRegisterMasterMind(deps Deps, rt relevo.Runtime) (mastermind.Record, error) {
 	reg, err := deps.MastermindRegistry(rt)
 	if err != nil {
@@ -203,9 +196,8 @@ func setupRegisterMasterMind(deps Deps, rt relevo.Runtime) (mastermind.Record, e
 }
 
 // setupSmokeFinish waits with the feed running and proves the plan's
-// artifact: HELLO.md holding the line. A pass shows the file and the commit
-// the builder made, then cleans the whole throwaway state up; a failure
-// keeps it for the transcript command the row names.
+// artifact. A pass cleans the whole throwaway state up; a failure keeps it
+// for the transcript command the row names.
 func setupSmokeFinish(ctx context.Context, deps Deps, rt relevo.Runtime, b store.Binding, round int, started time.Time, smokeDir string) (SetupStepDoc, error) {
 	stopFeed := startSmokeFeed(rt, SmokeName, smokeDir)
 	name, res, err := relevo.Wait(ctx, rt, relevo.WaitOptions{
@@ -240,10 +232,9 @@ func setupSmokeFinish(ctx context.Context, deps Deps, rt relevo.Runtime, b store
 }
 
 // SmokeLimitFailure is the failure a round gets when its last builder hit a
-// usage limit with nobody left to take over: the account's problem, not
-// relevo's, so the row says when it resets and how to add a fallback. The
-// throwaway state goes, because its transcript only repeats the limit.
-// nil when the round failed some other way.
+// usage limit with nobody left to take over; the row says when it resets and
+// how to add a fallback. The throwaway state goes, because its transcript
+// only repeats the limit. nil when the round failed some other way.
 func SmokeLimitFailure(ctx context.Context, rt relevo.Runtime, smokeDir string) error {
 	b, err := rt.Store.Load(SmokeName)
 	if err != nil || b.BuilderCandidate == "" {
@@ -268,8 +259,6 @@ func SmokeLimitFailure(ctx context.Context, rt relevo.Runtime, smokeDir string) 
 	return nil
 }
 
-// smokeHelloOkay proves the artifact: HELLO.md holding the line is what the
-// round's whole point buys.
 func smokeHelloOkay(repo string) error {
 	body, err := os.ReadFile(filepath.Join(repo, "HELLO.md"))
 	if err != nil {
@@ -282,8 +271,7 @@ func smokeHelloOkay(repo string) error {
 }
 
 // smokeProof is what the builder left, for the row to show before the
-// throwaway repository goes: the file it wrote and the commit it made on top
-// of the repository's first one.
+// throwaway repository goes.
 func smokeProof(repo string) string {
 	proof := ""
 	if body, err := os.ReadFile(filepath.Join(repo, "HELLO.md")); err == nil {
@@ -298,9 +286,8 @@ func smokeProof(repo string) string {
 	return proof
 }
 
-// smokePassDetail names the builder that closed the round, which differs
-// from the bound one when a usage limit switched it mid-round; saying so
-// shows the newcomer that the fallback order works.
+// smokePassDetail names the builder that closed the round, which differs from
+// the bound one when a usage limit switched it mid-round.
 func smokePassDetail(rt relevo.Runtime, bound store.Binding, took time.Duration) string {
 	first := rt.Candidates.NameOf(bound.BuilderCandidate)
 	last := first

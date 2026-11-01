@@ -29,7 +29,6 @@ const (
 	maxBinary    = 256 << 20
 )
 
-// Sentinel errors FetchBinary returns, each wrapped with the URL or tag by the caller side.
 var (
 	ErrNoChecksum       = errors.New("no checksum for the archive")
 	ErrBadTag           = errors.New("not a release tag")
@@ -38,8 +37,7 @@ var (
 	ErrTooLarge         = errors.New("response too large")
 )
 
-// Downloader fetches a release archive, verifies it against checksums.txt and
-// extracts the relevo binary into a temp file beside the running executable.
+// Downloader fetches a release archive, verifies it, and extracts the relevo binary.
 type Downloader struct {
 	Base   string       // download base URL; tests pass an httptest URL
 	Client *http.Client // nil uses one with DownloadTimeout
@@ -83,7 +81,7 @@ func (d *Downloader) FetchBinary(ctx context.Context, tag, goos, goarch, destDir
 }
 
 // fetchChecksum returns the SHA-256 for archiveName from checksums.txt.
-// Exactly one line must name it, with a 64-char lowercase-hex first field.
+// Exactly one line must name it.
 func (d *Downloader) fetchChecksum(ctx context.Context, url, archiveName string) (string, error) {
 	body, err := d.get(ctx, url, maxChecksums)
 	if err != nil {
@@ -169,8 +167,7 @@ func extractBinary(data []byte) ([]byte, error) {
 	return nil, ErrNoBinary
 }
 
-// writeTempBinary creates a temp file in destDir, writes bin, and makes it
-// executable; every failure removes the temp file.
+// writeTempBinary creates a temp file in destDir, writes bin, and makes it executable.
 func writeTempBinary(destDir string, bin []byte) (string, error) {
 	f, err := os.CreateTemp(destDir, ".relevo-update-*")
 	if err != nil {
@@ -200,7 +197,6 @@ func writeTempBinary(destDir string, bin []byte) (string, error) {
 	return tmp, nil
 }
 
-// isLowerHex64 reports whether s is exactly 64 lowercase hex characters.
 func isLowerHex64(s string) bool {
 	if len(s) != 64 {
 		return false

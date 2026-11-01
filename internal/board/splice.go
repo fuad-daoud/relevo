@@ -6,11 +6,10 @@ import (
 )
 
 // AppendElement inserts element bytes before the top-level elements array's
-// closing bracket and leaves every other byte of scene unchanged: no comma
-// into an empty array, and nothing re-encoded. The span comes from a JSON
-// token walk plus InputOffset, never a whole-document unmarshal, so a scene
-// with unknown or non-canonical fields round-trips untouched. A document that
-// is not an object whose elements is an array is ErrInvalid.
+// closing bracket and leaves every other byte of scene unchanged. The span
+// comes from a JSON token walk plus InputOffset, never a whole-document
+// unmarshal, so unknown or non-canonical fields round-trip untouched. A
+// document that is not an object whose elements is an array is ErrInvalid.
 func AppendElement(scene, element []byte) ([]byte, error) {
 	dec := json.NewDecoder(bytes.NewReader(scene))
 	tok, err := dec.Token()

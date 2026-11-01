@@ -1,8 +1,7 @@
 package setup
 
 // run.go is the setup wizard's front end: the run's documents, the inventory
-// line and the prompts. The apply steps live in apply.go and smoke.go; the
-// probed facts and the starter configuration the steps store sit beside them.
+// line and the prompts.
 
 import (
 	"context"
@@ -22,8 +21,8 @@ import (
 )
 
 // setupAnswerNotes is where an answer for a dropped question is noted, so an
-// ignored answer is never silent. nil asks the note writer for stderr each
-// time, so a test's swapped process streams still see it.
+// ignored answer is never silent; nil means os.Stderr as it stands at print
+// time.
 var setupAnswerNotes io.Writer
 
 func answerNoteWriter() io.Writer {
@@ -33,26 +32,21 @@ func answerNoteWriter() io.Writer {
 	return os.Stderr
 }
 
-// setupPromptStream is where the numbered prompts render, before the answer
-// is read from stdin. Under --json the verb never prompts.
+// setupPromptStream is where the numbered prompts render. Under --json the
+// verb never prompts.
 var setupPromptStream io.Writer = os.Stdout
 
-// signalContext builds the context the smoke round's wait passes through: an
-// interrupt ends the wait and the run like any other blocking verb.
 func signalContext() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 }
 
 // Run starts one run: probe, refuse the states the machine alone explains,
-// print the inventory, and move the questions into answers either by flag or
-// by prompt.
+// and move the questions into answers either by flag or by prompt.
 func Run(rt relevo.Runtime, deps Deps, answersFlag []string, asJSON, stdinTTY, stdoutTTY bool) error {
 	ctx, stop := signalContext()
 	defer stop()
 
 	w := deps.Notices
-	// The probe runs every CLI's status and model commands, seconds of
-	// silence without this line.
 	fmt.Fprintln(w, "checking which coding agents are installed and logged in...")
 	inv := Probe(deps.Env)
 	if deps.InSandbox {
@@ -103,8 +97,7 @@ func Run(rt relevo.Runtime, deps Deps, answersFlag []string, asJSON, stdinTTY, s
 
 // setupPrecheck refuses before anything prints when the machine itself is
 // the problem: no wizard harness on PATH at all, or none logged in. Both
-// refusals are Build's own messages asked for with no answers at all, so the
-// wording keeps init's shape instead of a second copy.
+// refusals are Build's own messages, so the wording keeps init's shape.
 func setupPrecheck(inv Inventory) error {
 	lcd := len(inv.Harnesses) == 0
 	if _, err := Build(inv, nil); err != nil && (lcd || isNotAvailable(err)) {
@@ -122,8 +115,8 @@ func isNotAvailable(err error) bool {
 }
 
 // setupGroundedAnswers names the recommendations a rerun keeps: the stored
-// builder/planner/tier values are the standing answers, and what plugin
-// install and service unit already live here drop their questions.
+// values are the standing answers, and an installed plugin or present
+// service unit drops its question.
 func setupGroundedAnswers(rt relevo.Runtime, inv Inventory, unitPresent bool) (Answers, Answers, error) {
 	current, err := storedSetupAnswers(rt)
 	if err != nil {
@@ -133,8 +126,7 @@ func setupGroundedAnswers(rt relevo.Runtime, inv Inventory, unitPresent bool) (A
 	return RecommendedAnswers(inv, standing), standing, nil
 }
 
-// storedSetupAnswers reads the configured values a rerun keeps: the builder
-// actor's candidates, the planner actor's first pick, and policy's ceiling.
+// storedSetupAnswers reads the configured values a rerun keeps.
 func storedSetupAnswers(rt relevo.Runtime) (Answers, error) {
 	L, err := rt.Config.Load()
 	if err != nil {
@@ -155,9 +147,8 @@ func storedSetupAnswers(rt relevo.Runtime) (Answers, error) {
 	return out, nil
 }
 
-// storedActorRefs turns a stored actor's candidate names into the
-// harness/provider/model tokens the setup questions speak, in the actor's
-// own order; a name the candidate set does not hold is skipped.
+// storedActorRefs turns a stored actor's candidate names into the tokens the
+// setup questions speak; a name the candidate set does not hold is skipped.
 func storedActorRefs(a roles.Actor, set *candidate.Set) []string {
 	refs := make([]string, 0, len(a.Candidates))
 	for _, e := range a.Candidates {
@@ -180,8 +171,8 @@ func storedActorRef(name string, set *candidate.Set) string {
 }
 
 // setupStandingAnswers merges the two install facts into the stored answers:
-// an installed plugin and a present service unit are standing yes/nos, and
-// their questions drop while they stay.
+// an installed plugin or a present service unit is a standing yes, so its
+// question drops while it stays.
 func setupStandingAnswers(current Answers, pluginInstalled, unitPresent bool) Answers {
 	out := make(Answers, len(current)+2)
 	for id, vals := range current {
@@ -196,8 +187,7 @@ func setupStandingAnswers(current Answers, pluginInstalled, unitPresent bool) An
 	return out
 }
 
-// claudeConfigDir is where Claude Code keeps its plugins: CLAUDE_CONFIG_DIR
-// when set, else ~/.claude.
+// claudeConfigDir is where Claude Code keeps its plugins.
 func claudeConfigDir() string {
 	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
 		return dir
@@ -207,21 +197,19 @@ func claudeConfigDir() string {
 }
 
 // sandboxServiceNote says why an env sandbox gets no service question: the
-// unit is the host's one relevo.service, so installing it from a sandbox
-// would restart the developer's own daemon on the sandbox binary.
+// unit is the host's, so a sandbox install would restart the developer's own
+// daemon on the sandbox binary.
 const sandboxServiceNote = "service: skipped inside an env sandbox; it would replace the host's relevo.service"
 
 // setupAskMode says whether still-open questions are asked on the run's
 // terminals: both stdin and stdout must be character devices, and --json
-// never prompts because its document carries the questions.
+// never prompts.
 func setupAskMode(stdinTTY, stdoutTTY, asJSON bool) bool {
 	return stdinTTY && stdoutTTY && !asJSON
 }
 
-// parseSetupAnswers collects the --answer flags into per-id value lists: a
-// repeated flag appends, each value validates against its own question, and
-// a flag naming a question the standing facts dropped is ignored with a
-// stderr note.
+// parseSetupAnswers collects the --answer flags into per-id value lists; a
+// flag naming a dropped question is ignored with a stderr note.
 func parseSetupAnswers(raw []string, questions []Question) (Answers, error) {
 	out := make(Answers, len(raw))
 	for _, piece := range raw {
@@ -243,8 +231,7 @@ func parseSetupAnswers(raw []string, questions []Question) (Answers, error) {
 	return out, nil
 }
 
-// setupAnswerPiece reads one flag value as "id=value", accepting and dropping
-// the leading --answer spelling.
+// setupAnswerPiece reads one flag value as "id=value".
 func setupAnswerPiece(piece string) (string, string, bool) {
 	extra := strings.TrimPrefix(piece, "--answer")
 	id, value, found := strings.Cut(strings.TrimSpace(extra), "=")
@@ -263,7 +250,6 @@ func findQuestion(qs []Question, id string) (Question, bool) {
 	return Question{}, false
 }
 
-// openSetupQuestions are the questions no given answer fills yet.
 func openSetupQuestions(qs []Question, given Answers) []Question {
 	open := make([]Question, 0, len(qs))
 	for _, q := range qs {
@@ -295,8 +281,6 @@ func setupQuestionsFor(raw []string, questionsFor func(Answers) []Question) ([]Q
 	return questionsFor(given), nil
 }
 
-// withOpencodeAnswer is the standing answers plus an opencode answer, the
-// pair the questions are built over.
 func withOpencodeAnswer(standing, a Answers) Answers {
 	if len(a["opencode"]) == 0 {
 		return standing
@@ -319,8 +303,8 @@ func anyRequired(qs []Question) bool {
 }
 
 // mergeSetupAnswers names every answer the apply carries: the given flags
-// and prompts win, the recommendations fill what nothing answered. A role
-// nothing answered stays empty, so Build derives it from the answers given.
+// and prompts win, the recommendations fill what nothing answered, and a role
+// nothing answered stays empty for Build to derive.
 func mergeSetupAnswers(qs []Question, rec, given Answers) Answers {
 	out := make(Answers, len(qs))
 	for _, q := range qs {
@@ -342,9 +326,7 @@ func mergeSetupAnswers(qs []Question, rec, given Answers) Answers {
 	return out
 }
 
-// setupInventoryLine is the one probe line a run prints: every wizard
-// harness on PATH, logged in or not, with the login command naming the way
-// in.
+// setupInventoryLine is the one probe line a run prints.
 func setupInventoryLine(inv Inventory) string {
 	parts := make([]string, 0, len(inv.Harnesses))
 	for _, s := range inv.Harnesses {

@@ -14,16 +14,15 @@ const DefaultScene = "docs/boards/board.excalidraw"
 // collide with a future subverb name.
 const sceneExt = ".excalidraw"
 
-// SceneExt is the Excalidraw scene extension, so a caller can route a path to
-// the legacy flow without repeating the literal.
+// SceneExt is the Excalidraw scene extension, so a caller can route a path
+// to the Excalidraw flow without repeating the literal.
 func SceneExt() string { return sceneExt }
 
-// Resolve turns arg into the scene path the server reads and writes. An empty
-// arg is the repo default, under repoRoot. A named path is resolved against
-// cwd and must end in .excalidraw; after symlinks are resolved on its deepest
-// existing ancestor it must sit under repoRoot, so neither ".." nor a
-// symlinked parent can steer a write outside the repository. A missing file is
-// accepted: it is a new scene, created on the first save.
+// Resolve turns arg into the scene path the server reads and writes. An
+// empty arg is the repo default. A named path must end in .excalidraw and,
+// after symlinks are resolved, sit under repoRoot, so neither ".." nor a
+// symlinked parent can steer a write outside the repository. A missing file
+// is accepted: it is a new scene, created on the first save.
 func Resolve(repoRoot, cwd, arg string) (string, error) {
 	root := filepath.Clean(repoRoot)
 	if real, err := filepath.EvalSymlinks(repoRoot); err == nil {
@@ -58,8 +57,6 @@ func Resolve(repoRoot, cwd, arg string) (string, error) {
 	return path, nil
 }
 
-// splitExisting returns the deepest existing ancestor of an absolute path and
-// the not-yet-existing remainder beneath it.
 func splitExisting(path string) (tail, anchor string, err error) {
 	cur := path
 	for {
@@ -81,12 +78,11 @@ func splitExisting(path string) (tail, anchor string, err error) {
 	}
 }
 
-// evalExisting resolves symlinks on path's deepest existing ancestor and keeps
-// the not-yet-existing tail, so two spellings of one directory compare equal
-// even when the deeper path does not exist yet. A bare EvalSymlinks on a missing
-// path fails and falls back to the unresolved form, which compares two spellings
-// of one directory as different -- the macOS /var vs /private/var symlink is the
-// case that made the live-scope checks platform-dependent.
+// evalExisting resolves symlinks on path's deepest existing ancestor and
+// keeps the not-yet-existing tail, so two spellings of one directory compare
+// equal even when the deeper path does not exist yet. A bare EvalSymlinks on
+// a missing path falls back to the unresolved form, which compares two
+// spellings of one directory as different (macOS /var vs /private/var).
 func evalExisting(path string) string {
 	clean := filepath.Clean(path)
 	tail, anchor, err := splitExisting(clean)

@@ -6,31 +6,23 @@ import (
 )
 
 // externalRefs finds every reference in a board that would leave the machine.
-// It is a text scan, not a parse: a board is hand-written HTML and a full DOM
-// walk would need a dependency this package does not have. Each pattern below
-// finds one kind of reference; a value is reported only when it names a remote
-// scheme or a protocol-relative host, so data:, blob: and #fragment values --
-// the ones a self-contained board actually uses -- are left alone.
+// It is a text scan, not a parse: a full DOM walk would need a dependency
+// this package does not have. A value is reported only when it names a remote
+// scheme or a protocol-relative host, so data:, blob: and #fragment values
+// are left alone.
 var externalRefs = struct {
-	// The reference attributes, with the attribute name captured so a namespace
-	// declaration can be excluded by name rather than by guessing at the value.
-	// xmlns is in the alternation on purpose: an inline SVG carries
-	// xmlns="http://www.w3.org/2000/svg", and the name check below is the only
-	// thing keeping that namespace out of the report. Leaving xmlns out of the
-	// pattern would make the exclusion unreachable and unfalsifiable.
-	attr *regexp.Regexp
-	// url(...) inside a style attribute or a <style> block.
-	cssURL *regexp.Regexp
-	// @import in a <style> block or a style attribute.
+	// The reference attributes, with the attribute name captured so a
+	// namespace declaration can be excluded by name. xmlns is in the
+	// alternation on purpose: the name check below is the only thing keeping
+	// an inline SVG's namespace out of the report.
+	attr      *regexp.Regexp
+	cssURL    *regexp.Regexp
 	cssImport *regexp.Regexp
-	// fetch("...") and import("...") string literals.
-	jsCall *regexp.Regexp
+	jsCall    *regexp.Regexp
 	// linkTag finds a <link> element, so a stylesheet or icon href -- the
 	// only hrefs that fetch -- can be checked with its rel in view. A plain
-	// <a href> only navigates when clicked and never loads, so it is not a
-	// reference.
-	linkTag *regexp.Regexp
-	// linkAttr reads one attribute out of a <link> tag.
+	// <a href> only navigates when clicked and never loads.
+	linkTag  *regexp.Regexp
 	linkAttr *regexp.Regexp
 }{
 	attr:      regexp.MustCompile(`(?is)\b(xlink:href|xmlns(?::[a-z0-9_-]+)?|src|srcset|action|poster)\s*=\s*(?:"([^"]*)"|'([^']*)')`),
@@ -41,10 +33,9 @@ var externalRefs = struct {
 	linkAttr:  regexp.MustCompile(`(?is)\b(rel|href)\s*=\s*(?:"([^"]*)"|'([^']*)')`),
 }
 
-// xmlnsDecl matches a namespace declaration attribute: xmlns or xmlns:prefix.
-// Inline SVG carries xmlns="http://www.w3.org/2000/svg", which is a URI but
-// never a fetch, so the attribute is excluded from the scan by name. Without
-// this every inline-SVG board would report its own namespace as external.
+// xmlnsDecl matches a namespace declaration attribute, excluded from the
+// scan by name: inline SVG carries an xmlns URI that is never a fetch.
+// Without this every inline-SVG board would report its own namespace.
 var xmlnsDecl = regexp.MustCompile(`(?i)^xmlns(:[a-z0-9_-]+)?$`)
 
 // linkLoads reports whether a <link> tag's href is fetched: only a
@@ -69,13 +60,10 @@ func linkLoads(tag string) (href string, ok bool) {
 }
 
 // ExternalRefs lists the references in an HTML board that would reach the
-// network: http:, https:, ws:, wss:, ftp: and the protocol-relative //host
-// form, found in src, srcset, action, poster and xlink:href attributes, in a
-// stylesheet or icon <link>'s href, in CSS url(...) and @import, and in
-// fetch(...) and import(...) string literals. A plain <a href> only navigates
-// and never loads, so it is not reported. Namespace declarations are excluded. The result is in first-
-// appearance order and carries no duplicates, so the caller can name the first
-// reference and the count.
+// network, in attributes, stylesheets and string literals. A plain <a href>
+// only navigates and never loads, so it is not reported, and namespace
+// declarations are excluded. The result is in first-appearance order with no
+// duplicates, so the caller can name the first reference and the count.
 //
 // This is a report, not a gate: the server's Content-Security-Policy is what
 // actually blocks the loads, and a board is still served when this lists
@@ -107,8 +95,6 @@ func ExternalRefs(html []byte) []string {
 	for _, m := range externalRefs.cssURL.FindAllStringSubmatch(string(html), -1) {
 		add(m[1], m[2], m[3])
 	}
-	// A <link> href counts only when the link loads: a stylesheet or an icon.
-	// Every other href -- anchors above all -- only navigates.
 	for _, tag := range externalRefs.linkTag.FindAllString(string(html), -1) {
 		if href, ok := linkLoads(tag); ok {
 			add(href)
@@ -136,7 +122,6 @@ func isExternalRef(value string) bool {
 	}
 	i := strings.Index(ref, ":")
 	if i < 0 {
-		// A relative path, a bare fragment or a hostless value: local.
 		return false
 	}
 	switch strings.ToLower(ref[:i]) {

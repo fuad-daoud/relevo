@@ -1,7 +1,6 @@
-// Package release answers what relevo asks about its own distribution
-// without touching the network: how the binary was installed, and whether a
-// newer release exists in what the daemon cached. The fetch sits behind an
-// interface in fetch.go.
+// Package release answers what relevo asks about its own distribution: how
+// the binary was installed, whether the daemon's cached check names a newer
+// release, and the network fetch and verified download behind both.
 package release
 
 import (
@@ -68,7 +67,7 @@ func IsReleaseTag(s string) bool {
 
 // Newer reports whether latest is strictly newer than running, false whenever
 // either side is unparseable. On equal numbers nothing is newer: a suffix on
-// running (a git describe, -dirty) means it is commits past that tag, never older.
+// running means it is commits past that tag, never older.
 func Newer(running, latest Version) bool {
 	switch {
 	case running.Major != latest.Major:
@@ -81,8 +80,6 @@ func Newer(running, latest Version) bool {
 	return false
 }
 
-// NewerStrings is Newer for the string form both callers hold: an unparseable
-// side makes the answer false.
 func NewerStrings(running, latest string) bool {
 	rv, rok := ParseVersion(running)
 	lv, lok := ParseVersion(latest)

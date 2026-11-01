@@ -70,23 +70,23 @@ var tenantStat = func(path string) (uid, gid uint32, mode os.FileMode, err error
 }
 
 // ServeChecks evaluates the health of a relevo serve installation. It runs
-// when the machine database holds the serve.tls.key secret: the certificate
-// and the clients come from that database, and the state check probes the
-// root the running daemon's serve.daemon row names -- or serveRoot when
-// there is none. Reading the root from the row is what makes the serve rows
-// show on a box started with a non-default --state.
+// when the machine database holds the serve.tls.key secret; the state check
+// probes the root the running daemon's serve.daemon row names, or serveRoot
+// when there is none, so the rows show on a box started with a non-default
+// --state.
 //
-// isolation is the raw serve.isolation policy value; the isolation row parses
-// it, so a hand-built unknown reads as a failure. image is the configured
-// serve.isolation_image the container row probes. sharedLogins is the parsed
-// serve.isolation_shared_logins value: the user-mode row warns when it is on.
+// isolation is the raw serve.isolation policy value; the isolation row
+// parses it, so a hand-built unknown reads as a failure. image is the
+// configured serve.isolation_image the container row probes. sharedLogins is
+// the parsed serve.isolation_shared_logins value: the user-mode row warns
+// when it is on.
 func ServeChecks(env Env, d *db.DB, serveRoot string, now time.Time, isolation, image string, sharedLogins bool) []Check {
 	if d == nil {
 		return nil
 	}
-	// Every row below is this machine's -- a certificate, an enrolled key, a pid
-	// and a listen address -- so the checks bind the machine-local file. Read off
-	// the shared handle they would report a machine that serves nothing.
+	// Every row below is this machine's, so the checks bind the machine-local
+	// file: read off the shared handle they would report a machine that
+	// serves nothing.
 	d = d.LocalOrSelf()
 	if _, ok, err := d.SecretGet("serve.tls.key"); err != nil || !ok {
 		return nil
@@ -175,9 +175,8 @@ type doctorClient struct {
 	UnixUser  string    `json:"unix_user,omitempty"`
 }
 
-// serveActiveClients reads the serve.clients registry and returns its active
-// (non-revoked) entries, whether the row was present at all, and any read or
-// parse error.
+// serveActiveClients reads the serve.clients registry and returns its
+// active (non-revoked) entries.
 func serveActiveClients(d *db.DB) (clients []doctorClient, present bool, err error) {
 	raw, ok, err := d.KVGet("serve.clients")
 	if err != nil {
@@ -198,9 +197,9 @@ func serveActiveClients(d *db.DB) (clients []doctorClient, present bool, err err
 	return clients, true, nil
 }
 
-// serveClientCount reports the number of active (non-revoked) clients, whether
-// the row was present at all, and any read or parse error. A malformed row is
-// an error, so a broken registry can never read as a clean zero.
+// serveClientCount reports the number of active clients, whether the row
+// was present at all, and any read or parse error. A malformed row is an
+// error, so a broken registry can never read as a clean zero.
 func serveClientCount(d *db.DB) (active int, present bool, err error) {
 	clients, present, err := serveActiveClients(d)
 	if err != nil {
@@ -210,20 +209,8 @@ func serveClientCount(d *db.DB) (active int, present bool, err error) {
 }
 
 // serveIsolationCheck is the serve isolation row. It parses the raw policy
-// value and reports:
-//
-//   - none with at most one active client: OK, Detail "none".
-//   - none with two or more: Warn, naming the count and the shared unix user.
-//   - user: Fail with the first unmet prerequisite -- not root, an active
-//     client with no unix_user, a user missing on this host, or an owner root
-//     with the wrong owner, group or mode -- and otherwise OK (or Warn when
-//     shared logins are on), Detail "scopes=off (isolation=user)".
-//   - container: Fail when podman is absent or the configured image is
-//     missing, naming the exact fix, and otherwise OK, Detail
-//     "isolation=container".
-//   - an unknown value: Fail naming serve.isolation.
-//   - an unreadable or unparseable serve.clients row: Fail, so a broken
-//     registry can never read as a clean none.
+// value, so a hand-built unknown reads as a failure; a broken serve.clients
+// row fails too, so it can never read as a clean none.
 func serveIsolationCheck(d *db.DB, root, raw, image string, sharedLogins bool) Check {
 	c := Check{Group: "serve", Name: "isolation"}
 	const fix = `relevo config set policy.serve '{"isolation":"none"}'`
@@ -260,9 +247,8 @@ func serveIsolationCheck(d *db.DB, root, raw, image string, sharedLogins bool) C
 	return c
 }
 
-// serveContainerIsolationCheck is the container-mode half of the isolation row.
-// It fails with the exact fix when podman is absent or the configured image is
-// missing, and otherwise reports the mode in force.
+// serveContainerIsolationCheck is the container-mode half of the isolation
+// row.
 func serveContainerIsolationCheck(c Check, image string) Check {
 	if _, err := containerPodmanLookPath("podman"); err != nil {
 		c.Severity, c.Detail = SevFail, "podman not found on PATH"
@@ -278,9 +264,7 @@ func serveContainerIsolationCheck(c Check, image string) Check {
 	return c
 }
 
-// serveUserIsolationCheck is the user-mode half of the isolation row. It fails
-// with a fix on the first unmet prerequisite and otherwise reports the
-// scopes-off detail, warning when shared logins are on.
+// serveUserIsolationCheck is the user-mode half of the isolation row.
 func serveUserIsolationCheck(c Check, root string, clients []doctorClient, sharedLogins bool, fix string) Check {
 	fail := func(detail, fixLine string) Check {
 		c.Severity, c.Detail, c.Fix = SevFail, detail, fixLine
@@ -317,9 +301,9 @@ func serveUserIsolationCheck(c Check, root string, clients []doctorClient, share
 }
 
 // ownerRootMismatch checks one owner's bindings/<hex> directory against the
-// approved layout -- root-owned, group the tenant's primary gid, mode 0710. A
-// missing root is not a mismatch: the create has not run yet. bad is true with
-// the exact chown/chmod line when the owner, group or mode is wrong.
+// approved layout: root-owned, group the tenant's primary gid, mode 0710. A
+// missing root is not a mismatch: the create has not run yet. It returns the
+// exact chown/chmod line and true when the owner, group or mode is wrong.
 func ownerRootMismatch(root, id string, uid, gid uint32) (string, bool) {
 	dir, ok := remote.ClientID(id).Dir()
 	if !ok {

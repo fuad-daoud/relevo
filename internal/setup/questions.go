@@ -7,11 +7,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 )
 
-// Choice is one of a question's answers: its value -- what an --answer flag
-// takes -- a short label, a one-line why, and for a model the efforts it runs
-// at. The unexported fields say how an effort joins the value: its default,
-// the separator, whether the model also runs with none, and whether the
-// effort list is unknown so any effort passes.
+// Choice is one of a question's answers: its value, label, why, and for a
+// model the efforts it runs at. The unexported fields say how an effort
+// joins the value: its default, the separator, whether the model also runs
+// with none, and whether any effort passes.
 type Choice struct {
 	Value   string
 	Label   string
@@ -25,9 +24,8 @@ type Choice struct {
 }
 
 // Question is one thing the wizard asks: its prompt, the choices to show,
-// the values recommended (one, or several in order for a multi), whether
-// several may be picked in order, and whether it may go unanswered -- a role
-// question, whose role Build then derives.
+// the values recommended, whether several may be picked in order, and
+// whether it may go unanswered -- a role question, whose role Build derives.
 type Question struct {
 	ID          string
 	Prompt      string
@@ -39,19 +37,16 @@ type Question struct {
 	more []Choice // accepted but not listed: a catalog too long to show
 }
 
-// Answers maps a question id to the values it already carries: candidate,
-// planner and tier values a stored config keeps -- a rerun recommends them
-// again while they are still among the choices -- and for plugin and service
-// the presence of an answer standing in for the fact the question asks
+// Answers maps a question id to the values it already carries; for plugin and
+// service the presence of an answer stands in for the fact the question asks
 // about, so the question itself is dropped.
 type Answers map[string][]string
 
-// questionKinds is the order the questions name harnesses in: the first-pick
-// order for builder choices and their recommendations.
+// questionKinds is the order the questions name harnesses in.
 var questionKinds = []string{"codex", "agy", "claude", "muse", "opencode"}
 
-// builderPrompt names the comma list, because a builder answer is several
-// models in the order they are tried.
+// builderPrompt names the comma list: a builder answer is several models in
+// the order they are tried.
 const builderPrompt = "Which models build code? Pick one or more, comma-separated, in the order to try them: the first builds, the next takes over when one hits a usage limit"
 
 // tierPrompt says plainly what each tier lets a builder do, because nothing
@@ -59,10 +54,8 @@ const builderPrompt = "Which models build code? Pick one or more, comma-separate
 const tierPrompt = "How much may a builder do without asking? yolo lets them run any command in their worktree without asking; at edit only a codex builder can bind, and it runs inside its workspace sandbox"
 
 // Questions are the questions still open, in the order the front end asks
-// them: opencode's models where it stands, builder, planner, the optional
-// roles, tier, then the optional plugin
-// and service, then smoke. A no-longer-applicable one is dropped rather than
-// carried with an empty choice list.
+// them. A no-longer-applicable one is dropped rather than carried with an
+// empty choice list.
 func Questions(inv Inventory, answers map[string][]string) []Question {
 	var qs []Question
 	for _, s := range inv.Harnesses {
@@ -104,12 +97,9 @@ func Questions(inv Inventory, answers map[string][]string) []Question {
 	return qs
 }
 
-// RecommendedAnswers are every question's answer together, ready for Build:
-// for each one the caller already keeps values, those stand while they are
-// still among the question's choices; every other question takes its own
-// recommendation. A role question takes none, so Build derives the role
-// from the answers it stands beside. current is nil on a fresh machine,
-// where every value is the default.
+// RecommendedAnswers are every question's answer together, ready for Build: kept
+// values stand while still among the choices, other questions take their own
+// recommendation, and a role question takes none. current is nil on a fresh machine.
 func RecommendedAnswers(inv Inventory, current map[string][]string) Answers {
 	out := Answers{}
 	for _, q := range Questions(inv, nil) {
@@ -124,8 +114,7 @@ func RecommendedAnswers(inv Inventory, current map[string][]string) Answers {
 	return out
 }
 
-// keptAnswers are the values an already-standing answer keeps: each one
-// still matching one of the question's choices, in the order given.
+// keptAnswers are the standing values still matching the question's choices.
 func keptAnswers(q Question, answers map[string][]string) ([]string, bool) {
 	vals := answers[q.ID]
 	if len(vals) == 0 {
@@ -145,10 +134,8 @@ func keptAnswers(q Question, answers map[string][]string) ([]string, bool) {
 	return kept, true
 }
 
-// builderQuestion shows every model each logged-in harness offers, question
-// order, and recommends one model per harness at medium effort: codex's
-// first listed model, agy's first gemini flash model else its first, claude
-// sonnet, muse's first catalog model.
+// builderQuestion shows every model each logged-in harness offers and
+// recommends one model per harness at medium effort.
 func builderQuestion(inv Inventory) Question {
 	offers := loggedChoices(inv)
 	recommended := []string{}
@@ -176,9 +163,7 @@ func builderQuestion(inv Inventory) Question {
 	}
 }
 
-// plannerQuestion names who writes plans, at high effort: claude opus when
-// it is logged in, else codex's first listed model, else muse's first
-// catalog model, else agy's first claude-opus-* model else its first.
+// plannerQuestion names who writes plans, at high effort.
 func plannerQuestion(inv Inventory) Question {
 	offers := loggedChoices(inv)
 	q := Question{
@@ -200,7 +185,6 @@ func plannerQuestion(inv Inventory) Question {
 	return q
 }
 
-// tierQuestion carries both tiers with the prompt naming what each means.
 func tierQuestion() Question {
 	return Question{
 		Recommended: []string{"yolo"},
@@ -213,7 +197,6 @@ func tierQuestion() Question {
 	}
 }
 
-// yesNoQuestion is one install-or-not question, recommended yes.
 func yesNoQuestion(id, prompt, yesWhy, noWhy string) Question {
 	return Question{
 		Recommended: []string{"yes"},
@@ -227,8 +210,7 @@ func yesNoQuestion(id, prompt, yesWhy, noWhy string) Question {
 }
 
 // candidateChoices are the questions' candidate picks, one per model each
-// logged-in harness offers, question order. The label is the model and the
-// why names the seat it runs on.
+// logged-in harness offers, question order.
 func candidateChoices(inv Inventory) []Choice {
 	offers := loggedChoices(inv)
 	choices := make([]Choice, 0, 8)
@@ -238,7 +220,6 @@ func candidateChoices(inv Inventory) []Choice {
 	return choices
 }
 
-// loggedChoices maps each logged-in wizard harness to its choices.
 func loggedChoices(inv Inventory) map[string][]Choice {
 	out := make(map[string][]Choice, len(inv.Harnesses))
 	for _, s := range inv.Harnesses {
@@ -249,9 +230,9 @@ func loggedChoices(inv Inventory) map[string][]Choice {
 	return out
 }
 
-// pickChoice is the first choice whose model has a given prefix -- and, when
-// one is named, a given substring -- else the first with the prefix, else
-// the first at all.
+// pickChoice is the first choice whose model has a given prefix and, when one
+// is named, a given substring, else the first with the prefix, else the first
+// at all.
 func pickChoice(choices []Choice, prefix, contains string) (Choice, bool) {
 	labels := make([]string, len(choices))
 	for i, c := range choices {
@@ -299,9 +280,8 @@ func loggedModels(inv Inventory) map[string][]string {
 	return models
 }
 
-// refFor prefixes the provider a harness's candidates carry to one model:
-// the kind's own first provider. An opencode model names its provider
-// itself.
+// refFor prefixes the provider a harness's candidates carry to one model;
+// an opencode model names its provider itself.
 func refFor(kind, model string) string {
 	if kind == "opencode" {
 		return kind + "/" + model
@@ -322,9 +302,7 @@ func exactChoice(choices []Choice, model string) (Choice, bool) {
 	return Choice{}, false
 }
 
-// providerFor is the provider a candidate lists under for one harness kind:
-// the first of the kind's own providers, with openai spelled for codex,
-// whose table's row names none.
+// providerFor is the provider a candidate lists under for one harness kind.
 func providerFor(kind string) string {
 	if kind == "codex" {
 		return "openai"
@@ -340,14 +318,13 @@ func harnessLookup(kind string) (harness.Harness, bool) {
 	return harness.Lookup(kind)
 }
 
-// agyFlashPick is agy's first gemini-* flash-high model, else its first
-// gemini model at all.
+// agyFlashPick is agy's first gemini flash-high model, else its first gemini at all.
 func agyFlashPick(models []string) (string, bool) {
 	return pickPattern(models, "gemini-", "flash-high")
 }
 
-// pickPattern is the first model with a given prefix -- and, when one is
-// named, a given substring -- else the first model at all.
+// pickPattern is the first model with a given prefix and, when one is named,
+// a given substring, else the first with the prefix, else the first at all.
 func pickPattern(models []string, prefix, contains string) (string, bool) {
 	for _, m := range models {
 		if strings.HasPrefix(m, prefix) && (contains == "" || strings.Contains(m, contains)) {

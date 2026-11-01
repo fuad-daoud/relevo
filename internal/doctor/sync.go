@@ -1,9 +1,8 @@
 package doctor
 
-// doctor's `sync quota` row: the account's month of Turso traffic and the last
-// complete hour's idle exports, read from the machine's local file with no
-// remote in reach. The row exists when either answer does; a read error means
-// the fact was never established, and an unestablished fact is no row.
+// doctor's `sync quota` row: the account's month of Turso traffic and the
+// last complete hour's idle exports, read from the machine's local file. A
+// read error is no row.
 
 import (
 	"fmt"
@@ -15,8 +14,7 @@ import (
 
 // syncQuotaRow reads the meter and builds the row. The read is the same
 // no-network local read `relevo status` makes, so the two surfaces cannot
-// disagree about the same file. The meter itself lives in cmd/relevo and
-// arrives as a parameter.
+// disagree; the meter itself lives in cmd/relevo and arrives as a parameter.
 func syncQuotaRow(rt relevo.Runtime, meter func(rt relevo.Runtime) (relevosync.QuotaReading, bool, relevosync.ExportHour, bool)) (Check, bool) {
 	q, qok, idle, iok := meter(rt)
 	return syncQuotaCheck(q, qok, idle, iok)

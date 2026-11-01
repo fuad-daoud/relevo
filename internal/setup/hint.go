@@ -16,8 +16,7 @@ const setupHint = "relevo is not set up yet: run relevo setup"
 var setupHintStream io.Writer
 
 // needsSetupHint is the pure rule for the unconfigured-machine hint: no
-// candidates section, and the verb is not one of the five exempted. help and
-// version spell their aliases close by so the table reads complete.
+// candidates section, and the verb is not one of the exempted.
 func needsSetupHint(verb string, hasCandidates bool) bool {
 	if hasCandidates {
 		return false
@@ -30,21 +29,17 @@ func needsSetupHint(verb string, hasCandidates bool) bool {
 	}
 }
 
-// setupHintDue records that this invocation owes the hint. It prints after
-// the verb's own output and error report, because a failure's report must be
-// the first thing on stderr.
+// setupHintDue records that this invocation owes the hint; it prints after
+// the verb's own output, so a failure's report stays first on stderr.
 var setupHintDue bool
 
-// NoteUnconfigured marks the hint due when the rule says so. The caller owns
-// the dispatched verb name and the candidate count; the hint package owns
-// only the rule and the due flag.
+// NoteUnconfigured marks the hint due when the rule says so.
 func NoteUnconfigured(verb string, hasCandidates bool) {
 	if needsSetupHint(verb, hasCandidates) {
 		setupHintDue = true
 	}
 }
 
-// FlushHint prints the hint once if it is due.
 func FlushHint() {
 	if !setupHintDue {
 		return

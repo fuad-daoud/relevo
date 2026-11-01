@@ -13,21 +13,17 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
-// noHarnessMessage is the refusal an empty probe earns -- the same text the
-// nothing-on-PATH paths have always printed.
+// noHarnessMessage is the refusal an empty probe earns: the same text the
+// nothing-on-PATH paths print.
 const noHarnessMessage = "no harness binaries on PATH (agy, claude, codex, muse, opencode); install one first"
 
-// noModelMessage is the refusal when no question offers a model to build
-// with: opencode alone, with none of its models picked.
+// noModelMessage is the refusal when no question offers a model to build with.
 const noModelMessage = "no model to build with: no harness offers one and no opencode model was picked; run relevo setup and pick one"
 
-// chainOrder is the order the actors doc writes in: the two builders first,
-// then the plan actors and the chain's reader actors.
+// chainOrder is the order the actors doc writes in.
 var chainOrder = []string{"builder", "librarian", "planner", "reviewer", "security", "lite-planner"}
 
-// picks are what Build writes, after validation: the ordered builder
-// tokens, the one planner token, the tier, and each role's tokens, answered
-// or derived.
+// picks are what Build writes, after validation.
 type picks struct {
 	builder  []string
 	planner  string
@@ -37,10 +33,8 @@ type picks struct {
 }
 
 // Build assembles the starter configuration from a probe plus the answers
-// the caller carries: candidates one per distinct model the picks name, a
-// policy at the tier answered, and the builder and librarian writers plus
-// the chain's planner, reviewer, security and lite-planner. It refuses
-// before writing anything when no harness is on PATH, or none is logged in.
+// the caller carries. It refuses before writing anything when no harness is
+// on PATH, or none is logged in.
 func Build(inv Inventory, answers Answers) (Files, error) {
 	if len(inv.Harnesses) == 0 {
 		return Files{}, errors.New(noHarnessMessage)
@@ -64,9 +58,7 @@ func Build(inv Inventory, answers Answers) (Files, error) {
 }
 
 // requiredPicks validates the builder tokens, the planner token and the tier
-// against each one's choices, erroring on an answer outside them; a missing
-// one is an error too, because a front end that asks everything hands all
-// three over.
+// against each one's choices.
 func requiredPicks(inv Inventory, answers Answers) (picks, error) {
 	byID := questionSet(inv, answers)
 	if len(byID["builder"].Choices) == 0 && len(answers["builder"]) == 0 {
@@ -87,9 +79,8 @@ func requiredPicks(inv Inventory, answers Answers) (picks, error) {
 	return picks{builder: tokens, planner: planner, tier: tier}, nil
 }
 
-// questionSet maps the questions' ids to their shape with every choice
-// value: the candidate, planner and tier questions always stand. The
-// answers decide which opencode models those questions offer.
+// questionSet maps the questions' ids to their shape; the answers decide
+// which opencode models those questions offer.
 func questionSet(inv Inventory, answers Answers) map[string]Question {
 	qs := Questions(inv, answers)
 	byID := make(map[string]Question, len(qs))
@@ -99,8 +90,7 @@ func questionSet(inv Inventory, answers Answers) map[string]Question {
 	return byID
 }
 
-// pickedList validates one multi answer's tokens against a question's
-// choices; no tokens means the answer itself is missing.
+// pickedList validates one multi answer's tokens against a question's choices.
 func pickedList(q Question, tokens []string) ([]string, error) {
 	out := make([]string, 0, len(tokens))
 	for _, t := range tokens {
@@ -116,7 +106,7 @@ func pickedList(q Question, tokens []string) ([]string, error) {
 	return out, nil
 }
 
-// pickedOne validates a singleton answer: exactly one token, one choice.
+// pickedOne validates a singleton answer.
 func pickedOne(q Question, tokens []string) (string, error) {
 	if len(tokens) != 1 {
 		return "", fmt.Errorf("missing %s answer", q.ID)
@@ -129,9 +119,9 @@ func pickedOne(q Question, tokens []string) (string, error) {
 }
 
 // cheapestPick is the one model the reviewer, security and lite-planner
-// actors share: claude's sonnet alias first, then the codex model the offer
-// list lists last, then muse's first catalog model, then agy's first flash
-// model else its first. Empty when no rule can name one.
+// actors share: claude's sonnet alias, then the codex model the offer lists
+// last, then muse's first catalog model, then agy's first flash model, else
+// its first, then opencode's first. Empty when no rule can name one.
 func cheapestPick(inv Inventory) string {
 	models := loggedModels(inv)
 	if len(models["claude"]) > 0 {
@@ -152,8 +142,8 @@ func cheapestPick(inv Inventory) string {
 	return ""
 }
 
-// rolePicks is each role's tokens: its own answer, validated, where one was
-// given, else what DerivedRoles makes of the builder and planner picks.
+// rolePicks is each role's tokens: its own answer where one was given, else
+// what DerivedRoles makes of the builder and planner picks.
 func rolePicks(inv Inventory, p picks, answers Answers) (Answers, error) {
 	qs := Questions(inv, answers)
 	out := DerivedRoles(qs, Answers{"builder": p.builder, "planner": {p.planner}})
@@ -176,9 +166,8 @@ func rolePicks(inv Inventory, p picks, answers Answers) (Answers, error) {
 	return out, nil
 }
 
-// allPicks joins the picks in candidate order: builder tokens first, then
-// the planner's, then each role's. A token picked twice names one
-// candidate, so repeats fall out in the dedup.
+// allPicks joins the picks in candidate order; a token picked twice names
+// one candidate.
 func allPicks(p picks) []string {
 	tokens := append(append([]string{}, p.builder...), p.planner)
 	for _, id := range roleIDs {
@@ -192,9 +181,7 @@ func allPicks(p picks) []string {
 	return tokens
 }
 
-// opencodePicked are the opencode models the answers picked, else the
-// default picks, as candidate tokens. allPicks drops one an actor already
-// runs, at a variant or not.
+// opencodePicked are the opencode models the answers picked, as candidate tokens.
 func opencodePicked(inv Inventory, answers Answers) []string {
 	var out []string
 	for _, s := range withOpencodePicks(inv, answers).Harnesses {
@@ -208,8 +195,7 @@ func opencodePicked(inv Inventory, answers Answers) []string {
 }
 
 // sharedCandidates turns the picked tokens into the candidate list Build
-// writes: one per distinct token, pick order. A `:effort` suffix after a
-// token's model is that token's own model, never a separate entry.
+// writes: one per distinct token, pick order.
 func sharedCandidates(tokens []string) ([]candidate.Candidate, error) {
 	cands := make([]candidate.Candidate, 0, len(tokens))
 	seen := make(map[string]bool, len(tokens))
@@ -227,9 +213,7 @@ func sharedCandidates(tokens []string) ([]candidate.Candidate, error) {
 	return cands, nil
 }
 
-// filesWith marshals the three sections the picks stand for: candidates, the
-// policy's ceiling, and the actors, plus the harness kinds the agent install
-// walks.
+// filesWith marshals the three sections the picks stand for.
 func filesWith(inv Inventory, p picks, cands []candidate.Candidate) (Files, error) {
 	names := candidate.DeriveNames(cands)
 	nameFor := make(map[string]string, len(cands))
@@ -279,7 +263,7 @@ func filesWith(inv Inventory, p picks, cands []candidate.Candidate) (Files, erro
 	}, nil
 }
 
-// librarianActor is the docs-only writer over the builders' own names. Its
+// librarianActor is the docs-only writer over the builders' own names; its
 // check stays nil so the writer default (on) applies.
 func librarianActor(builderNames []string, tier string) roles.Actor {
 	return roles.Actor{
@@ -290,7 +274,7 @@ func librarianActor(builderNames []string, tier string) roles.Actor {
 	}
 }
 
-// candidateEntries wraps names as an actor's candidates, each on.
+// candidateEntries wraps names as an actor's candidates.
 func candidateEntries(names []string) []roles.Entry {
 	entries := make([]roles.Entry, 0, len(names))
 	for _, name := range names {
@@ -299,8 +283,7 @@ func candidateEntries(names []string) []roles.Entry {
 	return entries
 }
 
-// loggedInKinds are the harness kinds whose CLI is logged in, inventory
-// order -- the order harness.All() sorts, which the agent install walks.
+// loggedInKinds are the logged-in harness kinds, inventory order.
 func loggedInKinds(inv Inventory) []string {
 	kinds := make([]string, 0, len(inv.Harnesses))
 	for _, s := range inv.Harnesses {
@@ -311,7 +294,6 @@ func loggedInKinds(inv Inventory) []string {
 	return kinds
 }
 
-// anyLoggedIn reports whether at least one status entry stands logged in.
 func anyLoggedIn(inv Inventory) bool {
 	for _, s := range inv.Harnesses {
 		if s.LoggedIn {
@@ -321,8 +303,7 @@ func anyLoggedIn(inv Inventory) bool {
 	return false
 }
 
-// notAvailableMessage lists the way in: the login command of every harness
-// the probe found, since one of them is the way out.
+// notAvailableMessage lists the login command of every harness the probe found.
 func notAvailableMessage(inv Inventory) string {
 	logins := make([]string, 0, len(inv.Harnesses))
 	for _, s := range inv.Harnesses {
@@ -331,8 +312,7 @@ func notAvailableMessage(inv Inventory) string {
 	return "no harness is logged in; log in with one of: " + strings.Join(logins, ", ")
 }
 
-// indent is the section encoding every front end stores: two-space indented
-// JSON with a trailing newline.
+// indent is the section encoding every front end stores.
 func indent(v any) ([]byte, error) {
 	out, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {

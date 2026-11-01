@@ -8,8 +8,7 @@ import (
 
 // SelfImageIdentity falls back to a stat of the resolved executable path: only
 // Linux names the running image independently of the path, so elsewhere a
-// replacement that lands between exec and this call is still read as the
-// baseline. The behaviour is the one that shipped, unchanged.
+// replacement landing between exec and this call is still read as the baseline.
 func SelfImageIdentity() (store.FileID, error) {
 	exe, err := ResolveExe()
 	if err != nil {

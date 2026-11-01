@@ -1,11 +1,9 @@
 package setup
 
 // roleIDs are the roles Build fills from the builder and planner answers
-// unless their own optional question is answered: the order a front end
-// lists and asks them in.
+// unless their own optional question is answered.
 var roleIDs = []string{"librarian", "reviewer", "security", "lite-planner"}
 
-// RoleWhat says in a few words what each role does, for a summary line.
 var RoleWhat = map[string]string{
 	"librarian":    "writes docs only",
 	"reviewer":     "reviews a builder's diff",
@@ -57,7 +55,6 @@ func roleQuestions(inv Inventory, builder, planner Question) []Question {
 	return qs
 }
 
-// IsRole reports whether a question id is one of the derived roles.
 func IsRole(id string) bool {
 	for _, r := range roleIDs {
 		if r == id {
@@ -89,9 +86,8 @@ func DerivedRoles(qs []Question, answers Answers) Answers {
 	return out
 }
 
-// pickedAlready is a derived pick as the answers already picked its model,
-// at whatever effort they chose, so one model never lands as two candidates
-// that differ only in effort.
+// pickedAlready is a derived pick at an effort the answers already picked its
+// model at, so one model never lands as two candidates.
 func pickedAlready(q Question, picked []string, derived string) string {
 	want, ok := ChoiceFor(q, derived)
 	if !ok {
@@ -105,8 +101,7 @@ func pickedAlready(q Question, picked []string, derived string) string {
 	return derived
 }
 
-// Describe is one answer value as a person reads it: the model with its
-// effort in brackets, or the plain value for a question without models.
+// Describe is one answer value as a person reads it.
 func Describe(q Question, value string) string {
 	c, effort, ok := choiceAndEffort(q, value)
 	if !ok || c.sep == "" {

@@ -23,11 +23,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// databaseCheck is doctor's `database` row: the path, the file
-// size, the schema version, the binding_record live/archived counts and the
-// route this process reached the row by -- `via file` for a direct open, `via
-// owner <sock>` for a dialled handle (stage 1b). It is OK unless the open
-// fails; there is no migrate row, because every open migrates.
+// databaseCheck is doctor's `database` row. There is no migrate row because
+// every open migrates.
 func databaseCheck(st *store.Store) Check {
 	path := st.DBPath()
 	c := Check{Name: "database", Severity: SevOK}
@@ -61,10 +58,9 @@ func databaseCheck(st *store.Store) Check {
 	return c
 }
 
-// engineCheck is doctor's `engine` row: the driver this binary opens databases
-// with, and whether its library is usable. A missing library warns -- a fresh
+// engineCheck is doctor's `engine` row. A missing library warns -- a fresh
 // root has none until something opens a database there -- and a library the
-// loader refuses fails, because nothing can open until it is removed.
+// loader refuses fails because nothing can open until it is removed.
 func engineCheck(status db.EngineState) Check {
 	c := Check{Name: "engine", Severity: SevOK}
 	switch {
@@ -84,9 +80,8 @@ func engineCheck(status db.EngineState) Check {
 	return c
 }
 
-// ownerCheck is doctor's `owner` row: whether the daemon serves relevo.sock,
-// and what it answers. A refused dial or an absent socket warns with the fix,
-// since a daemon that predates the socket still runs.
+// ownerCheck is doctor's `owner` row. A refused dial or an absent socket
+// warns, since a daemon that predates the socket still runs.
 func ownerCheck(status db.OwnerStatus, probeErr error) Check {
 	c := Check{Name: "owner", Severity: SevOK}
 	if probeErr != nil {
@@ -138,11 +133,10 @@ func ledgerChecks(gates []availability.Gate) []Check {
 	return checks
 }
 
-// serverChecks turns each configured server's probe (relevo.ProbeServers)
-// into a doctor row: reachable and enrolled is
-// ok; not enrolled and unreachable warn (an unreachable probe is
-// ProbeFailed -- relevo could not establish the fact, not that anything is
-// wrong); a changed certificate fails, since the client hard-refuses it.
+// serverChecks turns each configured server's probe into a doctor row. An
+// unreachable probe is ProbeFailed, because relevo could not establish the
+// fact, not because anything is wrong; a changed certificate fails because
+// the client hard-refuses it.
 func serverChecks(probes []relevo.ServerProbe) []Check {
 	checks := make([]Check, 0, len(probes))
 	for _, p := range probes {
@@ -208,8 +202,7 @@ func serverChecks(probes []relevo.ServerProbe) []Check {
 }
 
 // buildersText is a queue-aware, enrolled probe's runner census, the same
-// words RenderServers appends to its row: "runners %d/%d, %d
-// queued, scopes %s".
+// words RenderServers appends to its row.
 func buildersText(p relevo.ServerProbe) string {
 	scopes := "off"
 	switch {
@@ -226,9 +219,8 @@ func buildersText(p relevo.ServerProbe) string {
 		p.Builders.Running, p.Builders.Cap, p.Builders.Queued, scopes)
 }
 
-// policyChecks turns policy/candidates inconsistencies into doctor rows.
-// Warnings, not failures: an unlisted candidate is a degraded order, not
-// a broken machine.
+// policyChecks turns policy/candidates inconsistencies into doctor rows:
+// warnings, not failures.
 func policyChecks(warnings []resolve.PolicyWarning) []Check {
 	checks := make([]Check, 0, len(warnings))
 	for _, w := range warnings {
@@ -244,9 +236,8 @@ func policyChecks(warnings []resolve.PolicyWarning) []Check {
 }
 
 // refusalChecks turns the roles an omitted candidate would be refused for
-// into doctor rows. Warnings, not failures: the machine is fine, the
-// configuration is not. The fix is a literal policy.json built
-// from the tokens that serve the role, so it can be pasted as is.
+// into doctor rows. Warnings, not failures; the fix is a literal
+// policy.json that pastes as is.
 func refusalChecks(refusals []resolve.RoleRefusal) []Check {
 	checks := make([]Check, 0, len(refusals))
 	for _, r := range refusals {
@@ -290,13 +281,8 @@ func policyExample(role string, serving []string) string {
 // stale-record note names it.
 const staleMasterMindAge = 7 * 24 * time.Hour
 
-// mastermindCheckInput gathers the mastermind-row facts: which masterminds exist,
-// whether this process runs inside Claude Code or muse, and whether the
-// resolved mastermind has a live push claim. Every read is best-effort -- a
-// fact relevo cannot establish reads as absent, and the checks say "not
-// checked" rather than guessing. Home comes from $HOME so the row reads the
-// same directory cmd/relevo's TestMain isolated. The cmd-owned facts arrive
-// through deps; everything else is read here.
+// mastermindCheckInput gathers the mastermind-row facts. Every read is
+// best-effort: a fact relevo cannot establish reads as absent.
 func mastermindCheckInput(rt relevo.Runtime, kinds []string, deps Deps) MasterMindCheckInput {
 	in := MasterMindCheckInput{Home: os.Getenv("HOME"), ClaudeDir: os.Getenv("CLAUDE_CONFIG_DIR"), Running: deps.Version}
 	if wd, err := os.Getwd(); err == nil {
@@ -322,11 +308,9 @@ func mastermindCheckInput(rt relevo.Runtime, kinds []string, deps Deps) MasterMi
 	return in
 }
 
-// hostChildProcesses reads the child processes of pid: /proc/<pid>/task/*/children
-// names them, and each child's /proc/<pid>/cmdline its argv. On a host with no
-// /proc (macOS) it falls back to `ps -o pid=,args= --ppid`. A pid that has gone
-// or a read that fails yields nil, which reads as "no relevo mcp child" -- the
-// FAIL the mastermind row asks for when a Claude session has no push route.
+// hostChildProcesses reads the child processes of pid, falling back to `ps`
+// on a host with no /proc. A pid that has gone or a read that fails yields
+// nil, which reads as "no relevo mcp child".
 func hostChildProcesses(pid int) []ChildProcess {
 	if pid <= 0 {
 		return nil
@@ -370,9 +354,8 @@ func processArgs(pid int) []string {
 	return parts
 }
 
-// psChildren is hostChildProcesses' portable fallback: `ps -o pid=,args=
-// --ppid <pid>`, which the tree's other process probes already use. An
-// unsupported flag or a missing ps reads as no children.
+// psChildren is hostChildProcesses' portable fallback. An unsupported flag
+// or a missing ps reads as no children.
 func psChildren(pid int) []ChildProcess {
 	out, err := exec.Command("ps", "-o", "pid=,args=", "--ppid", strconv.Itoa(pid)).Output()
 	if err != nil {
@@ -381,9 +364,8 @@ func psChildren(pid int) []ChildProcess {
 	return ParsePSChildren(out)
 }
 
-// ParsePSChildren parses `ps -o pid=,args=` output: one line per process, the
-// pid first, the argv as the rest of the line. Pure, so the parsing is
-// testable without a process tree.
+// ParsePSChildren parses `ps -o pid=,args=` output. Pure, so the parsing
+// is testable without a process tree.
 func ParsePSChildren(out []byte) []ChildProcess {
 	var procs []ChildProcess
 	for _, line := range strings.Split(string(out), "\n") {
@@ -420,12 +402,10 @@ func InsertGlobalCheck(checks []Check, c Check) []Check {
 	return append(out, checks[last:]...)
 }
 
-// BindPreflightDefs runs the bind-time preflight for one kind and renders its
-// warning lines, checking the definitions the caller resolved for the kind --
-// the registry's builder definitions when roles.json is loaded, the shipped
-// ones otherwise. The timeout lives here, not at the call site, so
-// it cannot be dropped by accident; adopted is passed through to Run,
-// which owns what an adopted pane is and is not checked for.
+// BindPreflightDefs runs the bind-time preflight for one kind and renders
+// its warning lines. defs are the kind's resolved definitions; nil means the
+// shipped builder definitions. The timeout lives here so it cannot be dropped
+// by accident; adopted passes through to Run.
 func BindPreflightDefs(ctx context.Context, env Env, kind string, adopted bool, defs []string) []string {
 	if defs == nil {
 		defs = builderDefinitions()
@@ -435,8 +415,7 @@ func BindPreflightDefs(ctx context.Context, env Env, kind string, adopted bool, 
 	return bindWarningLines(Run(ctx, env, []string{kind}, WithAdopted(adopted), WithDefinitions(map[string][]string{kind: defs})))
 }
 
-// bindPreflight is BindPreflightDefs with the builder's shipped definitions:
-// the behaviour every pre-roles.json caller had.
+// bindPreflight is BindPreflightDefs with the builder's shipped definitions.
 func bindPreflight(ctx context.Context, env Env, kind string, adopted bool) []string {
 	return BindPreflightDefs(ctx, env, kind, adopted, builderDefinitions())
 }

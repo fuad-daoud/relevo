@@ -9,9 +9,8 @@ import (
 	"time"
 )
 
-// commentGap is the vertical clearance an unplaced comment keeps below the
-// scene's bounds, so an agent's comment never lands on a drawing and
-// consecutive comments stack clear of each other.
+// commentGap is the clearance an unplaced comment keeps below the scene's
+// bounds, so a comment never lands on a drawing.
 const commentGap = 40
 
 // humanBy is the author a comment gets when neither --by nor the
@@ -28,8 +27,8 @@ type Comment struct {
 	At   string  `json:"at"`
 }
 
-// CommentRequest is what one `board comment` asks for. A nil X/Y places the
-// comment below the scene's bounds.
+// CommentRequest is what one `board comment` asks for; a nil X/Y places
+// the comment below the scene's bounds.
 type CommentRequest struct {
 	Text  string
 	X, Y  *float64
@@ -38,7 +37,7 @@ type CommentRequest struct {
 	Theme *Theme
 }
 
-// DefaultBy resolves the comment author: an explicit value when set, else the
+// DefaultBy resolves the comment author: the explicit value, else the
 // environment's MasterMind, else human.
 func DefaultBy(env string) string {
 	if env != "" {
@@ -47,11 +46,10 @@ func DefaultBy(env string) string {
 	return humanBy
 }
 
-// ReadComments returns every comment in the scene at path, in elements[] order.
-// A missing scene is no comments and creates nothing. A malformed marker --
-// comment:true on an element that is not text, or without by, or with an at
-// that is not RFC3339 -- refuses naming the element id; a file that is not an
-// Excalidraw scene refuses naming the path.
+// ReadComments returns every comment in the scene at path, in elements[]
+// order. A missing scene is no comments and creates nothing. A malformed
+// marker -- comment:true on a non-text element, or without by, or with an at
+// that is not RFC3339 -- refuses naming the element id.
 func ReadComments(path string) ([]Comment, error) {
 	data, _, isNew, err := Load(path)
 	if err != nil {
@@ -66,10 +64,9 @@ func ReadComments(path string) ([]Comment, error) {
 	return commentsFromScene(data)
 }
 
-// AddComment appends one comment element to the scene at path and writes it
-// through the atomic rename, leaving every other byte of the scene unchanged.
-// A missing scene becomes a fresh one carrying the element. It returns the
-// comment it wrote.
+// AddComment appends one comment element to the scene at path, leaving
+// every other byte of the scene unchanged. A missing scene becomes a fresh
+// one carrying the element.
 func AddComment(path string, req CommentRequest) (Comment, error) {
 	by := strings.TrimSpace(req.By)
 	if err := validateBy(by); err != nil {
@@ -134,8 +131,8 @@ func AddComment(path string, req CommentRequest) (Comment, error) {
 	return Comment{ID: el.ID, X: x, Y: y, Text: req.Text, By: by, At: atStr}, nil
 }
 
-// validateBy is the author rule: a non-empty value after trimming, at most 64
-// bytes, and no control characters. A default resolved from a bogus
+// validateBy is the author rule: a non-empty value after trimming, at most
+// 64 bytes, and no control characters. A default resolved from a bogus
 // environment is validated too, so it refuses rather than lands in the scene.
 func validateBy(by string) error {
 	if by == "" {
@@ -153,8 +150,7 @@ func validateBy(by string) error {
 }
 
 // commentsFromScene walks the top-level elements array in order and returns
-// each comment it holds. A marker outside elements is never seen, and a marker
-// that is not comment:true is not a comment.
+// each comment it holds. A marker outside elements is never seen.
 func commentsFromScene(data []byte) ([]Comment, error) {
 	var doc struct {
 		Elements []json.RawMessage `json:"elements"`
@@ -195,10 +191,9 @@ func commentsFromScene(data []byte) ([]Comment, error) {
 	return out, nil
 }
 
-// commentPlacement is the unplaced-comment rule: x at the scene's left bound
-// and y one gap below its bottom bound, both over the non-deleted elements
-// with missing numbers read as zero. An empty scene places at the origin, so a
-// comment never lands on a drawing.
+// commentPlacement is the unplaced-comment rule: x at the scene's left
+// bound and y one gap below its bottom bound, over the non-deleted elements
+// with missing numbers read as zero. An empty scene places at the origin.
 func commentPlacement(data []byte, isNew bool) (float64, float64, error) {
 	if isNew {
 		return 0, 0, nil
@@ -255,7 +250,6 @@ type freshSceneDoc struct {
 	Files    map[string]any    `json:"files"`
 }
 
-// freshScene composes the document above with one element already inside.
 func freshScene(element []byte, bg string) ([]byte, error) {
 	return json.Marshal(freshSceneDoc{
 		Type:     "excalidraw",

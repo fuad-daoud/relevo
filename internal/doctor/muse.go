@@ -13,11 +13,10 @@ import (
 
 // Muse plugin rows. The single source of truth is `muse plugins inspect
 // relevo --json` through the injected reader: a zero exit returns an object
-// with record.enabled, record.version and a runtime_capabilities array whose
-// hook and mcp_server entries read trusted_enabled once approved; a non-zero
-// exit returns {"error":{"code":"unknown-plugin",...}} while still on muse.
-// The on-disk settings.json cannot answer this because its
-// runtime_capabilities stores only trusted definition hashes.
+// with record.enabled, record.version and a runtime_capabilities array; a
+// non-zero exit returns an unknown-plugin error object. The on-disk
+// settings.json cannot answer this because its runtime_capabilities stores
+// only trusted definition hashes.
 
 // MuseInspectFn probes muse's plugin state, shaped exactly like Env.Command
 // so cmd/relevo can hand it the Env method itself.
@@ -37,16 +36,14 @@ const (
 	museStatusTrusted = "trusted_enabled"
 )
 
-// museCap is one runtime capability of the inspected plugin: what it is and
-// how far muse's review of it has come.
 type museCap struct {
 	Kind   string `json:"kind"`
 	Status string `json:"status"`
 }
 
-// musePluginState is what one `muse plugins inspect relevo --json` probe
-// proves about the relevo plugin. museErr names the error code the answer
-// carried ("" when the answer was a plain installed object).
+// musePluginState is what one inspect probe proves about the relevo
+// plugin. museErr names the error code the answer carried ("" for a plain
+// installed object).
 type musePluginState struct {
 	museErr string
 	enabled bool
@@ -55,9 +52,8 @@ type musePluginState struct {
 }
 
 // musePluginChecks reads the plugin state once and reports the three rows
-// that mirror the Claude plugin rows. Nothing the probe cannot establish is
-// a FAIL: a spawn error or unparseable output leaves every row `not checked`
-// OK.
+// that mirror the Claude plugin rows. Nothing the probe cannot establish
+// is a FAIL.
 func musePluginChecks(in MasterMindCheckInput) []Check {
 	state, err := inspectMusePlugin(in.MuseInspect)
 	if err != nil {
@@ -153,9 +149,9 @@ const museInspectCommandText = "muse plugins inspect relevo --json"
 var errNoMuseProbe = errors.New("no muse inspect reader")
 
 // inspectMusePlugin runs the injected inspect command and decodes both
-// shapes: muse answers a missing plugin with exit 1 and an error object, and
-// any other command error or unparseable body is not a fact relevo can
-// state, so it comes back as an error the rows render as `not checked`.
+// shapes: a missing plugin answers exit 1 with an error object. Any other
+// command error or unparseable body comes back as an error the rows render
+// as `not checked`.
 func inspectMusePlugin(inspect MuseInspectFn) (musePluginState, error) {
 	if inspect == nil {
 		return musePluginState{}, errNoMuseProbe

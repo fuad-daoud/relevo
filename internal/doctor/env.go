@@ -24,8 +24,8 @@ type Env interface {
 	LookPath(binary string) (string, error)
 	HomePath(rel string) (string, error)
 	Stat(path string) error
-	// StatOwner returns the numeric uid that owns path and ok reports whether
-	// the platform's FileInfo carries one. It is how a row tells a root this
+	// StatOwner returns the numeric uid that owns path and whether the
+	// platform's FileInfo carries one. It is how a row tells a root this
 	// user owns from one an inherited environment pointed at.
 	StatOwner(path string) (uid uint32, ok bool)
 	// ReadFile reads a file whose existence Stat has already established; a
@@ -165,9 +165,8 @@ func (e *realEnv) Command(ctx context.Context, bin string, args ...string) ([]by
 	return exec.CommandContext(ctx, bin, args...).Output()
 }
 
-// ReleaseState reads the daemon's cached answer and classifies this install.
-// A root or cache it cannot read is not an error: it is "not checked", which
-// is what every unrefreshed, offline or unclassifiable install reads as.
+// ReleaseState reads the daemon's cached answer and classifies this
+// install. A root or cache it cannot read is "not checked", not an error.
 func (e *realEnv) ReleaseState() (string, string, bool, release.Kind) {
 	kind := release.Detect(e.self)
 
