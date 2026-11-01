@@ -43,7 +43,6 @@ type remoteFetch struct {
 	Settle *catchUpAck
 }
 
-// release drops the catch-up's unrenamed temp files, if the fetch made one.
 func (f *remoteFetch) release() {
 	if f == nil {
 		return
@@ -91,9 +90,6 @@ func fetchRemoteWithin(ctx context.Context, rt Runtime, b store.Binding, head ti
 		return f
 	}
 	f.View = view
-	// An observing member never fetches a catch-up: the chain pull is the one
-	// collector that installs its closed rounds and acks them.
-	//
 	// A close is collected by the fact that the server named a ClosedRound at
 	// or past this round, not by the state word that rides with it. The words
 	// are not exclusive: a round that closed and then halted again is both, and
@@ -344,7 +340,6 @@ func checkedOut(err error) bool {
 	return strings.Contains(msg, "checked out") || strings.Contains(msg, "used by worktree")
 }
 
-// warnCheckedOut logs the checkout hint once per process, then only at Debug.
 func warnCheckedOut(name, branch string) {
 	if _, seen := checkedOutWarned.LoadOrStore(name, struct{}{}); !seen {
 		slog.Info("checkout another branch, then relevo wait", "binding", name, "branch", branch)
@@ -354,8 +349,7 @@ func warnCheckedOut(name, branch string) {
 }
 
 // fetchCatchUp runs the round-close catch-up's downloads and absorb without
-// the state lock. It writes temp files or memory and changes no binding: the
-// apply half installs what came back and owns the report, ack and bookkeeping.
+// the state lock. It writes temp files or memory and changes no binding.
 func fetchCatchUp(ctx context.Context, rt Runtime, b store.Binding, view remote.BindingView) *catchUpFetch {
 	cf := &catchUpFetch{Round: view.ClosedRound}
 	if !fetchCatchUpFiles(ctx, rt, b, view, cf) {
@@ -419,7 +413,7 @@ func fetchCatchUpReport(ctx context.Context, rt Runtime, b store.Binding, view r
 }
 
 // fetchCatchUpDiff fetches the round's patch into memory, unless it is over
-// the patch cap, which is logged and stored as nothing exactly as before.
+// the patch cap, which is logged and stored as nothing.
 func fetchCatchUpDiff(ctx context.Context, rt Runtime, b store.Binding, view remote.BindingView, cf *catchUpFetch) bool {
 	server, name, n := b.Builder.Server, b.Name, view.ClosedRound
 	rc, err := rt.Remote.RoundFile(ctx, server, name, n, "diff")

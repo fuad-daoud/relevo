@@ -141,7 +141,6 @@ func applyRemoteErr(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 	var httpErr *client.HTTPError
 	if errors.As(err, &httpErr) {
 		if httpErr.Status == 401 {
-			// A revoked key is permanent: halt at once.
 			if httpErr.Body.Code == remote.CodeRevoked {
 				b, err := haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: %s: %s", name, server, httpErr.Body.Message))
 				return b, false, err

@@ -66,12 +66,10 @@ func carriesOldPaths(rt Runtime, b store.Binding) bool {
 }
 
 // resumeHandedOver prepares a handed-over binding for the first resume on its
-// new machine: the caller's directory must be a checkout of the repository, the
-// branch is fetched, the worktree path is recomputed the way a fresh bind
-// computes it, and the history mirror is pointed at this machine's repo row.
-// MasterMind and MasterMindID are set by resume itself right after, from the
-// caller; binding_record.owner is the serve tenant, "" on a local machine, and
-// is not touched, so the record stays visible to the resuming MasterMind.
+// new machine. MasterMind and MasterMindID are set by resume itself right after,
+// from the caller; binding_record.owner is the serve tenant, "" on a local
+// machine, and is not touched, so the record stays visible to the resuming
+// MasterMind.
 func resumeHandedOver(ctx context.Context, rt Runtime, opts BindOptions, b store.Binding) (store.Binding, error) {
 	if rt.Git == nil {
 		return store.Binding{}, ErrGitRequired
@@ -113,8 +111,6 @@ func resumeHandedOver(ctx context.Context, rt Runtime, opts BindOptions, b store
 	return b, repointMirror(rt, b.Name, local, commonDir)
 }
 
-// repointMirror points the history mirror of name at this machine's own repo
-// row for the URL, creating the row when this machine has none.
 func repointMirror(rt Runtime, name, url, commonDir string) error {
 	d, err := rt.Store.DB()
 	if err != nil {

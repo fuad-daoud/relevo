@@ -28,13 +28,9 @@ type roundEndCase struct {
 	Marker  bool
 }
 
-// classifyRoundEnd pins the end of an exited round with no usable work: the
-// report closes whatever the process did; a marker without one takes the
-// noreport close; and an exit with neither is a nudge only when the process
-// left cleanly -- a turn the stream shows ending, or a stream that establishes
-// nothing and lets today's code gate decide -- and never when the stream says
-// the turn was cut inside itself. An unclean verdict needs positive evidence,
-// so an unreadable or empty stream never earns one and keeps the nudge path.
+// classifyRoundEnd pins the end of an exited round with no usable work. An
+// unclean verdict needs positive evidence, so an unreadable or empty stream
+// never earns one and keeps the nudge path.
 func classifyRoundEnd(c roundEndCase) roundEndVerdict {
 	switch {
 	case c.Report:

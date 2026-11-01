@@ -22,11 +22,6 @@ import (
 // outage began, report it as the status, and halt once an open round has been
 // unreachable for longer than its budget plus the grace.
 //
-// It lives beside the halt's own text and its clearing because those three are
-// one behaviour: an episode this opens, the sentence it records, and the moment
-// the server's answering ends it. Splitting them across two files would put the
-// write and the undo next to each other's callers and nowhere near each other.
-//
 // The halt fires only on an open round: a round the server already closed has
 // nothing left running over there, and its answer arrives as a view rather than
 // as silence.
@@ -175,9 +170,7 @@ func remoteHaltText(state remote.RoundState, halt string) string {
 }
 
 // unreachableHaltDisproven is the set of round states whose arriving view
-// answers the unreachable halt's question. Split out so the clearing rules are
-// one predicate rather than a condition growing arms inside the function that
-// reads it.
+// answers the unreachable halt's question.
 func unreachableHaltDisproven(state remote.RoundState) bool {
 	switch state {
 	case remote.RoundRunning, remote.RoundQueued, remote.RoundNeedsYou, remote.RoundBroken:
@@ -190,10 +183,9 @@ func unreachableHaltDisproven(state remote.RoundState) bool {
 // reason of its own. It is a constant rather than a builder of arbitrary text, so
 // a reader of the halt sees the same sentence every time; the kind, not this
 // text, is what says the halt came from a broken view, and only the load
-// migration reads it back, to name the kind a record written before the field
-// did not carry.
+// migration reads it back, to name the kind a record without the field.
 //
 // It is store's constant because that migration is the other half of it: the
 // sentence written and the sentence recovered have to be one, or a break
-// recorded before the field is not recognised on the next load.
+// without the field is not recognised on the next load.
 const brokenHaltText = store.BrokenHaltText
