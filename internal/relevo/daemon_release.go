@@ -23,11 +23,9 @@ const releaseRetryAfter = time.Hour
 // It runs after everything else Tick does and never before it: no reconcile
 // decision may wait on a release check.
 //
-// The common path is one small file read -- a fresh cache ends it there, so a
-// 2s tick stays cheap. A stale cache costs one bracketed HTTP GET, and every
-// failure of that GET is swallowed and logged at debug: an offline machine
-// saves nothing, writes no wrong answer, and waits out a one-hour backoff
-// before trying again.
+// The common path is one small file read, so a 2s tick stays cheap. Every
+// failure is swallowed and logged at debug: an offline machine saves nothing,
+// writes no wrong answer, and waits out a one-hour backoff before trying again.
 func (d *Daemon) refreshRelease(ctx context.Context) {
 	if d.rt.Fetcher == nil {
 		return
@@ -38,16 +36,13 @@ func (d *Daemon) refreshRelease(ctx context.Context) {
 		now = d.rt.Now
 	}
 
-	// A failed fetch backs off for an hour, so a down endpoint is asked once
-	// an hour instead of on every tick.
 	if now().Before(d.releaseRetryAt) {
 		return
 	}
 
 	// The cache lives in the machine database's kv row "release-check",
-	// reached through the runtime's own store: for the daemon that is the one
-	// shared handle it serves, so the release check adds no connection of its
-	// own and no store.New per tick (D1).
+	// reached through the runtime's own store, so the release check adds no
+	// connection of its own.
 	mdb, err := d.rt.Store.DB()
 	if err != nil {
 		slog.Debug("release check: no database", "err", err)
@@ -96,8 +91,7 @@ func (d *Daemon) refreshRelease(ctx context.Context) {
 //
 // The binding is the caller's tick snapshot rather than a fresh load: a
 // concurrent pause or unbind of a remote binding costs one wasted fetch, which
-// the apply half discards against the binding it reads under the lock, and the
-// saved load was most of the tick's per-binding cost.
+// the apply half discards against the binding it reads under the lock.
 func (d *Daemon) prefetchRemote(ctx context.Context, b store.Binding) *remoteFetch {
 	if d.rt.Remote == nil {
 		return nil
@@ -116,16 +110,12 @@ func (d *Daemon) prefetchRemote(ctx context.Context, b store.Binding) *remoteFet
 	return &f
 }
 
-// archivedMirrorOnce runs the archived-record mirror feed once per process,
-// before the daemon's first tick.
 var archivedMirrorOnce sync.Once
 
 // mirrorArchived feeds every archived record the mirror has not seen into the
-// database.
-//
-// Each record is keyed by the kv row "ingested.archive.<recordID>": the key is
-// put only after a successful ingest, so a failure is logged and retried by
-// the next process rather than lost.
+// database. Each record is keyed by the kv row
+// "ingested.archive.<recordID>", put only after a successful ingest, so a
+// failure is logged and retried by the next process rather than lost.
 func mirrorArchived(ctx context.Context, rt Runtime) {
 	if rt.DB == nil {
 		return

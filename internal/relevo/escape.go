@@ -12,14 +12,12 @@ import (
 
 // escapeCheck gathers DecideEscape's inputs and runs it, for one headless
 // round close. It never fails the close it is called from: any git
-// error is a skipped check (EscapeNone), logged at Warn, not a reason to
-// hold up the round.
+// error is a skipped check (EscapeNone), not a reason to hold up the round.
 //
 // Preconditions for running at all -- otherwise EscapeNone without touching
 // git: b.Builder.Headless(), b.Repo != "", b.RoundBaselineTree != "",
-// b.Serve == nil (served bindings use a bare mirror as b.Repo; git status
-// cannot run in a bare repo and there is no source checkout to escape into),
-// and rt.Git != nil.
+// b.Serve == nil, and rt.Git != nil. Served bindings use a bare mirror as
+// b.Repo, and git status cannot run in a bare repo.
 func escapeCheck(ctx context.Context, rt Runtime, b store.Binding, hasReport bool) git.EscapeOutcome {
 	if !git.EscapeApplies(b) || rt.Git == nil {
 		return git.EscapeNone
@@ -46,9 +44,9 @@ func escapeCheck(ctx context.Context, rt Runtime, b store.Binding, hasReport boo
 }
 
 // repoMoved reports whether the source checkout changed during the round. A
-// repo the human left dirty before the send is the normal state for a round
-// that fails fast, so only a change against the send's snapshot counts; a
-// round sent without one falls back to the plain dirty check.
+// repo the human left dirty before the send is normal, so only a change
+// against the send's snapshot counts; a round sent without one falls back to
+// the plain dirty check.
 func repoMoved(ctx context.Context, rt Runtime, b store.Binding) (bool, error) {
 	if b.RoundRepoBaselineTree == "" {
 		return rt.Git.Dirty(ctx, b.Repo)

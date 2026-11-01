@@ -30,8 +30,7 @@ type gateProcSpec struct {
 // a daemon restart took the first one with it.
 func startGateProc(ctx context.Context, rt Runtime, spec gateProcSpec, attempt int) (store.GateRun, *store.GateRecord, error) {
 	// The check process is prepared through the same seam a round's start
-	// uses: a spec with a unit name gets its own temp dir, and one without a
-	// name is passed through with nothing.
+	// uses.
 	tmpDir, prepEnv, cleanupProc, err := prepareProc(ctx, rt, procRequest{
 		kind: procKindCheck, key: spec.UnitName, tree: spec.Dir,
 	})
@@ -62,8 +61,7 @@ func startGateProc(ctx context.Context, rt Runtime, spec gateProcSpec, attempt i
 // advanceGateProc advances spec's run one tick. next is non-nil only when the
 // run must be replaced: the single re-run after a restart loss, carrying
 // Attempt 1. Otherwise next is nil and done reports whether the run ended,
-// with rec the record to attach. A run still in flight returns done == false
-// and rec == nil, so the caller's handle stands.
+// with rec the record to attach.
 func advanceGateProc(ctx context.Context, rt Runtime, run store.GateRun, spec gateProcSpec) (next *store.GateRun, done bool, rec *store.GateRecord, err error) {
 	h := spawn.ProcHandle{PID: run.PID, StartedAt: time.Unix(run.StartedAt, 0)}
 	alive, aerr := rt.Runner.Alive(ctx, h)

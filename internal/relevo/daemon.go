@@ -30,14 +30,14 @@ type Daemon struct {
 	interval time.Duration
 
 	// refresh re-reads candidates.json and policy.json when they have
-	// changed and returns the Runtime the tick should use. Nil (the
-	// default) keeps today's behaviour: rt is used as given.
+	// changed and returns the Runtime the tick should use. Nil means rt is
+	// used as given.
 	refresh func(Runtime) Runtime
 
 	// upgrade, when set, runs after every completed tick and only while ctx
 	// is live. True means a new binary passed its preflight, and Run returns
-	// ErrReexec so the caller can exec into it. Nil (the default) keeps
-	// today's behaviour: the daemon never re-execs.
+	// ErrReexec so the caller can exec into it. Nil means the daemon never
+	// re-execs.
 	upgrade func(ctx context.Context) bool
 
 	// releaseRetryAt is when a release fetch that failed may be tried again.
@@ -46,8 +46,7 @@ type Daemon struct {
 
 	// ingestSeen is the store revision each binding was last mirrored at, so a
 	// tick whose data did not change costs one digest instead of a mirror run.
-	// It is process state on purpose: a restart mirrors everything once, and a
-	// change the daemon never saw cannot hide behind a revision it wrote.
+	// Process state on purpose: a restart mirrors everything once.
 	ingestSeen map[string]string
 
 	// backoff remembers servers whose prefetch failed, so a dead server costs
@@ -65,16 +64,16 @@ type Daemon struct {
 	// live is the liveness state that qualifies the slot, guarded by syncMu.
 	live verb.Liveness
 	// syncIdle is signalled whenever syncInFlight goes false, so a caller
-	// waiting for the slot -- a sync verb -- is woken rather than polling. It is
-	// created once in NewDaemon and never replaced, which is what lets Wait
-	// and the triggers share one lock and one condition.
+	// waiting for the slot is woken rather than polling. Created once in
+	// NewDaemon and never replaced, so Wait and the triggers share one lock
+	// and one condition.
 	syncIdle *sync.Cond
 	// syncLast is when the idle window last opened. The zero time means no
 	// window has run yet, so a fresh daemon syncs once and then settles.
 	syncLast time.Time
 	// outboxTruncatedAt is when the outbox was last emptied while sync was
-	// off. The zero time means it never has been, so a fresh daemon empties it
-	// on its first tick and then settles onto the interval.
+	// off. The zero time means never, so a fresh daemon empties it on its
+	// first tick.
 	outboxTruncatedAt time.Time
 	// tmpSweptAt is when this daemon last ran the tmp sweep; the zero time
 	// means never, so a daemon's first tick sweeps. It is daemon state rather
@@ -85,18 +84,16 @@ type Daemon struct {
 	// syncNow is the clock the idle window reads. Nil means time.Now.
 	syncNow func() time.Time
 	// syncVerbs is the verb runner the owner serves, set once the Daemon
-	// exists. Nil (the default) keeps today's behaviour: the tick drives
-	// rt.Sync exactly as before. When set, the tick drives the runner it
-	// shares with the verbs, so a client built lazily for one is reused by
-	// the other instead of each path opening its own. Set through
-	// SetSyncVerbs: cmd/relevo owns the hook installation while this type
-	// owns the field.
+	// exists. Nil means the tick drives rt.Sync exactly as before. When set,
+	// the tick drives the runner it shares with the verbs, so one client is
+	// reused instead of each path opening its own. Set through SetSyncVerbs:
+	// cmd/relevo owns the hook installation while this type owns the field.
 	syncVerbs *verb.Runner
 }
 
 // SetSyncVerbs shares the owner's verb runner with the tick, so background
-// attempts reuse the client a verb built lazily (and vice versa) instead of
-// each path opening its own handle to the same remote.
+// attempts reuse the client a verb built lazily instead of each path opening
+// its own handle to the same remote.
 func (d *Daemon) SetSyncVerbs(v *verb.Runner) {
 	d.syncVerbs = v
 }
@@ -108,16 +105,15 @@ func (d *Daemon) SetSyncVerbs(v *verb.Runner) {
 // the trigger with it.
 //
 // The trigger is nil-safe from the gate write's side, so a caller that never
-// bound it -- a serve host's own daemon, a test -- writes the gate and leaves
-// the export to the ordinary triggers.
+// bound it writes the gate and leaves the export to the ordinary triggers.
 func (d *Daemon) BindSyncNow(ctx context.Context) {
 	d.rt.SyncNow = func() { d.SyncNow(ctx) }
 }
 
 // syncEngine adapts the Daemon to the verb package's Engine: the clock the
 // idle window reads, the signal that wakes the slot's waiters, and the trigger
-// that hands a sync to the background. The moved hook logic drives the engine
-// through this adapter so the verb package never imports this one.
+// that hands a sync to the background, so the verb package never imports this
+// one.
 type syncEngine struct {
 	d *Daemon
 }
@@ -147,17 +143,15 @@ func NewDaemon(rt Runtime, interval time.Duration) *Daemon {
 	return d
 }
 
-// WithRefresh installs a per-tick refresh on the daemon. nil (the default)
-// keeps today's behaviour: the Runtime given to NewDaemon is used as-is.
-// Returns d for chaining.
+// WithRefresh installs a per-tick refresh on the daemon. nil means the Runtime
+// given to NewDaemon is used as-is. Returns d for chaining.
 func (d *Daemon) WithRefresh(f func(Runtime) Runtime) *Daemon {
 	d.refresh = f
 	return d
 }
 
 // WithUpgrade installs a post-tick hook that decides whether to re-exec onto a
-// new binary. nil (the default) keeps today's behaviour: no re-exec.
-// Returns d for chaining.
+// new binary. nil means no re-exec. Returns d for chaining.
 func (d *Daemon) WithUpgrade(f func(ctx context.Context) bool) *Daemon {
 	d.upgrade = f
 	return d
@@ -171,19 +165,16 @@ func (d *Daemon) TmpSweptAt() time.Time { return d.tmpSweptAt }
 func (d *Daemon) SetTmpSweptAt(t time.Time) { d.tmpSweptAt = t }
 
 // WaitSyncSlot runs fn with this daemon's sync to itself, waiting its turn
-// rather than dropping the work.
-//
-// It is the same guard the seal hook and the idle window take, and a sync verb
-// takes it the same way. The difference is what a caller does when the slot is
-// already held: queueSync marks the slot dirty for one rerun, because piling
-// attempts behind a slow network does not make the backlog smaller. A verb is
-// not that -- somebody asked for it explicitly and is waiting for the answer --
-// so it waits for the in-flight attempt to finish and then runs.
+// rather than dropping the work. It takes the same guard the seal hook and
+// the idle window take. A trigger that finds the slot held marks it dirty for
+// one rerun, because piling attempts behind a slow network does not make the
+// backlog smaller; a verb waits for the in-flight attempt to finish and then
+// runs, because somebody asked for it explicitly and is waiting for the
+// answer.
 //
 // The wait is a condition rather than a poll, and the slot is released in a
 // defer, so a verb that panics still frees it: a stuck flag would wedge every
-// later sync on this machine and the statusline would keep reading a marker no
-// tick writes again.
+// later sync on this machine.
 func (d *Daemon) WaitSyncSlot(fn func()) {
 	d.syncMu.Lock()
 	for d.syncInFlight {
@@ -250,8 +241,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 }
 
-// Tick reconciles every binding. It is the whole tick: the daemon has no other
-// input than its interval.
+// Tick reconciles every binding.
 func (d *Daemon) Tick(ctx context.Context) error {
 	if d.refresh != nil {
 		d.rt = d.refresh(d.rt)
@@ -267,13 +257,12 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	// ended is exactly the one left carrying stale records.
 	d.safely("mastermind prune", func() { d.pruneMasterMinds() })
 	// The availability and latency histories age out by SQL rather than in
-	// memory, on the same maintenance cadence and for the same reason: a row is
-	// deleted only by age, and no sync is running to carry that away.
+	// memory: a row is deleted only by age, and no sync is running to carry
+	// that away.
 	d.safely("history prune", func() { d.pruneHistory() })
 	// A reader round's scratch worktree is throwaway: leftovers from a crash go
 	// away here, before the no-bindings early return, because a machine whose
-	// readers are all gone is exactly the one left carrying them. It runs off
-	// the list above rather than a second one.
+	// readers are all gone is exactly the one left carrying them.
 	d.safely("scratch sweep", func() { sweepReaderScratch(ctx, d.rt, bindings) })
 	// The tmp root's own leftovers go on the same list and the same side of
 	// the early return: a machine with no bindings left is exactly the one
@@ -330,11 +319,11 @@ func (d *Daemon) Tick(ctx context.Context) error {
 
 	// The chain's staged rounds are shipped here, outside every lock, once per
 	// tick and after the binding loop: a tick above may have staged the next
-	// round for a remote member, and the step is what hands it over.
+	// round for a remote member.
 	d.safely("chain pending send", func() { chainSendPending(ctx, d.rt) })
 
-	// A server chain is moved by the pull: it collects every mirror chain's
-	// missing rounds and queues each chain's end delivery, outside every lock.
+	// A server chain is moved by the pull, outside every lock: it collects
+	// every mirror chain's missing rounds and queues each chain's end delivery.
 	d.safely("chain pull", func() { chainPullServers(ctx, d.rt) })
 
 	fresh, err := d.rt.Store.List()
@@ -353,8 +342,7 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	d.safely("admit oom-queued", func() { housekeep.AdmitOOMQueued(ctx, HousekeepDeps(d.rt), fresh) })
 
 	// Each of Tick's non-binding phases runs through safely, so a panic in
-	// one cannot take the whole daemon down: it is logged with a stack and
-	// the next tick tries again.
+	// one cannot take the whole daemon down: the next tick tries again.
 	d.safely("ingest", func() { d.ingestLiveBindings(ctx, fresh) })
 
 	d.safely("refresh", func() { d.refreshRelease(ctx) })
@@ -362,17 +350,16 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	return nil
 }
 
-// tickOne is the per-binding body Tick's whole-store pass uses: one critical
+// tickOne is the per-binding body of Tick's whole-store pass: one critical
 // section that reads the binding fresh under the lock, reconciles it, and
-// writes it back without releasing the lock. Reconcile and everything it calls
-// take the *store.Tx rather than locking themselves, so a CLI command running
-// concurrently cannot land a write between the read and the save.
+// writes it back. Reconcile and everything it calls take the *store.Tx rather
+// than locking themselves, so a CLI command running concurrently cannot land a
+// write between the read and the save.
 func (d *Daemon) tickOne(ctx context.Context, b store.Binding) (err error) {
 	name := b.Name
-	// A panic anywhere under this binding is contained here: it is logged
-	// with a stack and returned as an error, so Tick logs "reconcile failed"
-	// and goes on to the next binding. WithLock releases both of its locks
-	// through defers, so unwinding through it is safe.
+	// A panic anywhere under this binding is contained here, so Tick logs
+	// "reconcile failed" and goes on to the next binding. WithLock releases
+	// both of its locks through defers, so unwinding through it is safe.
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("reconcile panicked", "binding", name, "panic", r, "stack", string(debug.Stack()))
@@ -385,9 +372,8 @@ func (d *Daemon) tickOne(ctx context.Context, b store.Binding) (err error) {
 	pre := d.prefetchRemote(ctx, b)
 	defer pre.release()
 
-	// sealed is how many files this tick's seal pass moved into the database.
-	// It is read after the lock is released, which is the only place a sync
-	// may be started from.
+	// sealed is read after the lock is released, which is the only place a
+	// sync may be started from.
 	var sealed int
 	err = d.rt.Store.WithLock(func(tx *store.Tx) error {
 		loaded, err := tx.Load(name)
@@ -403,8 +389,7 @@ func (d *Daemon) tickOne(ctx context.Context, b store.Binding) (err error) {
 		// A binding written by a newer relevo is left to that relevo: this
 		// binary's Save would erase every field it does not know. Format 1
 		// is stored as 0, so any loaded Format above BindingFormat is a
-		// newer file. The binding is neither reconciled nor saved, and the
-		// file keeps every field it had.
+		// newer file.
 		if loaded.Format > store.BindingFormat {
 			warnOnce(name, "newer-format",
 				fmt.Sprintf("binding %s is format %d; this relevo knows %d; leaving it to a newer relevo",
@@ -432,9 +417,7 @@ func (d *Daemon) tickOne(ctx context.Context, b store.Binding) (err error) {
 			return err
 		}
 		// Compared against what was on disk, not against fresh: a back-fill
-		// is itself a change worth saving. The verdict is the shared row's:
-		// a tick that moved only live fields persists its overlay and emits
-		// nothing.
+		// is itself a change worth saving.
 		changed, err := tx.SaveWithOverlay(next)
 		if err != nil {
 			return err
@@ -453,10 +436,10 @@ func (d *Daemon) tickOne(ctx context.Context, b store.Binding) (err error) {
 		return err
 	}
 	// A seal that moved bytes is the moment worth syncing on: the bulk of what
-	// a machine has to hand another machine is a round's files. The sync is
-	// started here rather than inside the seal or the lock above, and is not
-	// waited on, because the seal is already committed and neither it nor the
-	// tick may wait on a network.
+	// a machine has to hand another machine is a round's files. The sync starts
+	// here rather than inside the seal or the lock, and is not waited on,
+	// because the seal is already committed and neither it nor the tick may
+	// wait on a network.
 	if sealed > 0 {
 		d.queueSync(ctx)
 	}

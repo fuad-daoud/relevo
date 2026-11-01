@@ -26,9 +26,8 @@ func gib(n uint64) string {
 
 // CheckDiskFree is a round's disk preflight: the first path with less than
 // minBytes free refuses the round with an *EnvironmentError naming it.
-// minBytes 0 turns the preflight off, so a policy disk_min_free_gb of 0 never
-// refuses a round. A path whose free space cannot be read is skipped with a
-// log line and never refuses the round: a broken statfs is a probe problem,
+// minBytes 0 turns the preflight off. A path whose free space cannot be read
+// is skipped and never refuses the round: a broken statfs is a probe problem,
 // and failing every round on it would defeat the check.
 func CheckDiskFree(paths []string, minBytes uint64, free func(string) (uint64, error)) error {
 	if minBytes == 0 {
