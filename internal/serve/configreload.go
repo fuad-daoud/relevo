@@ -35,7 +35,7 @@ type ConfigRefresher struct {
 	// an unchanged warning is not repeated on every successful reload.
 	logged map[string]bool
 
-	// warn is slog.Warn in production; tests replace it.
+	// warn is slog.Warn in production.
 	warn func(msg string, args ...any)
 }
 
@@ -95,7 +95,6 @@ func (r *ConfigRefresher) Refresh(cfg Config) Config {
 	return cfg
 }
 
-// fail warns once per distinct error and keeps serving cfg as it was.
 func (r *ConfigRefresher) fail(cfg Config, err error) Config {
 	msg := err.Error()
 	if msg == r.lastErr {

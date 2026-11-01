@@ -20,20 +20,17 @@ import (
 )
 
 // zeroSHA is the all-zero object name git reads as "this ref must not exist
-// yet". Passed as UpdateRef's old value it makes the write create-only, so the
-// second of two concurrent creates is refused by git itself instead of
-// overwriting the branch the first one cut.
+// yet". Passed as UpdateRef's old value it makes the write create-only, so
+// the second of two concurrent creates is refused by git itself.
 const zeroSHA = "0000000000000000000000000000000000000000"
 
 // ownerSections holds one exclusion per owner, keyed by client id: the
 // per-owner serialization a create and a round start each need across the
 // window where a re-check and the write it guards have to be a single step.
-// It is deliberately narrower than s.mu, which guards only the stores map, and
-// than admitMu, which decides the server-wide builder cap: keyed by owner, one
-// owner's section is never waited on by another owner's poll, ack or start.
+// It is deliberately narrower than s.mu and admitMu: one owner's section is
+// never waited on by another owner's poll, ack or start.
 var ownerSections sync.Map // remote.ClientID -> *sync.Mutex
 
-// lockOwnerSection takes the named owner's section and returns its release.
 func lockOwnerSection(owner remote.ClientID) func() {
 	v, _ := ownerSections.LoadOrStore(owner, &sync.Mutex{})
 	mu := v.(*sync.Mutex)
@@ -57,10 +54,8 @@ const (
 )
 
 // parseCreateChainRequest validates every untrusted field of a chain create,
-// returning the 400 message or "". It applies parseCreateRequest's rules to the
-// fields the two share and adds the chain's own: the plan count, size and
-// emptiness, the settings bounds and actor names, and the client binding ids'
-// parts.
+// returning the 400 message or "". It applies parseCreateRequest's rules to
+// the fields the two share and adds the chain's own.
 func parseCreateChainRequest(req remote.CreateChainRequest) string {
 	if bad := parseChainCreateShared(req); bad != "" {
 		return bad
@@ -80,9 +75,8 @@ func parseCreateChainRequest(req remote.CreateChainRequest) string {
 	return validateChainBindingIDs(req.ClientBindingIDs)
 }
 
-// parseChainCreateShared checks the fields a chain create and a binding create
-// share: the name and its chain-length cap, the repo id, the base commit, the
-// author and the two labels.
+// parseChainCreateShared checks the fields a chain create and a binding
+// create share.
 func parseChainCreateShared(req remote.CreateChainRequest) string {
 	if err := store.ValidName(req.Name); err != nil {
 		return err.Error()
@@ -115,8 +109,7 @@ func parseChainCreateShared(req remote.CreateChainRequest) string {
 	return validSubdir(req.Subdir)
 }
 
-// validateChainPlans checks the plan list: 1 to maxChainPlans entries, each
-// non-empty after trim and at most maxChainPlanBytes.
+// validateChainPlans checks the plan list.
 func validateChainPlans(plans []string) string {
 	if len(plans) < 1 || len(plans) > maxChainPlans {
 		return fmt.Sprintf("plans: 1 to %d are required", maxChainPlans)
@@ -132,8 +125,7 @@ func validateChainPlans(plans []string) string {
 	return ""
 }
 
-// validateChainSettings checks the chain's settings: the correction and regate
-// bounds, and an actor name for every part a chain runs.
+// validateChainSettings checks the chain's settings.
 func validateChainSettings(s remote.ChainSettings) string {
 	if s.MaxCorrections < 0 || s.MaxCorrections > maxChainCorrections {
 		return fmt.Sprintf("max_corrections must be 0 to %d", maxChainCorrections)
@@ -166,8 +158,7 @@ func validateChainBindingIDs(ids map[string]string) string {
 	return ""
 }
 
-// validateChainActorIDs checks that client_actor_ids has at most
-// maxChainActorIDs entries and that every actor key is non-empty and bounded.
+// validateChainActorIDs checks client_actor_ids.
 func validateChainActorIDs(ids map[string]string) string {
 	if len(ids) > maxChainActorIDs {
 		return fmt.Sprintf("client_actor_ids: at most %d ids allowed", maxChainActorIDs)
@@ -241,9 +232,8 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The bare repo is pinned before the init and the absorb and released after
-	// the rows are saved (defer covers every failure): between the absorb and
-	// the row write no row references it, and the pin is what keeps the tick's
-	// prune from deleting the repo inside that window.
+	// the rows are saved: between the absorb and the row write no row
+	// references it, and the pin keeps the tick's prune from deleting it.
 	unpin := pinBareRepo(bare)
 	defer unpin()
 
@@ -348,9 +338,8 @@ func (s *Server) chainFinishCreate(w http.ResponseWriter, r *http.Request, rt re
 	writeJSON(w, http.StatusCreated, view)
 }
 
-// cutChainWorktree is the create's git half: it refuses a bundle whose out ref
-// does not resolve to base, refuses an existing branch, cuts the branch at base
-// and checks out the builder's worktree. It writes its own failure and returns
+// cutChainWorktree is the create's git half: it cuts the branch at base and
+// checks out the builder's worktree. It writes its own failure and returns
 // false, unwinding what it made.
 func (s *Server) cutChainWorktree(ctx context.Context, w http.ResponseWriter, g relevo.Git, bare, name, outRef, branch, worktree, base string) bool {
 	unwind := func(hasWorktree, hasBranch bool) {
@@ -391,10 +380,6 @@ func (s *Server) cutChainWorktree(ctx context.Context, w http.ResponseWriter, g 
 	return true
 }
 
-// chainInitAndAbsorb creates the owner's bare repo, then absorbs the shipped
-// base bundle into refs/relevo/<name>/out. It reports the response itself and
-// returns false when it wrote a failure. Both steps run through the owner's
-// runtime: a user-mode owner's git and bundle transport run as the tenant.
 // initOwnerBare creates the owner's bare repo under that owner's section, so two
 // identical creates for one owner take the init one at a time: InitBare's own
 // existence check and its mkdir are not one step, and the loser of that race
@@ -405,6 +390,10 @@ func (s *Server) initOwnerBare(ctx context.Context, rt relevo.Runtime, caller re
 	return rt.Git.InitBare(ctx, bare)
 }
 
+// chainInitAndAbsorb creates the owner's bare repo, then absorbs the shipped
+// base bundle into refs/relevo/<name>/out. It reports the response itself and
+// returns false when it wrote a failure. Both steps run through the owner's
+// runtime: a user-mode owner's git and bundle transport run as the tenant.
 func (s *Server) chainInitAndAbsorb(w http.ResponseWriter, r *http.Request, rt relevo.Runtime, caller remote.ClientID, bare, outRef string, bundle io.Reader) bool {
 	ctx := r.Context()
 	// The init is one mkdir-and-git-init step whose own existence check is not

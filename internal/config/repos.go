@@ -9,18 +9,17 @@ import (
 
 // The repos section: one repository's settings, keyed by the repository's
 // identity -- the lower-case hex sha256 of its root commit, the same hash the
-// bind verb already travels on the wire as remote.RepoID(root commit). The
-// section is a per-item one, so two machines editing two different repositories
-// converge on one entry each instead of displacing each other's.
+// bind verb carries as remote.RepoID(root commit). The section is per-item,
+// so two machines editing two repositories converge instead of displacing
+// each other's.
 
 // RepoEntry is one repository's stored settings. Every field is optional: a
-// field set to "" is stored as absent, and an entry with no field left is not
-// stored at all. Name is a display label only; gate is the acceptance command
-// the repository's bindings take when no --gate names one; board_theme is an
-// opaque string the board round owns; trimpath is on or off, unset meaning on.
-// The unset default is never stored as itself -- an entry holding only it
-// would drop as empty -- so an entry that wants on beside nothing else stores
-// the word `on` explicitly instead.
+// field set to "" stores as absent, and an entry with no field left stores
+// nothing. Name is a display label only; gate is the acceptance command the
+// repository's bindings take with no --gate; board_theme is an opaque string
+// the board round owns; trimpath is on or off, unset meaning on. The unset
+// default never stores as itself -- an entry holding only it would drop as
+// empty -- so an entry wanting on beside nothing else stores `on` explicitly.
 type RepoEntry struct {
 	Name       string `json:"name,omitempty"`
 	Gate       string `json:"gate,omitempty"`
@@ -28,18 +27,17 @@ type RepoEntry struct {
 	Trimpath   string `json:"trimpath,omitempty"`
 }
 
-// repoEntryFields is the field vocabulary one entry carries. A field the entry
-// carries beyond these four is refused by name rather than ignored, so a
-// typo'd key never silently stores nothing.
+// repoEntryFields is the field vocabulary one entry carries. A field beyond
+// these four is refused by name rather than ignored, so a typo'd key never
+// silently stores nothing.
 var repoEntryFields = []string{"name", "gate", "board_theme", "trimpath"}
 
 // ParseRepos reads and checks the repos body: an object keyed by repository
 // identity, each value an object carrying at most the four known string
-// fields, trimpath's restricted to on and off. A body that is not an object, an entry that is not an object (a null
-// entry included), an unknown field and a non-string value are each refused,
-// naming the section and the entry they were found on. Empty fields are
-// dropped, and an entry left with no field at all is dropped, so a body this
-// parse accepts encodes back to itself.
+// fields, trimpath restricted to on and off. A non-object body, a non-object
+// entry (null included), an unknown field and a non-string value are each
+// refused, naming section and entry. Empty fields drop, and an entry left
+// with none drops, so an accepted body encodes back to itself.
 func ParseRepos(body []byte) (map[string]RepoEntry, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil {
@@ -68,7 +66,6 @@ func ParseRepos(body []byte) (map[string]RepoEntry, error) {
 			return nil, err
 		}
 		if entry == (RepoEntry{}) {
-			// An entry with no field left is not stored at all.
 			continue
 		}
 		out[key] = entry
@@ -77,8 +74,8 @@ func ParseRepos(body []byte) (map[string]RepoEntry, error) {
 }
 
 // parseRepoEntry validates one entry's fields and folds them into an entry.
-// Fields are walked in sorted order, so a body with two problems refuses on
-// the same one whichever order the map handed them back in.
+// Fields walk in sorted order, so a body with two problems refuses on the
+// same one regardless of map order.
 func parseRepoEntry(key string, fields map[string]json.RawMessage) (RepoEntry, error) {
 	names := make([]string, 0, len(fields))
 	for name := range fields {
@@ -117,8 +114,8 @@ func parseRepoEntry(key string, fields map[string]json.RawMessage) (RepoEntry, e
 }
 
 // EncodeRepos renders the repos section body: one entry per repository with
-// its empty fields absent, and an entry left empty dropped. The map's keys
-// sort, so the same set always encodes to the same bytes.
+// empty fields absent and empty entries dropped. Keys sort, so the same set
+// encodes to the same bytes.
 func EncodeRepos(m map[string]RepoEntry) ([]byte, error) {
 	out := make(map[string]RepoEntry, len(m))
 	for key, entry := range m {

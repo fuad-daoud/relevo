@@ -272,8 +272,7 @@ func gcArchive(ctx context.Context, rt relevo.Runtime, id remote.ClientID, b sto
 }
 
 // GCAbandoned archives owned bindings older than olderThan that are not
-// running; dryRun only lists. It releases the served refs when unbind keeps no
-// worktree.
+// running; dryRun only lists.
 func GCAbandoned(ctx context.Context, s *Server, olderThan time.Duration, now time.Time, dryRun bool) ([]GCAbandonedResult, error) {
 	bindingsDir := filepath.Join(s.cfg.Root, "bindings")
 	entries, err := os.ReadDir(bindingsDir)
@@ -463,8 +462,7 @@ func AdminUnavailable(s *Server, token string, until time.Time, reason string) (
 	return availability.Unavailable(relevo.AvailabilityDeps(ledgerRuntime(s)), token, until, reason)
 }
 
-// RenderGates formats `relevo serve gates`, printing the candidate's short name
-// when the gate carries one.
+// RenderGates formats `relevo serve gates`.
 func RenderGates(gates []availability.Gate, now time.Time) string {
 	if len(gates) == 0 {
 		return "no gates\n"

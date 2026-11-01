@@ -37,11 +37,11 @@ func settleServed(tx *store.Tx, name string, upTo int) (int, error) {
 	return n, nil
 }
 
-// settleAllServed backfills the ack older servers never wrote: for every owner
-// it settles each served binding's mastermind-bound entries up to the round the
-// owner acked -- or, for a DONE binding, the daemon's last closed round,
-// whichever is further. A per-owner failure is logged and the walk continues;
-// a missing bindings dir is nil.
+// settleAllServed backfills the missing ack: for every owner it settles each
+// served binding's mastermind-bound entries up to the round the owner acked --
+// or, for a DONE binding, the daemon's last closed round, whichever is
+// further. A per-owner failure is logged and the walk continues; a missing
+// bindings dir is nil.
 func (s *Server) settleAllServed() error {
 	bindingsDir := filepath.Join(s.cfg.Root, "bindings")
 	entries, err := os.ReadDir(bindingsDir)

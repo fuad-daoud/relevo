@@ -1,18 +1,12 @@
 package config
 
-// The secrets document: the six secrets a fleet shares, one key per name, each
-// value sealed under the sync key so the log carries ciphertext rather than the
-// thing it protects.
+// SecretDoc is the six secrets a fleet shares, one key per name, each value
+// sealed under the sync key so the log carries ciphertext. It reads and writes
+// the machine-local secret table and adds the allow-list, checked on the way out
+// and on the way in.
 //
-// It is bound to the machine-local file, like every other machine-local row, and
-// it reads and writes the same local secret table the rest of the program uses.
-// What it adds is the allow-list, which is checked on the way out and on the way
-// in, and the sealing, which is what makes the value safe to put on a shared
-// log at all.
-//
-// Every refusal this document makes names the secret. None of them names its
-// value, and none of them prints the envelope: a refusal is read by whoever
-// holds the log, so a value that reached one would have reached every reader.
+// Every refusal names the secret and never its value or envelope: a refusal is
+// read by whoever holds the log.
 
 import (
 	"bytes"
@@ -26,41 +20,36 @@ import (
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
-// Secrets is the name the secrets document travels under, as `doc:secrets` on
-// the log. It is the sync package's name for the same document, which is where
-// the exporter's stamping reads it from.
+// Secrets is the name the secrets document travels under, as `doc:secrets` on the
+// log. It is the sync package's name for the same document, which is where the
+// exporter's stamping reads it from.
 const Secrets = sync.SecretsDocName
 
-// ErrNotSharedSecret marks an arriving name the document does not carry. It is
-// the document's own refusal rather than the envelope's, so a caller can tell
-// "this build has no reader for that name" from "this value is not sealed
-// right", and both are refusals rather than failures.
+// ErrNotSharedSecret marks an arriving name the document does not carry. It is the
+// document's own refusal rather than the envelope's, so a caller can tell "no reader
+// for that name" from "not sealed right"; both are refusals rather than failures.
 var ErrNotSharedSecret = fmt.Errorf("config: this secret does not travel: %w", ErrInvalidValue)
 
-// secretSupersededSource labels the revision an arriving secret lands under when
-// it did not, followed by the installation that sent it. It reads as what
-// happened: the entry was newer than what this machine holds and still lost,
+// secretSupersededSource labels the revision an arriving secret lands under when it
+// did not, followed by the sending installation: the entry was newer and still lost
 // because this machine could not read it or was not allowed to take it.
 const secretSupersededSource = "sync-superseded:secrets:"
 
-// secretStampKey is the write-stamp key of one secret, which the sync package
-// owns because it is also where the exporter reads stamps from.
+// secretStampKey is the write-stamp key of one secret, owned by the sync package
+// where the exporter reads stamps from.
 func secretStampKey(name string) string { return sync.SecretStampKey(name) }
 
-// SecretDoc is the secrets document as a synclog document: one key per shared
-// secret name, one sealed value per name.
-//
-// A machine that holds no key holds no document: Items answers with an error
-// rather than an empty map, because the exporter reads an absent key as "this
-// document no longer holds it" and would send a removal for every secret the
-// fleet has.
+// SecretDoc is the secrets document as a synclog document: one key per shared secret
+// name, one sealed value per name. A machine that holds no key holds no document:
+// Items answers with an error rather than an empty map, because the exporter would
+// read an absent key as a removal for every secret the fleet has.
 type SecretDoc struct {
 	store *Store
 	now   func() time.Time
 }
 
-// NewSecretDoc binds the secrets document to one store. now overrides the
-// store's own clock, for a test that stamps at a chosen time.
+// NewSecretDoc binds the secrets document to one store. now overrides the store's own
+// clock for a test that stamps at a chosen time.
 func NewSecretDoc(s *Store, now func() time.Time) *SecretDoc {
 	if now == nil {
 		now = s.now
@@ -68,7 +57,7 @@ func NewSecretDoc(s *Store, now func() time.Time) *SecretDoc {
 	return &SecretDoc{store: s, now: now}
 }
 
-// Doc returns the secrets document of this store, for the sync runtime to
+// SecretsDoc returns the secrets document of this store, for the sync runtime to
 // register once it has one.
 func (s *Store) SecretsDoc() *SecretDoc { return NewSecretDoc(s, nil) }
 
@@ -76,22 +65,18 @@ func (s *Store) SecretsDoc() *SecretDoc { return NewSecretDoc(s, nil) }
 func (d *SecretDoc) Name() string { return Secrets }
 
 // Items returns the document as one sealed value per shared secret this machine
-// holds, filtered to the allow-list. A secret outside the list is never read
-// here: the table holds the token, the sync key and the serve certificates, and
-// an exporter that walked it by name would hand a peer this machine's identity.
+// holds, filtered to the allow-list. A secret outside the list is never read here:
+// the table holds this machine's identity, which an exporter walking it by name
+// would hand to a peer.
 //
-// The client key is the one entry whose export is conditional. A key no person
-// stamped is this machine's own -- generated by an install, re-marshalled by a
-// normalisation, or left over from before this document existed -- and handing
-// it to the fleet would silently replace the identity of every machine already
-// holding one. So it travels only once a person has put it here on purpose.
+// The client key is the one entry whose export is conditional. An unstamped key is
+// this machine's own, and handing it to the fleet would silently replace the
+// identity of every machine already holding one, so it travels only once a person
+// has put it here on purpose.
 //
-// Every other allow-listed secret travels whether or not it was stamped. The R2
-// credentials a laptop already held before this document existed are the reason:
-// a joiner is owed them without the owner re-running enable, and an exporter
-// that waited for a stamp would withhold them forever. Such a value takes its
-// stamp from the clock at export time, which is what the exporter does for any
-// key it has not exported before.
+// Every other allow-listed secret travels whether or not it was stamped: a joiner
+// is owed them without the owner re-running enable, so such a value takes its
+// stamp from the clock at export time.
 func (d *SecretDoc) Items() (map[string]json.RawMessage, error) {
 	ring, err := readKeyringFrom(d.store.db)
 	if err != nil {
@@ -125,26 +110,23 @@ func (d *SecretDoc) Items() (map[string]json.RawMessage, error) {
 	return out, nil
 }
 
-// stamped reports whether a person wrote this secret on this machine. A value
-// applied from a peer, generated here, or re-marshalled here answers false.
+// stamped reports whether a person wrote this secret on this machine; a peer-applied,
+// generated or re-marshalled value answers false.
 func (d *SecretDoc) stamped(name string) bool {
 	_, ok, err := d.ItemWriteStamp(name)
 	return err == nil && ok
 }
 
 // ResealKeepsStamp marks this document as one whose re-seals must not outrank a
-// peer's edit. A rekey re-seals every value this machine holds under the newest
-// epoch -- same plaintext, new bytes, new digest -- and an export that stamped
-// that re-seal from the clock would send it out ahead of an edit another
-// machine made while the key was rotating, and overwrite it there. The
-// re-emission carries the stamp the key already had instead: it lands as the
-// redelivery it is, and the peer's edit -- which carries its own, newer write
-// stamp -- wins on every reader including this one.
+// peer's edit. A rekey re-seals every value under the newest epoch, so stamping
+// that re-seal from the clock would overwrite an edit made while the key was
+// rotating; the re-emission keeps the stamp the key already had, so the peer's
+// newer edit wins on every reader including this one.
 func (d *SecretDoc) ResealKeepsStamp() bool { return true }
 
 // Apply writes one secret's value, or clears it when value is nil, in one
-// transaction with nothing else. It is the seam a caller without the importer's
-// own transaction uses; the importer reaches ApplyIn instead.
+// transaction with nothing else. A caller with the importer's transaction uses
+// ApplyIn instead.
 func (d *SecretDoc) Apply(key string, value json.RawMessage) error {
 	if refusal, err := d.check(key, value); refusal != nil || err != nil {
 		return refusal
@@ -153,16 +135,12 @@ func (d *SecretDoc) Apply(key string, value json.RawMessage) error {
 }
 
 // ApplyIn is Apply inside the importer's transaction, for a value that arrived
-// from the installation labelled label.
+// from the installation labelled label. The arriving value is opened before
+// anything is written, so an unreadable envelope never leaves the table changed;
+// a refusal changes nothing and the importer records it once no pass can land it.
 //
-// The arriving value is opened before anything is written, so an envelope this
-// machine cannot read never leaves the secret table changed behind it. A refusal
-// is non-nil and changes nothing: the entry may be one this machine is not
-// allowed to take, and the importer records it once no pass can land it.
-//
-// The write is unstamped. A stamp says this machine last wrote the key, and a
-// value a peer sent is not this machine's edit; the importer's applied state
-// already stops it echoing straight back.
+// The write is unstamped: a peer's value is not this machine's edit, and the
+// importer's applied state already stops it echoing straight back.
 func (d *SecretDoc) ApplyIn(t *db.Tx, key string, value json.RawMessage, label string) (refusal error, err error) {
 	if refusal, err := d.check(key, value); refusal != nil || err != nil {
 		return refusal, err
@@ -171,12 +149,9 @@ func (d *SecretDoc) ApplyIn(t *db.Tx, key string, value json.RawMessage, label s
 }
 
 // check refuses everything an arriving secret may not be, before a byte is
-// written. The name is refused against the allow-list, and the value against the
-// envelope rules; both refusals are refusals rather than failures, so the
-// importer retries and then records them as lost.
-//
-// A tombstone carries no value and is checked against the name alone: it removes
-// a name, so there is nothing in it to be unreadable.
+// written: the name against the allow-list, the value against the envelope rules.
+// Both are refusals rather than failures, so the importer retries and then records
+// them as lost. A tombstone carries no value and is checked against the name alone.
 func (d *SecretDoc) check(key string, value json.RawMessage) (refusal error, err error) {
 	if !sync.AllowSecret(key) {
 		return fmt.Errorf("config: %s: %w", key, ErrNotSharedSecret), nil
@@ -184,10 +159,9 @@ func (d *SecretDoc) check(key string, value json.RawMessage) (refusal error, err
 	if value == nil {
 		return nil, nil
 	}
-	// An arriving client key is opened here and not in applyIn, so a value this
-	// machine cannot read is refused before the transaction opens the client key
-	// path at all: a malformed PEM that landed would replace the identity this
-	// machine is enrolled under on every server.
+	// An arriving client key is opened here and not in applyIn, so an unreadable value
+	// is refused before the client key path is touched: a malformed PEM would replace
+	// the identity this machine is enrolled under on every server.
 	ring, err := readKeyringFrom(d.store.db)
 	if err != nil {
 		return err, nil
@@ -205,10 +179,9 @@ func (d *SecretDoc) check(key string, value json.RawMessage) (refusal error, err
 	return nil, nil
 }
 
-// applyIn is the write itself, inside the caller's transaction. A nil value
-// clears the secret, which is how a tombstone lands: the document carries the
-// removal as an upsert whose value is null, so the stamp reaches the reader that
-// removes the name.
+// applyIn is the write itself, inside the caller's transaction. A nil value clears
+// the secret: the removal travels as an upsert whose value is null, so the stamp
+// reaches the reader that removes the name.
 func (d *SecretDoc) applyIn(t *db.Tx, key string, value json.RawMessage, label string) error {
 	if value == nil {
 		return d.store.deleteSecretApplied(t, key, label)
@@ -228,14 +201,10 @@ func (d *SecretDoc) applyIn(t *db.Tx, key string, value json.RawMessage, label s
 }
 
 // ClientKeyReplacedKey is where the machine-local row records that an arriving
-// client key took the place of one this machine already held. It is a row rather
-// than a revision because it is a fact about this machine's state now, not about
-// one edit in its history: `relevo doctor` reads it to say the machine's identity
-// changed and the servers need the new enrolment line, and it reads nothing else.
-//
-// It is the sync package's name for the same row, which is where a refused
-// join's restore of it lives: config imports sync, so the two spellings would
-// drift the way Secrets and SecretsDocName would have.
+// client key replaced the one held. It is a row rather than a revision because it
+// is a fact about this machine's state now: `relevo doctor` reads it to say the
+// identity changed and the servers need the new enrolment line. It is the sync
+// package's name for the same row, so the two spellings cannot drift.
 const ClientKeyReplacedKey = sync.KeyClientKeyReplaced
 
 // ClientKeyReplaced is what the row holds: the identity this machine had before
@@ -247,13 +216,9 @@ type ClientKeyReplaced struct {
 }
 
 // noteClientKeyReplaced records the swap an arriving client key makes, and only
-// the swap: a value equal to what this machine already holds is a redelivery
-// rather than a change, and a name other than the client key is not an identity.
-//
-// The row is what makes the arrival reportable at all. Nothing derived goes
-// stale -- the client id and the enrolment line are read from the stored key
-// live -- so without it a machine whose identity was replaced would be silently
-// sending requests the servers no longer accept.
+// the swap: an equal value is a redelivery, and another name is not an identity. The
+// row is what makes the arrival reportable; without it a replaced machine would
+// silently send requests the servers no longer accept.
 func (d *SecretDoc) noteClientKeyReplaced(t *db.Tx, key string, plain []byte) error {
 	if key != SecretClientKey {
 		return nil
@@ -276,10 +241,9 @@ func (d *SecretDoc) noteClientKeyReplaced(t *db.Tx, key string, plain []byte) er
 	return t.ConfigPut(ClientKeyReplacedKey, body, d.now().UTC())
 }
 
-// clientIDsOf is the pair of identities two stored keys stand for, or an error
-// when either will not parse. A stored key that does not parse is refused rather
-// than reported as an unknown id, because the whole point of the row is to name
-// two identities an operator can act on.
+// clientIDsOf is the pair of identities two stored keys stand for, or an error when
+// either will not parse; an unparsable key is refused because the row must name two
+// actionable identities.
 func clientIDsOf(before, after []byte) (ClientKeyReplaced, error) {
 	oldPair, err := remote.ParsePrivate(before)
 	if err != nil {
@@ -296,9 +260,9 @@ func clientIDsOf(before, after []byte) (ClientKeyReplaced, error) {
 	}, nil
 }
 
-// ReadClientKeyReplaced is what this machine recorded when an arriving client
-// key replaced the one it held. A machine that never had one swapped answers
-// false, which is the ordinary state and not a fault.
+// ReadClientKeyReplaced is what this machine recorded when an arriving client key
+// replaced the one held. A machine that never had one swapped answers false, which is
+// the ordinary state and not a fault.
 func (s *Store) ReadClientKeyReplaced() (ClientKeyReplaced, bool, error) {
 	body, ok, err := s.db.LocalOrSelf().ConfigGet(ClientKeyReplacedKey)
 	if err != nil || !ok {
@@ -312,15 +276,10 @@ func (s *Store) ReadClientKeyReplaced() (ClientKeyReplaced, bool, error) {
 	return swapped, true, nil
 }
 
-// SupersedeIn records a value that did not land -- because this machine may not
-// take it, or because it lost to what this machine holds -- and changes nothing
-// else. It records the name and the reason and never the value: the value is
-// either a sealed envelope or a plaintext, and neither belongs in a revision a
-// reader of this machine's history would read.
-//
-// The snapshot it carries is the config document, in which every secret is
-// absent by construction, so rolling back to this revision is a no-op on the
-// secret table rather than a second change to it.
+// SupersedeIn records a value that did not land and changes nothing else. It records
+// the name and the reason and never the value: neither a sealed envelope nor a
+// plaintext belongs in a revision. The snapshot is the config document, in which
+// every secret is absent, so rolling back here is a no-op on the secret table.
 func (d *SecretDoc) SupersedeIn(t *db.Tx, key string, value json.RawMessage, label, why string) error {
 	before, err := readSnapshot(t)
 	if err != nil {
@@ -345,9 +304,9 @@ func (d *SecretDoc) SupersedeIn(t *db.Tx, key string, value json.RawMessage, lab
 	return err
 }
 
-// ItemWriteStamp is the stamp recorded when key was last written on this
-// machine. A value applied from a peer, generated here or re-marshalled here
-// records none, which is what keeps an unstamped client key off the log.
+// ItemWriteStamp is the stamp recorded when key was last written on this machine.
+// A peer-applied, generated or re-marshalled value records none, which keeps an
+// unstamped client key off the log.
 func (d *SecretDoc) ItemWriteStamp(key string) (synclog.Stamp, bool, error) {
 	text, ok, err := d.store.db.ConfigWriteStamp(secretStampKey(key))
 	if err != nil || !ok {

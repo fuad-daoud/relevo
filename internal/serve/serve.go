@@ -1,6 +1,5 @@
-// Package serve is the remote-builder server: the enrolled-client registry,
-// the v1 wire routes over a git-bundle transport, the per-owner binding stores
-// and the daemon that ticks them.
+// Package serve is the remote-builder server: the client registry, the v1
+// wire routes and the daemon that ticks them.
 package serve
 
 import (
@@ -83,8 +82,7 @@ type Config struct {
 	// means the deletes are skipped and the entries stay on the binding.
 	SessionReaper relevo.SessionDeleter
 	// LookupUser resolves an owner's declared unix_user to a tenant. It is
-	// required in user mode; os/user.Lookup is the production value, and tests
-	// inject a fake so setup stays pure.
+	// required in user mode; os/user.Lookup is the production value.
 	LookupUser func(string) (isolate.Tenant, error)
 	// SharedLogins keeps the server's account-home entries in a user-mode
 	// round's environment instead of stripping them, from
@@ -96,8 +94,7 @@ type Config struct {
 	ReaperFor func(isolate.Tenant) relevo.SessionDeleter
 	// Installation is this server's own identity: its id is the origin of
 	// every row the server writes and the id WhoAmI advertises, and its label
-	// lets a client show a name for the machine. The zero value serves
-	// exactly as before, with no installation advertised.
+	// names the machine to clients. The zero value advertises no installation.
 	Installation installation.Installation
 	// Audiences is the set of request audiences this server accepts: its
 	// certificate fingerprint and every host:<h> a --public-host value names.
@@ -108,31 +105,30 @@ type Config struct {
 type Server struct {
 	cfg Config
 	// reloaded is cfg as of the last successful tick refresh, guarded by s.mu.
-	// It differs from cfg only in the four sections a config edit may replace,
-	// and every reader copies the whole struct out under the lock, so a request
-	// or a tick step sees one consistent config for all of its work and never a
-	// mix of two reloads.
+	// It differs from cfg only in the four sections a config edit may replace --
+	// candidates, policy, roles registry and accounts -- and every reader copies
+	// the whole struct out under the lock, so a request or a tick step sees one
+	// consistent config for all of its work and never a mix of two reloads.
 	reloaded     Config
 	clients      *Clients
-	nonces       *remote.NonceWindow  // ttl = remote.MaxClockSkew
-	transport    remote.TreeTransport // remote.NewBundleTransport(cfg.Git, filepath.Join(cfg.Root, "tmp"))
+	nonces       *remote.NonceWindow // ttl = remote.MaxClockSkew
+	transport    remote.TreeTransport
 	addr         net.Addr
 	insecureHTTP bool
-	// audiences is the accepted audience set, copied from cfg so a later
-	// mutation of the caller's slice cannot widen it.
+	// audiences is copied from cfg so a later mutation of the caller's
+	// slice cannot widen it.
 	audiences []string
-	// mu guards the three pieces of process-wide state below: the stores map,
-	// the listen flags and the reloaded config. It is never held across Store,
-	// git or transport I/O -- a reader copies the reloaded config out and then
-	// works from the copy, per-owner exclusion is each owner's own Store lock
-	// (see ownerStore), and the server-wide builder cap is admitMu -- so a slow
-	// owner's reconcile cannot block another owner's poll.
+	// mu guards the stores map, the listen flags and the reloaded config. It
+	// is never held across Store, git or transport I/O -- per-owner exclusion
+	// is each owner's own Store lock (see ownerStore) and the server-wide
+	// builder cap is admitMu -- so a slow owner's reconcile cannot block
+	// another owner's poll.
 	mu sync.RWMutex
 	// gates is a `serve.`-prefixed view of the machine database, so a server-wide
 	// gate never collides with this machine's own rows.
 	gates db.KV
 	// gatesLocal is that machine's own ledger surface -- the unprefixed row
-	// `relevo gate <token>` recorded on this host and the synced gates document
+	// `relevo gate <token>` records on this host, which the synced gates document
 	// applies. Served runtimes read the union of the two (relevo.GatesLocal,
 	// gateunion.go), so a host gate steers served picks and switches; served
 	// writes still land in the prefixed row alone.
@@ -151,25 +147,22 @@ type Server struct {
 	// tmpSweptAt maps an owner root to its last tmp sweep. The Daemon that
 	// sweeps lives for one tick, so the pace has to outlive it here.
 	tmpSweptAt sync.Map
-	// liveCache caches running round LiveViews per caller/binding/round.
-	liveCache *liveCache
-	// tickFn, when non-nil, replaces Tick in Run; the drain tests set it.
+	liveCache  *liveCache
+	// tickFn, when non-nil, replaces Tick in Run.
 	tickFn func(context.Context) error
 }
 
 // EnsureStateRoot creates the state root's bindings directory, the directory
-// the doctor's serve/state check probes. MkdirAll also creates the root itself
-// and repairs a bindings directory that was removed; it is idempotent and
-// returns the raw error, as New does. The root is owner-only: it holds the
-// database and every binding's files, and MkdirAll never chmods an existing one.
+// the doctor's serve/state check probes. It is idempotent and returns the raw
+// error, as New does. The root is owner-only: it holds the database and every
+// binding's files, and MkdirAll never chmods an existing one.
 func EnsureStateRoot(root string) error {
 	return os.MkdirAll(filepath.Join(root, "bindings"), tmpdir.StateRootMode)
 }
 
 // UserModeRoot is where a user-mode server keeps its state when --state is
-// unset: a fixed, root-owned directory outside any tenant's home, so the daemon
-// and its tenants agree on one location regardless of whose HOME the daemon was
-// started with.
+// unset: a fixed, root-owned directory outside any tenant's home, so the
+// daemon and its tenants agree on one location.
 const UserModeRoot = "/var/lib/relevo"
 
 // EnsureUserModeRoot creates the user-mode serve root and its bindings/, repos/
@@ -200,8 +193,8 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Git == nil {
 		cfg.Git = git.NewClient("git", 0, 0)
 	}
-	// Normalize the unset isolation mode, so every server -- including one
-	// whose config predates the key -- emits "isolation":"none".
+	// Normalize the unset isolation mode, so every server emits
+	// "isolation":"none".
 	if cfg.Isolation == "" {
 		cfg.Isolation = isolate.ModeNone
 	}
@@ -239,15 +232,10 @@ func New(cfg Config) (*Server, error) {
 func (s *Server) DB() *db.DB { return s.cfg.DB }
 
 // live returns the config as of the last successful refresh: one consistent
-// copy of every section, taken under s.mu and used without it. A tick that
-// reloads mid-request cannot make one request see two different configs,
-// because the copy is of the whole struct rather than of the hot sections one
-// field at a time.
-//
-// Every reader of a reloadable section goes through this, and never through
-// s.cfg directly: cfg is the startup copy and would pin a server to the config
-// it launched with. The sections no reload can change are identical in both,
-// so a caller that reaches past live for them reads the same value.
+// copy of every section, taken under s.mu and used without it. Every reader
+// of a reloadable section goes through this, never through s.cfg directly:
+// cfg is the startup copy and would pin a server to the config it launched
+// with. The sections no reload can change are identical in both.
 func (s *Server) live() Config {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -360,8 +348,8 @@ func insideRoot(root, p string) bool {
 	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
-// OwnerRuntime resolves owner's runtime for the ui's server source. It holds no
-// lock of its own beyond ownerStore's map lookup.
+// OwnerRuntime resolves owner's runtime for the ui's server source; it holds
+// no lock of its own beyond ownerStore's map lookup.
 func (s *Server) OwnerRuntime(owner remote.ClientID) (relevo.Runtime, error) {
 	root, err := s.ownerRoot(owner)
 	if err != nil {
@@ -370,7 +358,6 @@ func (s *Server) OwnerRuntime(owner remote.ClientID) (relevo.Runtime, error) {
 	return s.runtimeAt(root), nil
 }
 
-// runtime resolves the Runtime for one client id.
 func (s *Server) runtime(id remote.ClientID) (relevo.Runtime, error) {
 	root, err := s.ownerRoot(id)
 	if err != nil {
@@ -416,11 +403,9 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 	// own /tmp, and a host path means nothing inside it.
 	if cfg.Isolation != isolate.ModeContainer {
 		rt.TmpRoot = s.ownerTmpDir(root)
-		// A named root must exist before a round's start prepares its
-		// directory through the store's confined helpers: mode-none serve has
-		// no ensureTenantRoots step to make it, and user mode's hands an
-		// existing one to the tenant at bind. Made at 0700, the same mode
-		// ensureTenantDir would create it with.
+		// A named root must exist before a round's start prepares its directory:
+		// mode-none serve has no ensureTenantRoots step to make it. Made at
+		// 0700, the mode ensureTenantDir creates it with.
 		if err := os.MkdirAll(rt.TmpRoot, tenantDirMode); err != nil {
 			slog.Warn("owner tmp root not created", "root", rt.TmpRoot, "err", err)
 		}
@@ -445,9 +430,9 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 // applyContainer rewires rt for one container-mode owner: its runner starts
 // every process as a rootless podman container bound to the owner's repo, so a
 // round, gate, consult or owner-path git runs confined by the container rather
-// than as the serve uid. There is no tenant chown and no tenant root: the
-// container runs as the serve uid on the host via keep-id. A runner that is not
-// a Boundary is wrapped to refuse every Start, so container mode never falls
+// than directly as the serve uid. There is no tenant chown and no tenant root:
+// the container runs as the serve uid on the host via keep-id. A runner that is
+// not a Boundary is wrapped to refuse every Start, so container mode never falls
 // back to the serve uid.
 func (s *Server) applyContainer(root string, rt *relevo.Runtime) {
 	repo, err := s.repoRoot(ownerIDOf(root))
@@ -479,10 +464,9 @@ func (s *Server) applyTenant(root string, st *store.Store, rt *relevo.Runtime) {
 	if b, ok := s.cfg.Runner.(isolate.Boundary); ok {
 		rt.Runner = withTmpDir(b.ForTenant(t, err), s.ownerTmpDir(root))
 	} else {
-		// User mode runs every builder under a tenant boundary. Production
-		// wraps the runner in resolveIsolation, so a runner that is not one is
-		// a wiring fault; it fails closed with a boundary-setup error, so a
-		// round halts NEEDS YOU rather than running as the serve uid.
+		// A runner that is not a tenant boundary is a wiring fault; it fails
+		// closed with a boundary-setup error, so a round halts NEEDS YOU
+		// rather than running as the serve uid.
 		rt.Runner = isolate.Refuse(s.cfg.Runner, fmt.Errorf("serve.isolation=user needs a tenant boundary runner, got %T", s.cfg.Runner))
 	}
 	if t == nil {

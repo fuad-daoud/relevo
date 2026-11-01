@@ -45,9 +45,9 @@ type tmpDirRunner struct {
 	dir  string
 }
 
-// It must stay transparent to every optional half of a Runner, as the boundary
-// is: callers type-assert Runtime.Runner to these themselves, so a wrapper that
-// dropped one would hide the base's scope support.
+// tmpDirRunner must stay transparent to every optional half of a Runner, as
+// the boundary is: callers type-assert Runtime.Runner to these themselves, so
+// a wrapper that dropped one would hide the base's scope support.
 var (
 	_ spawn.Runner            = tmpDirRunner{}
 	_ spawn.ScopeProber       = tmpDirRunner{}
@@ -55,8 +55,6 @@ var (
 	_ spawn.ScopeResultProber = tmpDirRunner{}
 )
 
-// withTmpDir returns base with every spec it starts carrying dir as its
-// temporary directory.
 func withTmpDir(base spawn.Runner, dir string) spawn.Runner {
 	return tmpDirRunner{base: base, dir: dir}
 }
@@ -87,22 +85,18 @@ func (r tmpDirRunner) Start(ctx context.Context, spec spawn.ProcSpec) (spawn.Pro
 	return r.base.Start(ctx, spec)
 }
 
-// Alive delegates to the base.
 func (r tmpDirRunner) Alive(ctx context.Context, h spawn.ProcHandle) (bool, error) {
 	return r.base.Alive(ctx, h)
 }
 
-// ExitCode delegates to the base.
 func (r tmpDirRunner) ExitCode(ctx context.Context, h spawn.ProcHandle, logPath string) (int, bool) {
 	return r.base.ExitCode(ctx, h, logPath)
 }
 
-// Kill delegates to the base.
 func (r tmpDirRunner) Kill(ctx context.Context, h spawn.ProcHandle, streamPath string) error {
 	return r.base.Kill(ctx, h, streamPath)
 }
 
-// Rusage delegates to the base.
 func (r tmpDirRunner) Rusage(ctx context.Context, h spawn.ProcHandle, streamPath string) (spawn.ProcRusage, bool) {
 	return r.base.Rusage(ctx, h, streamPath)
 }

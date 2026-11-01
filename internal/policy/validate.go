@@ -150,7 +150,6 @@ func UnknownKeys(raw []byte) []string {
 	return paths
 }
 
-// hasLeafPrefix reports whether some leaf path continues p with sep.
 func hasLeafPrefix(leaves []string, p, sep string) bool {
 	if p == "" {
 		return false

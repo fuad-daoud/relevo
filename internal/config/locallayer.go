@@ -13,19 +13,18 @@ import (
 )
 
 // The machine-local layer of the config doc. A section's shared body is the
-// whole truth for that section; a config_local row is a merge-patch over one
-// key of it saying what this machine overrides. The fields that land there --
-// an account's config dir and home, the policy's serve block -- name things
-// that only exist here, so they are read from the local file and written only
-// to it, and a merged read is the only view any caller ever sees.
-
+// whole truth for it; a config_local row is a merge-patch over one key of it
+// holding this machine's overrides. The fields landing there -- an account's
+// config dir and home, the policy's serve block -- name things existing only
+// here, so a merged read is the only view any caller sees.
+//
 // A patch is stored rather than a whole value so a shared edit that touches a
 // neighbouring key still reaches this machine, and one row per doc key holds
 // every field that key overrides.
-//
+
 // readLocalPatches returns every override whose key belongs to sec, keyed by
-// doc key. Reading them through the transaction is what makes the merged
-// prospective document a writer validates one snapshot rather than two.
+// doc key. It reads through the transaction so a validated prospective
+// document is one snapshot rather than two.
 func readLocalPatches(t *db.Tx, sec Section) (map[string]json.RawMessage, error) {
 	keys, err := t.ConfigLocalKeys(string(sec))
 	if err != nil {
@@ -45,11 +44,9 @@ func readLocalPatches(t *db.Tx, sec Section) (map[string]json.RawMessage, error)
 	return out, nil
 }
 
-// mergeLocal overlays sec's overrides on body. An override that names a key
-// body does not hold is skipped: the local layer overrides what the shared
-// layer already says and never introduces an item of its own, so a stale
-// override cannot conjure an account the shared layer no longer has, which is
-// the one way a merge could hand Load a document it refuses.
+// mergeLocal overlays sec's overrides on body. An override naming a key body
+// lacks is skipped: the local layer never introduces an item of its own, so a
+// stale override cannot conjure an account Load would refuse.
 func mergeLocal(sec Section, body json.RawMessage, patches map[string]json.RawMessage) (json.RawMessage, error) {
 	if len(patches) == 0 {
 		return body, nil
@@ -85,19 +82,16 @@ func mergeLocal(sec Section, body json.RawMessage, patches map[string]json.RawMe
 }
 
 // mergePatch applies an RFC 7386 merge-patch to base: a null member removes,
-// an object member recurses, and anything else replaces. An array is merged
-// member by member under each element's name rather than replaced whole,
-// because an array's index is not an identity two machines agree on.
+// an object member recurses, anything else replaces. An array merges member
+// by member under each element's name, because an array's index is not an
+// identity two machines agree on.
 //
-// The empty object is the one patch that changes nothing. It is what a diff
-// between two equal values produces, and merging it as an object would
-// replace a value with an empty one, so a field nobody touched would be
-// emptied out of the config.
+// The empty object changes nothing. It is what a diff of equal values
+// produces, and merging it as an object would empty a field nobody touched.
 func mergePatch(base, patch json.RawMessage) (json.RawMessage, error) {
 	var pv map[string]json.RawMessage
 	if err := json.Unmarshal(patch, &pv); err != nil || pv == nil {
-		// A patch that is not an object replaces, which is the one case RFC
-		// 7386 leaves to the value itself.
+		// A non-object patch replaces, the one case RFC 7386 leaves to the value.
 		return append(json.RawMessage(nil), compactJSON(patch)...), nil
 	}
 	if len(pv) == 0 {
@@ -130,10 +124,9 @@ func mergePatch(base, patch json.RawMessage) (json.RawMessage, error) {
 	return json.Marshal(out)
 }
 
-// writeLocalPatches stores the overrides a shared write implies, in the caller's
-// transaction so the two halves of one write commit together: a field stripped
-// out of the shared body and the local row that supplies it again are one
-// change, and neither is right on its own.
+// writeLocalPatches stores the overrides a shared write implies in the
+// caller's transaction, so the stripped shared half and the resupplying local
+// row commit together: neither is right alone.
 func writeLocalPatches(t *db.Tx, patches map[string]json.RawMessage, now time.Time) error {
 	for _, key := range slices.Sorted(maps.Keys(patches)) {
 		if err := t.ConfigLocalPut(key, patches[key], now); err != nil {
@@ -143,8 +136,8 @@ func writeLocalPatches(t *db.Tx, patches map[string]json.RawMessage, now time.Ti
 	return nil
 }
 
-// mergedDoc overlays every section's overrides on the shared document, which is
-// the only document any reader or writer validates or decodes.
+// mergedDoc overlays every section's overrides on the shared document, the
+// only document any reader or writer validates or decodes.
 func mergedDoc(t *db.Tx, shared Doc) (Doc, error) {
 	out := make(Doc, len(shared))
 	for sec, body := range shared {
@@ -161,7 +154,6 @@ func mergedDoc(t *db.Tx, shared Doc) (Doc, error) {
 	return out, nil
 }
 
-// mergedBody overlays sec's overrides on one shared body.
 func mergedBody(t *db.Tx, sec Section, body json.RawMessage) (json.RawMessage, error) {
 	patches, err := readLocalPatches(t, sec)
 	if err != nil {

@@ -1,6 +1,4 @@
-// Package config is the one home of relevo's configuration and secrets: they
-// live in the machine database and are imported once from the files under
-// ~/.config/relevo.
+// Package config owns relevo's configuration and secrets in the machine database.
 package config
 
 import (
@@ -18,8 +16,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
-// Section names one config_doc row. Hooks, Agents, Actors and Accounts have no
-// file: they are stored as a JSON body.
+// Section names one config_doc row. Only the sections in sectionFile have an
+// import file, and FileName returns "" for the rest.
 type Section string
 
 const (
@@ -38,8 +36,8 @@ const (
 	Sync       Section = "sync"
 )
 
-// Sections is the order an import checks and stores the sections, and the
-// order EncodeDoc and DiffDocs render them.
+// Sections is the order an import checks and stores the sections, and the order
+// EncodeDoc and DiffDocs render them.
 var Sections = []Section{Candidates, Agents, Actors, Accounts, Policy, Roles, Prices, Servers, Hooks, Workflows, Repos, Themes, Sync}
 
 // sectionFile maps a section to the file it is imported from.
@@ -65,8 +63,8 @@ const (
 	aliasesFile     = "aliases.json"
 )
 
-// Files returns the file names a config dir may hold and ImportFiles consumes;
-// the hooks directory is not in the list.
+// Files returns the file names a config dir may hold and ImportFiles consumes, without
+// the hooks directory.
 func Files() []string {
 	files := make([]string, 0, len(Sections)+2)
 	for _, sec := range Sections {
@@ -79,9 +77,9 @@ func Files() []string {
 
 type HooksMap map[string][][]string
 
-// Loaded is one consistent read of every section and both secrets. An absent
-// section reproduces the corresponding missing file: an empty non-nil
-// collection for candidates and servers, the zero values otherwise.
+// Loaded is one consistent read of every section and both secrets. An absent section
+// reads as its missing file would: an empty non-nil collection for candidates and
+// servers, the zero values otherwise.
 type Loaded struct {
 	Candidates *candidate.Set
 	Policy     policy.Policy
@@ -129,29 +127,21 @@ type Store struct {
 	rerender AgentRerenderer
 }
 
-// Open binds a config store to d's machine-local file, or to d itself on a
-// handle that carries none: every section and both secrets mean something only
-// on the machine that wrote them, so after the split they live in the local
-// file. Binding here rather than at each call site is what keeps a caller
-// holding a shared handle from reading its config back out of the shared file.
-//
-// The move of the machine fields out of the shared bodies runs here, so it is
-// reached first by the first thing that opens the config rather than by a
-// start-up path some callers do not take. A failure is left to the caller's
-// own write rather than reported here: the marker is what the exporter checks,
-// and a store that could not write cannot have moved anything.
-//
-// The hooks argv move does not run here, because a store opened this way has no
-// config root to measure the rows against and so could only record the work
-// without doing it. WithFiles runs it once a root is bound.
+// Open binds a config store to d's machine-local file, or to d itself on a handle
+// that carries none: sections and secrets live in the local file, so binding here
+// keeps a shared handle from reading its config out of the shared file. The machine
+// fields move runs here so the first opener reaches it; a failure is left to the
+// caller's own write, since a store that could not write cannot have moved anything.
+// The hooks argv move does not run here: with no config root it could only record
+// the work without doing it, so WithFiles runs it once a root is bound.
 func Open(d *db.DB) *Store {
 	s := &Store{db: d.LocalOrSelf(), now: time.Now}
 	_, _ = s.EnsureLocalLayer()
 	return s
 }
 
-// Load reads every section and both secrets. A stored body that does not parse
-// is an error: it cannot happen after a validated Put.
+// Load reads every section and both secrets. An unparsable stored body is an error:
+// it cannot happen after a validated Put.
 func (s *Store) Load() (Loaded, error) {
 	doc, err := s.mergedDoc()
 	if err != nil {
@@ -236,8 +226,9 @@ func loadAgents(doc Doc, L *Loaded) (map[string]roles.AgentEntry, error) {
 	return a, nil
 }
 
-// loadActors parses the actors section and, when present, rebuilds the roles
-// file from it: actors win and the pre-actors keys stop being read.
+// loadActors parses the actors section and, when present, rebuilds the roles file
+// from it: actors win, and the roles section and the legacy policy.order/tier
+// and candidate roles/tier keys stop being read.
 func loadActors(doc Doc, L *Loaded, agents map[string]roles.AgentEntry, rolesPresent bool, candBody []byte, candOK bool, polBody []byte, polOK bool) error {
 	body, ok := doc[Actors]
 	if !ok {
@@ -291,8 +282,8 @@ func loadServers(doc Doc, L *Loaded) error {
 	return nil
 }
 
-// loadAccounts parses the accounts section, warning about a group no candidate
-// of that harness uses. An absent section is an empty pool.
+// loadAccounts parses the accounts section, warning about a group no candidate of
+// that harness uses. An absent section is an empty pool.
 func loadAccounts(doc Doc, L *Loaded) error {
 	body, ok := doc[Accounts]
 	if !ok {
@@ -354,10 +345,9 @@ func opencodeGroups(set account.Set) []string {
 	return out
 }
 
-// loadHooks reads the hooks section into the dispatcher's argv map: the shared
-// rows under the root-relative names they are stored with, and the machine
-// rows under the absolute names they always keep. The embedded scripts are not
-// read here; they are the applier's business at write time.
+// loadHooks reads the hooks section into the dispatcher's argv map: shared rows under
+// their stored root-relative names, machine rows under their absolute names. Embedded
+// scripts are not read here; they are the applier's business at write time.
 func loadHooks(doc Doc, L *Loaded) error {
 	body, ok := doc[Hooks]
 	if !ok {

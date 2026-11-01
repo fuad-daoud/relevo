@@ -49,7 +49,6 @@ func (s *Server) resolveReaderRound(w http.ResponseWriter, r *http.Request) (sto
 	return b, rt, n, true
 }
 
-// artifactFiles is relevo's own listing as the wire type.
 func artifactFiles(files []view.ArtifactFile) []remote.ArtifactFile {
 	out := make([]remote.ArtifactFile, 0, len(files))
 	for _, f := range files {

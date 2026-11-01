@@ -23,7 +23,6 @@ type queuedRound struct {
 	QueuedAt  time.Time
 }
 
-// census is the server's builder count at a point in time.
 type census struct {
 	Running int
 	Queued  []queuedRound // sorted by QueuedAt, then Owner, then Name

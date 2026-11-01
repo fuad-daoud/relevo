@@ -12,16 +12,9 @@ import (
 // RepoDoc is the repository consent document as a synclog document: one key per
 // remote URL, one value per that repository's answer.
 //
-// It carries only this machine's own row for each URL, and it is bound to the
-// shared handle so that is the file it writes. Both halves of that are the same
-// decision. A repository row reaches every machine through the row log, so a
-// machine holding several installations' rows for one URL holds several answers
-// to the same question; writing the document into another installation's row
-// would overwrite what a person decided on that machine, and a repository row
-// has no stamp to order the two writes by. So a peer does not arrive as a row
-// overwrite: it arrives as this document, and this document writes this
-// machine's own row for the URL, which is the one RepoConsent reads and the one
-// the next person on this machine is answering.
+// It carries only this machine's own row for each URL: writing another
+// installation's row would overwrite what a person decided on that machine,
+// and a repository row has no stamp to order the two writes by.
 type RepoDoc struct {
 	shared *db.DB
 	local  *db.DB
@@ -77,7 +70,6 @@ func (d *RepoDoc) Apply(key string, value json.RawMessage) error {
 	return d.apply(key, value)
 }
 
-// apply is the write itself, against the file the repository rows live in.
 func (d *RepoDoc) apply(key string, value json.RawMessage) error {
 	url := key
 	answer, at := db.ConsentUnset, time.Time{}
@@ -101,20 +93,14 @@ func (d *RepoDoc) apply(key string, value json.RawMessage) error {
 
 // ApplyIn is Apply for an item that arrived from another machine. The value is
 // checked first and refused without touching anything when it fails, so an
-// answer this machine has no reader for never leaves the row unreadable behind
-// it.
+// answer this machine has no reader for never leaves the row unreadable.
 //
-// The write goes to this machine's own row for the URL, which is what the
-// peer's answer is for: the peer is telling this machine what that repository
-// may be registered as, and the row this machine reads back is the one it
-// writes here. An arriving answer records no write stamp -- the stamp is what
-// says this machine last wrote the key, and the peer wrote it over there.
-//
-// It does record the export signal, because the row this machine holds has
-// changed and the machines that took this machine's earlier answer from the row
-// log need to see the key move. That is a plain signal rather than a stamp: the
-// signal says the document may have changed, and what it exports is decided by
-// the value and the export state, not by the signal's own timestamp.
+// The write goes to this machine's own row for the URL. An arriving answer
+// records no write stamp -- the peer wrote it over there -- but it records the
+// export signal, so the machines that took this machine's earlier answer from
+// the row log see the key move. That is a plain signal rather than a stamp:
+// what it exports is decided by the value and the export state, not by the
+// signal's own timestamp.
 func (d *RepoDoc) ApplyIn(tx *db.Tx, key string, value json.RawMessage, label string) (refusal error, err error) {
 	if err := validURL(key); err != nil {
 		return err, nil

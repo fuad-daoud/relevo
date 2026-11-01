@@ -8,13 +8,13 @@ import (
 )
 
 // The one key vocabulary the config doc uses. A doc entry addresses a single
-// key, so the keys an entry can name, the rows config_local holds and the
-// machine-field patches are all written against are the same strings here
-// rather than three derivations that could drift apart.
+// key, so the keys an entry names, the rows config_local holds and the
+// machine-field patches all write against the same strings here rather than
+// three derivations that could drift apart.
 
 // perItemSections sync as one key per item, so two machines editing two
-// different accounts converge on one entry each instead of one entry per
-// section in which either machine's edit would displace the other's.
+// different accounts converge on one entry each instead of displacing each
+// other's under one entry per section.
 var perItemSections = map[Section]bool{
 	Candidates: true,
 	Agents:     true,
@@ -28,15 +28,14 @@ var perItemSections = map[Section]bool{
 // keySeparator joins a section name to an item name in a doc key.
 const keySeparator = "/"
 
-// itemKey is the doc key of one item of a per-item section.
 func itemKey(sec Section, name string) string {
 	return string(sec) + keySeparator + name
 }
 
-// splitKey divides a doc key into its section and, for a per-item section, the
-// item it names. A key this machine has no shape for is refused rather than
-// guessed at: applying it would write to a section or an item the entry never
-// named.
+// splitKey divides a doc key into its section and, for a per-item section,
+// the item it names. A key this machine has no shape for is refused rather
+// than guessed at: applying it would write to a section or item the entry
+// never named.
 func splitKey(key string) (Section, string, error) {
 	sec, name, split := strings.Cut(key, keySeparator)
 	section := Section(sec)
@@ -56,8 +55,8 @@ func splitKey(key string) (Section, string, error) {
 }
 
 // itemName reads the name an item of an array-shaped section carries. The
-// section's own validator is what says a name is well formed; this only has to
-// find it, so an absent name is a refusal and a malformed one is left to
+// section's own validator says whether a name is well formed; this only finds
+// it, so an absent name is a refusal and a malformed one is left to
 // validation.
 func itemName(row map[string]json.RawMessage) (string, error) {
 	raw, ok := row["name"]
@@ -72,9 +71,9 @@ func itemName(row map[string]json.RawMessage) (string, error) {
 }
 
 // splits writes the body of a per-item section into its items, keyed by the
-// item's own name. Candidates and accounts are arrays of named rows, so their
-// index is not an identity two machines agree on; agents, actors and servers
-// are objects keyed by the name already.
+// item's own name. Candidates and accounts are arrays of named rows, so
+// their index is not an identity two machines agree on; agents, actors and
+// servers are objects keyed by name already.
 func splits(sec Section, body json.RawMessage) (map[string]json.RawMessage, error) {
 	if !perItemSections[sec] {
 		return map[string]json.RawMessage{string(sec): body}, nil
@@ -85,8 +84,6 @@ func splits(sec Section, body json.RawMessage) (map[string]json.RawMessage, erro
 	return splitNamedObject(sec, body)
 }
 
-// namedArraySection reports whether a per-item section stores its items as an
-// array of objects each carrying a name, rather than as an object keyed by it.
 func namedArraySection(sec Section) bool { return sec == Candidates || sec == Accounts }
 
 func splitNamedArray(sec Section, body json.RawMessage) (map[string]json.RawMessage, error) {
@@ -121,9 +118,9 @@ func splitNamedObject(sec Section, body json.RawMessage) (map[string]json.RawMes
 }
 
 // joins rebuilds a per-item section's body from its items, in sorted name
-// order. The order is derived rather than remembered because a body built from
-// a map has no other order to keep: two machines then write the same bytes for
-// the same items, so a key that did not change does not diff as changed.
+// order. The order is derived rather than remembered because a body built
+// from a map has no other order to keep: two machines then write the same
+// bytes for the same items, so an unchanged key does not diff as changed.
 func joins(sec Section, items map[string]json.RawMessage) (json.RawMessage, error) {
 	if !perItemSections[sec] {
 		return items[string(sec)], nil

@@ -7,25 +7,22 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// Moving the machine fields out of the shared config_doc is a step in Go
-// rather than a migration in SQL, because the fields have to be read, split out
-// and stored as merge patches against their keys, and a SQL migration can only
-// rewrite whole rows. It runs once, is idempotent, and is recorded by a local
-// kv marker so a machine that has run it is distinguishable from one that has
-// not.
+// The machine-field move runs in Go rather than SQL: the fields are read,
+// split out and stored as merge patches against their keys, and a SQL
+// migration rewrites whole rows only. It runs once, idempotently, recording a
+// local kv marker.
 
-// localLayerMarker is the local kv row the move is recorded by. It sits in the
-// machine-local file because it is a statement about this machine's own config
-// rows, which is exactly what the layer it guards is.
+// localLayerMarker is the local kv row the move is recorded by. It sits in
+// the machine-local file because it describes this machine's own config rows.
 const localLayerMarker = "sync.config_local.v1"
 
 // movedMarker is the marker value. It is a JSON string because a kv row stores
 // a JSON document.
 var movedMarker = []byte(`"moved"`)
 
-// EnsureLocalLayer moves every machine field out of the shared config and into
-// the local layer, recording the marker. moved is false once the marker is set,
-// which is what makes a second call a no-op rather than a second move.
+// EnsureLocalLayer moves every machine field out of the shared config and
+// into the local layer, recording the marker. moved stays false once the
+// marker is set, so a second call is a no-op.
 func (s *Store) EnsureLocalLayer() (moved bool, err error) {
 	_, done, err := s.db.KVGet(localLayerMarker)
 	if err != nil || done {
@@ -67,9 +64,9 @@ func (s *Store) EnsureLocalLayer() (moved bool, err error) {
 	return moved, nil
 }
 
-// localLayerReady refuses while the machine fields are still in the shared
-// config, which is the state an exporter must not send a peer: until the move
-// has run, the shared bodies still carry this machine's directories.
+// localLayerReady refuses while machine fields are still in the shared
+// config: until the move runs, the shared bodies still carry this machine's
+// directories, which an exporter must not send a peer.
 func (s *Store) localLayerReady() error {
 	_, done, err := s.db.KVGet(localLayerMarker)
 	if err != nil {
@@ -91,13 +88,12 @@ func machineFieldSections() []Section {
 	return out
 }
 
-// PutLocal stores doc as this machine's overrides rather than as shared
-// sections, so nothing in it is written where another machine could read it.
+// PutLocal stores doc as this machine's overrides rather than shared
+// sections, so nothing in it reaches another machine.
 //
-// The patches are diffs against what the shared layer already says, which is
-// what keeps an override from freezing a neighbouring key: a peer that changes
-// an account's groups still reaches this machine, and only the field this write
-// named is held here.
+// Patches are diffs against the shared layer, so a peer's change to a
+// neighbouring key still reaches this machine and only the named field stays
+// held here.
 func (s *Store) PutLocal(doc Doc) error {
 	return s.db.Tx(func(t *db.Tx) error {
 		for _, sec := range Sections {
@@ -118,9 +114,9 @@ func (s *Store) PutLocal(doc Doc) error {
 }
 
 // localPatchesFor returns the overrides turning sec's merged value into next,
-// one row per doc key. The local layer overrides what is shared and never adds
-// or removes a section or an item, so a write that would is refused: it is a
-// shared write the caller has to make without --local.
+// one row per doc key. The local layer never adds or removes a section or an
+// item, so such a write is refused as a shared write the caller makes without
+// --local.
 func localPatchesFor(t *db.Tx, sec Section, next json.RawMessage) (map[string]json.RawMessage, error) {
 	shared, ok, err := t.ConfigGet(string(sec))
 	if err != nil {
@@ -166,12 +162,11 @@ func localPatchesFor(t *db.Tx, sec Section, next json.RawMessage) (map[string]js
 	return diffInto(t, patches, string(sec), current, next)
 }
 
-// diffInto records the merge-patch turning base into next under key, laid over
-// the row already stored there. The row accumulates rather than replacing,
-// because each write's patch is a diff against the merged value and a row
-// replaced by one would drop every override an earlier write had stored. An
-// absent next is a removal, which the patch expresses as a null, and a next
-// equal to base is no override at all, so nothing is written for it.
+// diffInto records the merge-patch turning base into next under key, laid
+// over the row already stored there. The row accumulates because each write
+// diffs against the merged value, so replacing it would drop earlier
+// overrides. An absent next is a null removal; a next equal to base writes
+// nothing.
 func diffInto(t *db.Tx, patches map[string]json.RawMessage, key string, base, next json.RawMessage) (map[string]json.RawMessage, error) {
 	diff := diffPatch(base, next)
 	if string(diff) == "{}" {
@@ -193,13 +188,11 @@ func diffInto(t *db.Tx, patches map[string]json.RawMessage, key string, base, ne
 	return patches, nil
 }
 
-// diffPatch returns the merge-patch that turns base into next: a member next
-// does not have is a null, a member it has recurses, and a value of another
-// kind is next itself.
+// diffPatch returns the merge-patch turning base into next: a member next
+// lacks is a null, a member it holds recurses, and any other value replaces.
 //
-// Both sides are a single key's value, never a whole array: an array-shaped
-// section is taken apart into its named items first, so the patch is taken per
-// item and an array is never diffed by position.
+// Both sides are one key's value, never a whole array: array sections are
+// split into named items first, so an array is never diffed by position.
 func diffPatch(base, next json.RawMessage) json.RawMessage {
 	out := map[string]json.RawMessage{}
 
@@ -223,9 +216,8 @@ func diffPatch(base, next json.RawMessage) json.RawMessage {
 	return compactJSON(next)
 }
 
-// validateLocalProspective refuses a local write that would leave the merged
-// config invalid, on the same terms a shared write is refused: an override is
-// still a config this machine has to run.
+// validateLocalProspective refuses a local write the merged config would
+// refuse on shared terms: an override is still config this machine runs.
 func validateLocalProspective(t *db.Tx, doc Doc) error {
 	shared, err := readDoc(t)
 	if err != nil {

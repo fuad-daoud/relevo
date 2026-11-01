@@ -3,12 +3,12 @@ package config
 import "github.com/fuad-daoud/relevo/internal/db"
 
 // The section and secret read surface: what the stored rows say, one body or
-// one secret at a time. The write surface is in config.go.
+// one secret at a time; the write surface is in config.go.
 
 // Body returns the stored body of one section, with this machine's overrides
-// laid over it; ok is false when the section is absent. The merged body is what
-// `config get`, `config export` and the bare `config` read, so a caller never
-// has to know that a machine field lives in the local layer to see it.
+// laid over it; ok is false when the section is absent. The merged body is
+// what `config get`, `config export` and the bare `config` read, so a caller
+// never needs to know a machine field lives in the local layer to see it.
 func (s *Store) Body(sec Section) ([]byte, bool, error) {
 	var (
 		out     []byte
@@ -32,7 +32,6 @@ func (s *Store) Body(sec Section) ([]byte, bool, error) {
 	return out, present, nil
 }
 
-// Has reports whether the section has a stored body.
 func (s *Store) Has(sec Section) (bool, error) {
 	_, ok, err := s.Body(sec)
 	return ok, err
@@ -44,8 +43,8 @@ func (s *Store) Secret(name string) ([]byte, bool, error) {
 
 func (s *Store) Version() (int64, error) { return s.db.ConfigVersion() }
 
-// loadSecrets fills the two secrets Load reports. An absent one leaves its field
-// at the zero value, which is how a machine with no client key reads.
+// loadSecrets fills the two secrets Load reports. An absent one leaves its
+// field at the zero value, which is how a machine with no client key reads.
 func (s *Store) loadSecrets(L *Loaded) error {
 	key, ok, err := s.db.SecretGet(SecretClientKey)
 	if err != nil {

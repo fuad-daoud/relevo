@@ -13,10 +13,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
-// MigrateToActors rewrites a pre-actors stored config -- a roles section, or
-// the legacy policy.order/policy.tier and candidate roles/tier keys -- as an
-// actors section plus, when a role needs one, an agents section, recorded as
-// one revision whose source is "migration". It reports whether it wrote.
+// MigrateToActors rewrites a stored config holding a roles section, or
+// policy.order/policy.tier and candidate roles/tier keys, as an actors
+// section plus, when a role needs one, an agents section, recorded as one
+// revision sourced "migration". It reports whether it wrote.
 //
 // It computes the whole new document and validates every section before
 // opening the transaction, so a failure writes nothing and the old config
@@ -172,8 +172,8 @@ func buildMigration(doc Doc, set *candidate.Set) (*migration, error) {
 		actors:    map[string]roles.Actor{},
 		roleTiers: map[string]string{},
 	}
-	// Existing agents survive the migration; a new native agent whose name
-	// collides with one takes the <role>-agent fallback.
+	// Existing agents survive; a new native agent colliding with one takes
+	// the <role>-agent fallback.
 	if body, ok := doc[Agents]; ok {
 		existing, _, err := roles.ParseAgents(body)
 		if err != nil {
@@ -354,7 +354,8 @@ func shippedAgentFor(role roles.Role) (string, bool) {
 	return spec.Definition, true
 }
 
-// nativeAgentName falls back to <role>-agent when the kinds disagree.
+// nativeAgentName is the claude agent's name, or <role>-agent when there is no
+// claude definition or the kinds disagree.
 func nativeAgentName(role roles.Role) string {
 	claude, ok := role.Definitions["claude"]
 	if !ok {

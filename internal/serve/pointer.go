@@ -9,8 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// Initialised reports whether root has any serve state marker: the clients kv
-// row, the TLS key secret, or the bindings directory beside them.
+// Initialised reports whether root has any serve state marker.
 func Initialised(root string, d *db.DB) (bool, error) {
 	if d != nil {
 		if _, ok, err := d.KVGet(clientsKVKey); err != nil {

@@ -7,7 +7,8 @@ import (
 	"sort"
 )
 
-// Change is one difference between two config documents, or a secret change.
+// Change is one difference between two config documents; a secret change
+// carries the same shape.
 type Change struct {
 	Path   string          `json:"path"`
 	Op     string          `json:"op"`               // "add" | "remove" | "change" | "set" | "applied" | "removed" | "superseded"
@@ -19,7 +20,7 @@ type Doc = map[Section]json.RawMessage
 
 const maxValue = 60
 
-// DiffDocs returns the changes that turn a into b, in a deterministic order:
+// DiffDocs returns the changes turning a into b, in a deterministic order:
 // sections in Sections order, object keys sorted, array indices ascending.
 func DiffDocs(a, b Doc) []Change {
 	changes := []Change{}
@@ -38,7 +39,7 @@ func DiffDocs(a, b Doc) []Change {
 	return changes
 }
 
-// Describe renders one change as the one line config log prints.
+// Describe renders one change as the one line the config log prints.
 func Describe(c Change) string {
 	switch c.Op {
 	case "change":
@@ -54,8 +55,9 @@ func Describe(c Change) string {
 	}
 }
 
-// EncodeDoc renders doc as an indented JSON object with one key per section in
-// Sections order, assembled by hand because a map's keys sort alphabetically.
+// EncodeDoc renders doc as an indented JSON object with one key per section
+// in Sections order, assembled by hand because a map's keys sort
+// alphabetically.
 func EncodeDoc(doc Doc) ([]byte, error) {
 	var buf bytes.Buffer
 	buf.WriteByte('{')
@@ -92,7 +94,7 @@ func EncodeDoc(doc Doc) ([]byte, error) {
 }
 
 // diffRaw diffs one section body by decoding both sides with UseNumber and
-// walking them; a side that does not decode is compared compactly as bytes.
+// walking them; an undecodable side compares compactly as bytes.
 func diffRaw(path string, a, b json.RawMessage) []Change {
 	out := []Change{}
 	av, aok := DecodeValue(a)
@@ -167,8 +169,8 @@ func diffValue(path string, a, b any, out *[]Change) {
 	}
 }
 
-// DecodeValue decodes one JSON value, keeping numbers as their literal text
-// so 2 and 2.0 are not conflated.
+// DecodeValue decodes one JSON value, keeping numbers as literal text so 2
+// and 2.0 are not conflated.
 func DecodeValue(raw json.RawMessage) (any, bool) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
@@ -187,7 +189,7 @@ func mustCompact(v any) json.RawMessage {
 	return compactCopy(b)
 }
 
-// compactCopy strips insignificant whitespace, or copies raw when invalid.
+// compactCopy strips insignificant whitespace; invalid input copies raw.
 func compactCopy(raw json.RawMessage) json.RawMessage {
 	var buf bytes.Buffer
 	if err := json.Compact(&buf, raw); err != nil {
@@ -196,8 +198,8 @@ func compactCopy(raw json.RawMessage) json.RawMessage {
 	return append(json.RawMessage(nil), buf.Bytes()...)
 }
 
-// joinPath appends an object key, quoting a key that is not a bare identifier
-// so a dot in it cannot be mistaken for a nested path.
+// joinPath appends an object key, quoting one that is not a bare identifier
+// so a dot in it cannot read as a nested path.
 func joinPath(path, key string) string {
 	if isIdent(key) {
 		return path + "." + key
