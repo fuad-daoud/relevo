@@ -349,23 +349,23 @@ func TestActorOutputsParseAndValidate(t *testing.T) {
 	}
 }
 
-// TestReadmeDesignerActorBlockValidates pins the actor block the README tells
-// a user to add: it parses, builds into a registry, and the role carries the
-// scope that keeps a designer round to its drafts.
+// TestReadmeDesignerActorBlockValidates pins the actor block the candidates
+// page tells a user to add: it parses, builds into a registry, and the role
+// carries the scope that keeps a designer round to its drafts.
 func TestReadmeDesignerActorBlockValidates(t *testing.T) {
-	readme, err := os.ReadFile("../../README.md")
+	page, err := os.ReadFile("../../docs/candidates.md")
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
 	var block string
-	for _, line := range strings.Split(string(readme), "\n") {
+	for _, line := range strings.Split(string(page), "\n") {
 		if strings.HasPrefix(line, `"designer": {`) {
 			block = line
 			break
 		}
 	}
 	if block == "" {
-		t.Fatal(`README has no line starting with "designer": {`)
+		t.Fatal(`docs/candidates.md has no line starting with "designer": {`)
 	}
 	actors, _, err := ParseActors([]byte("{" + block + "}"))
 	if err != nil {
