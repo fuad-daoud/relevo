@@ -22,28 +22,22 @@ type chainCloseWF struct {
 	Path    string
 	Outcome string
 	Stopped bool
-	// Note is the close's own note from the runner, folded into a non-done
-	// builder's one-line reason when its report names no source.
+	// Note is the close's own note, folded into a non-done builder's reason
+	// when its report names no source.
 	Note string
-	// Round is the round that closed. The close's caller advances the binding
-	// before the chain moves, so the closing binding's own round is no longer
-	// the closed one by then; the event must name the round the step awaited.
+	// Round is the round that closed. The caller advances the binding before
+	// the chain moves, so the event names the round the step awaited.
 	Round int
 	// DirtyCommit is the round's uncommitted-work snapshot commit, from the
-	// pulled view the close was built on. Non-empty says the round closed
-	// over work the tree it ran in never committed; "" only says no fact was
-	// carried, which a clean close and a close whose facts ship neither both
-	// are. The gate that reads it decides for a close whose tree this
-	// machine does not own.
+	// pulled view the close was built on. "" says only that no fact was
+	// carried; the gate decides for a tree this machine does not own.
 	DirtyCommit string
 }
 
 // chainEventFromCloseWF maps one member close onto the workflow event the
-// engine reads. The step and member come from the chain state's Awaiting; the
-// closing binding's actor comes from its chain_member row. A stopped close is
-// the engine's stopped event. Otherwise it parses the actor's declared
-// outcomes, keys its artifacts and closes the step halted when a declared
-// artifact is missing.
+// engine reads. A stopped close is the engine's stopped event; any other
+// parses the actor's declared outcomes and halts the step on a missing
+// declared artifact.
 func chainEventFromCloseWF(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, b store.Binding, wf chainCloseWF) (workflow.Event, error) {
 	st, err := chain.WorkflowState(c)
 	if err != nil {
@@ -74,27 +68,24 @@ func chainEventFromCloseWF(ctx context.Context, rt Runtime, tx *store.Tx, c db.C
 		return ev, nil
 	}
 	ev.Outcomes = values
-	// A writer's report status is the round's own outcome. A reader's output is
-	// a summary whose block the close already stripped, so its saved outcome
-	// says nothing about the step: the reader routes on the status its own
-	// block carries -- done when it carries outcomes without one.
+	// A writer's report status is the round's outcome. A reader's saved
+	// outcome says nothing about the step -- its block was already stripped
+	// -- so the reader routes on the status its own block carries.
 	if b.Shape == store.ShapeReader {
 		ev.Status = chain.ReaderStatus(bodies, outs)
 	} else {
 		ev.Status = wf.Outcome
 		// A builder close that is not done carries why in one line from its
-		// report tail, under the plan the chain halted on; the caller-rendered
-		// wording is what the engine's unmatched-run halt uses verbatim.
+		// report tail; the engine's unmatched-run halt uses it verbatim.
 		if wf.Outcome != reporttail.OutcomeDone {
 			tail, _, _ := reporttail.ParseWithReason(wf.Body)
 			ev.Reason = chain.BuilderHaltReason(tail, wf.Note, wf.Outcome)
 			ev.HaltReason = fmt.Sprintf("builder halted on plan %d: %s", c.Plan, ev.Reason)
 			return ev, nil
 		}
-		// A done close over a tree that still holds uncommitted work carries no
-		// round forward: the diff it seals is not the work the builder left, so
-		// advancing would hand the next member a step that looks complete and is
-		// not. The gate names where the work actually is.
+		// A done close over uncommitted work carries no round forward: the
+		// sealed diff is not the work the builder left, so advancing would
+		// hand on a step that looks complete and is not.
 		if reason := chainDirtyCloseReason(ctx, rt, c, b, round); reason != "" {
 			ev.Status = reporttail.OutcomeHalted
 			ev.Reason = reason
@@ -102,9 +93,8 @@ func chainEventFromCloseWF(ctx context.Context, rt Runtime, tx *store.Tx, c db.C
 			return ev, nil
 		}
 		// A done close whose tree this machine does not own answers from the
-		// facts the close was built on instead: a mirror round that says it
-		// left uncommitted work behind halts the same shape, on the pulled
-		// word, for the same reason the readable tree gives.
+		// facts the close was built on: a mirror round reporting uncommitted
+		// work halts the same shape, on the pulled word.
 		if reason := chainMirrorDirtyCloseReason(rt, c, b, round, wf.DirtyCommit); reason != "" {
 			ev.Status = reporttail.OutcomeHalted
 			ev.Reason = reason
@@ -130,11 +120,10 @@ func chainEventFromCloseWF(ctx context.Context, rt Runtime, tx *store.Tx, c db.C
 	return ev, nil
 }
 
-// chainPlanStepsReason is the plan gate's answer for a close: the halt wording
-// when the awaited step writes a plan and the output the close saved holds no
-// plan steps, and "" otherwise. It judges the saved body, as the builder would
-// receive it, not the stream. A chain with no readable stored definition skips
-// the gate.
+// chainPlanStepsReason is the plan gate's answer for a close: the halt
+// wording when the awaited step writes a plan but the saved output holds no
+// plan steps, "" otherwise. It judges the saved body, not the stream; a
+// chain with no readable definition skips the gate.
 func chainPlanStepsReason(rt Runtime, c db.ChainRow, step string, wf chainCloseWF) string {
 	def, err := chain.WorkflowDef(c)
 	if err != nil || !chainStepWritesPlan(def, step) {
@@ -151,12 +140,10 @@ func chainPlanStepsReason(rt Runtime, c db.ChainRow, step string, wf chainCloseW
 }
 
 // chainDirtyCloseReason is the dirty gate's answer for one writer close: the
-// halt wording when the round must not advance, and "" when it may. A clean
-// tree, a member the gate does not cover, and a clean read all give "".
-//
-// A git error is not a clean tree. The gate decides in band and never fails the
-// close it reads, exactly as escapeCheck does: the wording says the tree could
-// not be read, so the trace never records an unread tree as a finished round.
+// halt wording when the round must not advance, and "" when it may. A git
+// error is not a clean tree, and the gate never fails the close it reads:
+// it decides in band, exactly as escapeCheck does, so the trace never
+// records an unread tree as finished.
 func chainDirtyCloseReason(ctx context.Context, rt Runtime, c db.ChainRow, b store.Binding, round int) string {
 	if !chainDirtyGateApplies(rt, b) {
 		return ""
@@ -172,12 +159,11 @@ func chainDirtyCloseReason(ctx context.Context, rt Runtime, c db.ChainRow, b sto
 	return chainDirtyReason(rt, c, b, round, chainDirtySummary(ctx, rt, b))
 }
 
-// chainDirtyGateApplies reports whether the dirty gate covers this close. Only
-// the writer close that owns its tree does: a reader runs in a scratch copy,
-// and a mirror-placed writer's closed tree is the pulled result commit on the
-// server -- its row's CWD is this machine's own repo, which it must not probe.
-// A served binding's tree belongs to the server, and the close runs on the
-// server whose daemon can read it, so it keeps the gate like any owned tree.
+// chainDirtyGateApplies reports whether the dirty gate covers this close.
+// Only the writer close that owns its tree: a reader runs in a scratch copy,
+// and a mirror-placed writer's CWD is this machine's own repo, which the gate
+// must not probe. A served binding keeps the gate: its close runs on the
+// server whose daemon can read its tree.
 func chainDirtyGateApplies(rt Runtime, b store.Binding) bool {
 	if b.Shape == store.ShapeReader {
 		return false
@@ -188,36 +174,31 @@ func chainDirtyGateApplies(rt Runtime, b store.Binding) bool {
 	return rt.Git != nil && b.CWD != ""
 }
 
-// chainUncommittedWorkClause is the part of both dirty-tree halt wordings that
-// a stored halt reason is recognised by; the unread-tree wording leaves it out
-// because a commit does not recover a tree that could not be read.
+// chainUncommittedWorkClause is the clause of both dirty-tree wordings that
+// a stored halt reason is recognised by; the unread-tree wording leaves it
+// out, since no commit recovers an unreadable tree.
 const chainUncommittedWorkClause = "the chain does not advance over uncommitted work"
 
-// chainHaltedOverUncommittedWork reports whether a stored halt reason came from
-// the readable-tree or the mirror dirty wording.
 func chainHaltedOverUncommittedWork(reason string) bool {
 	return strings.Contains(reason, chainUncommittedWorkClause)
 }
 
-// chainDirtyReason is the halt wording for a round that left work behind: what
-// is uncommitted, the snapshot ref that is its only durable copy, and the diff
-// key the store sealed for the round.
+// chainDirtyReason is the halt wording for a round that left work behind:
+// what is uncommitted, its only durable copy, and the sealed diff.
 func chainDirtyReason(rt Runtime, c db.ChainRow, b store.Binding, round int, summary string) string {
 	return fmt.Sprintf("round %d of %s closed done with %s left uncommitted in %s and no commit to carry it: %s; commit it, or recover it from %s (sealed diff: %s)",
 		round, c.Name, summary, b.CWD, chainUncommittedWorkClause, chain.SnapshotRef(b, round), rt.Store.DiffPath(b.Name, round))
 }
 
 // chainDirtyUnreadReason is the halt wording for a tree the gate could not
-// read: it names the same evidence, and says plainly that the tree state is
-// unknown rather than reporting it clean.
+// read: the tree state is unknown, never reported clean.
 func chainDirtyUnreadReason(c db.ChainRow, b store.Binding, round int, err error) string {
 	return fmt.Sprintf("round %d of %s closed done but its tree %s could not be read (%v), so the chain cannot tell a finished round from uncommitted work and does not advance on the guess; commit the round, or recover it from %s",
 		round, c.Name, b.CWD, err, chain.SnapshotRef(b, round))
 }
 
-// chainDirtySummary is the one-line count of what is uncommitted. A stat that
-// cannot be read falls back to naming nothing counted rather than a number it
-// does not have.
+// chainDirtySummary is the one-line count of what is uncommitted. An
+// unreadable stat falls back to "changes", never a number it does not have.
 func chainDirtySummary(ctx context.Context, rt Runtime, b store.Binding) string {
 	stat, err := rt.Git.DiffWorktreeStat(ctx, b.CWD, b.RoundBaselineTree)
 	if err != nil || stat.Empty() {
@@ -227,10 +208,8 @@ func chainDirtySummary(ctx context.Context, rt Runtime, b store.Binding) string 
 }
 
 // chainMirrorDirtyCloseReason is the dirty gate's answer for a close whose
-// tree is elsewhere: the halt wording when the round the close was built on
-// says it left uncommitted work behind, and "" for a close whose facts carry
-// nothing or whose tree this machine does own (the readable-tree gate answers
-// those).
+// tree is elsewhere: the halt wording when the pulled facts say the round
+// left work behind, "" otherwise.
 func chainMirrorDirtyCloseReason(rt Runtime, c db.ChainRow, b store.Binding, round int, dirtyCommit string) string {
 	if dirtyCommit == "" || !b.Builder.Remote() {
 		return ""
@@ -239,21 +218,16 @@ func chainMirrorDirtyCloseReason(rt Runtime, c db.ChainRow, b store.Binding, rou
 }
 
 // chainMirrorDirtyReason is the halt wording for a mirror round that closed
-// done with uncommitted work on its server: the same wording chainDirtyReason
-// gives a readable tree, with the files the round's sealed diff patch names in
-// place of a tree stat, the branch it never reached named where a local tree
-// would be, and the server's snapshot ref where the work survives.
+// done with uncommitted work on its server: the sealed diff's paths stand in
+// for a tree stat the gate cannot read.
 func chainMirrorDirtyReason(rt Runtime, c db.ChainRow, b store.Binding, round int) string {
 	return fmt.Sprintf("round %d of %s closed done with uncommitted work (%s) left on the server and no commit in %s to carry it: %s; commit it, or recover it from %s (sealed diff: %s)",
 		round, c.Name, chainSealedDiffPaths(rt, b, round), b.Branch, chainUncommittedWorkClause, chain.SnapshotRef(b, round), rt.Store.DiffPath(b.Name, round))
 }
 
-// chainSealedDiffPaths reads the round's sealed diff patch and names the files
-// it changes. For a mirror round the patch -- which for a close whose tree
-// was dirty includes the worktree -- is the only copy of what is uncommitted,
-// so its paths are what the wording can put in a human's hands. A diff that
-// cannot be read, or one that names no file, falls back to the count word a
-// tree stat without a stat gives, rather than paths it does not have.
+// chainSealedDiffPaths names the files the round's sealed diff changes. For
+// a mirror round the patch is the only copy of what is uncommitted. An
+// unreadable diff, or one naming no file, falls back to "changes".
 func chainSealedDiffPaths(rt Runtime, b store.Binding, round int) string {
 	body, _ := rt.Store.ReadFile(rt.Store.DiffPath(b.Name, round))
 	var out []string
@@ -268,9 +242,9 @@ func chainSealedDiffPaths(rt Runtime, b store.Binding, round int) string {
 	return strings.Join(out, ", ")
 }
 
-// gitPatchPath is the path a `diff --git a/<p> b/<p>` header names, "" for any
-// other line. A path with no space survives; one with an embedded space is
-// guessed as the shorter a-side name, which is only ever wording of a hint.
+// gitPatchPath is the path a `diff --git a/<p> b/<p>` header names, "" for
+// any other line. A path with an embedded space is guessed as the shorter
+// a-side name: it is only ever wording of a hint.
 func gitPatchPath(line string) string {
 	const head = "diff --git a/"
 	if !strings.HasPrefix(line, head) {
@@ -283,11 +257,10 @@ func gitPatchPath(line string) string {
 	return rest
 }
 
-// chainCloseArtifacts keys a closing round's artifacts: a writer exposes its
-// report and its round diff; a reader exposes its saved output, plus every
-// artifact the actor declares, all pointing at the saved output. round is the
-// round that closed: the close's caller has already advanced the binding, so
-// b.Round is the next round and the diff key must be the closed one's.
+// chainCloseArtifacts keys a closing round's artifacts: a writer its report
+// and round diff, a reader its saved output for every declared artifact.
+// round is the round that closed: the caller already advanced the binding,
+// so b.Round is the next one.
 func chainCloseArtifacts(rt Runtime, b store.Binding, round int, path string, outs workflow.Outputs) map[string][]string {
 	art := map[string][]string{}
 	if b.Shape == store.ShapeReader {
@@ -325,9 +298,8 @@ func chainArtifactSizes(rt Runtime, art map[string][]string) map[string]int64 {
 }
 
 // chainReaderCloseOutcome is the outcome a chain reader member's close
-// records: the status its block-carrying message carries, read the way the
-// chain reads it, or "" when the binding is no workflow chain's member or its
-// declared outcomes do not parse (the close then keeps its own outcome).
+// records: the status its block carries, or "" when the binding is no chain
+// member or its outcomes do not parse -- the close then keeps its own.
 func chainReaderCloseOutcome(rt Runtime, tx *store.Tx, b store.Binding, round int, body []byte) string {
 	c, err := tx.ChainByMember(b.Name)
 	if err != nil || len(c.WorkflowJSON) == 0 {

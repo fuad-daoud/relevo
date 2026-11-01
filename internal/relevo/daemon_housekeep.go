@@ -28,17 +28,11 @@ const mastermindPruneInterval = time.Hour
 const mastermindPrunedAtKey = "planner.pruned_at"
 
 // sweepReaderScratch removes the scratch worktrees whose reader round is no
-// longer needed -- the daemon's cleanup of leftovers a crash left behind. It
-// walks the tick's own binding list: a reader's scratch lives for its current
-// round, so what to keep is decided by that list, not by a second read. For
-// each reader binding that is not DONE it keeps the entries whose round is the
-// binding's current round or later. A scratch for the current round is kept
-// even before the round is open, because send makes the scratch before it logs
-// the plan. Every other entry goes, including one whose binding is gone, DONE,
-// or not a reader. A leftover for the current round that no round needs is
-// removed by the close, the done or the unbind that already calls
-// removeReaderScratch. Errors are logged per entry by SweepScratch's own join
-// and never fail the tick.
+// longer needed, walking the tick's own binding list. A scratch for the
+// current round is kept even before the round is open, because send makes the
+// scratch before it logs the plan. Every other entry goes, including one whose
+// binding is gone, DONE, or not a reader. Errors never fail the tick:
+// SweepScratch joins them per entry.
 func sweepReaderScratch(ctx context.Context, rt Runtime, bindings []store.Binding) {
 	if rt.Git == nil {
 		return
@@ -65,17 +59,14 @@ func sweepReaderScratch(ctx context.Context, rt Runtime, bindings []store.Bindin
 
 // sealRounds seals every sealable closed round of one binding: the round's
 // NNN-* files become round_file rows and then leave the binding directory. It
-// never fails the tick -- each error is logged and the next tick retries,
-// which is also what makes a failed removal harmless.
+// never fails the tick: each error is logged and the next tick retries.
 //
 // artifactMaxBytes is policy.artifact_max_mb in bytes: a round whose artifact
 // directory is over it is left on disk, so nothing is dropped, until a later
 // tick sees the cap raised.
 //
-// The return is how many files were sealed, which is what tells the caller
-// whether this pass moved bytes at all. Nothing else about the pass changes:
-// the same rounds are considered, the same lines are logged, and the same
-// directories are removed.
+// The return is how many files were sealed, telling the caller whether this
+// pass moved bytes at all.
 func sealRounds(st *store.Store, tx *store.Tx, b store.Binding, artifactMaxBytes int64) int {
 	sealed := 0
 	rounds, err := st.RoundsOnDisk(b.Name)
@@ -104,10 +95,9 @@ func sealRounds(st *store.Store, tx *store.Tx, b store.Binding, artifactMaxBytes
 	}
 
 	// A DONE binding is finished: once its rounds are sealed and the directory
-	// holds nothing else -- no round file left to seal, no non-NNN file -- the
-	// empty directory goes too, provided its worktree was not kept on disk.
-	// os.Remove, never RemoveAll: anything still in there means the directory
-	// stays. The error is ignored, like every other failure in this pass.
+	// holds nothing else, the empty directory goes too, provided its worktree
+	// was not kept on disk. os.Remove, never RemoveAll: anything still in
+	// there means the directory stays.
 	if b.State == store.StateDone && !worktreeKept(b.Worktree) {
 		// An emptied out/ goes before the binding directory that holds it, so
 		// a finished binding leaves nothing on disk.
@@ -130,9 +120,8 @@ func worktreeKept(wt string) bool {
 }
 
 // safely runs one of Tick's non-binding phases, recovering a panic so that a
-// single bad phase cannot take the whole daemon down. It logs at Error with
-// phase, the panic value and the stack, and never re-panics: the phase simply
-// does not happen this tick, and the next tick tries again.
+// single bad phase cannot take the whole daemon down. The phase simply does
+// not happen this tick, and the next tick tries again.
 func (d *Daemon) safely(phase string, f func()) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -145,9 +134,7 @@ func (d *Daemon) safely(phase string, f func()) {
 // backfillMasterMindID sets a binding's MasterMindID from the registry when it
 // is empty but MasterMind.SessionID names a session the registry knows, under
 // the lock tickOne already holds, so the claim lookup, the forget guard and
-// the status row all key on the mastermind. A miss, a DONE binding, an empty
-// session and a Runtime with no registry all leave the binding exactly as it
-// was.
+// the status row all key on the mastermind.
 func backfillMasterMindID(rt Runtime, b store.Binding) store.Binding {
 	if b.MasterMindID != "" || b.State == store.StateDone || b.MasterMind.SessionID == "" || rt.MasterMinds == nil {
 		return b
@@ -162,12 +149,10 @@ func backfillMasterMindID(rt Runtime, b store.Binding) store.Binding {
 }
 
 // ingestLiveBindings runs internal/ingest over every live binding whose store
-// revision changed since the last run, so the database stays current with what
-// the store just recorded and an unchanged binding costs one digest rather
-// than a mirror transaction. d.rt.DB == nil (no database configured) is a
-// no-op. A source or database error is logged at Warn and that binding is
-// skipped this tick -- it never fails the tick or touches a binding, a round
-// file, or a state.
+// revision changed since the last run, so the database stays current and an
+// unchanged binding costs one digest rather than a mirror transaction. A nil
+// DB is a no-op; a source or database error skips that binding this tick and
+// never fails the tick.
 //
 // The revision is read before the run and recorded only after it succeeds: a
 // change that lands mid-run is caught by the next tick, and a run that fails
@@ -210,15 +195,13 @@ func (d *Daemon) ingestLiveBindings(ctx context.Context, bindings []store.Bindin
 	d.ingestSeen = seen
 }
 
-// mastermindPrunedAt is the kv row planner.pruned_at's document: when the daemon
-// last ran mastermind.Prune.
+// mastermindPrunedAt is when the daemon last ran mastermind.Prune.
 type mastermindPrunedAt struct {
 	At time.Time `json:"pruned_at"`
 }
 
 // mastermindPruneDue reports whether a prune last run at last (ok false when it
-// never ran) is due again at now: the once-an-hour decision, pure so a test
-// can pin it without a daemon.
+// never ran) is due again at now, pure so a test can pin it without a daemon.
 func mastermindPruneDue(last time.Time, ok bool, now time.Time) bool {
 	if !ok {
 		return true
@@ -227,10 +210,9 @@ func mastermindPruneDue(last time.Time, ok bool, now time.Time) bool {
 }
 
 // pruneMasterMinds forgets every mastermind record that is gone and that no non-DONE
-// binding names (mastermind.Prune), at most once an hour. The last run is the
-// store database's kv row planner.pruned_at; each forgotten record is logged
-// once. A Runtime with no registry, no usable database or a store whose
-// database will not open prunes nothing and logs why.
+// binding names (mastermind.Prune), at most once an hour. A Runtime with no
+// registry, no usable database or a store whose database will not open prunes
+// nothing.
 func (d *Daemon) pruneMasterMinds() {
 	rt := d.rt
 	if rt.MasterMinds == nil || rt.Store == nil {
@@ -298,7 +280,6 @@ func mastermindLastPruned(kv db.KV) (last time.Time, ok bool, err error) {
 	return v.At, true, nil
 }
 
-// recordMasterMindPruned writes planner.pruned_at after a prune attempt.
 func recordMasterMindPruned(kv db.KV, at time.Time) error {
 	raw, err := json.Marshal(mastermindPrunedAt{At: at.UTC()})
 	if err != nil {
@@ -309,9 +290,9 @@ func recordMasterMindPruned(kv db.KV, at time.Time) error {
 
 // bindingMasterMindCounts counts, per mastermind id, the bindings that are not DONE
 // and name that mastermind: the in-use guard mastermind.Prune needs. It is
-// the same walk cmd/relevo's mastermindBindingCounts does; the daemon cannot call
-// that one (it lives in package main). An unreadable store is an error, never
-// an empty map.
+// the same walk cmd/relevo's mastermindBindingCounts does; the daemon cannot
+// call that one (it lives in package main). An
+// unreadable store is an error, never an empty map.
 func bindingMasterMindCounts(st *store.Store) (map[string]int, error) {
 	bindings, err := st.List()
 	if err != nil {

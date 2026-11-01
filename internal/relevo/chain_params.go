@@ -11,9 +11,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
-// chainParamFlag is one old chain flag and the workflow param it fills. A flag
-// whose param the chosen workflow does not carry is refused, so a human never
-// believes a setting took effect when the workflow has no slot for it.
+// chainParamFlag is one old flag and the workflow param it fills. A flag the
+// chosen workflow has no slot for is refused, so no setting silently takes no
+// effect.
 type chainParamFlag struct {
 	flag  string
 	param string
@@ -21,24 +21,21 @@ type chainParamFlag struct {
 	given bool
 }
 
-// chainParamsFor resolves the values a workflow's params take, in precedence
-// order: the workflow's own defaults, then the repository's own gate, then
-// policy for the shipped default workflow, then the old flags, then --param.
-// It returns only the params it overrides; a caller merges them with
-// workflow.WithParams, which is what parses and validates the values. A flag
-// the workflow has no slot for is refused, naming the params the workflow does
-// take.
+// chainParamsFor resolves a workflow's params in precedence order: the
+// workflow's own defaults, then the repository's own gate, then policy for
+// the shipped default, then the old flags, then --param. It returns only the
+// params it overrides; the caller merges them with workflow.WithParams. A
+// flag the workflow has no slot for is refused, naming the params it takes.
 //
-// Policy fills those slots only for the shipped default workflow: a custom
-// workflow's own param defaults are the human's intent, so policy never
-// overwrites them, and a custom param left without a default stays required.
-// The repository's own gate sits exactly where the policy tier sat, behind the
+// Policy fills slots only for the shipped default: a custom workflow's own
+// defaults are the human's intent, so policy never overwrites them. The
+// repository's own gate sits exactly where the policy tier sat, behind the
 // flags; the old flags and --param override either.
 func chainParamsFor(def workflow.Definition, pol policy.Policy, opts ChainOptions, repo RepoSettings) (map[string]string, error) {
 	out := map[string]string{}
 
-	// Policy fills only the shipped default's slots: a custom workflow keeps its
-	// own defaults, and a workflow with no reviewer param ignores policy's.
+	// Policy fills only the shipped default's slots: a custom workflow keeps
+	// its own defaults.
 	if def.Name == workflow.Default().Name {
 		// The gate param takes the repository's own gate before the policy
 		// default: the repo tier sits exactly where the policy tier sat.
@@ -80,9 +77,8 @@ func chainParamsFor(def workflow.Definition, pol policy.Policy, opts ChainOption
 	return out, nil
 }
 
-// chainParamFlags is the old flags that fill workflow params, each carrying
-// only the params it was actually given. A flag that was not given is left out,
-// so the tier above it stands.
+// chainParamFlags are the old flags that fill workflow params, each carrying
+// only a given flag's params, so the tier above an ungiven flag stands.
 func chainParamFlags(opts ChainOptions) []chainParamFlag {
 	flags := []chainParamFlag{
 		{flag: "--builder-actor", param: "builder", value: opts.BuilderActor, given: opts.BuilderActor != ""},
@@ -108,7 +104,7 @@ func chainParamFlags(opts ChainOptions) []chainParamFlag {
 	return flags
 }
 
-// chainParamNames lists a workflow's params, sorted, for the refusal that names
+// chainParamNames lists a workflow's params, sorted, for the refusal naming
 // an old flag the workflow cannot hold.
 func chainParamNames(def workflow.Definition) []string {
 	names := make([]string, 0, len(def.Params))

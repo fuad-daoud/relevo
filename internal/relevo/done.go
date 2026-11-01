@@ -21,7 +21,7 @@ import (
 // worktree fields of UnbindResult.
 //
 // Payload is what Done delivered on the way out: every unconfirmed
-// to-MasterMind entry that was still pending when the human ran `relevo done`,
+// to-MasterMind entry still pending when the human ran `relevo done`,
 // rendered and joined exactly as `relevo wait` renders it. Empty when
 // nothing was pending.
 //
@@ -45,7 +45,7 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 	// rt.Store.Load/Save would try to take the lock a second time and Go
 	// mutexes are not reentrant.
 	var out DoneResult
-	// claimed are the entries the lock confirmed above; their text is rendered
+	// claimed are the entries confirmed under the lock; their text is rendered
 	// after the lock, because PushText reads the report file off disk and no
 	// file I/O belongs under the state lock.
 	var claimed []store.PendingEntry
@@ -76,10 +76,9 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 		// agree before this binding stops relaying locally.
 		//
 		// A member of a server chain is the exception: the chain's own verbs
-		// release it on the server, and this copy is the mirror. Calling the
-		// server here would ask it to release a binding the chain already
-		// released, and the refusal would fail a done that has already
-		// happened where it matters.
+		// release it on the server, and this copy is the mirror, so calling
+		// the server here would refuse a done that already happened where it
+		// matters.
 		var remoteKept, remoteReason string
 		if b.Builder.Remote() && !chain.ServerMember(tx, b.Name) {
 			if rt.Remote == nil {
@@ -94,14 +93,13 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 				if errors.Is(derr, client.ErrUnreachable) {
 					return fmt.Errorf("%s unreachable: %w", b.Builder.Server, derr)
 				}
-				// A 404 means the server already considers it gone -- the
-				// binding was settled and released, collected by its GC, or
-				// lost to a server state reset -- which is not a reason to
-				// refuse a done the human has already decided. Fall through
-				// and settle it locally, exactly as Unbind does. The same
-				// tradeoff is accepted there: a 404 raised by a foreign owner
-				// reading another tenant's binding is indistinguishable from
-				// "gone", and marks the local record done too.
+				// A 404 means the server already considers it gone, which is
+				// not a reason to refuse a done the human has already decided:
+				// fall through and settle it locally, exactly as Unbind does.
+				// The same tradeoff is accepted there: a 404 raised by a
+				// foreign owner reading another tenant's binding is
+				// indistinguishable from "gone", and marks the local record
+				// done too.
 				if !remote.Is404(derr) {
 					return fmt.Errorf("%s: %w", b.Builder.Server, derr)
 				}
@@ -116,16 +114,15 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 		// `done` is the last chance this binding has to hand its MasterMind
 		// something: after it, reconcile's DONE gate only admits what a push
 		// route already took and `relevo wait` answers `gone` without pulling,
-		// so an entry left unconfirmed here is stranded for good -- a findings
-		// entry, a halt, a report the human finished reading before running
-		// done. They are claimed and confirmed with route "done" below, in
-		// wait's own pull-then-confirm shape and against the same read wait
-		// uses, so both paths agree on what pending means and what it becomes.
+		// so an entry left unconfirmed here is stranded for good. They are
+		// claimed and confirmed with route "done" below, in wait's own
+		// pull-then-confirm shape and against the same read wait uses, so both
+		// paths agree on what pending means and what it becomes.
 		//
 		// A chain entry is NOT one of them: it is the chain's own status
-		// record, written under a binding named after the chain, and `chain
-		// done` deliberately queues no MasterMind delivery for it (the human
-		// ran the verb). Sweeping it here would consume that record on a plain
+		// record, written under a binding named after the chain, and
+		// `chain done` deliberately queues no MasterMind delivery for it.
+		// Sweeping it here would consume that record on a plain
 		// `relevo done` of one member, so it is skipped by the same kind rule
 		// PushText applies.
 		//
@@ -177,7 +174,7 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 		removeReaderScratch(ctx, rt, b, b.Round)
 		housekeep.RemoveRoundTmp(HousekeepDeps(rt), b, b.Round)
 
-		// The stop is recorded in the ledger, in the same shape relevo stop
+		// The stop is recorded in the ledger in the same shape relevo stop
 		// uses (closeStopped), with no log marker: the round's own record of
 		// why the process went away is here.
 		if stopErr == nil && oldState != store.StateDone && (pid != 0 || roundOpen) {
@@ -234,7 +231,7 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 	if len(claimed) > 0 {
 		// wait's own rendering, in wait's own order: report entries last, so a
 		// reader is handed the round's findings rather than a halt that closed
-		// them. PushText is the same expansion, and the same truncate.
+		// them.
 		binding := delivery.BindingFor(rt.Store, name)
 		delivered := make([]delivery.Delivered, 0, len(claimed))
 		for _, p := range claimed {
@@ -247,7 +244,7 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 }
 
 // roundIsOpen reports whether b's current round has a prompt and no report in
-// the log, read before done changes anything.
+// the log.
 func roundIsOpen(tx *store.Tx, b store.Binding) (bool, error) {
 	entries, err := tx.ReadLog(b.Name)
 	if err != nil {

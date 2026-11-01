@@ -15,13 +15,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
-// ChainsDoc is the read model of all chains, presenting a unified view of local,
-// placed and remote chains for status displays and cockpit views.
+// ChainsDoc is the read model of all chains: one view of local, placed and
+// remote chains for status and cockpit views.
 type ChainsDoc struct {
 	Chains []ChainEntry `json:"chains"`
 }
 
-// ChainEntry is one chain's status, steps, members, placement and hierarchy position.
+// ChainEntry is one chain's status, steps, members, placement and hierarchy
+// position.
 type ChainEntry struct {
 	Name      string               `json:"name"`
 	Parent    string               `json:"parent,omitempty"`
@@ -52,16 +53,15 @@ type ChainStep struct {
 	Round       int    `json:"round"`
 }
 
-// ReadChains reads every stored chain and returns the complete read model,
-// querying live trace and status for reachable remote chains.
+// ReadChains reads every stored chain into the read model, querying live
+// trace and status for reachable remote chains.
 func ReadChains(ctx context.Context, rt Runtime) (ChainsDoc, error) {
 	return ReadChainsScope(ctx, rt, Scope{})
 }
 
-// ReadChainsScope is ReadChains narrowed by sc: one mastermind's chains and the
-// children hanging under them, under the same scope rule the binding listing
-// uses. A chain is a builder's row, so a chain belongs to the mastermind that
-// owns it and a chain listing follows the same scope as a binding listing.
+// ReadChainsScope is ReadChains narrowed by sc: one mastermind's chains and
+// the children under them, under the binding listing's scope rule. A chain is
+// a builder's row, so it belongs to the owning mastermind.
 func ReadChainsScope(ctx context.Context, rt Runtime, sc Scope) (ChainsDoc, error) {
 	chains, err := rt.Store.Chains()
 	if err != nil {
@@ -99,15 +99,15 @@ func ReadChainsScope(ctx context.Context, rt Runtime, sc Scope) (ChainsDoc, erro
 	return assembleChainsDoc(entries), nil
 }
 
-// chainDocEntry builds one ChainEntry from stored data and optional remote view.
+// chainDocEntry builds one ChainEntry from stored data and an optional remote
+// view.
 //
-// `stale` means one thing only: this machine could not ask the server. A 404 is
-// the server's answer that it no longer holds the chain, which is not a fault
-// to report and never overwrites the stored status. A chain the stored row
-// already holds as over keeps that status with an empty `Stale`: the pull wrote
-// the row's end from the same view that closed it, so there is nothing left to
-// ask the server. A chain the row still holds as open reads as gone instead,
-// carrying the gone wording the pull writes for a chain the server dropped.
+// `stale` means one thing only: this machine could not ask the server. A 404
+// is the server's answer that it no longer holds the chain, never a fault and
+// never overwriting the stored status. A row already held as over keeps that
+// status with an empty `Stale`: the pull wrote the end from the closing view,
+// leaving nothing to ask. A row still held as open reads as gone instead,
+// carrying the pull's gone wording for a dropped chain.
 func chainDocEntry(ctx context.Context, rt Runtime, c db.ChainRow, now time.Time, repByName map[string]view.BindingStatus, storeBindings map[string]store.Binding) ChainEntry {
 	var liveTrace []db.ChainEventRow
 	var staleErr string
@@ -179,8 +179,8 @@ func chainDocEntry(ctx context.Context, rt Runtime, c db.ChainRow, now time.Time
 	}
 }
 
-// chainDocStepsAndFacts extracts steps and plan facts for a chain row without panicking
-// when workflow or engine state JSON is missing.
+// chainDocStepsAndFacts extracts steps and plan facts for a chain row,
+// without panicking when workflow or engine state JSON is missing.
 func chainDocStepsAndFacts(c db.ChainRow, memberRows []db.ChainMemberRow, traceRows []db.ChainEventRow) ([]ChainStep, string, int, int) {
 	if len(c.StateJSON) == 0 || len(c.WorkflowJSON) == 0 {
 		planPos := c.Plan
@@ -221,7 +221,6 @@ func chainDocStepsAndFacts(c db.ChainRow, memberRows []db.ChainMemberRow, traceR
 	return steps, currentStep, planPos, planTotal
 }
 
-// chainDocSteps builds the ordered steps for a workflow definition and state.
 func chainDocSteps(c db.ChainRow, def workflow.Definition, st workflow.State, memberRows []db.ChainMemberRow, traceRows []db.ChainEventRow) []ChainStep {
 	orderedIDs := orderWorkflowSteps(def)
 	out := make([]ChainStep, 0, len(orderedIDs))
@@ -274,7 +273,6 @@ func chainDocSteps(c db.ChainRow, def workflow.Definition, st workflow.State, me
 	return out
 }
 
-// stepMemberBinding matches an actor to its member binding name.
 func stepMemberBinding(c db.ChainRow, def workflow.Definition, actor string, memberRows []db.ChainMemberRow) string {
 	for _, m := range memberRows {
 		if chain.FlowActorMatch(m.Actor, actor) {
@@ -304,7 +302,6 @@ func stepMemberBinding(c db.ChainRow, def workflow.Definition, actor string, mem
 	return c.Name + "-" + actor
 }
 
-// chainStepOutcome formats a step's latest outcome for display.
 func chainStepOutcome(stepID string, step workflow.Step, st workflow.State, traceRows []db.ChainEventRow) string {
 	res, ok := st.Results[stepID]
 	kinds := step.Kinds()
@@ -344,7 +341,6 @@ func chainStepOutcome(stepID string, step workflow.Step, st workflow.State, trac
 	return ""
 }
 
-// checkStepOutcome formats a check step's latest result and target for display.
 func checkStepOutcome(stepID string, step workflow.Step, res workflow.Result, traceRows []db.ChainEventRow) string {
 	result := res.Status
 	target := ""
@@ -383,7 +379,6 @@ func checkStepOutcome(stepID string, step workflow.Step, res workflow.Result, tr
 	return fmt.Sprintf("%s · %s", stepID, result)
 }
 
-// checkTarget resolves the step target for a check result from on edges.
 func checkTarget(on map[string]workflow.Target, result string) string {
 	if t, ok := on["result="+result]; ok && t.Kind == workflow.TargetStep {
 		return t.Step
@@ -397,8 +392,8 @@ func checkTarget(on map[string]workflow.Target, result string) string {
 	return ""
 }
 
-// orderWorkflowSteps orders workflow steps breadth-first from start, followed
-// by sorted unreachable steps.
+// orderWorkflowSteps orders steps breadth-first from start, then the sorted
+// unreachable ones.
 func orderWorkflowSteps(def workflow.Definition) []string {
 	var ordered []string
 	seen := map[string]bool{}
@@ -449,7 +444,6 @@ func orderWorkflowSteps(def workflow.Definition) []string {
 	return ordered
 }
 
-// chainWhere determines where a chain runs: server, placed, or local.
 func chainWhere(c db.ChainRow, memberNames []string, repByName map[string]view.BindingStatus, storeBindings map[string]store.Binding) string {
 	if c.Server != "" {
 		return "server " + c.Server
@@ -472,7 +466,8 @@ func chainWhere(c db.ChainRow, memberNames []string, repByName map[string]view.B
 	return "local"
 }
 
-// chainElapsed computes a chain's elapsed time from creation, using UpdatedAt for terminal states.
+// chainElapsed is a chain's elapsed time from creation, to UpdatedAt for
+// terminal states.
 func chainElapsed(c db.ChainRow, now time.Time) time.Duration {
 	if c.CreatedAt.IsZero() {
 		return 0
@@ -488,15 +483,14 @@ func chainElapsed(c db.ChainRow, now time.Time) time.Duration {
 	return d
 }
 
-// chainTerminalStatus reports whether a status is terminal.
 func chainTerminalStatus(st string) bool {
 	return st == string(chain.StatusHalted) || st == string(chain.StatusStopped) || st == string(chain.StatusDone)
 }
 
-// chainStatusRank assigns a sort rank: running and halted first, then stopped,
-// then done, then gone. A gone chain ranks last of the words the read model
-// knows, because nothing about it can change and nothing is waiting on it; a
-// word no rule knows still sorts after every one of them.
+// chainStatusRank assigns a sort rank: running and halted first, then
+// stopped, done, gone. Gone ranks last of the known words, because nothing
+// about it can change and nothing waits on it; an unknown word sorts after
+// every one of them.
 func chainStatusRank(status string) int {
 	switch status {
 	case string(chain.StatusRunning), string(chain.StatusHalted):
@@ -512,8 +506,7 @@ func chainStatusRank(status string) int {
 	}
 }
 
-// assembleChainsDoc groups chains by Parent, sorts roots and children, and nests
-// recursively up to a depth of 8.
+// assembleChainsDoc groups chains by parent, sorted, nested to depth 8.
 func assembleChainsDoc(entries []ChainEntry) ChainsDoc {
 	byName := make(map[string]ChainEntry, len(entries))
 	for _, e := range entries {

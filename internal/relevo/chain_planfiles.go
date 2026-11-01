@@ -16,10 +16,10 @@ import (
 // maxPlanFileBytes bounds the size of one copied file.
 const maxPlanFileBytes = 1 << 20
 
-// chainBaseCommit resolves the chain's base branch to a commit from refs the
-// repository already holds: the builder's base branch, then its origin
-// remote-tracking ref. It never fetches: the caller holds a store transaction,
-// and a network call there would hold the database lock against every other verb.
+// chainBaseCommit resolves the chain's base branch from held refs: the
+// builder's base branch, then its origin remote-tracking ref. It never
+// fetches: the caller holds a store transaction, and a network call there
+// would hold the database lock against every other verb.
 func chainBaseCommit(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow) (string, error) {
 	ref := c.Base
 	if b, err := tx.Load(c.Builder); err == nil && b.BaseRef != "" {
@@ -37,10 +37,9 @@ func chainBaseCommit(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRo
 }
 
 // chainSeedPlanFiles copies every repo file the chain's plan texts name from
-// the chain's base branch into the chain's inputs directory. A name the base
-// branch does not hold is not a file and is left out; a file or a base that
-// cannot be read renders as chain.SeedMissing's path-free clause. It never fails
-// a send.
+// the base branch into the chain's inputs. A name the base branch does not
+// hold is left out; an unreadable file or base renders as chain.SeedMissing's
+// path-free clause. It never fails a send.
 func chainSeedPlanFiles(rt Runtime, tx *store.Tx, c db.ChainRow) []workflow.SeedFile {
 	paths, err := chainPlanPaths(c)
 	if err != nil || rt.Git == nil || c.Repo == "" {

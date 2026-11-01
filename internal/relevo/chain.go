@@ -15,7 +15,7 @@ import (
 )
 
 // chainSettingsOf reads a chain row's stored settings; a row with none reads
-// the zero settings, exactly as a chain started under the defaults.
+// the zero settings, as a chain started under the defaults.
 func chainSettingsOf(c db.ChainRow) (chain.Settings, error) {
 	var set chain.Settings
 	if len(c.SettingsJSON) > 0 {
@@ -26,7 +26,6 @@ func chainSettingsOf(c db.ChainRow) (chain.Settings, error) {
 	return set, nil
 }
 
-// chainPlanPaths decodes the chain's stored plan copies.
 func chainPlanPaths(c db.ChainRow) ([]string, error) {
 	if len(c.PlanPathsJSON) == 0 {
 		return nil, nil
@@ -38,16 +37,15 @@ func chainPlanPaths(c db.ChainRow) ([]string, error) {
 	return paths, nil
 }
 
-// chainApply advances the chain a closing member belongs to: it loads the
-// chain with the caller's tx, builds the workflow event its state awaits, and
-// performs the action in the same critical section as the close. A close that
-// is not the awaited one -- or that arrives once the chain has stopped --
-// changes nothing and writes no trace row.
+// chainApply advances the chain a closing member belongs to, in the same
+// critical section as the close: it loads the chain with the caller's tx,
+// builds the awaited workflow event, and performs the action. A close that is
+// not the awaited one, or that arrives once the chain stopped, changes
+// nothing and writes no trace row.
 //
 // It returns the closing binding as the caller should save it: the workflow
-// arm returns the value it wrote, so a remote member's staged repair -- which
-// sets the chain's own bookkeeping on the member record -- is what the close's
-// caller persists.
+// arm returns the value it wrote, so a remote member's staged repair, which
+// sets the chain's own bookkeeping on the member record, is what persists.
 func chainApply(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, wf *chainCloseWF) (store.Binding, error) {
 	c, err := tx.ChainByMember(b.Name)
 	if errors.Is(err, store.ErrNotFound) {
@@ -56,9 +54,9 @@ func chainApply(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	if err != nil {
 		return b, err
 	}
-	// A chain that runs on a server is advanced by that server's daemon, not
-	// by a close here: this machine mirrors it, and the chain pull is what
-	// moves the mirror.
+	// A chain that runs on a server is advanced by that server's daemon, not by
+	// a close here: this machine mirrors it, and the chain pull moves the
+	// mirror.
 	if chain.OnServer(c) {
 		return b, nil
 	}
@@ -69,7 +67,8 @@ func chainApply(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	if ferr != nil {
 		return b, ferr
 	}
-	// The seed reads the closing member's closed tree; persist the advanced round first.
+	// The seed reads the closing member's closed tree, so persist the advanced
+	// round first.
 	if err := tx.Save(b); err != nil {
 		return b, err
 	}
@@ -77,20 +76,15 @@ func chainApply(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 }
 
 // chainSeedView builds one send's inputs: the plan copies the chain holds and
-// the members' artifacts for the round that just closed. Every path it names is
-// made seed-openable by chainSeedInput -- the input's own path when the store
-// reads it as itself, a copy under the chain's directory otherwise, and a
-// path-free "not available" clause when it cannot be produced -- so a seed
-// never names a round_file key a runner cannot open. The reviewer's and
-// correction seeds name the builder round their closing event judged -- the
-// closing round itself when the builder closed it, the builder's newest closed
-// round when the reviewer did -- and carry that round's gate, the plan's
-// cumulative diff and the round's own prompt when it differs from the plan
-// copy; they also name the repo files the plan texts name, read from the
-// chain's base branch. The correction and fixes seeds name a reader's own
-// output file rather than the flat NNN-report.md no reader writes. The
-// security and fixes seeds name the whole branch diff -- the chain's base to
-// the builder's newest closed round -- and render no gate.
+// the members' artifacts for the round that just closed. Every path it names
+// is made seed-openable by chainSeedInput, so a seed never names a round_file
+// key a runner cannot open. The reviewer and correction seeds name the judged
+// builder round -- the closing round itself when the builder closed it, the
+// builder's newest closed round when the reviewer did -- and carry that
+// round's gate, the plan's cumulative diff, and the round's own prompt when it
+// differs from the plan copy. The correction and fixes seeds name a reader's
+// own output file rather than the flat NNN-report.md no reader writes. The
+// security and fixes seeds name the whole branch diff and render no gate.
 func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act chain.Action, closedRound int) (workflow.SeedView, error) {
 	v := workflow.SeedView{
 		Plan: s.Plan, Plans: s.Plans, Corrections: s.Corrections,
@@ -100,8 +94,7 @@ func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act c
 
 	// The correction and fixes seeds name a reader's own output: the path its
 	// report entry carries, never the flat NNN-report.md no reader writes. A
-	// lookup that fails is worded like any other missing input, never a failed
-	// close.
+	// failed lookup reads like any other missing input, never a failed close.
 	reviewerOutput, securityOutput := "", ""
 	switch act.Seed {
 	case chain.SeedCorrection:
@@ -120,9 +113,9 @@ func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act c
 
 	switch act.Seed {
 	case chain.SeedReviewer, chain.SeedCorrection:
-		// The builder round the event judged: the reviewer's own close judged
-		// the builder's round `closedRound`; a correction is seeded from the
-		// reviewer's close, so it names the builder's newest closed round.
+		// The judged builder round: the reviewer's own close judged
+		// `closedRound`; a correction is seeded from the reviewer's close, so
+		// it names the builder's newest closed round.
 		builderRound := closedRound
 		if act.Seed == chain.SeedCorrection {
 			builderRound = chain.NewestClosedRound(tx, c.Builder)
@@ -156,11 +149,11 @@ func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act c
 	return v, nil
 }
 
-// chainDeliveryMember names the member that carries a chain's end delivery: the
-// first of the chain's member bindings whose record still exists, in the order
-// builder, reviewer, planner, security. ok is false when every record is gone,
-// which is the one case a chain ends silently. A read failure that is not
-// "gone" is returned rather than treated as a missing member.
+// chainDeliveryMember names the member carrying a chain's end delivery: the
+// first surviving member binding in builder, reviewer, planner, security
+// order. ok is false when every record is gone, the one case a chain ends
+// silently. A read failure that is not "gone" is returned, not treated as
+// missing.
 func chainDeliveryMember(tx *store.Tx, c db.ChainRow) (name string, b store.Binding, ok bool, err error) {
 	for _, member := range view.EndMembers(tx, c) {
 		mb, lerr := tx.Load(member)
@@ -175,10 +168,10 @@ func chainDeliveryMember(tx *store.Tx, c db.ChainRow) (name string, b store.Bind
 	return "", store.Binding{}, false, nil
 }
 
-// chainTerminalPayload is what the mastermind reads when a chain ends: how it
-// ended, where it got to, and the command that resumes it (on a halt) or shows
-// its trace. The phase, plan and correction counts are the row's projected
-// legacy columns, which the engine keeps in step with the state.
+// chainTerminalPayload is what the mastermind reads when a chain ends: how
+// it ended, where it got to, and the resume command on a halt. The phase, plan
+// and correction counts are the row's projected legacy columns, kept in step
+// with the state.
 func chainTerminalPayload(c db.ChainRow, findings int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "chain %s %s: status %s, phase %s, plan %d/%d, corrections %d, findings %d.",
@@ -193,7 +186,6 @@ func chainTerminalPayload(c db.ChainRow, findings int) string {
 	return b.String()
 }
 
-// chainTerminalVerb is the status as a verb for the payload's first clause.
 func chainTerminalVerb(s chain.Status) string {
 	switch s {
 	case chain.StatusDone:

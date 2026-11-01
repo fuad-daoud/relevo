@@ -28,16 +28,15 @@ type InstallationFact struct {
 type HandoverFacts struct {
 	Name string
 	To   string
-	// This is this installation's id.
+	// This holds this installation's id.
 	This string
 
 	SyncEnabled bool
 	Locked      bool
 
-	// Round is the binding's current round and RoundOpen whether it is open.
 	Round     int
 	RoundOpen bool
-	// ChainErr is the running-chain refusal for the binding, or nil.
+	// ChainErr holds the running-chain refusal for the binding, nil when none.
 	ChainErr error
 	// Dirty is an unclean worktree; Unpushable is why the branch cannot travel
 	// ("" when it can).
@@ -63,8 +62,8 @@ type HandoverTarget struct {
 	Already bool
 }
 
-// HandoverRefusal decides whether a hand-over may go ahead and to whom. The
-// first refusal wins; each is one sentence the owner can act on.
+// HandoverRefusal resolves --to and refuses; the first refusal wins, each one
+// sentence the owner can act on.
 func HandoverRefusal(f HandoverFacts) (HandoverTarget, error) {
 	if !f.SyncEnabled {
 		return HandoverTarget{}, refusal.New("sync is off on this machine: relevo db sync enable first; a hand-over travels through the sync log")
@@ -92,7 +91,6 @@ func HandoverRefusal(f HandoverFacts) (HandoverTarget, error) {
 	return HandoverTarget{InstallationFact: target}, nil
 }
 
-// bindingStateRefusal is the part of the rules that reads the binding itself.
 func bindingStateRefusal(f HandoverFacts) error {
 	switch {
 	case f.Server:
@@ -213,7 +211,6 @@ func ResumeBranchRefusal(name, branch string) error {
 	return refusal.New("branch %s of binding %q is not on origin: ask the old machine to run relevo handover %s again", branch, name, name)
 }
 
-// HandoverText renders a hand-over's result for the old machine.
 func HandoverText(name string, r HandoverResult) string {
 	var b strings.Builder
 	if r.Already {

@@ -12,11 +12,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// chainRoundView is the closed-round facts of round r as the catch-up reads
-// them: the member's binding view, its ClosedRound set to r and every other
-// closed-round fact taken from the view's Round r, the newest one completed
-// by chainRoundFacts. That is what makes one member's older rounds
-// installable by the same code a single closed round uses.
+// chainRoundView is round r's closed-round facts as the catch-up reads them:
+// the binding view with ClosedRound set to r and every other closed-round fact
+// from the view's Round r. That makes older rounds installable by the same
+// code a single closed round uses.
 func chainRoundView(mv remote.ChainMemberView, r int) remote.BindingView {
 	v := mv.View
 	v.ClosedRound = r
@@ -40,11 +39,10 @@ func chainRoundView(mv remote.ChainMemberView, r int) remote.BindingView {
 	return v
 }
 
-// chainRoundEntry is round r's own entry from the member view, completed from
-// the binding view by chainRoundFacts, and whether the view lists that round at
-// all. A round the view does not list is reported false rather than as an empty
-// entry, so a caller that needs the round's own facts tells "no entry" from an
-// entry that happens to carry none.
+// chainRoundEntry is round r's own entry from the member view, completed by
+// chainRoundFacts, and whether the view lists that round at all. An unlisted
+// round reports false rather than an empty entry, so "no entry" reads apart
+// from an entry carrying none.
 func chainRoundEntry(mv remote.ChainMemberView, r int) (remote.ClosedRoundView, bool) {
 	for _, cr := range mv.Rounds {
 		if cr.Round == r {
@@ -54,8 +52,8 @@ func chainRoundEntry(mv remote.ChainMemberView, r int) (remote.ClosedRoundView, 
 	return remote.ClosedRoundView{}, false
 }
 
-// chainPullPrompt fetches one round's prompt. The server keeps the prompt it
-// staged at the round's own path and serves it as the round's plan file.
+// chainPullPrompt fetches one round's prompt: the staged prompt the server
+// serves as the round's plan file.
 func chainPullPrompt(ctx context.Context, rt Runtime, b store.Binding, r int) ([]byte, bool) {
 	rc, err := rt.Remote.RoundFile(ctx, b.Builder.Server, b.Name, r, "plan")
 	if err != nil {
@@ -74,13 +72,13 @@ func chainPullPrompt(ctx context.Context, rt Runtime, b store.Binding, r int) ([
 }
 
 // chainPullPromptEntry writes the round's prompt file and records the entry
-// that says the member was handed it. A round whose entry already exists is
-// left alone, so a re-run of an interrupted install never doubles it.
+// saying the member was handed it. An existing entry is left alone, so a
+// re-run of an interrupted install never doubles it.
 //
-// The entry carries the server's own start for the round, so a mirror's
-// duration is the round's real one rather than the gap between the pull and the
-// close. A server that sends no start -- one older than the field -- falls back
-// to the clock, which is the ingest time the mirror always recorded before.
+// The entry carries the server's own start, so a mirror's duration is the
+// round's real one rather than the pull-to-close gap. A server sending no
+// start falls back to the clock, the ingest time the mirror always recorded
+// before.
 func chainPullPromptEntry(rt Runtime, tx *store.Tx, b store.Binding, r int, body []byte, startedAt time.Time) error {
 	entries, err := tx.ReadLog(b.Name)
 	if err != nil {
@@ -100,8 +98,8 @@ func chainPullPromptEntry(rt Runtime, tx *store.Tx, b store.Binding, r int, body
 	})
 }
 
-// chainPullStart is the stamp a pulled round carries: the server's own start
-// when it sent one, and this machine's clock when it did not.
+// chainPullStart is the stamp a pulled round carries: the server's own start,
+// or this machine's clock when it sent none.
 func chainPullStart(rt Runtime, startedAt time.Time) time.Time {
 	if startedAt.IsZero() {
 		return rt.Now().UTC()

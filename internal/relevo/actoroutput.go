@@ -26,8 +26,8 @@ func ActorOutput(actors map[string]roles.Actor, agents map[string]roles.AgentEnt
 	return text.DefaultOutput
 }
 
-// actorOutput loads the config for ActorOutput; a missing or unreadable config
-// falls back to the shipped labels, because the label only words the prompt.
+// actorOutput is ActorOutput through the loaded config, falling back to the
+// shipped labels when it cannot load: the label only words the prompt.
 func actorOutput(rt Runtime, actor, definition string) string {
 	if rt.Config == nil {
 		return ActorOutput(nil, nil, actor, definition)
@@ -40,9 +40,9 @@ func actorOutput(rt Runtime, actor, definition string) string {
 }
 
 // readerOutputLabel is the output label of the agent a binding's actor plays:
-// the agent definition when the role's spec resolves, else the actor name.
-// The prompt that words the reader's artifact directory and the close line
-// that names the artifact both call this, so the two labels cannot drift.
+// the resolved definition, else the actor name. The prompt that words the
+// reader's artifact directory and the close line that names the artifact both
+// call this, so the two labels cannot drift.
 func readerOutputLabel(rt Runtime, b store.Binding) string {
 	actor := b.WriterRole()
 	definition := actor

@@ -11,7 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
-// CandidateSlots returns every actor slot that references the candidate named
+// CandidateSlots returns every actor slot referencing the candidate named
 // name, by name or token, sorted by actor name.
 func CandidateSlots(d ConfigDoc, name string) []ActorSlot {
 	token := candidateToken(d, name)
@@ -26,8 +26,8 @@ func CandidateSlots(d ConfigDoc, name string) []ActorSlot {
 	return slots
 }
 
-// SetActorEntries replaces actor's candidate list with entries. It covers
-// reorder, on/off, add and remove in one call.
+// SetActorEntries replaces actor's candidate list with entries: reorder,
+// on/off, add and remove in one call.
 func SetActorEntries(d ConfigDoc, actor string, entries []roles.Entry) (ConfigEdit, error) {
 	a, ok := d.Actors[actor]
 	if !ok {
@@ -50,16 +50,14 @@ func SetActorEntries(d ConfigDoc, actor string, entries []roles.Entry) (ConfigEd
 	return actorEdit(d, acts, actor, "edit actor "+actor+" candidates")
 }
 
-// SetActorPlacement replaces actor's ordered placement list with entries. It
-// covers reorder, add and remove in one call.
+// SetActorPlacement replaces actor's ordered placement list with entries:
+// reorder, add and remove in one call.
 //
 // Empty entries clear the field rather than storing ["local"]: the absent
-// field is what means ["local"] on the next load, so clearing leaves the
-// actor at the default instead of pinning that default into the config.
-//
-// The unknown-server refusal lives here rather than in the store's own
-// cross-check (internal/config/placement.go) so the cockpit can show a human
-// notice; the cross-check stays the backstop on every write path.
+// field is what means ["local"] on the next load. The unknown-server refusal
+// lives here rather than in the store's own cross-check so the cockpit can
+// show a human notice; the cross-check stays the backstop on every write
+// path.
 func SetActorPlacement(d ConfigDoc, actor string, entries []string) (ConfigEdit, error) {
 	a, ok := d.Actors[actor]
 	if !ok {
@@ -123,7 +121,6 @@ func EditActor(d ConfigDoc, actor, agent, tier string, check bool) (ConfigEdit, 
 	return actorEdit(d, acts, actor, "edit actor "+actor)
 }
 
-// AddActor creates an actor with no candidates, no tier and no check.
 func AddActor(d ConfigDoc, name, agent string) (ConfigEdit, error) {
 	body, err := roles.EncodeActors(map[string]roles.Actor{name: {Agent: agent}})
 	if err != nil {
@@ -161,7 +158,7 @@ func DeleteActor(d ConfigDoc, name string) (ConfigEdit, error) {
 }
 
 // DeleteAgent removes the custom agent named name. A shipped agent and an
-// agent any actor uses are both refused. Only the agents section changes.
+// agent any actor uses are both refused.
 func DeleteAgent(d ConfigDoc, name string) (ConfigEdit, error) {
 	if _, shipped := roles.Shipped(name); shipped {
 		return ConfigEdit{}, &FieldError{"", name + " ships with relevo; it can't be deleted"}
@@ -197,7 +194,6 @@ func DeleteAgent(d ConfigDoc, name string) (ConfigEdit, error) {
 	return ConfigEdit{Sections: sections, Message: "delete agent " + name, Name: name}, nil
 }
 
-// actorEdit builds an actors-only edit from acts and dry-runs it.
 func actorEdit(d ConfigDoc, acts map[string]roles.Actor, name, message string) (ConfigEdit, error) {
 	body, err := roles.EncodeActors(acts)
 	if err != nil {
@@ -210,8 +206,8 @@ func actorEdit(d ConfigDoc, acts map[string]roles.Actor, name, message string) (
 	return ConfigEdit{Sections: sections, Message: message, Name: name}, nil
 }
 
-// copyActors returns a shallow copy of m: the map is fresh, the Actor values
-// are shared until a caller replaces one.
+// copyActors returns a shallow copy of m: the map is fresh, the Actor
+// values shared until a caller replaces one.
 func copyActors(m map[string]roles.Actor) map[string]roles.Actor {
 	out := make(map[string]roles.Actor, len(m))
 	for k, v := range m {
@@ -220,7 +216,6 @@ func copyActors(m map[string]roles.Actor) map[string]roles.Actor {
 	return out
 }
 
-// sortedActorNames returns m's keys, sorted.
 func sortedActorNames(m map[string]roles.Actor) []string {
 	names := make([]string, 0, len(m))
 	for name := range m {

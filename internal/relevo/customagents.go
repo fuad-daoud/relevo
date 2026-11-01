@@ -10,18 +10,17 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
-// IsSourceAgent reports whether name is an agents entry relevo renders from its
-// own single-source text, as opposed to a native agent it never writes.
+// IsSourceAgent reports whether name is an agents entry relevo renders from
+// its own single-source text, as opposed to a native agent it never writes.
 func IsSourceAgent(agents map[string]roles.AgentEntry, name string) bool {
 	entry, ok := agents[name]
 	return ok && entry.Source != ""
 }
 
-// CustomAgentDocs renders the config's source agents, in name order, to one doc
-// per kind each source renders. Native entries are skipped, and when only is
-// non-empty so is every other name. A source that will not parse or render is
-// an error naming the agent: config validation already refuses one, so this is
-// unexpected.
+// CustomAgentDocs renders the config's source agents, in name order, to one
+// doc per kind each source renders. Native entries are skipped, and when only
+// is non-empty so is every other name. A source that will not parse or render
+// is an error naming the agent.
 func CustomAgentDocs(agents map[string]roles.AgentEntry, only string) ([]harness.CustomDoc, error) {
 	names := make([]string, 0, len(agents))
 	for name := range agents {
@@ -53,8 +52,8 @@ func CustomAgentDocs(agents map[string]roles.AgentEntry, only string) ([]harness
 	return docs, nil
 }
 
-// InstallCustomAgents renders cfg's source agents and installs them. A nil cfg
-// is a runtime with no config store: nothing to do, not an error.
+// InstallCustomAgents renders cfg's source agents and installs them. A nil
+// cfg is a runtime with no config store: nothing to do, not an error.
 func InstallCustomAgents(cfg *config.Store, env harness.InstallEnv, opts harness.InstallOptions) ([]harness.InstallResult, error) {
 	if cfg == nil {
 		return nil, nil
@@ -90,8 +89,6 @@ func CustomAgentFiles(cfg *config.Store, env harness.InstallEnv, name string) ([
 	return harness.CustomFiles(env, docs)
 }
 
-// ResetCustomAgentFile overwrites kind's rendered file for name with the bytes
-// relevo renders now, and returns the one install result.
 func ResetCustomAgentFile(cfg *config.Store, env harness.InstallEnv, kind, name string) (harness.InstallResult, error) {
 	results, err := InstallCustomAgents(cfg, env, harness.InstallOptions{Kind: kind, Role: name, Force: true})
 	if err != nil {

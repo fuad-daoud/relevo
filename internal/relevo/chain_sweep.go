@@ -15,10 +15,9 @@ import (
 
 // tickChains sweeps every running chain once per tick. A member whose record
 // is gone, or that sits NEEDS YOU, halts the chain with that member's reason:
-// no member close will ever arrive to move the chain, so the sweep is what
-// ends it. The daemon runs the sweep before it acts on the binding list,
-// because the chain that most needs it is the one whose member records have
-// all gone.
+// no member close will ever arrive to move the chain. The daemon runs the
+// sweep before it acts on the binding list, because the chain that most needs
+// it is the one whose member records have all gone.
 func tickChains(ctx context.Context, rt Runtime) {
 	chains, err := rt.Store.Chains()
 	if err != nil {
@@ -30,8 +29,8 @@ func tickChains(ctx context.Context, rt Runtime) {
 		if c.Status != string(chain.StatusRunning) {
 			continue
 		}
-		// A server chain is swept by the server's daemon; this machine must
-		// not halt it from a mirror that has not been pulled.
+		// A server chain is swept by the server's daemon, never from a mirror
+		// that has not been pulled.
 		if chain.OnServer(c) {
 			continue
 		}
@@ -54,9 +53,9 @@ func tickChains(ctx context.Context, rt Runtime) {
 }
 
 // chainSweep decides one chain under the caller's lock. The row is re-read
-// here, so a sweep that races a close writes nothing on a chain that has
-// already ended. Member order is fixed: the builder is checked first, so the
-// reason the human sees names the member the chain is closest to acting on.
+// here, so a sweep that races a close writes nothing on an ended chain.
+// Member order is fixed: the builder is checked first, so the reason the
+// human sees names the member the chain is closest to acting on.
 func chainSweep(ctx context.Context, rt Runtime, tx *store.Tx, name string) error {
 	c, err := tx.Chain(name)
 	if errors.Is(err, store.ErrNotFound) {
@@ -74,17 +73,12 @@ func chainSweep(ctx context.Context, rt Runtime, tx *store.Tx, name string) erro
 // chainSweepFlow decides a workflow chain: it walks chain_member in creation
 // order, and the first member whose record is gone, that sits NEEDS YOU, or
 // that is broken with nothing able to bring its builder back, ends the chain
-// with that member's reason. A chain member is the binding a step's actor runs
-// on, so the workflow's members are read from chain_member, not from the four
-// legacy columns.
+// with that member's reason. The members are read from chain_member, not the
+// four legacy columns.
 //
-// Broken is an arm of its own because the binding a member's break leaves is
-// not one any later round can move: a member whose builder is gone and has no
-// live process behind it has no close coming, so a chain waiting on it waits
-// forever. Its owner is a mirror of this chain -- the member observes the round
-// and writes the status word, and leaves the fault to the chain, whose end the
-// pull delivers once -- so nothing on the owner's side ends the chain, and the
-// sweep here is the only thing that can.
+// Broken is an arm of its own: a member whose builder is gone with no live
+// process behind it has no close coming, so a chain waiting on it waits
+// forever, and the sweep here is the only thing that can end it.
 func chainSweepFlow(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow) error {
 	rows, err := chainFlowMembers(tx, c)
 	if err != nil {
@@ -109,10 +103,9 @@ func chainSweepFlow(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow
 }
 
 // chainSweepBrokenReason is the reason a chain ends on a broken member: the
-// member's own halt when it recorded one, and the member named as broken when
-// it did not. A break with no reason is reachable -- the field is only written
-// once a switch has something to say -- and an empty chain reason is a halted
-// row with nothing on it to act on.
+// member's own halt when it recorded one, the member named as broken when it
+// did not. A break with no reason is reachable, and an empty chain reason
+// would leave a halted row with nothing to act on.
 func chainSweepBrokenReason(name, halt string) string {
 	if halt != "" {
 		return halt
@@ -120,10 +113,9 @@ func chainSweepBrokenReason(name, halt string) string {
 	return fmt.Sprintf("member %s broken", name)
 }
 
-// chainSweepFlowHalt ends a workflow chain the sweep found unable to move: the
-// engine's halt state, one trace row and the one end delivery, through the
-// workflow terminal so the chain's own payload and resume hint are written. The
-// step named is the one the engine is on, which is where the chain stopped.
+// chainSweepFlowHalt ends a workflow chain the sweep found unable to move:
+// the engine's halt state, one trace row and the one end delivery. The step
+// named is the one the engine is on.
 func chainSweepFlowHalt(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, reason string) error {
 	def, err := chain.WorkflowDef(c)
 	if err != nil {

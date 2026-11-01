@@ -15,11 +15,11 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
-// ServedChainRequest is what a server has to create and drive a chain for a
-// tenant: the validated wire values, plus the server's own facts -- the owner,
-// the bare repo it cuts the builder's tree from, the author the builder commits
-// as, and the client's link ids. Every field is set by the HTTP layer before
-// ServedChainPreflight reads it; nothing here is an option the server resolves.
+// ServedChainRequest is what a server needs to create and drive a tenant's
+// chain: the validated wire values, plus the server's own facts -- owner, bare
+// repo, committing author, and client link ids. Every field is set by the HTTP
+// layer before ServedChainPreflight reads it; nothing here is an option the
+// server resolves.
 type ServedChainRequest struct {
 	// Name is the chain's name, and its builder member's.
 	Name string
@@ -30,17 +30,17 @@ type ServedChainRequest struct {
 	// Feature and Ticket label every member, exactly as on a served create.
 	Feature string
 	Ticket  string
-	// Subdir is the inside-the-repository offset the round's processes run
-	// at, resolved on the client before the create; the server joins it into
-	// the round directory of every member it stores.
+	// Subdir is the inside-the-repository offset the rounds run at, resolved on
+	// the client before the create; the server joins it into every member's
+	// round directory.
 	Subdir string
-	// Trimpath is the client's effective trimpath setting: "" (absent) reads
-	// trimmed, and only "off" opts out. It rides beside Subdir so every
-	// member's rounds read the same value.
+	// Trimpath is the client's effective trimpath: "" reads trimmed, and only
+	// "off" opts out. It rides beside Subdir so every member's rounds read the
+	// same value.
 	Trimpath string
-	// BuilderActor is the actor the builder member runs. It is "" for every
-	// wire create -- the chain fixes the builder to the builder actor -- but a
-	// caller may name one, and the preflight's shape check then decides.
+	// BuilderActor is the actor the builder member runs. It is "" for every wire
+	// create -- the chain fixes the builder -- but a caller may name one, and
+	// the preflight's shape check then decides.
 	BuilderActor string
 	// Owner is the enrolled client that asked for the chain.
 	Owner string
@@ -49,10 +49,10 @@ type ServedChainRequest struct {
 	// RepoID is the repo id the client resolved, kept on the members' Serve
 	// facts so the client can match its copy.
 	RepoID string
-	// Base is the commit the builder starts from.
+	// Base is the starting commit.
 	Base string
-	// AuthorName and AuthorEmail are the client's git identity; every builder
-	// the server starts for a member commits as the client.
+	// AuthorName and AuthorEmail are the client's git identity, which every
+	// started builder commits as.
 	AuthorName  string
 	AuthorEmail string
 	// ClientInstallation and ClientBindingIDs are the client's link facts,
@@ -67,9 +67,8 @@ type ServedChainRequest struct {
 	ClientActorIDs map[string]string
 }
 
-// servedPick is one member's resolved launch: the candidate token the server's
-// own registry picked, the harness kind that token carries, and the tier the
-// server's policy resolved.
+// servedPick is one member's resolved launch: the server registry's candidate
+// token, its harness kind, and the resolved tier.
 type servedPick struct {
 	token string
 	kind  string
@@ -77,9 +76,8 @@ type servedPick struct {
 }
 
 // servedFacts is what every served member's binding mirrors: the builder's
-// served facts a member is created beside. A reader is the same binding except
-// that it shares the builder's worktree, carries no worktree and no branch of
-// its own, and holds no gate.
+// served facts a member is created beside. A reader shares the builder's
+// worktree and carries no worktree, branch, or gate of its own.
 type servedFacts struct {
 	owner        string
 	repoID       string
@@ -102,10 +100,10 @@ type servedFacts struct {
 	isWorkflow   bool
 }
 
-// ServedChainPlan is everything a served chain's read-only preflight resolved:
-// the request, the shipped default with the wire settings on its params, the
-// settings, the members every start names, and each member's own pick. Nothing
-// exists yet, so a refusal has nothing to undo.
+// ServedChainPlan is everything a served chain's read-only preflight
+// resolved: request, shipped default with wire settings on its params,
+// settings, members, and each member's pick. Nothing exists yet, so a refusal
+// has nothing to undo.
 type ServedChainPlan struct {
 	req      ServedChainRequest
 	def      workflow.Definition
@@ -114,15 +112,14 @@ type ServedChainPlan struct {
 	picks    map[string]servedPick
 }
 
-// ServedChainPreflight runs every check a served chain's create can make before
-// anything exists, all read-only: the name, the members' names, each actor's
+// ServedChainPreflight runs every check a served chain's create can make
+// before anything exists, all read-only: name, member names, each actor's
 // shape on this server's registry, and each member's candidate and tier. The
-// caller's candidate and the actor's placement list are ignored -- the server
-// picks with its own policy, exactly as a served binding's create does.
+// caller's candidate and placement list are ignored -- the server picks with
+// its own policy, exactly as a served binding's create does.
 //
-// Errors: store.ValidName / the name-length refusal; chainFreeNames' refusal; a
-// shape error naming the part and actor; ErrTierAboveMax or a pick refusal from
-// PickServedCandidateFor / ResolveServedTierFor.
+// Errors: store.ValidName / the name-length refusal; chainFreeNames' refusal;
+// a shape error naming part and actor; ErrTierAboveMax or a pick refusal.
 func ServedChainPreflight(rt Runtime, req ServedChainRequest) (ServedChainPlan, error) {
 	if err := store.ValidName(req.Name); err != nil {
 		return ServedChainPlan{}, refusal.New("%s", err)
@@ -163,8 +160,8 @@ func ServedChainPreflight(rt Runtime, req ServedChainRequest) (ServedChainPlan, 
 
 // servedChainPreflightWorkflow validates a custom workflow request before
 // anything exists: parses the definition, enforces no file seeds, validates
-// against the server's actors and shipped seeds, derives members, and resolves
-// a pick for each member.
+// against the server's actors and shipped seeds, and resolves a pick per
+// member.
 func servedChainPreflightWorkflow(rt Runtime, req ServedChainRequest) (ServedChainPlan, error) {
 	def, err := workflow.Parse(req.Workflow)
 	if err != nil {
@@ -203,16 +200,15 @@ func servedChainPreflightWorkflow(rt Runtime, req ServedChainRequest) (ServedCha
 	return ServedChainPlan{req: req, def: def, settings: chainSettingsFromWire(req.Settings), members: members, picks: picks}, nil
 }
 
-// ServedChainCreate creates the chain a preflight resolved, all-or-none through
-// the row: it builds every member in the served shape, writes the chain row
-// with the shipped default resolved onto the wire settings and the engine's
-// start state, copies the plans into the chain's own directory, then runs the
-// start actions, so plan 1 is queued for the server's admit. worktree is the
+// ServedChainCreate creates the chain a preflight resolved, all-or-none
+// through the row: every member in the served shape, the chain row with the
+// shipped default resolved onto the wire settings and the engine's start
+// state, the plans copied into the chain's own directory, then the start
+// actions, so plan 1 is queued for the server's admit. worktree is the
 // builder's served worktree, already cut from the base bundle by the caller.
 //
-// A failing transaction leaves neither the chain row nor any member. A failure
-// after it -- the plan copies or plan 1 -- leaves the chain started, exactly as
-// chainCreate does.
+// A failing transaction leaves neither the chain row nor any member. A
+// failure after it leaves the chain started, exactly as chainCreate does.
 func ServedChainCreate(ctx context.Context, rt Runtime, plan ServedChainPlan, worktree string) (ChainResult, error) {
 	req := plan.req
 	name := req.Name
@@ -249,9 +245,9 @@ func ServedChainCreate(ctx context.Context, rt Runtime, plan ServedChainPlan, wo
 	if err != nil {
 		return ChainResult{}, err
 	}
-	// The store's own scope stamps the chain row, exactly as prepareSave stamps
-	// every member binding: a shared store scopes every read to its owner, so a
-	// row written with no owner is invisible to its own chain's reads.
+	// The store's own scope stamps the chain row, as prepareSave stamps every
+	// member binding: a shared store scopes every read to its owner, so an
+	// ownerless row is invisible to its own chain's reads.
 	row.Owner = rt.Store.Owner()
 	row, err = servedChainEngineCreate(ctx, rt, plan, row, built, planPaths)
 	if err != nil {
@@ -266,10 +262,9 @@ func ServedChainCreate(ctx context.Context, rt Runtime, plan ServedChainPlan, wo
 }
 
 // servedChainMember is one chain member's binding in the served shape. The
-// builder mirrors buildServedBinding's literal: its own served worktree and
-// branch, a headless endpoint, the resolved gate and regate, its Serve facts and
-// its link. A reader shares the builder's tree -- CWD is the builder's worktree
-// -- and carries no worktree, no branch and no gate.
+// builder mirrors buildServedBinding's literal: served worktree and branch, a
+// headless endpoint, resolved gate and regate, Serve facts, and link. A reader
+// shares the builder's tree and carries no worktree, branch, or gate.
 func servedChainMember(m chainMember, pick servedPick, f servedFacts) store.Binding {
 	now := f.now
 	if now.IsZero() {
@@ -316,8 +311,8 @@ func servedChainMember(m chainMember, pick servedPick, f servedFacts) store.Bind
 }
 
 // servedMemberLink is the link a served member carries: nil when the client
-// sent neither an installation nor an id for the member key, exactly as
-// servedLink leaves a lone served binding nil.
+// sent neither installation nor id for the member key, as servedLink leaves a
+// lone served binding nil.
 func servedMemberLink(key, installation string, ids map[string]string) *store.RemoteLink {
 	id := ""
 	if ids != nil {
@@ -329,14 +324,12 @@ func servedMemberLink(key, installation string, ids map[string]string) *store.Re
 	return &store.RemoteLink{Installation: installation, ID: id}
 }
 
-// servedActorPick resolves one member's candidate and tier from the server's own
-// registry, the calls serve.pickServedTier makes: no client candidate, and the
-// actor's placement list ignored. actor is the member's actor word; the empty
-// builder role is resolved as "builder", exactly as a served create resolves it.
-// A refusal the gates answer with -- every candidate serving the actor gated,
-// or no candidate serving it at all -- returns as this pick's error, and the
-// preflight and resume loops propagate it as the create's refusal, exactly as
-// the local chain start answers with chainResolveActors' error.
+// servedActorPick resolves one member's candidate and tier from the server's
+// own registry, the calls serve.pickServedTier makes: no client candidate,
+// and the actor's placement list ignored. The empty
+// builder role resolves as "builder", as a served create resolves it. A
+// gating refusal returns as this pick's error, propagated as the create's
+// refusal, as the local start answers with chainResolveActors' error.
 func servedActorPick(rt Runtime, actor string) (servedPick, error) {
 	role := resolve.NormRole(actor)
 	roleName := role
@@ -358,9 +351,9 @@ func servedActorPick(rt Runtime, actor string) (servedPick, error) {
 	return servedPick{token: token, kind: kind, tier: string(tier)}, nil
 }
 
-// chainSettingsFromWire converts the wire settings to the chain's own type.
-// internal/remote does not import internal/chain, so the two are converted at
-// this edge.
+// chainSettingsFromWire converts the wire settings to the chain's own type:
+// internal/remote does not import internal/chain, so the two convert at this
+// edge.
 func chainSettingsFromWire(s remote.ChainSettings) chain.Settings {
 	return chain.Settings{
 		MaxCorrections: s.MaxCorrections,
@@ -386,15 +379,15 @@ func chainSettingsToWire(s chain.Settings) remote.ChainSettings {
 	}
 }
 
-// chainServedCarrier reports whether a chain's end delivery must be skipped: a
-// served member's MasterMind is on the client, which queues the delivery itself
-// after its pull, so the server queues nothing.
+// chainServedCarrier reports whether a chain's end delivery must be skipped:
+// a served member's MasterMind is on the client, which queues the delivery
+// itself after its pull, so the server queues nothing.
 func chainServedCarrier(b store.Binding) bool {
 	return b.Owner != ""
 }
 
-// ServedChainView is a chain's wire representation on the server: its row, each
-// member's current binding view plus the closed rounds in
+// ServedChainView is a chain's wire representation on the server: its row,
+// each member's binding view plus the closed rounds in
 // (acked_round, closed_round], the trace, and the security findings. recordID
 // resolves a member's server binding_record id and installation is this
 // server's own id, both exactly as ServedView takes them.
@@ -425,8 +418,8 @@ func ServedChainView(rt Runtime, name string, recordID func(string) string, inst
 		PlanStartCommit: c.PlanStartCommit,
 		Settings:        chainSettingsToWire(set),
 	}
-	// A workflow chain's position is its engine state, so the view projects the
-	// state onto the legacy columns rather than reading the row's saved copy.
+	// A workflow chain's position is its engine state, so the view projects
+	// the state onto the legacy columns rather than the row's saved copy.
 	if len(c.WorkflowJSON) > 0 {
 		def, derr := chain.WorkflowDef(c)
 		if derr != nil {
@@ -467,9 +460,8 @@ func ServedChainView(rt Runtime, name string, recordID func(string) string, inst
 		if b.Serve != nil {
 			for n := b.Serve.AckedRound + 1; n <= b.Serve.ClosedRound; n++ {
 				f := servedRoundFacts(entries, n)
-				// The server keeps the dirty commit of the round it last
-				// closed, so only that round ships one; an older round ships
-				// "" rather than the newest round's commit.
+				// The server keeps the dirty commit of its last closed round
+				// only; an older round ships "" rather than that commit.
 				if n == b.Serve.ClosedRound {
 					f.DirtyCommit = b.Serve.DirtyCommit
 				}

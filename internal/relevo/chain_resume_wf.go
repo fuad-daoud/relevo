@@ -18,41 +18,38 @@ import (
 )
 
 // chainResumePostWriteHook is nil outside tests; a test sets it to fail a
-// resume after its first write, the one seam that reaches the undo path.
+// resume after its first write, reaching the undo path.
 var chainResumePostWriteHook func(tx *store.Tx, c db.ChainRow) error
 
-// chainResumeWorkflow continues a halted or stopped workflow chain: it
-// re-enters the step the engine is on -- or the one --from names -- applies
-// --param and the old flags to the stored definition, creates the members the
-// params brought in, and runs the resumed action.
+// chainResumeWorkflow continues a halted or stopped chain: it re-enters the
+// engine step -- or the one --from names -- applies --param and the old flags
+// to the stored definition, creates the members the params brought in, and
+// runs the resumed action.
 func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts ResumeOptions) (ChainResult, error) {
 	if err := resumeRefusal(c); err != nil {
 		return ChainResult{}, err
 	}
-	// A child's resume is only meaningful while its parent can follow it back
-	// into the fork, so the parent is asked first and nothing is written on a
-	// refusal.
+	// A child's resume needs its parent able to follow it back into the fork,
+	// so the parent is asked first and nothing is written on a refusal.
 	if err := chainForkParentGate(rt, c); err != nil {
 		return ChainResult{}, err
 	}
-	// A gate change on a chain whose writer runs on a server has to reach that
-	// server's binding, so it is refused there when the server cannot take it.
-	// The push that delivers it waits for every other refusal below to clear.
+	// A gate change on a server-run writer must reach that server's binding, so
+	// it is refused where the server cannot take it. The delivering push waits
+	// for every other refusal below to clear.
 	if chainResumeChangesGate(opts) {
 		if err := resumeRemoteGateRefusal(ctx, rt, c); err != nil {
 			return ChainResult{}, err
 		}
 	}
-	// A workflow chain whose awaited member's round was left open by the halt --
-	// no report, and no close -- would otherwise be refused for that open round.
-	// A resume is the human ending it, so it is closed the way a stop does, and
-	// the resume can open the next one.
+	// A round the halt left open -- no report, no close -- would otherwise be
+	// refused for that open round. A resume is the human ending it, so it
+	// closes the way a stop does and the resume can open the next one.
 	if err := closeDeadMemberRound(ctx, rt, c); err != nil {
 		return ChainResult{}, err
 	}
-	// The row's engine definition and state, migrated onto the engine when the
-	// row still predates it and refused in the input class when it carries
-	// neither, so a resume never answers internal on a row a human can read.
+	// The row's definition and state, migrated onto the engine when the row
+	// predates it, so a resume never answers internal on a human-readable row.
 	c, def, before, err := chainResumeWorkflowRow(rt, c)
 	if err != nil {
 		return ChainResult{}, err
@@ -61,15 +58,15 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 	if err != nil {
 		return ChainResult{}, err
 	}
-	// A parent standing on a fork cannot re-enter the fork step -- entering it
-	// starts the children a second time. So a fork with a child still standing is
-	// refused here, before anything is written and before the chain's own end
-	// delivery is superseded: the human resumes the child instead.
+	// A parent on a fork cannot re-enter the fork step: entering it starts the
+	// children a second time. So a fork with a child still standing is refused
+	// here, before anything is written and before the end delivery is
+	// superseded: the human resumes the child instead.
 	if err := chainForkResumeRefusal(c, before); err != nil {
 		return ChainResult{}, err
 	}
-	// The old flags fill the workflow's params exactly as a start's do, so a
-	// resume can replace the check or the budgets the chain runs under.
+	// The old flags fill the params exactly as a start's do, so a resume can
+	// replace the check or the budgets the chain runs under.
 	flagParams, err := chainResumeFlagParams(def, rt, opts)
 	if err != nil {
 		return ChainResult{}, err
@@ -90,18 +87,16 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 			return ChainResult{}, err
 		}
 	}
-	// A resume that replaces the check on a halt a zero-budget repair arm
-	// caused goes back to that arm's check rather than to the arm itself, so
-	// the check runs again under the new command instead of halting on the very
-	// budget it had before. Every other resume re-enters what it asked for.
-	// The refusal lands here, before the delivery below is superseded and
-	// before the lock writes anything.
+	// A resume replacing the check on a zero-budget repair-arm halt goes back
+	// to that arm's check, so the check runs again under the new command. The
+	// refusal lands here, before the delivery below is superseded and before
+	// the lock writes anything.
 	from, err := chainResumeReroute(def, before, opts)
 	if err != nil {
 		return ChainResult{}, err
 	}
-	// A human has looked at the plan: every budget starts fresh, exactly as a
-	// resume resets the correction count on the fixed state machine.
+	// A human has looked at the plan: every budget starts fresh, as a resume
+	// resets the correction count on the fixed state machine.
 	before.Visits = map[string]int{}
 
 	var out ChainResult
@@ -116,19 +111,17 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 	if err != nil {
 		return ChainResult{}, err
 	}
-	// A resume whose send could not start halts the chain, exactly as the fixed
-	// state machine's resume returns the send's own error. The halt is the
-	// answer -- nothing about the resume was malformed and nothing of relevo's
-	// own failed -- so it is refused, not reported as an internal fault: the
-	// CLI reads a refusal as exit 2 with the reason to act on, and an internal
-	// as "send this to bugreport" on a row the human can read and fix.
+	// A resume whose send could not start halts the chain, as the fixed state
+	// machine's resume returns the send's own error. The halt is the answer,
+	// so it is refused, not reported as an internal fault: the CLI reads a
+	// refusal as exit 2 with the reason to act on, and an internal as "send
+	// this to bugreport" on a human-readable row.
 	if out.Chain.Status == string(workflow.StatusHalted) {
 		return out, refusal.New("chain %s is still halted: %s", out.Chain.Name, out.Chain.Reason)
 	}
-	// The resume itself has committed and nothing refused it, so the gate change
-	// a placed writer's server is owed can go out now. Any later abort of this
-	// resume -- the shipped round -- can no longer leave the server ahead of a
-	// chain whose own settings already carry the new gate.
+	// The resume committed and nothing refused it, so the gate change a placed
+	// writer's server is owed can go out now. No later abort of this resume
+	// can leave the server ahead of a chain already carrying the new gate.
 	if chainResumeChangesGate(opts) {
 		if err := resumeRemoteGatePush(ctx, rt, out.Chain, opts); err != nil {
 			return ChainResult{}, err
@@ -154,7 +147,6 @@ func chainResumeCommitRow(tx *store.Tx, row *db.ChainRow, def workflow.Definitio
 	return tx.ChainPut(*row)
 }
 
-// chainResumeLocked performs the atomic state mutation under the store lock.
 func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, opts ResumeOptions, def workflow.Definition, before workflow.State, from string, set chain.Settings, merged map[string]string) (ChainResult, error) {
 	row, err := tx.Chain(opts.Name)
 	if err != nil {
@@ -247,7 +239,7 @@ func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, opts Resum
 
 // chainResumeFlagParams translates a resume's old flags into workflow params,
 // the same slots a start's flags fill. A flag the workflow has no slot for is
-// refused, so a human never believes a setting took effect when it did not.
+// refused, so no setting silently takes no effect.
 func chainResumeFlagParams(def workflow.Definition, rt Runtime, opts ResumeOptions) (map[string]string, error) {
 	out := map[string]string{}
 	add := func(flag, param, value string) error {
@@ -285,8 +277,8 @@ func chainResumeFlagParams(def workflow.Definition, rt Runtime, opts ResumeOptio
 		}
 	}
 	if opts.Gate != "" || opts.NoGate {
-		// The gate flags win over every lower tier, so a resume reads no
-		// repository's settings here.
+		// The gate flags win over every lower tier, so no repository's
+		// settings are read here.
 		gate := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, resolve.RoleChecks(rt.RoleRegistry(), "builder"), RepoSettings{}).Command
 		if err := add("--gate/--no-gate", "gate", gate); err != nil {
 			return nil, err
@@ -295,18 +287,16 @@ func chainResumeFlagParams(def workflow.Definition, rt Runtime, opts ResumeOptio
 	return out, nil
 }
 
-// chainResumeClosed builds the step_closed a resume feeds when the run step the
-// chain awaits has a newer closed round on its member: a round sent while the
-// chain was halted or stopped, which the engine never saw. It rebuilds the
-// event through the same close path a live close uses, reading the round's
-// stored report entry and its own stream. No newer round means no event, and
-// the resume re-runs the step.
+// chainResumeClosed builds the step_closed a resume feeds when the awaited run
+// step has a newer closed round on its member: a round sent while the chain
+// was down, which the engine never saw. It rebuilds the event through the live
+// close path, reading the round's stored report entry and its own stream. No
+// newer round means no event, and the resume re-runs the step.
 //
-// A newer round whose report file is not on disk routes nothing either: a stop
-// close records the round as stopped without a report, so that round is already
-// closed as stopped and there is no body to review. Such a round leaves no event
-// and the resume re-runs the step; only a store failure other than the missing
-// report is an error.
+// A newer round whose report file is not on disk routes nothing either: a
+// stop close records the round as stopped without a report, so it is already
+// closed as stopped with no body to review. Only a store failure other than
+// the missing report is an error.
 func chainResumeClosed(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, st workflow.State) (*workflow.Event, error) {
 	if st.Awaiting.Member == "" || st.Awaiting.Round <= 0 {
 		return nil, nil
@@ -322,9 +312,8 @@ func chainResumeClosed(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 	return chainResumeRoundClose(ctx, rt, tx, c, member, newest)
 }
 
-// chainResumeRoundClose rebuilds the step_closed of one closed round of a
-// member from its stored report entry; a round with no report on disk gives no
-// event.
+// chainResumeRoundClose rebuilds the step_closed of one closed member round
+// from its stored report entry; a round with no report on disk gives no event.
 func chainResumeRoundClose(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, member string, newest int) (*workflow.Event, error) {
 	entry, ok := memberReportEntry(tx, member, newest)
 	if !ok {
@@ -341,10 +330,9 @@ func chainResumeRoundClose(ctx context.Context, rt Runtime, tx *store.Tx, c db.C
 	if err != nil {
 		return nil, err
 	}
-	// The close path reads the round a close carries, so the binding is handed
-	// the round that closed rather than the round the pull has since advanced
-	// it to: a reader's block lives in its stream, and the artifacts belong to
-	// the closed round.
+	// The close path reads the carried round, so the binding is handed the
+	// round that closed rather than the pull-advanced round: a reader's block
+	// lives in its stream, and the artifacts belong to the closed round.
 	b.Round = newest
 	ev, err := chainEventFromCloseWF(ctx, rt, tx, c, b, chainCloseWF{
 		Body: body, Path: entry.Path, Outcome: entry.Outcome, Round: newest,
@@ -355,7 +343,6 @@ func chainResumeRoundClose(ctx context.Context, rt Runtime, tx *store.Tx, c db.C
 	return &ev, nil
 }
 
-// memberReportEntry is the report entry that closed a member's round.
 func memberReportEntry(tx *store.Tx, name string, round int) (store.LogEntry, bool) {
 	entries, err := tx.ReadLog(name)
 	if err != nil {
@@ -371,11 +358,10 @@ func memberReportEntry(tx *store.Tx, name string, round int) (store.LogEntry, bo
 	return found, ok
 }
 
-// chainResumeRunAction performs one action a resume produced. A send that
-// re-runs the very round the chain was stopped on re-hands that round's own
-// staged prompt, so the member sees the bytes it was already given; anything
-// else is the engine's ordinary action. gateChanged says the resume replaced
-// the check, so a stale repair prompt is walked back to the step's own seed.
+// chainResumeRunAction performs one action a resume produced. A send re-running
+// the stopped-on round re-hands that round's staged prompt, so the member sees
+// the bytes already given; anything else is the engine's ordinary action.
+// gateChanged walks a stale repair prompt back to the step's own seed.
 func chainResumeRunAction(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before workflow.State, next *workflow.State, act workflow.Action, gateChanged bool) error {
 	if act.Kind == workflow.ActionSend {
 		if name, text, ok := chainResumeStagedText(rt, tx, c, before, act, gateChanged); ok {
@@ -386,11 +372,11 @@ func chainResumeRunAction(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 	return chainRunAction(ctx, rt, tx, c, def, before, next, workflow.Event{Kind: workflow.EventNeedsYou, Step: next.At}, act)
 }
 
-// chainResumeStagedText returns the staged prompt a resume re-sends: the round
-// the state awaited, when the action re-runs that same member's step and the
-// round's staged file is still there. A replaced check walks back past any
-// repair prompts, because their bytes name the check that failed; where that
-// walk ends on a prompt that is not a repair plan there is nothing to re-send.
+// chainResumeStagedText returns the staged prompt a resume re-sends: the
+// awaited round, when the action re-runs that member's step and the staged
+// file is still there. A replaced check walks back past any repair prompts,
+// whose bytes name the failed check; a walk ending on a non-repair prompt has
+// nothing to re-send.
 func chainResumeStagedText(rt Runtime, tx *store.Tx, c db.ChainRow, before workflow.State, act workflow.Action, gateChanged bool) (string, string, bool) {
 	if before.Awaiting.Member == "" || before.Awaiting.Round <= 0 || act.Actor != before.Awaiting.Member {
 		return "", "", false
@@ -413,25 +399,21 @@ func chainResumeStagedText(rt Runtime, tx *store.Tx, c db.ChainRow, before workf
 	if err != nil {
 		return "", "", false
 	}
-	// A walk-back that left the awaited round and stopped on a prompt that is
-	// not a repair plan has found the build plan or a seed of some other step;
-	// handing it over as this step's own would run the wrong work, so the engine
-	// renders the step's seed fresh instead.
+	// A walk-back off the awaited round onto a non-repair prompt found the
+	// build plan or another step's seed; handing it over would run the wrong
+	// work, so the engine renders the step's seed fresh instead.
 	if round != before.Awaiting.Round && !isRepairPlan(string(body)) {
 		return "", "", false
 	}
 	return name, string(body), true
 }
 
-// chainResumeAddMembers creates the members a resume's params brought in: the
-// actors of run steps the new definition reaches that have no chain_member row
-// yet, and swaps members whose actor differs.
+// chainResumeAddMembers creates the members a resume's params brought in,
+// and swaps members whose actor differs.
 func chainResumeAddMembers(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, snap *chainResumeSnapshot) (db.ChainRow, error) {
 	return chainResumeSyncMembers(ctx, rt, tx, c, def, snap)
 }
 
-// chainFlowStoredMembers loads a workflow chain's member bindings in
-// chain_member order.
 func chainFlowStoredMembers(tx *store.Tx, c db.ChainRow) ([]store.Binding, error) {
 	rows, err := chainFlowMembers(tx, c)
 	if err != nil {

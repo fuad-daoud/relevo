@@ -5,16 +5,13 @@ import (
 	"time"
 )
 
-// authGraceLimit is how long a binding's server may keep answering a transient
-// auth error -- a stale signature from a clock skew, typically -- before the
-// daemon halts it and asks for a human.
+// authGraceLimit is how long a server may keep answering a transient auth
+// error before the daemon halts the binding and asks for a human.
 const authGraceLimit = 15 * time.Minute
 
-// AuthGrace remembers, per binding name, the first time its server answered an
-// auth error that might clear on its own (stale, bad_signature, not_enrolled).
-// The daemon owns it, so one process-wide record covers every binding on a
-// server that restarted its clock; a CLI one-shot leaves it nil and so never
-// halts on a transient 401.
+// AuthGrace remembers, per binding name, the first sight of a transient auth
+// error that might clear on its own. The daemon owns the one process-wide
+// record; a CLI one-shot leaves it nil and never halts on a transient 401.
 //
 // Every method is nil-safe: a nil *AuthGrace never expires.
 type AuthGrace struct {

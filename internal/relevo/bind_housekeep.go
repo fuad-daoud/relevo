@@ -14,8 +14,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
-// housekeepTeardown adapts the engine's worktree teardown to the plain values
-// housekeep.GC reports.
 func housekeepTeardown(rt Runtime) func(context.Context, store.Binding, bool) housekeep.TeardownOutcome {
 	return func(ctx context.Context, b store.Binding, dryRun bool) housekeep.TeardownOutcome {
 		o := worktreeTeardown(ctx, rt, b, dryRun)
@@ -23,7 +21,6 @@ func housekeepTeardown(rt Runtime) func(context.Context, store.Binding, bool) ho
 	}
 }
 
-// housekeepAskUnbind adapts the engine's server ask to housekeep.GC's ask.
 func housekeepAskUnbind(rt Runtime) func(context.Context, store.Binding, bool) error {
 	return func(ctx context.Context, b store.Binding, force bool) error {
 		return askServerUnbind(ctx, rt, b, force)
@@ -31,8 +28,8 @@ func housekeepAskUnbind(rt Runtime) func(context.Context, store.Binding, bool) e
 }
 
 // HousekeepDeps builds internal/housekeep's Deps from rt. Git and Refs carry
-// through nil-safe: a nil rt.Git converts to a nil interface on both, since
-// the assignments are between identical interface shapes.
+// through nil-safe: a nil rt.Git stays a nil interface on both, since the
+// assignments are between identical interface shapes.
 func HousekeepDeps(rt Runtime) housekeep.Deps {
 	return housekeep.Deps{Store: rt.Store, TmpRoot: rt.TmpRoot, Git: rt.Git, Refs: rt.Git,
 		ChainCheckSettled: chainCheckSettled, ChainFlowTerminal: chainFlowTerminal,
@@ -59,19 +56,16 @@ func HousekeepDeps(rt Runtime) housekeep.Deps {
 		HaltChainEnv:    housekeepHaltChainEnv(rt)}
 }
 
-// housekeepHalt adapts the engine's halt-and-settle to housekeep's halt.
 func housekeepHalt(rt Runtime) func(context.Context, *store.Tx, store.Binding, string) (store.Binding, error) {
 	return func(ctx context.Context, tx *store.Tx, b store.Binding, message string) (store.Binding, error) {
 		return haltAndSettle(ctx, rt, tx, b, message)
 	}
 }
 
-// housekeepPreflight adapts the engine's disk preflight to housekeep's probe.
 func housekeepPreflight(rt Runtime) func(string) error {
 	return func(tree string) error { return preflightDisk(rt, tree) }
 }
 
-// housekeepAdmit adapts the engine's queued-round admission to housekeep's admit.
 func housekeepAdmit(rt Runtime) func(context.Context, string) error {
 	return func(ctx context.Context, name string) error { return Admit(ctx, rt, name) }
 }
@@ -100,9 +94,7 @@ func housekeepNow(rt Runtime) func() time.Time {
 	return time.Now
 }
 
-// housekeepHaltChainEnv runs the engine's chain halt for an environment note:
-// the definition and state reads, the cloned halted state and the terminal
-// transition, for the check row the caller already loaded.
+// housekeepHaltChainEnv runs the engine's chain halt for an environment note.
 func housekeepHaltChainEnv(rt Runtime) func(context.Context, *store.Tx, db.ChainRow, db.ChainCheckRow, workflow.Event) (bool, error) {
 	return func(ctx context.Context, tx *store.Tx, c db.ChainRow, row db.ChainCheckRow, ev workflow.Event) (bool, error) {
 		def, err := chain.WorkflowDef(c)

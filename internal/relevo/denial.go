@@ -10,9 +10,9 @@ import (
 )
 
 // matchDenial scans text line by line from the last line backwards, like
-// matchLimit, and returns the first (i.e. latest) line matching any
-// pattern. Thinking lines are skipped, because a model reasoning about a
-// denial is not one. Pure.
+// availability.MatchLimit, and returns the first (i.e. latest) line matching
+// any pattern. Thinking lines
+// are skipped, because a model reasoning about a denial is not one. Pure.
 func matchDenial(text string, patterns []*regexp.Regexp) (line string, ok bool) {
 	if len(patterns) == 0 {
 		return "", false

@@ -31,7 +31,6 @@ type CandidateInput struct{ Harness, Provider, Model string }
 // Field is "harness", "provider", "model" or "" (a whole-form error).
 type FieldError struct{ Field, Msg string }
 
-// Error returns the message the form shows.
 func (e *FieldError) Error() string { return e.Msg }
 
 // ConfigEdit is one validated change, ready for WriteConfigEdit.

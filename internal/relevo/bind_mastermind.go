@@ -10,9 +10,8 @@ import (
 )
 
 // resolveVerbMasterMind is how bind, add, fork and ask get their mastermind:
-// flag > env > host > session, through the registry Runtime.MasterMinds names.
-// ref is the caller's --mastermind value; "" resolves from the environment, the
-// caller's parent process and its harness session, in that order.
+// flag > env > host > session. ref is the caller's --mastermind value; ""
+// resolves from the environment, the parent process and its session.
 //
 // mastermind.ErrNoMasterMind becomes ErrNoMasterMindSession, and so does a Runtime with
 // no registry configured: nothing derives a mastermind from a pane.
@@ -21,8 +20,8 @@ func resolveVerbMasterMind(rt Runtime, ref string) (mastermind.Record, bool, err
 }
 
 // resolveVerbMasterMindHeal is resolveVerbMasterMind with the gone-record heal
-// switchable: a caller that may run in the daemon passes false, since the
-// daemon's environment is not the calling session's.
+// switchable: a caller in the daemon passes false, since its environment is
+// not the calling session's.
 func resolveVerbMasterMindHeal(rt Runtime, ref string, heal bool) (mastermind.Record, bool, error) {
 	if rt.MasterMinds == nil {
 		return mastermind.Record{}, false, ErrNoMasterMindSession
@@ -67,9 +66,8 @@ func resolveVerbMasterMindHeal(rt Runtime, ref string, heal bool) (mastermind.Re
 	}
 }
 
-// recordEndpoint is the mastermind endpoint a resolved record supplies:
-// its kind and session. MasterMind.PaneID is written by nothing; it
-// stays a field only so an older bind.json loads.
+// recordEndpoint is the mastermind endpoint a resolved record supplies.
+// MasterMind.PaneID stays a field only so an older bind.json loads.
 func recordEndpoint(rec mastermind.Record) store.Endpoint {
 	return store.Endpoint{
 		Kind:      rec.HarnessKind,

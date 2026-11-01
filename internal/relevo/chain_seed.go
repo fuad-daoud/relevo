@@ -17,12 +17,12 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
-// chainPlanDiff captures the plan's cumulative diff -- the plan-start commit to
-// the closing round's closed tree -- as a round_file beside the round diff, and
-// returns its key, or "" when there is nothing to capture. It NEVER fails the
-// close: an empty plan-start commit, a builder whose closed tree is unknown, no
-// git and a git failure all read as "not captured", the same shape capture's
-// own diff results use.
+// chainPlanDiff captures the plan's cumulative diff -- plan-start commit to
+// the closing round's closed tree -- as a round_file beside the round diff,
+// returning its key or "" when there is nothing to capture. It NEVER fails
+// the close: an empty plan-start commit, an unknown closed tree, no git, and
+// a git failure all read as "not captured", the same shape capture's own
+// diff results use.
 func chainPlanDiff(rt Runtime, tx *store.Tx, c db.ChainRow, builder string, builderRound int) string {
 	if c.PlanStartCommit == "" {
 		return ""
@@ -42,14 +42,12 @@ func chainPlanDiff(rt Runtime, tx *store.Tx, c db.ChainRow, builder string, buil
 	return path
 }
 
-// chainBranchDiff captures the whole branch's diff -- the chain's base commit to
-// the builder's newest closed tree -- as a row-only round_file key and returns
-// that key, or "" when there is nothing to capture. It is chainPlanDiff's twin
-// for the span that judges the branch as a whole: the base the builder's
-// worktree was cut from to the tree the store snapshotted when the builder round
-// closed, not the worktree's moving HEAD. It NEVER fails the close: no base, a
-// round below the first, no builder record, an empty closed tree, no git and a
-// git failure all read as "not captured".
+// chainBranchDiff captures the whole branch's diff -- base commit to the
+// builder's newest closed tree -- as a row-only round_file key, returning the
+// key or "". It is chainPlanDiff's twin for the branch span: the cut-from base
+// to the snapshotted tree, not the worktree's moving HEAD. It NEVER fails the
+// close: no base, a round below the first, no builder record, an empty closed
+// tree, no git, and a git failure all read as "not captured".
 func chainBranchDiff(rt Runtime, tx *store.Tx, c db.ChainRow, builder string, builderRound int) string {
 	if c.Base == "" || builderRound < 1 {
 		return ""
@@ -69,10 +67,9 @@ func chainBranchDiff(rt Runtime, tx *store.Tx, c db.ChainRow, builder string, bu
 	return path
 }
 
-// chainSeedPlanView fills the plan copies a seed may name: every plan copy the
-// chain holds, in plan order, made seed-openable by chainSeedInput, and the copy
-// for the current plan. A decode error leaves both empty, as the plan block did
-// before it moved here.
+// chainSeedPlanView fills the plan copies a seed may name: every plan copy in
+// order, seed-openable by chainSeedInput, and the current plan's copy. A
+// decode error leaves both empty.
 func chainSeedPlanView(rt Runtime, c db.ChainRow, plan int, v *workflow.SeedView) {
 	paths, err := chainPlanPaths(c)
 	if err != nil {
@@ -86,10 +83,10 @@ func chainSeedPlanView(rt Runtime, c db.ChainRow, plan int, v *workflow.SeedView
 	}
 }
 
-// chainOutcomeBodies orders a closing round's bodies for the outcome parse: the
-// in-memory body first, then the round's stream newest assistant message first.
-// round names the round that closed, which is not always the binding's own: a
-// close advances the binding before the chain moves.
+// chainOutcomeBodies orders a closing round's bodies for the outcome parse:
+// the in-memory body first, then the stream newest first. round names the
+// closed round, not always the binding's own: a close advances the binding
+// before the chain moves.
 func chainOutcomeBodies(rt Runtime, b store.Binding, round int, body []byte) [][]byte {
 	bodies := [][]byte{body}
 	if stream, err := rt.Store.ReadFile(rt.Store.StreamPath(b.Name, round)); err == nil {
@@ -101,23 +98,22 @@ func chainOutcomeBodies(rt Runtime, b store.Binding, round int, body []byte) [][
 	return bodies
 }
 
-// chainParseOutcomes reads the declared outcomes of a chain reader round, trying
-// the output body first, then the round's stream newest assistant message first.
-// round names the round that closed: a close advances the binding before the
-// chain moves, so the binding's own round is no longer the closed one.
+// chainParseOutcomes reads a chain reader round's declared outcomes: the output
+// body first, then the stream newest first. round names the closed round: a
+// close advances the binding first, so its own round is no longer the closed
+// one.
 func chainParseOutcomes(rt Runtime, b store.Binding, round int, body []byte, outputs workflow.Outputs) (map[string]string, string) {
 	return workflow.ParseOutcomes(outputs, chainOutcomeBodies(rt, b, round, body)...)
 }
 
-// chainBuilderPlanView is the plan view the reviewer and correction seeds carry:
-// which kind the closing builder round is when it is not the plan's first, the
-// round it sits on top of, every builder round of the plan with its openable
-// paths, and the commit to diff the plan from when no cumulative diff was
-// captured. The plan's first builder round is the newest round at or below
-// builderRound whose staged prompt equals the chain's staged plan copy: a
-// start/advance send hands the builder that copy, while a correction, a repair
-// and a human round carry other bytes. A closing round that is the plan's first
-// (or a chain whose copy cannot be read) gets no kind and no list.
+// chainBuilderPlanView is the plan view the reviewer and correction seeds
+// carry: the closing builder round's kind when not the plan's first, the round
+// it sits on, every plan round with openable paths, and the diff-from commit
+// when no cumulative diff was captured. The plan's first builder round is the
+// newest round at or below builderRound whose staged prompt equals the staged
+// plan copy: a start/advance send hands that copy, while a correction, repair,
+// or human round carries other bytes. A first-round close, or an unreadable
+// copy, gets no kind and no list.
 func chainBuilderPlanView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act chain.Action, builder string, builderRound int) (kind string, on int, rounds []workflow.SeedRound, diffFrom string) {
 	diffFrom = chain.PlanDiffFrom(c, s)
 	paths, err := chainPlanPaths(c)
@@ -154,9 +150,9 @@ func chainBuilderPlanView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State
 	return kind, on, rounds, diffFrom
 }
 
-// chainBuilderRoundKind names the closing builder round: a repair round when
-// its prompt entry says so, else a correction or fix-plan round when it ran the
-// planner's newest plan, else a round a human sent.
+// chainBuilderRoundKind names the closing builder round: repair when its
+// prompt entry says so, else correction or fix-plan when it ran the planner's
+// newest plan, else human-sent.
 func chainBuilderRoundKind(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, builder string, builderRound int) string {
 	if chainBuilderRoundIsRepair(rt, tx, builder, builderRound) {
 		return workflow.BuilderRoundRepair
@@ -171,11 +167,10 @@ func chainBuilderRoundKind(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.Stat
 }
 
 // chainBuilderRoundIsRepair reports whether the builder's prompt entry for the
-// round carries a repair note: the repair round is the only send that writes
-// one.
+// round carries a repair note: only the repair send writes one.
 func chainBuilderRoundIsRepair(rt Runtime, tx *store.Tx, builder string, round int) bool {
-	// An engine chain's repair send writes the repair text but not a legacy
-	// "repair k/M" note, so the staged prompt itself identifies the round.
+	// An engine repair send writes the repair text but no legacy "repair k/M"
+	// note, so the staged prompt itself identifies the round.
 	if staged, err := rt.Store.ReadFile(rt.Store.PromptPath(builder, round)); err == nil && isRepairPlan(string(staged)) {
 		return true
 	}
@@ -192,9 +187,9 @@ func chainBuilderRoundIsRepair(rt Runtime, tx *store.Tx, builder string, round i
 	return false
 }
 
-// chainBuilderRanThePlannerPlan reports whether the builder's staged prompt for
-// the round is the planner's newest closed plan: a correction or fix-plan send
-// hands the builder the planner's own text, so its bytes match.
+// chainBuilderRanThePlannerPlan reports whether the builder's staged prompt
+// is the planner's newest closed plan: a correction or fix-plan send hands
+// over the planner's own text, so the bytes match.
 func chainBuilderRanThePlannerPlan(rt Runtime, tx *store.Tx, c db.ChainRow, builder string, builderRound int) bool {
 	planRound := chain.NewestClosedRound(tx, c.Planner)
 	if planRound == 0 {
@@ -215,10 +210,10 @@ func chainBuilderRanThePlannerPlan(rt Runtime, tx *store.Tx, c db.ChainRow, buil
 	return bytes.Equal(staged, plan)
 }
 
-// chainRoundPromptPath is the round's own staged prompt when it is not the plan
-// copy itself, and "" when the round ran the plan copy: a builder round handed
-// the plan's own bytes needs no prompt named beside it, while a correction or
-// fix round, whose prompt is the planner's text, does.
+// chainRoundPromptPath is the round's staged prompt when not the plan copy
+// itself, and "" when the round ran the plan copy: a plan-bytes round needs
+// no prompt named beside it, while a correction or fix round, whose prompt is
+// the planner's text, does.
 func chainRoundPromptPath(rt Runtime, planPath, builder string, builderRound int) string {
 	promptPath := rt.Store.PromptPath(builder, builderRound)
 	staged, perr := rt.Store.ReadFile(promptPath)
@@ -231,14 +226,13 @@ func chainRoundPromptPath(rt Runtime, planPath, builder string, builderRound int
 
 // chainSeedInput is the one path a seed may name for one input. An empty path
 // stays empty. A binding round file is always copied under the chain's own
-// directory and the copy is named, whether it is a reserved key, a sealed row or
-// a file still on disk: a seal moves an on-disk round file into its row and
-// removes it, and it can do so between this seed being written and the runner
-// opening it. Any other regular file the store reads as itself, such as the
-// chain's own plan copy, is named as it is.
+// directory and the copy named: a seal moves an on-disk round file into its
+// row and removes it, and can do so between this seed being written and the
+// runner opening it. Any other regular file the store reads as itself, like
+// the chain's own plan copy, is named as it is.
 //
-// A read, a key or a write that fails yields chain.SeedMissing's one path-free
-// clause, so a seed never names a path a runner cannot open.
+// A failing read, key, or write yields chain.SeedMissing's path-free clause,
+// so a seed never names a path a runner cannot open.
 func chainSeedInput(rt Runtime, c db.ChainRow, path string) string {
 	if path == "" {
 		return ""

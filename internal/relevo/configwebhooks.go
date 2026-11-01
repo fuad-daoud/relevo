@@ -8,9 +8,8 @@ import (
 
 // SetWebhooks replaces the stored webhook list with hooks, validated like any
 // policy edit. An empty list clears notify whole, so the row returns to its
-// default rather than keeping an empty array behind it. Each hook goes through
-// a JSON round trip, so policy.Webhook's omitempty rules decide the stored
-// shape: a json format and an empty event list both vanish.
+// default rather than keeping an empty array. Each hook goes through a JSON
+// round trip, so policy.Webhook's omitempty rules decide the stored shape.
 func SetWebhooks(d ConfigDoc, hooks []policy.Webhook, message string) (ConfigEdit, error) {
 	if len(hooks) == 0 {
 		return EditPolicy(d, []PolicySet{{Path: "notify", Value: nil}}, message)
@@ -18,8 +17,8 @@ func SetWebhooks(d ConfigDoc, hooks []policy.Webhook, message string) (ConfigEdi
 
 	list := make([]any, 0, len(hooks))
 	for _, hook := range hooks {
-		// json is the default the policy schema reads from an absent key, so
-		// an explicit "json" is stored as the omitted "".
+		// json is the default an absent key reads as, so an explicit "json"
+		// is stored as the omitted "".
 		if hook.Format == "json" {
 			hook.Format = ""
 		}

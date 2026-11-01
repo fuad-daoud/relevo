@@ -18,8 +18,7 @@ import (
 )
 
 // remoteCode reports whether err is the server's own refusal for one code at
-// one status, which is how a chain verb tells "nothing to stop" and "already
-// running" from an ordinary failure.
+// one status.
 func remoteCode(err error, status int, code remote.Code) bool {
 	var httpErr *client.HTTPError
 	if !errors.As(err, &httpErr) {
@@ -68,12 +67,9 @@ func chainServerStatus(ctx context.Context, rt Runtime, c db.ChainRow) (view.Rep
 
 // chainServerTrace is `show <chain> --trace` for a chain that runs on a
 // server: the document is the server's own trace, decoded exactly as a local
-// trace is, so a trace that cannot be decoded is an error rather than a guess.
-//
-// A 404 from a chain this machine already holds as over is not a missing
-// trace: the server has released the chain, and the events this machine stored
-// while mirroring it are the trace it has. Any other 404 still means the server
-// holds no such chain.
+// trace is. A 404 from a chain this machine already holds as over is not a
+// missing trace: the server has released the chain, and the events this
+// machine stored while mirroring it are the trace it has.
 func chainServerTrace(ctx context.Context, rt Runtime, c db.ChainRow) (ChainTraceDoc, error) {
 	v, err := chainGetView(ctx, rt, c)
 	if err != nil {
@@ -91,9 +87,9 @@ func chainServerTrace(ctx context.Context, rt Runtime, c db.ChainRow) (ChainTrac
 		Plans: chainIntOr(v.Plans, c.Plans), Corrections: v.Corrections,
 	}
 	for _, r := range v.Trace {
-		// A mirror whose row carries a workflow may still hold rows the server
-		// wrote before its conversion: decode each row on its own, exactly as a
-		// local trace does.
+		// A mirror whose row carries a workflow may still hold rows the
+		// server wrote before its conversion: decode each row on its own,
+		// exactly as a local trace does.
 		ev, err := chainTraceEvent(r.Seq, r.TS, r.Phase, r.Step, r.Member, r.Round, r.Plan, r.Event, r.Action, r.Reason)
 		if err != nil {
 			return ChainTraceDoc{}, fmt.Errorf("chain %s: %w", c.Name, err)
@@ -103,10 +99,9 @@ func chainServerTrace(ctx context.Context, rt Runtime, c db.ChainRow) (ChainTrac
 	return doc, nil
 }
 
-// chainServerWait is `relevo wait <chain>` for a chain that runs on a server.
-// Each poll pulls the mirror unless the daemon is already doing it, then reads
-// the mirror; the end is the mirror's own wait, so the one queued delivery is
-// pulled exactly as a local chain's is.
+// chainServerWait is `relevo wait <chain>` for a chain that runs on a
+// server. Each poll pulls the mirror unless the daemon is already doing it;
+// the end is the mirror's own wait.
 func chainServerWait(ctx context.Context, rt Runtime, name string, timeout, interval time.Duration, peek bool) (WaitResult, error) {
 	if timeout <= 0 {
 		return WaitResult{}, fmt.Errorf("wait: timeout must be positive")
@@ -153,15 +148,12 @@ func chainServerWait(ctx context.Context, rt Runtime, name string, timeout, inte
 
 // chainServerStop is `relevo stop <chain>` for a chain that runs on a server:
 // the server stops it and answers what it did. A chain that is not running is
-// the ordinary nothing-to-stop answer -- except a halted one, which answers with
+// the ordinary nothing-to-stop answer, except a halted one, which answers with
 // its own refusal naming `relevo done`. That answer is built from the mirror's
-// status rather than the server's, so a served chain reads exactly as a local
-// one does; the mirror is this machine's own record of the chain, the same row
-// every other chain surface reads.
+// status rather than the server's, so a served chain reads as a local one does.
 //
-// A chain the server no longer holds -- the mirror the pull already marked
-// gone, or a 404 from the stop itself -- has nothing a server could stop and
-// is closed only by `relevo done`, so it answers with the halted refusal.
+// A chain the server no longer holds has nothing a server could stop and is
+// closed only by `relevo done`, so it answers with the halted refusal.
 func chainServerStop(ctx context.Context, rt Runtime, c db.ChainRow) (StopResult, error) {
 	if chain.GoneMirror(c) {
 		return StopResult{}, chain.HaltedStop(c.Name)
@@ -177,9 +169,9 @@ func chainServerStop(ctx context.Context, rt Runtime, c db.ChainRow) (StopResult
 		case remoteCode(err, 409, remote.CodeChainHalted):
 			return StopResult{}, chain.HaltedStop(c.Name)
 		case remote.Is404(err):
-			// A mirror that already ended keeps the answer an ended chain
-			// gives; a running one is halted in all but its row, which the
-			// next pull writes.
+			// A mirror that already ended keeps an ended chain's answer; a
+			// running one is halted in all but its row, which the next pull
+			// writes.
 			if c.Status == string(chain.StatusRunning) {
 				return StopResult{}, chain.HaltedStop(c.Name)
 			}
@@ -199,10 +191,9 @@ func chainServerStop(ctx context.Context, rt Runtime, c db.ChainRow) (StopResult
 // mirror is pulled so the answer is this machine's own view of the resumed
 // chain. A chain the server still runs is the running refusal.
 //
-// The mirror's own queued end payload is confirmed first, exactly as the local
-// resume confirms it: the halt it carries says the chain needs the human, and
-// that stops being true the moment they resume it -- a later wait or pull must
-// not deliver the stale NEEDS YOU.
+// The mirror's own queued end payload is confirmed first, exactly as the
+// local resume confirms it: a later wait or pull must not deliver the stale
+// NEEDS YOU.
 func chainServerResume(ctx context.Context, rt Runtime, c db.ChainRow, opts ResumeOptions) (ChainResult, error) {
 	if rt.Remote == nil {
 		return ChainResult{}, ErrRemoteUnavailable
@@ -218,14 +209,14 @@ func chainServerResume(ctx context.Context, rt Runtime, c db.ChainRow, opts Resu
 		Security:       opts.Security,
 		Regate:         opts.Regate,
 	}
-	// The resume target travels because the server's own engine enters the step:
-	// without it the server resumed the step it halted on, so a --from review
-	// re-entered the check instead of the review the human asked for.
+	// The resume target travels because the server's own engine enters the
+	// step: without it a --from review re-entered the check instead of the
+	// review the human asked for.
 	req.From = opts.From
 	req.Params = opts.Params
 	if opts.Gate != "" || opts.NoGate {
 		// The gate flags win over every lower tier, so a resume reads no
-		// repository's settings here.
+		// repository settings here.
 		gate := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, resolve.RoleChecks(rt.RoleRegistry(), "builder"), RepoSettings{}).Command
 		req.Gate = &gate
 	}
@@ -248,10 +239,10 @@ func chainServerResume(ctx context.Context, rt Runtime, c db.ChainRow, opts Resu
 }
 
 // roundOpenFromWire rebuilds the send path's typed round-open refusal from the
-// server's 409 round_open, so the CLI prints the conflict and its `relevo stop
-// <member>` next line exactly as a local refusal does. The member and round are
-// read back from the refusal's own message, whose shape the send path already
-// generates; anything unparseable stays the server's error.
+// server's 409 round_open, so the CLI prints the conflict exactly as a local
+// refusal does. The member and round are read back from the message
+// RoundOpenError.Error formats, so the two must agree; anything unparseable
+// stays the server's error.
 func roundOpenFromWire(err error) error {
 	var httpErr *client.HTTPError
 	if !errors.As(err, &httpErr) {
@@ -272,11 +263,8 @@ func roundOpenFromWire(err error) error {
 
 // chainServerDone is `relevo done <chain>` for a chain that runs on a server:
 // the server releases the chain, then each mirror member is released through
-// the ordinary done, and the mirror is closed with the chain's own done row.
-//
-// A 404 from the server for the chain -- on the mirror pull or on the done
-// post -- means the server already released it: this machine settles the mirror
-// locally below. Every other remote error still fails the verb.
+// the ordinary done. A 404 from the server means it already released the
+// chain: this machine settles the mirror locally below.
 func chainServerDone(ctx context.Context, rt Runtime, c db.ChainRow) (DoneResult, error) {
 	if rt.Remote == nil {
 		return DoneResult{}, ErrRemoteUnavailable
@@ -336,8 +324,8 @@ func chainServerDone(ctx context.Context, rt Runtime, c db.ChainRow) (DoneResult
 	return out, nil
 }
 
-// chainGetView reads a server chain's view, the one read every server-chain
-// read verb makes.
+// chainGetView reads a server chain's view, the read every server-chain read
+// verb makes.
 func chainGetView(ctx context.Context, rt Runtime, c db.ChainRow) (remote.ChainView, error) {
 	if rt.Remote == nil {
 		return remote.ChainView{}, ErrRemoteUnavailable
@@ -345,9 +333,8 @@ func chainGetView(ctx context.Context, rt Runtime, c db.ChainRow) (remote.ChainV
 	return rt.Remote.GetChain(ctx, c.Server, c.Name)
 }
 
-// chainResultFromMirror pulls the mirror once and answers with it: the shape a
-// resumed or finished server chain returns so its caller sees this machine's
-// own record, not the server's raw view.
+// chainResultFromMirror pulls the mirror once and answers with it, so the
+// caller sees this machine's own record, not the server's raw view.
 func chainResultFromMirror(ctx context.Context, rt Runtime, name string) (ChainResult, error) {
 	c, err := rt.Store.Chain(name)
 	if err != nil {
@@ -371,7 +358,7 @@ func chainResultFromMirror(ctx context.Context, rt Runtime, name string) (ChainR
 }
 
 // chainStoredMembersOf loads the members a row names, skipping a record that
-// is gone: a released member is not an error for a read verb.
+// is gone: a released member is no error for a read verb.
 func chainStoredMembersOf(rt Runtime, c db.ChainRow) ([]store.Binding, error) {
 	out := make([]store.Binding, 0, len(view.MembersOf(c)))
 	for _, name := range view.MembersOf(c) {

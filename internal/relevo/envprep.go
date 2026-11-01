@@ -23,9 +23,8 @@ func spawnHaltText(err error) string {
 }
 
 // preflightDisk refuses a process start when the worktree or the tmp root has
-// less free space than the policy minimum. A runtime with no tmp root checks
-// the worktree alone. The refusal is a plain *EnvironmentError: it is never
-// a spawnFailure, so it gates no candidate.
+// less free space than the policy minimum. The refusal is a plain
+// *EnvironmentError: it is never a spawnFailure, so it gates no candidate.
 func preflightDisk(rt Runtime, tree string) error {
 	free := rt.DiskFree
 	if free == nil {
@@ -42,8 +41,8 @@ func preflightDisk(rt Runtime, tree string) error {
 // it needs none. The inherited GOFLAGS is the parent the entry is built on, so
 // a value the host already set is extended rather than replaced. A binding
 // with a stored trimpath value decides: only "off" opts out. Otherwise the
-// repository's own settings answer, and a runtime with no Config -- every
-// served runtime -- reads the repository default: on.
+// repository's own settings answer, and a runtime with no Config reads the
+// repository default: on.
 func goFlagsEnv(ctx context.Context, rt Runtime, tree string, binding *store.Binding) ([]string, error) {
 	on := true
 	if binding != nil && binding.Serve != nil && binding.Serve.Trimpath != "" {

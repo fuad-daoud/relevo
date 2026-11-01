@@ -12,19 +12,16 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
-// chainLegacyColumns names a row's four member columns in the order a
-// conversion walks them: the builder keeps the chain's own name, and the rest
-// fill the reviewer, planner and security parts. An actor shared by more than
-// one column maps each of its bindings, and a lookup by actor returns the
-// first, which is the builder.
+// chainLegacyColumns names a row's four member columns in conversion order.
+// An actor shared by columns maps each of its bindings; a lookup returns
+// the first, which is the builder.
 func chainLegacyColumns(c db.ChainRow) []string {
 	return []string{c.Builder, c.Reviewer, c.Planner, c.Security}
 }
 
-// chainLegacyConversion is one legacy chain row translated onto the engine:
-// the row carrying the default workflow and its start state, the member rows
-// its four columns name, and the member bindings whose own gate and repair
-// budget must be cleared, because a check is now a step.
+// chainLegacyConversion is one legacy row translated onto the engine: the
+// row, its member rows, and the members whose own gate and repair budget are
+// cleared, because a check is now a step.
 type chainLegacyConversion struct {
 	row     db.ChainRow
 	members []db.ChainMemberRow
@@ -32,16 +29,14 @@ type chainLegacyConversion struct {
 }
 
 // ConvertLegacyChains rewrites every chain row that predates the workflow
-// engine onto it: the row gains the shipped default workflow and the state its
-// legacy step migrates to, its four member columns become chain_member rows,
-// and its members' own gates are cleared so the next check is a step. A row
-// that already carries a state is left alone, so running it twice changes
-// nothing.
+// engine onto it: the row gains the default workflow and its migrated state,
+// its columns become member rows, and its members' own gates are cleared. A
+// row that already carries a state is left alone, so running it twice
+// changes nothing.
 //
-// Each row converts in its own transaction, so one row that cannot convert is
-// halted and the rows after it still convert. Only a store read or write
-// failure is returned; a row that fails to convert is handled inside its own
-// transaction.
+// Each row converts in its own transaction: one that cannot convert is
+// halted, and the rest still convert. Only a store read or write failure is
+// returned.
 func ConvertLegacyChains(rt Runtime) error {
 	rows, err := rt.Store.Chains()
 	if err != nil {
@@ -59,9 +54,8 @@ func ConvertLegacyChains(rt Runtime) error {
 }
 
 // convertLegacyChain converts one row under its own lock. A row that cannot
-// convert is halted with the reason the conversion named, written to the row's
-// own status column so it needs no engine, and logged; every later row still
-// converts. A read or write failure is returned rather than swallowed.
+// convert is halted on its own status column, so it needs no engine; every
+// later row still converts. A read or write failure is returned.
 func convertLegacyChain(rt Runtime, name string) error {
 	return rt.Store.WithLock(func(tx *store.Tx) error {
 		c, err := tx.Chain(name)
@@ -100,12 +94,10 @@ func convertLegacyChain(rt Runtime, name string) error {
 	})
 }
 
-// convertLegacyChainRow migrates one chain row onto the workflow engine and
-// hands back the row the store holds afterwards. It is convertLegacyChain plus
-// the read a caller needs, for the verbs that meet a single row the daemon's
-// start-up sweep has not carried onto the engine. A row that cannot convert is
-// halted with the reason the conversion named rather than reported here, so the
-// caller reads that reason off the row it gets back.
+// convertLegacyChainRow migrates one row onto the engine and hands back the
+// stored row, for verbs that meet a row the start-up sweep has not carried
+// over yet. A row that cannot convert is halted, not reported: the caller
+// reads the reason off the row it gets back.
 func convertLegacyChainRow(rt Runtime, name string) (db.ChainRow, error) {
 	if err := convertLegacyChain(rt, name); err != nil {
 		return db.ChainRow{}, err
@@ -113,9 +105,8 @@ func convertLegacyChainRow(rt Runtime, name string) (db.ChainRow, error) {
 	return rt.Store.Chain(name)
 }
 
-// chainConvertLegacy is the pure half of a conversion: it reads the row's
-// settings and plan copies, resolves its member bindings through tx, and
-// returns the row the engine reads plus its member rows.
+// chainConvertLegacy is the pure half of a conversion: the row the engine
+// reads, plus its member rows.
 func chainConvertLegacy(tx *store.Tx, c db.ChainRow) (chainLegacyConversion, error) {
 	leg, members, cleared, err := chainLegacyFacts(tx, c)
 	if err != nil {
@@ -139,11 +130,9 @@ func chainConvertLegacy(tx *store.Tx, c db.ChainRow) (chainLegacyConversion, err
 	return chainLegacyConversion{row: row, members: members, cleared: cleared}, nil
 }
 
-// chainLegacyFacts reads everything workflow.FromLegacy needs from a row and
-// its member bindings. The builder's actor is read from its own binding, so a
-// chain whose builder runs a named actor keeps it. A member binding whose
-// record is gone is skipped: there is nothing to gate and no member row to
-// write.
+// chainLegacyFacts reads everything workflow.FromLegacy needs. The builder's
+// actor comes from its own binding, so a named actor survives. A member
+// whose record is gone is skipped: nothing to gate, no row to write.
 func chainLegacyFacts(tx *store.Tx, c db.ChainRow) (workflow.Legacy, []db.ChainMemberRow, []string, error) {
 	var set chain.Settings
 	if len(c.SettingsJSON) > 0 {
@@ -191,9 +180,8 @@ func chainLegacyFacts(tx *store.Tx, c db.ChainRow) (workflow.Legacy, []db.ChainM
 	return leg, members, cleared, nil
 }
 
-// chainClearMemberGate drops a legacy member's own gate and repair budget: the
-// workflow's check steps own them now. A member whose record has gone since
-// the row was read is a no-op.
+// chainClearMemberGate drops a legacy member's own gate and repair budget:
+// the workflow's check steps own them now. A gone member is a no-op.
 func chainClearMemberGate(tx *store.Tx, name string) error {
 	b, err := tx.Load(name)
 	if errors.Is(err, store.ErrNotFound) {

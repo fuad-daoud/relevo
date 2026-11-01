@@ -14,10 +14,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/text"
 )
 
-// This file is the cockpit's audit seam: a stored revision's changes in human
-// words, the same for a roll back's preview, and the whole-document check the
-// cockpit runs before it offers one. The CLI's `config log` prints a change as
-// a JSON path; these lines say who changed.
+// This file is the cockpit's audit seam: a stored revision's changes in
+// human words, and the whole-document check the cockpit runs before it
+// offers a roll back.
 
 // ChangeLine is one revision change, rendered for a human: the op glyph, the
 // subject the path belongs to, what is left of the path under it, and the two
@@ -38,7 +37,6 @@ type RollbackRefused struct {
 	Reason string
 }
 
-// Error is the one line the cockpit shows.
 func (e *RollbackRefused) Error() string {
 	return fmt.Sprintf("can't roll back to #%d: %s", e.Rev, e.Reason)
 }
@@ -47,10 +45,9 @@ func (e *RollbackRefused) Error() string {
 // ellipsis, the same 60 config's cutValue keeps.
 const auditMaxValue = 60
 
-// DescribeChange renders one stored change for a human. before is the
-// document the change was made to and after the document it produced; a
-// candidate's name is looked up in after for a change and an add, and in
-// before for a remove, because that is the side that carries the entry.
+// DescribeChange renders one stored change for a human. A candidate's name
+// is looked up in after for a change and an add, and in before for a remove:
+// that is the side that carries the entry.
 func DescribeChange(c config.Change, before, after config.Doc) ChangeLine {
 	named := after
 	if c.Op == "remove" {
@@ -71,7 +68,6 @@ func DescribeChange(c config.Change, before, after config.Doc) ChangeLine {
 	return line
 }
 
-// changeOp maps a stored op to its glyph.
 func changeOp(op string) string {
 	switch op {
 	case "add":
@@ -86,9 +82,9 @@ func changeOp(op string) string {
 	return op
 }
 
-// changeSubject applies the subject-and-field rules, a closed list, first match
-// wins. ms reports a policy path whose last segment ended in "_ms", so its
-// number is spoken with a unit.
+// changeSubject applies the subject-and-field rules, first match wins. ms
+// reports a policy path whose last segment ended in "_ms", so its number is
+// spoken with a unit.
 func changeSubject(path string, doc config.Doc) (subject, field string, ms bool) {
 	if i, rest, ok := candidatePath(path); ok {
 		name := candidateNameAt(doc, i)
@@ -125,7 +121,6 @@ func changeSubject(path string, doc config.Doc) (subject, field string, ms bool)
 	return path, "", false
 }
 
-// candidatePath splits "candidates[<i>]" and "candidates[<i>].<rest>".
 func candidatePath(path string) (i int, rest string, ok bool) {
 	body, ok := strings.CutPrefix(path, "candidates[")
 	if !ok {
@@ -148,9 +143,9 @@ func candidatePath(path string) (i int, rest string, ok bool) {
 	return 0, "", false
 }
 
-// pathUnder splits "<prefix><a>" and "<prefix><a>.<rest>". prefix is the section
-// name without its dot. The key is either bare, running to the next '.' or '[',
-// or a quoted ["…"] key decoded as a JSON string.
+// pathUnder splits "<prefix><a>" and "<prefix><a>.<rest>". prefix is the
+// section name without its dot. The key is either bare, running to the next
+// '.' or '[', or a quoted ["…"] key decoded as a JSON string.
 func pathUnder(path, prefix string) (a, rest string, ok bool) {
 	body, ok := strings.CutPrefix(path, prefix)
 	if !ok || body == "" {
@@ -191,8 +186,6 @@ func pathUnder(path, prefix string) (a, rest string, ok bool) {
 	return "", "", false
 }
 
-// stripMS drops a trailing "_ms" from rest's last segment, reporting whether it
-// did.
 func stripMS(rest string) (string, bool) {
 	segs := strings.Split(rest, ".")
 	last := segs[len(segs)-1]
@@ -220,9 +213,8 @@ func candidateNameAt(doc config.Doc, i int) string {
 	return cands[i].Name
 }
 
-// changeValue renders one side of a change. ms is true for a policy path
-// whose last segment ended in "_ms". The whole value is cut to auditMaxValue
-// runes.
+// changeValue renders one side of a change, cut to auditMaxValue runes. ms
+// is true for a policy path whose last segment ended in "_ms".
 func changeValue(raw json.RawMessage, ms bool) string {
 	if len(raw) == 0 {
 		return ""
@@ -234,9 +226,9 @@ func changeValue(raw json.RawMessage, ms bool) string {
 	return cutAudit(valueText(v, ms))
 }
 
-// valueText is one decoded JSON value in words: a string unquoted, a
-// bool on or off, an object's top-level scalar members as "key value" pairs in
-// key order with a nested member as "key …", and an array's scalar items.
+// valueText is one decoded JSON value in words: a string unquoted, a bool
+// on or off, an object's top-level scalar members as "key value" pairs in key
+// order with a nested member as "key …", and an array's scalar items.
 func valueText(v any, ms bool) string {
 	switch t := v.(type) {
 	case nil:
@@ -280,7 +272,6 @@ func valueText(v any, ms bool) string {
 	return fmt.Sprintf("%v", v)
 }
 
-// isScalar reports a value with no members of its own.
 func isScalar(v any) bool {
 	switch v.(type) {
 	case map[string]any, []any:
@@ -289,8 +280,7 @@ func isScalar(v any) bool {
 	return true
 }
 
-// cutAudit shortens s to auditMaxValue runes, marking the cut with an ellipsis,
-// as config's cutValue does.
+// cutAudit shortens s to auditMaxValue runes, as config's cutValue does.
 func cutAudit(s string) string {
 	runes := []rune(s)
 	if len(runes) <= auditMaxValue {
@@ -299,9 +289,9 @@ func cutAudit(s string) string {
 	return string(runes[:auditMaxValue-1]) + "…"
 }
 
-// RevisionChanges renders revision rev's stored changes, in stored order. The
-// document the change was made to is revision rev-1's; revision 1 has none, so
-// its changes are described against an empty document.
+// RevisionChanges renders revision rev's stored changes, in stored order.
+// The document the change was made to is revision rev-1's; revision 1 has
+// none, so its changes read against an empty document.
 func RevisionChanges(s *config.Store, rev int64) ([]ChangeLine, error) {
 	row, err := s.Revision(rev)
 	if err != nil {
@@ -331,8 +321,7 @@ func RevisionChanges(s *config.Store, rev int64) ([]ChangeLine, error) {
 
 // CheckDoc runs the whole-document checks a cockpit edit runs, over a stored
 // document: the provider lock on every candidate, then the cross-section dry
-// run. It returns the first error. The sections are decoded exactly as
-// LoadConfigDoc decodes the stored ones; a missing section is empty.
+// run. A missing section is empty.
 func CheckDoc(doc config.Doc) error {
 	d, err := configDocOf(doc)
 	if err != nil {
@@ -346,8 +335,8 @@ func CheckDoc(doc config.Doc) error {
 	return dryRun(d.Candidates, d.Actors, d.Agents, d.Policy)
 }
 
-// configDocOf decodes a document's four editable sections the way LoadConfigDoc
-// decodes the stored ones.
+// configDocOf decodes a document's four editable sections the way
+// LoadConfigDoc decodes the stored ones.
 func configDocOf(doc config.Doc) (ConfigDoc, error) {
 	d := ConfigDoc{
 		Actors: map[string]roles.Actor{},
@@ -386,7 +375,7 @@ func configDocOf(doc config.Doc) (ConfigDoc, error) {
 // RollbackPreview renders what rolling back to rev would change, and refuses
 // when the result would not pass CheckDoc. config.ErrNoChange and
 // config.ErrNoRevision pass through unwrapped, so the caller can tell "nothing
-// to do" from "no such revision" from a refusal.
+// to do" from "no such revision".
 func RollbackPreview(s *config.Store, rev int64) ([]ChangeLine, error) {
 	changes, err := s.RollbackPlan(rev)
 	if err != nil {

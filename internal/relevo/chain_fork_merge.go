@@ -12,25 +12,22 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
-// The two outcomes a fork's merge reports. The workflow's joined and conflict
-// edges match these words.
+// The two outcomes a fork's merge reports, matching the workflow's joined
+// and conflict edges.
 const (
 	chainMergeJoined   = "joined"
 	chainMergeConflict = "conflict"
 )
 
-// chainFlowMerge performs a fork's merge action. It merges every child's branch
-// into the parent writer's tree in child key order -- declaration order, so a
-// fixed fork merges the way it is written and an each fork merges in item order
-// -- and reports the result back through the parent as one merge_closed event.
+// chainFlowMerge merges every child's branch into the parent writer's tree in
+// child key order -- declaration order, so a fixed fork merges as written and
+// an each fork in item order -- and reports back as one merge_closed event.
 //
 // The merge stops at the first conflicting child with that conflict still in
-// the tree: MergeKeep leaves MERGE_HEAD and the markers where the builder can
-// resolve them, the conflict is reported as a round file under the parent, and
-// the branches after the stopped child are listed in it, because the author's
-// merge round has to merge those itself. A clean pass joins and the parent's
-// tree holds the merge commits. Any other git failure is not a conflict and has
-// nothing the author can resolve in a tree, so the parent halts.
+// the tree, and lists the branches after it in the conflict report, because
+// the author's merge round has to merge those itself. Any other git failure
+// is not a conflict and has nothing the author can resolve, so the parent
+// halts.
 func chainFlowMerge(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before workflow.State, next *workflow.State, ev workflow.Event, act workflow.Action) error {
 	writer, err := chainFlowWriterMember(tx, c)
 	if err != nil {
@@ -64,8 +61,8 @@ func chainFlowMerge(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow
 	if err := chainSaveFlow(rt, tx, c, def, before, *next, ev, act, writer); err != nil {
 		return err
 	}
-	// The merge closes against the row this action just wrote, so the parent is
-	// re-read rather than carried in from the caller's stale copy.
+	// The merge closes against the row just written, so the parent is re-read
+	// rather than carried in from the caller's stale copy.
 	saved, err := tx.Chain(c.Name)
 	if err != nil {
 		return err
@@ -78,10 +75,9 @@ func chainFlowMerge(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow
 	})
 }
 
-// mergeOutcome is what one merge pass produced: the child keys it merged, the
-// key it stopped at, the paths that child conflicted on, the branches after it
-// the merge never reached, and the git message of a failure that was not a
-// conflict at all.
+// mergeOutcome is one merge pass: the keys merged, the conflict stop, the
+// paths it conflicted on, the branches never reached, and a non-conflict git
+// failure's message.
 type mergeOutcome struct {
 	merged    []string
 	stopKey   string
@@ -90,15 +86,13 @@ type mergeOutcome struct {
 	fatal     string
 }
 
-// trace is the one line the merge's trace row carries: the children the merge
-// integrated, and the outcome. Nothing merged reads "merged -> conflict".
 func (o mergeOutcome) trace(result string) string {
 	return "merged " + strings.Join(o.merged, ", ") + " → " + result
 }
 
-// chainMergeChildren merges each child's branch into dir, in key order, and
-// stops at the first conflict. A conflict keeps the merge in progress; the keys
-// after it are recorded so the conflict report can name them.
+// chainMergeChildren merges each child's branch into dir in key order,
+// stopping at the first conflict. The merge stays in progress and the keys
+// after it are recorded, so the conflict report can name them.
 func chainMergeChildren(ctx context.Context, rt Runtime, c db.ChainRow, dir string, keys []string) mergeOutcome {
 	var out mergeOutcome
 	for i, key := range keys {
@@ -123,8 +117,6 @@ func chainMergeChildren(ctx context.Context, rt Runtime, c db.ChainRow, dir stri
 	return out
 }
 
-// chainMergeDir is the tree a chain's merge runs in: the writer member's own
-// working directory.
 func chainMergeDir(tx *store.Tx, writer string) (string, error) {
 	b, err := tx.Load(writer)
 	if err != nil {
@@ -137,19 +129,15 @@ func chainMergeDir(tx *store.Tx, writer string) (string, error) {
 }
 
 // chainWriteMergeConflict seals the fork's conflict report as a round file
-// under the parent: the paths git left unmerged, one per line, then a
-// "not yet merged:" section naming the branches after the stopped child. It is
-// keyed to the parent's writer and its newest closed round, the same pair a
-// check's log uses, and the key it returns is what {{<fork>.conflict}} hands
-// the builder.
+// under the parent: the unmerged paths, then the branches after the stopped
+// child. It is keyed to the parent's writer and newest closed round, the same
+// pair a check's log uses.
 //
-// The body is scanned for injection before it is written, because the report is
-// not just read by a human: a workflow seeded with {{<fork>.conflict}} alone
-// has chainRenderSeed inline this file verbatim into the resolving builder's
-// prompt, so an instruction-shaped unmerged path would otherwise reach a model
-// unflagged. flagged receives the caveat when the scan found something, and is
-// left "" when it did not, which keeps the body and the trace line byte-for-byte
-// what they are for an ordinary conflict.
+// The body is scanned for injection first, because a workflow seeded with
+// {{<fork>.conflict}} alone inlines this file verbatim into the resolving
+// builder's prompt, so an instruction-shaped path would otherwise reach a
+// model unflagged. flagged carries the caveat when the scan found something,
+// and stays "" when it did not.
 func chainWriteMergeConflict(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, out mergeOutcome, flagged *string) (string, error) {
 	member, round, err := chainCheckLogTarget(tx, c)
 	if err != nil {
@@ -170,8 +158,8 @@ func chainWriteMergeConflict(ctx context.Context, rt Runtime, tx *store.Tx, c db
 	return key, tx.PutRoundFile(member, round, key, []byte(body))
 }
 
-// report renders the conflict file: the unmerged paths a builder has to
-// resolve, then the branches the merge stopped short of.
+// report renders the conflict file: the unmerged paths, then the branches
+// the merge stopped short of.
 func (o mergeOutcome) report() string {
 	var b strings.Builder
 	for _, p := range o.paths {
@@ -186,9 +174,8 @@ func (o mergeOutcome) report() string {
 	return b.String()
 }
 
-// chainMergeHalt ends the parent after a merge that could not be carried out at
-// all, naming the child and git's own message so the author can see which merge
-// failed and why.
+// chainMergeHalt ends the parent after an uncarryable merge, naming the child
+// and git's own message so the author sees which merge failed and why.
 func chainMergeHalt(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before workflow.State, next *workflow.State, ev workflow.Event, reason string) error {
 	next.Status = workflow.StatusHalted
 	next.Reason = reason

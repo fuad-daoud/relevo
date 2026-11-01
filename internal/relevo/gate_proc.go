@@ -30,8 +30,7 @@ type gateProcSpec struct {
 // a daemon restart took the first one with it.
 func startGateProc(ctx context.Context, rt Runtime, spec gateProcSpec, attempt int) (store.GateRun, *store.GateRecord, error) {
 	// The check process is prepared through the same seam a round's start
-	// uses: a spec with a unit name gets its own temp dir, and one without a
-	// name is passed through with nothing.
+	// uses.
 	tmpDir, prepEnv, cleanupProc, err := prepareProc(ctx, rt, procRequest{
 		kind: procKindCheck, key: spec.UnitName, tree: spec.Dir,
 	})

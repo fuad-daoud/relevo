@@ -9,10 +9,10 @@ import (
 )
 
 // shipResumedRound hands a resumed chain's staged round to its remote awaited
-// member. A resume stages a remote member's round, so the unlocked pending-send
-// step ships it outside the state lock, exactly as a start ships its plan 1; a
-// failed ship records the halt and returns nil. A local awaited member, and a
-// step whose awaited run names no member, have nothing to ship.
+// member. The unlocked pending-send step ships it outside the state lock,
+// exactly as a start ships its plan 1; a failed ship records the halt and
+// returns nil. A local awaited member, and an await naming no member, have
+// nothing to ship.
 func shipResumedRound(ctx context.Context, rt Runtime, name string, c db.ChainRow) error {
 	member, _, ok := chain.Awaited(rt.Store, c)
 	if !ok {

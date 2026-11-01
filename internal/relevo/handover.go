@@ -13,15 +13,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/text"
 )
 
-// HandoverOptions names the binding, the machine it goes to and the remote its
-// branch is pushed to.
+// HandoverOptions names the binding, the machine it goes to and the remote
+// its branch is pushed to.
 type HandoverOptions struct {
 	Name   string
 	To     string
 	Remote string
 }
 
-// HandoverResult is what a hand-over did.
 type HandoverResult struct {
 	Target string
 	Branch string
@@ -32,9 +31,10 @@ type HandoverResult struct {
 	KeptReason      string
 }
 
-// Handover gives a binding to another machine: it pushes the branch, releases a
-// clean worktree, and flips the writer of both roots in one transaction. The
-// push comes first, so a failed push changes no state and a rerun repeats it.
+// Handover gives a binding to another machine: it pushes the branch, releases
+// a clean worktree, and flips the writer of both roots in one transaction.
+// The push comes first, so a failed push changes no state and a rerun repeats
+// it.
 func Handover(ctx context.Context, rt Runtime, opts HandoverOptions) (HandoverResult, error) {
 	d, err := rt.Store.DB()
 	if err != nil {
@@ -76,9 +76,9 @@ func Handover(ctx context.Context, rt Runtime, opts HandoverOptions) (HandoverRe
 	return res, nil
 }
 
-// gatherHandoverFacts reads the state the refusal rules judge. A binding this
-// machine already gave away has no record to read, so only the sync and target
-// facts are gathered for it.
+// gatherHandoverFacts gathers the state the refusal rules judge; a binding
+// already given away has no record to read, so only sync and target facts are
+// gathered for it.
 func gatherHandoverFacts(ctx context.Context, rt Runtime, d *db.DB, opts HandoverOptions) (HandoverFacts, store.Binding, error) {
 	f := HandoverFacts{Name: opts.Name, To: opts.To, This: d.Origin()}
 	local, err := relevosync.LocalHandle(d)
@@ -142,7 +142,7 @@ type branchState struct {
 }
 
 // branchFacts says whether the tree is dirty and why the branch could not be
-// pushed. A worktree that is already gone is clean.
+// pushed; a worktree that is already gone is clean.
 func branchFacts(ctx context.Context, rt Runtime, b store.Binding, remote string) branchState {
 	if rt.Git == nil {
 		return branchState{unpushable: "git is unavailable"}

@@ -7,15 +7,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// needsGitShim reports whether a binding's round writes to the tree. It keys
-// on the binding's shape, which is derived from the role's shape, never on an
-// actor name.
+// needsGitShim keys on the binding's shape, which is derived from the role's
+// shape, never on an actor name.
 func needsGitShim(b store.Binding) bool {
 	return b.Shape == store.ShapeWriter
 }
 
 // gitShimEnv is the PATH entry a writer round's process is spawned with, nil
-// for a round that needs no shim. The shim is in place when it returns.
+// for a round that needs no shim.
 func gitShimEnv(rt Runtime, b store.Binding) ([]string, error) {
 	if !needsGitShim(b) {
 		return nil, nil

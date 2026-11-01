@@ -10,11 +10,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// Where the config document's embedded files land on this machine's disk. The
-// applier is built from relevo's config directory (`<user config root>/relevo`),
-// so the paths it writes are the paths the importer reads.
-//
-// Three rules hold the writes, and each is a refusal rather than a repair:
+// Where the config document's embedded files land on this machine's disk. Three
+// rules hold the writes, and each is a refusal rather than a repair:
 //
 //   - the directory is computed from the event and file names, never read out
 //     of the entry, so an entry cannot steer a write anywhere;
@@ -24,7 +21,6 @@ import (
 //   - the write goes to a temp file in the target's own directory and is
 //     renamed over the target, so a reader never sees a half-written script.
 
-// HookFileApplier writes the config doc's hook scripts under root.
 func HookFileApplier(root string) config.FileApplier {
 	return diskFileApplier{root: root}
 }
@@ -45,9 +41,9 @@ func (a diskFileApplier) HookFilePath(event, file string) (string, error) {
 	return filepath.Join(a.hooksDir(), event+".d", file), nil
 }
 
-// ReadHookFile reports what is at path when it is a regular file. A symlink is
-// not a script: following one would read (and, on a write, replace) whatever
-// it names.
+// ReadHookFile reports what is at path when it is a regular file: a symlink is
+// not a script, and following one would read (and, on a write, replace)
+// whatever it names.
 func (a diskFileApplier) ReadHookFile(path string) ([]byte, bool, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -66,8 +62,8 @@ func (a diskFileApplier) ReadHookFile(path string) ([]byte, bool, error) {
 	return data, true, nil
 }
 
-// WriteHookFile writes data at path through a temp file in path's directory
-// and a rename, setting the executable bit only under this machine's hooks
+// WriteHookFile writes data at path through a temp file in path's directory and
+// a rename, setting the executable bit only under this machine's hooks
 // directory. An existing target that is not a regular file is refused.
 func (a diskFileApplier) WriteHookFile(path string, data []byte, exec bool) (bool, error) {
 	if info, err := os.Lstat(path); err == nil && !info.Mode().IsRegular() {
@@ -103,17 +99,17 @@ func (a diskFileApplier) WriteHookFile(path string, data []byte, exec bool) (boo
 }
 
 // underHooksDir reports whether path is this machine's hook script directory
-// or below it. The executable bit is set nowhere else, so a file the config
-// names can never arrive executable on a machine that did not run it.
+// or below it: the executable bit is set nowhere else, so a named file can
+// never arrive executable on a machine that did not run it.
 func (a diskFileApplier) underHooksDir(path string) bool {
 	dir := a.hooksDir()
 	return path == dir || strings.HasPrefix(path, dir+string(filepath.Separator))
 }
 
-// MachineConfigWithFiles is the config store of one machine bound to the
-// config root, with the applier the hooks section's embedded scripts are
-// written through. A store opened without it still carries the scripts and
-// still refuses nothing about them; it simply writes no disk.
+// MachineConfigWithFiles is the config store of one machine bound to the config
+// root, with the applier the hooks section's embedded scripts are written
+// through. A store opened without it still carries the scripts; it simply
+// writes no disk.
 func MachineConfigWithFiles(shared *db.DB) (*config.Store, error) {
 	root, err := ConfigRoot()
 	if err != nil {

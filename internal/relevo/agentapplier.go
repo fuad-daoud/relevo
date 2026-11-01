@@ -9,24 +9,13 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 )
 
-// Where a native agent's harness file belongs on this machine. The rules are
-// the hook applier's and they differ only where the files differ:
-//
-//   - the directory is the kind's own harness home, computed from the kind and
-//     the agent name through the same table `relevo config agents` installs
-//     through, so an item cannot steer the write and a peer that stores its
-//     agents under another home still applies them under its own;
-//   - a target that exists as a symlink or as anything but a regular file is
-//     refused rather than followed, so a definition cannot be written through
-//     a link to somewhere else;
-//   - the write goes to a temp file in the target's own directory and is
-//     renamed over the target, so a reader never sees a half-written file;
-//   - a definition is never executable, whatever mode the item asked for. Only
-//     a hook script is, and only under this machine's hooks directory.
+// Where a native agent's harness file belongs on this machine: the kind's
+// harness home through the install table, so an item cannot steer the write.
+// A definition is never written through a symlink, and never executable.
 
-// agentHome is the directory a kind's definitions live under. It is the user's
-// home, resolved the way harness.InstallEnv resolves it, so the paths written
-// here are the paths the installer reads.
+// agentHome is the directory a kind's definitions live under, resolved as
+// harness.InstallEnv resolves it, so these paths are the ones the installer
+// reads.
 func agentHome() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -35,9 +24,9 @@ func agentHome() (string, error) {
 	return home, nil
 }
 
-// AgentFilePath returns where one native agent's definition belongs for one
-// harness kind. An unknown kind is refused rather than guessed at: the table
-// is what says which home a kind uses, and a kind it does not hold has none.
+// AgentFilePath returns where one native agent's definition belongs. An
+// unknown kind is refused rather than guessed at: the table says which home
+// a kind uses.
 func (a diskFileApplier) AgentFilePath(kind, agent string) (string, error) {
 	if _, ok := harness.Lookup(kind); !ok {
 		return "", fmt.Errorf("agents: %q is not a harness kind: %w", kind, config.ErrAgentPath)
@@ -57,8 +46,7 @@ func (a diskFileApplier) AgentFilePath(kind, agent string) (string, error) {
 }
 
 // ReadAgentFile reports what is at path when it is a regular file. A symlink
-// is not a definition: following one would read (and, on a write, replace)
-// whatever it names.
+// is not a definition: following one would read or replace whatever it names.
 func (a diskFileApplier) ReadAgentFile(path string) ([]byte, bool, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -77,9 +65,9 @@ func (a diskFileApplier) ReadAgentFile(path string) ([]byte, bool, error) {
 	return data, true, nil
 }
 
-// WriteAgentFile writes data at path through a temp file in path's directory
-// and a rename. An existing target that is not a regular file is refused, and
-// the file lands mode 0644: an agent definition is read by a harness, not run.
+// WriteAgentFile writes data at path through a temp file in path's own
+// directory and a rename, so a reader never sees a half-written file. The
+// file lands mode 0644: a definition is read by a harness, not run.
 func (a diskFileApplier) WriteAgentFile(path string, data []byte) (bool, error) {
 	if info, err := os.Lstat(path); err == nil && !info.Mode().IsRegular() {
 		return false, fmt.Errorf("agents: %s is not a regular file: %w", path, config.ErrAgentPath)

@@ -14,8 +14,8 @@ type pendingDelivery struct {
 	idx    int
 }
 
-// collectPendingChainDeliveries finds unconfirmed chain-level end deliveries for
-// members of c that a resume should supersede upon success.
+// collectPendingChainDeliveries finds the unconfirmed chain-level end
+// deliveries a successful resume supersedes.
 func collectPendingChainDeliveries(tx *store.Tx, c db.ChainRow) ([]pendingDelivery, error) {
 	var out []pendingDelivery
 	for _, member := range view.EndMembers(tx, c) {
@@ -32,7 +32,6 @@ func collectPendingChainDeliveries(tx *store.Tx, c db.ChainRow) ([]pendingDelive
 	return out, nil
 }
 
-// confirmPendingChainDeliveries marks the collected end deliveries superseded.
 func confirmPendingChainDeliveries(tx *store.Tx, deliveries []pendingDelivery) error {
 	for _, d := range deliveries {
 		if err := tx.ConfirmIndex(d.member, d.idx, "superseded by resume"); err != nil {
@@ -71,11 +70,11 @@ func (s *chainResumeSnapshot) recordAdded(name string) {
 	s.added = append(s.added, name)
 }
 
-// restore recovers the pre-resume state if an error occurs after writes began.
-// Only the rows the resume wrote are put back: the chain row, the member rows
-// (an added member's row is deleted on its own, never by deleting the chain,
-// which would take the chain's check runs with it) and the member bindings.
-// The trace keeps what the failed attempt recorded.
+// restore recovers the pre-resume state after writes began. Only written rows
+// go back: the chain row, the member rows, and the member bindings. An added
+// member's row is deleted on its own, never by deleting the chain, which
+// would take the chain's check runs with it. The trace keeps the failed
+// attempt's record.
 func (s *chainResumeSnapshot) restore(tx *store.Tx, cause error) error {
 	errs := []error{cause}
 	if err := tx.ChainPut(s.origRow); err != nil {

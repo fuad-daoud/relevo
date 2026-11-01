@@ -10,9 +10,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
-// chainFlowFork runs the fork action: it starts each child workflow in order
-// under the parent's lock, cutting each child's branch from the parent writer's tip.
-// If any child fails to start, earlier children are rolled back and the parent halts.
+// chainFlowFork starts each child workflow in order from the parent writer's
+// tip. A child that fails to start rolls the earlier children back and halts
+// the parent.
 func chainFlowFork(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before workflow.State, next *workflow.State, ev workflow.Event, act workflow.Action) error {
 	var created []childCreated
 	for _, spec := range act.Children {
@@ -33,8 +33,8 @@ func chainFlowFork(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow,
 	return chainSaveFlow(rt, tx, c, def, before, *next, ev, act, closing)
 }
 
-// chainRollbackChildren removes what earlier started children created when a
-// later child fails to start: worktree, branch, rows, members, and chain directories.
+// chainRollbackChildren unwinds the started children when a later child fails
+// to start: worktree, branch, rows, members, and chain directories.
 func chainRollbackChildren(ctx context.Context, rt Runtime, tx *store.Tx, repo string, children []childCreated) {
 	for i := len(children) - 1; i >= 0; i-- {
 		ch := children[i]

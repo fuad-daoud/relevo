@@ -14,23 +14,19 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
-// Resuming one half of a fork. A child that resumes brings its parent back into
-// the fork it halted at; a parent that resumes enters the join its children have
-// earned, never a second fork. Both are refusals or one of those two moves --
-// there is no third outcome, because a fork's children are created once, at the
-// fork, and a resume has no business creating any more.
+// Resuming one half of a fork: a child brings its parent back into the halted
+// fork; a parent enters the earned join, never a second fork. There is no
+// third outcome, because a fork's children are created once, at the fork.
 
-// chainForkParentGate refuses a child's resume when the parent cannot follow it
-// back into the fork. It is asked before the resume writes anything, so a
+// chainForkParentGate refuses a child's resume when the parent cannot follow
+// it back into the fork. It is asked before the resume writes anything, so a
 // refusal leaves the child exactly as the human found it.
 //
-// A parent that is still running is waiting on its other children and needs no
-// re-opening: the child's own end reaches it as that child_ended. A parent
-// halted for some other reason, stopped, or done cannot re-open at all -- its
-// halt is not one this child would answer -- and resuming the child would leave
-// a running child nobody is waiting for. A parent whose row is gone is left to
-// the child's own failure: the handoff already warns about a missing parent and
-// ends the child quietly, and a resume must not be the thing that hard-fails.
+// A running parent needs no re-opening: the child's own end reaches it as
+// that child_ended. A parent halted for another reason, stopped, or done
+// cannot re-open, and resuming the child would leave a running child nobody
+// waits for. A gone parent row is left to the child's own failure, which
+// already warns about a missing parent and ends the child quietly.
 func chainForkParentGate(rt Runtime, c db.ChainRow) error {
 	if c.Parent == "" {
 		return nil
@@ -53,9 +49,8 @@ func chainForkParentGate(rt Runtime, c db.ChainRow) error {
 	return chainForkParentRefusal(parent, c)
 }
 
-// chainForkParentRefusal is the one refusal a child's resume makes: the parent's
-// status is named, and so is the command that does work, so a human is never
-// left with a message they cannot act on.
+// chainForkParentRefusal names the parent's status and the command that does
+// work, so a human is never left with a message they cannot act on.
 func chainForkParentRefusal(parent, child db.ChainRow) error {
 	key := chainForkChildKey(child)
 	switch chain.Status(parent.Status) {
@@ -78,15 +73,12 @@ func chainForkParentRefusal(parent, child db.ChainRow) error {
 		child.Name, parent.Name, flowTerminalStep(st), parent.Name)
 }
 
-// chainForkParentReopen re-opens a parent that halted because of a child that
-// has just resumed. It runs in the resume's own transaction, so the parent's
-// record of which children have ended can never disagree with the child that is
-// running again.
+// chainForkParentReopen re-opens a parent that halted over a child that just
+// resumed, in the resume's own transaction, so the parent's record of ended
+// children never disagrees with the running child.
 //
-// A parent that does not re-open -- because it is still running on its other
-// children, or because the child's halt is not the parent's reason -- is left
-// exactly as it is. The engine's own guard already ignores a late close, and a
-// running parent needs no write.
+// A parent that does not re-open is left exactly as it is: the engine's own
+// guard already ignores a late close, and a running parent needs no write.
 func chainForkParentReopen(rt Runtime, tx *store.Tx, child db.ChainRow) error {
 	if child.Parent == "" {
 		return nil
@@ -114,11 +106,9 @@ func chainForkParentReopen(rt Runtime, tx *store.Tx, child db.ChainRow) error {
 	return chainSaveForkReopen(rt, tx, parent, def, before, next, key)
 }
 
-// chainSaveForkReopen writes a re-opened parent: its state, running again and
-// awaiting the children it has not heard from, and one trace row naming the
-// child whose resume did it. The row carries no event or action, because no
-// close arrived -- a human resuming a child is not the engine's own transition,
-// and the reason is the whole record of it.
+// chainSaveForkReopen writes a re-opened parent: running again, awaiting the
+// unheard children, with one trace row naming the resuming child. The row
+// carries no event or action, because no close arrived.
 func chainSaveForkReopen(rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before, next workflow.State, key string) error {
 	stateJSON, err := json.Marshal(next)
 	if err != nil {
@@ -136,13 +126,10 @@ func chainSaveForkReopen(rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.D
 	return tx.ChainSaveWithEvent(row, trace)
 }
 
-// chainForkResumeRefusal refuses the resume of a chain standing on a fork while
-// any child is still standing. It is asked before the resume writes anything --
-// so the refusal also leaves the chain's own pending end delivery alone, which a
-// halt's delivery is until a human acts. It is nil for every other chain.
-//
-// A fork whose children have all ended done has earned its join and is not
-// refused here: chainForkResumeParent re-enters it.
+// chainForkResumeRefusal refuses the resume of a chain standing on a fork
+// while any child still stands. It is asked before anything is written, so
+// the refusal leaves the chain's own pending end delivery alone too. A fork
+// whose children all ended done has earned its join and is not refused here.
 func chainForkResumeRefusal(c db.ChainRow, before workflow.State) error {
 	if len(before.Awaiting.Children) == 0 {
 		return nil
@@ -154,16 +141,15 @@ func chainForkResumeRefusal(c db.ChainRow, before workflow.State) error {
 	return chainForkWaitRefusal(c, before, waiting)
 }
 
-// chainForkResumeParent is a fork parent's resume. It answers a resume of a chain
-// standing on a fork, and reports whether it did: handled is false for every other
-// chain, which resumes as it always did.
+// chainForkResumeParent answers a fork parent's resume, reporting whether it
+// did: handled is false for every other chain. chainForkResumeRefusal has
+// already refused a fork with a child still standing, so every child here
+// has ended done.
 //
-// The parent does not re-enter the fork step. A resume re-enters the step the
-// chain halted on, and entering a fork starts its children again -- replacing the
-// children the parent is already waiting on with new ones, on the same keys. So
-// the fork is answered where it stands instead: with a child still halted, the
-// earlier refusal named the children to resume; with every child ended done, the
-// fork has earned its join and the merge action runs.
+// The parent does not re-enter the fork step: entering a fork starts its
+// children again, replacing the ones it already waits on. So the fork is
+// answered where it stands instead, running the merge the earned join calls
+// for.
 func chainForkResumeParent(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before workflow.State) (bool, ChainResult, error) {
 	if len(before.Awaiting.Children) == 0 {
 		return false, ChainResult{}, nil
@@ -193,9 +179,9 @@ func chainForkResumeParent(ctx context.Context, rt Runtime, tx *store.Tx, c db.C
 	}, nil
 }
 
-// forkUndoneChildren are the children of a fork that have not ended done, in the
-// order the engine named them. A child the fork has not heard from at all reads
-// as running, which is what it is.
+// forkUndoneChildren are a fork's children that have not ended done, in
+// engine order. A child the fork never heard from reads as running, which is
+// what it is.
 func forkUndoneChildren(before workflow.State) []string {
 	var out []string
 	for _, key := range before.Awaiting.Children {
@@ -206,10 +192,10 @@ func forkUndoneChildren(before workflow.State) []string {
 	return out
 }
 
-// chainForkWaitRefusal refuses a parent resume while a child is still standing:
-// it names every child that has not ended done and the command that continues
-// one of them. The human resumes the child, which re-opens the parent; resuming
-// the parent instead would leave the fork waiting on a chain nobody moved.
+// chainForkWaitRefusal refuses a parent resume while a child still stands,
+// naming every unended child and the command continuing one of them. The
+// human resumes the child, which re-opens the parent; resuming the parent
+// would leave the fork waiting on a chain nobody moved.
 func chainForkWaitRefusal(c db.ChainRow, before workflow.State, waiting []string) error {
 	parts := make([]string, 0, len(waiting))
 	for _, key := range waiting {

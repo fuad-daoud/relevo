@@ -22,22 +22,20 @@ import (
 )
 
 // chainCheckGreen is a check that passed and chainCheckRed one that did not;
-// the engine reads these words, while the row keeps the runner's own result,
-// so a timeout stays distinguishable from a plain failure.
+// the engine reads these words, while the row keeps the runner's own
+// result, so a timeout stays distinguishable from a plain failure.
 const (
 	chainCheckGreen = "green"
 	chainCheckRed   = "red"
 )
 
-// chainCheckStarting is a run's result while its tracking row exists but its
-// process has not been recorded yet: chainStartCheck writes the row before it
-// spawns, then fills the PID. A row that survives to a tick in this state has
-// no process to advance, so the tick settles it as an error.
+// chainCheckStarting is a run's result while its row exists but its process
+// is not recorded yet. A row that survives to a tick in this state has no
+// process to advance, so the tick settles it as an error.
 const chainCheckStarting = "starting"
 
-// chainCheckStopped is the result a run is recorded with when a stop or a done
-// ends it: the process is gone and the run must never drive the engine, so the
-// row keeps the word rather than a runner result.
+// chainCheckStopped is the result a run carries when a stop or a done ends
+// it: the run must never drive the engine, so the row keeps the word.
 const chainCheckStopped = "stopped"
 
 // chainCheckPut is a test seam: nil in production, where the row that fills a
@@ -46,7 +44,6 @@ const chainCheckStopped = "stopped"
 // must not leave an orphan behind.
 var chainCheckPut func(tx *store.Tx, name string, row db.ChainCheckRow) error
 
-// putChainCheck writes one check row, through the test seam when it is set.
 func putChainCheck(tx *store.Tx, name string, row db.ChainCheckRow) error {
 	if chainCheckPut != nil {
 		return chainCheckPut(tx, name, row)
@@ -54,17 +51,12 @@ func putChainCheck(tx *store.Tx, name string, row db.ChainCheckRow) error {
 	return tx.ChainCheckPut(name, row)
 }
 
-// chainStartCheck starts one chain check run: the command runs through the gate
-// runner's mechanics in the chain's tree, scoped to the gate quota, and a
-// chain_check row records it with the visit this run is for its step. The
-// returned run number is the row's key.
+// chainStartCheck starts one chain check run in the chain's tree, scoped to
+// the gate quota; the check's log streams to the round-file path the row
+// records, sealed into a round_file row when the run ends.
 //
-// The run streams its log to the check's round-file path, recorded on the row;
-// chainAdvanceCheck seals that file into a round_file row when the run ends.
-//
-// The tracking row is written first, as "starting", so a process the caller
-// spawns always has a row naming it: a crash between the spawn and the PID fill
-// leaves a settleable "starting" row rather than an untracked process. A spawn
+// The tracking row is written first, as "starting", so a crash between spawn
+// and PID fill leaves a settleable row, not an untracked process. A spawn
 // that fails marks the row failed; a PID fill that fails kills the process.
 func chainStartCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, step, command string) (int, error) {
 	if rt.Runner == nil {
@@ -107,8 +99,8 @@ func chainStartCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRo
 	row.PID, row.StartedAt, row.Attempt = got.PID, got.StartedAt, got.Attempt
 	row.Result = ""
 	if err := putChainCheck(tx, c.Name, row); err != nil {
-		// The row cannot name the process this call started, so the chain would
-		// never learn the run exists: kill it and report the write failure.
+		// The row cannot name the process just started, so the chain would
+		// never learn of it: kill it and report the write failure.
 		h := spawn.ProcHandle{PID: got.PID, StartedAt: time.Unix(got.StartedAt, 0)}
 		if kerr := rt.Runner.Kill(ctx, h, spec.LogPath); kerr != nil {
 			slog.Warn("chain check: kill after a failed row write", "chain", c.Name, "run", run, "err", kerr)
@@ -118,9 +110,9 @@ func chainStartCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRo
 	return run, nil
 }
 
-// chainStartOrAdoptCheck starts a check run unless the chain already has one
-// alive: a resume that re-enters a check step while its earlier run still runs
-// adopts that run rather than starting a second one beside it on the same tree.
+// chainStartOrAdoptCheck starts a check run unless one is alive: a resume
+// re-entering a check step adopts the earlier run rather than starting a
+// second one on the same tree.
 func chainStartOrAdoptCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, step, command string) (int, error) {
 	if run, err := chainCheckLiveRun(ctx, rt, tx, c); err != nil {
 		return 0, err
@@ -130,9 +122,8 @@ func chainStartOrAdoptCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.
 	return chainStartCheck(ctx, rt, tx, c, step, command)
 }
 
-// chainCheckLiveRun returns the chain's oldest unsettled run that is still
-// alive, or 0 when every run is settled or dead. Runs are contiguous, so the
-// first unsettled one is the only candidate.
+// chainCheckLiveRun returns the oldest unsettled run still alive, or 0.
+// Runs are contiguous, so the first unsettled one is the only candidate.
 func chainCheckLiveRun(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow) (int, error) {
 	for run := 1; ; run++ {
 		row, err := tx.ChainCheck(c.Name, run)
@@ -152,9 +143,8 @@ func chainCheckLiveRun(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 	}
 }
 
-// chainCheckSettled reports whether a row already carries a terminal result. A
-// "starting" row is not settled: the process it will name has not been recorded
-// yet.
+// chainCheckSettled reports whether a row carries a terminal result. A
+// "starting" row is not settled: its process is not recorded yet.
 func chainCheckSettled(row db.ChainCheckRow) bool {
 	return row.Result != "" && row.Result != chainCheckStarting
 }
@@ -171,11 +161,10 @@ func chainCheckRowAlive(ctx context.Context, rt Runtime, c db.ChainRow, row db.C
 	return scopeRunning(ctx, rt, scopeUnitNameFor(scopeGate, c.Owner, c.Name+"-check", row.Run, ""))
 }
 
-// chainKillRunningChecks kills every check run a chain still has in flight and
-// records each as stopped, so a stop or a done frees the gate scope and leaves
-// no run that a resume could start a second one beside. A process that cannot
-// be killed, or a scope that cannot be ended, is returned: the caller must not
-// claim the run is stopped when something of it still is.
+// chainKillRunningChecks kills every check run still in flight and records
+// each as stopped, so no run survives that a resume could double. A process
+// or scope that cannot be ended is returned: the caller must not claim a run
+// stopped while something of it still is.
 func chainKillRunningChecks(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow) error {
 	for run := 1; ; run++ {
 		row, err := tx.ChainCheck(c.Name, run)
@@ -199,8 +188,9 @@ func chainKillRunningChecks(ctx context.Context, rt Runtime, tx *store.Tx, c db.
 	}
 }
 
-// chainKillCheck ends one run: the recorded process when it is alive, then its
-// gate scope, exactly as the gate runner's own stop does for a member's round.
+// chainKillCheck ends one run: the recorded process when it is alive, then
+// its gate scope, exactly as the gate runner's own stop does for a member's
+// round.
 func chainKillCheck(ctx context.Context, rt Runtime, c db.ChainRow, row db.ChainCheckRow) error {
 	if row.PID != 0 && rt.Runner != nil {
 		h := spawn.ProcHandle{PID: row.PID, StartedAt: time.Unix(row.StartedAt, 0)}
@@ -219,19 +209,18 @@ func chainKillCheck(ctx context.Context, rt Runtime, c db.ChainRow, row db.Chain
 	return err
 }
 
-// chainAdvanceCheck advances one chain check run a single tick. result is green
-// or red once the run ended and "" while it still runs; logKey is the
-// round-file key the check's log is sealed at. A run found already settled
-// answers from its row, so a repeated tick is a stable read.
+// chainAdvanceCheck advances one check run a single tick: green or red once
+// ended, "" while it runs. A settled run answers from its row, so a repeated
+// tick is a stable read.
 func chainAdvanceCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, run int) (result string, logKey string, err error) {
 	row, err := tx.ChainCheck(c.Name, run)
 	if err != nil {
 		return "", "", err
 	}
 	if row.Result == chainCheckStarting {
-		// The row predates its process: no handle was ever recorded, so there
-		// is nothing to advance. Settle it as an error rather than leaving the
-		// chain waiting on a run that can never close.
+		// The row predates its process, so there is nothing to advance:
+		// settle it rather than leave the chain waiting on a run that can
+		// never close.
 		row.Result = "error"
 		row.Note = "the run's process was never recorded"
 		if err := chainCheckSealLog(rt, tx, c, row); err != nil {
@@ -277,9 +266,8 @@ func chainAdvanceCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 }
 
 // tickChainChecks advances every chain's in-flight check once per tick, one
-// check per chain: a chain's steps run one at a time, so at most one check is
-// in flight. A settled check is fed back to the engine as check_closed in the
-// same critical section.
+// per chain: steps run one at a time. A settled check feeds check_closed to
+// the engine in the same critical section.
 func tickChainChecks(ctx context.Context, rt Runtime) {
 	chains, err := rt.Store.Chains()
 	if err != nil {
@@ -298,16 +286,13 @@ func tickChainChecks(ctx context.Context, rt Runtime) {
 	}
 }
 
-// chainAdvanceOneCheck advances the chain's oldest unsettled check, if it has
-// one, and feeds its end to the engine. Runs are allocated contiguously, so the
-// row list stops at the first run the chain has not recorded. A chain with no
-// workflow never started a check, so it is left alone. A chain with no check row
-// at all may still be waiting on a placed writer's check, which this tick
-// re-tries.
+// chainAdvanceOneCheck advances the chain's oldest unsettled check and feeds
+// its end to the engine. Runs are contiguous, so the list stops at the first
+// unrecorded run. A terminal chain, and one whose engine is not waiting on a
+// check, are skipped before any row lookup.
 //
-// A terminal chain, and a chain whose engine is not waiting on a check, are
-// skipped before any row lookup: the tick walks every chain, and neither has a
-// run it could advance.
+// A chain with no workflow never started a check, so it is left alone; one
+// with no check row may still await a placed writer's check, retried here.
 func chainAdvanceOneCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow) error {
 	if len(c.WorkflowJSON) == 0 {
 		return nil
@@ -315,11 +300,8 @@ func chainAdvanceOneCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 	if chainFlowTerminal(workflow.Status(c.Status)) {
 		return nil
 	}
-	// A server chain is driven by the server's daemon; this machine must not
-	// advance its checks from a mirror that has not been pulled. The pull
-	// installs the server's outcome, so a GetCheck this machine mints an id
-	// for would 404 (no such served check run) and halt the mirror on every
-	// tick while the server runs the gate normally.
+	// A server chain is driven by the server's daemon: advancing its checks
+	// from an unpulled mirror would 404 and halt the mirror on every tick.
 	if chain.OnServer(c) {
 		return nil
 	}
@@ -364,9 +346,8 @@ func chainAdvanceOneCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 	}
 }
 
-// chainTickPlacedCheck advances a placed writer's check run. When the check has
-// a run id, it polls GetCheck for the awaited run and feeds check_closed once
-// settled. When the check has no run id, it falls back to answering from the
+// chainTickPlacedCheck advances a placed writer's check run: with a run id
+// it polls GetCheck for the awaited run; without one it answers from the
 // writer's newest closed round's gate record once pulled.
 func chainTickPlacedCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow) error {
 	if len(c.WorkflowJSON) == 0 || c.Status != string(chain.StatusRunning) {
@@ -440,23 +421,14 @@ func chainTickPlacedCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 	})
 }
 
-// chainPlacedCheckMiss answers a GetCheck that found nothing under the run id
-// this machine awaits.
-//
-// A bare miss is not a lost run. The binding holds one run at a time, and it is
-// stored when the create answer comes back, so a tick that reads between the
-// create being asked for and its answer arriving sees nothing under the id --
-// and the same is true of a server whose daemon is still starting the run. Both
-// are a chain still waiting, so nothing is written and nothing is delivered;
-// halting here ended chains on checks that were about to answer, and because a
-// pull flips a halted mirror back to running while the tick halts it again, one
-// false halt became a chain notice every sweep.
+// chainPlacedCheckMiss answers a GetCheck that found nothing under the awaited
+// run id. A bare miss is not a loss: the tick may read between the create
+// being asked for and its answer arriving, or the server may still be starting
+// the run. Halting there ended chains on checks about to answer.
 //
 // A loss is proved, not assumed: the binding holds a settled run under a
-// different id for this same step. That is a run this step will never settle
-// against, so the chain halts and names the check. Everything else keeps
-// awaiting, and the chain's own round and chain timeouts end a check that truly
-// never answers.
+// different id for this same step. Everything else keeps awaiting; the chain's
+// own timeouts end a check that truly never answers.
 func chainPlacedCheckMiss(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, st workflow.State, b store.Binding, step workflow.Step) error {
 	if !chainCheckRunLost(ctx, rt, b, st, step) {
 		return nil
@@ -467,10 +439,9 @@ func chainPlacedCheckMiss(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 	return chainTerminalWF(ctx, rt, tx, c, def, before, st, workflow.Event{}, workflow.Action{Kind: workflow.ActionHalt, Reason: st.Reason})
 }
 
-// chainCheckRunLost reports that the binding holds a settled check run under an
-// id other than the awaited one, for the awaited step. A binding that holds
-// nothing, or holds the awaited run itself, is not a loss: the first is a run
-// not created yet, and the second cannot have answered with a miss.
+// chainCheckRunLost reports a settled run under an id other than the awaited
+// one, for the awaited step. Holding nothing, or the awaited run itself, is
+// not a loss.
 func chainCheckRunLost(ctx context.Context, rt Runtime, b store.Binding, st workflow.State, step workflow.Step) bool {
 	if rt.Remote == nil {
 		return false
@@ -484,9 +455,8 @@ func chainCheckRunLost(ctx context.Context, rt Runtime, b store.Binding, st work
 	return view.Result != "" && view.Step == st.Awaiting.Step
 }
 
-// chainCheckSpec is the gate-runner spec for one chain check: the chain's tree,
-// the gate scope unit, and the policy's gate timeout. A check has no binding,
-// so it takes the policy timeout and no CPU pin.
+// chainCheckSpec is the gate-runner spec for one chain check. A check has no
+// binding, so it takes the policy timeout and no CPU pin.
 func chainCheckSpec(rt Runtime, c db.ChainRow, run int, command, logPath string) gateProcSpec {
 	return gateProcSpec{
 		Dir:      c.Worktree,
@@ -497,8 +467,6 @@ func chainCheckSpec(rt Runtime, c db.ChainRow, run int, command, logPath string)
 	}
 }
 
-// chainCheckVisit is the visit a run is for its step: one plus the runs already
-// recorded for it.
 func chainCheckVisit(tx *store.Tx, name, step string) (int, error) {
 	visit := 1
 	for run := 1; ; run++ {
@@ -515,9 +483,8 @@ func chainCheckVisit(tx *store.Tx, name, step string) (int, error) {
 	}
 }
 
-// chainCheckLogTarget names the member and round a chain's check log is keyed
-// to: the chain's writer binding and its newest closed round. A chain with no
-// writer uses its first member.
+// chainCheckLogTarget names the member and round a check log is keyed to. A
+// chain with no writer uses its first member.
 func chainCheckLogTarget(tx *store.Tx, c db.ChainRow) (string, int, error) {
 	member := c.Builder
 	if member == "" {
@@ -536,8 +503,8 @@ func chainCheckLogTarget(tx *store.Tx, c db.ChainRow) (string, int, error) {
 }
 
 // chainCheckSealLog writes the run's streamed log into its round_file row and
-// removes the on-disk copy: the row is the record, exactly as a round's diff
-// is. A run that wrote nothing seals an empty row.
+// removes the on-disk copy: the row is the record. A run that wrote nothing
+// seals an empty row.
 func chainCheckSealLog(rt Runtime, tx *store.Tx, c db.ChainRow, row db.ChainCheckRow) error {
 	body, err := rt.Store.ReadFile(row.Log)
 	switch {
@@ -560,8 +527,8 @@ func chainCheckSealLog(rt Runtime, tx *store.Tx, c db.ChainRow, row db.ChainChec
 	return nil
 }
 
-// chainCheckResult maps the runner's result word onto the engine's: a pass is
-// green and every settled non-pass, a failure, a timeout or an error, is red.
+// chainCheckResult maps the runner's word onto the engine's: pass is green,
+// every other settled result red.
 func chainCheckResult(raw string) string {
 	if raw == "pass" {
 		return chainCheckGreen
@@ -569,10 +536,9 @@ func chainCheckResult(raw string) string {
 	return chainCheckRed
 }
 
-// partialCheckNote heads a stored check log whose served tail was cut, so the
-// log never reads as the whole run; it is empty for a log that was not cut. It
-// names the server and the run rather than a path: a server's filesystem layout
-// is not something it hands to its clients.
+// partialCheckNote heads a stored check log whose served tail was cut, so it
+// never reads as the whole run. It names the server and the run, not a path:
+// a server's layout is not for its clients.
 func partialCheckNote(view remote.CheckView, server string) string {
 	if !view.LogTruncated {
 		return ""

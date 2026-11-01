@@ -28,13 +28,10 @@ type SessionDeleter interface {
 	DeleteSession(ctx context.Context, s store.AbandonedSession) error
 }
 
-// sessionReaper is the real SessionDeleter: it runs the harness's own delete
-// command through an Exec.
 type sessionReaper struct {
 	exec usage.Exec
 }
 
-// NewSessionReaper returns the SessionDeleter that deletes sessions through x.
 func NewSessionReaper(x usage.Exec) SessionDeleter {
 	return sessionReaper{exec: x}
 }
@@ -162,8 +159,7 @@ func reapAbandoned(ctx context.Context, rt Runtime, name string) {
 			case deleted[key]:
 				changed = true
 			case attempted[key]:
-				// The entry survived this attempt: count it, and drop it at
-				// the limit rather than retrying a broken delete forever.
+				// Drop it at the limit rather than retrying a broken delete forever.
 				s.Attempts++
 				changed = true
 				if s.Attempts >= reapMaxAttempts {
@@ -189,7 +185,6 @@ func reapAbandoned(ctx context.Context, rt Runtime, name string) {
 	}
 }
 
-// reapAll reaps every binding that has an abandoned session.
 func reapAll(ctx context.Context, rt Runtime, bindings []store.Binding) {
 	for _, b := range bindings {
 		if len(b.AbandonedSessions) > 0 {

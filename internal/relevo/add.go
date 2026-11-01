@@ -19,41 +19,39 @@ import (
 // AddOptions describes one peer-builder request.
 type AddOptions struct {
 	Name      string // name for the new binding; required, must be free
-	Candidate string // candidate harness/provider/model token; empty means resolve by role through resolveCandidate
-	// MasterMindID is the caller's --mastermind value when it has one, and the
-	// resolved record's id afterwards. Empty means "resolve this session's
-	// mastermind".
+	Candidate string // candidate harness/provider/model token; empty means resolve by role
+	// MasterMindID is the caller's --mastermind value when it has one, else the
+	// resolved record's id. Empty means "resolve this session's mastermind".
 	MasterMindID string
-	Repo         string // the repository the worktree is cut from; the caller's cwd
+	Repo         string // Repo is the repository the worktree is cut from; the caller's cwd
 
-	// CWD binds the peer to a directory the human already prepared instead of
-	// creating a worktree. It is the escape hatch for a non-git tree; relevo
-	// records no Worktree for it and will never remove it.
+	// CWD binds the peer to a prepared directory instead of creating a
+	// worktree: the escape hatch for a non-git tree. Relevo records no
+	// Worktree for it and never removes it.
 	CWD string
 
 	// Branch is an existing branch to check out into relevo's own worktree
-	// (local name, e.g. "feature/api-auth"); "" = cut relevo/<name> as today.
+	// (local name, e.g. "feature/api-auth"); "" cuts relevo/<name>.
 	// Mutually exclusive with CWD. Name may be "" only when Branch is set
 	// (see DefaultBindingName).
 	Branch string
 
 	// Headless makes the peer's builder a process relevo runs per round
-	// instead of a pane. Passed through to resolveBuilder.
+	// instead of a pane.
 	Headless bool
 
 	// Server hosts the builder on a remote relevo server.
 	Server string
 
-	// Local runs the builder here, whatever the actor's placement says. It is
-	// the --local flag, and it is refused with Server on the command line.
+	// Local runs the builder here, whatever the actor's placement says;
+	// refused with Server.
 	Local bool
 
 	// Placement is a choice the caller already made, so Add does not probe
-	// again. The zero value means "resolve it here": an explicit Server or
-	// Local decides without a probe, and otherwise the actor's own list does.
+	// again. Zero means "resolve it here".
 	Placement resolve.PlacementResolution
 
-	// Base commit or ref to branch from; defaults to HEAD.
+	// Base is the commit or ref to branch from; defaults to HEAD.
 	Base string
 
 	// Tier overrides the candidate/policy permission tier.
@@ -63,28 +61,25 @@ type AddOptions struct {
 	AllowYolo bool
 
 	// Gate is the acceptance command relevo runs on the binding's completion
-	// marker. Empty means fall back to policy.json's gate.default,
-	// unless NoGate opts out of that default.
+	// marker. Empty means policy.json's gate.default, unless NoGate opts out.
 	Gate string
 
 	// NoGate opts this binding out of policy.json's gate.default even when
 	// Gate is empty. Ignored when Gate is set.
 	NoGate bool
 
-	// Regate is the binding's automatic repair-round budget:
-	// nil falls back to policy.json's gate.regate, an explicit 0 disables
-	// repair even when the policy sets one.
+	// Regate is the binding's automatic repair-round budget: nil falls back
+	// to policy.json's gate.regate, an explicit 0 disables repair even when
+	// the policy sets one.
 	Regate *int
 
 	// Feature is the human-given label grouping this binding with others;
 	// "" means ungrouped. Validated by store.ValidFeature when set.
 	Feature string
 
-	// Ticket is the issue this binding serves, as typed on --ticket:
-	// a number, #N, project/path#N, an issue key like ABC-123, or an http(s)
-	// URL. Add parses it once against opts.Repo and stores the canonical
-	// form; "" means none. There is no --no-feature: nothing to clear, the
-	// mark is CLI-only and only a fresh bind needs it.
+	// Ticket is the issue this binding serves, as typed on --ticket: a number,
+	// #N, project/path#N, an issue key like ABC-123, or an http(s) URL, stored
+	// in canonical form; "" means none.
 	Ticket string
 
 	// Role is the writer role the new binding runs; "" means builder.
@@ -92,8 +87,8 @@ type AddOptions struct {
 	Role string
 }
 
-// AddResult is what an add produced, so the CLI can tell the human where the
-// new tree and branch are without re-deriving them.
+// AddResult is what an add produced: the binding and where its tree and
+// branch are.
 type AddResult struct {
 	Binding  store.Binding
 	Worktree string // "" when --cwd was used
@@ -104,11 +99,8 @@ type AddResult struct {
 	Resolution resolve.Resolution
 }
 
-// requireRemoteReaders refuses a reader bind against a server that does not
-// advertise remote.FeatureReaders. The server is the side that runs the
-// reader, so a server without the feature would run it as a writer: the
-// client refuses before creating anything, and the message keeps the
-// local-only wording and names the server.
+// requireRemoteReaders refuses a reader bind against a server without
+// remote.FeatureReaders, which would run the reader as a writer.
 func requireRemoteReaders(ctx context.Context, rt Runtime, server string) error {
 	if rt.Remote == nil {
 		return ErrRemoteUnavailable
@@ -125,33 +117,21 @@ func requireRemoteReaders(ctx context.Context, rt Runtime, server string) error 
 
 // Add attaches an additional builder to the calling mastermind, on its own tree.
 //
-// Preconditions:  a relevo mastermind resolves for the caller (--mastermind,
-//
-//	$RELEVO_MASTERMIND, the host process, or the session); opts.Name is valid
-//	and unused; opts.Candidate is resolvable to builder; opts.Repo is a git
-//	repository unless opts.CWD is given.
-//
-// Postconditions: on success a new binding exists at round 1, in StateActive,
-//
-//	with a running builder and its own working tree. On ANY
-//	error, no binding exists and any worktree Add created has
-//	been removed.
+// On ANY error, no binding exists and any worktree Add created has been
+// removed.
 //
 // Errors: ErrGitRequired, store.ErrCWDTaken, git.ErrBranchExists,
-//
-//	or a wrapped git failure.
+// or a wrapped git failure.
 func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
-	// Resolve the caller's mastermind before the --server branch. A remote
-	// binding is the calling mastermind's, exactly like a local one: its id and
-	// session go into the client-side record addRemote writes. Only the
-	// server-side binding stays mastermind-less -- nothing about the mastermind
-	// crosses the wire.
+	// Resolve the caller's mastermind first: a remote binding is the calling
+	// mastermind's, exactly like a local one, and nothing about the
+	// mastermind crosses the wire.
 	rec, haveRec, err := resolveVerbMasterMind(rt, opts.MasterMindID)
 	if err != nil {
 		return AddResult{}, err
 	}
-	// The ticket is parsed once, before the local/remote split, so the
-	// local literal and addRemote both carry the stored form.
+	// Parse the ticket once, before the local/remote split, so both paths
+	// carry the stored form.
 	if opts.Ticket != "" {
 		ticket, terr := parseTicket(opts.Ticket, captureRepo(ctx, rt, opts.Repo))
 		if terr != nil {
@@ -160,20 +140,15 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		opts.Ticket = ticket
 	}
 	if opts.Server != "" {
-		// A reader runs on the server too: the server cuts the round's
-		// scratch worktree and serves the closed round's artifacts, so a
-		// reader bind needs a server that advertises remote.FeatureReaders.
-		// A server that predates it would run the reader as a writer and
-		// touch the served tree, so the refusal here is feature-gated. A role
-		// this client's registry does not know is left to the server's own
-		// check.
+		// A reader runs on the server too, so the bind needs one advertising
+		// remote.FeatureReaders: an older server would run it as a writer and
+		// touch the served tree. An unknown role is left to the server.
 		if shape, rerr := resolve.ActorShape(rt.RoleRegistry(), opts.Role); rerr == nil && shape == store.ShapeReader {
 			if err := requireRemoteReaders(ctx, rt, opts.Server); err != nil {
 				return AddResult{}, err
 			}
 			// A reader round has no check, so the writer-only knobs are
-			// refused here too, naming the flag, exactly as the local path
-			// below does.
+			// refused here too.
 			if opts.Gate != "" {
 				return AddResult{}, refusal.BadInputf("--gate: a reader round has no check")
 			}
@@ -181,18 +156,15 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 				return AddResult{}, refusal.BadInputf("--regate: a reader round has no check")
 			}
 		}
-		// A caller that resolved the actor's list (a plain bind that landed
-		// here) passes its choice in; only a bare --server is explicitly
-		// chosen here.
+		// A caller that resolved the actor's list passes its choice in; only
+		// a bare --server is chosen here.
 		if opts.Placement.How == "" {
 			opts.Placement = resolve.PlacementResolution{Name: opts.Server, How: resolve.PlacementExplicit}
 		}
 		return addRemote(ctx, rt, opts, rec, haveRec)
 	}
-	// The placement decides the rest of the path, once, before anything is
-	// created: an explicit --local is taken as given, and otherwise the
-	// actor's own list is probed in order. A caller that already resolved
-	// passes its choice in, so nothing is probed twice.
+	// The placement is decided once, before anything is created: an explicit
+	// --local is taken as given, otherwise the actor's own list is probed.
 	if opts.Placement.How == "" {
 		placement, perr := resolve.CreatePlacement(ctx, ResolveDeps(rt),
 			store.Binding{Role: resolve.NormRole(opts.Role)}.WriterRole(), opts.Candidate, "", opts.Local,
@@ -217,9 +189,8 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		}
 		return addRemote(ctx, rt, opts, rec, haveRec)
 	}
-	// A binding runs one actor, writer or reader. Refuse an unknown
-	// one here, on the local path only: a remote binding's actor is resolved
-	// against the server's own roles.json, never this client's.
+	// An unknown actor is refused here, on the local path only: a remote
+	// binding's actor resolves against the server's own roles.json.
 	shape, err := resolve.ActorShape(rt.RoleRegistry(), opts.Role)
 	if err != nil {
 		return AddResult{}, err
@@ -242,9 +213,8 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 			return AddResult{}, err
 		}
 	}
-	// Refuse here, not just inside resolveBuilder: Add cuts its worktree before
-	// that runs, and a name relevo would refuse must not leave a worktree
-	// behind. The composed name is discarded -- resolveBuilder recomputes it.
+	// Refuse here, not just inside resolveBuilder: Add cuts its worktree
+	// before that runs, and a refused name must not leave one behind.
 	if _, err := builderAgentName(opts.Name); err != nil {
 		return AddResult{}, err
 	}
@@ -261,8 +231,8 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	if err != nil {
 		return AddResult{}, err
 	}
-	// The placement rides on the resolution so the pick note and the added
-	// line say where the binding landed and what it passed over.
+	// The placement rides on the resolution, so the pick entry says where the
+	// binding landed.
 	res.Placement = opts.Placement
 	// The gate resolution rides on the resolution too, so the CLI can print
 	// which tier supplied the command the binding stored.
@@ -305,11 +275,8 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		createdBranch  bool
 	)
 
-	// The subdirectory the round runs in, resolved once from the repo the
-	// cut works against: a bind started below the root offsets its round by
-	// the prefix, and --cwd never consults it because the prepared directory
-	// is the round's directory itself. A runtime with no git is refused
-	// below, where the branch it would consult lives.
+	// The subdirectory the round runs in, resolved once: a bind started below
+	// the root offsets its round by the prefix. --cwd never consults it.
 	subdir := ""
 	if opts.CWD == "" && rt.Git != nil {
 		subdir = housekeep.ResolveSubdir(ctx, rt.Git, opts.Repo)
@@ -351,10 +318,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		if rt.Git == nil {
 			return AddResult{}, ErrGitRequired
 		}
-		// The cut is one helper, shared with a chain's start: --base when
-		// given, HEAD otherwise, a named base that does not resolve refused
-		// before any worktree exists, and the branch relevo/<name> checked
-		// before it is created.
+		// One cut shared with a chain's start, so the two can never drift.
 		cwd, branch, base, baseRef, err = cutWorktree(ctx, rt, opts.Name, opts.Repo, opts.Base)
 		if err != nil {
 			return AddResult{}, err
@@ -367,22 +331,15 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		if worktree != "" && rt.Git != nil {
 			_ = rt.Git.RemoveWorktree(ctx, opts.Repo, worktree, true)
 		}
-		// A branch Add cut itself (the cut path only: --cwd and --branch
-		// adopt a branch that already existed) is removed too, so a retry
-		// does not fail with "branch already exists". DeleteBranch is
-		// idempotent on a missing branch, and a failure here is ignored
-		// exactly like the worktree removal's.
+		// A branch Add cut itself is removed too, so a retry does not fail
+		// with "branch already exists".
 		if createdBranch && rt.Git != nil {
 			_ = rt.Git.DeleteBranch(ctx, opts.Repo, branch)
 		}
 	}
 
-	// The round runs in the subdirectory the prefix named, so the commit it
-	// was cut from must actually have that directory: a base without it
-	// would start every round in a path that does not exist. Only a non-empty
-	// prefix is checked -- the empty one is the root, which every commit
-	// has -- and the refusal comes before the binding is written, so the
-	// worktree and branch the cut made are rolled back.
+	// The cut commit must hold the subdirectory, or every round would start
+	// in a path that does not exist.
 	if subdir != "" {
 		exists, derr := rt.Git.DirAt(ctx, opts.Repo, base, subdir)
 		if derr != nil {
@@ -418,20 +375,16 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		AllowYolo:    opts.AllowYolo,
 		Role:         resolve.NormRole(opts.Role),
 	}
-	// Discard resolveBuilder's own resolution: bindOpts.Candidate is already
-	// pinned to c (explicit), so resolveBuilder's internal resolveCandidate
-	// call would report resolve.HowExplicit and lose the real How/Position/Skipped
-	// this function resolved above -- res, from the pre-worktree resolution,
-	// is what the pick entry and AddResult.Resolution must carry.
+	// Discard resolveBuilder's own resolution: it would report HowExplicit and
+	// lose the How/Position/Skipped resolved above.
 	builder, _, err := resolveBuilder(ctx, rt, nil, bindOpts, opts.Name)
 	if err != nil {
 		rollback()
 		return AddResult{}, err
 	}
 
-	// RoundCap, RoundTimeoutMS, CreatedAt and UpdatedAt are all left zero on
-	// purpose: store.Save fills them in (internal/store/store.go:269-279), so a
-	// peer builder gets exactly the same defaults a plain `relevo bind` does.
+	// RoundCap, RoundTimeoutMS, CreatedAt and UpdatedAt stay zero: store.Save
+	// fills them, so a peer builder gets a plain bind's defaults.
 	b := store.Binding{
 		Name:             opts.Name,
 		CWD:              cwd,
@@ -455,12 +408,8 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		Shape:            shape,
 		Gate:             res.Gate.Command,
 		Regate:           ResolveRegate(opts.Regate, rt.Policy),
-		// captureRepo runs against opts.Repo, not cwd: opts.Repo is the
-		// parent checkout the worktree is cut from (its git identity is
-		// what the coming history database wants), while cwd is the fresh
-		// worktree/peer directory -- a linked worktree reports the same
-		// facts once AddWorktree has run, but opts.Repo is always a real
-		// checkout, including on the --cwd escape hatch.
+		// captureRepo runs against opts.Repo, not cwd: only it is always a
+		// real checkout, including on the --cwd escape hatch.
 		RepoRef: captureRepo(ctx, rt, opts.Repo),
 		Feature: opts.Feature,
 		Ticket:  opts.Ticket,
@@ -488,23 +437,18 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 }
 
 // cutWorktree cuts relevo's own worktree for a new binding: the branch
-// relevo/<name> from base (else HEAD), at the store's worktree path. It is the
-// one cut both `add` and a chain's start run, so the two can never drift.
+// relevo/<name> from base (else HEAD). It is the one cut both `add` and a
+// chain's start run, so the two can never drift.
 //
-// Preconditions: rt.Git is set. A named base that does not resolve and a
-// branch that already exists are refused before anything is created.
-//
-// Postconditions: the worktree and its branch exist at the returned commit;
-// baseRef names the branch the cut came from, or "" when CurrentBranch could
-// not answer.
+// A named base that does not resolve and a branch that already exists are
+// refused before anything is created. baseRef is "" when CurrentBranch
+// could not answer.
 func cutWorktree(ctx context.Context, rt Runtime, name, repo, base string) (worktree, branch, commit, baseRef string, err error) {
 	if rt.Git == nil {
 		return "", "", "", "", ErrGitRequired
 	}
-	// The cut's starting commit: --base when given, HEAD otherwise. A named
-	// base that does not resolve is refused here, before any worktree exists;
-	// the ref is resolved to a commit, so the branch is cut from exactly what
-	// the caller named.
+	// --base when given, HEAD otherwise, resolved to a commit before any
+	// worktree exists.
 	if base != "" {
 		sha, ok, rerr := rt.Git.RefSHA(ctx, repo, base)
 		if rerr != nil {
@@ -529,19 +473,17 @@ func cutWorktree(ctx context.Context, rt Runtime, name, repo, base string) (work
 	if err := rt.Git.AddWorktree(ctx, repo, worktree, branch, commit); err != nil {
 		return "", "", "", "", err
 	}
-	// The branch the cut came from, for `relevo land`. A --cwd or
-	// --branch binding records none: nothing was cut, so there is no branch
-	// to rebase onto and land asks for --onto instead.
+	// The branch the cut came from, for `relevo land`. A --cwd or --branch
+	// binding records none: nothing was cut.
 	if ref, cerr := rt.Git.CurrentBranch(ctx, repo); cerr == nil {
 		baseRef = ref
 	}
 	return worktree, branch, commit, baseRef, nil
 }
 
-// DefaultBindingName derives a binding name from an existing branch: the last
-// path segment, lowercased, with every run of characters store.ValidName does
-// not accept replaced by one "-", then trimmed of "-". store.ValidName's own
-// error is returned unchanged, so the CLI can say "pass --name".
+// DefaultBindingName derives a binding name from an existing branch: the
+// last path segment, lowercased and coerced to store.ValidName's rule.
+// store.ValidName's own error is returned unchanged.
 func DefaultBindingName(branch string) (string, error) {
 	seg := branch
 	if i := strings.LastIndex(branch, "/"); i >= 0 {
@@ -570,8 +512,7 @@ func DefaultBindingName(branch string) (string, error) {
 	return name, nil
 }
 
-// branchDrivenByLiveBinding reports the error naming the live binding that
-// already drives branch, or nil when no binding in a non-DONE state holds it.
+// branchDrivenByLiveBinding names the live binding already driving branch.
 // A DONE binding does not block: relevo is finished with it.
 func branchDrivenByLiveBinding(rt Runtime, branch string) error {
 	bindings, err := rt.Store.List()

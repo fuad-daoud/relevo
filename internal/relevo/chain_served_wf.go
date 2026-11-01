@@ -14,8 +14,7 @@ import (
 )
 
 // servedChainDefinition resolves the shipped default with a served create's
-// wire settings on its params, so a served chain plans and runs through the
-// same engine a local default start does. internal/remote does not import
+// wire settings on its params. internal/remote does not import
 // internal/workflow, so the values are assembled here.
 func servedChainDefinition(req ServedChainRequest) (workflow.Definition, error) {
 	s := req.Settings
@@ -29,7 +28,7 @@ func servedChainDefinition(req ServedChainRequest) (workflow.Definition, error) 
 		"max_corrections": strconv.Itoa(s.MaxCorrections),
 	}
 	// A blank security actor keeps the default's own value, so a later resume
-	// that turns the scan on still has an actor to name.
+	// turning the scan on still has an actor to name.
 	if s.SecurityActor != "" {
 		values["security"] = s.SecurityActor
 	}
@@ -40,11 +39,11 @@ func servedChainDefinition(req ServedChainRequest) (workflow.Definition, error) 
 	return def, nil
 }
 
-// servedChainEngineCreate writes the engine half of a served create: it stores
-// the resolved definition and its start state on the row, creates the row and
-// every member atomically, copies the plans, and runs the start actions, so
-// plan 1 is queued for the server's admit exactly as a served send queues. It
-// returns the row as the store now holds it.
+// servedChainEngineCreate writes the engine half of a served create: the
+// resolved definition and start state on the row, the row and every member
+// created atomically, the plan copies, and the start actions, so plan 1 is
+// queued for the server's admit. It returns the row as the store now holds
+// it.
 func servedChainEngineCreate(ctx context.Context, rt Runtime, plan ServedChainPlan, row db.ChainRow, built []store.Binding, planPaths []string) (db.ChainRow, error) {
 	defJSON, err := json.Marshal(plan.def)
 	if err != nil {
@@ -77,18 +76,17 @@ func servedChainEngineCreate(ctx context.Context, rt Runtime, plan ServedChainPl
 	if err := chainRunStartActions(ctx, rt, row.Name, plan.def, start, acts); err != nil {
 		return row, fmt.Errorf("chain %q started, but plan 1 could not be handed to %s: %w", row.Name, row.Name, err)
 	}
-	// The start actions opened the first round; the store's row is the one that
-	// names it.
+	// The start actions opened the first round, so the store's row is the one
+	// that names it.
 	if current, cerr := rt.Store.Chain(row.Name); cerr == nil {
 		row = current
 	}
 	return row, nil
 }
 
-// servedChainAddMembers creates the members a served chain's resume brought in:
-// each is built in the served shape, the server picking its own candidate and
-// tier, beside the served builder, and its chain_member row is written with it.
-// seq is the next member sequence the chain's existing rows leave off at.
+// servedChainAddMembers creates the members a served chain's resume brought
+// in, each built in the served shape beside the served builder. seq is the
+// next member sequence the chain's existing rows leave off at.
 func servedChainAddMembers(rt Runtime, tx *store.Tx, c db.ChainRow, builder store.Binding, add []chainMember, seq int) (db.ChainRow, error) {
 	if builder.Serve == nil {
 		return c, fmt.Errorf("chain %s has a served builder with no serve facts", c.Name)

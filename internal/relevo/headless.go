@@ -12,18 +12,17 @@ import (
 )
 
 // ErrBuilderBusy reports a send against a headless binding whose previous
-// round's process is still running. One process per round is the model;
-// two at once in one tree would race each other's edits. Being a
-// refusal.Sentinel, anything wrapping it also unwraps to refusal.ErrRefused,
-// so the CLI classifies the busy send as refused (exit 2) rather
-// than internal without each call site naming both sentinels.
+// round's process is still running: one process per round, since two at once
+// in one tree would race each other's edits. As a refusal.Sentinel it unwraps
+// to refusal.ErrRefused, so the CLI classifies the busy send as refused
+// (exit 2) without each call site naming both sentinels.
 var ErrBuilderBusy = refusal.Sentinel("the previous process is still running; wait for the round to close, or relevo done")
 
 // ErrReportPending reports a send refused because the current round already
 // has its completion marker or report on disk, but the daemon has not yet
-// ingested the close. The round is over: restaging its plan and starting a
-// second builder would make the daemon close on the stale marker and deliver
-// the old report. The caller retries once the report is delivered.
+// ingested the close. The round is over: restaging its plan would make the
+// daemon close on the stale marker and deliver the old report. The caller
+// retries once the report is delivered.
 var ErrReportPending = refusal.Sentinel("the round's output is on disk but not yet delivered; relevo wait delivers it, then send the next round")
 
 // ErrScopeActive reports a send refused because this round's systemd scope
@@ -35,11 +34,10 @@ var ErrScopeActive = refusal.Sentinel("this round's builder scope is still runni
 // isScopeBusy reports whether a Start error is the host refusing this round's
 // scope unit rather than the candidate failing to run: systemd-run's own
 // already-loaded wording, and its variant about an existing fragment file.
-// Both are text matching because systemd surfaces the collision
-// as a wrapped command error, not as a sentinel this binary can type.
-//
-// A host-side collision says nothing about the candidate, which is exactly
-// why startProcess must not treat one as a spawn failure.
+// Both are text matching because systemd surfaces the collision as a wrapped
+// command error, not as a sentinel this binary can type -- and a host-side
+// collision says nothing about the candidate, so startProcess must not treat
+// one as a spawn failure.
 func isScopeBusy(err error) bool {
 	if err == nil {
 		return false
@@ -48,7 +46,7 @@ func isScopeBusy(err error) bool {
 	return strings.Contains(msg, "already loaded") || strings.Contains(msg, "has a fragment file")
 }
 
-// handleOf is the endpoint's stored process fields as the Runner's handle.
+// handleOf reads the endpoint's stored process fields as the Runner's handle;
 // StartedAt is Unix seconds on the endpoint.
 func handleOf(e store.Endpoint) spawn.ProcHandle {
 	return spawn.ProcHandle{PID: e.PID, StartedAt: time.Unix(e.StartedAt, 0)}
@@ -67,8 +65,8 @@ const (
 
 // scopeOwner8 is the owner component of a unit name: "local" for a binding
 // with no owner; the first 8 hex characters of the owning client's id when
-// Owner parses as a ClientID; "unknown" otherwise (which never happens for
-// what the server itself wrote, but must never block a spawn).
+// Owner parses as a ClientID; "unknown" otherwise, which must never block a
+// spawn.
 func scopeOwner8(owner string) string {
 	if owner == "" {
 		return "local"
@@ -80,9 +78,8 @@ func scopeOwner8(owner string) string {
 }
 
 // scopeUnitNameFor is the systemd scope unit's base name (the runner appends
-// ".scope") for any scoped spawn: "relevo-<kind>-<owner8>-<name>-<round>",
-// followed by "-<id>" when id is non-empty. owner8 and the sanitising are
-// shared with the round path, so relevo-round-* names match it byte for byte.
+// ".scope") for any scoped spawn. owner8 and the sanitising are shared with
+// the round path, so relevo-round-* names match it byte for byte.
 func scopeUnitNameFor(kind scopeKind, owner, name string, round int, id string) string {
 	unit := "relevo-" + string(kind) + "-" + scopeOwner8(owner) + "-" + safeUnitPart(name) + "-" + strconv.Itoa(round)
 	if id != "" {
@@ -91,8 +88,6 @@ func scopeUnitNameFor(kind scopeKind, owner, name string, round int, id string) 
 	return unit
 }
 
-// scopeUnitName is the per-round systemd scope unit's base name (the
-// runner appends ".scope"): "relevo-round-<owner8>-<name>-<round>".
 func scopeUnitName(b store.Binding) string {
 	return scopeUnitNameFor(scopeRound, b.Owner, b.Name, b.Round, "")
 }
@@ -135,9 +130,9 @@ func safeUnitPart(s string) string {
 	return sb.String()
 }
 
-// defaultRoundBudget mirrors the store's default round timeout, for a
-// binding that was never saved. Store.Save fills RoundTimeoutMS on every
-// real binding, so this is a guard, not a policy.
+// defaultRoundBudget mirrors the store's default round timeout for a binding
+// that was never saved; Store.Save fills RoundTimeoutMS on every real
+// binding, so this is a guard, not a policy.
 const defaultRoundBudget = 24 * time.Hour
 
 // roundBudget is the binding's round budget as a duration: what agy's

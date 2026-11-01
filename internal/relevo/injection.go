@@ -13,7 +13,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// injectionScan is what both scan sites consume.
 type injectionScan struct {
 	Flagged   int
 	FlaggedBy string                // "", "regex", "jev", "both"
@@ -21,11 +20,11 @@ type injectionScan struct {
 	Note      string                // "" or the Record.Note, for joinNotes on the entry
 }
 
-// scanForInjection runs the regex floor and, when both rt.Policy.Classify
-// and rt.Classify are non-nil, the classifier, and composes the result.
-// It never returns an error: every classifier failure is a Note. The
-// classifier call is bounded by context.WithTimeout(ctx, cfg.Timeout()).
-// source is "report" or "dialog"; the harness comes from b.Builder.Kind.
+// scanForInjection runs the regex floor and, when both rt.Policy.Classify and
+// rt.Classify are non-nil, the classifier, and composes the result. It never
+// returns an error: every classifier failure is a Note, and the classifier
+// call is bounded by context.WithTimeout(ctx, cfg.Timeout()). source is
+// "report" or "dialog"; the harness comes from b.Builder.Kind.
 func scanForInjection(ctx context.Context, rt Runtime, source string, b store.Binding, text []byte) injectionScan {
 	regexLines := housekeep.ScanLines(text, housekeep.CompileScanPatterns(rt.Policy))
 	regexCount := len(regexLines)
@@ -125,13 +124,13 @@ func shortReason(err error, timeout time.Duration) string {
 	return strings.TrimPrefix(err.Error(), "classify: ")
 }
 
-// composeFlagged is the pure union. A paragraph counts toward `above` when
-// probs[i] >= threshold. It adds to `flagged` only when no regex-hit line
-// falls within [kept[i].Line, kept[i].Line+kept[i].Lines-1], so a paragraph
-// both judges caught is counted once. max is the largest probs[i] (0 when
-// probs is empty). by is "" when flagged == 0, "regex" when only regex
-// contributed, "jev" when only the classifier did, "both" otherwise --
-// "both" includes the case where every jev paragraph overlapped a regex line.
+// composeFlagged is the union. A paragraph counts toward `above` when probs[i]
+// >= threshold. It adds to `flagged` only when no regex-hit line falls within
+// the paragraph, so a paragraph both judges caught is counted once. max is the
+// largest probs[i] (0 when probs is empty). by is "" when nothing is flagged,
+// "regex" when only regex contributed, "jev" when only the classifier did, and
+// "both" otherwise -- "both" includes the case where every jev paragraph
+// overlapped a regex line.
 func composeFlagged(regexLines []int, kept []classify.Paragraph, probs []float64, threshold float64) (flagged int, by string, above int, max float64) {
 	for _, p := range probs {
 		if p > max {
@@ -176,16 +175,9 @@ func composeFlagged(regexLines []int, kept []classify.Paragraph, probs []float64
 	return flagged, by, above, max
 }
 
-// flaggedParenthetical is the caveat the two scan sites append to the text
-// they record for the round. With rec == nil or rec.Note != "" it is:
-//
-//	" (N instruction-shaped line[s] flagged; see relevo show --log)"
-//
-// With a successful rec it is
-//
-//	" (N instruction-shaped line[s] flagged; jev p=0.94; see relevo show --log)"
-//
-// where p is rec.Max formatted %.2f. Empty when flagged <= 0, always.
+// flaggedParenthetical is the caveat the two scan sites append to the text they
+// record for the round: with a successful rec it names jev p=rec.Max, else just
+// the flagged count. Empty when flagged <= 0, always.
 func flaggedParenthetical(flagged int, rec *store.ClassifyRecord) string {
 	if flagged <= 0 {
 		return ""

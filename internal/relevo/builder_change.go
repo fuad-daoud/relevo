@@ -11,27 +11,23 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// ErrBadBuilder wraps every refusal of a `relevo send --candidate` token itself:
-// an unknown candidate, a bad ref, a role it does not serve, roles_missing,
-// or a tier above the cap. It exists so the server can map these to 422
-// rather than 500.
+// ErrBadBuilder wraps every refusal of a `relevo send --candidate` token: an
+// unknown candidate, a bad ref, an unserved role, or a tier above the cap. It
+// exists so the server maps these to 422 rather than 500.
 var ErrBadBuilder = errors.New("send --candidate")
 
-// ResolveSendBuilder is ResolveSendBuilderFor with the built-in builder's
-// role, for the callers and tests that use it.
+// ResolveSendBuilder is ResolveSendBuilderFor with the built-in builder's role.
 func ResolveSendBuilder(rt Runtime, current, token string) (*resolve.Resolution, error) {
 	return ResolveSendBuilderFor(rt, "builder", current, token)
 }
 
-// ResolveSendBuilderFor turns --candidate's token into the resolution to apply
-// for a binding whose writer role is role, or nil for a no-op. An explicit
-// token is resolved exactly as `relevo bind --worktree --candidate` resolves one, so a gated
-// candidate still resolves (its gates are recorded on the resolve.Resolution) and only
-// roles_missing refuses.
-//
-// It returns nil, nil when the token canonicalises to the binding's current
-// candidate: naming the builder a binding already has changes nothing. Every
-// error is wrapped with ErrBadBuilder, naming the token.
+// ResolveSendBuilderFor turns --candidate's token into the resolution to
+// apply for a binding whose writer role is role, or nil for a no-op. An
+// explicit token is resolved exactly as `relevo bind --worktree --candidate`
+// resolves one, so a gated candidate still resolves, its gates recorded;
+// only roles_missing refuses.
+// A token naming the current candidate is a no-op. Every error is wrapped
+// with ErrBadBuilder, naming the token.
 //
 // Precondition: token != "". It is a pure read of the ledger and candidates.
 func ResolveSendBuilderFor(rt Runtime, role, current, token string) (*resolve.Resolution, error) {
@@ -52,14 +48,11 @@ func resolveSendBuilder(rt Runtime, role, current, token, dir string) (*resolve.
 	return &res, nil
 }
 
-// applyBuilder is the persist half of a `relevo send --candidate`: it moves the
-// binding to res's candidate for this round and every later one, re-derives
-// the binding's stored tier for the new candidate through the normal chain,
-// and clears any round exclusion, which belongs to the old builder's round.
-//
-// It leaves Builder.Mode, AgentName and Server as they are. A candidate whose
-// re-derived tier is above max_tier without allowYolo is refused with
-// ErrBadBuilder, leaving the binding unchanged. Pure.
+// applyBuilder is the persist half of a `relevo send --candidate`: it moves
+// the binding to res's candidate, re-derives the stored tier, and clears any
+// round exclusion, which belongs to the old builder's round. Builder.Mode,
+// AgentName and Server stay as they are. A tier above max_tier without
+// allowYolo is refused with ErrBadBuilder, leaving the binding unchanged.
 func applyBuilder(b store.Binding, res resolve.Resolution, reg *roles.Registry, pol policy.Policy, allowYolo bool) (store.Binding, error) {
 	tier := resolve.ResolveTier("", res.Candidate, reg, b.WriterRole())
 	if err := resolve.CheckTierCap(tier, pol, allowYolo); err != nil {
@@ -74,9 +67,8 @@ func applyBuilder(b store.Binding, res resolve.Resolution, reg *roles.Registry, 
 	return b, nil
 }
 
-// CandidateRoundOpenError is the refusal of `send --candidate` while the
-// binding's round is open. It carries the binding so the CLI can name
-// `relevo stop <name>` as the next command.
+// CandidateRoundOpenError refuses `send --candidate` while the round is
+// open. It carries the binding so the CLI can name `relevo stop` next.
 type CandidateRoundOpenError struct {
 	Name  string
 	Round int
@@ -86,26 +78,22 @@ func (e *CandidateRoundOpenError) Error() string {
 	return fmt.Sprintf("binding %q has round %d open; relevo stop %s ends it, then send again with --candidate", e.Name, e.Round, e.Name)
 }
 
-// roundOpenIn reports whether the binding's round is open. It is store's single
-// definition of the condition, read here for the --candidate refusal.
+// roundOpenIn reports whether the binding's round is open: store's single
+// definition of the condition.
 func roundOpenIn(entries []store.LogEntry, round int) bool {
 	return store.RoundOpen(entries, round)
 }
 
 // candidateSendRefused reports whether `relevo send --candidate` is refused
-// because the binding's round is already open, with one exception: a served
-// binding that has halted in NEEDS YOU may be re-pointed at a named candidate.
+// because the round is open, with one exception: a served binding halted in
+// NEEDS YOU may be re-pointed at a named candidate. A halt is a human
+// decision point, and naming the candidate continues *this* round without
+// stopping first.
 //
-// The why: a halt is a human decision point. On a served binding `relevo
-// stop` performs the stop on the halted round, and naming the candidate that
-// continues *this* round works without stopping first, so the human has two
-// levers there. A local binding is not exempt -- it stops and re-sends, as the
-// refusal says.
-//
-// "Served" has two spellings, because relevo keeps two copies of such a
-// binding: the server's copy carries Owner and a headless builder, while the
-// client's copy carries Builder.Mode == ModeRemote and no Owner. This is the
-// same "not local" test RunningProcs uses.
+// "Served" has two spellings, because relevo keeps two copies: the server's
+// carries Owner and a headless builder, the client's Builder.Mode ==
+// ModeRemote and no Owner. This is the same "not local" test
+// housekeep.RunningProcs uses.
 func candidateSendRefused(b store.Binding, entries []store.LogEntry) bool {
 	if !roundOpenIn(entries, b.Round) {
 		return false
@@ -115,8 +103,7 @@ func candidateSendRefused(b store.Binding, entries []store.LogEntry) bool {
 }
 
 // HasPromptEntry reports whether the log holds a to-builder prompt entry of
-// round, in either kind spelling, with HasEntry's shape and nudge exclusion.
-// It reads store's shared definition rather than repeating it.
+// round. It reads store's shared definition rather than repeating it.
 func HasPromptEntry(entries []store.LogEntry, round int) bool {
 	return store.HasPrompt(entries, round)
 }

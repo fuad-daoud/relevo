@@ -26,13 +26,13 @@ import (
 )
 
 // chainServerPlan is everything a server-chain start resolved before anything
-// existed: the local policy settings, the plans, the member names, the caller's
+// existed: the policy settings, the plans, the member names, the caller's
 // mastermind, the git facts the create needs and the server's answer about
 // itself.
 type chainServerPlan struct {
 	settings chain.Settings
 	// gateRes is the gate resolution the settings were built from, so the
-	// start's ChainResult can name the tier that supplied the check.
+	// start's ChainResult names the tier that supplied the check.
 	gateRes      resolve.GateResolution
 	repo         string
 	ticket       string
@@ -45,16 +45,15 @@ type chainServerPlan struct {
 	authorName   string
 	authorEmail  string
 	server       string
-	// subdir is the prefix the create carries, resolved once with the
-	// repository below: the server joins the stored value into every
-	// member's round directory it cuts.
+	// subdir is the prefix the create carries: the server joins the stored
+	// value into every member's round directory it cuts.
 	subdir string
-	// trimpath is the effective trimpath setting the create carries, resolved
-	// once with the repository below: "" (absent) reads trimmed, "off" opts
-	// out, and omitempty keeps an unset value off the wire.
+	// trimpath is the effective trimpath setting the create carries: ""
+	// (absent) reads trimmed, "off" opts out, and omitempty keeps an unset
+	// value off the wire.
 	trimpath string
-	// origin is whether the server advertises FeatureOrigin, which decides
-	// whether the client mints the member ids the create carries.
+	// origin is whether the server advertises FeatureOrigin, deciding whether
+	// the client mints the member ids the create carries.
 	origin bool
 	// def is the resolved and parameterized workflow definition.
 	def workflow.Definition
@@ -71,9 +70,8 @@ type chainServerIDs struct {
 }
 
 // chainStartServer starts a chain on a server: the local refusals run first,
-// then one create hands the whole chain and its base bundle over, and finally
-// this machine records a mirror of the row and its members. Every refusal
-// fires before the server is asked to create anything.
+// then one create hands the whole chain and its base bundle over, and this
+// machine records a mirror of the row and its members.
 func chainStartServer(ctx context.Context, rt Runtime, opts ChainOptions) (ChainResult, error) {
 	plan, err := chainServerResolve(ctx, rt, opts)
 	if err != nil {
@@ -83,10 +81,8 @@ func chainStartServer(ctx context.Context, rt Runtime, opts ChainOptions) (Chain
 }
 
 // chainServerResolve runs every refusal a server-chain start can make without
-// touching the server's state: the local policy, the names, the branch and the
-// caller's mastermind, then the server's advertised features and the base,
-// repo id and identity the create needs. It reads git and the server; it
-// creates nothing.
+// touching the server's state. It reads git and the server; it creates
+// nothing.
 func chainServerResolve(ctx context.Context, rt Runtime, opts ChainOptions) (chainServerPlan, error) {
 	if rt.Remote == nil {
 		return chainServerPlan{}, ErrRemoteUnavailable
@@ -100,7 +96,7 @@ func chainServerResolve(ctx context.Context, rt Runtime, opts ChainOptions) (cha
 	}
 	// The chain's repository is resolved before the params are computed: the
 	// gate param and the chain settings both read the repository's own
-	// settings, which are keyed on the tree the chain runs on.
+	// settings.
 	repo, err := os.Getwd()
 	if err != nil {
 		return chainServerPlan{}, fmt.Errorf("resolve working directory: %w", err)
@@ -222,10 +218,10 @@ func chainServerMasterMind(rt Runtime, id string) (store.Endpoint, string, error
 
 // chainServerCreate hands the resolved chain to the server and records the
 // mirror here. The order is pinned: the out ref and the base bundle, the
-// create, then the local branch, the mirror row with its members, and the plan
-// copies. A local step that fails after the server answered deletes the branch
+// create, then the local branch, the plan copies, and the mirror row with its
+// members. A local step that fails after the server answered deletes the branch
 // this call created and asks for the same command again -- the server dedupes
-// the retry and answers with the chain's current view.
+// the retry.
 func chainServerCreate(ctx context.Context, rt Runtime, opts ChainOptions, plan chainServerPlan) (ChainResult, error) {
 	name := opts.Name
 	base := plan.base
@@ -292,8 +288,8 @@ func chainServerCreate(ctx context.Context, rt Runtime, opts ChainOptions, plan 
 	return ChainResult{Chain: row, Members: stored, Plans: len(plan.bodies), Check: chain.BuilderCheck(stored, name), CheckSource: plan.gateRes.Source}, nil
 }
 
-// chainMirrorStored loads the mirror bindings from the store, so the returned
-// result carries the fields the store stamps.
+// chainMirrorStored loads the mirror bindings from the store, so the result
+// carries the fields the store stamps.
 func chainMirrorStored(rt Runtime, members []store.Binding) ([]store.Binding, error) {
 	out := make([]store.Binding, 0, len(members))
 	for _, m := range members {
@@ -306,10 +302,9 @@ func chainMirrorStored(rt Runtime, members []store.Binding) ([]store.Binding, er
 	return out, nil
 }
 
-// chainServerCreateError rebuilds the typed actor refusal from the create's own
-// answer: the wire names unknown_actor for the actor the server cannot resolve,
-// and the CLI classifies that sentinel like the local resolve.ErrUnknownRole. Anything
-// else is returned as it came.
+// chainServerCreateError rebuilds the typed actor refusal from the create's
+// own answer: the wire names unknown_actor for the actor the server cannot
+// resolve. Anything else returns pickRefusalFromWire(err).
 func chainServerCreateError(err error) error {
 	var httpErr *client.HTTPError
 	if errors.As(err, &httpErr) && httpErr.Status == http.StatusBadRequest && httpErr.Body.Code == remote.CodeUnknownActor {
@@ -319,9 +314,10 @@ func chainServerCreateError(err error) error {
 }
 
 // chainServerBundle names the out ref at base and snapshots it, the two steps
-// a remote send makes before it ships a round. The bundle the snapshot carries
-// is what the server cuts the builder's worktree from; a snapshot that is
-// empty sends no bundle part. The returned closer releases the snapshot body.
+// a remote send makes before it ships a round. The bundle the snapshot
+// carries is what the server cuts the builder's worktree from; a snapshot that
+// is empty sends no bundle part. The returned closer releases the snapshot
+// body.
 func chainServerBundle(ctx context.Context, rt Runtime, repo, name, base string) (io.Reader, func(), error) {
 	outRef := "refs/relevo/" + name + "/out"
 	if err := rt.Git.UpdateRef(ctx, repo, outRef, base, ""); err != nil {
@@ -370,8 +366,8 @@ func chainServerRequest(opts ChainOptions, plan chainServerPlan, ids chainServer
 	return req
 }
 
-// chainServerBindingIDs mints the client's identifiers for the create when the
-// server advertises FeatureOrigin: by actor for a workflow create, and by part
+// chainServerBindingIDs mints the client's identifiers for the create when
+// the server advertises FeatureOrigin: by actor for a workflow create, by part
 // for a legacy settings create. A pre-origin server gets none.
 func chainServerBindingIDs(rt Runtime, plan chainServerPlan) (chainServerIDs, error) {
 	if !plan.origin {
@@ -396,7 +392,6 @@ func chainServerBindingIDs(rt Runtime, plan chainServerPlan) (chainServerIDs, er
 	return chainServerIDs{installation: inst.ID, byPart: byPart}, nil
 }
 
-// chainPlanTexts is the plan copies as text, in order.
 func chainPlanTexts(bodies [][]byte) []string {
 	out := make([]string, len(bodies))
 	for i, b := range bodies {
@@ -422,8 +417,7 @@ func chainWireSettings(s chain.Settings) remote.ChainSettings {
 
 // chainMirrorRow is the client's mirror of a server chain's row: the server's
 // state, this machine's plan copies and settings, and the server that drives
-// it. The worktree is empty -- the server holds the builder's tree -- and the
-// branch is the one the mirror cut.
+// it. The worktree is empty, since the server holds the builder's tree.
 func chainMirrorRow(opts ChainOptions, plan chainServerPlan, view remote.ChainView, planPaths []string, now time.Time) (db.ChainRow, error) {
 	paths, err := json.Marshal(planPaths)
 	if err != nil {
@@ -489,7 +483,6 @@ func chainMirrorRow(opts ChainOptions, plan chainServerPlan, view remote.ChainVi
 	return row, nil
 }
 
-// chainMirrorMembers builds the mirror bindings from the server's member views.
 func chainMirrorMembers(ctx context.Context, rt Runtime, opts ChainOptions, plan chainServerPlan, view remote.ChainView, ids chainServerIDs) []store.Binding {
 	repoRef := captureRepo(ctx, rt, plan.repo)
 	out := make([]store.Binding, 0, len(view.Members))
@@ -503,10 +496,9 @@ func chainMirrorMembers(ctx context.Context, rt Runtime, opts ChainOptions, plan
 	return out
 }
 
-// chainMirrorMember is one member's mirror binding: a remote member on the
-// chain's server, built from its ChainMemberView. The writer carries the branch,
-// the base, the check and the branch head; a reader carries no branch, because
-// it reads the writer's artifacts on the server.
+// chainMirrorMember is one member's mirror binding. The writer carries the
+// branch, the base, the check and the branch head; a reader carries no
+// branch, since it reads the writer's artifacts on the server.
 func chainMirrorMember(opts ChainOptions, plan chainServerPlan, v remote.ChainMemberView, id string, repoRef *store.RepoRef) store.Binding {
 	bv := v.View
 	kind := ""
@@ -547,8 +539,8 @@ func chainMirrorMember(opts ChainOptions, plan chainServerPlan, v remote.ChainMe
 	return b
 }
 
-// chainMemberState reads a member view's state as the store's, defaulting to
-// active when the server named none.
+// chainMemberState reads a member view's state as the store's, defaulting
+// to active when the server named none.
 func chainMemberState(state string) store.State {
 	s := store.State(state)
 	if !store.KnownState(s) {
@@ -557,7 +549,6 @@ func chainMemberState(state string) store.State {
 	return s
 }
 
-// chainOr is s when it is not empty, fallback otherwise.
 func chainOr(s, fallback string) string {
 	if s == "" {
 		return fallback
@@ -565,7 +556,6 @@ func chainOr(s, fallback string) string {
 	return s
 }
 
-// chainIntOr is n when it is not zero, fallback otherwise.
 func chainIntOr(n, fallback int) int {
 	if n == 0 {
 		return fallback

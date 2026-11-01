@@ -12,8 +12,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
-// splitPlannedMembers divides members needed by def into members that must be
-// newly created and members whose existing binding requires actor rebinding.
+// splitPlannedMembers divides planned members into ones to add and ones to
+// swap for a new actor.
 func splitPlannedMembers(members []chainMember, rows []db.ChainMemberRow) (add, swap []chainMember) {
 	have := make(map[string]db.ChainMemberRow, len(rows))
 	for _, m := range rows {
@@ -30,8 +30,8 @@ func splitPlannedMembers(members []chainMember, rows []db.ChainMemberRow) (add, 
 	return add, swap
 }
 
-// overlaySwapBinding mutates an existing local member binding with the newly
-// resolved actor's fields while preserving its identity, round, and logs.
+// overlaySwapBinding mutates a local binding with the new actor's fields,
+// preserving identity, round, and logs.
 func overlaySwapBinding(existing, fresh store.Binding, m chainMember) store.Binding {
 	existing = abandonSession(existing)
 	existing.Builder.StreamSessionID = ""
@@ -47,8 +47,8 @@ func overlaySwapBinding(existing, fresh store.Binding, m chainMember) store.Bind
 	return existing
 }
 
-// overlayServedSwapBinding mutates an existing served member binding with the
-// server's pick for the new actor while preserving server placement and link.
+// overlayServedSwapBinding mutates a served binding with the server's pick,
+// preserving placement and link.
 func overlayServedSwapBinding(existing store.Binding, m chainMember, pick servedPick) store.Binding {
 	existing = abandonSession(existing)
 	existing.Builder.StreamSessionID = ""
@@ -253,10 +253,8 @@ func chainResumeSwapServed(rt Runtime, tx *store.Tx, c db.ChainRow, builder stor
 	return c, tx.ChainPut(c)
 }
 
-// chainResumeSyncMembers detects whether any planned members need to be added
-// or swapped, validates their candidate gating and shapes before writing,
-// overlays swapped bindings in place, creates added bindings, and updates the
-// chain's member rows.
+// chainResumeSyncMembers adds or swaps the planned members the definition now
+// needs, validating candidate gating and shapes before writing anything.
 func chainResumeSyncMembers(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, snap *chainResumeSnapshot) (db.ChainRow, error) {
 	actors := rt.RoleRegistry().WorkflowActors()
 	planned, err := chain.MemberNames(c.Name, def, actors)
