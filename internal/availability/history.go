@@ -47,8 +47,7 @@ type History struct {
 // table that replaced it; nothing writes it and nothing reads it after that, so
 // the tags are the migration's rather than a live wire format.
 
-// Prune returns a new History containing every event no older than
-// HistoryRetainWindow, in order. It does not mutate the receiver's slice.
+// Prune keeps every event no older than HistoryRetainWindow, in order, without mutating the receiver.
 func (h History) Prune(now time.Time) History {
 	cutoff := now.Add(-HistoryRetainWindow)
 	var kept []Event
@@ -60,17 +59,13 @@ func (h History) Prune(now time.Time) History {
 	return History{Events: append([]Event(nil), kept...)}
 }
 
-// Append returns a new History with e added to the end. It performs no
-// deduplication: two observations are two events. It does not mutate the
-// receiver's slice.
+// Append adds e with no deduplication and without mutating the receiver.
 func (h History) Append(e Event) History {
 	cp := append([]Event(nil), h.Events...)
 	return History{Events: append(cp, e)}
 }
 
-// FromEntry converts a ledger entry into the history event it mirrors.
-// A RateLimited entry's Subject is a provider name; a SpawnFailed entry's
-// Subject is a candidate token, whose provider providerOf resolves.
+// FromEntry mirrors a ledger entry: a RateLimited Subject is a provider, a SpawnFailed Subject is a token providerOf resolves.
 func FromEntry(e Entry, providerOf func(token string) string) Event {
 	ev := Event{
 		At:      e.At,
@@ -81,8 +76,7 @@ func FromEntry(e Entry, providerOf func(token string) string) Event {
 	}
 	switch e.Kind {
 	case RateLimited:
-		// A rate-limit subject is a bare group or a group@account key; the
-		// history names the group and, when there is one, the account.
+		// A rate-limit subject is a bare group or a group@account key, named as group and account.
 		group, accountName, ok := account.ParseGateKey(e.Subject)
 		if !ok {
 			group, accountName = e.Subject, ""
@@ -96,9 +90,7 @@ func FromEntry(e Entry, providerOf func(token string) string) Event {
 	return ev
 }
 
-// HourCounts buckets provider's events of kind by local hour in loc,
-// returning a 24-cell count indexed by hour of day. loc is a parameter so
-// tests are timezone-independent; production passes time.Local.
+// HourCounts buckets provider's events of kind by hour in loc. Pure; loc keeps tests timezone-independent.
 func HourCounts(h History, provider string, kind Kind, loc *time.Location) [24]int {
 	var counts [24]int
 	for _, e := range h.Events {
@@ -110,8 +102,7 @@ func HourCounts(h History, provider string, kind Kind, loc *time.Location) [24]i
 	return counts
 }
 
-// BlockedDurations returns At - Since for every Cleared event on provider
-// whose Since is non-zero and not after At, in event order. Pure.
+// BlockedDurations returns At - Since for every valid Cleared event on provider, in order. Pure.
 func BlockedDurations(h History, provider string) []time.Duration {
 	var out []time.Duration
 	for _, e := range h.Events {

@@ -23,22 +23,20 @@ type LimitMatch struct {
 	Parsed bool      // Until came from the stream's own reset rather than the fallback
 }
 
-// durationRe matches "resets in 2h48m52s", "try again in 5 min", "resets in
-// 1d 5h", "retry after 30s" and captures the duration component run.
+// durationRe matches "resets in 2h48m52s" and captures the duration component run.
 var durationRe = regexp.MustCompile(`(?i)(?:resets?|try again|retry)\s+(?:in|after)\s+~?((?:\d+\s*(?:days?|d|hours?|hr|h|minutes?|min|m|seconds?|sec|s)\s*)+)`)
 
 // durationComponentRe pulls one "<number><unit>" component at a time out of the
-// captured run above. Units are checked by first letter (h/m/s/d), so the
-// alternation only needs to avoid a short form swallowing a longer one.
+// captured run above.
 var durationComponentRe = regexp.MustCompile(`(?i)(\d+)\s*(days?|d|hours?|hr|h|minutes?|min|m|seconds?|sec|s)`)
 
 // clockRe matches "resets 7pm", "resets at 23:30", "resets ~00:26".
 var clockRe = regexp.MustCompile(`(?i)resets?\s+(?:at\s+)?~?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?`)
 
 // dateRe matches the absolute-date form codex's weekly limit uses: "try again
-// at Oct 19th, 2026 7:14 PM", "resets on October 3, 2026". The capture groups
-// are, in order: month, day, year (may be empty), hour, minute and am/pm (each
-// may be empty when the line names no time).
+// at Oct 19th, 2026 7:14 PM". The capture groups are, in order: month, day,
+// year (may be empty), hour, minute and am/pm (each may be empty when the line
+// names no time).
 var dateRe = regexp.MustCompile(`(?i)(?:try again|resets?)\s+(?:at|on)\s+~?(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s*,?\s*(\d{4}))?(?:\s*,?\s*(?:at\s+)?(\d{1,2}):(\d{2})\s*(am|pm)?)?`)
 
 // instantRe matches an absolute RFC3339 reset instant, the form muse's quota
@@ -135,7 +133,6 @@ func ResetFromReason(reason string, now time.Time) (time.Time, bool) {
 	return parseReset(sanitize.Text(reason), now)
 }
 
-// matchesAny reports whether any pattern matches line.
 func matchesAny(line string, patterns []*regexp.Regexp) bool {
 	for _, p := range patterns {
 		if p.MatchString(line) {
@@ -145,7 +142,6 @@ func matchesAny(line string, patterns []*regexp.Regexp) bool {
 	return false
 }
 
-// capLine trims line, sanitises it and caps it at 200 runes.
 func capLine(line string) string {
 	runes := []rune(sanitize.Text(strings.TrimSpace(line)))
 	if len(runes) > 200 {
@@ -202,7 +198,6 @@ func parseInstantReset(line string, now time.Time) (time.Time, bool) {
 	return windowedReset(t, now, limitWindowDated)
 }
 
-// parseDurationReset handles the "resets in <run>" form.
 func parseDurationReset(line string, now time.Time) (time.Time, bool) {
 	m := durationRe.FindStringSubmatch(line)
 	if m == nil {
@@ -333,8 +328,7 @@ func parseClockReset(line string, now time.Time) (time.Time, bool) {
 	return windowedReset(t, now, limitWindowShort)
 }
 
-// parseClockParts parses the optional hour, minute and am/pm groups of the date
-// form. An empty hour means the line named no time: midnight, with ok true.
+// parseClockParts parses the date form's optional time groups, defaulting a missing time to midnight.
 func parseClockParts(hh, mm, ampm string) (hour, minute int, ok bool) {
 	if hh == "" {
 		return 0, 0, true
@@ -353,8 +347,7 @@ func parseClockParts(hh, mm, ampm string) (hour, minute int, ok bool) {
 	return hour, minute, true
 }
 
-// applyMeridiem folds an am/pm suffix into a 24-hour hour. An empty suffix
-// requires an already-24-hour hour.
+// applyMeridiem folds an am/pm suffix into a 24-hour hour; an empty suffix requires an already-24-hour hour.
 func applyMeridiem(hour int, ampm string) (int, bool) {
 	switch strings.ToLower(ampm) {
 	case "am":
@@ -379,8 +372,6 @@ func applyMeridiem(hour int, ampm string) (int, bool) {
 	return hour, true
 }
 
-// monthFromName resolves a month name (or its three-letter prefix) to its
-// time.Month.
 func monthFromName(name string) (time.Month, bool) {
 	key := strings.ToLower(name)
 	if len(key) > 3 {
@@ -390,8 +381,6 @@ func monthFromName(name string) (time.Month, bool) {
 	return m, ok
 }
 
-// windowedReset bounds t to (now, now+window] and returns it in UTC, or ok false
-// when it falls outside.
 func windowedReset(t, now time.Time, window time.Duration) (time.Time, bool) {
 	if !inLimitWindow(t, now, window) {
 		return time.Time{}, false
@@ -418,7 +407,6 @@ const limitWindowDated = 31 * 24 * time.Hour
 // roll to tomorrow stands.
 const clockResetGrace = time.Hour
 
-// inLimitWindow is parseReset's (now, now+max] bound.
 func inLimitWindow(t, now time.Time, max time.Duration) bool {
 	return t.After(now) && !t.After(now.Add(max))
 }

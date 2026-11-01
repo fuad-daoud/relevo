@@ -35,18 +35,9 @@ type OutageMatch struct {
 // alone, so every pattern names the status name or the numeric code, and always
 // in the shape the harness prints them beside.
 var outagePatterns = compileOutage(
-	// The gRPC status name Google-shaped providers print, in either case:
-	// "UNAVAILABLE (code 503)", "upstream unavailable".
 	`\bUNAVAILABLE\b`,
-	// The numeric 5xx the same providers print beside it: "code 503",
-	// "(code: 500)", "code=502".
 	`\bcode[\s:=-]*5\d\d\b`,
-	// A status the line states as one: "HTTP 502", "http/1.1 503",
-	// "status 500", "status_code: 503", and the same inside a raw JSON line
-	// of harness stderr ("status_code":503) -- the one channel that hands a
-	// pattern more than the message text.
 	`\b(?:http/?[\d.]*\s+|status(?:[\s_-]*code)?[\s"':=-]+)5\d\d\b`,
-	// The provider's own words for the class, for a line that names no code.
 	`\b(?:service unavailable|internal server error|bad gateway|gateway timeout)\b`,
 )
 
@@ -85,9 +76,7 @@ func MatchOutage(text string, now time.Time, fallback time.Duration) (OutageMatc
 }
 
 // compileOutage compiles the fixed table once, case-insensitively the way the
-// harness patterns are written. A pattern that somehow does not compile is
-// skipped rather than panicking; the table is a literal, so this cannot fire in
-// production, and it keeps the init total.
+// harness patterns are written; a pattern that does not compile is skipped.
 func compileOutage(patterns ...string) []*regexp.Regexp {
 	compiled := make([]*regexp.Regexp, 0, len(patterns))
 	for _, p := range patterns {

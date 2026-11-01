@@ -7,33 +7,16 @@ import (
 )
 
 // creditPatterns is the credit-exhaustion family a decision point classifies
-// before it calls MatchLimit. The class lives here rather than only in the
-// harness table because it is not harness-specific: every provider refuses a
-// request it cannot pay for in its own words, and a candidate has no balance of
-// its own to declare.
-//
-// Two of these are the harness's own opencode limit patterns -- insufficient
-// credits/quota and requires more credits -- restated here so the class is
-// decided without consulting the candidate set, and so it can be extended
-// without editing a harness table that other paths also read. The rest are the
-// provider sentences the class is known to arrive in. Keeping the two tables
-// separate is deliberate: a limit pattern is timed, a credit pattern is not, so
-// a shared entry could only ever be one or the other.
+// before it calls MatchLimit. The class is not harness-specific: every provider
+// refuses a request it cannot pay for in its own words. Keeping the two tables
+// separate is deliberate: a limit pattern is timed, a credit pattern is not.
 //
 // They key on what actually reaches a scan. transcript.LimitLines is the
-// channel, and it hands a pattern the harness's own message TEXT -- an error
-// event's message, a failed result's error text, or a non-JSON line of harness
-// stderr -- so a pattern here matches a sentence, never a structured field.
+// channel, and it hands a pattern the harness's own message TEXT, so a pattern
+// here matches a sentence, never a structured field.
 var creditPatterns = compileOutage(
-	// The two patterns internal/harness already carried for opencode, verbatim
-	// in substance. Insufficient quota is included with credits: a provider
-	// that says the balance will not cover the request has said the balance is
-	// short, whether or not it uses the word credit.
 	`\binsufficient (credits?|quota)\b`,
 	`\brequires more credits\b`,
-	// The provider sentences that name the balance being spent down rather
-	// than a quota window being reached. The seed for this class named all
-	// three of these; the last two had no pattern anywhere in the tree.
 	`\bcredits exhausted\b`,
 	`\bcan only afford\b`,
 )

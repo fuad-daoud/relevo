@@ -49,7 +49,6 @@ type AllowanceObservation struct {
 	HasWeekly        bool
 }
 
-// allowanceKey is the kv row the allowance document lives in.
 const allowanceKey = "muse_allowance"
 
 // LoadAllowance reads the allowance document from the store database's kv row.
@@ -73,7 +72,6 @@ func LoadAllowance(kv db.KV) (Allowance, error) {
 	return a, nil
 }
 
-// SaveAllowance writes the whole allowance document to the kv row.
 func SaveAllowance(kv db.KV, a Allowance) error {
 	data, err := json.MarshalIndent(a, "", "  ")
 	if err != nil {
@@ -115,7 +113,6 @@ func (a Allowance) Observe(key string, o AllowanceObservation) Allowance {
 	return out
 }
 
-// usable reports whether the observation carries any dimension worth storing.
 func (o AllowanceObservation) usable() bool {
 	return o.HasWindow && o.WindowResetsAtMS > 0 || o.HasWeekly && o.WeeklyResetsAtMS > 0
 }
@@ -128,8 +125,7 @@ func allowanceDimGates(used float64, resetsAtMS, nowMS int64) bool {
 	return resetsAtMS > 0 && nowMS < resetsAtMS && used >= AllowanceThreshold
 }
 
-// allowanceEntryGates reports whether either dimension of one stored record
-// gates a pick now.
+// allowanceEntryGates reports whether either dimension of one stored record gates a pick now.
 func allowanceEntryGates(e AllowanceEntry, nowMS int64) bool {
 	return allowanceDimGates(e.WindowUsed, e.WindowResetsAtMS, nowMS) ||
 		allowanceDimGates(e.WeeklyUsed, e.WeeklyResetsAtMS, nowMS)
@@ -175,12 +171,7 @@ func allowancePct(used float64) string {
 	return strconv.FormatFloat(used, 'f', -1, 64)
 }
 
-// allowanceGates is one AllowanceExhausted gate per muse candidate whose
-// stored allowance is exhausted. A candidate with no account pool reads its
-// bare group record; one with a pool is gated only once every login of the
-// pool is gated, the group@account partial-pool rule, so a gate on one login
-// leaves the candidate pickable on the other. Nothing is recorded, and a
-// non-muse candidate never gates: no allowance events exist for it.
+// allowanceGates gates a muse candidate only on exhausted allowance: every pool login (or the bare group record) must gate, nothing is recorded, and non-muse never gates.
 func allowanceGates(d Deps) []Gate {
 	if d.Candidates == nil || d.Gates == nil {
 		return nil
@@ -219,8 +210,6 @@ func allowanceGates(d Deps) []Gate {
 	return out
 }
 
-// allowanceRefGates reports whether one muse candidate's stored allowance
-// gates it, with the records the refusal names.
 func allowanceRefGates(doc Allowance, accounts account.Set, r candidate.Ref, nowMS int64) ([]AllowanceEntry, bool) {
 	pool := accounts.Pool(account.Kind(r.Harness), r.Provider)
 	if len(pool) == 0 {

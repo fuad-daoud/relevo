@@ -25,10 +25,10 @@ const gatesValueMax = 64 << 10
 // one table, and no config section is named after a document.
 func stampKey(subject string) string { return GatesName + "/" + subject }
 
-// stampedSubjects is the write-stamp subjects one ledger entry claims: its own
-// subject when the entry is a rate limit, and nothing when it is a spawn
-// failure. A spawn failure is this machine's observation of its own binaries
-// failing to start, so there is nothing on another machine for it to say.
+// stampedSubjects claims an entry's own subject for a rate limit and nothing
+// for a spawn failure: a spawn failure is this machine's observation of its
+// own binaries failing to start, so there is nothing on another machine for
+// it to say.
 func stampedSubjects(e Entry) []string {
 	if e.Kind != RateLimited {
 		return nil
@@ -37,16 +37,12 @@ func stampedSubjects(e Entry) []string {
 }
 
 // GatesDoc is the gates document as a synclog document: one key per ledger
-// subject, one value per subject's live rate-limit entries.
-//
-// A spawn failure is not in it. It says this binary could not start a
-// candidate here -- a missing executable, a local auth failure, a crash on
-// this host -- and none of that is true of another machine, so it stays in
-// this machine's ledger and never leaves it. A rate limit is the opposite: a
-// provider's quota is the provider's, so every machine gating the same
-// provider gates the same candidates, which is what makes it worth sharing. An
-// entry this build does not understand is local for the reason the ledger keeps
-// it raw: this machine cannot act on it and must not erase it.
+// subject, one value per subject's live rate-limit entries. A spawn failure
+// is not in it: a provider's quota is the provider's, so every machine gating
+// the same provider gates the same candidates, which is what makes a rate
+// limit worth sharing. An entry this build does not understand stays local
+// for the reason the ledger keeps it raw: this machine cannot act on it and
+// must not erase it.
 //
 // It is bound to the machine-local file rather than to a handle chosen by the
 // caller, because the ledger row, the per-subject write stamps and the
@@ -56,8 +52,8 @@ type GatesDoc struct {
 	now   func() time.Time
 }
 
-// OpenGates binds the gates document to the machine-local file its ledger lives
-// in. now is the clock Items prunes against; nil means time.Now.
+// OpenGates binds the gates document to its ledger's machine-local file; a
+// nil now means time.Now.
 func OpenGates(local *db.DB, now func() time.Time) *GatesDoc {
 	if now == nil {
 		now = time.Now
@@ -65,7 +61,6 @@ func OpenGates(local *db.DB, now func() time.Time) *GatesDoc {
 	return &GatesDoc{local: local, now: now}
 }
 
-// Name is the document's name, the word an entry's table carries after `doc:`.
 func (d *GatesDoc) Name() string { return GatesName }
 
 // Items returns the document as one value per subject this machine holds a live
@@ -83,7 +78,6 @@ func (d *GatesDoc) Items() (map[string]json.RawMessage, error) {
 	return gateItems(l.Prune(d.now()))
 }
 
-// gateItems is Items over an already-loaded and already-pruned ledger.
 func gateItems(l Ledger) (map[string]json.RawMessage, error) {
 	bySubject := map[string][]Entry{}
 	for _, e := range l.Entries {
@@ -140,10 +134,8 @@ func (d *GatesDoc) applyIn(kv db.KV, key string, value json.RawMessage) error {
 	return SaveLedger(kv, l)
 }
 
-// keepSubject is the ledger without the subject's rate-limit entries. Every
-// other entry stands: this machine's own spawn failures, and the entries whose
-// kind or source this build does not read, which is why a clear removes the
-// subject's known entries and nothing else.
+// keepSubject drops the subject's rate-limit entries and nothing else: this
+// machine's own spawn failures and entries this build does not read stand.
 func keepSubject(l Ledger, subject string) Ledger {
 	kept := make([]Entry, 0, len(l.Entries))
 	for _, e := range l.Entries {
@@ -155,27 +147,18 @@ func keepSubject(l Ledger, subject string) Ledger {
 	return Ledger{Entries: kept, Other: l.Other}
 }
 
-// clearSubject is the ledger with the subject's rate-limit entries gone.
 func clearSubject(l Ledger, subject string) Ledger { return keepSubject(l, subject) }
 
-// replaceSubject is keepSubject with the subject's rate-limit entries set to
-// the arriving ones, in the order they arrived.
 func replaceSubject(l Ledger, subject string, entries []Entry) Ledger {
 	kept := keepSubject(l, subject)
 	return Ledger{Entries: append(kept.Entries, entries...), Other: l.Other}
 }
 
-// decodeGatesValue reads one subject's arriving entries and refuses every shape
-// another machine could put there that this machine has no reader for.
-//
-// Each refusal answers its own attack. A kind other than a rate limit is an
-// entry this build has no rule for, and applying it on this build's terms would
-// be acting on a peer's rule without reading it. A source this build does not
-// read is the same refusal one level down: the ledger would have kept it raw,
-// and a raw entry is not a gate. A subject that is not the key is an entry
-// aimed at some other subject arriving under this one's name, which would gate a
-// provider the writer never named. A zero time, or an until before its at, is a
-// gate that would never be live or would already be over when it landed.
+// decodeGatesValue reads one subject's arriving entries and refuses every
+// shape this machine has no reader for: a kind other than a rate limit, a
+// source this build does not read (the ledger would have kept it raw, and a
+// raw entry is not a gate), a subject that is not the key, and a zero time or
+// an until before its at.
 func decodeGatesValue(subject string, value json.RawMessage) ([]Entry, error) {
 	if len(value) > gatesValueMax {
 		return nil, fmt.Errorf("gates %s: value is %d bytes, over the %d byte cap: %w",
@@ -244,8 +227,7 @@ func (d *GatesDoc) ItemWriteStamp(key string) (synclog.Stamp, bool, error) {
 	return stamp, err == nil, err
 }
 
-// ItemWriteStampIn is ItemWriteStamp read inside the importer's transaction,
-// which is how an arriving entry is weighed against a write made here.
+// ItemWriteStampIn is ItemWriteStamp inside the importer's transaction.
 func (d *GatesDoc) ItemWriteStampIn(tx *db.Tx, key string) (synclog.Stamp, bool, error) {
 	text, ok, err := tx.ConfigWriteStamp(stampKey(key))
 	if err != nil || !ok {

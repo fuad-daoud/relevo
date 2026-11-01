@@ -15,7 +15,7 @@ import (
 // is the window across the fleet. It returns the unchanged History and
 // LatencyHistory shapes, so HourCounts, BlockedDurations, Summary, StatsInputs,
 // formatHistory and peakText need no signature change: they see the same values
-// they always did, assembled from rows rather than from one rewritten document.
+// assembled from rows.
 //
 // What a read must never become is an input to a decision. Nothing here reaches
 // a pick: resolveCandidate and resolveRole read availability.Gates, which is the

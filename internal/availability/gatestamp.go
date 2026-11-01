@@ -69,10 +69,6 @@ func saveLedger(d Deps, l Ledger, subjects []string) error {
 	return nil
 }
 
-// syncNow asks for an attempt now rather than at the end of the export
-// debounce. A gate a person just recorded is worth the other machines seeing in
-// seconds; a nil hook is the normal case for a caller with no daemon behind it,
-// and then the next ordinary trigger exports it.
 func syncNow(d Deps) {
 	if d.SyncNow != nil {
 		d.SyncNow()

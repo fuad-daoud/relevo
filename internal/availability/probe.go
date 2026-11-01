@@ -110,7 +110,8 @@ func probeFailure(d Deps, ref string, c candidate.Candidate, host, text string) 
 // restrictive tier the harness can honour (probeTier), in a fresh temp
 // directory that is `git init`ed like a real round's worktree, because codex
 // refuses to run outside a git repository, and measures how long it takes to
-// produce its first model output. Failures are data: they come back in Err,
+// produce its first model output. The git call stays outside the timed window.
+// Failures are data: they come back in Err,
 // never as a returned error, so one broken candidate cannot hide the rest of
 // the listing.
 func ProbeCandidate(ctx context.Context, d Deps, x LineExec, c candidate.Candidate, host string) ProbeResult {
@@ -140,9 +141,6 @@ func ProbeCandidate(ctx context.Context, d Deps, x LineExec, c candidate.Candida
 	pctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 
-	// codex refuses to run outside a git repository, so the probe runs in a
-	// fresh git repo, like a real round's worktree. The git call stays outside
-	// the timed window: neither TTFTMS nor TotalMS includes it.
 	if err := x.Run(pctx, dir, []string{"git", "init", "-q"}, nil); err != nil {
 		return probeFailure(d, ref, c, host, "git init: "+err.Error())
 	}
@@ -150,7 +148,6 @@ func ProbeCandidate(ctx context.Context, d Deps, x LineExec, c candidate.Candida
 	return probeMeasure(pctx, d, x, c, host, dir, argv)
 }
 
-// probeMeasure runs the prepared argv and turns its output into a result.
 func probeMeasure(ctx context.Context, d Deps, x LineExec, c candidate.Candidate, host, dir string, argv []string) ProbeResult {
 	ref := c.Ref().String()
 	start := d.Now()
@@ -202,8 +199,6 @@ func probeMeasure(ctx context.Context, d Deps, x LineExec, c candidate.Candidate
 	return r
 }
 
-// exitWord is the exit-status head of a run error: everything up to its first
-// colon ("exit status 1"), or the whole text when it has none.
 func exitWord(err error) string {
 	s := err.Error()
 	if i := strings.Index(s, ":"); i >= 0 {
@@ -212,8 +207,7 @@ func exitWord(err error) string {
 	return s
 }
 
-// probeErrText bounds an error's text to the 300 bytes a sample carries, so one
-// pathological harness cannot bloat the history file.
+// probeErrText bounds an error's text to 300 bytes, so one pathological harness cannot bloat the history file.
 func probeErrText(s string) string {
 	if len(s) <= 300 {
 		return s
@@ -281,8 +275,7 @@ func recordLatency(d Deps, r ProbeResult) {
 	}
 }
 
-// ProbeNameWidth is the column width FormatProbe is given: the longest name
-// among the results about to print. An empty slice is width 0.
+// ProbeNameWidth is the longest name's width; an empty slice is width 0.
 func ProbeNameWidth(names []string) int {
 	width := 0
 	for _, name := range names {
