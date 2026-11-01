@@ -161,12 +161,12 @@ unacted before relevo labels it `stale`; absent defaults to four hours,
 and must be `> 0` when present. `scan_patterns` is an optional list of extra
 regular expressions appended to relevo's built-in instruction-shaped scan list;
 each pattern must compile. `gate` configures the default acceptance command
-(see [Gate](#gate) below): `default` is the command a binding gets when it
+(see [Gate](rounds.md#gate) below): `default` is the command a binding gets when it
 does not set `--gate` or `--no-gate` itself, absent or `""` meaning no gate;
 `timeout_ms` bounds one gate run, absent defaulting to ten minutes, and must
 be `> 0` when present. `regate` is how many automatic repair rounds a new
 binding may open after a failing gate (see [Repair
-rounds](../README.md#repair-rounds) below), absent or `0` meaning none, and must be
+rounds](rounds.md#repair-rounds) below), absent or `0` meaning none, and must be
 `>= 0` when present.
 
 `classify` configures an optional classifier (TypeSafe's Jev model) to run

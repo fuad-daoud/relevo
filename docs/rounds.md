@@ -300,3 +300,148 @@ URL stored whole), and which
 binding and round it was forked from. None of this
 changes what you see day to day; it exists for `relevo history`, the ui's
 dashboard and the database below.
+
+## Gate
+
+A binding can carry a **gate command**: a shell line relevo runs in the
+worktree the instant the builder's completion marker appears, against the
+tree exactly as the builder left it, the same moment the round's diff is
+captured. The gate never decides anything -- it annotates. The round still
+closes on the marker, the report is still delivered, and the human still
+judges the diff; the gate only adds a `gate=<result>` note and a `Gate:`
+line to the payload, plus a structured record on the report's log entry.
+
+While the gate runs, the round is held: nothing else acts on the
+builder -- no nudge, no "exited without a report" handling, no round-timeout
+halt -- until the gate finishes or times out.
+
+Configure it with `--gate '<cmd>'` on `relevo bind` or `relevo bind
+--worktree`; a repository can carry its own gate in the `repos` config
+section (`relevo config repo set gate <cmd>`, keyed by the repository's
+identity); `--no-gate` opts a binding out of both lower tiers. The flags
+resolve in this order:
+
+1. `--gate <cmd>` / `--no-gate` -- `--no-gate` wins over everything;
+2. the repository's own `gate` setting;
+3. the policy section's `gate.default`;
+4. no gate.
+
+The repository tier sits behind the role rule: a role whose check flag is
+off (a reader round) takes no gate even when its repository sets one, and
+`--gate` on a reader round is still refused. A `bind --resume` keeps the
+stored command. `bind`, `bind --worktree`, `bind --server` and `chain` name
+which tier supplied the command -- `gate: make check (--gate)`, `(repo
+setting)`, `(policy.gate.default)` -- and `chain` prints the same
+parenthetical on its `check:` line.
+
+A machine whose `repos` section is empty reads no git for this at all, so
+a machine that never used the feature pays nothing.
+
+The gate's full output -- and the supervisor's exit trailer -- lives at
+`NNN-gate.log` next to the round's prompt and report. Its result is one of
+`pass`, `fail`, `timeout`, or `error` (the last for a gate that could not
+start, or whose exit code could not be read):
+
+```
+Gate: make check -- PASS (exit 0, 1m40s). Output: /path/to/003-gate.log
+```
+
+A failing gate's payload line also carries the last few non-empty lines of
+the log, so the MasterMind sees why without opening the file:
+
+```
+Gate: make check -- FAIL (exit 2, 1m40s). Output: /path/to/003-gate.log
+  ok  	github.com/example/pkg	0.01s
+  FAIL	github.com/example/pkg2	0.02s
+  ...
+```
+
+`relevo status` shows `gating <age>` in place of the builder's own status
+while the gate is running, and `relevo show --log` appends ` gate=<result>` to the
+round's report entry.
+
+A round's report entry also carries its **builder session**, `builder_session`
+in the JSON that `relevo show --log --json` and `relevo show --json` print: the harness
+session that built the closed round, so a report read two rounds later can
+still name the session that wrote it. It is the session the round's stream
+announced in its first event. It is absent when the harness named none -- relevo
+never guesses. The one-line form appends ` session=<kind>:<id8>`.
+
+### Verify
+
+`relevo send --verify` -- or the policy section's `"verify": {"default": true}` -- marks
+the round: when it closes, **after the gate** so the reviewer sees the gate's
+own output, relevo runs a read-only **reviewer** over the finished round and
+records its verdict. `--no-verify` overrides the policy default for one send;
+the two flags are exclusive.
+
+The reviewer is a headless, one-shot consult started at round close. Its
+findings are its final message rather than a file, and it runs in a **throwaway
+worktree**: relevo creates a detached
+worktree at the builder's HEAD under
+`~/.local/state/relevo/.worktrees/.verify/<name>-<NNN>`, launches the reviewer
+there, and removes the tree once the consult reaches any terminal state. That
+isolation is what lets the reviewer run tests without touching the builder's
+tree or the MasterMind's checkout, and it is why the reviewer consult's tier is
+the policy section's `tier.reviewer` when set, else the candidate's, else **yolo** --
+for this consult only, in this tree only. The reviewer's agent definition still
+tells it not to edit; relevo cannot observe writes.
+
+The question names the round's prompt, report, diff and gate log, and asks the
+reviewer to end its findings with exactly this block:
+
+```
+verdict: accepted | rejected
+reasons: ["..."]
+```
+
+relevo parses the last ` ```relevo ` block for those two lines. Anything else --
+no block, an unreadable one, a verdict that is neither word -- is recorded as
+`unstructured` and delivered as prose for the MasterMind to read. `verdict` and
+`reasons` ride on the findings entry, and the newest verdict shows in
+`relevo status` as `verdict: rejected (2 reasons)` for as long as it judges the
+round just closed.
+
+**A verdict decides nothing.** `rejected` does not reopen the round, stop the
+binding, or summon a human: the report is delivered exactly as it always was,
+and the human still judges. `relevo wait --verdict` is a follow-up.
+
+A round whose reviewer could not be started -- no reviewer candidate, every one
+of them gated, no runner, a worktree that could not be created -- closes
+normally with one `verify skipped: <why>` note in the log. A crashed relevo can
+leave a tree under `.worktrees/.verify/`; remove it with
+`git worktree remove <path>`.
+
+### Repair rounds
+
+A failing gate does nothing on its own: the round closes, the report goes to
+the MasterMind, and a human judges the diff. A binding can opt into a **repair
+round** instead, with `--regate N` on `relevo bind`
+or `relevo send`, or with `"regate": N` under `gate` in the policy section (the
+default for new bindings). `N` is
+how many repair rounds relevo may open after failing gates; `0` -- the default
+-- turns the loop off, and `--regate` on a binding with no gate is accepted and
+inert, since a binding with no gate never fails one.
+
+When a round closes with `gate=fail` and the budget is not yet spent, relevo
+stages round N+1 in the same tick, after the report has been queued. Its prompt
+is written for the builder rather than by the MasterMind: it names the failed
+round's acceptance check and the original plan, and carries the last 200
+non-empty lines of `NNN-gate.log`, instructing the builder to fix ONLY what the
+check reports and to halt and report if no code change can fix it. The hand-off
+is exactly a send's -- a fresh builder process -- and the new round's prompt
+entry is logged with `repair k/M`.
+
+Two bounds end the loop with `NEEDS YOU` instead of another repair round:
+
+- the budget is spent: `gate failed after M repair round(s) (regate N)`;
+- the new failure's normalised output equals the previous failure's -- the
+  builder changed nothing that mattered -- reported as `gate output unchanged
+  after repair`. Timestamps, durations, large integers, hex digests and `/tmp`
+  paths are stripped before the two are compared.
+
+The failed round stays closed either way: its own report, diff and `gate=fail`
+stand, and relevo never writes or removes `NNN-done`. A passing gate or a human
+`relevo send` resets the count, so the next failure gets a fresh budget.
+Headless bindings are the intended case -- the server runs the same reconcile,
+so a remote headless binding gets repair rounds too.

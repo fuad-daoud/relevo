@@ -602,3 +602,54 @@ so a MasterMind agent can never fall into one.
 And because a popup takes focus the instant it opens, `Enter` on a binding
 that is not `DONE` asks first -- `mark webshop done? it is ACTIVE in round 5`
 -- and only `y` proceeds; any other key returns to the list.
+
+## Display states
+
+`relevo status` collapses the binding's internal state into four:
+
+- **ACTIVE** — someone is working (MasterMind or builder), nothing needs a human
+  yet.
+- **NEEDS YOU** — relevo has stopped and a person must act. Covers a dead
+  builder process, a round that ran past its timeout, and a binding that hit
+  its round cap.
+- **PAUSED** — the binding's worktree was released between rounds, keeping the
+  branch and the round log; nothing sets this state today, but a binding a
+  pre-housekeeping relevo left paused still reads as PAUSED, and
+  `relevo bind --resume` restores it. Nothing needs a human, and
+  `relevo unbind --done` leaves it alone.
+- **DONE** — the MasterMind declared the work verified via `relevo done`, and
+  relaying has stopped deliberately, not because anything went wrong: unlike
+  NEEDS YOU, nothing needs a human here. `Reconcile` returns immediately for
+  a done binding — no reports are queued and no timeouts are flagged. The binding and its round log stay in the database (`relevo show <name> --log`
+  still works as an audit trail) until `relevo unbind` or `relevo unbind --done` archives or removes them;
+  a clean worktree is released at `done` so the branch is free to review.
+
+## Recovering a broken binding
+
+If the builder's process dies without a report, relevo switches to the next
+candidate or, when none serves the binding, goes `NEEDS YOU` — see "Headless
+builders". A binding whose builder is gone between rounds is `BROKEN` and
+relaying stops until you point it at a new builder:
+
+```bash
+relevo bind --resume --name N --rebind                                       # start a fresh builder, picked by the actor's order
+relevo bind --resume --name N --candidate agy/google/gemini-3.8-flash-high     # start a fresh builder, naming it
+```
+
+The binding keeps its name, round number, round log, working directory, and diff
+baseline. The replacement builder is started with its agent on the launch line,
+like any builder relevo spawns. With `--rebind` the candidate is resolved through
+the builder actor's candidate list and the ledger, and the pick is logged, exactly as a fresh
+bind with `--candidate` omitted. Relevo does not automatically re-send the current
+prompt: it prints the `relevo send` command pointing at the staged prompt so you
+can hand over the round when ready.
+
+If only the MasterMind moved or restarted, `relevo bind --resume --name N` re-points
+the MasterMind without touching the builder. If you want to start over from scratch,
+use `relevo unbind N` and bind fresh.
+
+A headless binding is never `BROKEN` for lack of a process: between rounds
+there is none. If its process died mid-round the daemon already switched or
+halted it (see "Headless builders"). To move a binding to a fresh process by
+hand, `relevo send` the staged prompt again once `relevo status` shows the
+builder `exited`.
