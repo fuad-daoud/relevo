@@ -14,24 +14,19 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// ErrNoCandidates reports that no candidates are configured.
 var ErrNoCandidates = errors.New("no candidates configured")
 
-// ErrRoleNotServed reports that no configured candidate serves the requested role.
 var ErrRoleNotServed = errors.New("no candidate serves actor")
 
-// ErrAmbiguousCandidate reports that multiple candidates serve the requested role and none was specified.
 var ErrAmbiguousCandidate = errors.New("more than one candidate serves actor")
 
-// ErrUnknownRole reports a role that is not in the known role table.
 var ErrUnknownRole = errors.New("unknown actor")
 
 // ErrCandidateCannotRun reports an explicitly named candidate refused because
 // it is missing something the actor needs to start (role files or a skill).
 var ErrCandidateCannotRun = errors.New("the named candidate cannot run this actor")
 
-// ErrAllGated reports that every candidate serving the requested role is
-// currently gated by the ledger, and no token was named to bypass the check.
+// ErrAllGated is the omitted-token refusal when every serving candidate is gated.
 var ErrAllGated = errors.New("every candidate serving the actor is gated")
 
 // How names the rule that picked a Resolution's candidate.
@@ -67,14 +62,13 @@ type Skip struct {
 	Off bool
 }
 
-// Resolution is what Resolve picked and why. T3 records it in the
-// binding's log; T4 renders it in `relevo config`.
+// Resolution is what Resolve picked and why, recorded in the
+// binding's log and rendered in `relevo config`.
 type Resolution struct {
 	Candidate candidate.Candidate
 	How       How
-	// Account names the login of the candidate's pool the round draws from,
-	// or "" on a host with no accounts. It rides into the pick and switch
-	// notes and onto the binding.
+	// Account is the login of the candidate's pool the round draws from,
+	// or "" on a host with no accounts.
 	Account string
 	// Position is the candidate's 1-based index in order[role] when
 	// How == HowOrder, or 0 otherwise.
@@ -104,13 +98,12 @@ type Resolution struct {
 
 	// Placement is where the create landed, and every placement it passed
 	// over on the way. The zero value means the actor named no preference:
-	// nothing was probed, and the notes and the pick log entry stay exactly
-	// as they were before placement existed.
+	// nothing was probed, and the PlacementClause renders nothing.
 	Placement PlacementResolution
 
 	// Gate is the acceptance check the binding resolved and the tier that
-	// supplied it. The zero value means no gate: the command is empty, so
-	// the printed line reads "gate: none" whatever the absence came from.
+	// supplied it. The zero value means no gate: the printed line reads
+	// "gate: none".
 	Gate GateResolution
 }
 
@@ -135,10 +128,8 @@ func SkipsFor(gates []availability.Gate, token string) []Skip {
 	return out
 }
 
-// GatesForRole keeps every gate that applies to role: an unscoped gate
-// (Role == "") and the ones scoped to role itself. A roles-missing gate for
-// another role must neither refuse nor skip this role's picks. It is
-// pure and returns a new slice.
+// GatesForRole keeps every gate that applies to role, so a roles-missing
+// gate for another role neither refuses nor skips this role's picks.
 func GatesForRole(gates []availability.Gate, role string) []availability.Gate {
 	out := make([]availability.Gate, 0, len(gates))
 	for _, g := range gates {
@@ -149,8 +140,7 @@ func GatesForRole(gates []availability.Gate, role string) []availability.Gate {
 	return out
 }
 
-// skipText renders one Skip as "<token> (<kind> <until>)". An off skip renders
-// as "<token> (off)". name maps every token before it is printed: identity for
+// skipText renders one Skip, naming every token through name: identity for
 // the stored pick note, Set.NameOf for the line a human reads.
 func skipText(s Skip, name func(string) string) string {
 	if s.Off {
@@ -160,9 +150,8 @@ func skipText(s Skip, name func(string) string) string {
 }
 
 // UniqStrings drops later duplicates, keeping first occurrences in order.
-// Gate texts are de-duplicated at render time only: the ledger keeps
-// every `relevo gate <token>` entry and Resolve yields one Skip per
-// gate, but a row or a pick line says each distinct text once.
+// Gate texts de-duplicate at render time only: the ledger keeps every
+// entry, but a row or pick line says each distinct text once.
 func UniqStrings(in []string) []string {
 	if len(in) == 0 {
 		return in
@@ -186,17 +175,13 @@ func UniqStrings(in []string) []string {
 // it refuses only when everything serving the role is gated, or when
 // nothing is ordered and several serve. It is pure and deterministic: it
 // takes gates as a value and never opens the ledger itself.
-//
-// It is the legacy registry's resolver: ResolveRole over the derivation of
-// set and pol.
 func Resolve(set *candidate.Set, pol policy.Policy, gates []availability.Gate, token, role string, picks ...AccountPick) (Resolution, error) {
 	return ResolveRole(LegacyRegistry(set, pol), set, gates, token, role, picks...)
 }
 
 // LegacyRegistry is the registry derived from candidates.json and
-// policy.json, the behaviour every path had before roles.json. It is
-// roles.Build with no file, which never errors in legacy mode, so the error
-// is discarded.
+// policy.json: roles.Build with no file, which never errors in legacy mode,
+// so the error is discarded.
 func LegacyRegistry(set *candidate.Set, pol policy.Policy) *roles.Registry {
 	reg, _ := roles.Build(nil, set, pol)
 	return reg
@@ -234,8 +219,7 @@ func PickFor(d Deps) AccountPick {
 
 // withAccount fills the resolution's account: the first login of the chosen
 // candidate's harness and provider that no live gate covers. A host with no
-// accounts, or a decision that chose no candidate, is returned unchanged, so
-// no account means exactly the previous behaviour.
+// accounts, or a decision that chose no candidate, is returned unchanged.
 func withAccount(res Resolution, picks ...AccountPick) Resolution {
 	if len(picks) == 0 || len(picks[0].Set) == 0 || res.How == "" {
 		return res
@@ -377,7 +361,6 @@ func orderedRole(reg *roles.Registry, set *candidate.Set, gates []availability.G
 	return allGated(role, skipped)
 }
 
-// offSkip is the skip recorded for an off entry: it renders as "<token> (off)".
 func offSkip(token string) Skip { return Skip{Token: token, Off: true} }
 
 // RoleSectionText names the config section a file-mode role's candidates live
@@ -423,8 +406,8 @@ func allGated(role string, skipped []Skip) (Resolution, error) {
 	return Resolution{}, fmt.Errorf("every candidate serving %q is gated: %s; %s: %w", role, strings.Join(UniqStrings(texts), ", "), allGatedNext(waits, real, missing), ErrAllGated)
 }
 
-// allGatedNext is the way out of an all-gated pick. A missing skill is neither
-// bypassed by naming the candidate nor cleared by a gate: it is installed.
+// allGatedNext names the way out of an all-gated pick: a missing skill is
+// neither bypassed by naming the candidate nor cleared by a gate.
 func allGatedNext(waits, real, missing bool) string {
 	var parts []string
 	if waits || real || !missing {
@@ -442,9 +425,8 @@ func allGatedNext(waits, real, missing bool) string {
 	return strings.Join(parts, ", or ")
 }
 
-// identityName leaves every token as it is. It is what ExplainResolution
-// passes, so the stored KindPick note keeps every candidate token while the
-// rendering takes a name mapping.
+// identityName leaves every token as it is, so the stored KindPick note
+// keeps tokens while rendering takes a name mapping.
 func identityName(token string) string {
 	return token
 }
@@ -490,8 +472,7 @@ func explainResolution(role string, res Resolution, name func(string) string) st
 		out += "; gated: " + strings.Join(UniqStrings(texts), ", ")
 	}
 
-	// An explicitly named candidate that is off runs anyway; the note says so,
-	// printed with the gated candidate's own note.
+	// An explicitly named candidate that is off runs anyway; the note says so.
 	if res.OffNote != "" {
 		out += "; " + res.OffNote
 	}
@@ -527,7 +508,7 @@ func PlacementClause(p PlacementResolution) string {
 // ExplainResolution is the one line that says what was picked and why.
 // The pick log entry, the stderr line after a spawn, and `relevo config`
 // all render from it, so a pick the mastermind reads in `relevo log` is
-// word-for-word what bind printed (spec 1 principle 1). It names every
+// word-for-word what bind printed. It names every
 // candidate by its token: stored notes and their parsers are unchanged by A1.
 func ExplainResolution(role string, res Resolution) string {
 	return explainResolution(role, res, identityName)
@@ -536,7 +517,7 @@ func ExplainResolution(role string, res Resolution) string {
 // PickText is ExplainResolution for a line a human reads: every candidate is
 // named by its short name, or by its token when the set does not hold it.
 // The stored KindPick note keeps ExplainResolution, so
-// `relevo log` and the outcome and stats parsers read today's words.
+// `relevo log` and the outcome and stats parsers read the same words.
 func PickText(role string, res Resolution, set *candidate.Set) string {
 	return explainResolution(role, res, set.NameOf)
 }
@@ -544,7 +525,7 @@ func PickText(role string, res Resolution, set *candidate.Set) string {
 // PickEntry is the log record of one resolution. Confirmed and bound for
 // the mastermind so it is never mistaken for an undelivered payload; the
 // note is ExplainResolution, so `relevo log` reads exactly what bind
-// printed (spec 3.2, 4.4).
+// printed.
 func PickEntry(now time.Time, round int, role string, res Resolution) store.LogEntry {
 	return store.LogEntry{
 		TS: now.UTC(), Round: round, Direction: store.DirToMasterMind,

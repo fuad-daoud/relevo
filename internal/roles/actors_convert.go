@@ -9,9 +9,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 )
 
-// FromActors converts the agents and actors sections into today's File,
-// one row per actor, so every consumer of *Registry keeps working
-// unchanged.
+// FromActors converts the agents and actors sections into a File, one row
+// per actor, so every consumer of *Registry keeps working unchanged.
 //
 // Errors wrap ErrBadRoles, so config.Load handles them exactly as it
 // treats a bad roles file. The warnings name every agents entry no actor uses.
@@ -37,7 +36,6 @@ func FromActors(agents map[string]AgentEntry, actors map[string]Actor) (*File, [
 	return &File{Rows: rows, Source: SourceActors}, warnings, nil
 }
 
-// rowFor builds one actor's Row.
 func rowFor(name string, actor Actor, agents map[string]AgentEntry) (Row, error) {
 	shape, defs, err := agentFor(actor.Agent, agents)
 	if err != nil {

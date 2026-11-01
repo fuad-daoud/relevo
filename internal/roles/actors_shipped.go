@@ -2,8 +2,7 @@ package roles
 
 import "github.com/fuad-daoud/relevo/internal/agentsrc"
 
-// ShippedAgent is one agent relevo ships: its name, its shape and output
-// label, and the helper agents it requires.
+// ShippedAgent is one agent relevo ships.
 type ShippedAgent struct {
 	Name     string
 	Shape    agentsrc.Shape

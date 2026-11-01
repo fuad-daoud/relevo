@@ -1,6 +1,3 @@
-// Package roles parses the agents and actors config sections and converts
-// them into today's File, so every consumer of *Registry keeps working
-// unchanged.
 package roles
 
 import (
@@ -28,7 +25,7 @@ var ErrBadActors = errors.New("bad actors")
 // agentNamePattern.
 var agentKeyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
-// actorNamePattern is the shape of an actor name: today's role-name pattern
+// actorNamePattern is the shape of an actor name: the role-name pattern
 // (internal/roles/file.go).
 var actorNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
@@ -76,8 +73,6 @@ type Entry struct {
 	Off       bool
 }
 
-// MarshalJSON writes an on entry as its candidate string and an off entry as
-// {"candidate": .., "off": true}.
 func (e Entry) MarshalJSON() ([]byte, error) {
 	if e.Off {
 		return json.Marshal(struct {
@@ -88,7 +83,6 @@ func (e Entry) MarshalJSON() ([]byte, error) {
 	return json.Marshal(e.Candidate)
 }
 
-// UnmarshalJSON reads either entry form.
 func (e *Entry) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err == nil {
@@ -128,7 +122,6 @@ func ParseAgents(body []byte) (map[string]AgentEntry, []string, error) {
 	return entries, nil, nil
 }
 
-// validateAgent applies the validation rules to one agents entry.
 func validateAgent(name string, e AgentEntry) error {
 	if !agentKeyPattern.MatchString(name) {
 		return fmt.Errorf("agents: %s: bad agent name: %w", name, ErrBadActors)

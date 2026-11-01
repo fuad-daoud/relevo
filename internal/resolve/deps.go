@@ -18,12 +18,9 @@ type Remote interface {
 	Actor(ctx context.Context, server, actor, candidate string) (remote.ActorView, error)
 }
 
-// Deps is what the resolution code reads from its caller: the gate, probe
-// and limit inputs availability.Deps already carries, plus the policy that
-// orders roles and caps tiers, the server surface placement probes, the skill
-// and directory checks skill gates read, and the stored workflows workflow
-// resolution reads. A nil field means that facility is not configured and
-// reads as empty.
+// Deps is what the resolution code reads from its caller, beyond what
+// availability.Deps already carries. A nil field means that facility is not
+// configured and reads as empty.
 type Deps struct {
 	availability.Deps
 	// Policy is the mastermind's candidate order and tier caps per role.

@@ -11,7 +11,7 @@ import (
 )
 
 // RoleRefusal is one role for which an omitted candidate would be refused
-// right now, computed by the same resolveCandidate call bind makes.
+// right now, computed by the same Resolve call bind makes.
 type RoleRefusal struct {
 	Role    string
 	Text    string   // the words after "would refuse:" in relevo config

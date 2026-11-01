@@ -17,10 +17,9 @@ var (
 )
 
 // ResolveTier is the chain: explicit, the registry's tier for the role,
-// harness. explicit and candidate values are already validated by their
-// parsers; an unparseable stored value is treated as harness. In legacy mode
-// reg.TierFor is candidate.Tier then policy.TierFor(role), so the chain is
-// unchanged; in file mode it is the role's row tier.
+// harness. An unparseable stored value is treated as harness. In legacy mode
+// reg.TierFor is candidate.Tier then policy.TierFor(role); in file mode it is
+// the role's row tier.
 func ResolveTier(explicit string, c candidate.Candidate, reg *roles.Registry, role string) harness.Tier {
 	if explicit != "" {
 		if t, err := harness.ParseTier(explicit); err == nil {
@@ -33,9 +32,8 @@ func ResolveTier(explicit string, c candidate.Candidate, reg *roles.Registry, ro
 	return harness.TierHarness
 }
 
-// CheckTierCap refuses tier when tier.Above(pol.MaxTierOrDefault()) and
-// !allowYolo: `tier %s exceeds max_tier %s; pass --allow-yolo or raise
-// max_tier in ~/.config/relevo/policy.json`. harness never refuses.
+// CheckTierCap refuses a tier above max_tier without the explicit allowance;
+// harness never refuses.
 func CheckTierCap(tier harness.Tier, pol policy.Policy, allowYolo bool) error {
 	maxTier := pol.MaxTierOrDefault()
 	if tier.Above(maxTier) && !allowYolo {
@@ -44,10 +42,9 @@ func CheckTierCap(tier harness.Tier, pol policy.Policy, allowYolo bool) error {
 	return nil
 }
 
-// LaunchTier derives the tier a launch will use and refuses it when the stored
-// tier is above max_tier without the explicit allowance. It is the one place
-// that states the rule: a launch re-checks the stored tier every time, so an
-// over-cap record never starts without a caller that carries the allowance.
+// LaunchTier is the one place that states the launch tier rule: a launch
+// re-checks the stored tier every time, so an over-cap record never starts
+// without a caller that carries the allowance.
 func LaunchTier(b store.Binding, pol policy.Policy, allowYolo bool) (harness.Tier, error) {
 	tier := EffectiveTier(b)
 	if err := CheckTierCap(tier, pol, allowYolo); err != nil {
@@ -56,12 +53,11 @@ func LaunchTier(b store.Binding, pol policy.Policy, allowYolo bool) (harness.Tie
 	return tier, nil
 }
 
-// ReaderTier floors a reader's permission tier at edit: a reader must
-// be able to write its artifact directory, and shape does not change the tools
-// an agent gets. A resolved harness or read tier becomes
-// edit. When the harness refuses edit, the lowest tier it does allow that can
-// write is used instead (opencode allows only yolo). A policy max_tier below
-// edit refuses the bind.
+// ReaderTier floors a reader's permission tier at edit: a reader must be able
+// to write its artifact directory, and shape does not change the tools an
+// agent gets. When the harness refuses edit, the lowest tier it does allow
+// that can write is used instead (opencode allows only yolo). A policy
+// max_tier below edit refuses the bind.
 func ReaderTier(tier harness.Tier, kind string, pol policy.Policy) (harness.Tier, error) {
 	if tier == harness.TierHarness || tier == harness.TierRead {
 		tier = harness.TierEdit

@@ -42,7 +42,7 @@ type PlacementResolution struct {
 }
 
 // Local reports whether this placement runs here. The zero resolution does:
-// an actor that names nothing keeps today's local path.
+// an actor that names nothing runs locally.
 func (p PlacementResolution) Local() bool {
 	return p.Name == "" || p.Name == LocalPlacement
 }
@@ -233,7 +233,6 @@ func classifyProbeError(err error) (string, error) {
 	return "", err
 }
 
-// isReaderRole reports whether role is a reader in reg.
 func isReaderRole(reg *roles.Registry, role string) bool {
 	r, ok := reg.Role(role)
 	return ok && r.Shape == harness.ShapeConsult

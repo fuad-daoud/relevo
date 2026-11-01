@@ -193,7 +193,6 @@ func (m Model) pick(r view.BindingStatus) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// run moves to a pending result screen and starts the verb on name.
 func (m Model) run(name string) (tea.Model, tea.Cmd) {
 	m.screen = screenResult
 	m.result = resultModel{pending: true}

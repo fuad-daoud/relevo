@@ -20,10 +20,8 @@ import (
 // candidates: a listed token that is not configured, a listed token that
 // does not serve the role it is listed under, or a candidate that serves a
 // role but is missing from that role's order. policy.Load deliberately does
-// not check any of this against candidates.json: an order entry
-// naming a removed candidate must not stop every subcommand from starting.
-// It is tolerated at resolve time instead, and reported here for `relevo
-// policy` and `doctor` to render.
+// not check any of this against candidates.json: an order entry naming a
+// removed candidate must not stop every subcommand from starting.
 type PolicyWarning struct {
 	Role  string
 	Index int // index into order[role]; -1 for an unlisted-candidate warning
@@ -111,17 +109,15 @@ type policyRoleView struct {
 	serving []candidate.Candidate
 	// sole forces the "sole" tag on the single row. FormatPolicy means "one
 	// serving candidate"; FormatPolicyFor means "one row".
-	sole bool
-	// noRows is the line printed when there are no rows at all.
+	sole   bool
 	noRows string
 	res    Resolution
 	err    error
 }
 
-// formatPolicyRole renders one role's block: the header, one row per ranked
-// entry with the shared tail (peak cue, gate texts, "<- would pick"), and the
-// refusal line. It is the single row renderer both FormatPolicy and
-// FormatPolicyFor call, so the two can never drift. The gates are filtered to
+// formatPolicyRole renders one role's block. It is the single row renderer
+// both FormatPolicy and FormatPolicyFor call, so the two can never drift.
+// The gates are filtered to
 // the role here, so a gate scoped to another role never shows on this role's
 // rows or in its refusal.
 func formatPolicyRole(sb *strings.Builder, v policyRoleView, set *candidate.Set, width int, gates []availability.Gate, hist availability.History, now time.Time, loc *time.Location) {
@@ -182,7 +178,7 @@ func formatPolicyRole(sb *strings.Builder, v policyRoleView, set *candidate.Set,
 	}
 }
 
-// FormatPolicy renders, per role, what resolveCandidate would do right now
+// FormatPolicy renders, per role, what Resolve would do right now
 // and why -- computed by calling it, so the marker here can never disagree
 // with what bind actually picks. It is a listing, not a check:
 // `relevo config` prints this and always exits 0.
@@ -416,7 +412,7 @@ func LegacyRoleFieldWarnings(reg *roles.Registry, set *candidate.Set, pol policy
 // peakText is a candidate row's cue that its provider was recently
 // rate-limited: "limited <n>x around <HH>:00 (30d)" for the local hour
 // around now, or "" when the window around now saw none.
-// History never changes a pick -- resolveCandidate is untouched -- this is
+// History never changes a pick -- Resolve is untouched -- this is
 // display only.
 func peakText(hist availability.History, provider string, now time.Time, loc *time.Location) string {
 	c := availability.HourCounts(hist, provider, availability.RateLimited, loc)
@@ -428,20 +424,14 @@ func peakText(hist availability.History, provider string, now time.Time, loc *ti
 	return fmt.Sprintf("limited %dx around %02d:00 (30d)", n, h)
 }
 
-// formatHistory renders the "history (30d, local hours)" block: one row per
-// (provider, kind) with at least one event in hist, providers sorted and
-// RateLimited before SpawnFailed before Cleared within a provider. A
-// provider whose Cleared events carry a Since also gets a row in the
-// "blocked for" summary under the grid. It returns "" when hist
-// has no events, so a fresh install's `relevo config` prints nothing extra.
-//
-// A provider name here is a column of a history row, and a history row can have
-// arrived from another installation, so the drawn label goes through
-// sanitize.StripControls: this is a table of columns, and a control byte in a
-// provider would repaint the terminal and shift every column after it. Only the
-// label is sanitized -- grouping, sorting and the hour lookup still run on the
-// names the history holds, since a lookup against a sanitized key would find
-// nothing and print an empty row. The row stored is untouched.
+// formatHistory renders the "history (30d, local hours)" block. It returns ""
+// when hist has no events, so a fresh install's `relevo config` prints nothing
+// extra. A provider name drawn here can have arrived from another installation,
+// so the label goes through sanitize.StripControls: a control byte would
+// repaint the terminal and shift every column after it. Only the label is
+// sanitized -- grouping, sorting and the hour lookup still run on the names
+// the history holds, since a lookup against a sanitized key would find nothing
+// and print an empty row.
 func formatHistory(hist availability.History, loc *time.Location) string {
 	if len(hist.Events) == 0 {
 		return ""

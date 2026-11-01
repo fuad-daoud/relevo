@@ -143,8 +143,8 @@ func buildLegacy(set *candidate.Set, pol policy.Policy) *Registry {
 
 		seen := make(map[string]bool, len(order))
 		for i, tok := range order {
-			// The position counts skipped tokens too, as "order #N" does
-			// today: dropping an entry must not renumber the ones after it.
+			// The position counts skipped tokens too, as "order #N" does:
+			// dropping an entry must not renumber the ones after it.
 			c, err := set.Resolve(tok)
 			if err != nil {
 				continue
@@ -320,7 +320,6 @@ func fileSource(f *File) string {
 	return SourceFile
 }
 
-// canonicalTokens returns a ranked list's canonical tokens, in order.
 func canonicalTokens(ranked []Ranked) []string {
 	toks := make([]string, 0, len(ranked))
 	for _, r := range ranked {
@@ -418,7 +417,7 @@ func (r *Registry) Serves(name string, ref candidate.Ref) bool {
 // TierFor returns name's tier, without the explicit flag, which stays at the
 // call site:
 //   - in file mode, the role's parsed tier, when the file set one;
-//   - in legacy mode, exactly the middle of today's chain: the candidate's
+//   - in legacy mode, exactly the middle of the chain: the candidate's
 //     tier when set and valid, else policy's tier for the role, else false.
 func (r *Registry) TierFor(name string, c candidate.Candidate) (harness.Tier, bool) {
 	if r.FileMode() {
@@ -481,7 +480,6 @@ func (r *Registry) ListText(role string) string {
 	}
 }
 
-// copyRole returns a deep copy of role.
 func copyRole(role Role) Role {
 	out := role
 	out.Candidates = append([]string(nil), role.Candidates...)

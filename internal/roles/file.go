@@ -1,6 +1,6 @@
-// Package roles reads roles.json: which roles exist, the agent definition
-// each runs on each harness kind, the candidates each uses, ranked, and its
-// tier. Nothing outside the package uses the registry yet.
+// Package roles owns the role registry: which roles exist, the agent
+// definition each runs on each harness kind, and the candidates, tier
+// and placement each uses.
 package roles
 
 import (
@@ -40,9 +40,8 @@ type File struct {
 	// Rows is one entry per role the file names. A role the file omits
 	// keeps its built-in row.
 	Rows map[string]Row
-	// Source names where this File came from: empty means roles.json (the
-	// default), SourceActors means it was derived from the actors section.
-	// It is not part of the JSON shape.
+	// Source names where this File came from: empty means roles.json,
+	// SourceActors means the actors section. It is not part of the JSON shape.
 	Source string `json:"-"`
 }
 
@@ -75,10 +74,9 @@ type Row struct {
 	// Every entry must also appear in Candidates, as the same raw string.
 	Off []string `json:"off,omitempty"`
 
-	// Placement is where the role's rounds run, most preferred first, as the
-	// actors conversion wrote it. The build copies it onto the Role, and the
-	// resolution reads it there: an absent or empty list keeps today's local
-	// path. A legacy file may carry the key too; it flows the same way.
+	// Placement is where the role's rounds run, most preferred first. The
+	// build copies it onto the Role, and the resolution reads it there: an
+	// absent or empty list keeps the local path.
 	Placement []string `json:"placement,omitempty"`
 
 	// Tier is the role's default permission tier.
@@ -86,13 +84,10 @@ type Row struct {
 
 	// Outputs is the role's declared outputs.
 	Outputs workflow.Outputs `json:"outputs,omitempty"`
-	// Scope is the scope the actors conversion carried for a writer role:
-	// the paths its rounds may change, and whether a Go comment-only edit
-	// is allowed. It is refused on a reader. A legacy roles.json may
-	// carry the key; it flows the same way.
+	// Scope is the writer's declared scope: the paths its rounds may change,
+	// and whether a Go comment-only edit is allowed. It is refused on a reader.
 	Scope *pathscope.Scope `json:"scope,omitempty"`
-	// Skills are the skills the role's harness must be able to load, as the
-	// actors conversion wrote them.
+	// Skills are the skills the role's harness must be able to load.
 	Skills []string `json:"skills,omitempty"`
 }
 
@@ -296,7 +291,6 @@ func sortedNames(rows map[string]Row) []string {
 	return names
 }
 
-// sortedDefKinds returns a row's definition kinds, sorted.
 func sortedDefKinds(defs map[string]DefRow) []string {
 	kinds := make([]string, 0, len(defs))
 	for kind := range defs {

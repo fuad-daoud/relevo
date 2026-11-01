@@ -17,7 +17,7 @@ import (
 // config init` before anything is written.
 var ErrAmbiguousTier = errors.New("candidates of one role carry different tiers")
 
-// FromLegacy translates today's candidates.json roles/tier and policy.json
+// FromLegacy translates candidates.json roles/tier and policy.json
 // order/tier into a File: the second return is the notes, human
 // lines for the CLI to print, in harness.RoleNames() order.
 //
