@@ -10,8 +10,8 @@ import (
 )
 
 // ResolveExe returns the running executable's path, symlinks resolved and any
-// trailing " (deleted)" stripped: a replaced binary's /proc link reports that
-// suffix, and a re-exec must target the live path, not the deleted inode.
+// trailing " (deleted)" stripped: a re-exec must target the live path, not
+// the deleted inode.
 func ResolveExe() (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
