@@ -198,135 +198,143 @@ func openRound(env widget.Env, msg dash.JumpMsg) tea.Cmd {
 }
 
 func execLine(line string, env widget.Env, p prefs) tea.Cmd {
-	fields := strings.Fields(line)
-	if len(fields) == 0 {
+	name, args := parseExecLine(line)
+	if name == "" {
 		return nil
 	}
-	name := fields[0]
-	args := fields[1:]
 	switch name {
 	case "fleet":
 		return root(newFleetView(p.Sort != "name").withActions(env.Actions != nil))
 	case "log":
 		return func() tea.Msg { return widget.LogMsg{} }
 	case "rounds":
-		q := strings.Join(args, " ")
-		if q == "" {
-			q = p.Dashboard
-		}
-		v, init, err := newRoundsView(env, q, p.DashboardSort)
-		if err != nil {
-			return notice("no database: " + err.Error())
-		}
-		return rootThen(init, v)
+		return roundsExecCmd(args, env, p)
 	case "round":
-		if len(args) == 0 {
-			return notice(`unknown binding ""`)
-		}
-		key := args[0]
-		n := 0
-		if len(args) > 1 {
-			fmt.Sscanf(args[1], "%d", &n)
-		}
-		live := false
-		for i := range env.Report.Bindings {
-			if env.Report.Bindings[i].Key() == key {
-				live = true
-				break
-			}
-		}
-		if !live {
-			return notice(fmt.Sprintf("unknown binding %q", key))
-		}
-		v, cmd := newRoundView(env, key, n)
-		return rootThen(cmd, newFleetView(p.Sort != "name").withActions(env.Actions != nil), v)
+		return roundExecCmd(args, env, p)
 	case "stats":
-		window := "30d"
-		if len(args) > 0 {
-			window = args[0]
-		}
-		switch window {
-		case "7d", "30d", "90d", "all":
-		default:
-			return notice("stats: want 7d, 30d, 90d or all")
-		}
-		open := func(env widget.Env, q string) (widget.View, tea.Cmd, error) {
-			return newRoundsView(env, q, "")
-		}
-		v, init, err := stats.NewStatsView(env, window, open)
-		if err != nil {
-			return notice("no database: " + err.Error())
-		}
-		return rootThen(init, v)
-	case "chains":
-		if env.Actions == nil {
-			return notice("the config views need relevo ui on this machine")
-		}
-		v, init := newChainsView(env)
-		return rootThen(init, v)
-	case "candidates":
-		if env.Actions == nil {
-			return notice("the config views need relevo ui on this machine")
-		}
-		v, init := newCandidatesView(env)
-		return rootThen(init, v)
-	case "actors":
-		if env.Actions == nil {
-			return notice("the config views need relevo ui on this machine")
-		}
-		v, init := newActorsView(env)
-		return rootThen(init, v)
-	case "workflows":
-		if env.Actions == nil {
-			return notice("the config views need relevo ui on this machine")
-		}
-		v, init := newWorkflowsView(env)
-		return rootThen(init, v)
-	case "agents":
-		if env.Actions == nil {
-			return notice("the config views need relevo ui on this machine")
-		}
-		v, init := newAgentsView(env)
-		return rootThen(init, v)
-	case "servers":
-		if env.Actions == nil {
-			return notice("the config views need relevo ui on this machine")
-		}
-		v, init := newServersView(env)
-		return rootThen(init, v)
-	case "sync":
-		if env.Actions == nil {
-			return notice("the config views need relevo ui on this machine")
-		}
-		v, init := newSyncView(env)
-		return rootThen(init, v)
-	case "settings":
-		if env.Actions == nil {
-			return notice("the config views need relevo ui on this machine")
-		}
-		v, init := newSettingsView(env)
-		return rootThen(init, v)
-	case "audit":
-		if env.Actions == nil {
-			return notice("the config views need relevo ui on this machine")
-		}
-		v, init := newAuditView(env)
-		return rootThen(init, v)
+		return statsExecCmd(args, env, p)
+	case "chains", "candidates", "actors", "workflows", "agents", "servers", "sync", "settings", "audit":
+		return configExecCmd(name, env)
 	case "ungate":
-		if len(args) == 0 {
-			return notice("usage: ungate <provider|candidate>")
-		}
-		if env.Actions == nil {
-			return nil
-		}
-		subject := args[0]
-		return runAction(env.Ctx, "ungate", subject, func(ctx context.Context) widget.Result {
-			return env.Actions.Ungate(ctx, subject)
-		})
+		return ungateExecCmd(args, env)
 	case "help":
 		return func() tea.Msg { return widget.HelpMsg{} }
 	case "quit":
 		return tea.Quit
 	}
 	return notice(fmt.Sprintf("unknown command %q (try :help)", ":"+name))
+}
+
+func parseExecLine(line string) (string, []string) {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return "", nil
+	}
+	return fields[0], fields[1:]
+}
+
+func liveBinding(env widget.Env, key string) bool {
+	for i := range env.Report.Bindings {
+		if env.Report.Bindings[i].Key() == key {
+			return true
+		}
+	}
+	return false
+}
+
+func roundsExecCmd(args []string, env widget.Env, p prefs) tea.Cmd {
+	q := strings.Join(args, " ")
+	if q == "" {
+		q = p.Dashboard
+	}
+	v, init, err := newRoundsView(env, q, p.DashboardSort)
+	if err != nil {
+		return notice("no database: " + err.Error())
+	}
+	return rootThen(init, v)
+}
+
+func roundExecCmd(args []string, env widget.Env, p prefs) tea.Cmd {
+	if len(args) == 0 {
+		return notice(`unknown binding ""`)
+	}
+	key := args[0]
+	n := 0
+	if len(args) > 1 {
+		fmt.Sscanf(args[1], "%d", &n)
+	}
+	if !liveBinding(env, key) {
+		return notice(fmt.Sprintf("unknown binding %q", key))
+	}
+	v, cmd := newRoundView(env, key, n)
+	return rootThen(cmd, newFleetView(p.Sort != "name").withActions(env.Actions != nil), v)
+}
+
+func statsExecCmd(args []string, env widget.Env, p prefs) tea.Cmd {
+	window := "30d"
+	if len(args) > 0 {
+		window = args[0]
+	}
+	switch window {
+	case "7d", "30d", "90d", "all":
+	default:
+		return notice("stats: want 7d, 30d, 90d or all")
+	}
+	open := func(env widget.Env, q string) (widget.View, tea.Cmd, error) {
+		return newRoundsView(env, q, "")
+	}
+	v, init, err := stats.NewStatsView(env, window, open)
+	if err != nil {
+		return notice("no database: " + err.Error())
+	}
+	return rootThen(init, v)
+}
+
+func configExecCmd(name string, env widget.Env) tea.Cmd {
+	if env.Actions == nil {
+		return notice("the config views need relevo ui on this machine")
+	}
+	switch name {
+	case "chains":
+		v, init := newChainsView(env)
+		return rootThen(init, v)
+	case "candidates":
+		v, init := newCandidatesView(env)
+		return rootThen(init, v)
+	case "actors":
+		v, init := newActorsView(env)
+		return rootThen(init, v)
+	case "workflows":
+		v, init := newWorkflowsView(env)
+		return rootThen(init, v)
+	case "agents":
+		v, init := newAgentsView(env)
+		return rootThen(init, v)
+	case "servers":
+		v, init := newServersView(env)
+		return rootThen(init, v)
+	case "sync":
+		v, init := newSyncView(env)
+		return rootThen(init, v)
+	case "settings":
+		v, init := newSettingsView(env)
+		return rootThen(init, v)
+	case "audit":
+		v, init := newAuditView(env)
+		return rootThen(init, v)
+	}
+	return nil
+}
+
+func ungateExecCmd(args []string, env widget.Env) tea.Cmd {
+	if len(args) == 0 {
+		return notice("usage: ungate <provider|candidate>")
+	}
+	if env.Actions == nil {
+		return nil
+	}
+	subject := args[0]
+	return runAction(env.Ctx, "ungate", subject, func(ctx context.Context) widget.Result {
+		return env.Actions.Ungate(ctx, subject)
+	})
 }

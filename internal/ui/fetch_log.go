@@ -90,89 +90,96 @@ func fetchArtifacts(ctx context.Context, src widget.Source, key string, round, s
 	return func() tea.Msg {
 		rt, name, ok := src.Runtime(key)
 		if !ok {
-			return tabMsg{
-				name:  key,
-				round: round,
-				t:     tabArtifacts,
-				content: tabContent{
-					loaded: true,
-					round:  round,
-					err:    unresolvedKey(key),
-				},
-			}
+			return artifactUnresolved(key, round)
 		}
 		if round < 1 {
-			return tabMsg{
-				name:  key,
-				round: round,
-				t:     tabArtifacts,
-				content: tabContent{
-					loaded: true,
-					round:  round,
-					empty:  "no completed round yet",
-				},
-			}
+			return artifactNoRound(key, round)
 		}
-		b, err := rt.Store.Load(name)
-		if err != nil {
-			return tabMsg{
-				name:  key,
-				round: round,
-				t:     tabArtifacts,
-				content: tabContent{
-					loaded: true,
-					round:  round,
-					err:    err,
-				},
-			}
-		}
-		actor := b.WriterRole()
-		output := relevo.OutputFile(rt, b)
-		files, err := relevo.RoundArtifacts(rt, name, round, actor, output)
-		if err != nil {
-			return tabMsg{
-				name:  key,
-				round: round,
-				t:     tabArtifacts,
-				content: tabContent{
-					loaded: true,
-					round:  round,
-					err:    err,
-				},
-			}
-		}
-		if len(files) == 0 {
-			return tabMsg{
-				name:  key,
-				round: round,
-				t:     tabArtifacts,
-				content: tabContent{
-					loaded: true,
-					round:  round,
-					at:     time.Now(),
-					empty:  fmt.Sprintf("no artifacts for round %d", round),
-				},
-			}
-		}
-		if sel < 0 || sel >= len(files) {
-			sel = 0
-		}
-		content := tabContent{
-			loaded:         true,
-			round:          round,
-			at:             time.Now(),
-			artifacts:      files,
-			artifactRel:    files[sel].Rel,
-			artifactActor:  actor,
-			artifactOutput: output,
-			artifactDir:    rt.Store.ArtifactDir(name, round, actor),
-		}
-		data, rerr := relevo.ReadArtifact(rt, name, round, actor, files[sel].Rel)
-		if rerr != nil {
-			content.artifactErr = rerr
-		} else {
-			content.artifactBody = string(data)
-		}
-		return tabMsg{name: key, round: round, t: tabArtifacts, content: content}
+		return artifactList(key, rt, name, round, sel)
 	}
+}
+
+func artifactUnresolved(key string, round int) tabMsg {
+	return tabMsg{
+		name:  key,
+		round: round,
+		t:     tabArtifacts,
+		content: tabContent{
+			loaded: true,
+			round:  round,
+			err:    unresolvedKey(key),
+		},
+	}
+}
+
+func artifactNoRound(key string, round int) tabMsg {
+	return tabMsg{
+		name:  key,
+		round: round,
+		t:     tabArtifacts,
+		content: tabContent{
+			loaded: true,
+			round:  round,
+			empty:  "no completed round yet",
+		},
+	}
+}
+
+func artifactLoadErr(key string, round int, err error) tabMsg {
+	return tabMsg{
+		name:  key,
+		round: round,
+		t:     tabArtifacts,
+		content: tabContent{
+			loaded: true,
+			round:  round,
+			err:    err,
+		},
+	}
+}
+
+func artifactList(key string, rt relevo.Runtime, name string, round, sel int) tabMsg {
+	b, err := rt.Store.Load(name)
+	if err != nil {
+		return artifactLoadErr(key, round, err)
+	}
+	actor := b.WriterRole()
+	output := relevo.OutputFile(rt, b)
+	files, err := relevo.RoundArtifacts(rt, name, round, actor, output)
+	if err != nil {
+		return artifactLoadErr(key, round, err)
+	}
+	if len(files) == 0 {
+		return tabMsg{
+			name:  key,
+			round: round,
+			t:     tabArtifacts,
+			content: tabContent{
+				loaded: true,
+				round:  round,
+				at:     time.Now(),
+				empty:  fmt.Sprintf("no artifacts for round %d", round),
+			},
+		}
+	}
+	if sel < 0 || sel >= len(files) {
+		sel = 0
+	}
+	content := tabContent{
+		loaded:         true,
+		round:          round,
+		at:             time.Now(),
+		artifacts:      files,
+		artifactRel:    files[sel].Rel,
+		artifactActor:  actor,
+		artifactOutput: output,
+		artifactDir:    rt.Store.ArtifactDir(name, round, actor),
+	}
+	data, rerr := relevo.ReadArtifact(rt, name, round, actor, files[sel].Rel)
+	if rerr != nil {
+		content.artifactErr = rerr
+	} else {
+		content.artifactBody = string(data)
+	}
+	return tabMsg{name: key, round: round, t: tabArtifacts, content: content}
 }
