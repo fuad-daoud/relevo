@@ -21,9 +21,9 @@ const (
 	testAgyRef      = "agy/test/m"
 )
 
-// testCandidatesJSON mirrors the shape of the three aliases the default table
-// used to ship, plus a reviewer on claude: opencode and agy serve builder
-// only; claude serves both.
+// testCandidatesJSON mirrors the shape of the three default-table aliases,
+// plus a reviewer on claude: opencode and agy serve builder only; claude
+// serves both.
 const testCandidatesJSON = `[
   {"harness":"opencode","provider":"test","model":"m","roles":["builder"]},
   {"harness":"claude","provider":"test","model":"m","roles":["builder","reviewer"]},
