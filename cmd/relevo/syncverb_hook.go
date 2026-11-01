@@ -86,7 +86,8 @@ func buildVerbRunner(d *db.DB) *verb.Runner {
 // installSyncVerbSerializing rebinds the owner's verb hook with the daemon's
 // in-flight guard, so a verb and a tick cannot interleave: both record the same
 // markers, and two at once would write each other's outcomes. A server whose hook
-// the startup did not install stays without one. It runs once the Daemon exists,
+// the startup did not install stays without one: that is the startup saying this
+// machine's rows may not leave yet. It runs once the Daemon exists,
 // so the guard is the one the seal hook and the idle tick already take.
 func installSyncVerbSerializing(ctx context.Context, d *relevo.Daemon, srv *owner.Server, handle *db.DB) {
 	if srv == nil || handle == nil || srv.OnSyncVerb == nil {

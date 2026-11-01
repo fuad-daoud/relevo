@@ -14,16 +14,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/setup"
 )
 
-// cmdInit seeds the candidates, policy and actors sections from the harness
-// binaries on PATH, then installs the agent definitions.
 type initFlagValues struct {
 	force    *bool
 	noAgents *bool
 	asJSON   *bool
 }
 
-// initFlagSet exists so the registry's parity test finds exactly one installer
-// per verb.
+// initFlagSet defines init's flags, so cmdInit and the tests read one flag
+// surface.
 func initFlagSet(fs *flag.FlagSet) *initFlagValues {
 	v := &initFlagValues{}
 	v.force = fs.Bool("force", false, "overwrite the existing candidates / policy sections")
@@ -32,6 +30,8 @@ func initFlagSet(fs *flag.FlagSet) *initFlagValues {
 	return v
 }
 
+// cmdInit seeds the candidates, policy and actors sections from the harness
+// binaries on PATH, then installs the agent definitions.
 func cmdInit(args []string) error {
 	return outcomeError(cmdInitRun(args))
 }

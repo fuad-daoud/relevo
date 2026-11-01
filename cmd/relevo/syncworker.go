@@ -16,7 +16,9 @@ const workerReplicaName = "relevo-sync.db"
 
 // cmdSyncWorker serves the sync pipe on stdin and stdout until the daemon closes
 // stdin. The worker owns the replica and nothing else: it opens no handle on
-// relevo.db. The verb is hidden from the usage text and the registry because no
+// relevo.db, and the replica is reached only through the sync constructor the
+// driver wraps, which keeps a driver abort inside this process from touching
+// the record. The verb is hidden from the usage text and the registry because no
 // human runs it; documenting how to start one by hand would be a second way to
 // start a worker beside the daemon.
 func cmdSyncWorker(args []string) error {

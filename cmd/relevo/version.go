@@ -60,7 +60,7 @@ func releaseInputs() release.Inputs {
 	}
 
 	// FromModule is true only when the ldflags stamp was empty and the module
-	// version was not.
+	// version was not: exactly buildVersion's own fallback order.
 	if version == "" {
 		if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
 			in.FromModule = true
@@ -72,7 +72,8 @@ func releaseInputs() release.Inputs {
 
 // statusNotice is the line `relevo status` prints when a newer release exists,
 // and "" whenever it does not. Pure: every input is an argument, so it is
-// table-tested without a store or a network.
+// table-tested without a store or a network. It returns "" for every SevOK row
+// of the doctor's release table, so status and doctor agree.
 func statusNotice(running, latest string, ok bool, kind release.Kind) string {
 	if !ok || kind == release.KindUnknown || kind == release.KindLocalBuild {
 		return ""

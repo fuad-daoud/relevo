@@ -107,9 +107,11 @@ func installRouteForArgs(args []string) (peek bool) {
 	return peek
 }
 
-// routeForArgs maps a command line to its route: the peek verbs and the
+// routeForArgs maps a command line to its route, its dial budget and how long
+// it may wait for a daemon that is still starting: the peek verbs and the
 // daemon open directly, the statusline gets the short budget, a hook gets the
-// verb budget with no start wait, and every other verb dials the owner.
+// verb budget with no start wait, and every other verb dials with the default
+// budget and the start wait.
 func routeForArgs(args []string) (dbRoute, time.Duration, time.Duration) {
 	if isPeekArgs(args) || (len(args) > 0 && args[0] == "daemon") {
 		return routeNone, verbDialBudget, 0
@@ -124,8 +126,13 @@ func routeForArgs(args []string) (dbRoute, time.Duration, time.Duration) {
 }
 
 // isPeekArgs reports the read-only verbs, which install no route and never
-// start the owner, and skip captureAgyEnv, which would open -- and can
-// migrate -- the database the verb promises not to touch.
+// start the owner: the daemon's --check/--preflight probes, bugreport, whose
+// read-only runtime opens the machine database itself, db query, which reads
+// the file directly or through an owner that is already up, and board, whose
+// runtime reads and writes the repository itself. A peek verb also skips
+// captureAgyEnv, which would open -- and can migrate -- the very database the
+// verb promises not to touch. Their own flags pick what the verb does and
+// never change the route.
 func isPeekArgs(args []string) bool {
 	if len(args) == 0 {
 		return false
@@ -254,8 +261,11 @@ func waitStep() time.Duration {
 }
 
 // sandboxBannerVerb returns the sandbox name to print above a command's
-// output, or "" with no sandbox, for a peek verb, or for a constantly-run
-// read-only verb. A `config get` in a pipeline stays pipelineable.
+// output, or "" for a command that gets no banner. It is empty outside a
+// sandbox (RELEVO_SANDBOX unset), for the peek verbs, for the read-only verbs
+// a caller runs constantly -- status --line runs on every prompt keystroke and
+// would otherwise fill the screen -- and for the read-only config subcommands,
+// so a `config get` in a pipeline stays pipelineable.
 func sandboxBannerVerb(args []string) string {
 	name := os.Getenv("RELEVO_SANDBOX")
 	if name == "" || len(args) == 0 || isPeekArgs(args) {

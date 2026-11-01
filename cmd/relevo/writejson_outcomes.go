@@ -162,8 +162,10 @@ func configSecretDocOf(name string) ConfigSecretDoc {
 }
 
 // MasterMindDoc is the mastermind write verbs' document. state is the word the
-// verb reached; repo is the repository the answer applied to, empty when the
-// answer was the session's own.
+// verb reached: created, reattached or moved for init and enable, forgotten,
+// no_record or disabled for disable, reset for reset, forgotten for forget. repo
+// is the repository the answer applied to, empty when the answer was the
+// session's own.
 type MasterMindDoc struct {
 	ID    string `json:"id"`
 	Name  string `json:"name"`
@@ -222,7 +224,7 @@ func serveRevokeDocOf(id string) ServeRevokeDoc {
 }
 
 // ServeGCResult is one `serve gc --json` row: the owner, label, name, last seen
-// as RFC3339, and whether it was archived.
+// as RFC3339, and whether it was archived (false on a dry run).
 type ServeGCResult struct {
 	Owner    string `json:"owner"`
 	Label    string `json:"label"`
@@ -266,9 +268,12 @@ func serveUnbindDocOf(owner, name string, res relevo.UnbindResult) ServeUnbindDo
 }
 
 // updateDoc is `update`/`update --check --json`: the running version, the
-// executable, the action word, the target, whether the binary was replaced,
-// and the decision's sentence. kind is not part of the document: --check's
-// block is rendered from it, naming the kind beside the version.
+// executable the run resolved, the action word, the target (omitted when the
+// decision names none), whether the binary was actually replaced, and the
+// decision's one sentence (for the go-install action, the command itself).
+//
+// kind is not part of the document: --check's human block is rendered from
+// this document, and the block names the detected kind beside the version.
 type updateDoc struct {
 	Running string `json:"running"`
 	Exe     string `json:"exe"`

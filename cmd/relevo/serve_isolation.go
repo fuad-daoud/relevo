@@ -93,8 +93,9 @@ func withIsolation(cfg serve.Config, raw string) serve.Config {
 }
 
 // scopeFromPolicy is the systemd scope template a served round launches under.
-// nil turns scopes off; otherwise scopes are on by default with CPUWeight 100,
-// every other field passed through as given.
+// nil turns scopes off only when sc.Enabled is explicitly false: a nil sc, or
+// one silent on Enabled, leaves scopes on with CPUWeight 100, and every other
+// field passes through as given, its own zero meaning "omit" to ScopeArgv.
 func scopeFromPolicy(sc *policy.ScopePolicy) *spawn.ScopeSpec {
 	if sc != nil && sc.Enabled != nil && !*sc.Enabled {
 		return nil

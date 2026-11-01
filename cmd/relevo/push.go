@@ -19,8 +19,8 @@ type pushFlagValues struct {
 	asJSON     *bool
 }
 
-// pushFlagSet exists so the registry's parity test finds exactly one installer
-// per verb.
+// pushFlagSet defines push's flags, so cmdPush and the tests read one flag
+// surface.
 func pushFlagSet(fs *flag.FlagSet) *pushFlagValues {
 	v := &pushFlagValues{}
 	v.mastermind = fs.String("mastermind", "", "mastermind id or name (default: $RELEVO_MASTERMIND, else this session's host)")
@@ -58,7 +58,8 @@ func cmdPush(args []string) error {
 		return err
 	}
 
-	// The --ack shape is checked before any runtime is built.
+	// The --ack shape is checked before any runtime is built, so a wrong
+	// invocation touches no state directory.
 	binding, seq, acking, err := pushAckArgs(v, fs.Args())
 	if err != nil {
 		return err

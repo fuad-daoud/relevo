@@ -12,8 +12,8 @@ type helpFlagValues struct {
 	asJSON *bool
 }
 
-// helpFlagSet exists so the registry's parity test finds exactly one installer
-// per verb.
+// helpFlagSet defines help's flags, so cmdHelp and the tests read one flag
+// surface.
 func helpFlagSet(fs *flag.FlagSet) *helpFlagValues {
 	v := &helpFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the verb registry instead of the usage text")

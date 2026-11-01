@@ -70,8 +70,8 @@ type historyFlagValues struct {
 	withRows   *bool
 }
 
-// json is accepted and ignored -- history always prints JSON -- so it has no
-// pointer.
+// historyFlagSet accepts and ignores --json: history always prints JSON, so it
+// has no pointer.
 func historyFlagSet(fs *flag.FlagSet) *historyFlagValues {
 	v := &historyFlagValues{}
 	v.here = fs.Bool("here", false, "filter to the repo the current directory belongs to")

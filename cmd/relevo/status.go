@@ -282,7 +282,8 @@ func runStatusline(asJSON bool, mastermindRef string) error {
 	if err != nil && !asJSON && mastermindRef == "" && noMasterMinds(rt) {
 		// Before any MasterMind registers, the line says so: neither an error nor an
 		// empty line is the truth under a newcomer's first prompt. The document
-		// keeps refusing.
+		// keeps refusing, since a null mastermind over no rows is that same
+		// healthy-looking answer.
 		fmt.Println("relevo: no MasterMind yet")
 		return nil
 	}

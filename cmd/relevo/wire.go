@@ -285,7 +285,8 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 	pol := L.Policy
 
 	// Warnings are carried, never printed: every CLI command calls newRuntime,
-	// so printing here would be noise.
+	// so printing here would be noise. `relevo doctor` renders them
+	// and the daemon logs each once.
 	configWarnings := L.Warnings
 
 	cls, _ := classify.Resolve(pol.Classify, L.Typesafe, os.Getenv)
@@ -480,10 +481,12 @@ func musePPidOf(pid int) (int, bool) {
 	return 0, false
 }
 
-// newRemoteClient wires Runtime.Remote: nil when the servers section is absent
-// or empty. Servers without a client key are not fatal, but the fix prints
-// once, since a configured server this client cannot reach is a setup mistake
-// worth naming immediately.
+// newRemoteClient wires Runtime.Remote through the one rule the daemon's config
+// reload shares: nil when the servers section is absent or empty. Servers without
+// a client key are not fatal -- every remote path already reports
+// ErrRemoteUnavailable on a nil Runtime.Remote -- but the fix prints once, since
+// a configured server this client cannot reach is a setup mistake worth naming
+// immediately rather than only when a remote command is next run.
 func newRemoteClient(servers remote.Servers, key []byte) (relevo.RemoteClient, error) {
 	remoteClient, err := relevo.NewRemoteClient(servers, key)
 	if errors.Is(err, relevo.ErrNoClientKey) {

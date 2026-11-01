@@ -22,8 +22,8 @@ type sendFlagValues struct {
 	asJSON    *bool
 }
 
-// sendFlagSet exists so the registry's parity test finds exactly one installer
-// per verb.
+// sendFlagSet defines send's flags, so cmdSend and the tests read one flag
+// surface.
 func sendFlagSet(fs *flag.FlagSet) *sendFlagValues {
 	v := &sendFlagValues{}
 	v.file = fs.String("file", "", "path to the plan file to hand the runner")
@@ -116,7 +116,7 @@ func cmdSend(args []string) error {
 	}
 	if *asJSON {
 		// The round's candidate and tier: the flags when given, else the
-		// binding's own values.
+		// binding's own values, which the send just stored.
 		cand, roundTier := *candidate, *tier
 		if b, lerr := rt.Store.Load(target); lerr == nil {
 			cand = b.BuilderCandidate

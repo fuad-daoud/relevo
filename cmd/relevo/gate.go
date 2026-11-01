@@ -52,9 +52,6 @@ func gateUntil(forFlag, reason string, now time.Time) (time.Time, error) {
 	return until, nil
 }
 
-// cmdGate is the one verb for gate operations, with the serve forms via --serve.
-// With no positional it lists the active gates; a positional gates a provider;
-// --clear lifts a gate.
 type gateFlagValues struct {
 	forFlag   *string
 	reason    *string
@@ -63,7 +60,8 @@ type gateFlagValues struct {
 	asJSON    *bool
 }
 
-// The state flag has no pointer: the --serve route reads it back off the FlagSet.
+// gateFlagSet installs the state flag with no pointer: the --serve route reads
+// it back off the FlagSet.
 func gateFlagSet(fs *flag.FlagSet) *gateFlagValues {
 	v := &gateFlagValues{}
 	v.forFlag = fs.String("for", "", "how long to gate the provider, as a Go `duration` (e.g. 2h); omit to leave it gated until relevo gate --clear")
@@ -75,6 +73,9 @@ func gateFlagSet(fs *flag.FlagSet) *gateFlagValues {
 	return v
 }
 
+// cmdGate is the one verb for gate operations, with the serve forms via --serve.
+// With no positional it lists the active gates; a positional gates a provider;
+// --clear lifts a gate.
 func cmdGate(args []string) error {
 	fs := flag.NewFlagSet("gate", flag.ContinueOnError)
 	v := gateFlagSet(fs)

@@ -48,8 +48,8 @@ type showSectionArgs struct {
 	output, artifacts           bool
 	trace                       bool
 	workflow                    bool
-	findingsID                  string
-	artifactRel                 string
+	findingsID                  string // findingsID is --findings's value and names the findings section when non-empty.
+	artifactRel                 string // artifactRel is --artifact's rel and names the artifacts section when non-empty.
 }
 
 // showSectionFlags resolves the one section the flags name, defaulting to
@@ -242,11 +242,12 @@ func cmdShow(args []string) error {
 
 	switch {
 	case section == relevo.ShowDiff, section == relevo.ShowDrift:
-		// The diff body stays byte-identical, including its default round
-		// and its .viewed stamp.
+		// Byte-identical to the removed diff verb, including its default
+		// round and its .viewed stamp.
 		return classifyReadErr(printDiff(rt, name, *round, *stat, section == relevo.ShowDrift, *anchors))
 	case section == relevo.ShowLog && (*round == 0 || *follow):
-		// The whole log prints byte for byte, --json's NDJSON included.
+		// The whole log is the removed log verb, byte for byte, --json's
+		// NDJSON included.
 		return classifyReadErr(printLog(rt, name, *round, *after, *asJSON, *follow, true))
 	}
 
@@ -279,8 +280,9 @@ func classifyReadErr(err error) error {
 	}
 }
 
-// printShow is cmdShow's body after section resolution. allowDB=false returns
-// store.ErrNotFound for a non-live binding instead of opening the database;
+// printShow is cmdShow's body after section resolution. allowDB=false means a
+// non-live binding returns store.ErrNotFound instead of opening (and so
+// creating) the database;
 // markViewed guards the .viewed stamp, and headerPrefix names the owner.
 func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB bool, headerPrefix string) error {
 	name := opts.Name
@@ -394,9 +396,11 @@ func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB b
 	return nil
 }
 
-// printDiff is diff's body for --diff and --drift; the output stays
-// byte-identical, including the .viewed stamp. The default round is the newest
-// completed round, or the open round with drift.
+// printDiff is diff's body, shared by `show --diff` and `show --drift`: the
+// output is byte-identical to the removed diff verb for the same arguments,
+// including the .viewed stamp.
+// round 0 means diff's default: the newest completed round, or the open round
+// with drift.
 func printDiff(rt relevo.Runtime, name string, round int, stat, drift, anchors bool) error {
 	b, err := rt.Store.Load(name)
 	if err != nil {

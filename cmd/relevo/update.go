@@ -67,7 +67,10 @@ func cmdUpdateRun(args []string) error {
 		return fail(codeInternal, "cannot resolve the running executable: %v", err)
 	}
 
-	// The fetch is skipped whenever the decision cannot need the latest tag.
+	// The fetch is skipped whenever the decision cannot need the latest tag:
+	// an explicit --to names the target, a go install only prints, and a
+	// local or unknown build without --release refuses before any target is
+	// read.
 	needLatest := *to == "" && kind != release.KindGoInstall &&
 		!((kind == release.KindLocalBuild || kind == release.KindUnknown) && !*forceRelease)
 	latest := ""

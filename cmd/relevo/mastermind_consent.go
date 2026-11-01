@@ -16,7 +16,8 @@ import (
 
 // mastermindOpenTimed opens relevo.db on a goroutine and gives up after
 // mastermindPriorIDTimeout, so a hook never waits on sqlite. The caller must
-// call the returned close function; a nil *db.DB reads as the safe answers.
+// call the returned close function; a nil *db.DB means the open did not finish
+// in time, and the safe answers (no prior id, unset consent) follow from it.
 func mastermindOpenTimed(path string) (*db.DB, func()) {
 	opened := make(chan *db.DB, 1)
 	go func() {
@@ -126,6 +127,8 @@ func mastermindEnableFlagSet(fs *flag.FlagSet) *mastermindEnableFlagValues {
 	return v
 }
 
+// cmdMasterMindEnable answers yes for this session, and with --repo for the
+// repository, then registers the calling session.
 func cmdMasterMindEnable(args []string) error {
 	return outcomeError(cmdMasterMindEnableRun(args))
 }
@@ -217,8 +220,6 @@ func cmdMasterMindEnableRun(args []string) error {
 	return nil
 }
 
-// cmdMasterMindDisable answers no for the repository, or for this session, and
-// forgets an existing record.
 type mastermindDisableFlagValues struct {
 	repo    *bool
 	kind    *string
@@ -235,6 +236,8 @@ func mastermindDisableFlagSet(fs *flag.FlagSet) *mastermindDisableFlagValues {
 	return v
 }
 
+// cmdMasterMindDisable answers no for the repository, or for this session, and
+// forgets an existing record.
 func cmdMasterMindDisable(args []string) error {
 	return outcomeError(cmdMasterMindDisableRun(args))
 }
@@ -323,8 +326,6 @@ func cmdMasterMindDisableRun(args []string) error {
 	return nil
 }
 
-// cmdMasterMindReset clears the current repository's answer and the calling
-// session's own answer and told baseline, so the consent question is asked again.
 type mastermindResetFlagValues struct {
 	kind    *string
 	session *string
@@ -339,6 +340,8 @@ func mastermindResetFlagSet(fs *flag.FlagSet) *mastermindResetFlagValues {
 	return v
 }
 
+// cmdMasterMindReset clears the current repository's answer and the calling
+// session's own answer and told baseline, so the consent question is asked again.
 func cmdMasterMindReset(args []string) error {
 	return outcomeError(cmdMasterMindResetRun(args))
 }
@@ -400,9 +403,6 @@ func cmdMasterMindResetRun(args []string) error {
 	return nil
 }
 
-// cmdMasterMindGuide renders the model-facing text for a location's consent
-// answer: the guide when the repository answered yes, the ask-note when it has
-// not, and nothing when it answered no or is not a repository.
 type mastermindGuideFlagValues struct {
 	cwd     *string
 	kind    *string
@@ -419,6 +419,9 @@ func mastermindGuideFlagSet(fs *flag.FlagSet) *mastermindGuideFlagValues {
 	return v
 }
 
+// cmdMasterMindGuide renders the model-facing text for a location's consent
+// answer: the guide when the repository answered yes, the ask-note when it has
+// not, and nothing when it answered no or is not a repository.
 func cmdMasterMindGuide(args []string) error {
 	fs := flag.NewFlagSet("guide", flag.ContinueOnError)
 	v := mastermindGuideFlagSet(fs)
@@ -429,6 +432,8 @@ func cmdMasterMindGuide(args []string) error {
 
 	// A process relevo started for a round is a runner, never asked, briefed or
 	// registered, so the guide answers before anything opens the database.
+	// The disabled state is the existing non-repository answer, which the
+	// plugin is already silent on.
 	if isRunnerHost() {
 		if *asJSON {
 			fmt.Println(`{"state":"disabled","text":""}`)
@@ -455,7 +460,8 @@ func cmdMasterMindGuide(args []string) error {
 		}
 	}
 
-	// No repository means no answer to give and none to ask for.
+	// No repository means no answer to give and none to ask for; the init and
+	// notice hooks apply the same rule.
 	repoState := db.ConsentNo
 	repoLabel := ""
 	ref := mastermindRepoOf(context.Background(), rt, cwd)

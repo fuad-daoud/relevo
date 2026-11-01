@@ -28,8 +28,8 @@ import (
 // the module version the toolchain records in the build info.
 var version = ""
 
-// distribution is stamped by release.yml; empty in every other build, which
-// release.Detect reads as "no claim".
+// distribution is stamped by release.yml with -X main.distribution=release;
+// empty in every other build, which release.Detect reads as "no claim".
 var distribution = ""
 
 const usage = `relevo automates the plan/report handoff between two AI coding agent

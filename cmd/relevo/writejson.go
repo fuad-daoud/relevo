@@ -249,7 +249,8 @@ func tierOrHarness(tier string) string {
 }
 
 // ServiceDoc is `relevo service install|uninstall --json`: which verb ran, the
-// unit file, and what happened to it.
+// unit file it acted on, and what happened to it: wrote, unchanged, removed or
+// absent.
 type ServiceDoc struct {
 	Action  string `json:"action"`
 	Unit    string `json:"unit"`

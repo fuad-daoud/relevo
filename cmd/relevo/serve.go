@@ -333,8 +333,8 @@ func serveAdminConfigFrom(root string, d *db.DB, L config.Loaded) serve.Config {
 	return cfg
 }
 
-// An empty candidates set is not an error here: the census is meaningful with
-// no candidates.
+// serveAdminConfigWithPolicy allows an empty candidates set: the census is
+// meaningful with no candidates.
 func serveAdminConfigWithPolicy(root string, d *db.DB) (serve.Config, error) {
 	L, err := loadConfig(d)
 	if err != nil {
@@ -446,7 +446,8 @@ func cmdServeRun(args []string) error {
 	dispatcher := newHooksDispatcher(hooksCfg, pol)
 
 	// Scopes are enabled by policy and confirmed by a startup probe; if
-	// systemd-run is missing, scopes stay off for the daemon's lifetime.
+	// systemd-run is missing or the user manager refuses, scopes stay off for
+	// the daemon's lifetime.
 	scopesStatus := "off"
 	scope := scopeFromPolicy(pol.ScopeFor(true))
 	if userMode {

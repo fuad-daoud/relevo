@@ -12,10 +12,11 @@ import (
 
 // serveConfigReloader builds the reload source the running server ticks against:
 // the machine database's own config store, reading the same user config dir
-// loadConfig imported at startup. An empty configDir resolves the user config dir
-// here, so a caller that already knows it passes it rather than resolving twice.
-// A database newer than this build gets no source, the same import loadConfig
-// skipped for it.
+// loadConfig imported at startup, exactly as cmdDaemon hands rt.Config to the
+// daemon's watcher. An empty configDir resolves the user config dir here, so a
+// caller that already knows it passes it rather than resolving twice. A database
+// newer than this build gets no source, the same import loadConfig skipped for
+// it, so that server keeps its startup config for life.
 func serveConfigReloader(d *db.DB, configDir string) (*serve.ConfigRefresher, error) {
 	if d.Newer() {
 		slog.Warn("relevo.db schema is newer; serve config reload disabled")

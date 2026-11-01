@@ -38,8 +38,6 @@ func waitDocOf(name string, res relevo.WaitResult) WaitDoc {
 	return doc
 }
 
-// cmdWait blocks until a round closes or needs a human. It reads relevo's own
-// state only; it launches nothing.
 type waitFlagValues struct {
 	name    *string
 	any     *bool
@@ -60,6 +58,8 @@ func waitFlagSet(fs *flag.FlagSet) *waitFlagValues {
 	return v
 }
 
+// cmdWait blocks until a round closes or needs a human. It reads relevo's own
+// state only; it launches nothing.
 func cmdWait(args []string) error {
 	fs := flag.NewFlagSet("wait", flag.ContinueOnError)
 	v := waitFlagSet(fs)
@@ -93,8 +93,9 @@ func cmdWait(args []string) error {
 		if err != nil {
 			return err
 		}
-		// A chain name waits on the chain -- unless the chain is no longer
-		// running and its builder has a manual round open.
+		// A name that resolves to a chain waits on the chain -- unless the
+		// chain is no longer running and its builder has a manual round open,
+		// in which case the wait follows that round as any binding's would.
 		binding, isChain, err := relevo.ChainWaitTarget(rt, target)
 		if err != nil {
 			return waitFailure(err)

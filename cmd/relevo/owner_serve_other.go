@@ -9,8 +9,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db/wire/owner"
 )
 
-// serveOwner serves nothing off unix: a nil handle means no socket and no
-// server, and there is no socket transport there.
+// serveOwner starts the owner over d on ln. A nil handle (the open failed)
+// means no socket and no server, which is every off-unix start: there is no
+// socket transport there.
 func serveOwner(d *db.DB, ln net.Listener, _ func()) (*owner.Server, error) {
 	if d == nil || ln == nil {
 		return nil, nil

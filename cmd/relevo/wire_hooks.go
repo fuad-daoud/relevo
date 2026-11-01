@@ -10,7 +10,9 @@ import (
 // resolveHooksConfig builds the hook dispatcher environment from the loaded
 // hooks section and the run log. A caller with no database open passes nil for
 // the log, and hook output is then recorded nowhere. Every relative argv[0]
-// is resolved against root here, the last point before the hook runs.
+// is resolved against root here, the last point before the hook runs: a script
+// under the config root is root-relative so it travels, and one outside it is
+// machine-local and already absolute.
 func resolveHooksConfig(hooksMap map[string][][]string, log hooks.RunLog) (hooks.Config, error) {
 	root, err := relevo.ConfigRoot()
 	if err != nil {

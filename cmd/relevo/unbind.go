@@ -67,7 +67,9 @@ func cmdUnbind(args []string) error {
 	}
 
 	// The plain and --pick paths honour neither --dry-run nor --delete, and
-	// --done archives by default. Refuse here, before newRuntime.
+	// --done archives by default, so --archive contradicts it. Refuse here,
+	// before newRuntime and any store or network access: each flag is scoped
+	// to a path this command does not take.
 	if *dryRun && !*done {
 		return fail(codeRefused, "--dry-run goes with --done or --sweep")
 	}

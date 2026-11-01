@@ -9,8 +9,9 @@ import (
 )
 
 // mastermindRepoOf reads cwd's repository identity through the runtime's git
-// client. A Runtime with no git client, or a cwd outside a repository, yields
-// an empty ref.
+// client, in the same shape internal/ingest stores: the origin URL normalised,
+// the common dir canonical. A Runtime with no git client, or a cwd outside a
+// repository, yields an empty ref.
 func mastermindRepoOf(ctx context.Context, rt relevo.Runtime, cwd string) db.Repo {
 	if rt.Git == nil {
 		return db.Repo{}

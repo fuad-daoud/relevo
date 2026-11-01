@@ -213,8 +213,6 @@ func appendEnvLine(path, line string) error {
 	return nil
 }
 
-// cmdMasterMindEnable answers yes for this session, and with --repo for the
-// repository, then registers the calling session.
 type mastermindListFlagValues struct {
 	asJSON *bool
 }
@@ -500,8 +498,9 @@ func gcScope(mastermindFlag string, all bool, resolve func(ref string) (mastermi
 }
 
 // mastermindInUse is Forget's guard: a record any binding that is not DONE still
-// names is in use. An unreadable store refuses the forget: deleting a record a
-// live binding may name is worse than making the human retry.
+// names is in use, and forgetting it would strand that binding's history. An
+// unreadable store refuses the forget: deleting a record a live binding may name
+// is worse than making the human retry.
 func mastermindInUse(rt relevo.Runtime) func(id string) bool {
 	return func(id string) bool {
 		counts, err := mastermindBindingCounts(rt)

@@ -27,9 +27,12 @@ func dialUDS(ctx context.Context, sock string) (net.Conn, error) {
 // refusal no real socket would answer.
 var firstDial = dialUDS
 
-// ownerStarting reports whether a starting daemon is evident: the connect
-// comes first because probing the lock takes the flock, which would cost a
-// daemon starting at that instant its start.
+// ownerStarting reports whether a daemon that is still starting is evident
+// under root: a plain connect to sock that succeeds means some process holds
+// the listener, which is what survives a re-exec; when the connect fails the
+// daemon lock is probed. The connect comes first because probing the lock takes
+// the flock for a moment, which would cost a daemon that takes it at that
+// instant its start.
 func ownerStarting(root, sock string) bool {
 	if listenerHeld(sock) {
 		return true
