@@ -61,7 +61,7 @@
   `relevo show --diff` defaults to the newest completed one. Pass `--anchors` to prefix
   each hunk and each `' '`/`'+'` line with its `path:line`, ready to quote into a
   review comment (see [Reviewing a round](#reviewing-a-round)).
-- `relevo status [NAME|--name N] [--json] [--all] [--line]` — one row per binding: round, display state, the builder's own status, the last relayed event and anything pending. `--line` is the one-row-per-binding form Claude Code's status line runs (see [Status line](../README.md#status-line)). Rows are attention-first -- NEEDS YOU, ACTIVE, PAUSED, DONE, stale first within a group, newest last-event first -- the same order `relevo ui` uses, so the two never disagree. Naming a binding shows only that one. Bindings marked DONE are hidden by default and the footer names how many are hidden.
+- `relevo status [NAME|--name N] [--json] [--all] [--line]` — one row per binding: round, display state, the builder's own status, the last relayed event and anything pending. `--line` is the one-row-per-binding form Claude Code's status line runs (see [Status line](#status-line)). Rows are attention-first -- NEEDS YOU, ACTIVE, PAUSED, DONE, stale first within a group, newest last-event first -- the same order `relevo ui` uses, so the two never disagree. Naming a binding shows only that one. Bindings marked DONE are hidden by default and the footer names how many are hidden.
   While a round is open a row also shows the round's live diff against its baseline (`+120/-30 in 6`, `(shared tree)` for a `--cwd` binding sharing the MasterMind's own working tree), an ACTIVE row's `quiet <age>` since its last progress sample, and `●new` when the binding's newest report is unread (its record's `viewed_at` stamp is older than the newest report).
   `--json` also carries fields the prose above does not spell out:
   ```
@@ -624,3 +624,51 @@ A headless binding is never `BROKEN` for lack of a process (see [Headless
 builders](rounds.md#headless-builders)). To move a binding to a fresh process by
 hand, `relevo send` the staged prompt again once `relevo status` shows the
 builder `exited`.
+
+## Status line
+
+`relevo status --line` shows this MasterMind's bindings, one row each (one entry
+per chain in place of its members), under the Claude Code prompt; it shows nothing
+on error and never probes a builder.
+The first line names the MasterMind (`MasterMind architect-14`), so each terminal
+shows which MasterMind it is; `relevo mastermind list` maps that name to its chat.
+While a live board runs for this MasterMind, the next line is `board <mastermind> · <url>`,
+dim, carrying the full token-bearing URL; `status --line --json` carries the same
+as the top-level `board` block (`name`, `scope`, `url`, null when absent), and the
+OpenCode plugin's sidebar draws the same line. The block is a file read only --
+the pointer, `server.json` and a pid check -- and never reads the database.
+Each row shows the round's harness (`harness@server` for a remote builder),
+what it is waiting on, this round's tokens, and the round's length: ticking while
+it runs, frozen once the report is in. While a round runs the row also says what
+the runner is doing -- `working`, `quiet X` once its progress has gone silent,
+`stalled X`, `exploring X`, `gating X`, `exited`, `running`, `queued` -- in place
+of the phase word, and the round's live diff against its baseline (`+A/-R in F`,
+`(shared)` for a `--cwd` binding whose tree is the mastermind's own).
+
+Add this to `~/.claude/settings.json`:
+
+```json
+"statusLine": { "type": "command", "command": "relevo status --line", "refreshInterval": 1 }
+```
+
+One precondition: `relevo` must be on the `PATH` of the Claude Code process.
+The MasterMind session is identified by `RELEVO_MASTERMIND`, which the relevo plugin's
+hook exports.
+
+Claude Code renders a few cells less than `COLUMNS`; relevo subtracts 4 by
+default (measured on the fullscreen TUI). If the right-hand round clock (with
+a state word only when it is not ACTIVE) is clipped or sits short of the edge,
+measure yours and set `RELEVO_STATUSLINE_MARGIN` in the environment Claude Code
+starts from. To measure, put this in `statusLine.command` for one refresh and
+count the cells before Claude Code's `…`:
+
+    sh -c 'printf "%s" "$(seq -s . 1 $COLUMNS | cut -c1-$COLUMNS)"'
+
+Each row is `○ name  rN · builder · what relevo is waiting on  …  age · STATE`,
+where `builder` is the harness segment of the candidate token, `age` is time
+since the last prompt, report or question crossed, and a `+A/-R in F` segment in
+the middle is the round's live diff against its baseline. `relevo status --line
+--json` carries that diff as an additive `live` object on the row (`files`,
+`added`, `removed`, and `shared` for a `--cwd` binding); the key is present only
+while a round runs. It also carries `text`: the row exactly as the text mode
+renders it, without colour codes, which the OpenCode sidebar prints.

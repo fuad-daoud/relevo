@@ -380,53 +380,12 @@ gives a MasterMind a name of your own.
 - [Lifecycle hooks](docs/hooks.md) — hook events, webhooks and harness setup.
 - [Claude Code plugin](docs/plugin.md) — the MCP server, hooks and slash commands.
 
-## Status line
+For contributors:
 
-`relevo status --line` shows this MasterMind's bindings, one row each (one entry
-per chain in place of its members), under the Claude Code prompt; it shows nothing
-on error and never probes a builder.
-The first line names the MasterMind (`MasterMind architect-14`), so each terminal
-shows which MasterMind it is; `relevo mastermind list` maps that name to its chat.
-While a live board runs for this MasterMind, the next line is `board <mastermind> · <url>`,
-dim, carrying the full token-bearing URL; `status --line --json` carries the same
-as the top-level `board` block (`name`, `scope`, `url`, null when absent), and the
-OpenCode plugin's sidebar draws the same line. The block is a file read only --
-the pointer, `server.json` and a pid check -- and never reads the database.
-Each row shows the round's harness (`harness@server` for a remote builder),
-what it is waiting on, this round's tokens, and the round's length: ticking while
-it runs, frozen once the report is in. While a round runs the row also says what
-the runner is doing -- `working`, `quiet X` once its progress has gone silent,
-`stalled X`, `exploring X`, `gating X`, `exited`, `running`, `queued` -- in place
-of the phase word, and the round's live diff against its baseline (`+A/-R in F`,
-`(shared)` for a `--cwd` binding whose tree is the mastermind's own).
-
-Add this to `~/.claude/settings.json`:
-
-```json
-"statusLine": { "type": "command", "command": "relevo status --line", "refreshInterval": 1 }
-```
-
-One precondition: `relevo` must be on the `PATH` of the Claude Code process.
-The MasterMind session is identified by `RELEVO_MASTERMIND`, which the relevo plugin's
-hook exports.
-
-Claude Code renders a few cells less than `COLUMNS`; relevo subtracts 4 by
-default (measured on the fullscreen TUI). If the right-hand round clock (with
-a state word only when it is not ACTIVE) is clipped or sits short of the edge,
-measure yours and set `RELEVO_STATUSLINE_MARGIN` in the environment Claude Code
-starts from. To measure, put this in `statusLine.command` for one refresh and
-count the cells before Claude Code's `…`:
-
-    sh -c 'printf "%s" "$(seq -s . 1 $COLUMNS | cut -c1-$COLUMNS)"'
-
-Each row is `○ name  rN · builder · what relevo is waiting on  …  age · STATE`,
-where `builder` is the harness segment of the candidate token, `age` is time
-since the last prompt, report or question crossed, and a `+A/-R in F` segment in
-the middle is the round's live diff against its baseline. `relevo status --line
---json` carries that diff as an additive `live` object on the row (`files`,
-`added`, `removed`, and `shared` for a `--cwd` binding); the key is present only
-while a round runs. It also carries `text`: the row exactly as the text mode
-renders it, without colour codes, which the OpenCode sidebar prints.
+- [Architecture](docs/architecture.md) — the package layers, the import rule and where new code goes.
+- [Code style](docs/style.md) — comments, no history, size limits, shared helpers and tests.
+- [Docs standard](docs/docs-standard.md) — how these pages are written.
+- [Runbook](docs/runbook.md) — verifying, merging, releasing and deploying.
 
 ## Platform support
 

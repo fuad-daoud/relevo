@@ -45,7 +45,7 @@ acks each line with `relevo push --ack <binding> <seq>`, which confirms that
 entry and exits; the holder sees the confirm and sends the next line, so by the
 time the `wait` tool returns its outcome line the report is already in the
 session. Meanwhile the status line under the prompt keeps the bindings, round
-and state in view (see [Status line](../README.md#status-line)). Without a holder -- the mod
+and state in view (see [Status line](commands.md#status-line)). Without a holder -- the mod
 not loaded, another harness, a session where no MasterMind resolved -- reports
 arrive through the `wait` tool above instead. `relevo help --json push`
 documents both routes of the verb.
