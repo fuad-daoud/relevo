@@ -132,7 +132,7 @@ func TestRepoConsentItemsSkipRowsWithoutURL(t *testing.T) {
 	if _, err := f.shared.SetRepoConsent(db.Repo{CommonDir: strPtr("/repo/.git")}, db.ConsentNo, baseTime); err != nil {
 		t.Fatalf("SetRepoConsent for the dir: %v", err)
 	}
-	// An answer that was set and then cleared: no longer a value to carry.
+	// An answer set and then cleared: no value is left to carry.
 	if _, err := f.shared.SetRepoConsent(db.Repo{OriginURL: strPtr("https://github.com/o/cleared")}, db.ConsentYes, baseTime); err != nil {
 		t.Fatalf("SetRepoConsent yes: %v", err)
 	}

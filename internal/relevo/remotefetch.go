@@ -297,7 +297,7 @@ func applyDrift(rt Runtime, tx *store.Tx, name string, round int, data []byte) {
 // catchUpFetch is the round-close download a fetch made without the lock: the
 // report, diff, log and stream files -- a reader's artifacts in place of the
 // report and diff -- and the bundle's outcome. The apply half installs it
-// under the lock with the steps the inline catch-up used to run.
+// under the lock.
 type catchUpFetch struct {
 	Round         int               // view.ClosedRound
 	Abort         bool              // a read failed and the whole-branch retry did too: the apply returns b unchanged (retry next tick)

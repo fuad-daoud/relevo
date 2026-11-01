@@ -200,8 +200,7 @@ func TestPruneHistoryDeletesAgedRows(t *testing.T) {
 }
 
 // A Deps with no shared file records nothing and prunes nothing: a machine with
-// no database keeps no history at all, rather than a second copy somewhere the
-// documents used to be.
+// no database keeps no history at all.
 func TestHistoryRowsAreOptional(t *testing.T) {
 	t.Parallel()
 	d := testDeps(t)

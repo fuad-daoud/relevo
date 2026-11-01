@@ -477,9 +477,9 @@ func setupTestEnv(t *testing.T, cfgOpts ...func(*Config)) *testEnv {
 // candidate every env starts from. A served chain create now refuses a member
 // whose role has no candidate (PickServedCandidateFor propagates the refusal,
 // as a local bind does), so the shared env's candidate also serves the two
-// reader roles the default chain request names: a leg that used to be created
-// with an empty candidate resolves like the internal/relevo chain fixtures
-// do. planner and security are file-mode actor names, not harness roles, and
+// reader roles the default chain request names: a leg created with an empty
+// candidate resolves like the internal/relevo chain fixtures do. planner and
+// security are file-mode actor names, not harness roles, and
 // no shared-env request names them.
 func builderCandidateSet(t *testing.T) (*candidate.Set, error) {
 	t.Helper()

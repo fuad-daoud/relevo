@@ -133,8 +133,9 @@ func LingerPath(user string) string { return LingerDir + "/" + user }
 
 // PortCheck is the `port` row, which exists only on a sandbox that also runs
 // `relevo serve`. It warns on the default port, which the production serve on
-// the same host already owns, and on a port that is not the one the sandbox was
-// created with, which means the unit was changed after the fact.
+// the same host already owns, and on a port that is not the one the sandbox
+// was created with, which means the unit on disk no longer matches the port
+// recorded at creation.
 func PortCheck(in SandboxInput) Check {
 	c := Check{Name: "port"}
 	port, ok := ListenPort(in.Listen)

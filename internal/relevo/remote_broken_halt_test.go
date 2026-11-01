@@ -13,10 +13,11 @@ import (
 // view: a server holding a round whose builder is gone is NEEDS YOU here, halted
 // with the server's own reason and owing exactly one entry.
 //
-// A broken view used to fall through to the default arm, which reports a
-// payload and returns. The binding stayed Active, `relevo wait` sat on a round
-// no process would finish, and the MasterMind heard nothing: the state word
-// said broken and the halt said nothing, because the break was never read.
+// A broken view must not fall through to the default arm, which reports a
+// payload and returns: that answer leaves the binding Active, `relevo wait`
+// sitting on a round no process will finish, and the MasterMind hearing
+// nothing -- the state word says broken and the halt says nothing, because
+// the break is never read.
 func TestRemoteBrokenViewHaltsWithServerReason(t *testing.T) {
 	t.Parallel()
 	st := store.New(t.TempDir())

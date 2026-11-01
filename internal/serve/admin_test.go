@@ -1011,7 +1011,7 @@ func requireKeys(t *testing.T, obj any, keys ...string) {
 }
 
 // TestRenderGatesSanitizesNote pins that a gate's note is sanitised before it
-// is printed, so a reason stored before the fix cannot draw a control sequence.
+// is printed, so a stored reason cannot draw a control sequence.
 func TestRenderGatesSanitizesNote(t *testing.T) {
 	gates := []availability.Gate{{
 		Token: "claude/t/m",

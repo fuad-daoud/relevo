@@ -43,9 +43,9 @@ func TestHaltedChainStopIsAConflictNotInternal(t *testing.T) {
 
 // TestResumeReHaltIsRefusedNotInternal pins the resume side of the same rule:
 // a resume whose own transition lands on a halt is a refusal carrying the halt
-// reason, and the CLI codes it as one. The mutation it kills is the plain
-// fmt.Errorf the resume used to return, which no sentinel matched and the
-// frame therefore coded internal.
+// reason, and the CLI codes it as one. The mutation it kills is a plain
+// fmt.Errorf, which no sentinel matches and the frame therefore codes
+// internal.
 func TestResumeReHaltIsRefusedNotInternal(t *testing.T) {
 	t.Parallel()
 

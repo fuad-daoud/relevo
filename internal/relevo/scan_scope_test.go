@@ -122,7 +122,7 @@ func TestDenialScanIgnoresThePreviousBuildersLines(t *testing.T) {
 // TestLimitScanReadsOnlyHarnessChannels pins the harness-authored-channels rule
 // end to end: a limit-shaped sentence a tool wrote, or a successful result's own
 // text, is the model talking about a limit, not hitting one. limitText drops
-// both, while the rendered tail the scan used to read still shows them.
+// both, while the rendered tail still shows them.
 func TestLimitScanReadsOnlyHarnessChannels(t *testing.T) {
 	fr := newFakeRunner()
 	rt, b := gateOnLimitSetup(t, fr)

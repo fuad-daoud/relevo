@@ -12,8 +12,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// needsYouWithClosingRound is the wire shape that used to double-halt: the
-// server says the round both closed and needs a human. A round that closed and
+// needsYouWithClosingRound is the double-halt wire shape: the server says
+// the round both closed and needs a human. A round that closed and
 // then halted again reports exactly this, and the client must collect the close
 // first and let the catch-up own whatever it decides -- including the decision
 // to halt for its own reason.

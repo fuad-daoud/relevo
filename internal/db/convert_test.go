@@ -238,10 +238,9 @@ func TestConvertLeavesNoSQLiteSidecars(t *testing.T) {
 	}
 }
 
-// TestConvertSkipsAFileSQLiteClosedCleanly is replaced by
-// TestConvertRunsOnACleanlyClosedLegacyFile and TestConvertSkipsAMarkedFile:
-// a clean close no longer means "do not convert", so what it pinned is now the
-// two halves those tests hold.
+// A clean close is not "do not convert":
+// TestConvertRunsOnACleanlyClosedLegacyFile and TestConvertSkipsAMarkedFile
+// hold the two halves of that coverage.
 // headerApplicationID reads the application_id field straight out of the file
 // header, so a test never has to open a file another engine holds.
 func headerApplicationID(t *testing.T, path string) int64 {
