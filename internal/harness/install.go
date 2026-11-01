@@ -65,10 +65,8 @@ type InstallResult struct {
 	Path    string
 	Outcome InstallOutcome
 	Err     string
-	// NewerShipped reports that the kept difference sits on an older copy: the
-	// manifest holds what relevo last wrote here, and that is not the
-	// definition relevo ships now, so a reset brings a newer one rather than
-	// only undoing the user's edit.
+	// NewerShipped reports the kept difference sits on an older copy, so a reset
+	// brings a newer definition rather than only undoing the user's edit.
 	NewerShipped bool
 }
 
@@ -376,7 +374,6 @@ func InstallAccountHome(env InstallEnv, opts InstallOptions, kind, home string) 
 	return results, merr
 }
 
-// record stores path's sha and reports whether that changed the map.
 func record(manifest map[string]string, path, sha string) bool {
 	if manifest[path] == sha {
 		return false

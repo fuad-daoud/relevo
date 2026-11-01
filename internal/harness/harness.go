@@ -32,8 +32,7 @@ type RoleSpec struct {
 	Definitions []string
 }
 
-// roleTable defines relevo's built-in roles: a job name, its shape, and the
-// harness definition that implements it. The candidate that runs it is a
+// roleTable is relevo's built-in roles. The candidate that runs one is a
 // separate choice.
 var roleTable = []RoleSpec{
 	{
@@ -93,10 +92,9 @@ type Role struct {
 type Harness struct {
 	Kind   string // harness kind, as passed to the harness's own agent selector
 	Binary string // executable name looked up on PATH
-	// Roles are the definitions relevo ships for this kind, ordered with
-	// plan-executor first so doctor reports the role the loop depends on
-	// before the rest. A row need not back a roleTable entry: architect is the
-	// mastermind's definition, shipped but never launched by relevo.
+	// Roles lists this kind's definitions, plan-executor first so doctor reports
+	// the role the loop depends on before the rest. A row need not back a
+	// roleTable entry: architect is shipped but never launched by relevo.
 	Roles []Role
 	// MinVersion is the semver floor doctor holds the binary to; "" means
 	// unchecked.
@@ -176,8 +174,7 @@ var knownHarnesses = map[string]Harness{
 		MinVersion: "1.4.11",
 		Providers:  []string{"meta"},
 		// The quota object's shape comes from Muse's wire schema, and the
-		// prose the scan reads is pinned by a captured 429 sentence, though
-		// no raw limit stream has been sealed as a fixture yet.
+		// prose the scan reads is pinned by a captured 429 sentence.
 		LimitPatterns: []string{
 			`(?i)usage limit`,
 			`(?i)tier.?limit`,

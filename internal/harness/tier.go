@@ -46,7 +46,7 @@ func (t Tier) Rank() int {
 	}
 }
 
-// Above returns t.Rank() > u.Rank(), false if either is harness.
+// Above reports whether t outranks u; false if either is harness.
 func (t Tier) Above(u Tier) bool {
 	if t == TierHarness || u == TierHarness {
 		return false
@@ -196,10 +196,9 @@ func (h Harness) ExtraArgsPermissionFlag(extra []string) string {
 	return ""
 }
 
-// PromptCopyWanted reports whether relevo should stage a prompt copy inside out/
-// and point the launch prompt to it. agy at read runs under --mode plan
-// without access to the binding directory outside its --add-dir arguments, so
-// relevo copies the prompt into out/.
+// PromptCopyWanted reports whether relevo stages a prompt copy inside out/.
+// agy at read runs under --mode plan without access to the binding directory
+// outside its --add-dir arguments, so relevo copies the prompt into out/.
 func PromptCopyWanted(kind string, tier Tier) bool {
 	return kind == "agy" && tier == TierRead
 }

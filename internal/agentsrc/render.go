@@ -61,7 +61,6 @@ func Render(s Source, kind string) ([]byte, error) {
 	return nil, fmt.Errorf("agent %s: kind %s is not in its kinds: %w", s.Name, kind, ErrBadSource)
 }
 
-// kindRendered reports whether kind is in the source's rendered kinds.
 func kindRendered(s Source, kind string) bool {
 	for _, k := range RenderedKinds(s) {
 		if k == kind {

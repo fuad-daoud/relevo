@@ -23,7 +23,6 @@ const maxWaitTimeout = 27 * time.Hour
 // maxWaitTimeoutNoProgress is the upper bound on wait timeout without progress token.
 const maxWaitTimeoutNoProgress = 25 * time.Minute
 
-// WaitArgs is the wait tool's input: {name?, round?, timeout?}.
 type WaitArgs struct {
 	Name             string `json:"name,omitempty"`
 	Round            int    `json:"round,omitempty"`
@@ -94,16 +93,11 @@ func waitOutcomeWord(code int) string {
 	}
 }
 
-// peekRef is the non-claiming command that prints e whole: delivery's own
-// `relevo show` form with --peek appended. The peek is what makes the pointer
-// safe here -- a plain `show` claims the oldest pending payload of its round,
-// so pointing an already-confirmed entry at a claiming command would hand the
-// reader the NEXT pending payload of that round as a side effect of reading one
-// it already has.
-//
-// A kind delivery names no section for (a halt entry, whose payload is the
-// notification itself and carries its own `relevo status` pointer) is pointed
-// at the round's log, which carries the entry and claims nothing.
+// peekRef is the non-claiming command that prints e whole: delivery's `relevo
+// show` form with --peek appended. A plain `show` claims the round's oldest
+// pending payload, so it would hand the reader the NEXT pending payload as a
+// side effect; --peek avoids that. A halt entry, which carries its own pointer,
+// is pointed at the round's log, which claims nothing.
 func peekRef(b store.Binding, e store.LogEntry) string {
 	if ref := delivery.LogRef(b, e); ref != "" {
 		return ref + " --peek"
@@ -111,18 +105,11 @@ func peekRef(b store.Binding, e store.LogEntry) string {
 	return fmt.Sprintf("relevo show %s --round %d --log --peek", b.Name, e.Round)
 }
 
-// oversizeWaitBody renders the over-cap result: one item per entry the delivery
-// confirmed, in confirmation order so the waited round is last. An entry whose
-// text still fits the budget left is delivered whole; an entry that does not is
-// cut to that budget, or -- when too little of it is left for a useful fragment
-// -- reduced to its peek pointer. Either way every confirmed entry is
-// represented, which is the whole point: confirming every entry and printing a
-// path for them all drops the content of each one the caller never sees.
-//
-// A halt entry is the exception: its text is the reason a human is needed, it is
-// short, and a report that eats the budget first would otherwise reduce it to a
-// pointer at the exact moment it matters most. So a halt's text is written whole
-// whatever budget is left, and it does not spend budget the report still needs.
+// oversizeWaitBody renders the over-cap result: one item per confirmed entry, in
+// confirmation order so the waited round is last, every entry represented whole
+// or cut to budget, or reduced to its peek pointer. A halt entry is the
+// exception: its text is the reason a human is needed, so it is written whole
+// whatever budget is left and spends none the report still needs.
 func oversizeWaitBody(st *store.Store, name string, round int, res relevo.WaitResult) string {
 	binding := delivery.BindingFor(st, name)
 

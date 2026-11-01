@@ -91,8 +91,7 @@ func fileState(res InstallResult) (FileState, error) {
 	}
 }
 
-// ResetAgentFile overwrites agent's definition file on kind with the shipped
-// copy and returns Install's single result.
+// ResetAgentFile overwrites kind's file for agent with the shipped copy.
 func ResetAgentFile(env InstallEnv, kind, agent string) (InstallResult, error) {
 	results, err := Install(env, InstallOptions{Kind: kind, Role: agent, Force: true})
 	if err != nil {
