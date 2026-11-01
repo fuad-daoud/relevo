@@ -58,7 +58,8 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 		// A running chain owns its member's rounds, so done is refused the
 		// same way the send path refuses one: a DONE member is neither gone
 		// nor NEEDS YOU, and the chain would wait forever for a close that
-		// can no longer come.
+		// can no longer come. Checked in this critical section, with the
+		// state write below, exactly as the send path checks it.
 		if err := chain.RefuseRunningMember(tx, name); err != nil {
 			return err
 		}
@@ -119,8 +120,9 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 		// paths agree on what pending means and what it becomes.
 		//
 		// A chain entry is NOT one of them: it is the chain's own status
-		// record, and `chain done` deliberately queues no MasterMind delivery
-		// for it. Sweeping it here would consume that record on a plain
+		// record, written under a binding named after the chain, and
+		// `chain done` deliberately queues no MasterMind delivery for it.
+		// Sweeping it here would consume that record on a plain
 		// `relevo done` of one member, so it is skipped by the same kind rule
 		// PushText applies.
 		//

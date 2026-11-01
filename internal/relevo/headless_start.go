@@ -186,9 +186,13 @@ func startProcessResuming(ctx context.Context, rt Runtime, tx *store.Tx, b store
 		// A tenant-boundary refusal and a scope collision are the host's, not the
 		// candidate's: neither gates the candidate nor is a spawnFailure, since
 		// a runner that fails to *start* for a host reason has not proved the
-		// candidate cannot run. freeRoundScope is the primary guard, but a scope
-		// loading between the probe and the Start still arrives here as an
-		// ordinary error.
+		// candidate cannot run. Gating it would gate a candidate that never
+		// ran, and the halt would then read "every candidate is gated".
+		// Returning a plain, non-spawnFailure error also keeps the lost-builder
+		// path from spending its one fresh attempt on a resume that would
+		// collide the same way. freeRoundScope is the primary guard, but a
+		// scope loading between the probe and the Start still arrives here as
+		// an ordinary error.
 		if errors.Is(err, spawn.ErrBoundarySetup) || isScopeBusy(err) || errors.Is(err, spawn.ErrScopeUnavailable) {
 			return b, fmt.Errorf("start headless builder for %q (%s): %w", b.Name, c.Ref().String(), err)
 		}
@@ -205,8 +209,9 @@ func startProcessResuming(ctx context.Context, rt Runtime, tx *store.Tx, b store
 }
 
 // resumeRound continues the round's builder in the session it announced before
-// it was lost to a daemon restart, rebuilt for the same candidate and tier and
-// rendered through the harness's resume selector.
+// it was lost to a daemon restart: it resolves the candidate exactly as
+// startRound does, rebuilds the round for the same candidate and tier, and
+// renders its argv through the harness's resume selector.
 //
 // It has startRound's pre- and postconditions. ErrResumeUnsupported comes back
 // wrapped and unchanged, so the caller can fall back to a fresh relaunch.

@@ -18,7 +18,8 @@ import (
 // nudgePlanOnMarker resumes an exited plan-writing reader whose marker is down
 // but whose output holds no plan steps. The marker is removed once the resume
 // has started, so the round closes on the resumed runner's exit and not on the
-// marker already there.
+// marker already there. resumed is false, with nothing changed, for any round
+// that does not owe the nudge.
 func nudgePlanOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry) (store.Binding, bool, error) {
 	if rt.Runner == nil {
 		return b, false, nil
@@ -42,7 +43,8 @@ func nudgePlanOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 
 // readerFinalMessageGrace is how long a reader round whose marker is present
 // waits for its runner to exit: a runner writes its final message just after
-// the marker and then exits, and a hung one must not hold the round forever.
+// the marker and then exits, so two minutes is generous, and a hung one must
+// not hold the round forever.
 const readerFinalMessageGrace = 2 * time.Minute
 
 // readerSummaryEarlyNote is the note a reader round closes with when its
@@ -56,8 +58,11 @@ const readerSummaryEarlyNote = "runner still running after its marker; summary t
 // that message is the round's summary, so the round waits for the exit. A
 // marker absent this tick closes nothing, and a marker that appears between
 // this read and closeOnMarker's own must not close the round before the final
-// message lands. Inside the grace a report-less round is held even when its
-// process is gone, and an unreadable liveness check holds the tick.
+// message lands. held is true while the process is alive inside the grace; a
+// runner still alive after the grace is stopped the way `relevo stop` stops
+// one, with early true, so the caller closes on the stream as it is. Inside
+// the grace a report-less round is held even when its process is gone, and an
+// unreadable liveness check holds the tick.
 func holdReaderOnMarker(ctx context.Context, rt Runtime, b store.Binding) (present, held, early bool, err error) {
 	fi, serr := os.Stat(rt.Store.DonePath(b.Name, b.Round))
 	if serr != nil {
@@ -107,7 +112,9 @@ func holdReaderOnMarker(ctx context.Context, rt Runtime, b store.Binding) (prese
 // markerClose is the marker branch of reconcileHeadless: closeOnMarker and,
 // when the marker is present and the gate is done, the post-close sequence.
 // The normal read and the re-check in the exited branch share it, so a marker
-// appearing inside one tick is handled by one implementation.
+// appearing inside one tick is handled by one implementation. closed and
+// gating are the two bools reported: a read with no marker comes back
+// unchanged with both false.
 func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, markerNote string, wantVerify bool) (store.Binding, bool, bool, error) {
 	// A reader round closes on its runner's exit, not on the marker: the
 	// summary is only complete once the process has gone. The marker is read
@@ -169,8 +176,11 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	}
 	// The report is queued; a failing gate may now open round N+1, exactly as
 	// Send would. A chain member's red gate is the chain's to spend: the
-	// wiring already decided this tick whether a repair can run, so the two
-	// agree. Only a done round may buy a repair: a member that reported
+	// wiring already decided this tick whether a repair can run, on this
+	// binding and this gate log, so the two agree. It opens the round only
+	// when that decision allowed one; when it did not, the red event went to
+	// the chain's reviewer and the member must be left alone rather than
+	// halted. Only a done round may buy a repair: a member that reported
 	// halted, blocked or unstructured halts the chain instead, whatever its
 	// gate says.
 	if halted, ok, herr := housekeep.HaltOnEnvironmentGate(ctx, HousekeepDeps(rt), tx, next, rec, closedRound); ok || herr != nil {

@@ -38,8 +38,10 @@ func ChainWaitTarget(rt Runtime, name string) (binding string, chainArm bool, er
 }
 
 // WaitChain polls a chain until it is no longer running and reports how it
-// ended. A finished chain is exit 0; a halted or stopped one is exit 3.
-// Unless peek is set, the chain's one end delivery is pulled with route
+// ended. A finished chain is exit 0; a halted or stopped one is exit 3, the
+// code a chain that waits on a human shares with every other binding that
+// needs one. Unless peek is set, the chain's one end delivery is pulled with
+// route
 // "wait" and returned as the Payload; a chain that was already delivered has
 // none.
 //

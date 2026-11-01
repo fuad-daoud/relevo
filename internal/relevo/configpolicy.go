@@ -489,8 +489,9 @@ func EditPolicy(d ConfigDoc, sets []PolicySet, message string) (ConfigEdit, erro
 	}, nil
 }
 
-// tierExceedsMaxPattern matches an actor's tier-above-max_tier rejection and
-// captures the actor, its tier and the max it exceeds.
+// tierExceedsMaxPattern matches an actor's tier-above-max_tier rejection, from
+// either roles.json's build-time check or policy.json's own tier.<role> cap,
+// and captures the actor, its tier and the max it exceeds.
 var tierExceedsMaxPattern = regexp.MustCompile(`(?:^|: )(\w[\w-]*)\.tier: (\w+) exceeds max_tier (\w+)`)
 
 // policyFilePrefixPattern is the leading "<name>.json: " a dry-run error

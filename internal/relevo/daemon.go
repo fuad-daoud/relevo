@@ -46,7 +46,8 @@ type Daemon struct {
 
 	// ingestSeen is the store revision each binding was last mirrored at, so a
 	// tick whose data did not change costs one digest instead of a mirror run.
-	// Process state on purpose: a restart mirrors everything once.
+	// It is process state on purpose: a restart mirrors everything once, and a
+	// change the daemon never saw cannot hide behind a revision it wrote.
 	ingestSeen map[string]string
 
 	// backoff remembers servers whose prefetch failed, so a dead server costs
@@ -84,7 +85,7 @@ type Daemon struct {
 	// syncNow is the clock the idle window reads. Nil means time.Now.
 	syncNow func() time.Time
 	// syncVerbs is the verb runner the owner serves, set once the Daemon
-	// exists. Nil means the tick drives rt.Sync exactly as before. When set,
+	// exists. Nil means the tick drives rt.Sync directly. When set,
 	// the tick drives the runner it shares with the verbs, so one client is
 	// reused instead of each path opening its own. Set through SetSyncVerbs:
 	// cmd/relevo owns the hook installation while this type owns the field.
@@ -372,8 +373,9 @@ func (d *Daemon) tickOne(ctx context.Context, b store.Binding) (err error) {
 	pre := d.prefetchRemote(ctx, b)
 	defer pre.release()
 
-	// sealed is read after the lock is released, which is the only place a
-	// sync may be started from.
+	// sealed is how many files this tick's seal pass moved into the database.
+	// It is read after the lock is released, which is the only place a sync
+	// may be started from.
 	var sealed int
 	err = d.rt.Store.WithLock(func(tx *store.Tx) error {
 		loaded, err := tx.Load(name)

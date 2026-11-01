@@ -87,9 +87,9 @@ func chainServerTrace(ctx context.Context, rt Runtime, c db.ChainRow) (ChainTrac
 		Plans: chainIntOr(v.Plans, c.Plans), Corrections: v.Corrections,
 	}
 	for _, r := range v.Trace {
-		// A mirror row may still hold rows the server wrote before its
-		// conversion: decode each row on its own, exactly as a local trace
-		// does.
+		// A mirror whose row carries a workflow may still hold rows the
+		// server wrote before its conversion: decode each row on its own,
+		// exactly as a local trace does.
 		ev, err := chainTraceEvent(r.Seq, r.TS, r.Phase, r.Step, r.Member, r.Round, r.Plan, r.Event, r.Action, r.Reason)
 		if err != nil {
 			return ChainTraceDoc{}, fmt.Errorf("chain %s: %w", c.Name, err)
@@ -240,8 +240,9 @@ func chainServerResume(ctx context.Context, rt Runtime, c db.ChainRow, opts Resu
 
 // roundOpenFromWire rebuilds the send path's typed round-open refusal from the
 // server's 409 round_open, so the CLI prints the conflict exactly as a local
-// refusal does. The member and round are read back from the refusal's own
-// message; anything unparseable stays the server's error.
+// refusal does. The member and round are read back from the message
+// RoundOpenError.Error formats, so the two must agree; anything unparseable
+// stays the server's error.
 func roundOpenFromWire(err error) error {
 	var httpErr *client.HTTPError
 	if !errors.As(err, &httpErr) {

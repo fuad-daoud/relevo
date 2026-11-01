@@ -16,7 +16,7 @@ import (
 
 // This file is the cockpit's audit seam: a stored revision's changes in
 // human words, and the whole-document check the cockpit runs before it
-// offers one.
+// offers a roll back.
 
 // ChangeLine is one revision change, rendered for a human: the op glyph, the
 // subject the path belongs to, what is left of the path under it, and the two
@@ -143,8 +143,9 @@ func candidatePath(path string) (i int, rest string, ok bool) {
 	return 0, "", false
 }
 
-// pathUnder splits "<prefix><a>" and "<prefix><a>.<rest>", where prefix is
-// the section name without its dot.
+// pathUnder splits "<prefix><a>" and "<prefix><a>.<rest>". prefix is the
+// section name without its dot. The key is either bare, running to the next
+// '.' or '[', or a quoted ["…"] key decoded as a JSON string.
 func pathUnder(path, prefix string) (a, rest string, ok bool) {
 	body, ok := strings.CutPrefix(path, prefix)
 	if !ok || body == "" {

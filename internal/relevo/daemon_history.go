@@ -12,7 +12,8 @@ import (
 // The availability and latency histories' retention pass. It runs beside the
 // mastermind prune in the daemon's periodic maintenance and nowhere else: a
 // delete by age is not work a tick should do, and it needs no sync behind it
-// because an age delete is recorded nowhere. A machine with no daemon still
+// because an age delete is recorded nowhere (the tables carry an insert
+// trigger alone). A machine with no daemon still
 // shows a 30-day window, because the readers prune in memory on the way out.
 
 // historyPruneInterval is how often the history prune runs: the same hourly
@@ -30,6 +31,7 @@ type historyPrunedAt struct {
 
 // historyPruneDue reports whether a prune last run at last (ok false when it
 // never ran) is due again at now, pure so a test can pin it without a daemon.
+// It is the mastermind prune's rule (mastermindPruneDue).
 func historyPruneDue(last time.Time, ok bool, now time.Time) bool {
 	if !ok {
 		return true

@@ -43,7 +43,8 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		// it edit a tree nobody is watching.
 		if b.Builder.PID != 0 {
 			if rt.Runner != nil {
-				// No round is open and nothing reads this handle's exit.
+				// No round is open, nothing reads this handle's exit, and
+				// b.Round may be 0, which is why Kill gets "".
 				if err := rt.Runner.Kill(ctx, handleOf(b.Builder), ""); err != nil {
 					slog.Warn("stray headless process not killed", "binding", b.Name, "pid", b.Builder.PID, "err", err)
 				} else {
@@ -75,8 +76,9 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	}
 
 	// The marker is the contract: the process is done with whatever it exits
-	// as, and it exits on its own. A report without a marker is a process
-	// still working. The escape check runs before closeOnMarker, not inside
+	// as, and it exits on its own. Never Kill here. A report without a marker
+	// is a process still working. The escape check runs before closeOnMarker,
+	// not inside
 	// it, and only when the marker is there: queueReport clears
 	// RoundBaselineTree, and the snapshot must be compared while still on b.
 	// A live round pays no git subprocess every tick for it.
@@ -155,8 +157,9 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		// A builder quiet on both signals may sit on a provider rate-limit
 		// answer it never got to exit and report, so the stall is the gate:
 		// scan the current process's own harness lines and, on a match, take
-		// the gateOnLimit -> switchBuilder path, uncounted, so the replacement
-		// starts on the same round. Only a stalled binding is scanned, and the
+		// the gateOnLimit -> switchBuilder path, uncounted and with closeOld
+		// (the call's bare `true`), so the replacement starts on the same
+		// round. Only a stalled binding is scanned, and the
 		// scan is limit patterns only, keeping escape and denial precedence at
 		// exit. stallLimitGateRecorded skips the block once this round has
 		// recorded one, since a repeat tick reads the same unchanged tail.
@@ -398,7 +401,8 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		// The round is running again, so a halt the attempt lost to the daemon
 		// restart left goes with it, every field: the notification key it still
 		// carries dedups the next halt of this same round. OwedHalt is left
-		// alone, as the other revive paths leave it.
+		// alone -- a pending notification for an already closed round, still
+		// owed -- as the other revive paths leave it (bind.go).
 		b = ClearHaltFields(b)
 		slog.Info("headless builder relaunched after daemon restart", "binding", b.Name, "round", b.Round, "candidate", b.BuilderCandidate)
 		return b, nil

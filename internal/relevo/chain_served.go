@@ -325,7 +325,8 @@ func servedMemberLink(key, installation string, ids map[string]string) *store.Re
 }
 
 // servedActorPick resolves one member's candidate and tier from the server's
-// own registry: no client candidate, and the placement list ignored. The empty
+// own registry, the calls serve.pickServedTier makes: no client candidate,
+// and the actor's placement list ignored. The empty
 // builder role resolves as "builder", as a served create resolves it. A
 // gating refusal returns as this pick's error, propagated as the create's
 // refusal, as the local start answers with chainResolveActors' error.
@@ -388,7 +389,8 @@ func chainServedCarrier(b store.Binding) bool {
 // ServedChainView is a chain's wire representation on the server: its row,
 // each member's binding view plus the closed rounds in
 // (acked_round, closed_round], the trace, and the security findings. recordID
-// and installation are taken exactly as ServedView takes them.
+// resolves a member's server binding_record id and installation is this
+// server's own id, both exactly as ServedView takes them.
 func ServedChainView(rt Runtime, name string, recordID func(string) string, installation string) (remote.ChainView, error) {
 	c, err := rt.Store.Chain(name)
 	if err != nil {

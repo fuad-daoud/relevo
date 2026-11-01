@@ -124,7 +124,8 @@ type HistoryOptions struct {
 func (o HistoryOptions) ParsedQuery() histq.Query { return o.parsed }
 
 // Filter resolves o into a db.Filter, merging the -q query with the flags. The
-// query is parsed first; every explicit flag then sets the field it names, and
+// query is parsed first; every explicit flag (non-empty, or a non-nil Archived)
+// then sets the field it names, and
 // a flag disagreeing with a value the query set appends a note for the CLI to
 // print. Here resolves via rt.Git.RepoFacts into the normalised origin URL or
 // the common dir, erroring when Here is not a git repository. Newest is always

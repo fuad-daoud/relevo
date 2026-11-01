@@ -218,9 +218,10 @@ func chainServerMasterMind(rt Runtime, id string) (store.Endpoint, string, error
 
 // chainServerCreate hands the resolved chain to the server and records the
 // mirror here. The order is pinned: the out ref and the base bundle, the
-// create, then the local branch, the mirror row with its members, and the plan
-// copies. A local step that fails after the server answered deletes the branch
-// and asks for the same command again -- the server dedupes the retry.
+// create, then the local branch, the plan copies, and the mirror row with its
+// members. A local step that fails after the server answered deletes the branch
+// this call created and asks for the same command again -- the server dedupes
+// the retry.
 func chainServerCreate(ctx context.Context, rt Runtime, opts ChainOptions, plan chainServerPlan) (ChainResult, error) {
 	name := opts.Name
 	base := plan.base
@@ -303,7 +304,7 @@ func chainMirrorStored(rt Runtime, members []store.Binding) ([]store.Binding, er
 
 // chainServerCreateError rebuilds the typed actor refusal from the create's
 // own answer: the wire names unknown_actor for the actor the server cannot
-// resolve. Anything else is returned as it came.
+// resolve. Anything else returns pickRefusalFromWire(err).
 func chainServerCreateError(err error) error {
 	var httpErr *client.HTTPError
 	if errors.As(err, &httpErr) && httpErr.Status == http.StatusBadRequest && httpErr.Body.Code == remote.CodeUnknownActor {
@@ -312,10 +313,11 @@ func chainServerCreateError(err error) error {
 	return pickRefusalFromWire(err)
 }
 
-// chainServerBundle names the out ref at base and snapshots it. The bundle
-// the snapshot carries is what the server cuts the builder's worktree from; a
-// snapshot that is empty sends no bundle part. The returned closer releases
-// the snapshot body.
+// chainServerBundle names the out ref at base and snapshots it, the two steps
+// a remote send makes before it ships a round. The bundle the snapshot
+// carries is what the server cuts the builder's worktree from; a snapshot that
+// is empty sends no bundle part. The returned closer releases the snapshot
+// body.
 func chainServerBundle(ctx context.Context, rt Runtime, repo, name, base string) (io.Reader, func(), error) {
 	outRef := "refs/relevo/" + name + "/out"
 	if err := rt.Git.UpdateRef(ctx, repo, outRef, base, ""); err != nil {

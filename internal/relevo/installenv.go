@@ -29,7 +29,8 @@ func AgentInstallEnv() (harness.InstallEnv, error) {
 
 // MachineConfig opens the config store of the same machine database
 // AgentInstallEnv keeps the role manifest in: the custom agents live in the
-// config, so both read through one state root. The store carries the file
+// config, so the surfaces that install them read both -- the config and the
+// manifest -- through one state root. The store carries the file
 // applier as well, so the hooks section's embedded scripts are written where
 // the argv rows name them rather than only held in the database.
 func MachineConfig() (*config.Store, error) {

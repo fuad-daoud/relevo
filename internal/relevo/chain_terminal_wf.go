@@ -51,7 +51,9 @@ func chainTerminalWF(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRo
 
 // chainTerminalRound is the round a chain's end notice is filed under: the
 // carrier's last closed round, since the carrier's own round has already
-// advanced past it. A carrier that never reported keeps its current round.
+// advanced past it, and a notice filed there would be the only entry of a
+// round nobody ever ran. A carrier that never reported keeps its current
+// round.
 func chainTerminalRound(tx *store.Tx, b store.Binding) int {
 	entries, err := tx.ReadLog(b.Name)
 	if err != nil {

@@ -14,8 +14,9 @@ import (
 // one-shot and still reads close to live within this window.
 const liveStatCacheTTL = 5 * time.Second
 
-// liveDiffDeadline is liveDeadline's git sibling: the detail pane waits on it,
-// so a slow or wedged git shows no diff line rather than stalling the open.
+// liveDiffDeadline is liveDeadline's git sibling: the detail pane opens a row
+// and waits on it, so a slow or wedged git shows no diff line rather than
+// stalling the open.
 const liveDiffDeadline = 500 * time.Millisecond
 
 type liveStatEntry struct {
@@ -26,8 +27,9 @@ type liveStatEntry struct {
 // liveStatCache is keyed by the binding's working directory + "@" + the round's
 // baseline tree: one worktree against one tree, the diff's two actual inputs,
 // so two bindings sharing a worktree share an entry. The binding's name is not
-// in the key because it names no input to the read, and a stale round's entry
-// is simply never looked up again -- there is nothing to invalidate. Shared is
+// in the key because it names no input to the read: a new round gets a new
+// baseline, so the key changes with it, and a stale round's entry is simply
+// never looked up again -- there is nothing to invalidate. Shared is
 // per binding, not per diff, so it is filled in on the way out and never
 // cached.
 var (

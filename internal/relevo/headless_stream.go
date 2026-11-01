@@ -52,7 +52,8 @@ func carryStream(from, to store.Endpoint) store.Endpoint {
 // until the next round starts. The pass owns one renderer, so a call and its
 // result drained in the same range keep their duration. The first drained
 // line naming the harness's own session records it on the endpoint; later
-// lines cannot change it. It never fails the tick: every problem is a
+// lines cannot change it, so a sub-agent's session appearing mid-round is
+// ignored. It never fails the tick: every problem is a
 // slog.Warn and an unchanged binding, and the cursor advances only after the
 // append succeeded, so a failed write renders the same lines again next tick
 // rather than dropping them.
@@ -140,8 +141,8 @@ func readFrom(path string, off int64) ([]byte, error) {
 }
 
 // appendLines appends lines, each newline-terminated, to the file at path in
-// one write: one buffer interleave with the supervisor's stderr at line
-// boundaries.
+// one write: O_APPEND writes of one buffer interleave with the supervisor's
+// stderr at line boundaries.
 func appendLines(path string, lines []string) error {
 	f, err := openAppend(path)
 	if err != nil {
@@ -247,7 +248,8 @@ func streamLastActivity(rt Runtime, b store.Binding) time.Time {
 // its rate-limit gate. gateOnLimit writes the ledger entry before looking for
 // the round's report, so a stalled live builder with a report was re-recording
 // the same gate every tick, each record moving Until forward and keeping every
-// other binding on the same candidate gated indefinitely. A repeat tick carries
+// other binding on the same candidate or account gated indefinitely. A repeat
+// tick carries
 // no new fact about the provider, so it records once per round and otherwise
 // falls through to deliverAndSettle. The report must be on disk: a match with
 // no report ends the tick in gateOnLimit -> switchBuilder instead. Scoped to

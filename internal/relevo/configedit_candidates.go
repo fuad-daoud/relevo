@@ -124,7 +124,8 @@ func EditCandidate(d ConfigDoc, name string, in CandidateInput) (ConfigEdit, err
 }
 
 // PreviewCandidateName is the name in would get: for editing != "" the entry
-// named editing takes in's harness/provider/model; for "" in is appended. No
+// named editing takes in's harness/provider/model; for "" in is appended.
+// Names are derived as AddCandidate and EditCandidate derive them. No
 // validation; an empty model gives "".
 func PreviewCandidateName(d ConfigDoc, editing string, in CandidateInput) string {
 	if strings.TrimSpace(in.Model) == "" {

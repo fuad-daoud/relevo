@@ -91,7 +91,8 @@ func (d *Daemon) refreshRelease(ctx context.Context) {
 //
 // The binding is the caller's tick snapshot rather than a fresh load: a
 // concurrent pause or unbind of a remote binding costs one wasted fetch, which
-// the apply half discards against the binding it reads under the lock.
+// the apply half discards against the binding it reads under the lock, and
+// the saved load was most of the tick's per-binding cost.
 func (d *Daemon) prefetchRemote(ctx context.Context, b store.Binding) *remoteFetch {
 	if d.rt.Remote == nil {
 		return nil

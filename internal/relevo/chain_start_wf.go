@@ -91,8 +91,9 @@ func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOption
 	}
 
 	plan.repo = repo
-	// The subdirectory is resolved from the same repository value as above,
-	// not a second working-directory probe.
+	// The subdirectory is resolved from the same repository value as the repo
+	// above: a second probe from the caller's shell could name a prefix the
+	// chain's commit and cut never saw.
 	plan.subdir = housekeep.ResolveSubdir(ctx, rt.Git, repo)
 	if err := chainValidateWorkflowOpts(opts); err != nil {
 		return chainWFStart{}, err

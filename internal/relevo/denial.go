@@ -9,8 +9,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/transcript"
 )
 
-// matchDenial scans text line by line from the last line backwards and
-// returns the first (i.e. latest) line matching any pattern. Thinking lines
+// matchDenial scans text line by line from the last line backwards, like
+// availability.MatchLimit, and returns the first (i.e. latest) line matching
+// any pattern. Thinking lines
 // are skipped, because a model reasoning about a denial is not one. Pure.
 func matchDenial(text string, patterns []*regexp.Regexp) (line string, ok bool) {
 	if len(patterns) == 0 {

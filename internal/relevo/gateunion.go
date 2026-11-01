@@ -10,10 +10,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// gateunion.go is the served gate source: reads are the union of the serve row
-// ("serve.ledger") and the host's own unprefixed "ledger" row, while writes
-// land in the serve row alone, so a subject present in both is gated once,
-// not twice.
+// gateunion.go is the served gate source: reads are the serve row plus every
+// host entry whose (kind, subject) the serve row does not hold live,
+// recomputed at every read, so a hidden host copy shows again once the serve
+// copy expires. Writes land in the serve row alone.
 
 // gateUnionKV is the union ledger surface: primary is the row served writes
 // go to ("serve.ledger"), host is the machine-local row "ledger" they join on

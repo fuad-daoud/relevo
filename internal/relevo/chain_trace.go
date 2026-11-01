@@ -34,9 +34,9 @@ type ChainTraceDoc struct {
 	Events []ChainTraceEvent `json:"events"`
 }
 
-// ChainTraceEvent is one trace row: the transition's order and time, the
-// member whose round closed and its round, the decoded event and action, and
-// the halt reason when there is one.
+// ChainTraceEvent is one trace row: the transition's order and time, the phase
+// and step before the event, the member whose round closed and its round, the
+// decoded event and action, and the halt reason when there is one.
 type ChainTraceEvent struct {
 	Seq    int
 	TS     time.Time
@@ -186,7 +186,8 @@ func flowTraceLine(e ChainTraceEvent) string {
 
 // mergeTraceText is a fork's merge row: the children the merge integrated
 // and the result. A conflict carries the paths it left in the tree, and the
-// row's action already carries the merged keys as its reason.
+// row's action already carries the merged keys as its reason, so that text is
+// reused rather than recomputed from a state the merge has already cleared.
 func mergeTraceText(e ChainTraceEvent) string {
 	joined := e.FlowAction != nil && e.FlowAction.Reason != ""
 	if n := len(e.Flow.Artifacts["conflict"]); e.Flow.Result == "conflict" && n > 0 {

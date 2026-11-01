@@ -16,7 +16,8 @@ import (
 // tickChains sweeps every running chain once per tick. A member whose record
 // is gone, or that sits NEEDS YOU, halts the chain with that member's reason:
 // no member close will ever arrive to move the chain. The daemon runs the
-// sweep before it acts on the binding list.
+// sweep before it acts on the binding list, because the chain that most needs
+// it is the one whose member records have all gone.
 func tickChains(ctx context.Context, rt Runtime) {
 	chains, err := rt.Store.Chains()
 	if err != nil {
@@ -53,7 +54,8 @@ func tickChains(ctx context.Context, rt Runtime) {
 
 // chainSweep decides one chain under the caller's lock. The row is re-read
 // here, so a sweep that races a close writes nothing on an ended chain.
-// Member order is fixed: the builder is checked first.
+// Member order is fixed: the builder is checked first, so the reason the
+// human sees names the member the chain is closest to acting on.
 func chainSweep(ctx context.Context, rt Runtime, tx *store.Tx, name string) error {
 	c, err := tx.Chain(name)
 	if errors.Is(err, store.ErrNotFound) {
@@ -102,7 +104,8 @@ func chainSweepFlow(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow
 
 // chainSweepBrokenReason is the reason a chain ends on a broken member: the
 // member's own halt when it recorded one, the member named as broken when it
-// did not. A break with no reason is reachable.
+// did not. A break with no reason is reachable, and an empty chain reason
+// would leave a halted row with nothing to act on.
 func chainSweepBrokenReason(name, halt string) string {
 	if halt != "" {
 		return halt

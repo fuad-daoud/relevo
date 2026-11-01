@@ -289,8 +289,9 @@ func recordMasterMindPruned(kv db.KV, at time.Time) error {
 }
 
 // bindingMasterMindCounts counts, per mastermind id, the bindings that are not DONE
-// and name that mastermind: the in-use guard mastermind.Prune needs. It
-// duplicates cmd/relevo's walk because that one lives in package main. An
+// and name that mastermind: the in-use guard mastermind.Prune needs. It is
+// the same walk cmd/relevo's mastermindBindingCounts does; the daemon cannot
+// call that one (it lives in package main). An
 // unreadable store is an error, never an empty map.
 func bindingMasterMindCounts(st *store.Store) (map[string]int, error) {
 	bindings, err := st.List()

@@ -127,7 +127,10 @@ func shortReason(err error, timeout time.Duration) string {
 // composeFlagged is the union. A paragraph counts toward `above` when probs[i]
 // >= threshold. It adds to `flagged` only when no regex-hit line falls within
 // the paragraph, so a paragraph both judges caught is counted once. max is the
-// largest probs[i] (0 when probs is empty); by names which side contributed.
+// largest probs[i] (0 when probs is empty). by is "" when nothing is flagged,
+// "regex" when only regex contributed, "jev" when only the classifier did, and
+// "both" otherwise -- "both" includes the case where every jev paragraph
+// overlapped a regex line.
 func composeFlagged(regexLines []int, kept []classify.Paragraph, probs []float64, threshold float64) (flagged int, by string, above int, max float64) {
 	for _, p := range probs {
 		if p > max {
