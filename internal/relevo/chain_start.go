@@ -28,12 +28,12 @@ type ChainOptions struct {
 	// Name is the chain's name, and its builder member's; it must leave room
 	// for the longest member suffix.
 	Name string
-	// Plans is the ordered source paths; at least one. Each is readable and
-	// non-empty, and each is copied into the chain's own directory at start.
+	// Plans are the ordered source paths, at least one; each is readable,
+	// non-empty, and copied into the chain's directory at start.
 	Plans []string
-	// BuilderActor names the actor the builder member runs. The chain fixes it
-	// to the builder actor and no flag exposes it; it stays a field so the
-	// member's writer check is the one call every part's shape goes through.
+	// BuilderActor names the actor the builder member runs; it stays a field
+	// so the member's writer check is the one call every part's shape goes
+	// through.
 	BuilderActor string
 	// Feature, NoFeature and Ticket label every member, exactly as on bind.
 	// Exactly one of Feature/NoFeature is required.
@@ -72,8 +72,7 @@ type ChainOptions struct {
 	Params map[string]string
 	// Parent names the chain's parent when this is a child of a fork.
 	Parent string
-	// Task is the chain's task input text, already read from --task-file when
-	// that flag named one.
+	// Task is the chain's task input text, already read from --task-file.
 	Task string
 	// DryRun resolves and validates the workflow and prints its graph without
 	// starting anything.
@@ -81,8 +80,7 @@ type ChainOptions struct {
 }
 
 // ChainResult is what a start produced: the chain row, its members in part
-// order (builder, reviewer, planner, and security when the phase is on), and
-// how many plans it holds.
+// order, and how many plans it holds.
 type ChainResult struct {
 	Chain   db.ChainRow
 	Members []store.Binding
@@ -90,9 +88,8 @@ type ChainResult struct {
 	// Check is the builder member's resolved acceptance command; "" means none.
 	Check string
 	// CheckSource names the tier that supplied Check -- "--gate", "repo
-	// setting" or "policy.gate.default" -- for the printed check line. ""
-	// leaves the line without a parenthetical, which is the shape a result
-	// read back off a mirror prints.
+	// setting" or "policy.gate.default". "" leaves the line without a
+	// parenthetical, the shape a result read back off a mirror prints.
 	CheckSource string
 }
 
@@ -141,19 +138,10 @@ type chainStartPlan struct {
 // atomically, copies the plans into the chain's directory and hands plan 1 to
 // the builder.
 //
-// Preconditions:  a relevo mastermind resolves for the caller; opts.Name is a
-// valid name of at most chainMaxNameLen characters; exactly one of
-// opts.Feature/opts.NoFeature is set; every plan is readable and non-empty;
-// every member name is free; the builder actor is a writer and the other
-// actors are readers, and each resolves to a candidate.
+// A failed handover leaves the chain row and the members in place; the
+// builder member is then NEEDS YOU.
 //
-// Postconditions: on success a chain row exists in status running, phase
-// build, step building, awaiting (builder, 1), with its member bindings and its
-// plan copies, and plan 1 has been sent to the builder. A failed handover
-// leaves the chain row and the members in place; the builder member is then
-// NEEDS YOU.
-//
-// Errors: the validation refusals above, ErrGitRequired, git.ErrBranchExists,
+// Errors: a validation refusal, ErrGitRequired, git.ErrBranchExists,
 // ErrNoMasterMindSession, or a wrapped git, store or send failure.
 func ChainStart(ctx context.Context, rt Runtime, opts ChainOptions) (ChainResult, error) {
 	// The shipped default is the workflow every chain runs when no --workflow
@@ -180,10 +168,10 @@ func chainRollback(ctx context.Context, rt Runtime, repo, worktree, branch strin
 
 // chainSettings resolves the chain's settings: a flag beats the setting, and
 // the setting beats the policy default. checks is the builder role's own
-// check flag, which decides whether an unset gate flag takes the repository's
-// own gate or policy's gate.default -- exactly as a lone binding resolves it.
-// repo is the chain's repository's own settings; its zero value (a resume, or
-// a chain on a tree with no settings) leaves the old two tiers standing.
+// check flag, deciding whether an unset gate flag takes the repository's own
+// gate or policy's gate.default, exactly as a lone binding resolves it. repo
+// is the chain repository's own settings; its zero value leaves the old two
+// tiers standing.
 func chainSettings(pol policy.Policy, opts ChainOptions, checks bool, repo RepoSettings) chain.Settings {
 	set := chain.Settings{
 		MaxCorrections: pol.ChainMaxCorrections(),
@@ -273,7 +261,7 @@ func chainMembersFor(opts ChainOptions, set chain.Settings) []chainMember {
 	return members
 }
 
-// chainActorOrBuilder is the builder member's actor: the named one, or the
+// chainActorOrBuilder is the builder member's actor, defaulting to the
 // builder actor.
 func chainActorOrBuilder(actor string) string {
 	if actor == "" {
@@ -304,9 +292,8 @@ func chainFreeNames(rt Runtime, members []chainMember) error {
 }
 
 // chainResolveActors checks every member's actor has the shape its part needs
-// and resolves the candidate that member's round will run, all read-only and
-// before anything is created. It returns the resolution per part, keyed by the
-// part name.
+// and resolves the candidate that member's round will run, read-only and
+// before anything is created.
 func chainResolveActors(rt Runtime, members []chainMember) (map[string]resolve.Resolution, error) {
 	out := make(map[string]resolve.Resolution, len(members))
 	for _, m := range members {
@@ -327,11 +314,10 @@ func chainResolveActors(rt Runtime, members []chainMember) (map[string]resolve.R
 	return out, nil
 }
 
-// chainBuildMembers builds every member's stored binding: its tier resolved
-// from its actor's registry entry, its endpoint from resolveBuilder (so the
-// launch is validated before anything is written), and, for the writer only,
-// the check, regate budget and scaled round cap the chain resolved. plans is
-// the chain's plan count, which sizes the writer's cap.
+// chainBuildMembers builds every member's stored binding: its tier from its
+// actor's registry entry, its endpoint from resolveBuilder, and, for the
+// writer only, the check, regate budget and scaled round cap the chain
+// resolved. plans is the chain's plan count, which sizes the writer's cap.
 func chainBuildMembers(ctx context.Context, rt Runtime, members []chainMember, resolutions map[string]resolve.Resolution, base chainBase, set chain.Settings, plans int) ([]store.Binding, error) {
 	reg := rt.RoleRegistry()
 	built := make([]store.Binding, 0, len(members))
@@ -369,11 +355,11 @@ func chainBuildMembers(ctx context.Context, rt Runtime, members []chainMember, r
 	return built, nil
 }
 
-// chainMemberBinding is one member's binding. The builder mirrors add's
-// literal: its own worktree and branch, the builder role, a writer shape, the
-// builder actor's check and regate budget. A reader shares the builder's tree,
-// carries its actor name as its role and its shape, and holds no worktree and
-// no gate.
+// chainMemberBinding is one member's binding: the builder mirrors add's
+// literal with its own worktree and branch, the builder role, a writer shape,
+// the check and regate budget. A reader shares the builder's tree, carries
+// its actor name as its role and its shape, and holds no worktree and no
+// gate.
 func chainMemberBinding(m chainMember, ep store.Endpoint, token string, base chainBase) store.Binding {
 	b := store.Binding{
 		Name:             m.name,
@@ -401,9 +387,9 @@ func chainMemberBinding(m chainMember, ep store.Endpoint, token string, base cha
 	return b
 }
 
-// chainRow is the chain row a start writes: status running, phase build, step
-// building, plan 1, corrections 0, awaiting the builder's first round, with
-// the resolved settings and the four part names.
+// chainRow is the chain row a start writes: status running, phase build,
+// step building, plan 1, corrections 0, awaiting the builder's first round,
+// with the resolved settings and the part names.
 func chainRow(opts ChainOptions, set chain.Settings, members []chainMember, base chainBase, planPaths []string, now time.Time) (db.ChainRow, error) {
 	paths, err := json.Marshal(planPaths)
 	if err != nil {

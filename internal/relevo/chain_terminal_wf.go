@@ -15,11 +15,11 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
-// chainTerminalWF ends a workflow chain: it writes the status and the trace
-// row, then queues exactly one end delivery on the first member whose record
-// still exists, in chain_member order. A later tick's close is ignored by the
-// engine, so the payload exists once. A fork child is the one end that
-// delivers nothing: its end is the parent's child_ended instead.
+// chainTerminalWF ends a workflow chain: the status and the trace row, then
+// exactly one end delivery on the first member whose record still exists, in
+// chain_member order. A later tick's close is ignored by the engine, so the
+// payload exists once. A fork child delivers nothing: its end is the parent's
+// child_ended instead.
 func chainTerminalWF(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before, next workflow.State, ev workflow.Event, act workflow.Action) error {
 	carrier, found, err := chainTerminalCarrier(tx, c)
 	if err != nil {
@@ -50,9 +50,8 @@ func chainTerminalWF(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRo
 }
 
 // chainTerminalRound is the round a chain's end notice is filed under: the
-// carrier's last closed round. The carrier's own round has already advanced
-// past it, and a notice filed there would be the only entry of a round nobody
-// ever ran. A carrier that never reported keeps its current round.
+// carrier's last closed round, since the carrier's own round has already
+// advanced past it. A carrier that never reported keeps its current round.
 func chainTerminalRound(tx *store.Tx, b store.Binding) int {
 	entries, err := tx.ReadLog(b.Name)
 	if err != nil {
@@ -66,10 +65,9 @@ func chainTerminalRound(tx *store.Tx, b store.Binding) int {
 	return b.Round
 }
 
-// chainTerminalCarrier names the member a chain's end is recorded against: the
-// first member whose record still exists, in chain_member order. A fork child
-// names none -- it looks no member up and carries no delivery, only the
-// handoff to its parent.
+// chainTerminalCarrier names the member a chain's end is recorded against:
+// the first member whose record still exists, in chain_member order. A fork
+// child names none: it carries no delivery, only the handoff to its parent.
 func chainTerminalCarrier(tx *store.Tx, c db.ChainRow) (store.Binding, bool, error) {
 	if c.Parent != "" {
 		return store.Binding{}, false, nil
@@ -93,10 +91,8 @@ func chainTerminalCarrier(tx *store.Tx, c db.ChainRow) (store.Binding, bool, err
 
 // chainTerminalWFPayload is what the mastermind reads when a workflow chain
 // ends: how it ended, where it got to, and the command that resumes it (on a
-// halt) or shows its trace. A halt names both ways out -- resume after fixing
-// the cause, or done to close the chain -- because a resume is only half the
-// answer and a reader who has abandoned the work needs the half that is not a
-// resume at all.
+// halt) or shows its trace. A halt names both ways out, since a reader who
+// has abandoned the work needs the half that is not a resume at all.
 func chainTerminalWFPayload(c db.ChainRow, s workflow.State) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "chain %s %s: status %s, at %s, plans %d/%d, findings %d.",
@@ -111,8 +107,8 @@ func chainTerminalWFPayload(c db.ChainRow, s workflow.State) string {
 	return b.String()
 }
 
-// flowTerminalStep is the step a terminal state names: the step it halted at,
-// or the one the engine is on.
+// flowTerminalStep is the step a terminal state names: the step it halted
+// at, or the one the engine is on.
 func flowTerminalStep(s workflow.State) string {
 	if s.At != "" {
 		return s.At
@@ -120,13 +116,12 @@ func flowTerminalStep(s workflow.State) string {
 	return s.Awaiting.Step
 }
 
-// flowPlanTotal is a state's plan-input length.
 func flowPlanTotal(s workflow.State) int {
 	return len(s.Iter["plans"].Items)
 }
 
-// reasonSentence closes a halt reason with a period unless it already ends in
-// one, so a reason that is its own sentence is not doubled.
+// reasonSentence closes a halt reason with a period unless it already ends
+// in one.
 func reasonSentence(reason string) string {
 	if strings.HasSuffix(reason, ".") {
 		return reason

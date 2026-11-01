@@ -9,7 +9,7 @@ import (
 // ConfigRoot is relevo's own config directory, `<user config root>/relevo`:
 // the one place hook scripts are read from and written to, and the directory
 // the importer reads. Resolving it through config.UserRoot keeps the applier,
-// the importer and `relevo config` agreeing; nothing beside it under the user
+// the importer and `relevo config` agreeing, and nothing else under the user
 // config root is ever synced.
 func ConfigRoot() (string, error) {
 	root, err := config.UserRoot()

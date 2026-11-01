@@ -16,12 +16,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
-// ErrNotAChain is `show --trace`'s refusal of a name that is not a chain: only
-// a chain has a trace.
+// ErrNotAChain is `show --trace`'s refusal of a name that is not a chain.
 var ErrNotAChain = errors.New("not a chain")
 
-// ChainTraceDoc is one chain's state and its ordered trace, the document
-// `relevo show <n> --trace` renders and `--json` prints.
+// ChainTraceDoc is one chain's state and its ordered trace.
 type ChainTraceDoc struct {
 	Name        string
 	Status      string
@@ -30,16 +28,15 @@ type ChainTraceDoc struct {
 	Plan        int
 	Plans       int
 	Corrections int
-	// Parent names the chain that forked this one. Empty on a chain that is not
-	// a fork child, so its trace header is exactly the header it had before
-	// forks existed.
+	// Parent names the chain that forked this one, empty when this chain is
+	// not a fork child.
 	Parent string            `json:"parent,omitempty"`
 	Events []ChainTraceEvent `json:"events"`
 }
 
-// ChainTraceEvent is one trace row: the transition's order and time, the phase
-// and step before the event, the member whose round closed and its round, the
-// decoded event and action, and the halt reason when there is one.
+// ChainTraceEvent is one trace row: the transition's order and time, the
+// member whose round closed and its round, the decoded event and action, and
+// the halt reason when there is one.
 type ChainTraceEvent struct {
 	Seq    int
 	TS     time.Time
@@ -51,15 +48,15 @@ type ChainTraceEvent struct {
 	Event  chain.Event
 	Action chain.Action
 	Reason string
-	// Flow and FlowAction are a workflow row's decoded event and action; both
-	// are nil on a row the fixed state machine wrote.
+	// Flow and FlowAction are a workflow row's decoded event and action,
+	// nil on a row the fixed state machine wrote.
 	Flow       *workflow.Event
 	FlowAction *workflow.Action
 }
 
-// ChainTrace reads one chain's state and its trace rows, in seq order. A stored
-// event or action that does not decode is an error rather than a guess, so a
-// trace never renders a transition it cannot name.
+// ChainTrace reads one chain's state and its trace rows, in seq order. A
+// stored event or action that does not decode is an error rather than a
+// guess.
 func ChainTrace(ctx context.Context, rt Runtime, name string) (ChainTraceDoc, error) {
 	c, err := rt.Store.Chain(name)
 	if err != nil {
@@ -71,11 +68,10 @@ func ChainTrace(ctx context.Context, rt Runtime, name string) (ChainTraceDoc, er
 	return chainStoredTrace(rt, c)
 }
 
-// chainStoredTrace is a chain's trace from the events this machine stored, in
-// seq order, decoded exactly as a server view's rows are. It is the whole
+// chainStoredTrace is a chain's trace from the events this machine stored,
+// in seq order, decoded exactly as a server view's rows are. It is the whole
 // answer for a local chain, and the answer for a server chain the server has
-// released: the pull installs every round the mirror closed before the row
-// reached a terminal status, so a released chain's stored events are its trace.
+// released.
 func chainStoredTrace(rt Runtime, c db.ChainRow) (ChainTraceDoc, error) {
 	rows, err := rt.Store.ChainEvents(c.Name)
 	if err != nil {
@@ -87,11 +83,9 @@ func chainStoredTrace(rt Runtime, c db.ChainRow) (ChainTraceDoc, error) {
 		Plan: c.Plan, Plans: c.Plans, Corrections: c.Corrections,
 		Parent: c.Parent,
 	}
-	// A row's own event encoding cannot say whether the engine or the fixed
-	// state machine wrote it: a chain converted onto the engine carries both its
-	// old rows and its new ones, and their stopped and needs_you kinds share a
-	// name. Decode per row, preferring the workflow vocabulary and falling back
-	// to the legacy one when it rejects the kind.
+	// A converted chain carries both old and new rows, whose stopped and
+	// needs_you kinds share a name: decode per row, preferring the workflow
+	// vocabulary and falling back to the legacy one.
 	for _, r := range rows {
 		ev, err := chainTraceEvent(r.Seq, r.TS, r.Phase, r.Step, r.Member, r.Round, r.Plan, r.Event, r.Action, r.Reason)
 		if err != nil {
@@ -102,11 +96,9 @@ func chainStoredTrace(rt Runtime, c db.ChainRow) (ChainTraceDoc, error) {
 	return doc, nil
 }
 
-// chainTraceEvent decodes one stored trace row into a ChainTraceEvent: it tries
-// the workflow vocabulary first and falls back to the fixed state machine's
-// legacy decode when either the event or the action kind is not the workflow's.
-// A row written before a chain was converted onto the engine keeps decoding as
-// the legacy event it is, so one trace renders both.
+// chainTraceEvent decodes one stored trace row into a ChainTraceEvent: the
+// workflow vocabulary first, then the fixed state machine's legacy decode.
+// A pre-conversion row keeps decoding as the legacy event it is.
 func chainTraceEvent(seq int, ts time.Time, phase, step, member string, round, plan int, eventJSON, actionJSON, reason string) (ChainTraceEvent, error) {
 	fev, ferr := workflow.DecodeEvent(eventJSON)
 	if ferr == nil {
@@ -132,13 +124,12 @@ func chainTraceEvent(seq int, ts time.Time, phase, step, member string, round, p
 }
 
 // RenderTrace renders a trace document as one line per event, in seq order.
-// Each line carries its own row's plan; a row written before the plan column
-// existed (plan 0) falls back to the chain's current plan.
+// A row written before the plan column existed (plan 0) falls back to the
+// chain's current plan.
 func RenderTrace(doc ChainTraceDoc) string {
 	var b strings.Builder
 	// A fork child's trace is its own, so its header names the parent it was
-	// forked from: the rows below are the child's, and the parent reads its own
-	// when asked. A chain with no parent prints no header line at all.
+	// forked from. A chain with no parent prints no header line at all.
 	if doc.Parent != "" {
 		fmt.Fprintf(&b, "child of %s\n", doc.Parent)
 	}
@@ -164,8 +155,7 @@ func RenderTrace(doc ChainTraceDoc) string {
 }
 
 // flowTraceLine renders one workflow trace row: the step it was on, the round
-// or check run, the outcomes it carried and the target it chose, for example
-// "review r2  verdict=changes → correct".
+// or check run, the outcomes it carried and the target it chose.
 func flowTraceLine(e ChainTraceEvent) string {
 	var b strings.Builder
 	switch e.Flow.Kind {
@@ -194,12 +184,9 @@ func flowTraceLine(e ChainTraceEvent) string {
 	return b.String()
 }
 
-// mergeTraceText is a fork's merge row: the children the merge integrated and
-// the result, "merged 1, 2 → joined". A conflict carries the paths it left in
-// the tree, so the row reads "merged → conflict (n paths)" -- the count is what
-// the author has to resolve by hand. The row's action already carries the
-// merged keys as its reason, so that text is reused rather than recomputed from
-// a state the merge has already cleared.
+// mergeTraceText is a fork's merge row: the children the merge integrated
+// and the result. A conflict carries the paths it left in the tree, and the
+// row's action already carries the merged keys as its reason.
 func mergeTraceText(e ChainTraceEvent) string {
 	joined := e.FlowAction != nil && e.FlowAction.Reason != ""
 	if n := len(e.Flow.Artifacts["conflict"]); e.Flow.Result == "conflict" && n > 0 {
@@ -214,7 +201,6 @@ func mergeTraceText(e ChainTraceEvent) string {
 	return "merged"
 }
 
-// flowOutcomesText renders a close's outcomes as sorted key=value pairs.
 func flowOutcomesText(outcomes map[string]string) string {
 	if len(outcomes) == 0 {
 		return ""
@@ -231,7 +217,6 @@ func flowOutcomesText(outcomes map[string]string) string {
 	return strings.Join(pairs, ", ")
 }
 
-// flowTargetText names the target a workflow action chose.
 func flowTargetText(act workflow.Action) string {
 	switch act.Kind {
 	case workflow.ActionSend:
@@ -262,8 +247,8 @@ func flowTargetText(act workflow.Action) string {
 }
 
 // showTrace answers `show <n> --trace`: the chain's state and its ordered
-// trace, rendered for the human and carried as a document for --json. A name
-// the store holds no chain for is refused, because only a chain has a trace.
+// trace. A name the store holds no chain for is refused, since only a chain
+// has a trace.
 func showTrace(ctx context.Context, rt Runtime, opts ShowOptions) (ShowResult, error) {
 	if _, err := rt.Store.Chain(opts.Name); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -284,9 +269,9 @@ func showTrace(ctx context.Context, rt Runtime, opts ShowOptions) (ShowResult, e
 	}, nil
 }
 
-// showWorkflow answers `show <n> --workflow`: the definition the chain took at
-// start, printed as indented JSON. A name the store holds no workflow chain
-// for is refused, because only a workflow chain has one.
+// showWorkflow answers `show <n> --workflow`: the definition the chain took
+// at start, printed as indented JSON. A name the store holds no workflow
+// chain for is refused.
 func showWorkflow(ctx context.Context, rt Runtime, opts ShowOptions) (ShowResult, error) {
 	_ = ctx
 	c, err := rt.Store.Chain(opts.Name)

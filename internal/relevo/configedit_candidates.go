@@ -13,8 +13,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
-// AddCandidate validates in, appends it, derives its name and returns the
-// candidates section alone.
+// AddCandidate validates in, appends it, and returns the candidates section
+// alone.
 func AddCandidate(d ConfigDoc, in CandidateInput) (ConfigEdit, error) {
 	san, err := validateCandidateInput(in, d, -1)
 	if err != nil {
@@ -44,9 +44,9 @@ func AddCandidate(d ConfigDoc, in CandidateInput) (ConfigEdit, error) {
 	}, nil
 }
 
-// EditCandidate changes the candidate named name to in. The name follows the
-// model, and every actor entry that referenced the candidate follows the
-// rename. Every other field of the entry is kept.
+// EditCandidate changes the candidate named name to in. The name follows
+// the model, and every actor entry that referenced the candidate follows the
+// rename.
 func EditCandidate(d ConfigDoc, name string, in CandidateInput) (ConfigEdit, error) {
 	i := candidateIndex(d, name)
 	if i < 0 {
@@ -124,9 +124,8 @@ func EditCandidate(d ConfigDoc, name string, in CandidateInput) (ConfigEdit, err
 }
 
 // PreviewCandidateName is the name in would get: for editing != "" the entry
-// named editing takes in's harness/provider/model; for "" in is appended.
-// Names are derived as AddCandidate/EditCandidate derive them. No validation;
-// an empty model gives "".
+// named editing takes in's harness/provider/model; for "" in is appended. No
+// validation; an empty model gives "".
 func PreviewCandidateName(d ConfigDoc, editing string, in CandidateInput) string {
 	if strings.TrimSpace(in.Model) == "" {
 		return ""
@@ -151,8 +150,8 @@ func PreviewCandidateName(d ConfigDoc, editing string, in CandidateInput) string
 	return candidate.DeriveNames(entries)[i]
 }
 
-// DeleteCandidate removes the candidate named name and every actor entry that
-// references it. An actor left with no candidates refuses the edit.
+// DeleteCandidate removes the candidate named name and every actor entry
+// referencing it. An actor left with no candidates refuses the edit.
 func DeleteCandidate(d ConfigDoc, name string) (ConfigEdit, error) {
 	i := candidateIndex(d, name)
 	if i < 0 {
@@ -209,8 +208,8 @@ func DeleteCandidate(d ConfigDoc, name string) (ConfigEdit, error) {
 	return ConfigEdit{Sections: sections, Message: "delete candidate " + name, Name: name}, nil
 }
 
-// validateCandidateInput applies the rules in order. skip is the index of
-// the entry an edit is replacing, excluded from the duplicate checks, or -1.
+// validateCandidateInput applies the rules in order. skip is the index an
+// edit is replacing, excluded from the duplicate checks, or -1.
 func validateCandidateInput(in CandidateInput, d ConfigDoc, skip int) (CandidateInput, error) {
 	if err := checkProvider(in.Harness, in.Provider); err != nil {
 		return in, err
@@ -240,11 +239,10 @@ func validateCandidateInput(in CandidateInput, d ConfigDoc, skip int) (Candidate
 	return in, nil
 }
 
-// checkProvider is the provider lock: the harness must be one relevo knows, and
-// the provider a non-empty single word among the harness's providers when the
-// harness names any. It is validateCandidateInput's first four rules, extracted
-// so the cockpit's whole-document check can run them over a stored config
-// without going through a form.
+// checkProvider is the provider lock: the harness must be one relevo knows,
+// and the provider a non-empty single word among the harness's providers when
+// the harness names any. It is extracted so the cockpit's whole-document check
+// can run it over a stored config without going through a form.
 func checkProvider(harnessKind, provider string) error {
 	h, ok := harness.Lookup(harnessKind)
 	if !ok {
@@ -262,10 +260,8 @@ func checkProvider(harnessKind, provider string) error {
 	return nil
 }
 
-// dryRun validates the whole post-edit config the way the store will: it
-// validates every section, converts the agents and actors to a roles file, and
-// builds the registry over the candidate set. Any error becomes a whole-form
-// FieldError.
+// dryRun validates the whole post-edit config the way the store will. Any
+// error becomes a whole-form FieldError.
 func dryRun(cands []candidate.Candidate, acts map[string]roles.Actor, agents map[string]roles.AgentEntry, pol policy.Policy) error {
 	if acts == nil {
 		acts = map[string]roles.Actor{}
@@ -322,7 +318,6 @@ func encodeCandidates(cands []candidate.Candidate) ([]byte, error) {
 	return append(data, '\n'), nil
 }
 
-// candidateIndex returns the index of the candidate named name, or -1.
 func candidateIndex(d ConfigDoc, name string) int {
 	for i, c := range d.Candidates {
 		if c.Name == name {
@@ -332,7 +327,7 @@ func candidateIndex(d ConfigDoc, name string) int {
 	return -1
 }
 
-// candidateToken returns the canonical token of the candidate named name, or
+// candidateToken returns the canonical token of the candidate named name,
 // "" when no candidate has that name.
 func candidateToken(d ConfigDoc, name string) string {
 	for _, c := range d.Candidates {
@@ -343,8 +338,8 @@ func candidateToken(d ConfigDoc, name string) string {
 	return ""
 }
 
-// resolvesToCandidate reports whether ref names a candidate in d, by name or
-// by canonical token.
+// resolvesToCandidate reports whether ref names a candidate in d, by name
+// or by canonical token.
 func resolvesToCandidate(d ConfigDoc, ref string) bool {
 	for _, c := range d.Candidates {
 		if c.Name == ref || c.Ref().String() == ref {

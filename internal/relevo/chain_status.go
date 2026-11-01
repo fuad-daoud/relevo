@@ -8,16 +8,15 @@ import (
 )
 
 // ChainStatus is `relevo status <chain>`: the chain's own row with its member
-// bindings listed underneath, builder first. The members keep their ordinary
-// rows here whatever the chain's status -- naming a chain asks for the whole
-// chain, not only the roll-up.
+// bindings listed underneath, builder first. Naming a chain asks for the
+// whole chain, not only the roll-up.
 func ChainStatus(ctx context.Context, rt Runtime, name string) (view.Report, error) {
 	c, err := rt.Store.Chain(name)
 	if err != nil {
 		return view.Report{}, err
 	}
-	// A chain that runs on a server answers from the server's view, so the
-	// status a human reads is the chain's, not this machine's stale mirror.
+	// A chain that runs on a server answers from the server's view, not this
+	// machine's stale mirror.
 	if chain.OnServer(c) {
 		return chainServerStatus(ctx, rt, c)
 	}

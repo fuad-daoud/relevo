@@ -10,8 +10,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 )
 
-// AddServer validates e as the entry for name and returns the servers section
-// with it added. Only the servers section changes.
+// AddServer validates e as the entry for name and returns the servers
+// section with it added.
 func AddServer(d ConfigDoc, name string, e remote.ServerEntry) (ConfigEdit, error) {
 	if err := checkServerName(name); err != nil {
 		return ConfigEdit{}, err
@@ -28,8 +28,8 @@ func AddServer(d ConfigDoc, name string, e remote.ServerEntry) (ConfigEdit, erro
 	return serverEdit(next, name, "add server "+name)
 }
 
-// EditServer replaces the entry named name with e, validated like an add. The
-// name cannot change, so the entry it addresses is the one it rewrites.
+// EditServer replaces the entry named name with e, validated like an add.
+// The name cannot change.
 func EditServer(d ConfigDoc, name string, e remote.ServerEntry) (ConfigEdit, error) {
 	if _, ok := d.Servers[name]; !ok {
 		return ConfigEdit{}, &FieldError{"name", "no server named " + name}
@@ -44,8 +44,7 @@ func EditServer(d ConfigDoc, name string, e remote.ServerEntry) (ConfigEdit, err
 }
 
 // DeleteServer removes the server named name. An actor whose placement names
-// it refuses the delete and is named, so the form says why before the write is
-// attempted; the config cross-check is the backstop.
+// it refuses the delete and is named; the config cross-check is the backstop.
 func DeleteServer(d ConfigDoc, name string) (ConfigEdit, error) {
 	if _, ok := d.Servers[name]; !ok {
 		return ConfigEdit{}, &FieldError{"name", "no server named " + name}
@@ -94,9 +93,8 @@ func checkServerName(name string) error {
 	return nil
 }
 
-// checkServerEntry validates one entry the way the store will, by parsing the
-// one-entry body the write would store: a url with a scheme and host, and a
-// trust setting that matches it.
+// checkServerEntry validates one entry the way the store will, by parsing
+// the one-entry body the write would store.
 func checkServerEntry(name string, e remote.ServerEntry) error {
 	body, err := json.Marshal(map[string]remote.ServerEntry{name: e})
 	if err != nil {
@@ -108,7 +106,6 @@ func checkServerEntry(name string, e remote.ServerEntry) error {
 	return nil
 }
 
-// actorsPlacedOn names every actor whose placement lists server, sorted.
 func actorsPlacedOn(d ConfigDoc, server string) []string {
 	var out []string
 	for _, name := range sortedActorNames(d.Actors) {

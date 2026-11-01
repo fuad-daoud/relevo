@@ -24,7 +24,7 @@ type chainWFStart struct {
 	def      workflow.Definition
 	settings chain.Settings
 	// gateRes is the gate resolution the settings were built from, so the
-	// start's ChainResult can name the tier that supplied the check.
+	// start's ChainResult names the tier that supplied the check.
 	gateRes      resolve.GateResolution
 	repo         string
 	ticket       string
@@ -39,15 +39,14 @@ type chainWFStart struct {
 	mastermindID string
 	keeper       string
 	// subdir is the repository offset the start's repository was reached
-	// from: a local chain joins it into every member's round directory, a
-	// placed or served builder carries it on its create.
+	// from: a local chain joins it into every member's round directory.
 	subdir string
 }
 
 // chainStartWorkflow starts a chain that runs the named user workflow: it
-// resolves and validates the definition against the actors present, cuts the
-// worktree, creates one member per actor the workflow uses, stores the
-// definition and the engine's start state, and runs the start actions.
+// resolves and validates the definition, cuts the worktree, creates one
+// member per actor the workflow uses, and stores the definition with the
+// engine's start state.
 func chainStartWorkflow(ctx context.Context, rt Runtime, opts ChainOptions) (ChainResult, error) {
 	plan, err := chainResolveWorkflowStart(ctx, rt, opts)
 	if err != nil {
@@ -57,8 +56,7 @@ func chainStartWorkflow(ctx context.Context, rt Runtime, opts ChainOptions) (Cha
 }
 
 // chainResolveWorkflowStart runs every precondition of a workflow start
-// read-only: the definition, its params, the inputs, the actors, the members
-// and the caller's mastermind.
+// read-only.
 func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOptions) (chainWFStart, error) {
 	def, _, err := resolve.ResolveWorkflow(rt.Config, opts.Workflow)
 	if err != nil {
@@ -66,7 +64,7 @@ func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOption
 	}
 	// The chain's repository is resolved before the params are computed: the
 	// gate param and the chain settings both read the repository's own
-	// settings, which are keyed on the tree the chain runs on.
+	// settings.
 	repo, err := os.Getwd()
 	if err != nil {
 		return chainWFStart{}, fmt.Errorf("resolve working directory: %w", err)
@@ -93,10 +91,8 @@ func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOption
 	}
 
 	plan.repo = repo
-	// The subdirectory is resolved from the same repository value the repo
-	// above: resolving it a second time -- from the caller's shell -- would
-	// name a prefix the chain's starting commit and cut have no say about
-	// when the two differ.
+	// The subdirectory is resolved from the same repository value as above,
+	// not a second working-directory probe.
 	plan.subdir = housekeep.ResolveSubdir(ctx, rt.Git, repo)
 	if err := chainValidateWorkflowOpts(opts); err != nil {
 		return chainWFStart{}, err
@@ -173,10 +169,9 @@ func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOption
 }
 
 // chainRefuseReaderBuilder refuses a workflow whose builder param names an
-// actor that is not a writer: that param names the member that owns the chain's
-// tree, so a reader there would leave the chain with no writer member at all.
-// A workflow with no builder param is free to name no writer, and every member
-// then takes the "<chain>-<actor>" form.
+// actor that is not a writer: that param names the member that owns the
+// chain's tree, so a reader there would leave the chain with no writer member
+// at all.
 func chainRefuseReaderBuilder(def workflow.Definition, actors map[string]workflow.ActorInfo) error {
 	p, ok := def.Params["builder"]
 	if !ok || p.Kind != workflow.ParamString {
@@ -208,7 +203,6 @@ func chainRefuseForkPlacedWriter(opts ChainOptions, def workflow.Definition, pla
 	return nil
 }
 
-// workflowHasFork reports whether the workflow has at least one fork step.
 func workflowHasFork(def workflow.Definition) bool {
 	for _, step := range def.Steps {
 		if step.Fork != nil {
@@ -219,8 +213,8 @@ func workflowHasFork(def workflow.Definition) bool {
 }
 
 // chainValidateWorkflowOpts refuses a bad name or feature choice before
-// anything exists. The chain-name cap is the workflow's own, so it is checked
-// after the members are resolved.
+// anything exists. The chain-name cap is the workflow's own, so it is
+// checked after the members are resolved.
 func chainValidateWorkflowOpts(opts ChainOptions) error {
 	if err := store.ValidName(opts.Name); err != nil {
 		return refusal.New("%v", err)
@@ -236,9 +230,8 @@ func chainValidateWorkflowOpts(opts ChainOptions) error {
 	return nil
 }
 
-// chainPlanBodiesFor reads the plan copies a workflow start holds: none when
-// none were given, the bodies otherwise. The workflow's own input rule decides
-// whether that many is allowed.
+// chainPlanBodiesFor reads the plan copies a workflow start holds. The
+// workflow's own input rule decides how many are allowed.
 func chainPlanBodiesFor(opts ChainOptions) ([][]byte, error) {
 	if len(opts.Plans) == 0 {
 		return nil, nil
@@ -290,17 +283,16 @@ func chainWorkflowMembers(def workflow.Definition, planned []chain.PlannedMember
 		}
 		out = append(out, chainMember{part: part, name: m.Name, actor: m.Actor, shape: shape, writer: m.Writer})
 	}
-	// The legacy four parts keep their historical order -- builder, reviewer,
-	// planner, security -- so a terminal delivery names the member it always
-	// did; every other actor follows, in the sorted actor order planned holds.
+	// The legacy four keep their order, so a terminal delivery names the
+	// member it always did; every other actor follows in planned order.
 	slices.SortStableFunc(out, func(a, b chainMember) int {
 		return chainPartRank(a.part) - chainPartRank(b.part)
 	})
 	return out
 }
 
-// chainPartRank orders a member's part after the legacy four, which come first
-// in the order the fixed state machine named them. Any other part is last.
+// chainPartRank orders a member's part after the legacy four, which come
+// first. Any other part is last.
 func chainPartRank(part string) int {
 	switch part {
 	case chain.MemberBuilder:
@@ -341,7 +333,6 @@ type chainPreparedWorkflow struct {
 	unwind  func()
 }
 
-// chainBuildStartMembers builds member bindings and worktree/branch for a workflow start.
 func chainBuildStartMembers(ctx context.Context, rt Runtime, opts ChainOptions, plan chainWFStart) ([]store.Binding, chainBase, func(), bool, error) {
 	remote := len(plan.placements) > 0 && !plan.placements[chain.MemberBuilder].Local()
 	if remote {
@@ -394,8 +385,8 @@ func chainBuildStartMembers(ctx context.Context, rt Runtime, opts ChainOptions, 
 	return locals, rowBase, nil, false, nil
 }
 
-// chainPrepareWorkflow is the preparation half of a workflow start: git,
-// bindings and row construction, without the state lock.
+// chainPrepareWorkflow is the preparation half of a workflow start,
+// without the state lock.
 func chainPrepareWorkflow(ctx context.Context, rt Runtime, opts ChainOptions, plan chainWFStart) (chainPreparedWorkflow, error) {
 	built, rowBase, unwind, remote, err := chainBuildStartMembers(ctx, rt, opts, plan)
 	if err != nil {
@@ -462,8 +453,8 @@ func chainPrepareWorkflow(ctx context.Context, rt Runtime, opts ChainOptions, pl
 	}, nil
 }
 
-// chainPersistAndStartWorkflow writes the chain row, its members and notes to
-// the database under the caller's transaction, copies plans, and runs the start actions.
+// chainPersistAndStartWorkflow writes the row, members and notes under the
+// caller's transaction, copies plans, and runs the start actions.
 func chainPersistAndStartWorkflow(ctx context.Context, rt Runtime, tx *store.Tx, prep chainPreparedWorkflow) (ChainResult, error) {
 	if err := tx.CreateChain(prep.row, prep.built); err != nil {
 		return ChainResult{}, err
@@ -498,7 +489,6 @@ func chainPersistAndStartWorkflow(ctx context.Context, rt Runtime, tx *store.Tx,
 	return ChainResult{Chain: row, Members: stored, Plans: len(prep.plan.bodies), Check: check, CheckSource: source}, nil
 }
 
-// chainCreateWorkflow is the half of a workflow start that creates things.
 func chainCreateWorkflow(ctx context.Context, rt Runtime, opts ChainOptions, plan chainWFStart) (ChainResult, error) {
 	prep, err := chainPrepareWorkflow(ctx, rt, opts, plan)
 	if err != nil {
@@ -551,8 +541,6 @@ func chainRunStartActions(ctx context.Context, rt Runtime, name string, def work
 	})
 }
 
-// chainMemberWriter reports whether the named member is one the workflow's
-// writers.
 func chainMemberWriter(members []chainMember, name string) bool {
 	for _, m := range members {
 		if m.name == name {

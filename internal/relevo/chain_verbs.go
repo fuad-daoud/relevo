@@ -15,29 +15,24 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
-// The two words a chain's own stop and done write. The reason is the trace
-// row's when no member round was there to raise the event: the chain still ends,
-// and the row says why it ended without a close. The event reasons are the
-// chain's own vocabulary for "a human acted on this chain", whose text the
-// trace renders -- round 1's event kinds carry no "stopped"/"done" verb of their
-// own, exactly as the member sweep's row does not.
+// The two words a chain's own stop and done write: the chain still ends, and
+// the row says why it ended without a close. The event reasons are the
+// chain's own vocabulary for "a human acted on this chain".
 const (
 	chainStopNoRoundReason = "no open member round"
-	// ChainStopActionStopped is the StopResult.Action a chain stop reports when
-	// its member had no open round and the chain was stopped directly. The
-	// documented stop actions ("killed", "reaped", "gone", "dequeued",
-	// "nothing") all describe a member's round, which is exactly what this one
-	// does not: nothing on the member was stopped and the chain ended.
+	// ChainStopActionStopped is the StopResult.Action a chain stop reports
+	// when its member had no open round and the chain was stopped directly:
+	// nothing on the member was stopped and the chain ended.
 	ChainStopActionStopped = "stopped"
 	chainDoneReason        = "done"
 )
 
 // ErrChainRunning reports a verb refused because a chain still owns its
-// members: `relevo done` on a running chain. The CLI maps it to a conflict, so
-// a script can tell "stop it first" from an internal failure.
+// members: `relevo done` on a running chain. The CLI maps it to a conflict,
+// so a script can tell "stop it first" from an internal failure.
 var ErrChainRunning = errors.New("the chain is still running")
 
-// ErrChainDone reports a verb refused because the chain has finished: nothing
+// ErrChainDone reports a verb refused because a chain has finished: nothing
 // continues a done chain. The CLI maps it to a conflict, the same class its
 // running sibling has.
 var ErrChainDone = errors.New("the chain is done")
@@ -47,19 +42,15 @@ var ErrChainDone = errors.New("the chain is done")
 // any binding, and that member's stopped close raises the chain's `stopped`
 // event, which marks the chain stopped and queues its one end delivery.
 //
-// A chain that is not running is stopped through its member: the awaited
-// member's open round -- a manual round a human sent while the chain was down --
-// is ended the way any binding's round is, because that round is the only work
-// the chain still has and its builder may carry the chain's own name, so this
-// verb is the only route to it. A chain with no open member round has nothing to
-// stop: ErrNothingToStop, the answer `relevo stop` already gives and the CLI
-// reports as exit 0. When a running chain's awaited member has no open round,
-// nothing would ever raise the event, so the chain is stopped directly under the
-// state lock instead.
+// A chain that is not running is stopped through its member, whose open round
+// is ended the way any binding's round is: the member may carry the chain's
+// own name, so this verb is the only route to it. A chain with no open member
+// round has nothing to stop: ErrNothingToStop. When a running chain's awaited
+// member has no open round, the chain is stopped directly under the state
+// lock instead.
 //
-// A chain waiting on fork children is stopped the same way and then takes its
-// children down with it, so no child is left running under a parent that has
-// stopped hearing from it.
+// A chain waiting on fork children takes its children down with it, so no
+// child is left running under a stopped parent.
 func ChainStop(ctx context.Context, rt Runtime, name string) (StopResult, error) {
 	c, err := rt.Store.Chain(name)
 	if errors.Is(err, store.ErrNotFound) {
@@ -87,15 +78,12 @@ func ChainStop(ctx context.Context, rt Runtime, name string) (StopResult, error)
 // chainStopHaltedMember stops the awaited member's round on a chain that has
 // already left running. The member may carry the chain's own name, so
 // `relevo stop <member>` resolves to this very verb and the round is reachable
-// only from here; ending it is what keeps a halted chain with an open manual
-// round from having no working command at all -- the resume refuses the open
-// round, so without this a human is left with nothing to run.
+// only from here.
 //
-// A halted chain with no open member round answers with its own refusal, which
-// names `relevo done` as the command that closes it: "nothing to stop" left a
-// human at a halt with no command to run. A stopped chain keeps the
-// nothing-to-stop answer -- it has already ended, and a release is a different
-// verb -- so the refusal is asked of the halted status alone.
+// A halted chain with no open member round answers with its own refusal,
+// naming `relevo done` as the command that closes it. A stopped chain keeps
+// the nothing-to-stop answer, so the refusal is asked of the halted status
+// alone.
 func chainStopHaltedMember(ctx context.Context, rt Runtime, c db.ChainRow) (StopResult, error) {
 	member, _, ok := chain.Awaited(rt.Store, c)
 	if !ok {
@@ -122,12 +110,10 @@ func chainStoppedNothing(c db.ChainRow) error {
 	return ErrNothingToStop
 }
 
-// chainStopWorkflow stops a workflow chain's awaited member. The actor the
-// engine is on resolves through chain_member, and stopping that member's round
-// raises the chain's stopped event. A chain whose engine awaits a check has no
-// member to stop, a member that was removed or whose binding is gone has nothing
-// to reach, and a member whose round already closed has nothing to stop, so each
-// is stopped directly under the lock.
+// chainStopWorkflow stops a workflow chain's awaited member, resolved through
+// chain_member; stopping that member's round raises the chain's stopped event.
+// An awaited check, a removed or missing member, and an already-closed round
+// each stop directly under the lock instead.
 func chainStopWorkflow(ctx context.Context, rt Runtime, c db.ChainRow) (StopResult, error) {
 	st, err := chain.WorkflowState(c)
 	if err != nil {
@@ -179,9 +165,8 @@ func chainStoredMemberName(rt Runtime, c db.ChainRow, actor string) (string, err
 
 // chainStopWorkflowDirect marks a running workflow chain stopped when the step
 // it awaits has no open member round to end: the engine's stopped state, one
-// trace row and the one end delivery, written under the state lock in the shape
-// the engine's own stop uses. A check still in flight is killed and recorded as
-// stopped first, so a stop never leaves it running beside the stopped chain.
+// trace row and the one end delivery, under the state lock. A check still in
+// flight is killed and recorded as stopped first.
 func chainStopWorkflowDirect(ctx context.Context, rt Runtime, name string) error {
 	return rt.Store.WithLock(func(tx *store.Tx) error {
 		c, err := tx.Chain(name)
@@ -216,13 +201,12 @@ func chainStopWorkflowDirect(ctx context.Context, rt Runtime, name string) error
 
 // ChainDone releases a chain the human is finished with: `relevo done <n>`
 // where <n> names a chain. Every member that exists is released through the
-// ordinary `Done`, builder first, so each member's worktree and process are
-// given back the way a lone binding's are; the chain is then marked done with
-// one trace row and no MasterMind delivery, because the human ran this verb.
+// ordinary `Done`, builder first; the chain is then marked done with one
+// trace row and no MasterMind delivery, because the human ran this verb.
 //
 // A running chain is refused: `relevo stop <n> first`. A member's failure
-// returns its error and leaves the chain's status unchanged, so the verb can be
-// run again once the member is fixed.
+// returns its error and leaves the chain's status unchanged, so the verb can
+// be run again once the member is fixed.
 func ChainDone(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 	c, err := rt.Store.Chain(name)
 	if errors.Is(err, store.ErrNotFound) {
@@ -238,20 +222,17 @@ func ChainDone(ctx context.Context, rt Runtime, name string) (DoneResult, error)
 		return DoneResult{}, fmt.Errorf("chain %s is running; relevo stop %s first: %w", c.Name, c.Name, ErrChainRunning)
 	}
 
-	// The row this verb releases: a row that predates the workflow engine is
-	// migrated onto it here, through the same single-row conversion the sweep
-	// runs, and a row that still carries neither a workflow nor a state is
-	// refused in the input class instead. Both answers land before the check
-	// kill below and the member loop after it, so a refusal releases nothing
-	// and the verb can be run again.
+	// A row that predates the workflow engine is migrated onto it here, and a
+	// row that still carries neither a workflow nor a state is refused in the
+	// input class instead; both land before anything is released, so the verb
+	// can be run again.
 	c, err = chainDoneWorkflowRow(rt, c)
 	if err != nil {
 		return DoneResult{}, err
 	}
 
-	// A check left running by an earlier stop still owns the chain's tree: kill
-	// it and record it stopped before any member's worktree is released, so a
-	// done never takes the tree out from under a live check.
+	// A check left running by an earlier stop still owns the chain's tree:
+	// kill and record it stopped before any member's worktree is released.
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
 		row, err := tx.Chain(name)
 		if err != nil {
@@ -263,7 +244,7 @@ func ChainDone(ctx context.Context, rt Runtime, name string) (DoneResult, error)
 	}
 
 	// The builder's result is the chain's: its worktree and branch are the
-	// chain's tree, which is what the verb's document names.
+	// chain's tree.
 	var out DoneResult
 	for i, member := range view.EndMembers(rt.Store, c) {
 		res, derr := Done(ctx, rt, member)
@@ -291,27 +272,17 @@ func ChainDone(ctx context.Context, rt Runtime, name string) (DoneResult, error)
 	}); err != nil {
 		return DoneResult{}, err
 	}
-	// The chain is released: its end is done, so the seed copies it kept are no
-	// longer needed. The stored row is done whether the verb wrote it now or
-	// found it already there.
+	// The chain is released: its end is done, so the seed copies it kept are
+	// no longer needed.
 	chainInputsSweep(rt, name, string(chain.StatusDone))
 	return out, nil
 }
 
 // chainDoneWorkflowRow is the done path's read of the chain row's engine
-// definition and state, and hands back the row the store holds afterwards. The
-// sweep that migrates pre-engine rows runs at daemon start, so a verb can meet a
-// row the sweep could not finish: it is halted with the reason the conversion
-// named and carries neither a workflow nor a state. Reading such a row as a
-// plain error left `chain --done` answering internal on a chain the human can
-// still look at.
-//
-// A row with no workflow is migrated here, through the same single-row
-// conversion the sweep runs, so a chain the sweep simply has not reached yet is
-// done as any other. Whatever still lacks a workflow or a state is refused in
-// the input class instead, naming the row's own reason and the command that
-// reads it. The wording is this verb's own -- the resume path's refusals say a
-// chain cannot be resumed, which is the wrong verb here.
+// definition and state. A row with no workflow is migrated here, through the
+// same single-row conversion the sweep runs. Whatever still lacks a workflow
+// or a state is refused in the input class instead, naming the row's own
+// reason and the command that reads it.
 func chainDoneWorkflowRow(rt Runtime, c db.ChainRow) (db.ChainRow, error) {
 	if len(c.WorkflowJSON) == 0 {
 		fresh, err := convertLegacyChainRow(rt, c.Name)
@@ -340,11 +311,9 @@ func chainDoneWorkflowRow(rt Runtime, c db.ChainRow) (db.ChainRow, error) {
 }
 
 // chainInputsSweep removes a chain's inputs directory when the chain has ended
-// done or stopped: the copies of round files its seeds named are no longer
-// needed. A halted chain keeps them -- it may still be resumed -- and the
-// chain's own plan-i.md copies, which live beside the directory, are never
-// touched. A removal failure is logged, never returned: the transition has
-// already been written, and failing it would undo a fact.
+// done or stopped. A halted chain keeps it, since it may still be resumed,
+// and the chain's own plan-i.md copies beside it are never touched. A removal
+// failure is logged, never returned.
 func chainInputsSweep(rt Runtime, name, status string) {
 	if status != string(chain.StatusDone) && status != string(chain.StatusStopped) {
 		return
@@ -355,9 +324,8 @@ func chainInputsSweep(rt Runtime, name, status string) {
 }
 
 // chainDoneRow is the chain's own close: the engine state's status done, its
-// legacy columns projected, and one workflow trace row naming the member the
-// release was carried out from. No payload is queued -- the human ran this verb,
-// so there is nobody to tell.
+// legacy columns projected, and one workflow trace row. No payload is queued,
+// since the human ran this verb.
 func chainDoneRow(rt Runtime, tx *store.Tx, c db.ChainRow) error {
 	def, err := chain.WorkflowDef(c)
 	if err != nil {
@@ -387,7 +355,7 @@ func chainDoneRow(rt Runtime, tx *store.Tx, c db.ChainRow) error {
 
 // supersedeChainDelivery confirms a chain's undelivered end payload: a halt's
 // delivery queued before a resume says the chain needs the human, and that is
-// no longer true the moment they resume it. The next end queues its own.
+// no longer true the moment they resume it.
 func supersedeChainDelivery(rt Runtime, c db.ChainRow) error {
 	return rt.Store.WithLock(func(tx *store.Tx) error {
 		for _, member := range view.EndMembers(tx, c) {

@@ -42,7 +42,6 @@ func FormatDuration(d time.Duration) string {
 	return s
 }
 
-// formatScope formats a ScopePolicy the way the settings table displays it.
 func formatScope(sc *policy.ScopePolicy, defaultText string) string {
 	if sc == nil {
 		return defaultText
@@ -373,8 +372,7 @@ func SettingPaths(key string) []string {
 	}
 }
 
-// EditPolicy validates sets against d.PolicyRaw, encodes the resulting policy,
-// validates it via policy.Parse and dryRun, and returns the ConfigEdit.
+// EditPolicy validates sets against d.PolicyRaw and returns the ConfigEdit.
 func EditPolicy(d ConfigDoc, sets []PolicySet, message string) (ConfigEdit, error) {
 	var m map[string]any
 	var origMap map[string]any
@@ -491,13 +489,12 @@ func EditPolicy(d ConfigDoc, sets []PolicySet, message string) (ConfigEdit, erro
 	}, nil
 }
 
-// tierExceedsMaxPattern matches an actor's tier-above-max_tier rejection, from
-// either roles.json's build-time check or policy.json's own tier.<role> cap,
-// and captures the actor, its tier and the max it exceeds.
+// tierExceedsMaxPattern matches an actor's tier-above-max_tier rejection and
+// captures the actor, its tier and the max it exceeds.
 var tierExceedsMaxPattern = regexp.MustCompile(`(?:^|: )(\w[\w-]*)\.tier: (\w+) exceeds max_tier (\w+)`)
 
-// policyFilePrefixPattern is the leading "<name>.json: " every validation
-// error from EditPolicy's dry run carries, naming the section it failed.
+// policyFilePrefixPattern is the leading "<name>.json: " a dry-run error
+// carries, naming the section it failed.
 var policyFilePrefixPattern = regexp.MustCompile(`^(?:roles|policy|actors|candidates|agents)\.json: `)
 
 // badWordSuffixPattern is the trailing ": bad <word>" a wrapped sentinel
@@ -507,8 +504,7 @@ var badWordSuffixPattern = regexp.MustCompile(`: bad \w+$`)
 // HumanPolicyError turns a validation error from EditPolicy, ResetSetting or
 // dryRun into plain words: no JSON path, no file name, no wrapped sentinel.
 // A tier-above-max_tier rejection is reworded first; any other error has its
-// leading "<name>.json: " and trailing ": bad <word>" stripped, in that
-// order, and is otherwise returned as it stands.
+// leading "<name>.json: " and trailing ": bad <word>" stripped, in that order.
 func HumanPolicyError(err error) string {
 	if err == nil {
 		return ""
@@ -522,7 +518,7 @@ func HumanPolicyError(err error) string {
 	return msg
 }
 
-// ResetSetting resets key to its default by clearing the paths from SettingPaths(key).
+// ResetSetting resets key to its default by clearing its SettingPaths.
 func ResetSetting(d ConfigDoc, key string) (ConfigEdit, error) {
 	paths := SettingPaths(key)
 	if paths == nil {
