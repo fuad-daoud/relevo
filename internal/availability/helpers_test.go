@@ -121,7 +121,7 @@ func testDepsWith(t *testing.T, set *candidate.Set) Deps {
 }
 
 // badJSONKV returns invalid bytes for every key, so a reader hits the decode
-// failure a hand-edited file used to cause.
+// failure a hand-edited file causes.
 type badJSONKV struct{}
 
 func (badJSONKV) KVGet(string) ([]byte, bool, error) { return []byte("not json"), true, nil }

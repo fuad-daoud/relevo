@@ -22,7 +22,7 @@ import (
 //
 // A machine that was never stale, or a fleet at epoch 1, records no vouch
 // target and publishes no extension. The steady-path call stays only as the
-// retry of a vouch whose publish previously failed.
+// retry of a vouch whose publish failed.
 func PublishOwnCut(ctx context.Context, shared *db.DB, kv db.KV, t synclog.LogTransport) {
 	if shared == nil || t == nil || kv == nil {
 		return
