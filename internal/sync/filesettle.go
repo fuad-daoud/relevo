@@ -4,16 +4,11 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// The work that follows a batch of arriving items once it has committed. An
-// arriving agents item lands its definition files inside the importer's
-// transaction, but the render that goes with it reads the config the apply
-// wrote, so it cannot run there: a render inside the transaction would render
-// the agent as it was before the entry arrived. The pipeline therefore drains
-// what the apply queued, here, after the commit.
-//
-// It is a seam with one caller, the same way the documents themselves arrive
-// through SetDocsBuilder and the capture through SetFileCapture: internal/sync
-// cannot import internal/relevo, so the package that owns both asks for it.
+// The work that follows a batch of arriving items once it has committed: the
+// render reads the config the apply wrote, so it cannot run inside the
+// importer's transaction, where the agent still reads as it was. internal/sync
+// cannot import internal/relevo, so the package that owns both installs it, the
+// way the documents arrive through SetDocsBuilder.
 
 var fileSettle func(shared *db.DB)
 

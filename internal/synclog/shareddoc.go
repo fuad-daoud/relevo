@@ -9,43 +9,34 @@ import (
 	"strings"
 )
 
-// DocPrefix marks a table name as naming a synced document rather than a shared
-// table. A doc entry is an ordinary log entry that happens to name a document,
-// so it rides the transport, the sequence numbering and the signature a row
-// already had, and nothing about the log's shape changes to carry one.
+// DocPrefix marks a table name as a synced document rather than a shared table.
+// A doc entry is an ordinary log entry naming a document, so it rides the
+// transport, numbering and signature unchanged.
 const DocPrefix = "doc:"
 
-// SharedDoc is one document that syncs as whole keys rather than as rows.
-//
-// The three methods are the whole contract, and each answers for one machine:
-// Items is what this machine would send, Apply is what it does with one key it
-// was sent, and Name is the word the entry's table carries. A doc's body is
-// attacker-controlled until its signature has been checked, which is why Apply
-// takes a single key and a single value and validates the result rather than
-// merging a body wholesale.
+// SharedDoc is one document that syncs as whole keys rather than as rows. Items
+// is what this machine would send, Apply what it does with one sent key, Name the
+// word the entry's table carries. A doc's body is attacker-controlled until its
+// signature is checked, so Apply takes one key and value and validates rather
+// than merging wholesale.
 type SharedDoc interface {
-	// Name is the document's name, which appears in the entry's table as
-	// `doc:<name>`.
+	// Name is the document's name, in the entry's table as `doc:<name>`.
 	Name() string
-	// Items returns the document's current state as one JSON value per key
-	// that is to sync. A key absent from the map is a key the document no
-	// longer holds, and is exported as a delete.
+	// Items returns the document's current state as one JSON value per key to sync;
+	// an absent key is a delete.
 	Items() (map[string]json.RawMessage, error)
-	// Apply writes one key's value, or removes the key when value is nil. It
-	// must be idempotent: an entry delivered twice leaves the same document.
+	// Apply writes one key's value, or removes the key when value is nil. It must
+	// be idempotent.
 	Apply(key string, value json.RawMessage) error
 }
 
-// sharedDocs is the registry of the documents a reader and a writer can name.
-// It is a package-level table rather than a parameter because the doc a table
-// name resolves to has to be the same answer for the importer, the exporter
-// and the reconciler, whichever of them is the first to be asked.
+// sharedDocs is the registry the importer, exporter and reconciler all resolve
+// through, so one table name is one answer whichever asks first.
 var sharedDocs = map[string]SharedDoc{}
 
-// RegisterSharedDoc makes doc the handler for `doc:<name>`. A name already
-// registered is refused rather than replaced: two handlers for one document
-// would each apply half of what a peer sent, and whichever was registered last
-// would decide silently which half.
+// RegisterSharedDoc makes doc the handler for `doc:<name>`. A taken name is
+// refused rather than replaced: two handlers would each apply half of what a
+// peer sent, the last registered deciding silently.
 func RegisterSharedDoc(doc SharedDoc) error {
 	if doc == nil {
 		return fmt.Errorf("synclog: shared doc is nil: %w", ErrInvalid)
@@ -61,10 +52,8 @@ func RegisterSharedDoc(doc SharedDoc) error {
 	return nil
 }
 
-// checkDocName refuses a document name that could not survive the round trip
-// through a table name and back. An empty name would give `doc:` on its own,
-// and a name carrying a separator would leave a reader unable to tell which
-// word is the document's.
+// checkDocName refuses a document name that could not survive the table-name round
+// trip: empty gives bare `doc:`, a separator leaves the word unreadable.
 func checkDocName(name string) error {
 	if name == "" {
 		return fmt.Errorf("synclog: shared doc name is empty: %w", ErrInvalid)
@@ -85,9 +74,9 @@ func SharedDocNames() []string {
 	return names
 }
 
-// IsDocTable reports whether a table name names a doc entry. SharedTable has to
-// keep refusing these, so the importer routes on the prefix before it asks
-// whether a table is shared.
+// IsDocTable reports whether a table name names a doc entry. SharedTable keeps
+// refusing these, so the importer routes on the prefix before asking whether a
+// table is shared.
 func IsDocTable(tbl string) bool {
 	return strings.HasPrefix(tbl, DocPrefix)
 }
@@ -101,14 +90,10 @@ func DocName(tbl string) (string, bool) {
 	return strings.TrimPrefix(tbl, DocPrefix), true
 }
 
-// SharedDocFor returns the handler registered for the document an entry's table
-// names.
-//
-// A doc table naming no document and one naming a document this build has no
-// reader for are refused apart, because they are apart: the first is an entry
-// that never said what it was about, and the second is bytes this machine
-// cannot interpret. Applying either would be acting on a name it has no reader
-// for, and the second is the one another machine could write.
+// SharedDocFor returns the handler for the document an entry's table names. A
+// docless table and an unregistered document are refused apart: the first never
+// said what it was about, the second is bytes this machine cannot interpret
+// that another machine could write.
 func SharedDocFor(tbl string) (SharedDoc, error) {
 	name, ok := DocName(tbl)
 	if !ok {
@@ -125,10 +110,9 @@ func SharedDocFor(tbl string) (SharedDoc, error) {
 	return doc, nil
 }
 
-// DocEntry is one doc entry read off the wire and checked for shape, before any
-// of it reaches a document. Everything here has been through another machine,
-// so each field is checked rather than trusted: an entry that reaches Apply is
-// one whose document, key, operation, stamp and value shape all agreed.
+// DocEntry is one wire doc entry checked for shape before reaching a document.
+// Everything here passed through another machine, so each field is checked: an
+// entry reaching Apply has agreeing document, key, operation, stamp and value.
 type DocEntry struct {
 	// Doc is the handler the entry's table named.
 	Doc SharedDoc
@@ -136,27 +120,20 @@ type DocEntry struct {
 	Name string
 	// Key is the item key the entry writes, without its `doc:` table.
 	Key string
-	// Stamp is the position the write was made at, which is what decides
-	// whether an arriving entry is newer than what this machine holds.
-	Stamp Stamp
-	// Origin is the installation that made the write.
+	// Stamp is the position the write was made at, deciding whether an arriving
+	// entry is newer than what this machine holds.
+	Stamp  Stamp
 	Origin string
-	// Value is the item's new value, or nil for a delete. A nil value is the
-	// tombstone, never an absent body: the body always carries one or the
-	// other, so the stamp travels with a delete too.
+	// Value is the item's new value, or nil for a delete. Nil is the tombstone,
+	// never an absent body, so the stamp travels with a delete too.
 	Value json.RawMessage
 }
 
-// docBody is the body every doc entry carries: the position the write was made
-// at, and the value it wrote. A delete is an upsert whose value is JSON null,
-// because the stamp has to reach the reader that removes the key and a delete
-// body carrying no stamp could not say whether the removal is newer than what
-// the reader holds.
-//
-// The stamp travels as text and not as a number because the body is signed as
-// written and re-encoded on the way through: a number would have to be read
-// and written back in one canonical form or two encodings of the same stamp
-// would not share a signature.
+// docBody is the body every doc entry carries: write position and value. A delete
+// is an upsert with JSON null value, so the stamp reaches the remover and tells
+// whether the removal is newer than held.
+// The stamp travels as text, not a number: the signed body is re-encoded in transit,
+// and two encodings of one numeric stamp would not share a signature.
 type docBody struct {
 	Stamp string          `json:"stamp"`
 	Value json.RawMessage `json:"value"`
@@ -169,9 +146,8 @@ type docWrite struct {
 }
 
 // entryHash is the head digest for one upsert: a row body's columns, or a doc
-// body's two fields. The two are hashed apart because a doc body carries an
-// arbitrary JSON value where a row body carries storable columns, so the row
-// encoder has nothing to say about one.
+// body's two fields, hashed apart since the row encoder says nothing about a
+// doc's arbitrary JSON value.
 func entryHash(e Entry) (string, error) {
 	if IsDocTable(e.Table) {
 		return docBodyHash(e.Body)
@@ -179,10 +155,9 @@ func entryHash(e Entry) (string, error) {
 	return BodyHash(e.Body)
 }
 
-// docBodyHash digests a doc body by its two fields re-encoded in one order, so
-// two entries naming the same stamp and the same value in a different order are
-// one item rather than two. It reads the body through the shape check first, so
-// a body this machine would refuse never reaches the digest.
+// docBodyHash digests a doc body by its two fields in one order, so same stamp and
+// value in different order is one item. It shape-checks first, so a refusable body
+// never reaches the digest.
 func docBodyHash(raw json.RawMessage) (string, error) {
 	write, err := decodeDocBody(raw)
 	if err != nil {
@@ -196,9 +171,8 @@ func docBodyHash(raw json.RawMessage) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// DocPK is the log's primary key for one doc item: the item key as a
-// single-element json_array, so a doc entry carries the one-column key every
-// other entry does and a reader parses one shape for both.
+// DocPK is the log's primary key for one doc item: the key as a single-element
+// json_array, so a doc entry carries the one-column key every entry does.
 func DocPK(key string) (string, error) {
 	if key == "" {
 		return "", fmt.Errorf("synclog: doc key is empty: %w", ErrInvalid)
@@ -210,24 +184,18 @@ func DocPK(key string) (string, error) {
 	return string(encoded), nil
 }
 
-// ParseDocEntry reads a doc entry off the wire and refuses every shape this
-// machine has no reader for: a table that names no document, a document that is
-// not registered, a primary key that is not one string, an operation that is
-// not an upsert, a body that is not an object carrying exactly a stamp and a
-// value, and a stamp that is not a canonical decimal number.
-//
-// Each refusal is a separate check because each answers a different attack. A
-// table or key of the wrong shape names something this machine would look up
-// and misread; a body that is not the agreed object carries fields no check
-// covers, including the stamp the reader would order by; and a stamp of the
-// wrong shape would order wrongly against everything already applied.
+// ParseDocEntry reads a wire doc entry and refuses every unreadable shape: a
+// docless table, an unregistered document, a non-single-string key, a non-upsert
+// op, a body that is not exactly stamp and value, and a non-canonical stamp.
+// Each refusal is a separate check answering a different attack: a misshapen table
+// or key would be looked up and misread, an off-shape body carries unchecked fields
+// including the ordering stamp, and a misshapen stamp would order wrongly.
 func ParseDocEntry(e Entry) (DocEntry, error) {
 	return parseDocEntry(SharedDocFor, e)
 }
 
-// parseDocEntry is ParseDocEntry against a chosen way of finding the document,
-// so a reader bound to its own documents refuses what those documents do not
-// name.
+// parseDocEntry is ParseDocEntry against a chosen document lookup, so a reader
+// bound to its own documents refuses what they do not name.
 func parseDocEntry(lookup func(string) (SharedDoc, error), e Entry) (DocEntry, error) {
 	doc, err := lookup(e.Table)
 	if err != nil {
@@ -255,9 +223,8 @@ func parseDocEntry(lookup func(string) (SharedDoc, error), e Entry) (DocEntry, e
 	}, nil
 }
 
-// docKey reads the one-element key array a doc entry is addressed by. A key of
-// any other shape names no item: an array of two names two items, and a bare
-// string names none, so both would apply a write this machine cannot point at.
+// docKey reads the one-element key array a doc entry is addressed by. Any other
+// shape names no item and would apply a write with no address.
 func docKey(pk string) (string, error) {
 	var values []string
 	if err := json.Unmarshal([]byte(pk), &values); err != nil {
@@ -269,12 +236,9 @@ func docKey(pk string) (string, error) {
 	return values[0], nil
 }
 
-// decodeDocBody reads the stamp and value out of a doc entry's body.
-//
-// The body is decoded into a map first so an unknown field is a refusal rather
-// than a field this build ignores: a peer that added a field this build has no
-// reader for is a peer whose ordering rule this build cannot apply, and
-// dropping the field quietly would apply the entry on the wrong terms.
+// decodeDocBody reads the stamp and value out of a doc entry's body, decoded as a
+// map first so an unknown field refuses: a peer adding a field this build cannot
+// read has an ordering rule this build cannot apply.
 func decodeDocBody(raw json.RawMessage) (docWrite, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {

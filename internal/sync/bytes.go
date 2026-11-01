@@ -29,7 +29,6 @@ type ByteCounters struct {
 // machines in different zones agree on which month a byte belongs to.
 func BytesKey(t time.Time) string { return "sync.bytes." + t.UTC().Format("2006-01") }
 
-// Zero reports whether nothing moved.
 func (c ByteCounters) Zero() bool { return c == ByteCounters{} }
 
 // ReadBytes returns the month holding t. A month nothing was counted in reads as
@@ -42,7 +41,6 @@ func ReadBytes(kv db.KV, t time.Time) (ByteCounters, error) {
 	return c, nil
 }
 
-// addBytes adds d to the month holding t.
 func addBytes(kv db.KV, t time.Time, d ByteCounters) error {
 	c, err := ReadBytes(kv, t)
 	if err != nil {

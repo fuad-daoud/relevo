@@ -12,41 +12,34 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// DocStamper is the optional half of a SharedDoc that knows when a key was last
-// written. A first export stamps from it rather than from the clock: a machine
-// that joins with an old config must not beat an edit another machine made
-// since, which a stamp of "now" would do.
+// DocStamper is the optional SharedDoc half knowing when a key was last written.
+// A first export stamps from it, not the clock: a joiner with an old config must
+// not beat a newer peer edit.
 type DocStamper interface {
 	// ItemUpdatedAt is when key was last written; ok is false when the doc
 	// cannot say.
 	ItemUpdatedAt(key string) (at time.Time, ok bool, err error)
 }
 
-// DocWriteStamper is the optional half of a SharedDoc that stamps an item when
-// it is written, so the export carries the time of the write and not the time
-// of the export.
+// DocWriteStamper is the optional SharedDoc half stamping an item when written,
+// so the export carries the write's time, not the export's.
 type DocWriteStamper interface {
 	// ItemWriteStamp is the stamp recorded when key was last written here; ok is
 	// false when no write on this machine stamped it.
 	ItemWriteStamp(key string) (stamp Stamp, ok bool, err error)
 }
 
-// DocReSealStamper is the optional half of a SharedDoc whose items are sealed
-// values. When the key rotates, such a doc re-seals every value it holds
-// without anyone editing it: the plaintext is the same, only the bytes differ,
-// and the digest with them. A re-seal that took a fresh stamp would rank above
-// a peer's edit that happened while the key was rotating, and overwrite it --
-// so a doc that re-seals says so here, and its re-emissions carry the stamp the
-// key already had instead. A person's edit on such a doc still outranks
-// everything, because it carries its write stamp and that branch runs first.
+// DocReSealStamper is the optional SharedDoc half for sealed values. A key
+// rotation re-seals every value without an edit; a fresh stamp would outrank a
+// peer's concurrent edit, so re-emissions carry the stamp the key already had.
 type DocReSealStamper interface {
 	// ResealKeepsStamp says a digest that changed with no newer write stamp is
 	// a re-seal of what the key already carried.
 	ResealKeepsStamp() bool
 }
 
-// ItemDigest is the hash an item is compared by. The value is compacted first
-// so spacing never makes an unchanged item look changed.
+// ItemDigest is the hash an item is compared by, compacted first so spacing
+// never marks an unchanged item changed.
 func ItemDigest(value json.RawMessage) (string, error) {
 	var buf []byte
 	if value != nil {
@@ -60,12 +53,9 @@ func ItemDigest(value json.RawMessage) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// exportDocs turns every signalled doc into entries on the log.
-//
-// A locked machine emits nothing and keeps every signal: a doc entry must be
-// signed, and an unsigned one would be refused by every unlocked reader. A doc
-// nobody registered keeps its signal too, so it is exported once something can
-// read it.
+// exportDocs turns every signalled doc into log entries. Locked emits nothing
+// and keeps every signal, since unsigned entries are refused everywhere;
+// unregistered keeps its signal until something can read it.
 func (e *Exporter) exportDocs() (int, error) {
 	if len(e.key) == 0 {
 		return 0, nil
@@ -89,10 +79,9 @@ func (e *Exporter) exportDocs() (int, error) {
 	return appended, nil
 }
 
-// exportDoc diffs one doc against what was last exported and appends one entry
-// per changed key. The append comes before the state write, so a crash between
-// them re-exports the same values under fresh stamps, which a reader applies
-// as the same state.
+// exportDoc diffs one doc and appends one entry per changed key, before the state
+// write, so a crash between them re-exports values a reader applies as the same
+// state.
 func (e *Exporter) exportDoc(doc SharedDoc, sig db.DocSignal) (int, error) {
 	items, err := doc.Items()
 	if err != nil {
@@ -123,8 +112,6 @@ func (e *Exporter) exportDoc(doc SharedDoc, sig db.DocSignal) (int, error) {
 	return len(entries), nil
 }
 
-// docEntries builds the entries for every key whose digest differs from the
-// export state, and for every exported key the doc no longer holds.
 func (e *Exporter) docEntries(doc SharedDoc, items map[string]json.RawMessage, state map[string]db.DocExportRow) ([]Entry, []db.DocExportWrite, error) {
 	clock := NewHybridClock(e.db.LocalOrSelf())
 	var entries []Entry
@@ -167,14 +154,10 @@ func (e *Exporter) docEntries(doc SharedDoc, items map[string]json.RawMessage, s
 	return entries, writes, nil
 }
 
-// docStamp is the stamp for a key about to be exported. The stamp recorded when
-// the key was written wins when it is newer than the one the key last carried.
-// Otherwise a re-sealing doc's upsert keeps the stamp the key already had --
-// a re-seal is the same value under new bytes, and a stamp of now would rank it
-// above a peer's edit it never saw. A key never exported takes its stamp from
-// when the doc says it was written, and every later one -- including every
-// removal -- comes from the clock, moved past the stamp the key last carried so
-// a change always outranks the state it replaces.
+// docStamp is the stamp for a key about to be exported. The write stamp wins
+// when newer than the last carried; a re-sealing doc otherwise keeps the stamp
+// it had, since a re-seal is the same value under new bytes. A first export
+// stamps from the doc, every later one from the clock past the last carried.
 func (e *Exporter) docStamp(clock *HybridClock, doc SharedDoc, key string, prev db.DocExportRow, had, tombstone bool) (Stamp, error) {
 	var last Stamp
 	if had {

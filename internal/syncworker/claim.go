@@ -17,14 +17,12 @@ const claimPrefix = "claim:"
 const claimTTL = 24 * time.Hour
 
 // ClaimIdentity writes the claim token for origin where the remote holds none,
-// holds the caller's own, or holds one older than the TTL, then answers with the
-// claim the remote holds after a push and a pull.
-//
-// The write alone cannot make the claim exclusive: the push is last-writer-wins
-// per row, so two machines that both found the row absent each push their token
-// and the later push replaces the earlier. The read-back narrows that to the
-// race inside one push, and the caller compares the token it gets back against
-// its own, then again on every later attempt, which is where a double win shows.
+// holds the caller's own, or holds one older than the TTL, then answers with
+// the claim the remote holds after a push and a pull. The write alone cannot
+// make the claim exclusive: the push is last-writer-wins per row, so two
+// machines that both found the row absent each push, and the later push wins.
+// The read-back narrows that to one push, and the caller's comparison on every
+// later attempt is where a double win shows.
 func (b *TursoBackend) ClaimIdentity(origin, token string, at time.Time) (string, time.Time, error) {
 	if err := b.ready(); err != nil {
 		return "", time.Time{}, err
@@ -102,9 +100,9 @@ func queryClaim(ctx context.Context, tx *sql.Tx, origin string) (string, time.Ti
 	return token, at, nil
 }
 
-// parseClaim reads a claim row. The row is the remote's claim, so one that does
-// not parse reads as a claim made at the zero time: it holds the identity until
-// the caller's own write replaces it, and never as an absent one.
+// parseClaim reads a claim row. A row that does not parse reads as a claim made
+// at the zero time: it holds the identity until the caller's own write replaces
+// it, never as an absent one.
 func parseClaim(value string) (string, time.Time) {
 	token, stamp, _ := strings.Cut(value, " ")
 	at, err := time.Parse(time.RFC3339Nano, stamp)
@@ -114,8 +112,7 @@ func parseClaim(value string) (string, time.Time) {
 	return token, at
 }
 
-// claimIdentity serves the verb. An identity to claim is required: a claim on
-// no one names nothing.
+// claimIdentity serves the verb. An identity to claim is required.
 func (s *server) claimIdentity(req Request) Response {
 	if req.Origin == "" {
 		return refuse(req, fmt.Errorf("%w: claim_identity with no origin", ErrProtocol))

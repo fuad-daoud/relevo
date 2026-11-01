@@ -1,10 +1,10 @@
 package sync
 
 // The breaker is what a daemon remembers about a worker that will not answer:
-// the marker a call leaves behind, the consecutive deaths it counts, the delay
-// it waits between attempts, and the latch that stops the machine and asks a
-// human to look. It is state over the machine-local kv and a clock, so the whole
-// policy is testable with no process and no network.
+// the marker a call leaves behind, the deaths it counts, the delay between
+// attempts, and the latch that stops the machine. It is state over the
+// machine-local kv and a clock, so the whole policy is testable with no
+// process and no network.
 
 import (
 	"encoding/json"
@@ -62,7 +62,6 @@ type BreakerState struct {
 	At time.Time `json:"at,omitempty"`
 }
 
-// Breaker counts a worker's deaths and decides when a call may run again.
 type Breaker struct {
 	kv  db.KV
 	now func() time.Time
@@ -90,7 +89,6 @@ func (b *Breaker) State() (BreakerState, error) {
 	return st, nil
 }
 
-// Deaths returns the consecutive death count.
 func (b *Breaker) Deaths() (int, error) {
 	st, err := b.State()
 	if err != nil {
@@ -99,8 +97,8 @@ func (b *Breaker) Deaths() (int, error) {
 	return st.Deaths, nil
 }
 
-// Latched reports whether the machine is latched. The latch lives in the
-// attention marker, so the statusline reads it without asking the breaker.
+// Latched reports whether the machine is latched; the latch lives in the
+// attention marker so the statusline reads it without asking the breaker.
 func (b *Breaker) Latched() (bool, error) {
 	cause, err := b.LatchCause()
 	if err != nil {
@@ -120,8 +118,7 @@ func (b *Breaker) LatchCause() (string, error) {
 }
 
 // Begin opens one call: it counts a marker a previous call left behind, refuses
-// while the machine is latched or backing off, and writes the in-call marker the
-// reply clears.
+// while latched or backing off, and writes the in-call marker the reply clears.
 func (b *Breaker) Begin(verb string) error {
 	if err := b.Observe(); err != nil {
 		return err
@@ -150,11 +147,10 @@ func (b *Breaker) Begin(verb string) error {
 // End clears the in-call marker: a reply arrived, so no call is in flight.
 func (b *Breaker) End() error { return ClearInCall(b.kv) }
 
-// Observe counts the death the in-call marker names, unless that marker has
-// already been counted, and leaves the marker for the next daemon to find. A
-// call that missed runs it as the worker is dropped, and a fresh daemon runs it
-// at start; the number in the marker is what keeps one death from counting
-// twice.
+// Observe counts the death the in-call marker names, unless already counted,
+// and leaves the marker for the next daemon to find. A call that missed runs it
+// as the worker is dropped and a fresh daemon runs it at start; the marker
+// number keeps one death from counting twice.
 func (b *Breaker) Observe() error {
 	call, ok, err := ReadInCall(b.kv)
 	if err != nil || !ok {
@@ -194,10 +190,9 @@ func (b *Breaker) Success() error {
 	return b.save(st)
 }
 
-// Refused records a reply the worker sent and declined. A refusal that will
-// repeat on every attempt latches at once, because waiting out three deaths it
-// can already predict only delays the human who has to act; anything else is
-// left to the ordinary call path.
+// Refused records a reply the worker sent and declined. One that repeats on
+// every attempt latches at once, because waiting out three predictable deaths
+// only delays the human who must act; anything else stays on the ordinary path.
 func (b *Breaker) Refused(err error) error {
 	if !IsPermanentRefusal(err) {
 		return nil
@@ -211,9 +206,7 @@ func (b *Breaker) Refused(err error) error {
 	return b.latch(latchRefused)
 }
 
-// Due reports whether a call may run now: a latched machine never is, a machine
-// with no deaths is due at once, and a machine that has died waits out the
-// backoff.
+// Due reports whether a call may run now.
 func (b *Breaker) Due() (bool, error) {
 	latched, err := b.Latched()
 	if err != nil {

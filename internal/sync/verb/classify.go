@@ -2,9 +2,8 @@ package verb
 
 // The mapping from a sync failure onto the closed set of codes the wire carries.
 //
-// It is its own file because the table it is has grown past what belongs beside
-// the executor: the executor runs verbs, and this decides what a caller is told
-// about one. Keeping them apart also keeps the file each of them fits in.
+// It is its own file because the table has grown past what belongs beside the
+// executor: the executor runs verbs, and this decides what a caller is told.
 
 import (
 	"errors"
@@ -25,11 +24,10 @@ func Classify(err error) string {
 	case errors.Is(err, relevosync.ErrNoRemote):
 		return wire.SyncCodeNoRemote
 	case errors.Is(err, relevosync.ErrNoR2), errors.Is(err, relevosync.ErrNoR2AfterJoin):
-		// Both are the same fact under two names: this machine has no bucket
+		// Both are one fact under two names: this machine has no bucket
 		// credentials. The plain one is refused before anything is imported and
-		// the join one after the document that was supposed to bring them, so a
-		// caller that has to tell them apart reads the message rather than the
-		// code -- but it is one condition to the user, who is told the same fix.
+		// the join one after the document that should have brought them, so a
+		// caller telling them apart reads the message rather than the code.
 		return wire.SyncCodeNoR2
 	case errors.Is(err, relevosync.ErrAlreadyEnabled):
 		return wire.SyncCodeAlreadyEnabled
@@ -55,12 +53,10 @@ func Classify(err error) string {
 	case errors.Is(err, relevosync.ErrQuotaReached):
 		return wire.SyncCodeRemoteRefused
 	case errors.Is(err, relevosync.ErrRemoteSchema):
-		// The remote has no table for the rows this machine is pushing, which is
-		// not a fault in the call and not something re-running it fixes: the DDL
-		// never reached the remote. It is its own code rather than a share of the
-		// ordinary refusal because the way out is a different one, and a reader
-		// sent to `relevo bugreport` for a remote that never learned the schema
-		// has been sent to report a driver boundary as a defect.
+		// The remote has no table for the rows this machine is pushing, which no
+		// re-run fixes: the DDL never reached the remote. It is its own code
+		// because the way out differs, and a reader sent to `relevo bugreport`
+		// for it has been sent to report a driver boundary as a defect.
 		return wire.SyncCodeRemoteSchemaMissing
 	case errors.Is(err, synclog.ErrBadSignature), errors.Is(err, synclog.ErrLockedSignedOrigin):
 		// A signature refusal names the entry and its origin; the way out is a

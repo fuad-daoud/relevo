@@ -1,11 +1,8 @@
 package sync
 
-// The machine-local half of an enable: the token it stores, the section it
-// points at a remote, and the mark that says the machine is on. Every one of
-// them lives in the file beside the shared database, so none can leave with a
-// change set. The turn-off, the status read and the editor all read and write
-// exactly them, which is why they share a file with the enable rather than a
-// package of their own.
+// The machine-local half of an enable: stored token, remote-pointing section, and
+// on-mark. All live beside the shared database so none leaves with a change set,
+// shared by turn-off, status and editor rather than a package of their own.
 
 import (
 	"bytes"
@@ -18,36 +15,28 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// The refusals the enable surface answers with. They are sentinels so a caller
-// branches on the class while the message names the fix.
+// The refusals the enable surface answers with, sentinels branching on class while
+// the message names the fix.
 var (
-	// ErrAlreadyEnabled is a machine already syncing. An enable that stopped
-	// before the join finished left the machine off, so a second enable resumes
-	// it rather than inheriting a half-join; a machine that is on refuses until
-	// it is turned off, because the mark is the one thing an enable never
-	// overrides.
+	// ErrAlreadyEnabled is a machine already syncing. A stopped-before-join machine
+	// is off, so a second enable resumes it; a machine that is on refuses until
+	// turned off, because the mark is never overridden.
 	ErrAlreadyEnabled = errors.New("sync: already enabled on this machine")
 
-	// ErrNoToken is an intake with no token on either route. The message names
-	// the secret and the two routes and stops there: every line out of this
-	// path can end up in a log, so nothing here says which route was tried or
-	// what either of them held.
+	// ErrNoToken is an intake with no token on either route, naming secret and
+	// routes and nothing tried or held: every line here can end up in a log.
 	ErrNoToken = errors.New("sync: no " + SecretToken + ": pass --token-stdin or set " + EnvToken)
 
-	// ErrNoRemote is an enable that named no remote on either route. A hand-
-	// written section is the advanced route, so the refusal names the flag first
-	// and the section second rather than sending a first-run reader to a config
-	// document to discover where sync keeps its settings.
+	// ErrNoRemote is an enable naming no remote on either route, flag first and
+	// section second: the section is the advanced route, not a first-run reader's.
 	ErrNoRemote = errors.New("sync: no remote is configured on this machine: pass --url or set the " + SectionSettings + " section's remote_url")
 
-	// ErrRemoteConflict is a --url that contradicts the remote the section
-	// already holds. Pointing this machine somewhere else would move its rows to
-	// a database the user did not ask for, so it refuses and names both remotes
-	// rather than picking a winner.
+	// ErrRemoteConflict is a --url contradicting the stored remote: moving rows
+	// elsewhere unasked refuses, naming both remotes rather than picking a winner.
 	ErrRemoteConflict = errors.New("sync: --url names a remote this machine is not pointed at")
 )
 
-// RemoteConflictError is ErrRemoteConflict carrying the two remotes it names.
+// RemoteConflictError is ErrRemoteConflict carrying the two remotes named.
 type RemoteConflictError struct {
 	// URL is the --url value and Stored the section's remote_url.
 	URL, Stored string
@@ -59,15 +48,13 @@ func (e *RemoteConflictError) Error() string {
 
 func (e *RemoteConflictError) Unwrap() error { return ErrRemoteConflict }
 
-// EnvToken is the environment variable a token is read from when --token-stdin
-// is not given. It carries the name of the tool that mints these tokens, so a
-// shell already exporting one for turso's own CLI does the right thing without
-// being told.
+// EnvToken is the environment variable a token is read from when --token-stdin is
+// not given; named for the minting tool, so a shell exporting one for turso's CLI
+// does the right thing unasked.
 const EnvToken = "TURSO_TOKEN"
 
-// TokenSource names the route a token arrived by. It exists so a caller can say
-// where it read from without holding the value; it is never formatted into a
-// refusal, which is the whole reason it is a name and not a value.
+// TokenSource names the route a token arrived by, so a caller says where without
+// holding the value; never formatted into a refusal, hence a name not a value.
 type TokenSource string
 
 const (
@@ -79,26 +66,22 @@ const (
 	TokenSourceEnv TokenSource = "env"
 )
 
-// TokenIntake is the token an enable would store and the two routes it could
-// have arrived by. The flag beats the environment, so a script that pipes a
-// token cannot be overridden by whatever the environment happens to carry, and
-// a flag that was not passed never shadows an environment that was set.
+// TokenIntake is the token an enable would store and its two arrival routes: flag
+// beats environment, so a piped token wins and an unpassed flag never shadows a
+// set environment.
 type TokenIntake struct {
 	// FromStdin says the caller asked for the token on standard input.
 	FromStdin bool
-	// Stdin is what standard input held, already read. It is consulted only
-	// when FromStdin is set, so an empty pipe is never a reason to ignore a
-	// token the environment is carrying.
+	// Stdin is what standard input held, already read, consulted only when FromStdin
+	// is set, so an empty pipe never ignores an environment-carried token.
 	Stdin []byte
 	// EnvValue is what the environment held under EnvToken.
 	EnvValue string
 }
 
-// Resolve returns the token to store and the route it came by. A route that
-// yields nothing falls through to the next, so a flag asked for and left empty
-// still finds the environment's token rather than refusing a machine that has
-// one. Neither route yielding anything is ErrNoToken, and that refusal is one
-// fixed line whatever was tried: the routes are named, the attempt is not.
+// Resolve returns the token to store and the route it came by. An empty route
+// falls through to the next, so an empty flag still finds the environment's token.
+// Neither yielding anything is ErrNoToken, one fixed line: routes named, attempt not.
 func (i TokenIntake) Resolve() ([]byte, TokenSource, error) {
 	if i.FromStdin {
 		if value := bytes.TrimSpace(i.Stdin); len(value) > 0 {
@@ -111,10 +94,9 @@ func (i TokenIntake) Resolve() ([]byte, TokenSource, error) {
 	return nil, TokenSourceNone, ErrNoToken
 }
 
-// R2Intake is what an enable was given for R2, and the stored credentials it
-// falls back to. The flag beats the stored value per field, so a machine
-// pointed at a new bucket keeps its old secret rather than being asked for it
-// again -- the three non-secret flags describe where, and only where changed.
+// R2Intake is what an enable was given for R2 and the stored fallback. The flag
+// beats stored per field, so repointing keeps the old secret: non-secret flags
+// describe where, and only where changed.
 type R2Intake struct {
 	// Endpoint, Bucket and KeyID are the flags, empty when they were not passed.
 	Endpoint string
@@ -123,18 +105,14 @@ type R2Intake struct {
 	// Secret is what --r2-secret-stdin or EnvR2Secret resolved to, empty when
 	// neither carried anything.
 	Secret []byte
-	// Stored is what the machine already holds, read by the caller so this rule
-	// stays a pure function of its input and can be tested without a database.
+	// Stored is what the machine already holds, read by the caller to keep this rule
+	// a pure function testable without a database.
 	Stored R2Secrets
 }
 
-// R2Resolve returns the four credentials an enable would store.
-//
-// A field the caller supplied wins, and a field it did not is taken from what is
-// already stored. Nothing resolving is ErrNoR2, which is the refusal an enable
-// stops on: a machine that cannot name a bucket cannot move a body, and the
-// check is here rather than at the first upload so the enable refuses before it
-// has imported anything.
+// R2Resolve returns the four credentials an enable would store: supplied wins,
+// unpassed falls back to stored. Nothing resolving is ErrNoR2, refused here rather
+// than at first upload so the enable refuses before importing anything.
 func (i R2Intake) R2Resolve() (R2Secrets, error) {
 	out := R2Secrets{
 		Endpoint: i.Endpoint,
@@ -163,15 +141,12 @@ func (i R2Intake) R2Resolve() (R2Secrets, error) {
 	return out, nil
 }
 
-// SectionSettings is the config section this machine's sync settings live
-// under. The section is machine-local by the table it is stored in, so the name
-// is the only thing the settings and the section have to agree about.
+// SectionSettings is the config section this machine's sync settings live under,
+// machine-local by table: the name is the only thing settings and section agree on.
 const SectionSettings = "sync"
 
-// ReadSettings returns this machine's sync section, or a zero Settings when the
-// machine has none. An absent section is not an error: a machine that never
-// turned sync on has no section, and reads as off with no remote, which is
-// exactly what it is.
+// ReadSettings returns this machine's sync section, or zero Settings when none: an
+// absent section reads as off with no remote, which is exactly what it is.
 func ReadSettings(l Local) (Settings, error) {
 	body, ok, err := l.ConfigGet(SectionSettings)
 	if err != nil {
@@ -183,12 +158,9 @@ func ReadSettings(l Local) (Settings, error) {
 	return ParseSettings(body)
 }
 
-// MarkEnabled writes the machine-local mark that sync is on or off. Two rows
-// carry the one fact and both are written in the same transaction: the sync
-// section, which is the record a reader opens, and the sync.enabled marker,
-// which is the one the idle tick and the statusline read without parsing a
-// section. Writing one without the other is the drift that leaves a machine
-// that reads as off still pushing, or one that pushes with nothing to say so.
+// MarkEnabled writes the machine-local mark that sync is on or off. Two rows carry
+// the one fact in one transaction -- section and sync.enabled marker -- because
+// writing one without the other drifts into off-yet-pushing or pushing-with-nothing.
 func MarkEnabled(l Local, enabled bool, now time.Time) error {
 	settings, err := ReadSettings(l)
 	if err != nil {
@@ -217,11 +189,9 @@ func MarkEnabled(l Local, enabled bool, now time.Time) error {
 	return nil
 }
 
-// PutSettings writes the sync section on its own, without the enabled marker.
-// The two rows MarkEnabled writes together carry the mark, so this is the
-// advanced route: what stores a remote before the mark, because a remote is not
-// a decision anything made and a refusal after it must leave the machine
-// pointed at the right remote with sync still off.
+// PutSettings writes the sync section on its own, without the enabled marker: the
+// advanced route storing a remote before the mark, so a later refusal leaves the
+// machine pointed right with sync still off.
 func PutSettings(l Local, settings Settings, now time.Time) error {
 	body, err := encodeSettings(settings)
 	if err != nil {
@@ -238,8 +208,8 @@ func PutSettings(l Local, settings Settings, now time.Time) error {
 	return nil
 }
 
-// encodeSettings is the one place a Settings becomes a section body, so the two
-// writers cannot disagree about what a section looks like on disk.
+// encodeSettings is the one place a Settings becomes a section body, so both writers
+// agree on the on-disk shape.
 func encodeSettings(settings Settings) ([]byte, error) {
 	body, err := json.Marshal(settings)
 	if err != nil {

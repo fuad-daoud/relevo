@@ -10,9 +10,9 @@ import (
 // ExportDebounce is the shortest gap between the starts of two attempts that
 // an outbox entry or a freshen hint may cause. Ingest writes the shared file
 // on nearly every two-second tick while a round runs, so a trigger per write
-// would be an attempt per tick; fifteen seconds keeps a write's wait for the
-// other machines to a quarter minute at the cost of at most four attempts a
-// minute, and a burst of writes inside the gap costs one.
+// would be an attempt per tick; fifteen seconds keeps a write's wait to a
+// quarter minute at the cost of at most four attempts a minute, and a burst
+// of writes inside the gap costs one.
 const ExportDebounce = 15 * time.Second
 
 // HotWindow is the idle pull window while another machine is writing. One
@@ -71,8 +71,7 @@ func BreakerDue(runner *relevosync.Runner) bool {
 	return due
 }
 
-// PullWindow is the idle gap in force at now: hot while an attempt applied
-// rows within HotSince or sync came on within HotSince, cold otherwise.
+// PullWindow is the idle gap in force at now.
 func (l *Liveness) PullWindow(now time.Time) time.Duration {
 	if WarmSince(l.AppliedAt, now) || WarmSince(l.OnSince, now) {
 		return HotWindow
@@ -80,8 +79,6 @@ func (l *Liveness) PullWindow(now time.Time) time.Duration {
 	return ColdWindow
 }
 
-// WarmSince reports whether at is recent enough to keep the window hot: set
-// and within HotSince of now.
 func WarmSince(at, now time.Time) bool {
 	return !at.IsZero() && now.Sub(at) < HotSince
 }

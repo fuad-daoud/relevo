@@ -28,7 +28,6 @@ func SharedDocs(shared *db.DB) []synclog.SharedDoc {
 	return docsBuilder(shared)
 }
 
-// docUser is an exporter, importer or reconciler.
 type docUser interface {
 	UseDocs(docs ...synclog.SharedDoc)
 }

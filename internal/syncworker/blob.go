@@ -1,17 +1,13 @@
 package syncworker
 
-// The two blob verbs. A body never crosses the pipe: the daemon writes it to a
-// staging file beside the replica, names that file and the object's key, and
-// the worker moves the bytes between the two. A pipe is one line per request and
-// a JSON line cannot carry a few megabytes, so this is what makes a large
-// value movable at all.
+// The two blob verbs. A body never crosses the pipe: the daemon stages it in a
+// file beside the replica and names that file and the object's key, because a
+// JSON line cannot carry a few megabytes.
 //
-// The digest is checked before anything is published. A key names a body by its
-// sha256, and a fetch on another machine checks what arrived against the same
-// digest: if a wrong file were stored under a key, every machine that fetched it
-// would disagree with the entry and the row could not be applied. Checking here
-// is what turns that from a silent corruption into a refusal naming both the key
-// and the file.
+// The digest is checked before anything is published: a key names a body by its
+// sha256, and a wrong file stored under a key would disagree with the entry on
+// every machine that fetched it. Checking here turns that silent corruption
+// into a refusal naming both the key and the file.
 
 import (
 	"context"
@@ -31,15 +27,13 @@ import (
 // nowhere to put bodies yet, and the message says which setting is missing.
 var ErrNoR2 = errors.New("syncworker: no R2 settings; hello named no bucket")
 
-// stagingMode is the mode a staging file is created with. A body in this folder
-// is a user's content that has not been stored anywhere else yet, and 0600 is
-// what keeps another account on this machine from reading it out of a directory
-// its own user does not own.
+// stagingMode is 0600: a body staged here is a user's content stored nowhere
+// else yet, and 0600 keeps another account on this machine from reading it.
 const stagingMode = 0o600
 
 // newBlobStore builds the store hello configured. It is a var so a test can
-// stand in for it: the real one signs every request and reaches a bucket, and no
-// CI test may. Nothing else replaces it.
+// stand in for it: the real one signs every request and reaches a bucket, and
+// no CI test may.
 var newBlobStore = func(cfg R2Config) blobstore.BlobStore {
 	return blobstore.NewS3Store(blobstore.S3Config{
 		Endpoint: cfg.Endpoint,
@@ -50,18 +44,14 @@ var newBlobStore = func(cfg R2Config) blobstore.BlobStore {
 }
 
 // partSuffix is the name a fetched body is written under before it is renamed
-// into place. The rename is what makes the file's arrival atomic: a reader
-// either sees the whole body or no file, and a fetch interrupted half way
-// leaves a name the next fetch overwrites rather than a truncated body that
-// looks complete.
+// into place. The rename makes the arrival atomic: a reader sees the whole
+// body or no file, never a truncated body that looks complete.
 const partSuffix = ".part"
 
-// putBlob uploads the staged file under key, unless the store already holds it.
-//
-// It asks Has before Put because two machines exporting the same body would
-// otherwise each pay to send it, and because the answer is what the caller needs
-// to know: a skip says the object another machine put is already the one this
-// entry points at, so the entry may be appended either way.
+// putBlob uploads the staged file under key, unless the store already holds
+// it. Has runs before Put because two machines exporting the same body would
+// otherwise each pay to send it; a skip says the object is already the one
+// this entry points at, so the entry may be appended either way.
 func putBlob(ctx context.Context, store blobstore.BlobStore, key, staging string) (int64, bool, error) {
 	exists, err := store.Has(ctx, key)
 	if err != nil {
@@ -88,13 +78,11 @@ func putBlob(ctx context.Context, store blobstore.BlobStore, key, staging string
 	return size, false, nil
 }
 
-// getBlob fetches the object under key into staging.
-//
-// The bytes land beside the target first and are renamed over it, so a fetch
-// that fails or is interrupted never leaves a partial body where the importer
-// will read one and compare its digest against a key it cannot match. A missing
-// object is its own refusal class: it repeats, and the daemon latches the origin
-// rather than retrying a bucket that has already answered.
+// getBlob fetches the object under key into staging. The bytes land beside the
+// target first and are renamed over it, so a failed fetch never leaves a
+// partial body the importer would compare against a key it cannot match. A
+// missing object is its own refusal class: it repeats, so the daemon latches
+// the origin rather than retrying a bucket that has already answered.
 func getBlob(ctx context.Context, store blobstore.BlobStore, key, staging string, max int64) (int64, error) {
 	if max <= 0 {
 		return 0, fmt.Errorf("syncworker: get %s names no size limit", key)
@@ -113,11 +101,9 @@ func getBlob(ctx context.Context, store blobstore.BlobStore, key, staging string
 	return written, nil
 }
 
-// fetchTo writes the object under key to path, fsyncing it before returning.
-//
-// The fsync is what makes the rename mean something: without it the rename can
-// land in the directory while the bytes are still only in the page cache, and a
-// crash would leave a correctly named file holding nothing.
+// fetchTo writes the object under key to path, fsyncing it before returning:
+// without the fsync the rename can land while the bytes are still only in the
+// page cache, and a crash would leave a correctly named file holding nothing.
 func fetchTo(ctx context.Context, store blobstore.BlobStore, key, path string, max int64) (int64, error) {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, stagingMode)
 	if err != nil {
@@ -138,9 +124,8 @@ func fetchTo(ctx context.Context, store blobstore.BlobStore, key, path string, m
 	return written, nil
 }
 
-// blobFetchError classifies a failed fetch. A 404 is marked with the class the
-// daemon latches on; every other failure is a fault a later attempt can still
-// get past, so it is left unmarked and the caller retries it.
+// blobFetchError classifies a failed fetch: a 404 is marked with the class the
+// daemon latches on, and every other failure is left unmarked for a retry.
 func blobFetchError(key string, err error) error {
 	if errors.Is(err, blobstore.ErrNotFound) {
 		return MarkRefusal(CodeBlobMissing, fmt.Errorf("syncworker: %s is not in the store: %w", key, err))
@@ -148,10 +133,9 @@ func blobFetchError(key string, err error) error {
 	return fmt.Errorf("syncworker: get %s: %w", key, err)
 }
 
-// digestFile reads a staged file and returns its length and its sha256. Both
-// come from one pass: a body is a few megabytes at most, and hashing a second
-// read would double the cost of the only check standing between a wrong file and
-// a published object.
+// digestFile reads a staged file and returns its length and its sha256 in one
+// pass: hashing a second read would double the cost of the check standing
+// between a wrong file and a published object.
 func digestFile(path string) (int64, string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -166,12 +150,10 @@ func digestFile(path string) (int64, string, error) {
 	return size, hex.EncodeToString(digest.Sum(nil)), nil
 }
 
-// checkDigest refuses a staged file that is not the body its key names.
-//
-// The digest in the key is the last path segment, because that is how
-// blobstore.Key builds one. A key with no digest in it is refused rather than
-// compared against nothing: it names no body, and publishing under it would
-// leave an object no fetch could ever verify.
+// checkDigest refuses a staged file that is not the body its key names. The
+// digest in the key is its last path segment, because that is how blobstore.Key
+// builds one; a key with no digest names no body, and publishing under it
+// would leave an object no fetch could verify.
 func checkDigest(key, sum string) error {
 	want := filepath.Base(key)
 	if want == "" || want == "." || want == string(filepath.Separator) {
@@ -185,14 +167,10 @@ func checkDigest(key, sum string) error {
 	return nil
 }
 
-// putBlobVerb answers put_blob. It carries no body: the daemon wrote the file
-// and named it, and the only thing this call decides is whether the object
-// belongs in the store and how many bytes that was.
-//
-// The counters are kept on the server rather than on the backend because they
-// count work the verbs themselves do. The backend's own byte totals come from
-// the replica, and a Backend that did not move bodies should not have to carry
-// fields for them.
+// putBlobVerb answers put_blob: the daemon wrote the file and named it, so
+// this call decides only whether the object belongs in the store and how many
+// bytes that was. The counters live on the server because they count work the
+// verbs do, not bytes the replica moved.
 func (s *server) putBlobVerb(req Request) Response {
 	store, err := s.blobStore(req)
 	if err != nil {
@@ -220,11 +198,9 @@ func (s *server) getBlobVerb(req Request) Response {
 	return Response{ID: req.ID, OK: true, Bytes: got}
 }
 
-// blobStore returns the store hello configured, or a refusal when there is none.
-//
-// The store is built once and kept: a client is built per pipe and every
-// request would otherwise construct an http client for one call. A machine that
-// sends a blob verb before the handshake is refused by the dispatch table, so the
+// blobStore returns the store hello configured, or a refusal when there is
+// none. The store is built once and kept, because a client is built per pipe.
+// A blob verb before the handshake is refused by the dispatch table, so the
 // only case reaching here is a hello that named no bucket.
 func (s *server) blobStore(req Request) (blobstore.BlobStore, error) {
 	if s.blobs != nil {
@@ -243,8 +219,8 @@ func (s *server) blobStore(req Request) (blobstore.BlobStore, error) {
 // errPastMax is a body longer than the ref it was fetched for declares.
 var errPastMax = errors.New("syncworker: the body runs past the length its ref declares")
 
-// capWriter passes writes through until left bytes are used, and fails the write
-// that would pass it, which ends the copy and so the download.
+// capWriter passes writes through until left bytes are used, then fails the
+// write that would pass it, ending the copy and so the download.
 type capWriter struct {
 	w    io.Writer
 	left int64

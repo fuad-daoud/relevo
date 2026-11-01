@@ -25,16 +25,16 @@ func RewindImport(shared *db.DB, origin string, seq int) error {
 	return shared.RewindImportMark(origin, seq)
 }
 
-// originRewinds computes the rewind target sequence for each remote origin from
-// cumulative dropped trouble reports.
+// originRewinds computes each remote origin's rewind target from cumulative dropped trouble reports.
 //
 // DrainOutbox prepends the pending parents it pulls on top of the 256-entry
-// window. Rewind each origin to max(0, Nmin - 4*DefaultBatchSize); overshooting
-// is harmless because the replay is idempotent and runs through to the head.
+// window, so rewind each origin to max(0, Nmin - 4*DefaultBatchSize);
+// overshooting is harmless because the replay is idempotent and runs to the
+// head.
 //
-// The dropped list is capped at maxDroppedReports (50) and keeps the newest,
-// so the oldest drop can be gone. When an origin's dropped lines fill the cap,
-// rewind that origin to 0 and let the existing floor/snapshot path take over.
+// The dropped list is capped at maxDroppedReports (50) and keeps the newest, so
+// the oldest drop can be gone; when an origin's lines fill the cap, rewind it
+// to 0 and let the floor/snapshot path take over.
 func originRewinds(localOrigin string, dropped []string) map[string]int {
 	if len(dropped) == 0 {
 		return nil
@@ -66,10 +66,9 @@ func originRewinds(localOrigin string, dropped []string) map[string]int {
 	return rewinds
 }
 
-// ReplayRefusedPass runs once at the head of steady import to repair origins
-// that suffered batch drops under earlier binaries. It parses cumulative dropped
-// trouble reports, rewinds each remote origin's mark to before its first dropped
-// batch, and writes the KeyReplayRefused marker so it runs only once per machine.
+// ReplayRefusedPass runs once at the head of steady import to repair origins that
+// suffered batch drops under earlier binaries, rewinding each remote origin's mark
+// to before its first dropped batch; it then writes the KeyReplayRefused marker.
 //
 // When a transport is provided, the target is placed where the importer can
 // resume from it (see rewindPoint).
@@ -124,12 +123,12 @@ func ReplayRefusedPass(shared *db.DB, kv db.KV, t synclog.LogTransport) error {
 // rewindPoint is where an origin's mark can be put back to so the importer
 // replays from target, and whether it should move at all.
 //
-// Below the origin's floor the log keeps only each row's newest entry, so the
-// entry after target may be gone; the importer reads a mark below the floor
-// through the snapshot path, which needs no batch boundary, so target itself
-// is the answer. Above the floor every entry is there, and the mark has to sit
-// on a batch boundary: a mark inside a batch skips the rest of it and the next
-// batch reads as a gap.
+// Below the floor the log keeps only each row's newest entry, so the entry
+// after target may be gone; the importer reads a mark below the floor through
+// the snapshot path, which needs no batch boundary, so target itself is the
+// answer. Above the floor every entry is there and the mark must sit on a batch
+// boundary: a mark inside a batch skips the rest of it and the next batch reads
+// as a gap.
 func rewindPoint(t synclog.LogTransport, state synclog.MarkState, origin string, target int) (int, bool, error) {
 	head, ok := state.Heads[origin]
 	if !ok || head <= target {

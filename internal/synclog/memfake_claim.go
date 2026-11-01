@@ -6,15 +6,13 @@ import (
 	"time"
 )
 
-// claimRow is what the log holds for one claimed identity.
 type claimRow struct {
 	token string
 	at    time.Time
 }
 
-// ClaimIdentity is the compare-and-set the remote runs: a claim is written
-// where there is none, where it is the caller's own, or where it has gone stale,
-// and the answer is a read of what the log holds afterwards.
+// ClaimIdentity is the remote's compare-and-set: written where none, the caller's
+// own, or stale, answering with a read of what the log holds afterwards.
 func (m *MemTransport) ClaimIdentity(_ context.Context, origin, token string, at time.Time) (string, time.Time, error) {
 	if origin == "" {
 		return "", time.Time{}, fmt.Errorf("synclog: claim an identity: no origin: %w", ErrInvalid)
@@ -33,10 +31,8 @@ func (m *MemTransport) ClaimIdentity(_ context.Context, origin, token string, at
 	return held.token, held.at, nil
 }
 
-// OverwriteClaim replaces a claim whatever it holds, as a remote's
-// last-writer-wins push does when two machines wrote the row before either
-// pulled. It is how a test lays down the double win a compare-and-set alone
-// does not rule out.
+// OverwriteClaim replaces a claim whatever it holds, as a last-writer-wins push
+// does. It lays down the double win a compare-and-set alone does not rule out.
 func (m *MemTransport) OverwriteClaim(origin, token string, at time.Time) {
 	m.log.mu.Lock()
 	defer m.log.mu.Unlock()
@@ -46,8 +42,8 @@ func (m *MemTransport) OverwriteClaim(origin, token string, at time.Time) {
 	m.log.claims[origin] = claimRow{token: token, at: at}
 }
 
-// Claims returns the identities that hold a claim, so a test can assert the
-// remote holds none it did not expect.
+// Claims returns the identities holding a claim, so a test asserts the remote
+// holds only expected ones.
 func (m *MemTransport) Claims() []string {
 	m.log.mu.Lock()
 	defer m.log.mu.Unlock()

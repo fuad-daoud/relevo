@@ -46,12 +46,10 @@ type QuotaReading struct {
 	Projectable bool
 }
 
-// ReadQuota folds the machine's settings, byte counters and account snapshot
-// into one reading. It reports false -- nothing to say -- when this machine
-// moved no bytes this month and the snapshot holds no row for the month: a
-// machine that has never synced, or one with sync off since before the month
-// began. A machine with sync off but traffic earlier in the month still
-// reports, because those bytes were spent.
+// ReadQuota reports false -- nothing to say -- when this machine moved no bytes
+// this month and the snapshot holds no row for it: a machine that never synced,
+// or one with sync off since before the month began. One with sync off but
+// earlier traffic still reports, because those bytes were spent.
 //
 // It takes the local handle rather than a bare kv because the quota lives in
 // the machine's sync section, which only the local file carries.
@@ -87,15 +85,13 @@ func ReadQuota(local Local, origin string, now time.Time) (QuotaReading, bool, e
 	return q, true, nil
 }
 
-// monthStart is the instant the UTC month holding t began.
 func monthStart(t time.Time) time.Time {
 	u := t.UTC()
 	return time.Date(u.Year(), u.Month(), 1, 0, 0, 0, 0, time.UTC)
 }
 
 // snapshotHasMonth reports whether the snapshot holds a published row for the
-// month holding now. A row of any size counts: it says another machine spent
-// traffic this month whether or not this one did.
+// month holding now; a row of any size counts.
 func snapshotHasMonth(snap AccountSnapshot, now time.Time) bool {
 	month := now.UTC().Format("2006-01")
 	for _, row := range snap.Rows {

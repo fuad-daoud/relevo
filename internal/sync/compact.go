@@ -15,7 +15,6 @@ import (
 // It is local state because the schedule is this machine's own.
 const KeyCompact = "sync.compact"
 
-// compactState is the marker KeyCompact holds.
 type compactState struct {
 	At      time.Time `json:"at"`
 	Entries int       `json:"entries"`
@@ -23,16 +22,12 @@ type compactState struct {
 	Dropped int       `json:"dropped"`
 }
 
-// compact drops this machine's superseded log entries when one is due.
-//
-// It runs after the import and the marks publish, so the floor reflects the
-// marks the readers last published and this machine's own are not behind it. A
-// failure is logged and left for the next tick: the exchange itself succeeded,
-// and compaction is housekeeping whose retry costs nothing. It reports whether
-// it compacted.
-//
-// The floor is skipped unless it is above the one the log already records, so a
-// quiet log with no new reader progress does no work.
+// compact drops this machine's superseded log entries when one is due. It runs
+// after the import and the marks publish, so the floor reflects the marks the
+// readers last published. A failure is logged and left for the next tick: the
+// exchange itself succeeded and compaction is housekeeping. It reports whether
+// it compacted. The floor is skipped unless above the recorded one, so a quiet
+// log does no work.
 func (r *Runner) compact(shared *db.DB, t *StopTransport, now time.Time) bool {
 	if r.Local == nil {
 		return false

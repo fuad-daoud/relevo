@@ -1,16 +1,10 @@
 package synclog
 
-// The snapshot path reads an origin's log up to its compaction floor.
-//
-// Compaction leaves, at or below the floor, exactly the origin's state as of the
-// floor: the latest entry per row, deletes included. That is a state and not a
-// history, so it cannot be applied batch by batch the way a live log is -- a
-// child's entry can sit before its parent's. The region is read whole, reduced
-// to one entry per row and applied parents-first.
-//
-// A reader joining from zero has a mark of 0 and one that fell silent past the
-// mark window has a mark below the floor; both take this path, so there is no
-// separate re-import.
+// The snapshot path reads an origin's log up to its compaction floor: the latest
+// entry per row, deletes included. That is a state, not a history, so it cannot
+// apply batch by batch -- a child may precede its parent. The region is read whole,
+// reduced to one entry per row and applied parents-first. Joining and long-silent
+// readers both take this path, so there is no separate re-import.
 
 import (
 	"encoding/json"
@@ -22,28 +16,24 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// snapshotChunkEntries bounds one transaction of a snapshot by entry count; the
-// blob budget bounds it by bytes.
+// snapshotChunkEntries bounds one snapshot transaction by entry count; the blob
+// budget bounds it by bytes.
 const snapshotChunkEntries = 200
 
-// The region is held whole in memory, and the log it comes from is written by
-// other machines, so it is bounded: by rows, and by the inline body bytes those
-// rows carry (bodies over the ref threshold travel as refs and are fetched a
-// chunk at a time). A region past either is not one this design produces.
+// The region is held whole in memory from another machine's log, so it is bounded
+// by rows and inline body bytes; a region past either is not this design's.
 const (
 	maxRegionRows  = 1_000_000
 	maxRegionBytes = int64(512) << 20
 )
 
-// maxSnapshotPasses bounds the retry passes a region takes. Each pass applies
-// the rows whose references are in place, so the passes an honest region needs
-// are the depth of its parent chains; a region built to need one pass per row
-// would otherwise cost a pass over the whole region for every row in it.
+// maxSnapshotPasses bounds a region's retry passes. Each pass applies rows whose
+// references are in place, so an honest region needs its parent-chain depth; a
+// hostile one could otherwise cost a full pass per row.
 const maxSnapshotPasses = 64
 
-// snapshots takes the snapshot path for every origin whose floor is past this
-// machine's mark. Origins it could not finish are added to held, so the normal
-// path leaves them alone for the run.
+// snapshots takes the snapshot path for every origin floored past this mark.
+// Unfinished origins join held, so the normal path leaves them alone.
 func (i *Importer) snapshots(state MarkState, marks map[string]int, total *ImportResult, held map[string]bool) error {
 	origins := make([]string, 0, len(state.Floors))
 	for origin := range state.Floors {
@@ -82,16 +72,9 @@ func (i *Importer) snapshots(state MarkState, marks map[string]int, total *Impor
 	return nil
 }
 
-// snapshotOrigin brings one origin from mark to floor.
-//
-// The mark stays where it was until the whole region is applied. A crash in the
-// middle re-applies the region, which is harmless: an upsert is idempotent and a
-// delete of an absent row is a no-op.
-//
-// Rows whose references refuse them on every pass are dropped and the mark still
-// moves to the floor, the way the normal path moves past a batch it refuses:
-// left at the old mark, the region would be pulled, fetched and applied again on
-// every run, and refuse the same rows each time.
+// snapshotOrigin brings one origin from mark to floor. The mark waits for the whole
+// region: a mid-crash re-applies idempotently. Refused-on-every-pass rows drop with
+// the mark still moving to the floor, lest the region be pulled and refused every run.
 func (i *Importer) snapshotOrigin(origin string, mark, floor, head int, marks map[string]int, total *ImportResult) (*Hold, error) {
 	if floor > head {
 		return nil, badFloor(origin, floor, fmt.Sprintf("past the log's head %d", head))
@@ -161,13 +144,10 @@ func (i *Importer) snapshotOrigin(origin string, mark, floor, head int, marks ma
 	return nil, nil
 }
 
-// pullRegion reads (after, upto] of one origin and keeps the highest sequence per
-// row. A compacted log holds one entry per row up to its floor already, apart
-// from the moment between a compaction's push and this pull, which the reduction
-// makes harmless.
-//
-// The transport is not trusted for the range: an entry outside it, or from
-// another origin, is ignored, and a page that does not advance ends the read.
+// pullRegion reads (after, upto] of one origin, keeping the highest sequence per
+// row. Reduction absorbs the compaction-push gap. The transport is not trusted for
+// the range: out-of-range or foreign entries ignore, and a non-advancing page ends
+// the read.
 func (i *Importer) pullRegion(origin string, after, upto int) ([]Entry, bool, error) {
 	latest := make(map[rowKey]Entry)
 	cursor := after
@@ -207,14 +187,9 @@ func (i *Importer) pullRegion(origin string, after, upto int) ([]Entry, bool, er
 	return out, reached, nil
 }
 
-// checkFloor refuses a floor the log itself contradicts before the mark is
-// moved to it. The floor is a meta row other machines can write, and a mark set
-// past entries this machine never read would skip them for good: a mark only
-// moves forward and the normal path pulls only what follows it.
-//
-// An honest floor names an entry that is still there -- compaction never drops
-// the entry at the floor, since nothing at or below it is later -- and it ends
-// a batch, because it was a reader's mark and marks land on batch tails.
+// checkFloor refuses a self-contradicted floor before moving the mark to it: a mark
+// past unread entries would skip them for good, since marks only move forward. An
+// honest floor still holds its entry and ends a batch, as a reader's mark does.
 func (i *Importer) checkFloor(origin string, floor int, reached bool) error {
 	if !reached {
 		return badFloor(origin, floor, "names no entry the log holds")
@@ -236,9 +211,8 @@ func badFloor(origin string, floor int, why string) error {
 	return &stallError{origin: origin, cause: fmt.Errorf("the log's floor %d for this origin %s", floor, why)}
 }
 
-// splitRegion orders a region for applying: upserts parents-first and by
-// ascending sequence within a table, then deletes children-first. An entry for a
-// table this build does not share is dropped and reported rather than applied.
+// splitRegion orders a region for applying: upserts parents-first by ascending
+// sequence, then deletes children-first. Unshared tables drop and report.
 func splitRegion(region []Entry, total *ImportResult) (upserts, deletes []Entry) {
 	for _, e := range region {
 		if _, ok := SharedTable(e.Table); !ok && e.Table != CtlTakeover {
@@ -267,12 +241,9 @@ func splitRegion(region []Entry, total *ImportResult) (upserts, deletes []Entry)
 	return upserts, deletes
 }
 
-// applyUntilDone applies entries in passes. A foreign key can refuse an upsert
-// whose parent has a higher sequence -- a table that references itself, as forks
-// do -- so a refused entry is set aside and retried after the rest. Passes
-// repeat while each applies something. When one applies nothing, or the passes
-// run out, the rows still refused are left: left names them, and err is kept
-// for a failure that is not a refusal.
+// applyUntilDone applies entries in passes: a refused upsert waits for its higher-
+// sequenced parent and retries after the rest. Passes repeat while applying; a
+// stalled or exhausted run leaves refused rows, keeping err for non-refusals.
 func (i *Importer) applyUntilDone(origin string, entries []Entry, total *ImportResult) (left, err error) {
 	for pass := 0; len(entries) > 0; pass++ {
 		if pass == orDefault(i.passes, maxSnapshotPasses) {
@@ -290,7 +261,7 @@ func (i *Importer) applyUntilDone(origin string, entries []Entry, total *ImportR
 	return nil, nil
 }
 
-// describeRows names the first few rows, enough to find them.
+// describeRows names the first few rows for finding them.
 func describeRows(entries []Entry) string {
 	var names []string
 	for n, e := range entries {
@@ -303,7 +274,7 @@ func describeRows(entries []Entry) string {
 	return strings.Join(names, ", ")
 }
 
-// applyPass applies entries chunk by chunk and returns those a constraint refused.
+// applyPass applies entries chunk by chunk, returning constraint-refused ones.
 func (i *Importer) applyPass(origin string, entries []Entry, total *ImportResult) (deferred []Entry, applied int, err error) {
 	for _, chunk := range i.chunks(entries) {
 		n, refused, err := i.applyChunk(origin, chunk, total)
@@ -318,9 +289,8 @@ func (i *Importer) applyPass(origin string, entries []Entry, total *ImportResult
 	return deferred, applied, nil
 }
 
-// chunks cuts entries so no transaction holds more than snapshotChunkEntries, or
-// more declared body bytes than one batch may, which is the budget resolveRefs
-// enforces.
+// chunks cuts entries so no transaction exceeds snapshotChunkEntries or the batch
+// body budget resolveRefs enforces.
 func (i *Importer) chunks(entries []Entry) [][]Entry {
 	limit := i.chunk
 	if limit <= 0 {
@@ -344,7 +314,7 @@ func (i *Importer) chunks(entries []Entry) [][]Entry {
 	return out
 }
 
-// declaredBlobBytes is what an entry's refs say they will fetch.
+// declaredBlobBytes is what an entry's refs declare to fetch.
 func declaredBlobBytes(e Entry) int64 {
 	slots, err := refSlots([]Entry{e}, make(map[int]map[string]json.RawMessage))
 	if err != nil {
@@ -357,7 +327,7 @@ func declaredBlobBytes(e Entry) int64 {
 	return sum
 }
 
-// orDefault is n, or def when n is zero.
+// orDefault is n, or def when zero.
 func orDefault(n, def int) int {
 	if n == 0 {
 		return def

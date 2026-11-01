@@ -7,14 +7,11 @@ import (
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
-// The two halves of the steady exchange, each run alone for a client that asked
-// for it. The daemon runs them together on its own triggers; these exist so
-// `relevo db sync push` and `pull` are the same code rather than a second
-// spelling of it.
+// The two halves of the steady exchange, each runnable alone, so push and pull
+// are the same code the daemon triggers together.
 
-// push drains this machine's outbox into the log: the export half of the steady
-// exchange, run alone for a caller who asked for it. It appends only rows this
-// installation owns, so an imported row never travels back.
+// push drains this machine's outbox into the log. It appends only owned rows, so
+// an imported row never travels back.
 func (v *Runner) push(ctx context.Context) *wire.SyncResult {
 	transport, err := v.drive(ctx)
 	if err != nil {
@@ -30,10 +27,8 @@ func (v *Runner) push(ctx context.Context) *wire.SyncResult {
 	return &wire.SyncResult{OK: true, Applied: res.Appended > 0}
 }
 
-// pull reads every origin but this one and applies it: the import half of the
-// steady exchange, run alone. A batch this machine cannot act on is dropped by
-// the importer rather than failing the call, so one unreadable entry cannot
-// stop every other origin.
+// pull reads every other origin and applies it. An unactionable batch is dropped,
+// not failed, so one unreadable entry cannot stop every other origin.
 func (v *Runner) pull(ctx context.Context) *wire.SyncResult {
 	transport, err := v.drive(ctx)
 	if err != nil {

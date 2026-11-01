@@ -1,8 +1,8 @@
 package sync
 
-// The join guard: a join reads every other origin's whole log through Turso, so
-// it is estimated from the bucket before any worker exists, and refused when it
-// would not fit in what is left of the month's Turso traffic.
+// The join guard: a join reads every other origin's whole log through Turso, so it
+// estimates from the bucket before any worker exists, refusing what the month's
+// left Turso traffic would not fit.
 
 import (
 	"bytes"
@@ -15,19 +15,17 @@ import (
 	"github.com/fuad-daoud/relevo/internal/blobstore"
 )
 
-// ErrJoinOverQuota reports a join estimated to cost more Turso traffic than the
-// month has left.
+// ErrJoinOverQuota reports a join estimated past the month's left Turso traffic.
 var ErrJoinOverQuota = errors.New("sync: the join would use more Turso traffic than this month has left")
 
-// maxSizeObject bounds a published log size. The object is a few dozen bytes; a
-// larger one is not ours and is ignored rather than read.
+// maxSizeObject bounds a published log size object, which is really a few dozen
+// bytes; a larger one is not ours and is ignored rather than read.
 const maxSizeObject = 4096
 
-// The bucket is written by other machines and is not trusted, so the estimate
-// bounds what it takes from it: how many size objects it reads, and how large a
-// size it believes. A log past maxLogSize is no log this design produces, and a
-// bound on each keeps the sum from overflowing into a number the guard waves
-// through.
+// The bucket is written by untrusted other machines, so the estimate bounds both
+// takes: how many size objects read, and how large a size believed. Past maxLogSize
+// is no log this design produces; bounding each keeps the sum from overflowing past
+// the guard.
 const (
 	maxSizeKeys = 1000
 	maxLogSize  = int64(1) << 40
@@ -42,18 +40,18 @@ type LogSize struct {
 
 // JoinEstimate is what a join is expected to cost, read from the bucket alone.
 type JoinEstimate struct {
-	// R2Bytes is every body in the bucket. R2 has no egress charge and a join
-	// adds no storage, so it is reported and never refused on.
+	// R2Bytes is every body in the bucket, reported never refused: no egress charge,
+	// no added storage.
 	R2Bytes int64
 	// TursoBytes is the sum of every origin's published log size.
 	TursoBytes int64
-	// Known is whether any origin published a size. An estimate that is not
-	// known proves nothing, so the guard lets the join proceed.
+	// Known is whether any origin published a size; unknown proves nothing, so the
+	// guard lets the join proceed.
 	Known bool
 }
 
-// bucketTotals lists the bucket once: the bytes held by bodies, and the keys of
-// the published log sizes. Any other key is neither and is ignored.
+// bucketTotals lists the bucket once: body bytes and published size keys; any other
+// key is neither and is ignored.
 func bucketTotals(ctx context.Context, store blobstore.BlobStore) (int64, []string, error) {
 	objects, err := store.List(ctx, "")
 	if err != nil {
@@ -71,8 +69,7 @@ func bucketTotals(ctx context.Context, store blobstore.BlobStore) (int64, []stri
 	return bodies, sizes, nil
 }
 
-// EstimateJoin totals the bucket's bodies and every origin's published log
-// size.
+// EstimateJoin totals the bucket's bodies and every origin's published log size.
 func EstimateJoin(ctx context.Context, store blobstore.BlobStore) (JoinEstimate, error) {
 	bodies, keys, err := bucketTotals(ctx, store)
 	if err != nil {
@@ -96,9 +93,8 @@ func EstimateJoin(ctx context.Context, store blobstore.BlobStore) (JoinEstimate,
 	return est, nil
 }
 
-// readLogSize reads one published size, reporting false for an object that is
-// not one: longer than a size object is, not JSON, or a size no log has. The
-// read stops past maxSizeObject whatever the listing said the object held.
+// readLogSize reads one published size, false for a non-size: over-long, non-JSON,
+// or a size no log has. The read stops past maxSizeObject whatever the listing said.
 func readLogSize(ctx context.Context, store blobstore.BlobStore, key string) (int64, bool, error) {
 	var buf bytes.Buffer
 	if _, err := store.Get(ctx, key, &limitedWriter{w: &buf, left: maxSizeObject + 1}); err != nil {
@@ -114,11 +110,11 @@ func readLogSize(ctx context.Context, store blobstore.BlobStore, key string) (in
 	return size.Bytes, true, nil
 }
 
-// errObjectTooLarge stops a read that ran past what the object may hold.
+// errObjectTooLarge stops a read past what the object may hold.
 var errObjectTooLarge = errors.New("sync: the object is larger than a size object")
 
-// limitedWriter takes at most left bytes and fails the write that would pass
-// it, which ends the download rather than buffering it.
+// limitedWriter takes at most left bytes, failing the write that would pass it to
+// end the download rather than buffer it.
 type limitedWriter struct {
 	w    *bytes.Buffer
 	left int
@@ -132,8 +128,8 @@ func (l *limitedWriter) Write(p []byte) (int, error) {
 	return l.w.Write(p)
 }
 
-// GuardJoin refuses a join whose known estimate is more than what is left of
-// the quota. An estimate exactly equal to what is left fits.
+// GuardJoin refuses a join whose known estimate tops the quota left; exactly equal
+// fits.
 func GuardJoin(est JoinEstimate, quota, usedThisMonth int64) error {
 	left := quota - usedThisMonth
 	if !est.Known || est.TursoBytes <= left {
@@ -143,8 +139,8 @@ func GuardJoin(est JoinEstimate, quota, usedThisMonth int64) error {
 		ErrJoinOverQuota, humanBytes(est.TursoBytes), humanBytes(max(left, 0)), humanBytes(quota))
 }
 
-// guard estimates the join and refuses it when it does not fit. It reports
-// whether a bucket was consulted at all.
+// guard estimates the join, refusing when it does not fit, reporting whether a
+// bucket was consulted at all.
 func (e *Enabler) guard(plan EnablePlan, now time.Time) (JoinEstimate, bool, error) {
 	if e.Blobs == nil {
 		return JoinEstimate{}, false, nil
@@ -170,14 +166,10 @@ func (e *Enabler) guard(plan EnablePlan, now time.Time) (JoinEstimate, bool, err
 }
 
 // guardJoined is the guard a join runs after its document import, against the
-// credentials that import brought rather than against the ones the command
-// carried. It is the same rule and the same refusal, on a later reading of the
-// same rows: a join has no bucket to estimate until the secrets document has
-// been applied, so this is the earliest point at which the question is askable.
-//
-// A machine with no bucket store to consult is not guarded, the same as a plain
-// enable's: the guard exists to stop a join reading more than the month's quota
-// allows, and a caller that installed no store installed no bucket to overrun.
+// imported credentials rather than the command's: same rule and refusal on a later
+// reading, since no bucket estimates before the secrets document applies. A machine
+// with no bucket store consults nothing and is not guarded: no installed store means
+// no bucket to overrun.
 func (e *Enabler) guardJoined() (JoinEstimate, bool, error) {
 	stored, err := ReadR2(e.Request.Local)
 	if err != nil {
@@ -186,9 +178,8 @@ func (e *Enabler) guardJoined() (JoinEstimate, bool, error) {
 	return e.guard(EnablePlan{Remote: "", R2: stored}, e.now())
 }
 
-// ownBodiesJoined is ownBodies for a join, against the credentials the document
-// brought. It runs after the import for the same reason the guard does: before
-// it, this machine has no bucket to list.
+// ownBodiesJoined is ownBodies for a join, against the document-brought credentials,
+// after the import like the guard: before it, no bucket lists.
 func (e *Enabler) ownBodiesJoined() (map[string]bool, error) {
 	stored, err := ReadR2(e.Request.Local)
 	if err != nil {
@@ -197,13 +188,12 @@ func (e *Enabler) ownBodiesJoined() (map[string]bool, error) {
 	return e.ownBodies(EnablePlan{Remote: "", R2: stored})
 }
 
-// guardTimeout bounds the bucket listing the guard makes.
+// guardTimeout bounds the guard's bucket listing.
 const guardTimeout = 2 * time.Minute
 
 // ownBodies lists the bodies the bucket holds under this machine's origin, so the
-// join's reconcile can upload any its rows name that the bucket lost. A join
-// that cannot list the bucket could not upload to it either, so a failure ends
-// the enable here rather than halfway through.
+// reconcile uploads what rows name that the bucket lost. A join that cannot list
+// could not upload either, so failure ends the enable here, not halfway through.
 func (e *Enabler) ownBodies(plan EnablePlan) (map[string]bool, error) {
 	if e.Blobs == nil {
 		return nil, nil

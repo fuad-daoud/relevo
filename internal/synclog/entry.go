@@ -13,25 +13,20 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// ErrInvalid reports an entry, a key or a body that does not have the shape the
-// log is defined in. It is a refusal rather than a failure: the offending value
-// came from a body this machine does not control, and dropping it is correct.
+// ErrInvalid reports an entry, key or body of the wrong shape. It is a refusal,
+// not a failure: the value came from an uncontrolled body, and dropping it is correct.
 var ErrInvalid = errors.New("invalid sync log entry")
 
-// ErrBlobMissing reports a body the store does not hold. It is a sentinel
-// because a missing body and a bucket that could not be reached call for
-// opposite handling: the first latches the origin and names the round, since the
-// object an entry points at is not there and a retry will not make it appear,
-// and the second is a fault a later attempt can still get past.
+// ErrBlobMissing reports a body the store does not hold. It is a sentinel because
+// a missing body and an unreachable bucket need opposite handling: the first
+// latches the origin, the second may pass on retry.
 var ErrBlobMissing = errors.New("synclog: the body is not in the blob store")
 
-// Op is what an importer is asked to do with the row an entry names.
+// Op is what an entry asks the importer to do with its row.
 type Op string
 
 const (
-	// OpUpsert writes the row's body onto its primary key.
 	OpUpsert Op = "upsert"
-	// OpDelete removes the row by its primary key.
 	OpDelete Op = "delete"
 )
 
@@ -42,45 +37,36 @@ type Ref struct {
 }
 
 // Entry is one append to the log: what one installation recorded about one
-// shared row, at one position in that installation's own sequence.
-//
-// Seq and Batch belong to the transport, not to the writer: a machine that
-// named its own sequence numbers would reuse them after a restore from a
-// backup, so the transport assigns Seq as one past the highest it holds for the
-// origin and Batch as the Seq of the first entry of the append that wrote this
-// one. A reader can then tell where one atomic batch ends.
+// shared row, at one position in its own sequence. Seq and Batch belong to the
+// transport, not the writer: self-numbering would reuse numbers after a backup
+// restore, so the transport assigns Seq past the held high and Batch as the
+// append's first Seq, marking atomic batch ends for readers.
 type Entry struct {
-	// Origin is the installation that owns the row the entry names.
 	Origin string
-	// Seq is the entry's position in that origin's log.
-	Seq int
-	// Batch is the Seq of the first entry of the append that wrote this entry,
-	// so entries sharing a Batch arrived together and are applied together.
+	Seq    int
+	// Batch is the Seq of the append's first entry: shared Batch arrived and applies
+	// together.
 	Batch int
-	// Table is the shared table the row is in.
 	Table string
 	// PK is the row's primary key as the json_array text the outbox records.
 	PK string
-	// Op is the write the entry asks for.
 	Op Op
-	// SchemaVersion is the writer's schema version, so a reader can tell an
-	// entry it understands from one written by a newer binary.
+	// SchemaVersion is the writer's schema version, telling a reader whether it
+	// understands the entry.
 	SchemaVersion int
-	// Body is the row as JSON, column name to value. It is empty for a delete,
-	// which names a row by its key and carries nothing else.
+	// Body is the row as JSON, column name to value, empty for a delete naming
+	// only its key.
 	Body json.RawMessage
 	// At is when the entry was written.
 	At time.Time
-	// MAC is the HMAC-SHA256 over the entry's canonical encoding, empty on an
-	// entry written before this machine had a key. It covers every field above
-	// except Seq and Batch, which the transport assigns after the signature is
-	// made.
+	// MAC is the HMAC-SHA256 over the entry's canonical encoding, empty pre-key. It
+	// covers every field above except Seq and Batch, assigned after signing.
 	MAC []byte
 	// After points at an entry in another origin's log that this entry depends on.
 	After *Ref
 }
 
-// WithAfter returns a copy of e with After set to after.
+// WithAfter returns a copy of e with After set.
 func (e Entry) WithAfter(after *Ref) Entry {
 	if after == nil {
 		e.After = nil
@@ -108,9 +94,8 @@ func NewUpsert(origin, table, pk string, schemaVersion int, body json.RawMessage
 	return e, nil
 }
 
-// NewDelete builds the entry that removes a row. It carries no body: the
-// importer deletes by key, so a body would be a second answer to a question the
-// key already answers, and one that could disagree with it.
+// NewDelete builds the entry that removes a row. It carries no body: the importer
+// deletes by key, so a body could only disagree with it.
 func NewDelete(origin, table, pk string, schemaVersion int, at time.Time) (Entry, error) {
 	e := Entry{
 		Origin:        origin,
@@ -126,29 +111,20 @@ func NewDelete(origin, table, pk string, schemaVersion int, at time.Time) (Entry
 	return e, nil
 }
 
-// NewDocUpsert builds the entry that writes one doc key's value.
-//
-// The entry is an ordinary upsert on the table `doc:<name>`, carrying the
-// stamp and the value in its body. Nothing about the transport, the numbering
-// or the signature changes to carry a doc: what makes it a doc entry is the
-// table name, and that is checked where it is read.
+// NewDocUpsert builds the entry that writes one doc key's value: an ordinary
+// upsert on `doc:<name>` carrying stamp and value, told by table name where read.
 func NewDocUpsert(origin string, doc SharedDoc, key string, schemaVersion int, stamp Stamp, value json.RawMessage, at time.Time) (Entry, error) {
 	return newDocEntry(origin, doc, key, schemaVersion, stamp, value, at)
 }
 
-// NewDocDelete builds the entry that removes one doc key.
-//
-// It is an upsert whose value is JSON null rather than a delete, for two
-// reasons that both come down to the stamp. A delete carries no body, so the
-// stamp would not travel and a reader could not tell a removal older than the
-// value it holds from one newer than it. And the shape rule refuses a delete
-// that carries a body, so the stamp and the removal could not travel together
-// at all.
+// NewDocDelete builds the entry that removes one doc key: an upsert with JSON null
+// value, since a bodyless delete could not carry the stamp telling whether the
+// removal is newer than held, and a delete carrying a body is refused.
 func NewDocDelete(origin string, doc SharedDoc, key string, schemaVersion int, stamp Stamp, at time.Time) (Entry, error) {
 	return newDocEntry(origin, doc, key, schemaVersion, stamp, nil, at)
 }
 
-// newDocEntry builds the one doc entry shape, with a nil value as the removal.
+// newDocEntry builds the one doc entry shape, nil value as removal.
 func newDocEntry(origin string, doc SharedDoc, key string, schemaVersion int, stamp Stamp, value json.RawMessage, at time.Time) (Entry, error) {
 	if doc == nil {
 		return Entry{}, fmt.Errorf("synclog: doc entry names no doc: %w", ErrInvalid)
@@ -180,10 +156,8 @@ func newDocEntry(origin string, doc SharedDoc, key string, schemaVersion int, st
 	return e, nil
 }
 
-// checkShape refuses an entry the log has no room for: an unknown op, a delete
-// carrying a body, or an upsert carrying none. Both directions are refused at
-// the point the entry is built, because an entry that reaches a transport with
-// the wrong shape has already been serialized onto a pipe.
+// checkShape refuses a shapeless entry at build time: unknown op, bodied delete, or
+// bodiless upsert. A misshapen transport entry is already serialized onto a pipe.
 func checkShape(e Entry) error {
 	if e.After != nil && (e.After.Origin == "" || e.After.Seq <= 0) {
 		return fmt.Errorf("synclog: entry %s %s has invalid after ref: %w", e.Table, e.PK, ErrInvalid)
@@ -203,9 +177,8 @@ func checkShape(e Entry) error {
 	return nil
 }
 
-// SharedTable returns the shared table named tbl, and whether any shared table
-// carries that name. A table name reaches SQL, and the only names allowed to is
-// the one the db package has already classified as shared.
+// SharedTable returns the shared table named tbl and whether one carries that name.
+// Only a db-classified name may reach SQL.
 func SharedTable(tbl string) (db.SharedTable, bool) {
 	for _, s := range db.SharedTables {
 		if s.Name == tbl {
@@ -215,9 +188,8 @@ func SharedTable(tbl string) (db.SharedTable, bool) {
 	return db.SharedTable{}, false
 }
 
-// SharedTablesInOrder returns the shared tables' names in the order the db
-// package lists them: parents before children, so a walk in this order meets a
-// parent before anything that needs it.
+// SharedTablesInOrder returns the shared tables' names in db order: parents before
+// children, so a walk meets a parent before its needer.
 func SharedTablesInOrder() []string {
 	names := make([]string, 0, len(db.SharedTables))
 	for _, s := range db.SharedTables {
@@ -227,8 +199,7 @@ func SharedTablesInOrder() []string {
 }
 
 // KeyOf returns the columns tbl keys its rows by, in key order, and the values
-// pk names for them. The pk text is JSON and is parsed, never read: a value comes
-// back as a value to bind, so nothing a body carries can become SQL.
+// pk names. The pk JSON is parsed to bind values, so no carried body becomes SQL.
 func KeyOf(tbl, pk string) ([]string, []any, error) {
 	shared, ok := SharedTable(tbl)
 	if !ok {
@@ -249,29 +220,27 @@ func KeyOf(tbl, pk string) ([]string, []any, error) {
 	return shared.PrimaryKey, values, nil
 }
 
-// decodeKey parses the key text into its values. A key that is not a JSON array
-// is refused rather than guessed at: a key of the wrong shape would either match
-// no row or match a row the entry never named.
+// decodeKey parses the key text into its values. A non-array key is refused, not
+// guessed: it would match no row or the wrong one.
 func decodeKey(pk string) ([]any, error) {
 	dec := json.NewDecoder(strings.NewReader(pk))
-	// Numbers are read as written rather than through float64, so a key wider
-	// than a float holds exactly and binds as the integer its column is.
+	// Numbers are read as written, not float64, so a wide key binds exactly as its
+	// column's integer.
 	dec.UseNumber()
 	var raw []any
 	if err := dec.Decode(&raw); err != nil {
 		return nil, fmt.Errorf("synclog: key %s is not a JSON array: %w", pk, ErrInvalid)
 	}
-	// The decoder stops at the end of the array and would otherwise read past it,
-	// so a key with anything appended parses as its own prefix. A key is the
-	// whole of its text or it is not a key.
+	// The decoder stops at the array end and would read past it, so trailing text
+	// would parse as the prefix. A key is its whole text or not a key.
 	if err := expectEOF(dec); err != nil {
 		return nil, fmt.Errorf("synclog: key %s has text after its values: %w", pk, ErrInvalid)
 	}
 	return raw, nil
 }
 
-// expectEOF reports whether a decoder has consumed all of its input. A second
-// value, or a trailing byte, is a body carrying more than the shape it claims.
+// expectEOF reports whether a decoder consumed all input: a second value or
+// trailing byte is a body beyond its claimed shape.
 func expectEOF(dec *json.Decoder) error {
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return ErrInvalid
@@ -279,9 +248,9 @@ func expectEOF(dec *json.Decoder) error {
 	return nil
 }
 
-// keyValue maps one decoded key value onto the type the driver binds. A JSON
-// number arrives as written; an integral one is bound as the integer its column
-// holds, because binding a real for an INTEGER column compares as a real.
+// keyValue maps one decoded key value onto the driver's bind type: an integral
+// JSON number binds as its column's integer, since a real compares as a real
+// against INTEGER.
 func keyValue(v any) any {
 	n, ok := v.(json.Number)
 	if !ok {

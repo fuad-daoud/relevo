@@ -7,20 +7,16 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// entryRefusal is the one entry of a chunk the file refused outright, and why.
 type entryRefusal struct {
 	at    int
 	entry Entry
 	err   error
 }
 
-// applyChunk resolves a chunk's bodies and writes it in one transaction. It
-// returns the entries a constraint refused, to be retried once the rest is in.
-//
-// An entry refused for what it is -- a row another installation owns, a body that
-// cannot be read -- rolls the chunk back, is reported and dropped, and the chunk
-// is written again without it. Leaving the rest of the chunk applied would keep
-// a row that landed under the wrong owner.
+// applyChunk resolves a chunk's bodies and writes it in one transaction,
+// returning constraint-refused entries for retry once the rest is in. An entry
+// refused for what it is rolls the chunk back and drops: leaving the rest applied
+// would keep a row landed under the wrong owner.
 func (i *Importer) applyChunk(origin string, chunk []Entry, total *ImportResult) (int, []Entry, error) {
 	for {
 		if err := resolveRefs(i.mover, i.staging, chunk); err != nil {
@@ -39,11 +35,9 @@ func (i *Importer) applyChunk(origin string, chunk []Entry, total *ImportResult)
 	}
 }
 
-// chunkFetchFailure says what a failed fetch makes of a chunk, the way a batch's
-// does: a missing object ends the run naming the row, a chunk whose refs
-// contradict their rows is dropped, and anything else holds the origin with the
-// mark where it was. A dropped chunk is not an error: it is reported and the
-// run goes on.
+// chunkFetchFailure maps a chunk's failed fetch as a batch's: missing ends the run
+// naming the row, contradictory refs drop the chunk, anything else holds the
+// origin. A dropped chunk is reported, not an error.
 func (i *Importer) chunkFetchFailure(origin string, chunk []Entry, err error, total *ImportResult) error {
 	var missing *missingBlob
 	switch {
@@ -57,10 +51,9 @@ func (i *Importer) chunkFetchFailure(origin string, chunk []Entry, err error, to
 	}
 }
 
-// writeChunk applies a chunk in one transaction.
-//
-// A statement a foreign key refuses fails alone and leaves the transaction open,
-// which the engine's tests pin, so the entry is set aside and the rest go on.
+// writeChunk applies a chunk in one transaction. A foreign-key refusal fails alone
+// with the transaction open, which the engine's tests pin, so the entry is set
+// aside and the rest go on.
 func (i *Importer) writeChunk(chunk []Entry) (applied int, deferred []Entry, refusal *entryRefusal, err error) {
 	err = i.db.Tx(func(tx *db.Tx) error {
 		applied, deferred = 0, nil

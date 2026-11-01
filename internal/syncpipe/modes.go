@@ -9,10 +9,10 @@ import (
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
-// SecureSyncFiles narrows the replica, its driver files and the staged bodies
-// to owner-only. They hold the whole database and the content in transit, and an
-// earlier run under a looser umask left them readable by other accounts. It runs
-// before any worker opens the replica; a file that is not there is skipped.
+// SecureSyncFiles narrows the replica, its driver files and staged bodies to
+// owner-only. They hold the whole database and content in transit, and an earlier
+// looser umask may have left them readable. It runs before any worker opens the
+// replica; a missing file is skipped.
 func SecureSyncFiles(sharedPath string) error {
 	files, err := relevosync.ReplicaFiles(ReplicaPath(sharedPath))
 	if err != nil {

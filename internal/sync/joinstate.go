@@ -7,33 +7,19 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// An enable --join has to store the remote and the token before it can open a
-// worker at all: the opener reads them out of the machine-local file rather than
-// taking them as arguments, because that is the only place the daemon's worker
-// assembly lives. So the join stages those two rows, checks the passphrase
-// against the remote, and -- if the check fails -- puts every row back exactly as
-// it found it.
-//
-// Exactly is the word that does the work. A machine that asked to join with the
-// wrong passphrase and was left pointed at somebody else's remote, or holding a
-// token it could not use, would be a machine whose next enable does something the
-// operator never asked for. Restoring means putting the bytes back, including the
-// rows that were absent before, rather than writing a default over them.
+// An enable --join stages remote and token before opening a worker: the opener
+// reads them from the machine-local file, the daemon's only worker assembly.
+// On a failed passphrase check every row goes back exactly as found -- bytes and
+// absence alike, never a default -- so no next enable acts on an unasked remote
+// or unusable token.
 
 // JoinSnapshot is the machine-local state an enable --join must be able to put
-// back: the sync section, the token, the key, every secret the fleet's document
-// may land on, the fact about the remote's key, the enabled marker, the fact
-// that an arriving client key replaced a held one, and the join marker.
-//
-// The secret rows are the whole allow-list, not an R2 subset, because the
-// document apply runs on the worker the passphrase check drives and every
-// refusal after it has to leave the machine byte-identical. A join refused at
-// the settle must not keep the fleet's shared values -- the typesafe key and a
-// stamped client key that replaced the one this machine generated for itself.
-//
-// It records absence as well as value, because "there was no token here" and
-// "the token here was this" are different machines and only the first one is what
-// a refused join should leave behind.
+// back: section, token, key, every allow-listed secret the document may land on,
+// remote-key fact, enabled marker, client-key-replaced fact, and join marker.
+// Secrets cover the whole allow-list: the apply runs on the passphrase check's
+// worker, so every later refusal leaves the machine byte-identical. Absence records
+// alongside value: no token here differs from this token here, and only the first
+// is what a refused join leaves.
 type JoinSnapshot struct {
 	section      []byte
 	hasSection   bool
@@ -60,22 +46,18 @@ type JoinSnapshot struct {
 	join              heldRow
 }
 
-// docSecretsBookkeeping is one doc's machine-local bookkeeping, read as rows
-// and put back as rows: what each key was last applied at, what digest it was
-// last compared by, and whether the doc was signalled when it was read. The
-// tables move together because they record the same arrival -- the export
-// state is how the exporter sees what the applied state is.
+// docSecretsBookkeeping is one doc's machine-local bookkeeping, read and restored
+// as rows: last applied at, last compared digest, and whether signalled. The tables
+// move together, recording the same arrival.
 type docSecretsBookkeeping struct {
 	applied   []db.DocAppliedRow
 	export    []db.DocExportStateRow
 	signalled bool
 }
 
-// fromPeers is the part of the bookkeeping a join keeps over its fresh start:
-// what this machine took from peers' entries. An export row of this machine's
-// own origin records a value it sent to a log it wrote before, which the log it
-// is joining has never seen, so the row is dropped and the document stays
-// signalled for the next export to send that value.
+// fromPeers is the bookkeeping a join keeps over its fresh start, from peers'
+// entries only: own-origin export rows name a log the joined log never saw, so
+// they drop and the document stays signalled for the next export.
 func (k docSecretsBookkeeping) fromPeers(self string) docSecretsBookkeeping {
 	out := k
 	out.export = nil
@@ -90,7 +72,7 @@ func (k docSecretsBookkeeping) fromPeers(self string) docSecretsBookkeeping {
 }
 
 // readDocSecretsBookkeeping reads the secrets document's bookkeeping off the
-// machine-local file, the file the document's apply path wrote it to.
+// machine-local file its apply path wrote to.
 func readDocSecretsBookkeeping(l Local) (docSecretsBookkeeping, error) {
 	var kept docSecretsBookkeeping
 	err := l.Tx(func(t *db.Tx) error {
@@ -112,14 +94,11 @@ func readDocSecretsBookkeeping(l Local) (docSecretsBookkeeping, error) {
 	return kept, nil
 }
 
-// restoreDocSecretsBookkeeping puts the secrets document's bookkeeping back the
-// way readDocSecretsBookkeeping read it. A signal the document carried when it
-// was read stands -- it is the echo of a write a caller this enable passed, not
-// of the state that was just put back -- while a signal the clear itself
-// planted is struck, because what it points at is exactly the state these rows
-// stand for. It is the whole restore in a transaction of its own, so a caller
-// that has just run the one clear the join makes can keep the document's
-// bookkeeping over it.
+// restoreDocSecretsBookkeeping puts the secrets document's bookkeeping back as read.
+// A signal carried at read time stands -- an echo of this enable's caller write,
+// not the restored state -- while a signal the clear planted is struck, since it
+// points at exactly the state these rows stand for. It runs in its own transaction,
+// so a caller that just ran the join's clear keeps the bookkeeping over it.
 func restoreDocSecretsBookkeeping(l Local, kept docSecretsBookkeeping) error {
 	err := l.Tx(func(t *db.Tx) error {
 		if err := restoreSecretsDocBookkeeping(t, kept); err != nil {
@@ -136,22 +115,20 @@ func restoreDocSecretsBookkeeping(l Local, kept docSecretsBookkeeping) error {
 	return nil
 }
 
-// heldRow is one row's bytes and whether it was there at all.
+// heldRow is one row's bytes and whether it was there.
 type heldRow struct {
 	value   []byte
 	present bool
 }
 
-// KeyClientKeyReplaced is the machine-local row that says an arriving client key
-// took the place of one this machine already held. It is spelled here rather
-// than imported because the config package imports this one, and the restore is
-// part of what a refused join owes the machine -- the same reason
-// SecretClientKey and SecretTypesafe are spelled in this package.
+// KeyClientKeyReplaced is the machine-local row saying an arriving client key took
+// a held one's place, spelled here not imported: the config package imports this
+// one, and its restore is part of what a refused join owes the machine -- as
+// SecretClientKey does.
 const KeyClientKeyReplaced = "config/client_key_replaced"
 
-// SnapshotJoin reads every row an enable --join stages, or the document apply it
-// runs writes, on the machine-local file. A row that was absent stays absent on
-// restore.
+// SnapshotJoin reads every row an enable --join stages or its document apply writes;
+// absent stays absent on restore.
 func SnapshotJoin(l Local) (JoinSnapshot, error) {
 	var s JoinSnapshot
 	var err error
@@ -188,11 +165,9 @@ func SnapshotJoin(l Local) (JoinSnapshot, error) {
 	return s, nil
 }
 
-// Restore puts back exactly what SnapshotJoin read.
-//
-// A row that was absent is deleted rather than written empty: an absent token is
-// how a machine says it has none, and a section written with no remote in it is
-// a different thing that the preflight would read as a machine pointed nowhere.
+// Restore puts back exactly what SnapshotJoin read: absent deletes rather than
+// writing empty, since an absent token says none and a remoteless section reads as
+// pointed nowhere.
 func (s JoinSnapshot) Restore(l Local, now time.Time) error {
 	return l.Tx(func(t *db.Tx) error {
 		if err := restoreConfig(t, SectionSettings, s.section, s.hasSection, now); err != nil {
@@ -225,10 +200,8 @@ func (s JoinSnapshot) Restore(l Local, now time.Time) error {
 	})
 }
 
-// restoreConfig puts one machine-local config row back. The sync section and
-// the replaced row both travel this way: an absent row is deleted rather than
-// written empty, and a present one is put back with these bytes, so a reader
-// cannot meet a row of its own default between the two.
+// restoreConfig puts one machine-local config row back: absent deletes, present
+// restores these bytes, so no reader meets a default row between the two.
 func restoreConfig(t *db.Tx, key string, body []byte, present bool, now time.Time) error {
 	if !present {
 		if err := t.ConfigDelete(key); err != nil {
@@ -255,11 +228,9 @@ func restoreSecret(t *db.Tx, name string, value []byte, present bool) error {
 	return nil
 }
 
-// restoreSecretsDocBookkeeping puts the secrets document's applied and export
-// rows back the way the snapshot read them, inside the caller's transaction.
-// Every row recorded for the document since then is deleted and the snapshot's
-// rows written back, so a retried join meets the state a refused first join met
-// rather than its own leftovers.
+// restoreSecretsDocBookkeeping puts the secrets document's applied and export rows
+// back as snapshotted, inside the caller's transaction: later rows delete, snapshot
+// rows return, so a retried join meets the refused first join's state.
 func restoreSecretsDocBookkeeping(t *db.Tx, kept docSecretsBookkeeping) error {
 	if err := t.DeleteDocApplied(SecretsDocName); err != nil {
 		return fmt.Errorf("sync: restore the %s document's applied state: %w", SecretsDocName, err)

@@ -1,9 +1,8 @@
 package sync
 
-// The steady pipeline runs while sync is on: it drains this machine's outbox
-// into the log and reads every other origin's entries back. It is the one body
-// both triggers share, so the seal path and the idle window cannot drift into
-// two orders or two marker sets.
+// The steady pipeline drains this machine's outbox into the log and reads every
+// other origin's entries back. It is the one body both triggers share, so the
+// seal path and the idle window cannot drift into two orders or marker sets.
 
 import (
 	"context"
@@ -17,34 +16,30 @@ import (
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
-// errNoSync is what an attempt with nothing to drive reports. Both triggers ask
+// errNoSync is what an attempt with nothing to drive reports; both triggers ask
 // Enabled first, so arriving here means one of them forgot to.
 var errNoSync = errors.New("sync: no client and no local file to drive")
 
-// errStepTimedOut is what a step that ran past its bound reports. The worker is
-// cancelled with it, so the next attempt starts a fresh process rather than
-// driving the one that stopped answering.
+// errStepTimedOut is what a step past its bound reports; the worker is cancelled
+// with it, so the next attempt starts fresh rather than driving one that stopped
+// answering.
 var errStepTimedOut = errors.New("sync: a step ran past its deadline")
 
-// StepTimeout bounds one data step of the steady pipeline. A step that outlives
-// it is a worker that stopped answering rather than a slow remote, so the
-// worker is cancelled and the step reported instead of holding the next tick.
-// It sits just below the pipe client's transfer-sized call bound, so the
-// deliberate cancel is taken first and the step is released as a stop rather
-// than left for the transport to time out and count as a death.
+// StepTimeout bounds one data step of the steady pipeline. A step past it is a
+// worker that stopped answering rather than a slow remote, so the worker is
+// cancelled instead of holding the next tick. It sits just below the pipe
+// client's transfer-sized call bound, so the deliberate cancel wins and the step
+// releases as a stop rather than timing out as a death.
 const StepTimeout = 9 * time.Minute
 
 // SteadyImportDeadline bounds one attempt's import loop. It sits under the
-// 5-minute idle window so two attempts never overlap: an attempt still
-// importing when the next window opens would otherwise drive the one worker
-// from two triggers. A stop at this bound is not an error; the next tick
-// continues from the marks this one moved.
+// 5-minute idle window so two attempts never overlap on the one worker. A stop
+// at this bound is not an error; the next tick continues from the marks moved.
 const SteadyImportDeadline = 4 * time.Minute
 
-// SteadyResult is what one attempt moved, in the shape the trigger logs it.
+// SteadyResult is what one attempt moved, in the shape the trigger logs.
 type SteadyResult struct {
-	// Exported is how many of this machine's entries the attempt handed the
-	// log.
+	// Exported is how many of this machine's entries the attempt handed the log.
 	Exported int
 	// Applied is how many of another origin's entries the attempt wrote.
 	Applied int
@@ -52,21 +47,17 @@ type SteadyResult struct {
 	Err error
 	// Attention is whether Err is one a human has to act on.
 	Attention bool
-	// Trouble is what the attempt's import reported besides applied entries:
-	// an origin a newer writer held, a batch a refusal dropped, a sequence gap.
+	// Trouble is what the attempt's import reported besides applied entries: a
+	// held origin, a dropped batch, a sequence gap.
 	Trouble Trouble
 }
 
-// On reports whether this machine's sync is turned on as the local marker says.
-// A machine that never turned sync on has nothing to poll the network for.
-//
-// It reads only the machine-local marker, never the client: a tick asks this
-// before it takes the sync slot, while a verb may be replacing the transport
-// under that slot, and the marker is the field neither writes.
-//
-// An unreadable marker reads as on: a caller has already established that there
-// is a machine-local file, and skipping on a transient read error would quietly
-// stop syncing a machine that is meant to be syncing.
+// On reports whether this machine's sync is on as the local marker says; a
+// machine that never turned sync on has nothing to poll for. It reads only the
+// machine-local marker, never the client: a tick asks this before taking the sync
+// slot while a verb may be replacing the transport under it. An unreadable
+// marker reads as on, so a transient read error never quietly stops a syncing
+// machine.
 func (r *Runner) On() bool {
 	if r == nil || r.Local == nil {
 		return false
@@ -79,9 +70,9 @@ func (r *Runner) On() bool {
 	return state.Enabled
 }
 
-// SyncOnce runs one steady attempt and records its outcome in the local
-// markers. Every path leaves a tick marker behind, so a machine that gave up
-// says so rather than looking idle.
+// SyncOnce runs one steady attempt and records its outcome in the local markers;
+// every path leaves a tick marker, so a machine that gave up says so rather than
+// looking idle.
 func (r *Runner) SyncOnce(ctx context.Context, shared *db.DB) SteadyResult {
 	if !r.Enabled() || shared == nil {
 		return SteadyResult{Err: errNoSync}
@@ -93,13 +84,10 @@ func (r *Runner) SyncOnce(ctx context.Context, shared *db.DB) SteadyResult {
 	return out
 }
 
-// attempt is the pipeline without the marker writing. The order is the
-// exchange's: export first, so the log learns what this machine wrote, then
-// import, so the file learns what the others wrote.
-//
-// The capture runs first, before the export, because a person editing a hook
-// script or a native agent file on disk is a person's edit and it has to reach
-// the peers with this attempt rather than with whichever one comes next.
+// attempt is the pipeline without the marker writing: export first so the log
+// learns what this machine wrote, then import. The capture runs before the
+// export, so an edit to a hook script or native agent file on disk reaches the
+// peers with this attempt rather than the next.
 func (r *Runner) attempt(ctx context.Context, shared *db.DB) SteadyResult {
 	CaptureFiles(shared)
 	t := NewStopTransport(r.Client)
@@ -109,18 +97,14 @@ func (r *Runner) attempt(ctx context.Context, shared *db.DB) SteadyResult {
 	return out
 }
 
-// exchange is the export then the import over one attempt's transport.
-//
-// The marks are published after the import, not inside it: what a publish
-// reports is where this machine has got to, and that is only true once the
-// import has finished moving them. A publish that ran first would advertise a
-// position the attempt had not reached yet.
+// exchange is the export then the import over one attempt's transport. The marks
+// are published after the import, not inside it: what a publish reports is where
+// this machine has got to, only true once the import has finished moving them.
 func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) SteadyResult {
 	var out SteadyResult
 	r.recordRemoteKDF(ctx, t)
-	// A machine that continues as an adopted identity checks the claim on it
-	// before either half runs: another machine holding the token means two
-	// machines would append to one log.
+	// An adopted identity checks the claim before either half runs: another
+	// machine holding the token means two machines would append to one log.
 	if err := r.identityGate(ctx, t); err != nil {
 		return r.failed(out, err)
 	}
@@ -128,16 +112,15 @@ func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) 
 		out.Trouble.Held = append(out.Trouble.Held, err.Error())
 		return out
 	}
-	// The stale stop reads the two local epoch facts and nothing else: a
-	// machine whose held newest epoch is below the recorded remote epoch
-	// neither exports nor imports until its owner unlocks it with the new
-	// passphrase. Both halves stop, because a stale exporter appends entries
-	// current readers refuse, and a stale importer would apply them.
+	// The stale stop reads the two local epoch facts and nothing else: a machine
+	// whose held newest epoch is below the recorded remote epoch neither exports
+	// nor imports until its owner unlocks with the new passphrase, because a
+	// stale exporter appends entries current readers refuse, and a stale importer
+	// would apply them.
 	if err := r.epochGate(); err != nil {
 		if !errors.Is(err, synclog.ErrEpochMoved) && !errors.Is(err, ErrEpochReplaced) {
-			// A key this machine cannot read is its own failure, not a
-			// locked machine's posture: the attempt reports it failed rather
-			// than running any half of the exchange unverified.
+			// An unreadable key is this machine's own failure: the attempt reports
+			// it failed rather than running either half unverified.
 			return r.failed(out, err)
 		}
 		out.Trouble.Held = append(out.Trouble.Held, err.Error())
@@ -148,12 +131,12 @@ func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) 
 		return r.failed(out, err)
 	}
 	out.Exported = exported
-	// The extension that vouches for this origin's own confirmed tail goes
-	// out before the import reads the cuts, so this attempt's own reads see
-	// the fence this machine believes in.
+	// The extension vouching for this origin's confirmed tail goes out before the
+	// import reads the cuts, so this attempt's own reads see the fence believed in.
 	PublishOwnCut(ctx, shared, r.Local, t)
-	imported, err := r.drainImport(ctx, shared, t) // The settles run after the import, not inside it: what they render is the
-	// config the import wrote, which is only true once it has committed.
+	imported, err := r.drainImport(ctx, shared, t)
+	// The settles run after the import: what they render is the config the
+	// import wrote, only true once committed.
 	SettleFiles(shared)
 	if err != nil {
 		return r.failed(out, err)
@@ -172,7 +155,7 @@ func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) 
 	return out
 }
 
-// exportStep runs the exporter under the attempt bound. Locked signed origins
+// exportStep runs the exporter under the attempt bound; locked signed origins
 // are tolerated so the import half still runs.
 func (r *Runner) exportStep(ctx context.Context, shared *db.DB, t *StopTransport) (int, bool, error) {
 	var exported int
@@ -197,7 +180,7 @@ func (r *Runner) exportStep(ctx context.Context, shared *db.DB, t *StopTransport
 	return exported, false, nil
 }
 
-// identityGate is CheckAdoptedClaim under the attempt's own step bound.
+// identityGate is CheckAdoptedClaim under the attempt's step bound.
 func (r *Runner) identityGate(ctx context.Context, t *StopTransport) error {
 	if r.Local == nil {
 		return nil
@@ -207,9 +190,8 @@ func (r *Runner) identityGate(ctx context.Context, t *StopTransport) error {
 	})
 }
 
-// pendingAdoptGate stops steady attempts while an adoption is unfinished:
-// the installation file and database origin disagree about identity, so
-// neither exporting nor importing is safe.
+// pendingAdoptGate stops steady attempts while an adoption is unfinished, when
+// file and database disagree about identity and neither half is safe.
 func (r *Runner) pendingAdoptGate(shared *db.DB) error {
 	pending, ok, err := ReadAdoptPending(shared, r.Local)
 	if err != nil || !ok {
@@ -219,20 +201,14 @@ func (r *Runner) pendingAdoptGate(shared *db.DB) error {
 }
 
 // marksEvery is the shortest gap between two publishes of this machine's marks.
-//
-// A publish is a Turso write and a push, and a tick that ran an import has
-// already spent its transfer. The throttle is safe because a mark only grows: a
-// published mark that has fallen behind is a lower one, which only makes
-// another machine's floor more cautious, never less.
+// A publish is a Turso write and a push; the throttle is safe because a mark only
+// grows, so a fallen-behind publish only makes another machine's floor more cautious.
 const marksEvery = 15 * time.Minute
 
 // publishMarks tells the log how far this machine has applied of every origin,
-// at most once every marksEvery and only after an import that moved a mark.
-//
-// A publish that fails is logged rather than folded into the attempt's result.
-// The exchange itself succeeded, and the marks are a report of where this
-// machine stands: failing the tick over them would report a sync that did
-// happen as one that did not, and the next attempt republishes anyway.
+// at most once every marksEvery and only after an import that moved a mark. A
+// failed publish is logged, not folded into the result: the exchange succeeded,
+// and the next attempt republishes anyway.
 func (r *Runner) publishMarks(shared *db.DB, t *StopTransport, moved bool) {
 	if !moved || r.Local == nil {
 		return
@@ -253,14 +229,9 @@ func (r *Runner) publishMarks(shared *db.DB, t *StopTransport, moved bool) {
 	r.put(KeyMarksPublished, now)
 }
 
-// marksDue reports whether a publish is due: one is due when the marker is
-// absent, which is a machine that has never published, and again once
-// marksEvery has passed since the last.
-//
-// A marker that will not parse reads as due rather than as never due. The
-// worst a bad marker costs is a publish the throttle was going to skip, and the
-// alternative is a machine whose marks are never published again because a row
-// it cannot read holds it off.
+// marksDue reports whether a publish is due: due when the marker is absent, and
+// again once marksEvery has passed. An unparsable marker reads as due: the worst
+// it costs is one publish the throttle would have skipped.
 func (r *Runner) marksDue(now time.Time) bool {
 	var last time.Time
 	if err := marker(r.Local, KeyMarksPublished, &last); err != nil {
@@ -270,8 +241,8 @@ func (r *Runner) marksDue(now time.Time) bool {
 	return last.IsZero() || now.Sub(last) >= marksEvery
 }
 
-// Track records t as the work in flight until the returned release runs, so
-// Stop can end it from outside the sync slot that work holds.
+// Track records t as the work in flight until the returned release runs, so Stop
+// can end it from outside the sync slot.
 func (r *Runner) Track(t *StopTransport) (release func()) {
 	if r == nil {
 		return func() {}
@@ -280,9 +251,8 @@ func (r *Runner) Track(t *StopTransport) (release func()) {
 	return func() { r.active.CompareAndSwap(t, nil) }
 }
 
-// Stop ends the work in flight, if there is any: a steady attempt or a push or
-// pull verb. A disable or retry calls it before it waits for the sync slot, so
-// it does not wait out work that can run for a whole data-step bound.
+// Stop ends the work in flight, if any. A disable or retry calls it before waiting
+// for the sync slot, so it never waits out a whole data-step bound.
 func (r *Runner) Stop() {
 	if r == nil {
 		return
@@ -293,7 +263,7 @@ func (r *Runner) Stop() {
 }
 
 // drainImport reads the other origins page by page, each Import under the step
-// bound, until a run moves no mark or the attempt's own deadline passes.
+// bound, until a run moves no mark or the attempt's deadline passes.
 func (r *Runner) drainImport(ctx context.Context, shared *db.DB, t *StopTransport) (synclog.ImportResult, error) {
 	deadline := time.Now().Add(SteadyImportDeadline)
 	return drainImport(func() (synclog.ImportResult, error) {
@@ -315,9 +285,8 @@ func (r *Runner) drainImport(ctx context.Context, shared *db.DB, t *StopTranspor
 	}, deadline, time.Now)
 }
 
-// TroubleFrom is the importer's report as the marker stores it: each trouble in
-// the importer's own sentence, so a status surface names the installation and
-// the sequence a reader has to act on without re-deriving either.
+// TroubleFrom is the importer's report as the marker stores it, each trouble in
+// the importer's own sentence naming the installation and sequence to act on.
 func TroubleFrom(res synclog.ImportResult) Trouble {
 	var t Trouble
 	for _, held := range res.Held {
@@ -335,28 +304,26 @@ func TroubleFrom(res synclog.ImportResult) Trouble {
 	return t
 }
 
-// failed is the result every error path takes: the counts already moved are
-// kept, the error is reported, and Attention names the one a human must
-// unblock.
+// failed is the result every error path takes: counts already moved are kept,
+// and Attention names the one a human must unblock.
 func (r *Runner) failed(out SteadyResult, err error) SteadyResult {
 	out.Err = err
 	out.Attention = errors.Is(err, ErrAuthRefused)
 	return out
 }
 
-// within runs one step and gives up on it after the bound. A step that outlives
-// the bound is a worker that stopped answering: the step's transport is
-// stopped, which cancels the call it was waiting on and refuses every call
-// after it, and the step is reported as timed out. This waits for the step to
-// come back, so no call a previous step left behind runs beside the next one.
+// within runs one step and gives up on it after the bound. A step past it is a
+// worker that stopped answering: its transport is stopped, cancelling the waited
+// call and refusing later ones, and the step reports timed out. This waits for
+// the step to return, so no leftover call runs beside the next one.
 func within(ctx context.Context, t *StopTransport, bound time.Duration, step func() error) error {
 	timer := time.NewTimer(bound)
 	defer timer.Stop()
 	return withinUntil(ctx, t, timer.C, step)
 }
 
-// withinUntil runs one step until expired receives or ctx is done. Split from
-// within so a test can fire the bound at a chosen moment without relying on clocks.
+// withinUntil runs one step until expired receives or ctx is done, split from
+// within so a test can fire the bound without relying on clocks.
 func withinUntil(ctx context.Context, t *StopTransport, expired <-chan time.Time, step func() error) error {
 	done := make(chan error, 1)
 	go func() { done <- step() }()
@@ -375,9 +342,8 @@ func withinUntil(ctx context.Context, t *StopTransport, expired <-chan time.Time
 	}
 }
 
-// cancelWorker stops the worker a transport is driving, when it can. Killing
-// the process a call waits on is what releases a step that ran past its bound;
-// a transport with no worker behind it has nothing to stop.
+// cancelWorker stops the worker a transport is driving, when it can: killing the
+// waited-on process is what releases a step past its bound.
 func cancelWorker(client synclog.LogTransport) {
 	if c, ok := client.(interface{ Cancel() }); ok {
 		c.Cancel()
@@ -385,7 +351,7 @@ func cancelWorker(client synclog.LogTransport) {
 }
 
 // stepTimeout is the bound one step runs under: the runner's own when a test
-// shortened it, the package default otherwise.
+// shortened it, else the package default.
 func (r *Runner) stepTimeout() time.Duration {
 	if r.Timeout > 0 {
 		return r.Timeout
@@ -394,10 +360,9 @@ func (r *Runner) stepTimeout() time.Duration {
 }
 
 // record writes the markers one attempt leaves. The tick marker goes on every
-// path, so a machine that gave up says so; the backlog, the trouble report and
-// the exchange times go on only once the attempt finished, because those are
-// the facts a completed attempt measured. The latch belongs to the breaker and
-// is never touched here.
+// path so a machine that gave up says so; backlog, trouble and times go on only
+// once finished, because those are what a completed attempt measured. The latch
+// belongs to the breaker and is never touched here.
 func (r *Runner) record(out SteadyResult) {
 	now := time.Now().UTC()
 	r.put(KeyLastTick, tick{At: now, OK: out.Err == nil})
@@ -409,24 +374,21 @@ func (r *Runner) record(out SteadyResult) {
 	r.put(KeyTimes, Times{Export: now, Import: now})
 }
 
-// maxDroppedReports caps the cumulative dropped list. It is a report a reader
-// scrolls, not a log: the newest reports are the ones still worth acting on, so
-// a machine that drops for a long time keeps the tail rather than growing a
-// marker without bound.
+// maxDroppedReports caps the cumulative dropped list, keeping the tail: the
+// newest reports are the ones still worth acting on.
 const maxDroppedReports = 50
 
-// putTrouble writes the attempt's report through RecordTrouble.
+// putTrouble writes the attempt's report through RecordTrouble, carrying dropped
+// reports forward.
 func (r *Runner) putTrouble(t Trouble) {
 	RecordTrouble(r.Local, t)
 }
 
-// RecordTrouble writes one import's report to the trouble marker, carrying
-// dropped reports forward. A dropped batch has already had its origin's mark
-// moved past it, so it is never offered again and only a reader can act on it;
-// a later clean import must not erase it. Held and gap reports are per-run
-// because they recur while they are true, so they are written as this import
-// found them. The steady attempt and the one-shot pull share it, so a status
-// read agrees with whichever ran last.
+// RecordTrouble writes one import's report to the trouble marker, carrying dropped
+// reports forward: a dropped batch moved its origin's mark past it, so it is never
+// offered again and a clean import must not erase it. Held and gap reports are
+// per-run because they recur while true. The steady attempt and the one-shot pull
+// share it, so a status read agrees with whichever ran last.
 func RecordTrouble(kv db.KV, t Trouble) {
 	var prior Trouble
 	if err := marker(kv, KeyTrouble, &prior); err != nil {
@@ -444,8 +406,7 @@ func RecordTrouble(kv db.KV, t Trouble) {
 	}
 }
 
-// capDropped keeps the newest dropped reports, dropping the oldest when the
-// list grows past the cap.
+// capDropped keeps the newest dropped reports past the cap.
 func capDropped(list []string) []string {
 	if len(list) <= maxDroppedReports {
 		return list
@@ -453,9 +414,8 @@ func capDropped(list []string) []string {
 	return list[len(list)-maxDroppedReports:]
 }
 
-// put writes one marker, logging a failure rather than folding it into the
-// result: the next attempt repeats the same measurement, so a lost marker costs
-// one window rather than a wrong answer.
+// put writes one marker, logging a failure rather than folding it into the result:
+// the next attempt repeats the measurement, so a lost marker costs one window.
 func (r *Runner) put(key string, value any) {
 	body, err := json.Marshal(value)
 	if err != nil {
@@ -467,8 +427,8 @@ func (r *Runner) put(key string, value any) {
 	}
 }
 
-// recordRemoteKDF is the exchange's hello: it learns whether the remote holds a
-// key, under the step bound so a silent remote costs one step.
+// recordRemoteKDF is the exchange's hello learning whether the remote holds a key,
+// under the step bound so a silent remote costs one step.
 func (r *Runner) recordRemoteKDF(ctx context.Context, t *StopTransport) {
 	ctx, cancel := context.WithTimeout(ctx, r.stepTimeout())
 	defer cancel()
@@ -477,11 +437,9 @@ func (r *Runner) recordRemoteKDF(ctx context.Context, t *StopTransport) {
 
 // epochGate is the stale stop the exchange runs before both halves: ErrEpochMoved
 // when the keyring's newest epoch sits below the recorded remote epoch,
-// ErrEpochReplaced when the held newest epoch equals the remote's but with a
-// mismatched check, nil otherwise. A locked machine never trips it -- it holds
-// no key, so no epoch moves under it -- and an epoch the machine never recorded
-// leaves the gate open, which is what a fact left in place by an unreachable
-// remote means.
+// ErrEpochReplaced on a matching epoch with a mismatched check, nil otherwise. A
+// locked machine never trips it, holding no key; an unrecorded epoch leaves the
+// gate open, as a fact an unreachable remote left in place.
 func (r *Runner) epochGate() error {
 	ring, ok, err := heldKeyring(r.Local)
 	if err != nil || !ok {
@@ -500,9 +458,8 @@ func (r *Runner) epochGate() error {
 	return nil
 }
 
-// heldKeyring reads the machine's keyring over a kv handle, ok false on a
-// machine that holds no key at all. It is the read SigningKey does, over the
-// whole ring rather than the newest key's one row.
+// heldKeyring reads the machine's keyring over a kv handle, ok false when it holds
+// no key: the read SigningKey does, over the whole ring rather than one row.
 func heldKeyring(kv db.KV) (Keyring, bool, error) {
 	l, isDB := kv.(Local)
 	if !isDB || l == nil {

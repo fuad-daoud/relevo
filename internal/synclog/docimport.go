@@ -1,11 +1,9 @@
 package synclog
 
-// The importer's doc path: doc entries leave a batch or a snapshot region
-// before any row is applied, and are applied or parked in one transaction on the
-// machine-local file. The rows then go in through the shared file's own
-// transaction, which also moves the mark. The two files share no transaction,
-// so the order is the safety: a crash between them redelivers the batch, and
-// the doc half is idempotent.
+// The importer's doc path: doc entries leave a batch or region before any row, applied
+// or parked in one machine-local transaction; rows follow in the shared file's own
+// transaction with the mark. The files share no transaction, so the order is the
+// safety: a crash between them redelivers, and the doc half is idempotent.
 
 import (
 	"bytes"
@@ -17,33 +15,30 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// TxDoc is a SharedDoc that can apply an item inside the importer's
-// transaction, so the item, the revision it leaves and the applied state it is
-// remembered by commit together or not at all.
+// TxDoc is a SharedDoc applying an item inside the importer's transaction, so item,
+// revision and applied state commit together or not at all.
 type TxDoc interface {
 	SharedDoc
 	// ApplyIn writes one key's value, or removes the key when value is nil.
-	// refusal is non-nil when the item cannot land now; nothing is recorded and
-	// nothing changes, because the item may depend on a key still to come.
+	// refusal is non-nil when the item cannot land now, depending on a key still
+	// to come; nothing is recorded and nothing changes.
 	ApplyIn(tx *db.Tx, key string, value json.RawMessage, label string) (refusal error, err error)
-	// SupersedeIn records an item that lost, to what this machine holds or
-	// because it could never land, and changes nothing.
+	// SupersedeIn records a losing item without changing anything.
 	SupersedeIn(tx *db.Tx, key string, value json.RawMessage, label, why string) error
 }
 
-// TxWriteStamper is the optional half of a TxDoc that can say, inside the
-// importer's transaction, when a key was last written on this machine.
+// TxWriteStamper is the optional TxDoc half reporting, inside the transaction,
+// when a key was last written here.
 type TxWriteStamper interface {
 	ItemWriteStampIn(tx *db.Tx, key string) (stamp Stamp, ok bool, err error)
 }
 
-// docItem is a doc entry that passed the shape checks, with the entry it came
-// from so a locked reader can park it whole.
+// docItem is a shape-checked doc entry with its wire entry, so a locked reader can
+// park it whole.
 type docItem struct {
 	entry  Entry
 	parsed DocEntry
-	// label names the installation the entry came from in the revision it
-	// leaves.
+	// label names the installation the entry came from in the revision it leaves.
 	label string
 }
 
@@ -59,11 +54,9 @@ func splitDocs(entries []Entry) (docs, rows []Entry) {
 	return docs, rows
 }
 
-// unknownDoc holds an origin whose entries name a document this build has no
-// reader for, at seq: the peer is most likely on a newer binary, and dropping
-// the batch would lose the rows beside the entry for good. A doc table naming
-// no document at all stays a refusal, because no upgrade would give it a
-// meaning.
+// unknownDoc holds an origin whose entries name an unreadable document at seq: the
+// peer is likely newer, and dropping would lose the beside rows for good. A docless
+// table stays a refusal: no upgrade would give it meaning.
 func (i *Importer) unknownDoc(origin string, seq int, entries []Entry) *Hold {
 	for _, e := range entries {
 		name, ok := DocName(e.Table)
@@ -79,8 +72,8 @@ func (i *Importer) unknownDoc(origin string, seq int, entries []Entry) *Hold {
 	return nil
 }
 
-// parseDocs checks every doc entry before any is applied, so a malformed entry
-// refuses the whole set and nothing lands half way.
+// parseDocs checks every doc entry before any applies, so one malformed entry
+// refuses the set and nothing lands halfway.
 func (k *keyed) parseDocs(entries []Entry) ([]docItem, error) {
 	items := make([]docItem, 0, len(entries))
 	for _, e := range entries {
@@ -94,12 +87,10 @@ func (k *keyed) parseDocs(entries []Entry) ([]docItem, error) {
 	return items, nil
 }
 
-// takeDocs applies a locked-or-unlocked reader's doc entries and reports how
-// many it handled. An unlocked reader applies them; a locked one parks them,
-// because it cannot tell an honest entry from a forged one yet.
-//
-// The clock observes every stamp first, applied, superseded or parked, and
-// outside the transaction because it persists through its own.
+// takeDocs applies a locked-or-unlocked reader's doc entries, reporting how many
+// handled. Unlocked applies, locked parks what it cannot yet verify as honest.
+// The clock observes every stamp first, whether applied, superseded or parked,
+// outside the transaction because it persists through its own write.
 func (i *Importer) takeDocs(origin string, docs []Entry) (int, error) {
 	if len(docs) == 0 {
 		return 0, nil
@@ -152,11 +143,9 @@ func park(tx *db.Tx, e Entry) error {
 	return tx.ParkDoc(e.Origin, e.Seq, string(raw), time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z"))
 }
 
-// applyDocs applies a set of verified entries in passes. Keys of one document
-// can depend on each other -- an actor names an agent -- and the exporter sends
-// them in key order, so an item refused for the state of the document is set
-// aside and tried again after the rest. When a pass lands nothing new, what is
-// left will never land and is recorded as superseded.
+// applyDocs applies verified entries in passes. Same-document keys can depend on
+// each other, so a refused item is set aside for the next pass; a pass landing
+// nothing supersedes what is left.
 func applyDocs(tx *db.Tx, local string, items []docItem) error {
 	left := items
 	for len(left) > 0 {
@@ -180,9 +169,8 @@ func applyDocs(tx *db.Tx, local string, items []docItem) error {
 	return nil
 }
 
-// supersedeRefused records the items no pass could land. The key's applied
-// state still moves to the entry, so a redelivery is a no-op and an older
-// entry still loses to it.
+// supersedeRefused records unlandable items, still moving applied state to the
+// entry so redelivery is a no-op and older entries lose.
 func supersedeRefused(tx *db.Tx, items []docItem, whys []error) error {
 	for n, it := range items {
 		p := it.parsed
@@ -197,13 +185,10 @@ func supersedeRefused(tx *db.Tx, items []docItem, whys []error) error {
 	return nil
 }
 
-// applyDoc decides one verified doc entry against the newest state applied for
-// its key. An entry equal to it is a redelivery and does nothing, which is what
-// makes a crash between the two transactions harmless; a newer one is applied;
-// an older one is recorded as superseded. A local write of the key that this
-// machine has not exported yet counts as an entry of its own origin, so an
-// arriving entry older than it is superseded too. refusal is the document
-// declining a newer entry for now, with nothing recorded.
+// applyDoc decides one verified doc entry against the newest applied state: equal
+// redelivers as a no-op, newer applies, older supersedes. An unexported local write
+// counts as its own origin's entry, so an older arrival supersedes too. refusal is
+// the document declining a newer entry for now, recording nothing.
 func applyDoc(tx *db.Tx, local string, it docItem) (refusal error, err error) {
 	doc, ok := it.parsed.Doc.(TxDoc)
 	if !ok {
@@ -251,11 +236,10 @@ func applyDoc(tx *db.Tx, local string, it docItem) (refusal error, err error) {
 	return nil, recordExported(tx, p, value)
 }
 
-// localWriteWins reports whether this machine's own write of the key outranks
-// the arriving entry, in which case the entry must not overwrite it. It runs
-// only for an entry newer than the applied state, so outranking the entry
-// outranks that state too. The write is stamped with this machine's origin, so
-// ties break to the higher origin like any other pair of entries.
+// localWriteWins reports whether this machine's own write outranks the arriving
+// entry, which must then not overwrite it. It runs only for entries newer than
+// applied state; the write carries this machine's origin, so ties break to the
+// higher origin like any entry pair.
 func localWriteWins(tx *db.Tx, doc TxDoc, local string, p DocEntry) (Stamp, bool, error) {
 	w, ok := doc.(TxWriteStamper)
 	if !ok {
@@ -273,7 +257,7 @@ func stampBeats(stamp Stamp, origin string, other Stamp, otherOrigin string) boo
 	return stamp > other || (stamp == other && origin > otherOrigin)
 }
 
-// recordExported leaves the export state holding what was just applied, so the
+// recordExported leaves export state holding what was just applied, so the
 // exporter finds nothing to send back.
 func recordExported(tx *db.Tx, p DocEntry, value json.RawMessage) error {
 	if value == nil {
@@ -286,9 +270,8 @@ func recordExported(tx *db.Tx, p DocEntry, value json.RawMessage) error {
 	return tx.SetDocExported(p.Name, p.Key, p.Origin, p.Stamp.String(), digest)
 }
 
-// compareApplied orders an arriving entry against the applied one by stamp and,
-// on a tie, by origin, so two machines that stamped the same instant agree on
-// the winner. It is zero for the same (stamp, origin).
+// compareApplied orders an arriving entry against the applied one by stamp, then
+// origin, so same-instant stampers agree. Zero is the same (stamp, origin).
 func compareApplied(cur db.DocApplied, p DocEntry) (int, error) {
 	have, err := ParseStamp(cur.Stamp)
 	if err != nil {
@@ -307,7 +290,7 @@ func compareApplied(cur db.DocApplied, p DocEntry) (int, error) {
 	return 0, nil
 }
 
-// docValue turns the null a tombstone carries into the nil Apply takes.
+// docValue turns a tombstone's null into the nil Apply takes.
 func docValue(raw json.RawMessage) json.RawMessage {
 	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return nil
@@ -315,11 +298,9 @@ func docValue(raw json.RawMessage) json.RawMessage {
 	return raw
 }
 
-// DrainPending applies the doc entries parked while this machine was locked,
-// now that it holds a key. An entry that does not verify, or no longer parses,
-// is refused and removed, so a forged entry parked earlier is never applied.
-// The entries that verify go in together, so the keys of one document can
-// depend on each other as they do in a batch.
+// DrainPending applies entries parked while locked, now that a key is held.
+// Unverifying or unparsable entries refuse and remove, so a forged parked entry
+// never applies. Verifying entries go in together for same-document dependencies.
 func (i *Importer) DrainPending() (ImportResult, error) {
 	var res ImportResult
 	if len(i.key) == 0 {
@@ -367,8 +348,8 @@ func (i *Importer) DrainPending() (ImportResult, error) {
 	return res, nil
 }
 
-// verifyParked reads a parked entry back and checks it as a keyed reader checks
-// an arriving one. The reason is empty when the entry may be applied.
+// verifyParked rechecks a parked entry like an arriving one; the returned reason
+// is empty when the entry may be applied.
 func (i *Importer) verifyParked(row db.PendingDoc) (docItem, string) {
 	var e Entry
 	if err := json.Unmarshal([]byte(row.Entry), &e); err != nil {

@@ -21,16 +21,13 @@ import (
 // versions below, which this build knows how to bring forward in place.
 const logFormatVersion = 4
 
-// formatOneVersion is the format this build's predecessor wrote. A remote at
-// it holds the same log without the marks table, and is upgraded rather than
-// refused, so a machine that has not synced since the change is not left with a
-// remote no build of this version will open.
+// formatOneVersion is the previous format: the same log without the marks
+// table. A remote at it is upgraded rather than refused.
 const formatOneVersion = 1
 
 // formatTwoVersion is the format before the mac column: this build's tables,
-// with every entry unsigned. It is upgraded in place for the reason format one
-// is, and the entries it holds keep a NULL mac, which reads as unsigned rather
-// than as a signature that failed.
+// with every entry unsigned. It is upgraded in place, and its entries keep a
+// NULL mac, which reads as unsigned rather than as a signature that failed.
 const formatTwoVersion = 2
 
 // formatThreeVersion is the format before the after_origin and after_seq columns.
@@ -51,14 +48,11 @@ const (
 	addAfterSeqStatement    = "ALTER TABLE log ADD COLUMN after_seq INTEGER"
 )
 
-// upgrade is what one older format needs in order to reach this build's own:
-// the statements to run, and the tables the remote must be holding for this
-// build to believe it.
-//
-// The tables are named per format rather than shared because format one is the
-// only one without the marks table, and a remote claiming an older format while
-// holding the newer tables is a remote whose two halves disagree. Matching them
-// as a pair is what refuses that instead of trying to bring it forward.
+// upgrade is what one older format needs to reach this build's own: the
+// statements to run, and the tables the remote must hold for this build to
+// believe it. The tables are named per format because only format one lacks the
+// marks table; matching them as a pair refuses a remote whose format and tables
+// disagree instead of trying to bring it forward.
 type upgrade struct {
 	tables     []string
 	statements []string
@@ -84,8 +78,7 @@ var upgrades = map[int]upgrade{
 
 // createStatements is the remote schema, in one place so the create and the
 // classification cannot disagree about what a relevo log is. The marks table is
-// last because it is the only one the format below does not have, so an upgrade
-// creates it on its own.
+// last, so an upgrade from the format without it creates it on its own.
 var createStatements = []string{
 	"CREATE TABLE log (" +
 		"origin TEXT NOT NULL, seq INTEGER NOT NULL, batch INTEGER NOT NULL, " +
@@ -103,13 +96,10 @@ var createStatements = []string{
 
 // ensureLog makes sure the remote is this log: an empty remote gets the log's
 // tables, one at an older format is brought forward, one whose meta names this
-// format is used, and anything else is refused. A remote is never written into
-// after it has been classified as something other than a relevo log.
-//
-// The table set and the format row are matched together rather than one after
-// the other, so a remote that holds the current tables and claims an older
-// format -- or the other way round -- is refused rather than opened as
-// something it is not.
+// format is used, and anything else is refused. A remote classified as
+// something other than a relevo log is never written into. The table set and
+// the format row are matched together, so a remote whose tables and format
+// disagree is refused rather than opened as something it is not.
 func (b *TursoBackend) ensureLog(ctx context.Context, url string) error {
 	tables, err := userTables(ctx, b.db)
 	if err != nil {
@@ -212,8 +202,9 @@ func (b *TursoBackend) upgradeLog(ctx context.Context, statements []string) erro
 	return nil
 }
 
-// isDuplicateColumnError reports whether err was caused by an ALTER TABLE ADD COLUMN
-// for a column that already exists (e.g. added concurrently by another worker).
+// isDuplicateColumnError reports whether err was caused by an ALTER TABLE ADD
+// COLUMN for a column that already exists, as when another worker's upgrade
+// added it first.
 func isDuplicateColumnError(err error) bool {
 	if err == nil {
 		return false
@@ -242,14 +233,11 @@ func userTables(ctx context.Context, db *sql.DB) ([]string, error) {
 	return names, rows.Err()
 }
 
-// engineTable reports whether a table belongs to the database engine rather than
-// to whatever the remote holds. SQLite keeps its sqlite_ tables, and the sync
-// engine keeps its change tracking in every replica in tables of its own, all
-// named turso_ or __turso_internal_, so a replica of an empty remote is never
-// empty. The match is on those prefixes rather than on any one table, so an
-// engine that renames a table of its own still matches, and it is made in Go
-// rather than in LIKE, whose underscore matches any one character and whose
-// ESCAPE the engine need not support.
+// engineTable reports whether a table belongs to the database engine rather
+// than to whatever the remote holds: SQLite's sqlite_ tables and the sync
+// engine's turso_ and __turso_internal_ tables, so a replica of an empty remote
+// is never empty. The match is on prefixes rather than names, and it is made in
+// Go rather than in LIKE, whose underscore matches any one character.
 func engineTable(name string) bool {
 	for _, prefix := range []string{"sqlite_", "turso_", "__turso_internal_"} {
 		if strings.HasPrefix(name, prefix) {
@@ -266,10 +254,9 @@ func isLogTables(tables []string) bool {
 	return slices.Equal(tables, []string{"head", "log", "marks", "meta"})
 }
 
-// isFormatOneTables reports whether the remote holds exactly the tables the
-// format below has: the same log without the marks table. It is a format to
-// bring forward rather than a remote to refuse, so it is named apart from the
-// current set instead of being read as a partial create of it.
+// isFormatOneTables reports whether the remote holds exactly the previous
+// format's tables: the same log without the marks table. It is a format to
+// bring forward, not a partial create of the current set.
 func isFormatOneTables(tables []string) bool {
 	return slices.Equal(tables, []string{"head", "log", "meta"})
 }

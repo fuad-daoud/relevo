@@ -5,10 +5,9 @@ import (
 	"fmt"
 )
 
-// The in-memory log's half of the remote's meta: the passphrase material, and
-// the sequence each origin started signing at. Both are the log's own records
-// here so the exporter and importer can be written against the fake without a
-// remote, which is what CI has.
+// The in-memory log's half of the remote's meta: passphrase material and each
+// origin's signing start, held here so exporter and importer run against the fake
+// without a remote.
 
 func (m *MemTransport) KeyMeta(context.Context) (KeyMeta, error) {
 	m.log.mu.Lock()
@@ -17,9 +16,8 @@ func (m *MemTransport) KeyMeta(context.Context) (KeyMeta, error) {
 	return keyHeld(m.log), nil
 }
 
-// keyHeld is the log's material as a read answers with it: an epoch row that
-// was never written reads as epoch 1, and Present is the salt's presence rather
-// than a field of its own.
+// keyHeld is the log's material as a read answers: a never-written row reads as
+// epoch 1, and Present is the salt's presence.
 func keyHeld(log *memLog) KeyMeta {
 	key := log.key
 	key.Epoch = keyEpochOf(key)
@@ -27,7 +25,6 @@ func keyHeld(log *memLog) KeyMeta {
 	return key
 }
 
-// keyEpochOf is the epoch a key block names, where an unwritten row is epoch 1.
 func keyEpochOf(key KeyMeta) int {
 	if key.Epoch == 0 {
 		return 1
@@ -35,10 +32,8 @@ func keyEpochOf(key KeyMeta) int {
 	return key.Epoch
 }
 
-// KeyInit writes the material where the log holds none and answers with what it
-// holds afterwards, as the remote does: insert-if-absent, then a read rather
-// than an echo, so two machines racing the first one both learn the winner's
-// salt.
+// KeyInit writes the material where the log holds none, answering with a read
+// rather than an echo, so two racers both learn the winner's salt.
 func (m *MemTransport) KeyInit(_ context.Context, key KeyMeta) (KeyMeta, error) {
 	m.log.mu.Lock()
 	defer m.log.mu.Unlock()
@@ -51,10 +46,9 @@ func (m *MemTransport) KeyInit(_ context.Context, key KeyMeta) (KeyMeta, error) 
 	return keyHeld(m.log), nil
 }
 
-// KeyRekey rotates the log's key to the epoch the spec names. The
-// compare-and-set runs against the epoch the caller read, and the cuts are
-// checked against the heads the log actually holds before anything is written:
-// a caller whose observation is stale leaves the log as it was.
+// KeyRekey rotates the log's key to the spec's epoch. Epoch and cuts are checked
+// against what the log holds before writing, so a stale caller leaves the log as
+// it was.
 func (m *MemTransport) KeyRekey(_ context.Context, spec KeyRekeySpec) (KeyMeta, error) {
 	m.log.mu.Lock()
 	defer m.log.mu.Unlock()
@@ -85,10 +79,8 @@ func (m *MemTransport) KeyRekey(_ context.Context, spec KeyRekeySpec) (KeyMeta, 
 	return keyHeld(m.log), nil
 }
 
-// checkCuts refuses a rekey whose cuts are not the log's own heads: an origin
-// whose head moved between the caller's read and this write, and an origin the
-// caller named that the log does not hold, are both an observation that is no
-// longer true.
+// checkCuts refuses cuts that are not the log's own heads: a moved head or an
+// unknown origin is an observation no longer true.
 func (m *memLog) checkCuts(cuts map[string]EpochCut) error {
 	heads := make(map[string]int)
 	for _, origin := range m.origins() {
@@ -108,12 +100,10 @@ func (m *memLog) checkCuts(cuts map[string]EpochCut) error {
 	return nil
 }
 
-// PublishEpochCut extends this handle's own origin's cut, forward only and
-// within the log: a cut naming a sequence the log does not hold vouches for
-// history nobody appended, and one below the stored row could only move the
-// fence over entries a reader has already been told to refuse above it. A
-// backward or inside-the-fence extension is refused rather than silently
-// ignored, so the caller learns its vouch did not land.
+// PublishEpochCut extends this handle's own cut, forward only and within the log:
+// beyond head vouches for unappended history, and a backward extension could only
+// move the fence over entries readers were told to refuse, so it is refused rather
+// than ignored and the caller learns it did not land.
 func (m *MemTransport) PublishEpochCut(_ context.Context, cut EpochCut) error {
 	m.log.mu.Lock()
 	defer m.log.mu.Unlock()
@@ -138,7 +128,7 @@ func (m *MemTransport) PublishEpochCut(_ context.Context, cut EpochCut) error {
 	return nil
 }
 
-// firstSigned is the index of the first entry carrying a MAC, or -1.
+// firstSigned is the first MAC-carrying entry's index, -1 when none.
 func firstSigned(entries []Entry) int {
 	for n, e := range entries {
 		if len(e.MAC) > 0 {
@@ -148,9 +138,8 @@ func firstSigned(entries []Entry) int {
 	return -1
 }
 
-// checkBoundary refuses a signed batch for an origin with no boundary unless it
-// names the sequence its first signed entry is about to get. It runs before
-// anything is written.
+// checkBoundary refuses a signed batch for a boundaryless origin unless it names
+// its first signed entry's sequence, before anything is written.
 func (m *memLog) checkBoundary(origin string, entries []Entry, next int, boundary Boundary) error {
 	first := firstSigned(entries)
 	if first < 0 {
@@ -165,12 +154,9 @@ func (m *memLog) checkBoundary(origin string, entries []Entry, next int, boundar
 	return nil
 }
 
-// recordSignedFrom notes where this origin started signing, at most once.
-//
-// It runs inside the append's own lock, so the marker and the entries it
-// describes cannot be seen apart, and it is written only if there is none yet: a
-// later signed batch must not move the boundary back over entries a reader has
-// already been told were signed.
+// recordSignedFrom notes where this origin started signing, at most once, inside
+// the append's lock so marker and entries are never seen apart. A later batch must
+// not move the boundary over entries readers were told were signed.
 func (m *memLog) recordSignedFrom(entries []Entry, boundary Boundary) {
 	first := firstSigned(entries)
 	if first < 0 {

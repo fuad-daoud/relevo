@@ -15,8 +15,7 @@ const SecretToken = "turso.token"
 
 // SetToken stores value as this installation's remote token, in the local file
 // beside the shared database. The value is never formatted into a refusal or an
-// error: a rejection names the secret and never what it was handed, because
-// every path out of this function ends up in a log line.
+// error, because every path out of this function ends up in a log line.
 func SetToken(l Local, value []byte, now time.Time) error {
 	if len(bytes.TrimSpace(value)) == 0 {
 		return fmt.Errorf("sync: %s is empty: %w", SecretToken, db.ErrInvalid)

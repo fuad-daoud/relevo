@@ -2,10 +2,9 @@ package sync
 
 // The runner is the seam a remote is driven through. It holds the log transport
 // a pipe client provides and the machine-local kv the markers are written
-// through, and it carries the bound one attempt would run under and the marker
-// keys the statusline reads back. The client is built where the wiring is built
-// and installed here, so every daemon path that drives sync hands around one
-// holder rather than build a client each.
+// through, and it carries the bound one attempt runs under. The client is built
+// where the wiring is and installed here, so every daemon path hands one holder
+// around rather than building a client each.
 
 import (
 	"errors"
@@ -30,8 +29,7 @@ var ErrAuthRefused = errors.New("sync: the remote refused this installation's to
 const DefaultTimeout = 20 * time.Second
 
 // Runner is the remote seam. It holds the log transport a pipe client provides,
-// so a transport method cannot be lost without the tree failing to build, and a
-// caller installs one because the wiring around it is installed unconditionally.
+// so a transport method cannot be lost without the tree failing to build.
 type Runner struct {
 	// Client is the transport the log is exchanged over. Nil means no client is
 	// open, and nothing reads it while it is.

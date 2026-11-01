@@ -15,46 +15,42 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// SecretKey is the name the derived sync key is stored under, in the local
-// secret table beside the token. The passphrase itself is never stored.
+// SecretKey is the name the derived sync key is stored under, in the local secret
+// table beside the token; the passphrase itself is never stored.
 const SecretKey = "sync.key"
 
-// KeyRemoteKDF is the local fact that the remote holds key material: 1 or 0.
-// It is what lets status say locked without reaching the network.
+// KeyRemoteKDF is the local fact that the remote holds key material, 1 or 0: what
+// lets status say locked without reaching the network.
 const KeyRemoteKDF = "sync.remote_kdf"
 
-// SyncRemoteEpoch is the local fact naming the newest epoch the remote holds,
-// written by every attempt that could read it and left as it was by one that
-// could not.
+// SyncRemoteEpoch is the local fact naming the newest epoch the remote holds, written
+// by every attempt that could read it and left by one that could not.
 const SyncRemoteEpoch = "sync.remote_epoch"
 
-// SyncVouchTarget is the machine-local kv fact naming the sequence up to which
-// this origin vouches for the tail it appended before learning of a rekey.
+// SyncVouchTarget is the machine-local kv fact naming the sequence up to which this
+// origin vouches for the tail appended before learning of a rekey.
 const SyncVouchTarget = "sync.vouch_target"
 
-// SyncKeyCheckMatch is the machine-local kv fact recording whether the held
-// newest key's check matches the remote's check at the same epoch: "1" or "0".
+// SyncKeyCheckMatch is the machine-local kv fact recording whether the held newest
+// key's check matches the remote's at the same epoch: "1" or "0".
 const SyncKeyCheckMatch = "sync.key_check_match"
 
-// ErrEpochReplaced is what a machine whose held newest key check differs from
-// the remote's check at the same epoch reports: another machine rekeyed to the
-// same epoch and overwrote this machine's key. It stops signing and exporting
-// and holds its import whole, and the fix is unlock with the winner's passphrase.
+// ErrEpochReplaced is what a machine whose held newest key check differs from the
+// remote's at the same epoch reports: another machine's rekey overwrote this key.
+// It stops signing and exporting and holds its import whole; unlock with the
+// winner's passphrase to fix.
 var ErrEpochReplaced = errors.New("sync: another machine's rekey replaced this one's key at the same epoch: run relevo db sync unlock with the passphrase that rekeyed the remote")
 
-// SecretKeyEpoch is the secret-table row naming the newest epoch this machine
-// holds. It sits in the secret table beside the key rather than in the kv facts
-// because a caller holding only the secret table -- a document opening an
-// arriving value -- reads the keyring through that surface alone.
+// SecretKeyEpoch is the secret-table row naming the newest held epoch, beside the
+// key not in kv: a secret-table-only caller -- a document opening an arriving value
+// -- reads the ring through that surface alone.
 const SecretKeyEpoch = "sync.key.epoch"
 
-// SecretKeyOldPrefix prefixes the secret-table row holding one older epoch's
-// key, named for the epoch it holds.
+// SecretKeyOldPrefix prefixes the secret-table row holding one older epoch's key.
 const SecretKeyOldPrefix = "sync.key.old."
 
-// ErrKDFParams marks a KDF string that is malformed or outside the bounds. The
-// remote chooses these numbers and is untrusted, so a huge memory cost is
-// refused rather than allocated.
+// ErrKDFParams marks a malformed or out-of-bounds KDF string; the remote chooses
+// these numbers and is untrusted, so a huge memory cost refuses rather than allocates.
 var ErrKDFParams = errors.New("sync: the remote's key derivation parameters are not acceptable")
 
 const (
@@ -67,22 +63,24 @@ const (
 	kdfMinThreads, kdfMaxThreads = 1, 8
 )
 
-// KDFParams are the argon2id cost parameters; MemoryKiB is in kibibytes.
+// KDFParams are the argon2id cost parameters, MemoryKiB in kibibytes.
 type KDFParams struct {
 	Time      uint32
 	MemoryKiB uint32
 	Threads   uint8
 }
 
-// DefaultKDF is what a new key is derived with.
+// DefaultKDF is what a new key derives with.
 var DefaultKDF = KDFParams{Time: 3, MemoryKiB: 65536, Threads: 4}
 
-// String formats the parameters as the remote stores them.
+// String formats the parameters as the remote stores them: the canonical shape
+// ParseKDF also enforces.
 func (p KDFParams) String() string {
 	return fmt.Sprintf("%s;t=%d;m=%d;p=%d", kdfName, p.Time, p.MemoryKiB, p.Threads)
 }
 
-// ParseKDF parses a stored KDF string and refuses anything outside the bounds.
+// ParseKDF parses a stored KDF string, refusing anything outside the bounds: the
+// remote is untrusted, so a huge cost refuses rather than allocates.
 func ParseKDF(s string) (KDFParams, error) {
 	var t, m, p int
 	parts := strings.Split(s, ";")
@@ -112,27 +110,27 @@ func ParseKDF(s string) (KDFParams, error) {
 	return params, nil
 }
 
-// DeriveKey stretches the passphrase into the 32-byte sync key.
+// DeriveKey stretches the passphrase into the 32-byte sync key under the given costs.
 func DeriveKey(passphrase, salt []byte, p KDFParams) []byte {
 	return argon2.IDKey(passphrase, salt, p.Time, p.MemoryKiB, p.Threads, kdfKeyLen)
 }
 
-// KeyCheck is the value the remote holds so another machine can tell a wrong
-// passphrase from a right one. Its label differs from the entry label so a
-// check can never double as an entry MAC.
+// KeyCheck is the value the remote holds distinguishing wrong from right
+// passphrases; its label differs from the entry label, never doubling as an entry MAC.
 func KeyCheck(key []byte) []byte {
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(keyCheckLabel))
 	return mac.Sum(nil)
 }
 
-// SetKey stores the derived key. The value is never formatted into an error.
+// SetKey stores the derived key as an epoch-1 ring, never formatting the value
+// into an error.
 func SetKey(l Local, key []byte, now time.Time) error {
 	return SetKeys(l, Keyring{Epoch: 1, Keys: map[int][]byte{1: key}}, now)
 }
 
-// Keyring is every epoch key this machine holds: the newest and the older ones
-// it unwrapped off the remote's chain. Keys[Epoch] is the newest.
+// Keyring is every epoch key held, newest and unwrapped older ones: Keys[Epoch] is
+// the newest.
 type Keyring struct {
 	// Epoch is the newest epoch in Keys.
 	Epoch int
@@ -140,10 +138,8 @@ type Keyring struct {
 	Keys map[int][]byte
 }
 
-// SetKeys stores the keyring: the newest key under its own name -- the name
-// every existing reader reads -- the epoch beside it, and one row per older
-// epoch. All of it lands in one transaction, so a machine is never half
-// unlocked across a crash.
+// SetKeys stores the keyring -- newest under its own name, epoch beside it, one row
+// per older epoch -- in one transaction, so no crash leaves a half-unlocked machine.
 func SetKeys(l Local, ring Keyring, now time.Time) error {
 	newest, err := ring.newest()
 	if err != nil {
@@ -165,9 +161,8 @@ func SetKeys(l Local, ring Keyring, now time.Time) error {
 	})
 }
 
-// newest is the key the ring's epoch names, refusing a ring that names no
-// epoch, holds none for it, or carries an epoch above its newest: an older row
-// above the newest is a ring no unlock could have produced.
+// newest is the key the ring's epoch names, refusing no epoch, none held, or any
+// above the newest: no unlock produces the last.
 func (r Keyring) newest() ([]byte, error) {
 	if r.Epoch < 1 {
 		return nil, fmt.Errorf("sync: the keyring names no epoch: %w", db.ErrInvalid)
@@ -184,8 +179,7 @@ func (r Keyring) newest() ([]byte, error) {
 	return newest, nil
 }
 
-// older is the epochs below the newest, ascending, so the rows are written in
-// one order every run writes the same way.
+// older is the epochs below the newest, ascending, written the same way every run.
 func (r Keyring) older() []int {
 	var out []int
 	for epoch := range r.Keys {
@@ -197,16 +191,14 @@ func (r Keyring) older() []int {
 	return out
 }
 
-// ReadKeyring returns the stored keyring; ok is false when this machine holds
-// no key at all.
+// ReadKeyring returns the stored keyring; ok is false when holding no key.
 func ReadKeyring(l Local) (Keyring, bool, error) {
 	return ReadKeyringFrom(l)
 }
 
-// ReadKeyringFrom is ReadKeyring over the secret-reader surface, so a caller
-// holding only the secret table reads the whole ring without a database handle.
-// The older rows are read from the epoch the machine names rather than from a
-// listing, because the surface is one row at a time by design.
+// ReadKeyringFrom is ReadKeyring over the secret-reader surface: a secret-table-only
+// caller reads the whole ring without a database handle, older rows by named epoch,
+// one row at a time by design.
 func ReadKeyringFrom(secrets SecretReader) (Keyring, bool, error) {
 	newest, ok, err := secrets.SecretGet(SecretKey)
 	if err != nil {
@@ -240,20 +232,19 @@ func ReadKeyringFrom(secrets SecretReader) (Keyring, bool, error) {
 	return ring, true, nil
 }
 
-// ReadKey returns the stored key; ok is false when this machine has none.
+// ReadKey returns the stored key; ok is false when none.
 func ReadKey(l Local) (key []byte, ok bool, err error) {
 	return ReadKeyFrom(l)
 }
 
 // SecretReader is the one row the key lives in, read without the rest of the
-// database: a caller holding only the secret table -- a document opening an
-// arriving value inside somebody else's transaction -- reads the key through
-// this rather than taking a whole database handle it would have to open one for.
+// database: a secret-table-only caller -- a document opening an arriving value --
+// reads through this rather than opening a whole handle.
 type SecretReader interface {
 	SecretGet(name string) ([]byte, bool, error)
 }
 
-// ReadKeyFrom is ReadKey over that surface.
+// ReadKeyFrom is ReadKey over the SecretReader surface.
 func ReadKeyFrom(secrets SecretReader) (key []byte, ok bool, err error) {
 	key, ok, err = secrets.SecretGet(SecretKey)
 	if err != nil {
@@ -262,10 +253,9 @@ func ReadKeyFrom(secrets SecretReader) (key []byte, ok bool, err error) {
 	return key, ok, nil
 }
 
-// SigningKey is the key entries are signed and verified with, or nil on a
-// locked machine. It is read per attempt, so an unlock while the daemon runs
-// takes effect on the next tick. A key that cannot be read is an error, never a
-// locked machine: running locked would import entries without checking them.
+// SigningKey is the key entries sign and verify with, or nil on a locked machine,
+// read per attempt so a running unlock takes effect next tick. An unreadable key is
+// an error, never locked: running locked would import entries unchecked.
 func SigningKey(kv db.KV) ([]byte, error) {
 	l, isDB := kv.(Local)
 	if !isDB || l == nil {
@@ -281,13 +271,11 @@ func SigningKey(kv db.KV) ([]byte, error) {
 	return key, nil
 }
 
-// DeleteKey removes the stored keyring and the facts about the remote's. An
-// absent key is a no-op.
+// DeleteKey removes the stored keyring and the remote's facts; absent is a no-op.
 func DeleteKey(l Local) error {
 	return l.Tx(func(t *db.Tx) error {
-		// The older rows are named for the epoch each one holds, so what to
-		// delete is read before anything goes: a machine whose epoch row is gone
-		// holds no older rows, because the ring is written as one unit.
+		// Older rows name their epoch, so the epoch reads before anything deletes: a
+		// missing epoch row holds no older rows, the ring writing as one unit.
 		epoch := 1
 		if value, ok, err := t.SecretGet(SecretKeyEpoch); err != nil {
 			return fmt.Errorf("sync: read %s: %w", SecretKeyEpoch, err)

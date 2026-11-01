@@ -16,23 +16,19 @@ import (
 	turso "turso.tech/database/tursogo"
 )
 
-// The log's own vocabulary. An entry is one of these two writes, and the remote
-// columns are named after them so what crosses the pipe is what the log stores.
+// The log's own vocabulary: the remote columns are named after these writes, so
+// what crosses the pipe is what the log stores.
 const (
 	opUpsert = "upsert"
 	opDelete = "delete"
 )
 
 // ReplicaDriver is the half of the replica only a sync engine can do: bootstrap
-// the local replica from the remote, push the replica's changes, apply the
-// remote's, and report the engine's own health. Everything else -- the log,
-// head and meta tables, sequence assignment, paging -- is SQL over the
-// connection Open hands back, so the replica's rules can be tested against a
-// plain file with no engine and no network.
-//
-// Open is the only way a replica file is ever reached: the backend holds no
-// path and opens nothing itself, which is what keeps every statement on the
-// connection the sync constructor owns.
+// the replica from the remote, push the replica's changes, apply the remote's,
+// and report the engine's own health. Everything else is SQL over the
+// connection Open hands back, so the replica's rules test against a plain file
+// with no engine and no network. Open is the only way a replica file is ever
+// reached: the backend holds no path and opens nothing itself.
 type ReplicaDriver interface {
 	// Open bootstraps the replica from the remote and returns the pool every
 	// statement runs through. It runs once, from hello.
@@ -41,11 +37,9 @@ type ReplicaDriver interface {
 	Push(ctx context.Context) error
 	// Pull applies the remote's changes to the replica.
 	Pull(ctx context.Context) error
-	// Stats is the engine's own health call, and it hands back the engine's own
-	// network counters with it. The transport's stats are the log's size, read in
-	// SQL; asking the engine first keeps a size from being reported for a replica
-	// nobody can reach, and the counters are what the byte totals are measured
-	// from.
+	// Stats is the engine's own health call, and the network counters come back
+	// with it: asking the engine first keeps a size from being reported for a
+	// replica nobody can reach.
 	Stats(ctx context.Context) (turso.TursoSyncDbStats, error)
 	// Checkpoint folds the replica's WAL into its database file. The engine
 	// never does this on its own for a sync replica.
@@ -59,30 +53,27 @@ type TursoBackend struct {
 	spec   Spec
 	db     *sql.DB
 	// page bounds one pull's read. It is a field so a test can lower it and pin
-	// that a page which cuts a batch still hands the batch back whole.
+	// that a cut batch still comes back whole.
 	page int
 	// bytes holds what the replica has moved over this worker's life, split by
-	// direction. They are cumulative and start at zero on a fresh backend rather
-	// than being read off the replica file: the file carries the engine's own
-	// counters from before this process existed, and those bytes were some
-	// earlier worker's to report.
+	// direction, cumulative from zero: the replica file carries the engine's own
+	// counters from before this process existed, which were an earlier worker's
+	// to report.
 	bytes Stats
-	// lastEngine is the engine's counters as of the last transfer this backend
-	// made, and haveLast says whether one was ever read. Each push and pull takes
-	// a reading before and after itself and adds the difference, so the totals
-	// count what this worker moved rather than what the replica has held since it
-	// was written. The flag is what stops a failed reading from being taken for a
-	// zero: an unreadable counter is not a counter that did not move.
+	// lastEngine is the engine's counters as of the last transfer, and haveLast
+	// says whether one was ever read. The flag stops a failed reading from being
+	// taken for a zero: an unreadable counter is not a counter that did not
+	// move.
 	lastEngine turso.TursoSyncDbStats
 	haveLast   bool
 	// warn is where a failed checkpoint is reported: the worker's stderr, which
-	// is the daemon's log. Nil reports nothing.
+	// is the daemon's log; nil reports nothing.
 	warn io.Writer
 }
 
-// The backend is what the worker serves the pipe with. Naming it here means a
-// verb the pipe speaks cannot lose its implementation without the tree failing
-// to build.
+// The backend is what the worker serves the pipe with: naming it here means a
+// verb the pipe speaks cannot lose its implementation without failing the
+// build.
 var _ Backend = (*TursoBackend)(nil)
 
 // NewTursoBackend returns the log behind the replica driver owns. The driver is
@@ -98,12 +89,11 @@ func NewTursoBackendForPath(replicaPath string) Backend {
 }
 
 // Open bootstraps the replica from the remote and makes sure the remote holds
-// the log's schema before anything reads or writes it.
+// the log's schema before anything else touches it.
 func (b *TursoBackend) Open(spec Spec) error {
 	ctx := context.Background()
-	// A second hello is a fresh handshake on a pipe that is already open; the
-	// first replica is released before the next is taken so no file is held
-	// twice.
+	// A second hello is a fresh handshake on an open pipe; the first replica is
+	// released before the next is taken so no file is held twice.
 	if b.db != nil {
 		_ = b.Close()
 	}
@@ -121,14 +111,12 @@ func (b *TursoBackend) Open(spec Spec) error {
 }
 
 // Append writes one batch of this origin's entries as a single replica
-// transaction and pushes it. The sequence numbers come from the replica's own
-// high-water mark, never from the request: a local file restored from a backup
-// arrives with entries it never wrote, and a request's numbering would start
-// over and reuse a number the log already holds.
-//
-// The push comes before the reply. The daemon clears the outbox rows an append
-// covered only once it has the numbered entries back, so an append answered
-// before the remote holds it would drop changes the log never received.
+// transaction and pushes it. Sequence numbers come from the replica's own
+// high-water mark, never from the request: a file restored from a backup
+// arrives with entries it never wrote, and a request's numbering could reuse a
+// number the log already holds. The push comes before the reply: the daemon
+// clears the outbox only once it has the numbered entries back, and a reply
+// sent before the push would let it drop changes the log never received.
 func (b *TursoBackend) Append(entries []Entry) ([]Entry, error) {
 	return b.AppendSigned(entries, Boundary{})
 }
@@ -159,7 +147,7 @@ func (b *TursoBackend) AppendSigned(entries []Entry, boundary Boundary) ([]Entry
 }
 
 // writeBatch numbers one batch and writes its log rows and head updates in one
-// transaction, so a reader sees the whole batch or none of it.
+// transaction: a reader sees the whole batch or none of it.
 func (b *TursoBackend) writeBatch(ctx context.Context, entries []Entry, boundary Boundary) ([]Entry, error) {
 	tx, err := b.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -176,8 +164,8 @@ func (b *TursoBackend) writeBatch(ctx context.Context, entries []Entry, boundary
 	for i, e := range entries {
 		e.Origin = b.spec.Origin
 		e.Seq = next + i
-		// Every entry of one request carries the first sequence of that request
-		// so a reader can tell where the batch ends and apply it whole.
+		// Every entry carries the request's first sequence, so a reader can tell
+		// where the batch ends and apply it whole.
 		e.Batch = next
 		if err := insertEntry(ctx, tx, e); err != nil {
 			return nil, err
@@ -196,11 +184,10 @@ func (b *TursoBackend) writeBatch(ctx context.Context, entries []Entry, boundary
 	return written, nil
 }
 
-// insertEntry writes one entry's log row. A delete carries no body, so it is
-// stored as NULL rather than as an empty string that would read as a body. An
-// unsigned entry's MAC goes in the same way: NULL is what says "this entry was
-// written before this machine had a key", and it is not the same answer as a
-// MAC that failed to verify.
+// insertEntry writes one entry's log row. A delete carries no body, so it
+// stores NULL rather than an empty string that would read as a body; an
+// unsigned entry's MAC stores NULL the same way, which is not a MAC that failed
+// to verify.
 func insertEntry(ctx context.Context, tx *sql.Tx, e Entry) error {
 	var body any
 	if e.Op == opUpsert {
@@ -228,9 +215,9 @@ func insertEntry(ctx context.Context, tx *sql.Tx, e Entry) error {
 	return nil
 }
 
-// updateHead moves the row's latest state. An upsert replaces the row's state
-// with this entry's hash; a delete drops it, because a row the origin removed
-// is not one reconcile should keep proposing.
+// updateHead moves the row's latest state: an upsert replaces it with this
+// entry's hash, and a delete drops it, because a removed row is not one
+// reconcile should keep proposing.
 func updateHead(ctx context.Context, tx *sql.Tx, e Entry) error {
 	if e.Op == opDelete {
 		if _, err := tx.ExecContext(ctx,
@@ -244,10 +231,10 @@ func updateHead(ctx context.Context, tx *sql.Tx, e Entry) error {
 		return fmt.Errorf("syncworker: hash %s %s: %w", e.Tbl, e.PK, err)
 	}
 	// An update, then an insert when it moved nothing, rather than one upsert:
-	// on a sync connection the engine can refuse an upsert that lands on an
-	// existing head row as a corrupt record, while a plain update of the same
-	// row goes through. The worker is the replica's only writer, so the two
-	// statements in one transaction cannot race another insert of the row.
+	// on a sync connection the engine can refuse an upsert landing on an
+	// existing head row as a corrupt record. The worker is the replica's only
+	// writer, so the two statements in one transaction cannot race another
+	// insert of the row.
 	res, err := tx.ExecContext(ctx,
 		"UPDATE head SET seq = ?, hash = ? WHERE origin = ? AND tbl = ? AND pk = ?",
 		e.Seq, hash, e.Origin, e.Tbl, e.PK)
@@ -270,11 +257,10 @@ func updateHead(ctx context.Context, tx *sql.Tx, e Entry) error {
 }
 
 // Pull applies the remote's changes to the replica, then returns one page per
-// origin of every other origin's entries past the mark given for it. The importer
-// calls Pull once per run, so a backlog larger than a page drains one page per
-// sync tick. A batch that begins at or before a mark is skipped whole: the
-// importer applies whole batches, and half of one would apply an order the
-// exporter never wrote.
+// origin of every other origin's entries past the mark given for it. A backlog
+// larger than a page drains one page per sync tick, and a batch beginning at or
+// before a mark is skipped whole: half of one would apply an order the exporter
+// never wrote.
 func (b *TursoBackend) Pull(marks map[string]int) ([]Entry, error) {
 	if err := b.ready(); err != nil {
 		return nil, err
@@ -290,10 +276,9 @@ func (b *TursoBackend) Pull(marks map[string]int) ([]Entry, error) {
 	return entries, nil
 }
 
-// scanEntry reads one log row back into the entry the pipe carries. The MAC is
-// read as raw bytes rather than as text: it is a digest, and the column is a
-// BLOB, so any decoding of it on the way in would have to be undone on the way
-// out for the two to agree.
+// scanEntry reads one log row back into the entry the pipe carries. The MAC
+// reads as raw bytes rather than text: decoding it on the way in would have to
+// be undone on the way out for the two to agree.
 func scanEntry(rows *sql.Rows) (Entry, error) {
 	var (
 		e           Entry
@@ -328,8 +313,8 @@ func scanEntry(rows *sql.Rows) (Entry, error) {
 }
 
 // Head returns one page of an origin's latest state per row, in ascending
-// sequence order so a caller can resume from the sequence it last saw. An empty
-// cursor starts at the beginning and a limit of zero means the whole rest.
+// sequence order. An empty cursor starts at the beginning and a limit of zero
+// means the whole rest.
 func (b *TursoBackend) Head(origin, after string, limit int) ([]HeadRow, error) {
 	if err := b.ready(); err != nil {
 		return nil, err
@@ -371,8 +356,7 @@ func (b *TursoBackend) Head(origin, after string, limit int) ([]HeadRow, error) 
 	return out, nil
 }
 
-// Stats reports what the log holds: how many entries, how many origins wrote
-// them, and the highest sequence in it.
+// Stats reports what the log holds: entries, origins, and the highest sequence.
 func (b *TursoBackend) Stats() (Stats, error) {
 	if err := b.ready(); err != nil {
 		return Stats{}, err
@@ -387,17 +371,15 @@ func (b *TursoBackend) Stats() (Stats, error) {
 		Scan(&s.Entries, &s.Origins, &s.Seq); err != nil {
 		return Stats{}, fmt.Errorf("syncworker: read the log's size: %w", err)
 	}
-	// The byte counters ride along with the log's size. They are what this
-	// worker moved rather than what the engine has moved, so they are read from
-	// the accumulated totals and never seeded from the engine's own running
-	// counters.
+	// The byte counters ride along with the log's size, read from this worker's
+	// accumulated totals rather than the engine's own running counters.
 	s.TursoSent, s.TursoReceived = b.bytes.TursoSent, b.bytes.TursoReceived
 	return s, nil
 }
 
 // Close releases the replica's connections. The driver's own handle is dropped
-// rather than closed -- the bindings expose no close -- and the worker process
-// ends right after, which is what releases the file it still holds.
+// rather than closed, because the bindings expose no close, and the worker
+// process ending right after is what releases the file it still holds.
 func (b *TursoBackend) Close() error {
 	if b.db == nil {
 		return nil
@@ -410,10 +392,9 @@ func (b *TursoBackend) Close() error {
 	return nil
 }
 
-// ready reports whether hello has opened the replica. A verb the pipe serves
-// only after the handshake still refuses rather than panics on a nil handle:
-// the worker's dispatch orders the verbs, and this is the second gate that does
-// not rest on the first.
+// ready reports whether hello has opened the replica. A verb served only after
+// the handshake refuses rather than panics on a nil handle: this second gate
+// does not rest on the dispatch ordering.
 func (b *TursoBackend) ready() error {
 	if b.db == nil {
 		return fmt.Errorf("syncworker: no replica: %w", ErrNoHello)
@@ -421,11 +402,11 @@ func (b *TursoBackend) ready() error {
 	return nil
 }
 
-// The shape the engine's own refusal takes: the call failed to execute SQL, and
-// -- when this machine's table is the one missing -- which table it was. The
-// worker matches the shape itself rather than sharing internal/sync's
-// classifier, because the class is a word this package owns and the worker may
-// not reach that package's database.
+// The shape the engine's own refusal takes: the call failed to execute SQL,
+// and -- when this machine's table is the one missing -- which table it was.
+// The worker matches the shape itself rather than sharing internal/sync's
+// classifier (remoterefusal.go), because it may not reach that package's
+// database. The two must agree.
 const (
 	remoteRefusalMarker = "failed to execute sql"
 	remoteMissingTable  = "no such table"
@@ -434,7 +415,7 @@ const (
 // markDriverRefusal returns err marked with the class of remote refusal it is,
 // and every other error unchanged. A missing table is its own class because its
 // fix is the schema; any other refused statement repeats until the change set
-// changes, and both meet the same remote on every later attempt.
+// changes.
 func markDriverRefusal(err error) error {
 	if !strings.Contains(err.Error(), remoteRefusalMarker) {
 		return err
@@ -446,11 +427,10 @@ func markDriverRefusal(err error) error {
 }
 
 // bodyHash is the digest head carries for a row: the sha256 of the body's
-// canonical encoding. The daemon encodes every body once, with its columns
-// sorted, and the wire carries exactly those bytes, so re-marshalling the
-// object reproduces synclog.BodyHash without this package importing it -- an
-// import that would drag internal/db into the worker and break the boundary the
-// worker exists to keep. A test pins the two digests equal.
+// canonical encoding. The daemon encodes every body once with sorted columns
+// and the wire carries exactly those bytes, so re-marshalling reproduces
+// synclog.BodyHash without importing internal/db across the worker's boundary.
+// A test pins the two digests equal.
 func bodyHash(body json.RawMessage) (string, error) {
 	var columns map[string]json.RawMessage
 	if err := json.Unmarshal(body, &columns); err != nil {

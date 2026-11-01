@@ -17,20 +17,19 @@ import (
 // command line, so the daemon learns what its own child speaks before it sends
 // anything it would otherwise have to take back.
 //
-// Version 2 added the blob verbs and the R2 settings hello carries. Version 3
-// added key_rekey, which writes the key's new epoch beside it; a daemon on an
-// older version and a worker on this one refuse each other here rather than
-// discovering the difference at the first key_rekey, which would be after one
-// side had already answered from material the other cannot read.
+// Version 2 carries the blob verbs and the R2 settings hello names. Version 3
+// carries key_rekey, which writes the key's new epoch beside it; a daemon on
+// an older version and a worker on this one refuse each other here rather than
+// at the first key_rekey, which would be after one side had answered from
+// material the other cannot read.
 //
-// Version 4 adds AfterOrigin and AfterSeq on Entry, ClaimIdentity, and the
+// Version 4 carries AfterOrigin and AfterSeq on Entry, ClaimIdentity, and the
 // ctl:takeover entry kind.
 const ProtocolVersion = 4
 
-// The refusals the worker answers with rather than dying over. A request that
-// breaks one of them has a well-formed frame around it, so the reply can carry
-// the reason and the pipe stays usable; only a frame the worker cannot read at
-// all ends the loop.
+// The refusals the worker answers with rather than dying over: a request that
+// breaks one has a well-formed frame, so the reply carries the reason and the
+// pipe stays usable. Only a frame the worker cannot read at all ends the loop.
 var (
 	// ErrProtocol is a line that is not a request this pipe speaks, including a
 	// request with no id: with no id there is nothing to answer, so the worker
@@ -53,8 +52,8 @@ var (
 type Verb string
 
 const (
-	// VerbHello opens the pipe: it carries the version, this installation's
-	// origin and the credentials the worker owns for the rest of its life.
+	// VerbHello opens the pipe, carrying the version, this installation's origin
+	// and the credentials the worker owns for life.
 	VerbHello Verb = "hello"
 	// VerbExport appends one batch of this origin's entries as one write.
 	VerbExport Verb = "export"
@@ -78,23 +77,19 @@ const (
 	// sequences, for a reader whose mark is below the origin's floor.
 	VerbPullRange Verb = "pull_range"
 	// VerbCompact drops this worker's own superseded entries up to a floor and
-	// records the floor, in one write.
+	// records the floor.
 	VerbCompact Verb = "compact"
-	// VerbKeyMeta reads the passphrase material the remote holds: the KDF
-	// parameters and the check value derived from the key.
+	// VerbKeyMeta reads the passphrase material the remote holds.
 	VerbKeyMeta Verb = "key_meta"
 	// VerbKeyInit writes that material if the remote holds none, and answers
 	// with whatever it holds afterwards.
 	VerbKeyInit Verb = "key_init"
-	// VerbKeyRekey rotates the log's key to a new epoch: the new material, the
-	// key it replaced sealed for the machines still holding it, and every
-	// origin's cut, all in one transaction that refuses a remote whose epoch
-	// or whose heads moved under the caller.
+	// VerbKeyRekey rotates the log's key to a new epoch -- new material, sealed
+	// key it replaced, and every origin's cut -- in one transaction that refuses
+	// a moved epoch or moved heads.
 	VerbKeyRekey Verb = "key_rekey"
 	// VerbKeyCut extends this worker's own origin's cut, forward only and
-	// within the log. It is how a machine that unlocked with the new
-	// passphrase -- or whose own head has grown past the cut it holds --
-	// vouches for the tail it appended before it learned of the rekey.
+	// within the log, vouching for the tail appended before the rekey.
 	VerbKeyCut Verb = "key_cut"
 	// VerbClaim records, and reads back, the claim a machine adopting an
 	// identity holds on it. A request with no claim token only reads.
@@ -105,11 +100,11 @@ const (
 
 // KeyMeta is the passphrase material a remote holds, as the pipe carries it.
 //
-// It travels as base64 like the MAC, because encoding/json gives a byte slice
-// that and because the remote stores these in text meta rows. The salt and the
-// check are not secret -- the remote holds them so a second machine can derive
-// and compare the same key -- and they are still treated as untrusted: every
-// value here came from a remote this machine does not control.
+// Salt and check travel as base64: encoding/json encodes a byte slice that way,
+// and the remote also stores them base64 in text meta rows. They are not secret
+// -- the remote holds them so a second machine can derive and compare the same
+// key -- but every value here is untrusted: it came from a remote this machine
+// does not control.
 type KeyMeta struct {
 	// Salt is the KDF salt, empty on a remote that has never been given one.
 	Salt []byte `json:"salt,omitempty"`
@@ -121,9 +116,9 @@ type KeyMeta struct {
 	// rather than being read from the salt, because a remote can hold a check
 	// without a salt and the two absences mean different things to a caller.
 	Present bool `json:"present,omitempty"`
-	// Epoch is the epoch this material's key is. A remote that holds no
-	// key_epoch row is at epoch 1, and the worker hands every reader that 1
-	// rather than a zero each caller would have to default itself.
+	// Epoch is the epoch this material's key is. A remote with no key_epoch row
+	// is at epoch 1, which the worker hands out rather than a zero every caller
+	// would default itself.
 	Epoch int `json:"epoch,omitempty"`
 	// Wrapped is the older epochs' keys the remote holds sealed, keyed by the
 	// epoch each one is. It is nil on a remote that holds none, which is every
@@ -155,17 +150,15 @@ type R2Config struct {
 	Bucket string `json:"bucket"`
 	// KeyID is the access key that signs every request.
 	KeyID string `json:"key_id"`
-	// Secret is that key's secret. It is never formatted into an error, and the
-	// status surface reports whether it is present rather than what it holds.
+	// Secret is that key's secret, never formatted into an error: the status
+	// surface reports whether it is present rather than what it holds.
 	Secret string `json:"secret"`
 }
 
-// Request is one line of the pipe, from the daemon to the worker.
-//
-// Every field is optional in the JSON because a verb reads only what it needs,
-// and omitempty keeps a request's line down to what it carries: a token over a
-// pipe is read out of the first line, and a longer one only widens what
-// another process on this machine could read.
+// Request is one line of the pipe, from the daemon to the worker. Every field
+// is optional because a verb reads only what it needs, and omitempty keeps the
+// line short: a token over a pipe is read out of the first line, and a longer
+// one only widens what another process on this machine could read.
 type Request struct {
 	// ID matches the reply, and is how one reply is told from another's.
 	ID string `json:"id"`
@@ -181,12 +174,12 @@ type Request struct {
 	Token string `json:"token,omitempty"`
 	URL   string `json:"url,omitempty"`
 	// R2 is the bucket configuration, on hello alone. It is optional because a
-	// machine may sync rows with no bucket configured, and the blob verbs are
-	// then refused with a message that says so rather than failing on a nil.
+	// machine may sync rows with no bucket; the blob verbs are then refused
+	// rather than failing on a nil.
 	R2 *R2Config `json:"r2,omitempty"`
 	// Key names the object a blob verb addresses, as "<origin>/<sha256>". It is
-	// never a path into the bucket: the store builds the URL from it and both
-	// halves are checked, so a key cannot reach outside its own origin's prefix.
+	// never a path into the bucket: both halves are checked, so a key cannot
+	// reach outside its own origin's prefix.
 	Key string `json:"key,omitempty"`
 	// Staging is the absolute local path the body is read from or written to.
 	// Bodies never cross the pipe, so this is the only thing either blob verb
@@ -201,21 +194,14 @@ type Request struct {
 	// answers with what follows it and with no mark answered from the start.
 	Marks map[string]int `json:"marks,omitempty"`
 	// Publish is what a publish_marks carries: each origin this reader has
-	// applied to the sequence named. It is its own field rather than the Marks
-	// above because the two shapes are a list and a map, and one frame field
-	// cannot be both.
-	//
-	// A mark's reader is not among them. It is this worker's own origin from
-	// hello, so a caller on this machine cannot write another reader's rows --
-	// a mark is what a compaction floor is computed from, and choosing one for
-	// somebody else is choosing what the log may drop.
+	// applied to the sequence named, in a list the Marks map cannot share a
+	// field with. The reader is the worker's own origin from hello, so no caller
+	// writes another reader's rows: a mark feeds the compaction floor.
 	Publish []Mark `json:"publish,omitempty"`
-	// At is when this reader reached the marks being published, rather than a
-	// time the worker takes for itself: a mark's age decides whether its reader
-	// still counts towards a floor, and only the publisher knows when it was
-	// really at that sequence. It is a pointer so a request that carries no
-	// time at all sends no field, rather than one every verb would have to know
-	// to ignore.
+	// At is when this reader reached the marks being published: a mark's age
+	// decides whether its reader still counts towards a floor, and only the
+	// publisher knows when it was really at that sequence. It is a pointer so
+	// a request with no time sends no field.
 	At *time.Time `json:"at,omitempty"`
 	// After and Limit page a head read. An empty after starts at the beginning
 	// and a limit of zero means the whole rest, which is what a caller that
@@ -228,8 +214,7 @@ type Request struct {
 	Upto     int `json:"upto,omitempty"`
 	Floor    int `json:"floor,omitempty"`
 	// KeyMeta is the passphrase material a key_init writes. A key_meta carries
-	// none: it asks what the remote holds rather than naming what it should.
-	// A key_rekey names the material the remote is to hold afterwards.
+	// none, and a key_rekey names the material the remote is to hold afterwards.
 	KeyMeta *KeyMeta `json:"key_meta,omitempty"`
 	// Epoch is the epoch the caller read the remote at, on a key_rekey alone:
 	// the rekey is a compare-and-set against it, so a remote whose epoch moved
@@ -239,10 +224,9 @@ type Request struct {
 	// caller observed. The worker re-predicts them from the log inside its own
 	// transaction and refuses a caller whose observation is stale.
 	Cuts map[string]EpochCut `json:"cuts,omitempty"`
-	// Cut is the one cut a key_cut extends this worker's own origin to, named
-	// by the caller and tagged under the key the caller vouches with. The
-	// origin is the worker's from hello and the head is the log's own, so a
-	// caller cannot vouch for history the log does not hold.
+	// Cut is the one cut a key_cut extends this worker's origin to, tagged under
+	// the key it vouches with. The origin is the worker's from hello and the head
+	// is the log's, so no caller vouches for history the log lacks.
 	Cut *EpochCut `json:"cut,omitempty"`
 	// BoundarySeq and BoundaryTag are the first signed sequence an export
 	// predicts for its origin and the tag that binds it to the key. The worker
@@ -265,30 +249,26 @@ type Response struct {
 	OK bool `json:"ok"`
 	// Error is the refusal's own words, and empty on success.
 	Error string `json:"error,omitempty"`
-	// Code is the class of a refusal the worker answered with, and empty on
-	// success and on a refusal a later attempt can still get past. The daemon
-	// reads the class rather than the reason's words, so a remote's own text
-	// never decides how a refusal is classified.
+	// Code is the refusal's class, empty on success and on a refusal a retry can
+	// still get past. The daemon reads the class, so a remote's own text never
+	// decides how a refusal is classified.
 	Code RefusalCode `json:"code,omitempty"`
-	// Entries is what an export numbered, a pull read, or a head read and did
-	// not fit the fields below.
+	// Entries is what an export numbered, a pull read, or a pull_range read.
 	Entries []Entry `json:"entries,omitempty"`
 	// Head is a page of an origin's latest state per row.
 	Head []HeadRow `json:"head,omitempty"`
-	// Bytes is what one blob verb moved, in each direction. It is the exact
-	// length rather than an estimate, because the daemon adds it to what the
-	// month has cost and an estimate compounds across every call.
+	// Bytes is what one blob verb moved, in each direction, exact rather than
+	// estimated: the daemon adds it to the month's cost, and an estimate would
+	// compound across every call.
 	Bytes int64 `json:"bytes,omitempty"`
 	// Skipped says a put_blob found the object already in the store and sent
-	// nothing. A caller that uploaded a body another machine had already put
-	// reads the skip as the object it wanted being there, not as a failure.
+	// nothing: the wanted object is there, so the entry may be appended.
 	Skipped bool `json:"skipped,omitempty"`
 	// Stats is what the log holds, on stats alone.
 	Stats *Stats `json:"stats,omitempty"`
-	// Marks is what a read_marks answered with. It is one object rather than
-	// four fields at the top of the reply because one of its names is entries,
-	// which an export and a pull already answer under, and a reply may not say
-	// two different things under one name.
+	// Marks is what a read_marks answered with: one object rather than four
+	// top-level fields, because one of its names is entries, which an export and
+	// a pull already answer under.
 	Marks *MarkState `json:"marks,omitempty"`
 	// Dropped and Floor are what a compact answers with: the entries it removed
 	// and the floor the log now records, which is never below the one before.
@@ -305,10 +285,9 @@ type Response struct {
 	Traffic map[string]TrafficRow `json:"traffic,omitempty"`
 }
 
-// RefusalCode is the class of a refusal the worker answered with. It is the
-// worker's own vocabulary: the daemon maps each class to a sentinel of its own,
-// so a refusal crosses the pipe as a word this package chose rather than as
-// anything the remote said.
+// RefusalCode is the class of a refusal the worker answered with: the worker's
+// own word for it, so the daemon maps each class to a sentinel without reading
+// the remote's text.
 type RefusalCode string
 
 const (
@@ -320,26 +299,23 @@ const (
 	// its own class because its fix is the schema rather than a re-recorded
 	// row.
 	CodeSchema RefusalCode = "schema"
-	// CodeBlobMissing is a body the store does not hold. It is a refusal that
-	// repeats, so it needs a class of its own: the daemon latches the origin and
-	// names the round, where a bucket that could not be reached is retried.
+	// CodeBlobMissing is a body the store does not hold. It repeats, so it has
+	// its own class: the daemon latches the origin and names the round.
 	CodeBlobMissing RefusalCode = "blob_missing"
 	// CodeQuota is a remote refusing writes because the plan's quota is reached.
 	// It repeats until the billing month turns, so the daemon latches on it.
 	CodeQuota RefusalCode = "quota"
 	// CodeBlobRefused is a body the worker will not publish under the key it was
-	// given, because the staged file's digest is not the key's. The store is
-	// fine and the remote is fine; what crossed the pipe is not, and repeating
-	// the call unchanged would publish the same wrong body.
+	// given: the staged file's digest is not the key's. Repeating the call
+	// unchanged would publish the same wrong body.
 	CodeBlobRefused RefusalCode = "blob_refused"
 	// CodeBoundary is a signed batch the worker refused because its boundary was
 	// not the one predicted. Nothing was written and the next attempt predicts
 	// again.
 	CodeBoundary RefusalCode = "boundary"
 	// CodeEpochRace is a key_rekey the worker refused because the remote's epoch
-	// is not the one the caller read: another machine rekeyed first. Nothing was
-	// written, and no retry with the same material can get past it -- the
-	// caller's key is an old one now.
+	// moved under the caller: another machine rekeyed first. Nothing was written,
+	// and no retry with the same material can get past it.
 	CodeEpochRace RefusalCode = "epoch_race"
 )
 
@@ -353,8 +329,8 @@ type RefusalError interface {
 }
 
 // MarkRefusal returns err marked with the class of refusal it is. An empty
-// class leaves the error alone, and an unmarked refusal is one the daemon reads
-// as a fault a later attempt can still get past.
+// class leaves the error alone; an unmarked refusal reads as a fault a retry
+// can still get past.
 func MarkRefusal(code RefusalCode, err error) error {
 	if code == "" {
 		return err
@@ -386,8 +362,7 @@ func (m *markedRefusal) Unwrap() error { return m.err }
 func (m *markedRefusal) RefusalCode() RefusalCode { return m.code }
 
 // Entry is one log entry as it travels the pipe. Its JSON names are the remote
-// table's own columns, so what crosses the pipe is what the log stores and a
-// worker reading it needs no second vocabulary.
+// table's own columns, so what crosses the pipe is what the log stores.
 type Entry struct {
 	// Origin is the installation that owns the row. The transport hands out Seq
 	// and Batch, never the writer, so a local file restored from a backup can
@@ -423,9 +398,8 @@ type Entry struct {
 }
 
 // HeadRow is one row of an origin's head: the latest state of a single shared
-// row, as the log holds it. This is the state reconcile compares a local row
-// against, so a row missing here is one the origin has not written and a row
-// here with another hash is one whose contents changed.
+// row, as the log holds it. Reconcile compares a local row against it, so a
+// row missing here is one the origin has not written.
 type HeadRow struct {
 	// Tbl is the shared table the row is in.
 	Tbl string `json:"tbl"`
@@ -449,26 +423,21 @@ type Stats struct {
 	Seq int `json:"seq"`
 	// TursoSent and TursoReceived are the network bytes the replica has pushed
 	// and pulled over this worker's life, from the deltas of the engine's own
-	// counters. They are cumulative for this worker and start at zero, because a
-	// process that has just started has moved nothing whatever the replica file
-	// was written by before.
+	// counters. They start at zero: a fresh process moved nothing, whatever the
+	// replica file carried from before.
 	TursoSent     int64 `json:"turso_sent"`
 	TursoReceived int64 `json:"turso_received"`
 	// R2Put and R2Get are the body bytes sent to and received from the bucket
-	// over this worker's life, counted from object sizes rather than estimated.
-	// An upload that found the object already present adds nothing: it moved no
-	// bytes, and counting it would bill the month for a body nobody sent.
+	// over this worker's life, counted from object sizes. An upload finding the
+	// object present adds nothing: it moved no bytes.
 	R2Put int64 `json:"r2_put"`
 	R2Get int64 `json:"r2_get"`
 }
 
-// Mark is one origin's published position, as a publish_marks carries it: a
-// sequence and where it is, and nothing else.
-//
-// There is no reader and no time among them. The reader is the worker's own
-// origin from hello, so a caller cannot name a machine that is not this one;
-// the time is the request's own, one value for the whole publish rather than
-// one per origin that could disagree with each other.
+// Mark is one origin's published position, as a publish_marks carries it.
+// There is no reader and no time among them: the reader is the worker's own
+// origin from hello, and the time is the request's own, one value for the
+// whole publish.
 type Mark struct {
 	// Origin is the log the position is in, which is never this reader's own.
 	Origin string `json:"origin"`
@@ -476,10 +445,9 @@ type Mark struct {
 	Seq int `json:"seq"`
 }
 
-// PublishedMark is a mark as a read_marks hands it back, with the reader and the
-// time the publish did not carry. It is a separate shape from Mark because a
-// reply names who a mark belongs to and when it was taken, and a request that
-// could do the same would be letting the publisher choose both.
+// PublishedMark is a mark as a read_marks hands it back, with the reader and
+// the time. A request cannot name those: letting the publisher choose both
+// would let it vouch for another reader.
 type PublishedMark struct {
 	// Reader is the installation the mark belongs to.
 	Reader string `json:"reader"`
@@ -493,17 +461,13 @@ type PublishedMark struct {
 }
 
 // MarkState is what a read of the marks answers with: every published mark, the
-// floors the remote has recorded, and each origin's head and entry count.
-//
-// It is its own object on the wire rather than four fields beside the rest of
-// the reply because one of its names is entries, which an export and a pull
-// already answer under. A reply may not say two different things under one
-// name, so the three counts are read from here rather than from the top.
+// floors the remote has recorded, and each origin's head and entry count. It is
+// its own object on the wire because one of its names is entries, which an
+// export and a pull already answer under, and a reply may not say two different
+// things under one name.
 //
 // The maps are nil rather than empty when there is nothing to report, so an
-// absent floor and a floor of zero stay apart -- a remote that has compacted
-// nothing and one whose floor is at the start of a log mean different things to
-// the caller that reads them.
+// absent floor and a floor of zero stay apart.
 type MarkState struct {
 	// Marks are the published positions, one row per reader per origin.
 	Marks []PublishedMark `json:"marks,omitempty"`
@@ -529,9 +493,8 @@ type MarkState struct {
 	EpochCuts map[string]EpochCut `json:"epoch_cuts,omitempty"`
 }
 
-// readRequest reads one request line. A clean end of the pipe is io.EOF, which
-// the caller turns into an ordinary exit; a line that is present but is not a
-// request this pipe speaks is ErrProtocol.
+// readRequest reads one request line. A clean end of the pipe is io.EOF; a
+// line that is not a request this pipe speaks is ErrProtocol.
 func readRequest(r *bufio.Reader) (Request, error) {
 	line, err := r.ReadBytes('\n')
 	if len(line) == 0 && err != nil {
@@ -555,9 +518,8 @@ func readRequest(r *bufio.Reader) (Request, error) {
 	return req, nil
 }
 
-// trimNewline drops the line's own terminator. The last line of a pipe that
-// closes without one is still a line, so the terminator is removed whether or
-// not it was there.
+// trimNewline drops the line's terminator, whether or not one is there: the
+// last line of a closing pipe is still a line.
 func trimNewline(line []byte) []byte {
 	for len(line) > 0 && (line[len(line)-1] == '\n' || line[len(line)-1] == '\r') {
 		line = line[:len(line)-1]
@@ -565,10 +527,9 @@ func trimNewline(line []byte) []byte {
 	return line
 }
 
-// writeResponse writes one reply line and flushes it. The flush is the whole
-// point of the function: the daemon waits for this reply before it decides
-// whether a call was made, so a reply still sitting in a buffer is a call that
-// never came back.
+// writeResponse writes one reply line and flushes it. The flush is the point:
+// the daemon waits for this reply, so a reply still in a buffer is a call
+// that never came back.
 func writeResponse(w *bufio.Writer, resp Response) error {
 	line, err := json.Marshal(resp)
 	if err != nil {

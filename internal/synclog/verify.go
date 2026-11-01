@@ -9,27 +9,25 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// signatureError carries the sentence a refusal reads as. It names the origin
-// and seq and never key material.
+// signatureError is a refusal sentence naming origin and seq, never key material.
 type signatureError struct{ msg string }
 
 func (e *signatureError) Error() string { return e.msg }
 
 func (e *signatureError) Unwrap() error { return ErrBadSignature }
 
-// holdsOrigin reports whether err holds only its own origin for the run: a body
-// that could not be fetched, or a signature that was refused.
+// holdsOrigin reports whether err holds only its origin: an unfetchable body or
+// a refused signature.
 func holdsOrigin(err error) bool {
 	var stalled *stallError
 	var refused *signatureError
 	return errors.As(err, &stalled) || errors.As(err, &refused)
 }
 
-// loadSigned computes, per origin, the sequence from which entries must be
-// signed: the lowest of this machine's own record and every remote boundary
-// that verifies under its key. A boundary that does not verify holds its origin
-// for the run, and one that does is recorded locally at once, so deleting the
-// remote row afterwards changes nothing.
+// loadSigned computes per origin the sequence entries must be signed from: the
+// lowest of the local record and every verifying remote boundary. A verifying
+// boundary is recorded at once, so deleting the remote row afterwards changes
+// nothing; a failing one holds its origin.
 func (i *Importer) loadSigned(state MarkState) error {
 	if len(i.key) == 0 {
 		return nil
@@ -48,10 +46,8 @@ func (i *Importer) loadSigned(state MarkState) error {
 		if origin == i.db.Origin() {
 			continue
 		}
-		// The boundary was tagged under the key its origin signed with, which
-		// can be an older epoch's than the newest this machine holds -- the
-		// remote's history is old-key material the moment it rekeyed. It
-		// verifies by trial like any other signed row.
+		// The boundary was tagged under its origin's signing key, possibly an older
+		// epoch's, so it verifies by trial like any signed row.
 		if seq < 1 || !i.anyKeyVerifies(func(key []byte) bool {
 			return VerifyBoundary(key, origin, seq, state.SignedTags[origin])
 		}) {
@@ -70,16 +66,11 @@ func (i *Importer) loadSigned(state MarkState) error {
 	return i.loadCuts(state)
 }
 
-// loadCuts computes, per origin, the highest cut this machine acts on: the
-// highest of its own record and every remote cut whose tag verifies under the
-// cut's epoch key. A remote cut is acted on only when it names the reader's
-// newest held epoch -- a row at a retired epoch, whatever its key verifies,
-// is never recorded and holds its origin for the run, so the default fence of
-// the reader's newest key stands and a leaked old key cannot re-bless history
-// the reader has never verified. A cut that does not verify holds its origin
-// for the run, and one that does is recorded locally at once and never
-// regresses, so deleting, lowering or replaying the remote row afterwards
-// changes nothing.
+// loadCuts computes per origin the highest acted-on cut: the highest of the local
+// record and every remote cut verifying under the cut's epoch key. Only the newest
+// held epoch is acted on, so a leaked old key cannot re-bless history; a verifying
+// cut is recorded at once and never regresses. A cut that does not verify, or one
+// naming a retired epoch, holds its origin for the run.
 func (i *Importer) loadCuts(state MarkState) error {
 	if len(i.ring) == 0 {
 		return nil
@@ -117,8 +108,9 @@ func (i *Importer) loadCuts(state MarkState) error {
 	return nil
 }
 
-// requiresSigned reports whether an entry must carry a valid signature under rule 6:
-// rules 3 and 5, any After-bearing entry, or any ctl: entry.
+// requiresSigned reports whether an entry must carry a signature: a binding or
+// binding_record upsert naming a writer other than its origin, any After-bearing
+// entry, or any ctl: entry.
 func requiresSigned(e Entry) bool {
 	if e.After != nil || strings.HasPrefix(e.Table, "ctl:") {
 		return true
@@ -133,8 +125,8 @@ func requiresSigned(e Entry) bool {
 	return false
 }
 
-// verify checks one origin's entries as pulled, before any ref is resolved. A
-// locked machine verifies nothing, unless entries require signatures (rule 6).
+// verify checks one origin's pulled entries before any ref resolves. Locked
+// verifies nothing, except signature-required entries.
 func (i *Importer) verify(origin string, entries []Entry) error {
 	if len(i.key) == 0 {
 		for _, e := range entries {
@@ -183,12 +175,9 @@ func (i *Importer) verify(origin string, entries []Entry) error {
 	return nil
 }
 
-// verifyMAC checks one entry's MAC against the keys the origin's cut allows:
-// an entry at or below the cut verifies under any key this machine holds, and
-// one above it under some epoch at least the cut's. An entry that verifies
-// under none of the ones allowed is refused, not skipped -- a refusal holds
-// the origin for the run and the next attempt re-refuses it rather than
-// applying what could be forgery.
+// verifyMAC checks one entry's MAC against the cut's allowed keys: at or below
+// the cut any held key, above it some epoch at least the cut's. A match on none is
+// refused, not skipped, holding the origin rather than applying possible forgery.
 func (i *Importer) verifyMAC(origin string, e Entry) error {
 	for _, key := range i.allowedKeys(origin, e.Seq) {
 		if VerifyMAC(key, e) {
@@ -198,9 +187,7 @@ func (i *Importer) verifyMAC(origin string, e Entry) error {
 	return &signatureError{fmt.Sprintf("entry %d from %q has a bad signature", e.Seq, origin)}
 }
 
-// anyKeyVerifies reports whether a key of this machine's ring verifies under
-// the check given. It is the trial a confirmed-at-or-below-the-cut row runs:
-// every held epoch is on the table, newest first.
+// anyKeyVerifies runs a check under each held key, newest first.
 func (i *Importer) anyKeyVerifies(check func([]byte) bool) bool {
 	for _, key := range i.allowedKeys("", -1) {
 		if check(key) {
@@ -210,15 +197,9 @@ func (i *Importer) anyKeyVerifies(check func([]byte) bool) bool {
 	return false
 }
 
-// allowedKeys is the set of held keys, newest epoch first, the entry at seq
-// may verify under. An origin without a cut row is fenced by the default: its
-// entries must verify under the reader's newest key, which at an epoch-1
-// fleet is exactly the single-key verification of today and at a rekeyed one
-// is what keeps an old-key write attempting a log no reader has heard of a
-// cut for from re-blessing the dead key. The cut narrows the set from the top
-// only: an entry above an epoch-2 cut may not verify under key 1, however
-// honestly signed it looks, because the cut is exactly what says key 1 is
-// dead above that point.
+// allowedKeys is the held keys, newest first, the entry at seq may verify under.
+// A cutless origin is fenced by default to the newest key; the cut narrows from
+// the top only, so above-cut entries never verify under a dead key.
 func (i *Importer) allowedKeys(origin string, seq int) [][]byte {
 	all := i.epochs()
 	cut, found := i.cuts[origin]
@@ -246,9 +227,8 @@ func (i *Importer) allowedKeys(origin string, seq int) [][]byte {
 	return keys
 }
 
-// epochs is the epochs this machine holds keys for, highest first, so a trial
-// answers with the newest key's before the older ones. A machine set by
-// SetKey alone is a one-key machine at epoch 1, which every epoch-1 log is.
+// epochs is the held epochs, highest first. A SetKey-only machine is a one-key
+// machine at epoch 1, which every epoch-1 log is.
 func (i *Importer) epochs() []int {
 	if len(i.ring) == 0 {
 		if len(i.key) == 0 {
@@ -264,7 +244,6 @@ func (i *Importer) epochs() []int {
 	return out
 }
 
-// keyOf is the key this machine holds for epoch, or nil.
 func (i *Importer) keyOf(epoch int) []byte {
 	if len(i.ring) == 0 {
 		if epoch == 1 {
@@ -275,8 +254,8 @@ func (i *Importer) keyOf(epoch int) []byte {
 	return i.ring[epoch]
 }
 
-// recordSigned lowers this machine's signed-from record for an origin to the
-// lowest verified entry, inside the caller's transaction.
+// recordSigned lowers this machine's signed-from record to the lowest verified
+// entry, inside the caller's transaction.
 func (i *Importer) recordSigned(tx *db.Tx, origin string, entries []Entry) (int, bool, error) {
 	if len(i.key) == 0 {
 		return 0, false, nil
@@ -299,7 +278,6 @@ func (i *Importer) recordSigned(tx *db.Tx, origin string, entries []Entry) (int,
 	return first, true, nil
 }
 
-// noteSigned remembers a record the committed transaction wrote.
 func (i *Importer) noteSigned(origin string, seq int, wrote bool) {
 	if !wrote {
 		return

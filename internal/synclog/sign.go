@@ -5,47 +5,41 @@ import (
 	"fmt"
 )
 
-// ErrLockedSignedOrigin refuses an append from a machine with no key whose own
-// log already carries signed entries: an unsigned entry it added would be
-// refused by every unlocked reader.
+// ErrLockedSignedOrigin refuses a keyless append where its own log already
+// carries signed entries: the unsigned entry would be refused by every unlocked
+// reader.
 var ErrLockedSignedOrigin = errors.New("this machine's log is signed; run relevo db sync unlock")
 
-// ErrEpochMoved is what a machine whose held newest epoch is below the
-// recorded remote epoch reports: the remote has rekeyed and this machine
-// holds the old key. It stops signing and exporting and holds its import
-// whole -- a stale reader must not apply entries current readers refuse --
-// and the fix is the owner's: relevo db sync unlock with the new passphrase.
+// ErrEpochMoved reports a remote rekey past this machine's held newest epoch. It
+// stops signing and holds the import whole: a stale reader must not apply entries
+// current readers refuse.
 var ErrEpochMoved = errors.New("sync: the remote's key moved to a newer epoch; this machine holds the old one: run relevo db sync unlock with the new passphrase")
 
-// ErrBadSignature reports an entry an unlocked reader refuses: its MAC does not
-// hold, or it is unsigned where its origin signs.
+// ErrBadSignature reports an entry an unlocked reader refuses: a bad MAC, or
+// unsigned where its origin signs.
 var ErrBadSignature = errors.New("synclog: an entry's signature was refused")
 
-// ErrBoundary refuses a signed batch whose first signed sequence is not the one
-// the exporter predicted, or that names none where the origin has no boundary.
-// Nothing is written, and the exporter predicts again on its next attempt.
+// ErrBoundary refuses a signed batch on an unpredicted boundary, or one naming
+// none where the origin has no boundary. Nothing is written; the exporter predicts
+// again next attempt.
 var ErrBoundary = errors.New("synclog: the signed-from boundary was not the one predicted; it is retried on the next attempt")
 
-// keyed is the key an exporter, reconciler or importer works with. No key is a
+// keyed is the key an exporter, reconciler or importer works with; no key is a
 // locked machine.
 type keyed struct {
 	key []byte
-	// ring is every epoch key this machine holds, keyed by the epoch each one
-	// is. A verifier verifies by trial under the ring; the exporter signs
-	// under key, which whichever setter ran stores as the newest epoch's.
-	// nil reads as a one-key machine, which every epoch-1 log is.
+	// ring is every epoch key held, keyed by epoch, for trial verification; nil
+	// reads as a one-key machine, which every epoch-1 log is. key is always the
+	// newest epoch's entry.
 	ring map[int][]byte
 	// boundaryKnown is set once the remote is known to hold this origin's
 	// boundary, so later appends do not read it again.
 	boundaryKnown bool
-	// docs, when set, are the documents this exporter or importer answers for
-	// instead of the process-wide registry, so several machines can be run in
-	// one process.
+	// docs, when set, replaces the process-wide registry, so several machines run
+	// in one process.
 	docs map[string]SharedDoc
 }
 
-// UseDocs binds the documents this exporter or importer answers for, in place
-// of the registry.
 func (k *keyed) UseDocs(docs ...SharedDoc) {
 	k.docs = make(map[string]SharedDoc, len(docs))
 	for _, d := range docs {
@@ -53,7 +47,6 @@ func (k *keyed) UseDocs(docs ...SharedDoc) {
 	}
 }
 
-// docFor finds the handler a `doc:` table names.
 func (k *keyed) docFor(tbl string) (SharedDoc, error) {
 	if k.docs == nil {
 		return SharedDocFor(tbl)
@@ -68,7 +61,6 @@ func (k *keyed) docFor(tbl string) (SharedDoc, error) {
 	return nil, fmt.Errorf("synclog: no shared doc named %q: %w", name, ErrInvalid)
 }
 
-// docNamed finds the handler for a document's name, and whether there is one.
 func (k *keyed) docNamed(name string) (SharedDoc, bool) {
 	if k.docs != nil {
 		doc, ok := k.docs[name]
@@ -81,10 +73,8 @@ func (k *keyed) docNamed(name string) (SharedDoc, bool) {
 // SetKey sets the sync key; nil or empty is a locked machine.
 func (k *keyed) SetKey(key []byte) { k.key = key }
 
-// Keyring is every epoch key a verifier holds: the newest epoch's key and the
-// older ones it unwrapped off the remote's chain. It is this package's own
-// shape for the machine's stored ring, which the reader of the local keyring
-// hands across rather than this package reaching for its secrets.
+// Keyring is every epoch key a verifier holds, handed across by the local
+// keyring's reader so this package never reaches for secrets.
 type Keyring struct {
 	// Epoch is the newest epoch in Keys.
 	Epoch int
@@ -92,11 +82,9 @@ type Keyring struct {
 	Keys map[int][]byte
 }
 
-// SetKeyring sets the ring a verifier verifies by trial under, carrying the
-// newest epoch's key into the signing key the same setter runs write. A ring
-// that names no epoch its keys back is refused, never half-stored: a verifier
-// with a newest it cannot name would verify nothing signed since the epoch
-// moved.
+// SetKeyring sets the trial ring, carrying the newest key into the signing key.
+// A ring naming no backed epoch is refused, never half-stored: such a verifier
+// would verify nothing signed since the epoch moved.
 func (k *keyed) SetKeyring(ring Keyring) {
 	if ring.Epoch < 1 || len(ring.Keys[ring.Epoch]) == 0 {
 		return
@@ -110,8 +98,8 @@ func (k *keyed) SetKeyring(ring Keyring) {
 	k.ring = ring.Keys
 }
 
-// sign stamps every entry with its MAC when there is a key. It runs last, on
-// the entries exactly as they will be stored.
+// sign stamps every entry with its MAC when there is a key, last, on the entries
+// exactly as stored.
 func (k *keyed) sign(entries []Entry) {
 	if len(k.key) == 0 {
 		return
@@ -121,7 +109,6 @@ func (k *keyed) sign(entries []Entry) {
 	}
 }
 
-// guard refuses an append from a locked machine whose own origin is signed.
 func (k *keyed) guard(t LogTransport, origin string) error {
 	if len(k.key) > 0 {
 		return nil
@@ -136,9 +123,8 @@ func (k *keyed) guard(t LogTransport, origin string) error {
 	return nil
 }
 
-// appendTo appends the batch, and while the remote holds no boundary for the
-// origin it also sends the one it predicts: the origin's head plus the batch
-// index of the first signed entry.
+// appendTo appends the batch, sending the predicted boundary while the remote
+// holds none: the origin's head plus the first signed entry's batch index.
 func (k *keyed) appendTo(t LogTransport, origin string, entries []Entry) ([]Entry, error) {
 	ba, canBound := t.(BoundaryAppender)
 	if len(k.key) == 0 || k.boundaryKnown || !canBound {

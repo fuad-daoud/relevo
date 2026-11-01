@@ -2,15 +2,13 @@ package synclog
 
 import "fmt"
 
-// Preview is what a reconcile would append, grouped by table, in the order the
-// reconcile would walk.
+// Preview is what a reconcile would append, grouped by table in walk order.
 type Preview struct {
 	Tables []PreviewTable
 }
 
-// PreviewTable is one table's share of a preview. The counts are complete; the
-// key lists together stop at the limit the preview was asked for, so a table of a
-// million rows costs a bounded report.
+// PreviewTable is one table's share of a preview. Counts are complete; key lists
+// stop at the asked limit, so a huge table costs a bounded report.
 type PreviewTable struct {
 	Table      string
 	Appends    int
@@ -19,13 +17,11 @@ type PreviewTable struct {
 	DeleteKeys []string
 }
 
-// Empty reports whether the file and the log already agree.
 func (p Preview) Empty() bool { return len(p.Tables) == 0 }
 
-// Preview walks the same differences Reconcile would append, in the same
-// order, and reports them without appending anything: no body is uploaded and
-// no entry reaches the transport. keyLimit bounds the keys kept per table,
-// appends first; the counts are never bounded.
+// Preview walks the differences Reconcile would append, in the same order,
+// appending nothing and uploading no body. keyLimit bounds keys per table,
+// appends first; counts are never bounded.
 func (r *Reconciler) Preview(keyLimit int) (Preview, error) {
 	r.reset()
 	var out Preview

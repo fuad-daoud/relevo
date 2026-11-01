@@ -1,8 +1,8 @@
 package syncworker
 
 // Compaction: an origin drops its own superseded log entries and records the
-// floor it dropped up to, in one transaction and one push, so no reader ever sees
-// a hole under an old floor.
+// floor it dropped up to, in one transaction and one push, so no reader ever
+// sees a hole under an old floor.
 
 import (
 	"context"
@@ -13,24 +13,20 @@ import (
 )
 
 // compactStatement drops an entry at or below the floor that a later entry for
-// the same row, also at or below the floor, supersedes: every such entry but the
-// newest per row. The later entry must be bounded by the floor too: a row whose
-// only newer entry sits above it keeps its older one, so a reader applying up to
-// the floor always meets a row's parent.
+// the same row, also at or below the floor, supersedes. The later entry must
+// be bounded by the floor too, so a reader applying up to the floor always
+// meets a row's parent.
 //
-// It keeps the newest per row by one grouped pass rather than asking, per
-// entry, whether a later one exists: that question reads a range of the log for
-// every entry, and on a log of tens of thousands of entries it held the worker
-// -- and every verb queued behind it -- for minutes.
+// It keeps the newest per row by one grouped pass: asking per entry would read
+// a range of the log for every entry, which held the worker for minutes on a
+// log of tens of thousands of entries.
 const compactStatement = "DELETE FROM log WHERE origin = ? AND seq <= ? AND seq NOT IN (" +
 	"SELECT MAX(seq) FROM log WHERE origin = ? AND seq <= ? GROUP BY tbl, pk)"
 
-// Compact drops this worker's own superseded entries up to floor.
-//
-// The floor has to be a position a reader's mark can have reached: no past the
-// log's head and never inside a batch, because a reader applies whole batches and
-// a floor inside one would leave it a batch with a hole. The recorded floor is
-// the larger of the old and the new, so it only rises.
+// Compact drops this worker's own superseded entries up to floor. The floor
+// must be a position a reader's mark can have reached: no past the log's head
+// and never inside a batch, which a reader applies whole. The recorded floor
+// is the larger of the old and the new, so it only rises.
 func (b *TursoBackend) Compact(floor int) (CompactResult, error) {
 	if err := b.ready(); err != nil {
 		return CompactResult{}, err
@@ -67,12 +63,9 @@ func (b *TursoBackend) Compact(floor int) (CompactResult, error) {
 }
 
 // alignFloor refuses a floor past the log's head and moves one that falls
-// inside a batch down to the end of the batch before it.
-//
-// A floor comes from the marks other machines publish, and a reader applies
-// whole batches, so one inside a batch is a mark no honest reader holds. Moving
-// it down keeps compaction going -- refusing it would stop it on every tick for
-// as long as the mark stayed -- and dropping less is always safe.
+// inside a batch down to the end of the batch before it. A reader applies whole
+// batches, so a floor inside one is a mark no honest reader holds; moving it
+// down keeps compaction going, and dropping less is always safe.
 func (b *TursoBackend) alignFloor(ctx context.Context, tx *sql.Tx, floor int) (int, error) {
 	var head sql.NullInt64
 	if err := tx.QueryRowContext(ctx,
@@ -94,9 +87,8 @@ func (b *TursoBackend) alignFloor(ctx context.Context, tx *sql.Tx, floor int) (i
 	return floor, nil
 }
 
-// writeFloor records max(old floor, floor) for this origin and returns it.
-//
-// An update then an insert, as writeMark does, for the same engine reason.
+// writeFloor records max(old floor, floor) for this origin and returns it: an
+// update then an insert, as writeMark does, for the same engine reason.
 func (b *TursoBackend) writeFloor(ctx context.Context, tx *sql.Tx, floor int) (int, error) {
 	key := floorPrefix + b.spec.Origin
 	var old string
@@ -145,8 +137,8 @@ func (s *server) pullRange(req Request) Response {
 }
 
 // compact drops this worker's own entries. The origin is the worker's own from
-// hello and never a field of the request, for the reason publish_marks has: only
-// the machine that wrote a log may drop from it.
+// hello, never a request field: only the machine that wrote a log may drop
+// from it.
 func (s *server) compact(req Request) Response {
 	res, err := s.backend.Compact(req.Floor)
 	if err != nil {

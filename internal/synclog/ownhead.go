@@ -7,19 +7,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// OwnHeadFact is the kv fact naming the highest sequence this origin's own
-// transport confirmed appending. It is what the owner's cut extension vouches
-// for: a far larger tail than what has actually landed is one the machine
-// itself never confirmed, so the fact is written after every successful
-// append and read again for the extension.
+// OwnHeadFact names the highest sequence this origin's transport confirmed
+// appending. The owner's cut extension vouches for it: a tail beyond what landed
+// is one the machine never confirmed.
 const OwnHeadFact = "sync.own_head.v1"
 
-// noteOwnHead advances the own-head fact to written's highest sequence, when
-// that is past what the fact already holds. It runs through the machine-local
-// file -- the fact is this machine's own record, nothing a peer benefits from
-// -- and a write that fails is a logged warning rather than an export
-// failure: the fact recovers on the next append, and gating the exchange on
-// it would stop the whole fleet for one bookkeeping row.
+// noteOwnHead advances the own-head fact to written's highest sequence. It runs
+// through the machine-local file, and a failing write is a logged warning, not an
+// export failure: the fact recovers on the next append.
 func noteOwnHead(kv db.KV, written []Entry) {
 	head := 0
 	for _, e := range written {
@@ -31,8 +26,8 @@ func noteOwnHead(kv db.KV, written []Entry) {
 		return
 	}
 	if have, ok, err := OwnHead(kv); err != nil {
-		// Unreadable is overwritable: the fact is replaced with what was
-		// confirmed now, which is at least as true as the row it cannot read.
+		// Unreadable is overwritable: what was confirmed now is at least as true
+		// as the row it cannot read.
 	} else if ok && have >= head {
 		return
 	}
@@ -41,10 +36,9 @@ func noteOwnHead(kv db.KV, written []Entry) {
 	}
 }
 
-// OwnHead reads the own-head fact; ok is false when nothing has appended on
-// this machine's transport since the fact was introduced. A row that does not
-// parse reads as absent for the same reason noteOwnHead overwrites an
-// unreadable one: the next confirmed append rewrites it.
+// OwnHead reads the own-head fact; ok is false when nothing appended since its
+// introduction. An unparsable row reads as absent: the next confirmed append
+// rewrites it.
 func OwnHead(kv db.KV) (int, bool, error) {
 	value, ok, err := kv.KVGet(OwnHeadFact)
 	if err != nil {

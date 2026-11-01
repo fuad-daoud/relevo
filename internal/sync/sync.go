@@ -1,7 +1,6 @@
-// Package sync is the scaffolding cloud sync needs before a byte moves: the
-// machine-local rows sync reads (the settings, the token, the tick markers),
-// the statusline's four tokens over those markers, and the client interface
-// every test fakes instead of dialing.
+// Package sync is the scaffolding cloud sync needs before a byte moves:
+// machine-local rows, the statusline's four tokens over them, and the client
+// interface tests fake instead of dialing.
 package sync
 
 import (
@@ -12,15 +11,13 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// Every row sync reads is one that must never sync, so all of them bind to the
-// machine-local file beside the shared database. A shared handle writes config,
-// secret and kv rows into the file that leaves the machine, which is why
-// nothing here takes one: the seam is the local handle or nothing.
+// Every row sync reads must never sync, so all bind to the machine-local file
+// beside the shared database; nothing here takes a shared handle, which writes
+// rows into the file that leaves the machine.
 type Local = *db.DB
 
-// The markers a tick writes and the statusline reads back. Every key is in the
-// local file's `sync` namespace, so a marker is local by the namespace rule
-// rather than by a per-key decision, and a second machine never sees one.
+// The markers a tick writes and the statusline reads back, every key in the local
+// file's `sync` namespace: local by the namespace rule, never seen by a second machine.
 const (
 	KeyEnabled   = "sync.enabled"
 	KeyBacklog   = "sync.backlog"
@@ -28,16 +25,13 @@ const (
 	KeyAttention = "sync.attention"
 	KeyTimes     = "sync.times"
 	KeyTrouble   = "sync.trouble"
-	// KeyMarksPublished is when this machine last published its import marks to
-	// the log. It is a marker rather than a field because the throttle is what
-	// the next attempt reads, and a daemon that has been running since before
-	// the marks existed has no field to carry it.
+	// KeyMarksPublished is when this machine last published its import marks to the
+	// log; a marker because the throttle reads it and an old daemon has no field.
 	KeyMarksPublished = "sync.marks.published"
 )
 
-// LocalHandle is the machine-local file beside d, or an error on a handle
-// opened without one: a caller that cannot name the local file has no row that
-// is safe to write, so the seam fails rather than falling back to shared.
+// LocalHandle is the machine-local file beside d, or an error on a handle opened
+// without one: with no local file no row is safe to write, so the seam fails.
 func LocalHandle(d *db.DB) (Local, error) {
 	if l := d.Local(); l != nil {
 		return l, nil
@@ -45,8 +39,8 @@ func LocalHandle(d *db.DB) (Local, error) {
 	return nil, fmt.Errorf("sync: no local file beside the shared database: %w", db.ErrInvalid)
 }
 
-// State is everything the statusline's token depends on, read out of the local
-// markers with no network handle in reach.
+// State is everything the statusline's token depends on, read from local markers
+// with no network handle in reach.
 type State struct {
 	// Enabled is whether sync is turned on for this installation.
 	Enabled bool
@@ -54,14 +48,13 @@ type State struct {
 	Backlog int64
 	// LastTickOK is whether the most recent tick succeeded.
 	LastTickOK bool
-	// Attention is whether the handle reported an error a human must act on,
-	// such as an authorisation the remote refuses, or a latched breaker.
+	// Attention is whether the handle reported an error a human must act on.
 	Attention bool
-	// LatchCause is the fixed sentence the latch marker carries, empty when
-	// nothing is latched. It is the cause behind the statusline's err token.
+	// LatchCause is the fixed sentence the latch marker carries, empty when nothing
+	// is latched: the cause behind the statusline's err token.
 	LatchCause string
-	// LastExport and LastImport are when the steady pipeline last completed
-	// each half of the exchange, zero when it never has.
+	// LastExport and LastImport are when the steady pipeline last completed each
+	// half, zero when never.
 	LastExport time.Time
 	LastImport time.Time
 	// Trouble is what the last import reported besides applied entries.
@@ -69,14 +62,13 @@ type State struct {
 	// Attempt is the last steady attempt the daemon recorded, the zero value
 	// when none was.
 	Attempt Attempt
-	// Rebuild is the last automatic replica rebuild this machine ran, the
-	// zero value when it never has. It rides the same reads so every surface
-	// that reads the state says what the machine did to recover.
+	// Rebuild is the last automatic replica rebuild, zero when never: every state
+	// reader says what the machine did to recover.
 	Rebuild Rebuild
 }
 
-// tick is the marker one finished tick writes. A tick that failed leaves OK
-// false and no attention marker: the machine is behind, not broken.
+// tick is the marker one finished tick writes; a failed tick leaves OK false and
+// no attention marker: the machine is behind, not broken.
 type tick struct {
 	At time.Time `json:"at"`
 	OK bool      `json:"ok"`
@@ -89,20 +81,17 @@ type attention struct {
 	Message string    `json:"message"`
 }
 
-// Times is when the steady pipeline last finished each half of the exchange.
-// The two are recorded together because one attempt runs both; a machine that
-// has never completed an attempt carries neither.
+// Times is when the steady pipeline last finished each half, recorded together
+// because one attempt runs both; a machine that never completed an attempt
+// carries neither.
 type Times struct {
 	Export time.Time `json:"export"`
 	Import time.Time `json:"import"`
 }
 
-// Trouble is what the last import reported besides applied entries: the
-// origins a newer writer held, the batches a refusal dropped, and the sequence
-// gaps a hole left. Each entry is the importer's own sentence, so the status
-// surface names the installation and the sequence a reader has to act on. It
-// is a report rather than a failure, which is why it is stored rather than
-// raised.
+// Trouble is what the last import reported besides applied entries, each entry
+// in the importer's own sentence: a held origin, a dropped batch, a gap. A report
+// rather than a failure, which is why it is stored rather than raised.
 type Trouble struct {
 	Held    []string `json:"held,omitempty"`
 	Dropped []string `json:"dropped,omitempty"`
@@ -114,14 +103,13 @@ func (t Trouble) Empty() bool {
 	return len(t.Held) == 0 && len(t.Dropped) == 0 && len(t.Gaps) == 0
 }
 
-// Holds is every report a reader has to act on now: the held origins and the
-// gaps. Dropped reports are history and are not repeated here.
+// Holds is every report a reader must act on now: held origins and gaps, never
+// the historic dropped reports.
 func (t Trouble) Holds() []string {
 	return append(append([]string(nil), t.Held...), t.Gaps...)
 }
 
-// The four tokens the statusline shows, one per state that needs a human. The
-// renderer formats them; detail lives in the sync view.
+// The four tokens the statusline shows, one per state needing a human.
 const (
 	TokenOff    = "sync:off"
 	TokenOK     = "sync:ok"
@@ -129,14 +117,13 @@ const (
 	TokenErr    = "sync:err"
 )
 
-// BacklogThreshold is the unpushed operation count above which a machine whose
-// last tick succeeded is behind rather than ok.
+// BacklogThreshold is the unpushed count above which a succeeding last tick still
+// reads as behind.
 const BacklogThreshold int64 = 100
 
-// Token is the whole statusline mapping: state in, token out. The order is the
-// rule -- a machine that is off is never behind, an error needing attention
-// outranks a failed tick, trouble the last import reported is a machine that is
-// behind, and a failed tick outranks a backlog.
+// Token is the whole statusline mapping: off never reads as behind, attention
+// outranks a failed tick, reported trouble reads as behind, and a failed tick
+// outranks a backlog.
 func Token(s State) string {
 	switch {
 	case !s.Enabled:
@@ -156,9 +143,8 @@ func Token(s State) string {
 	}
 }
 
-// StatusToken is the token for a machine as the statusline reads it: the local
-// markers mapped by Token. It touches nothing but kv, so it answers with the
-// network blackholed and no client open.
+// StatusToken is the token for a machine as the statusline reads it: local markers
+// mapped by Token, touching nothing but kv.
 func StatusToken(kv db.KV) (string, error) {
 	s, err := ReadState(kv)
 	if err != nil {
@@ -167,9 +153,8 @@ func StatusToken(kv db.KV) (string, error) {
 	return Token(s), nil
 }
 
-// ReadState reads the markers out of kv. An absent marker leaves its field at
-// the default its name carries: not enabled, no backlog, no tick recorded, and
-// no error needing attention.
+// ReadState reads the markers out of kv; an absent marker leaves its field at the
+// default its name carries.
 func ReadState(kv db.KV) (State, error) {
 	var (
 		s     State
@@ -204,10 +189,8 @@ func ReadState(kv db.KV) (State, error) {
 	return s, nil
 }
 
-// ReadAttention returns the message the attention marker carries, or "" when
-// no marker is set. The message is the fixed text Runner wrote, never a body
-// the remote chose, so a caller can render it on a screen or put it in a log
-// without asking what a remote was allowed to say.
+// ReadAttention returns the attention marker's message, or "" when unset. It is the
+// fixed text Runner wrote, never a remote's body, so a caller renders it freely.
 func ReadAttention(kv db.KV) (string, error) {
 	var a attention
 	if err := marker(kv, KeyAttention, &a); err != nil {
@@ -216,9 +199,8 @@ func ReadAttention(kv db.KV) (string, error) {
 	return a.Message, nil
 }
 
-// WriteTimes records when the steady pipeline last finished each half of the
-// exchange. It is the writer the reader in ReadState pairs with, so the two
-// cannot disagree about the marker's shape.
+// WriteTimes records when the steady pipeline last finished each half: the writer
+// ReadState pairs with, so the two agree on the marker's shape.
 func WriteTimes(kv db.KV, t Times) error {
 	body, err := json.Marshal(t)
 	if err != nil {
@@ -230,9 +212,9 @@ func WriteTimes(kv db.KV, t Times) error {
 	return nil
 }
 
-// WriteTrouble records what the last import reported besides applied entries.
-// It is written on every successful attempt, empty included, so a machine that
-// caught up stops showing the trouble a previous attempt reported.
+// WriteTrouble records what the last import reported besides applied entries, on
+// every successful attempt -- empty included, so a caught-up machine stops showing
+// old trouble.
 func WriteTrouble(kv db.KV, t Trouble) error {
 	body, err := json.Marshal(t)
 	if err != nil {
@@ -244,11 +226,9 @@ func WriteTrouble(kv db.KV, t Trouble) error {
 	return nil
 }
 
-// ClearDroppedTrouble removes the cumulative dropped reports a machine carries.
-// A dropped batch moves the origin's mark past it, so the drop is never offered
-// again and only a reader can act on it; the report therefore accumulates until
-// the operator's retry says they have seen it. Held and gap reports are per-run
-// and are left where they are.
+// ClearDroppedTrouble removes the cumulative dropped reports, which accumulate
+// until the operator's retry says seen: a dropped batch moved its origin's mark
+// past it and is never offered again. Held and gap reports are per-run and stay.
 func ClearDroppedTrouble(kv db.KV) error {
 	var tr Trouble
 	if err := marker(kv, KeyTrouble, &tr); err != nil {
@@ -274,22 +254,19 @@ func ClearDroppedTrouble(kv db.KV) error {
 	return nil
 }
 
-// KeyInCall is the marker a pipe call writes before it asks for anything and
-// clears when its reply arrives. A marker left behind names a call that never
-// came back, which is the one death a daemon that was itself killed cannot
+// KeyInCall is the marker a pipe call writes before asking and clears on reply; a
+// leftover names a call that never came back, the one death a killed daemon cannot
 // otherwise count.
 const KeyInCall = "sync.incall"
 
-// InCall is what the in-call marker holds. The number is what lets a leftover
-// marker be counted exactly once: a start counts the call only while its number
-// is past the highest one already counted.
+// InCall is what the in-call marker holds; the number lets a leftover be counted
+// exactly once, past the highest already counted.
 type InCall struct {
 	At   time.Time `json:"at"`
 	Verb string    `json:"verb"`
 	N    int       `json:"n"`
 }
 
-// WriteInCall writes the in-call marker before a pipe call goes out.
 func WriteInCall(kv db.KV, call InCall) error {
 	body, err := json.Marshal(call)
 	if err != nil {
@@ -301,7 +278,6 @@ func WriteInCall(kv db.KV, call InCall) error {
 	return nil
 }
 
-// ClearInCall removes the in-call marker once a reply has arrived.
 func ClearInCall(kv db.KV) error {
 	if err := kv.KVDelete(KeyInCall); err != nil {
 		return fmt.Errorf("sync: in-call marker: %w", err)
@@ -309,9 +285,9 @@ func ClearInCall(kv db.KV) error {
 	return nil
 }
 
-// ReadInCall returns the in-call marker a call left behind, and whether one is
-// set. An unreadable marker is a failure rather than an absent one: a machine
-// whose marker cannot be read must not be reported as having no call in flight.
+// ReadInCall returns the in-call marker a call left behind and whether one is
+// set. An unreadable marker is a failure, not an absent one, so a machine whose
+// marker cannot be read is never reported as having no call in flight.
 func ReadInCall(kv db.KV) (InCall, bool, error) {
 	body, ok, err := kv.KVGet(KeyInCall)
 	if err != nil {
@@ -327,9 +303,8 @@ func ReadInCall(kv db.KV) (InCall, bool, error) {
 	return call, true, nil
 }
 
-// SetAttention writes the marker that makes the statusline read sync:err. The
-// message is fixed text written in this tree: the statusline and the sync view
-// both show it, and neither a worker's nor a remote's own words may reach them.
+// SetAttention writes the marker reading as sync:err. The message is fixed text
+// from this tree: neither a worker's nor a remote's words may reach the surfaces.
 func SetAttention(kv db.KV, message string, at time.Time) error {
 	body, err := json.Marshal(attention{At: at.UTC(), Message: message})
 	if err != nil {
@@ -341,9 +316,8 @@ func SetAttention(kv db.KV, message string, at time.Time) error {
 	return nil
 }
 
-// ClearLatch removes the latched-error marker. It is the one path that unlatches
-// a machine: the retry verb runs it, and neither a tick nor a call clears the
-// marker on its own.
+// ClearLatch removes the latched-error marker: the one path unlatching a machine,
+// run by the retry verb and by nothing else on its own.
 func ClearLatch(kv db.KV) error {
 	if err := kv.KVDelete(KeyAttention); err != nil {
 		return fmt.Errorf("sync: attention marker: %w", err)
@@ -351,9 +325,8 @@ func ClearLatch(kv db.KV) error {
 	return nil
 }
 
-// marker reads one key out of kv into out, which must be a pointer. An absent
-// key is not an error: it leaves out at the zero value the caller reads as the
-// marker's default.
+// marker reads one key out of kv into out, which must be a pointer; absent is not
+// an error, leaving the caller's default zero value.
 func marker(kv db.KV, key string, out any) error {
 	body, ok, err := kv.KVGet(key)
 	if err != nil {

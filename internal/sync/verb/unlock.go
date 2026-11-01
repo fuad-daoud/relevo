@@ -19,24 +19,22 @@ func (v *Runner) unlock(ctx context.Context, verb *wire.SyncVerb, passphrase []b
 	if err != nil {
 		return Refusal(Classify(err), err)
 	}
-	// The key this unlock stored is what lets the machine vouch for the tail
-	// it appended before it learned of the rekey; the extension goes out
-	// before the parked docs drain, so the fence this machine believes in is
-	// on the remote while this machine unblocks itself.
+	// The key just stored is what lets this machine vouch for the tail it appended
+	// before it learned of the rekey; the extension goes out before the parked
+	// docs drain, so the fence this machine believes in is on the remote while
+	// it unblocks itself.
 	relevosync.PublishOwnCut(ctx, v.Shared, v.Local, transport)
 	if _, err := relevosync.DrainParkedDocs(v.Shared, v.Local, transport); err != nil {
 		return Refusal(Classify(err), err)
 	}
-	// Secrets stored before this machine held a key were never signalled, and an
-	// export only reads a signalled doc, so without this they would never
-	// travel. It follows the drain: a peer's newer value parked while locked is
-	// applied first, so the export does not send this machine's older one over
-	// it under a fresh stamp.
+	// Secrets stored keyless were never signalled, so without this they would never
+	// travel. It follows the drain, so a newer parked peer value is not overwritten
+	// by this machine's older one.
 	if err := v.Local.SignalDoc(relevosync.SecretsDocName); err != nil {
 		return Refusal(Classify(err), err)
 	}
-	// A join that ran while this machine was locked still owes its own history,
-	// and the key it now holds is what lets that history be sent.
+	// A join run while locked still owes its own history, sendable only with the
+	// now-held key.
 	owed := &relevosync.Enabler{Request: relevosync.EnableRequest{Local: v.Local, Shared: v.Shared}}
 	if _, err := owed.FinishJoin(transport); err != nil {
 		return Refusal(Classify(err), err)

@@ -34,7 +34,6 @@ type ExportHour struct {
 	Idle     int    `json:"idle"`
 }
 
-// OverIdle reports whether the hour's idle exports pass the warning line.
 func (h ExportHour) OverIdle() bool { return h.Idle > IdleExportsWarn }
 
 // exportHourKey is the hour a.End falls in, UTC, so attempts on machines in
@@ -42,10 +41,9 @@ func (h ExportHour) OverIdle() bool { return h.Idle > IdleExportsWarn }
 func exportHourKey(t time.Time) string { return t.UTC().Format("2006-01-02T15") }
 
 // NoteRoundsOpen records how many rounds are open now. It is nil-safe because
-// attempts run on the sync goroutine while the daemon ticks: the count is
-// only ever the last noted one. Zero is a real count only after the first
-// note; until then the count is unknown, so a daemon that just started never
-// books its first attempt as idle while a round may be open.
+// attempts run on the sync goroutine while the daemon ticks. Zero counts only
+// after the first note; until then the count is unknown, so a daemon that just
+// started never books its first attempt as idle while a round may be open.
 func (r *Runner) NoteRoundsOpen(n int) {
 	if r == nil {
 		return
@@ -123,13 +121,11 @@ func readExportHours(kv db.KV) []ExportHour {
 	return hours
 }
 
-// IdleExports returns the last complete hour's counts: the hour before now's
-// UTC hour, because a partial hour cannot be compared with a per-hour
-// threshold. It returns false when that hour has no row, which is what a
-// machine that exported nothing then looks like: nothing to warn about, not
-// an error. A row that will not parse reads as empty and is left for the next
-// booking to replace: this is the reader status and doctor call, and a read
-// never writes.
+// IdleExports returns the last complete hour's counts: the hour before now's UTC
+// hour, because a partial hour cannot be compared with a per-hour threshold. It
+// returns false when that hour has no row, which is a machine that exported
+// nothing then: nothing to warn about, not an error. A row that will not parse
+// reads as empty and is left for the next booking to replace: a read never writes.
 func IdleExports(kv db.KV, now time.Time) (ExportHour, bool, error) {
 	want := now.UTC().Add(-time.Hour).Format("2006-01-02T15")
 	body, ok, err := kv.KVGet(KeyExportsHours)
