@@ -37,8 +37,8 @@ func inOwnScope(cgroupPath string) bool {
 
 // RestartSafety is the doctor row that says whether a daemon restart right
 // now would kill anything. It never fails: an exited process is skipped and
-// any other unreadable host degrades to `cannot tell`. The Warn detail names
-// at most three offenders, then `and K more`.
+// any other unreadable host degrades to `cannot tell on this host`. The Warn
+// detail names at most three offenders, then `and K more`.
 func RestartSafety(procs []RunningProc, readCgroup func(pid int) (string, error)) Check {
 	c := Check{Group: "", Name: "restart"}
 	if len(procs) == 0 {

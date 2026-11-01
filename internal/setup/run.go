@@ -21,7 +21,8 @@ import (
 )
 
 // setupAnswerNotes is where an answer for a dropped question is noted, so an
-// ignored answer is never silent.
+// ignored answer is never silent; nil means os.Stderr as it stands at print
+// time.
 var setupAnswerNotes io.Writer
 
 func answerNoteWriter() io.Writer {
@@ -170,7 +171,8 @@ func storedActorRef(name string, set *candidate.Set) string {
 }
 
 // setupStandingAnswers merges the two install facts into the stored answers:
-// their questions drop while they stay.
+// an installed plugin or a present service unit is a standing yes, so its
+// question drops while it stays.
 func setupStandingAnswers(current Answers, pluginInstalled, unitPresent bool) Answers {
 	out := make(Answers, len(current)+2)
 	for id, vals := range current {
@@ -259,7 +261,8 @@ func openSetupQuestions(qs []Question, given Answers) []Question {
 }
 
 // setupQuestionsFor are the questions an answer set is checked against: an
-// --answer opencode=... is read first and the questions built over it.
+// --answer opencode=... decides which opencode models the other questions
+// offer, so it is read first and the questions built over it.
 func setupQuestionsFor(raw []string, questionsFor func(Answers) []Question) ([]Question, error) {
 	qs := questionsFor(nil)
 	var opencode []string

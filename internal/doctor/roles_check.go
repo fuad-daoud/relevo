@@ -8,8 +8,9 @@ import (
 )
 
 // roleSourceChecks is the one global row saying where the roles came from,
-// plus one warning row per field the actors section makes irrelevant. Where
-// there is nothing stale to warn about, only the OK row is printed.
+// plus one warning row per field the actors section makes irrelevant. Without
+// an actors section there is nothing stale to warn about, so only the OK row
+// is printed.
 func roleSourceChecks(reg *roles.Registry, set *candidate.Set, pol policy.Policy) []Check {
 	detail := "legacy: candidates.json roles, policy.json order and tier"
 	if reg.FileMode() {

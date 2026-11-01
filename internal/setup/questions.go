@@ -230,8 +230,9 @@ func loggedChoices(inv Inventory) map[string][]Choice {
 	return out
 }
 
-// pickChoice is the first choice whose model has a given prefix and,
-// when one is named, a given substring.
+// pickChoice is the first choice whose model has a given prefix and, when one
+// is named, a given substring, else the first with the prefix, else the first
+// at all.
 func pickChoice(choices []Choice, prefix, contains string) (Choice, bool) {
 	labels := make([]string, len(choices))
 	for i, c := range choices {
@@ -244,7 +245,8 @@ func pickChoice(choices []Choice, prefix, contains string) (Choice, bool) {
 	return choices[slices.Index(labels, m)], true
 }
 
-// claudeOnPath reports whether claude has a status entry in the inventory.
+// claudeOnPath reports whether claude has a status entry in the inventory;
+// the plugin question only exists when it does.
 func claudeOnPath(inv Inventory) bool {
 	for _, s := range inv.Harnesses {
 		if s.Harness == "claude" {
@@ -254,8 +256,9 @@ func claudeOnPath(inv Inventory) bool {
 	return false
 }
 
-// museOnPath reports whether muse has a status entry in the inventory,
-// gating on PATH presence alone.
+// museOnPath reports whether muse has a status entry in the inventory; the
+// muse-plugin question only exists when it does. It gates on PATH presence
+// alone, exactly as the plugin question gates on claude's.
 func museOnPath(inv Inventory) bool {
 	for _, s := range inv.Harnesses {
 		if s.Harness == "muse" {
@@ -265,7 +268,8 @@ func museOnPath(inv Inventory) bool {
 	return false
 }
 
-// loggedModels maps each wizard harness kind to its offered models.
+// loggedModels maps each wizard harness kind to the models it offers when it
+// is logged in; kinds not in the inventory map to nothing.
 func loggedModels(inv Inventory) map[string][]string {
 	models := make(map[string][]string, len(inv.Harnesses))
 	for _, s := range inv.Harnesses {
@@ -285,6 +289,7 @@ func refFor(kind, model string) string {
 	return kind + "/" + providerFor(kind) + "/" + model
 }
 
+// exactChoice is the choice for one model, else the first choice at all.
 func exactChoice(choices []Choice, model string) (Choice, bool) {
 	for _, c := range choices {
 		if c.Label == model {
@@ -318,8 +323,8 @@ func agyFlashPick(models []string) (string, bool) {
 	return pickPattern(models, "gemini-", "flash-high")
 }
 
-// pickPattern is the first model with a given prefix and, when one is
-// named, a given substring.
+// pickPattern is the first model with a given prefix and, when one is named,
+// a given substring, else the first with the prefix, else the first at all.
 func pickPattern(models []string, prefix, contains string) (string, bool) {
 	for _, m := range models {
 		if strings.HasPrefix(m, prefix) && (contains == "" || strings.Contains(m, contains)) {

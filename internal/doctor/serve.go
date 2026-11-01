@@ -302,7 +302,8 @@ func serveUserIsolationCheck(c Check, root string, clients []doctorClient, share
 
 // ownerRootMismatch checks one owner's bindings/<hex> directory against the
 // approved layout: root-owned, group the tenant's primary gid, mode 0710. A
-// missing root is not a mismatch.
+// missing root is not a mismatch: the create has not run yet. It returns the
+// exact chown/chmod line and true when the owner, group or mode is wrong.
 func ownerRootMismatch(root, id string, uid, gid uint32) (string, bool) {
 	dir, ok := remote.ClientID(id).Dir()
 	if !ok {

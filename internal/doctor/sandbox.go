@@ -53,7 +53,9 @@ type SandboxInput struct {
 	StateHome string
 	// ConfigHome is $XDG_CONFIG_HOME, "" when unset.
 	ConfigHome string
-	StateRoot  string
+	// StateRoot is the state root those values resolved to.
+	StateRoot string
+	// ConfigRoot is the config root those values resolved to.
 	ConfigRoot string
 	User       string
 	UID        int
@@ -63,8 +65,9 @@ type SandboxInput struct {
 }
 
 // XDGCheck is the `xdg` row: a parent that exported XDG_STATE_HOME or
-// XDG_CONFIG_HOME hands them to a child running as another user. It warns
-// only when the root exists and belongs to another uid, which is that case
+// XDG_CONFIG_HOME hands them to a child running as another user, and the
+// child then writes its state under the parent's directory. It warns only
+// when the root exists and belongs to another uid, which is that case
 // established rather than guessed.
 func XDGCheck(env Env, in SandboxInput) Check {
 	c := Check{Name: "xdg"}
@@ -108,8 +111,8 @@ func XDGCheck(env Env, in SandboxInput) Check {
 }
 
 // LingerCheck is the `linger` row, which exists only on a sandbox. Without
-// lingering the sandbox's user manager stops at logout, so it warns when
-// systemd holds no linger file for this account.
+// lingering the sandbox's user manager, and with it its daemon, stops at
+// logout, so it warns when systemd holds no linger file for this account.
 func LingerCheck(env Env, in SandboxInput) Check {
 	c := Check{Name: "linger"}
 	path := LingerPath(in.User)

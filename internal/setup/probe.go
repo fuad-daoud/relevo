@@ -16,7 +16,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 )
 
-// Runner is the seam one probe command runs through.
+// Runner is the seat one probe command runs through: the command's stdout,
+// its exit code, and a non-nil err only when it could not run at all.
 type Runner interface {
 	Run(name string, args ...string) (stdout []byte, exit int, err error)
 }
@@ -38,7 +39,7 @@ var errProbeTimeout = errors.New("probe command timed out")
 type runnerEnv struct{ harness.InstallEnv }
 
 // Run execs the command under the probe deadline; a hang surfaces as
-// errProbeTimeout.
+// errProbeTimeout, and a non-zero exit reports with its code and no error.
 func (runnerEnv) Run(name string, args ...string) ([]byte, int, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), probeDeadline)
 	defer cancel()
@@ -54,9 +55,12 @@ func (runnerEnv) Run(name string, args ...string) ([]byte, int, error) {
 
 // HarnessStatus is one probed harness: its kind, whether it is on PATH and,
 // when it is, whether its CLI is logged in and which models it offers. Login
-// is empty for a harness not on PATH; Efforts and DefaultEffort are set
-// where the status carries them. Catalog is opencode's every runnable
-// "provider/model", and its Models the ones picked from it.
+// carries the login command to name wherever the status is printed; it is
+// empty for a harness not on PATH. Efforts and DefaultEffort are per-model
+// efforts where the status carries them: codex reads them off its CLI, muse
+// has them fixed, and the others' efforts are known in the questions.
+// Catalog is opencode's every runnable "provider/model", and its Models the
+// ones picked from it.
 type HarnessStatus struct {
 	Harness       string
 	OnPath        bool
@@ -90,7 +94,8 @@ var loginCommands = map[string]string{
 var claudeAliases = []string{"sonnet", "opus", "haiku"}
 
 // museModels is muse's whole fixed catalog, in default order: muse names no
-// model-list command either, so the first entry is the offer's default pick.
+// model-list command either; the first entry is the offer's default pick,
+// and all of these always resolve.
 var museModels = []string{"muse-spark-1.3", "muse-spark-1.2", "muse-wonder-1.0"}
 
 var museEfforts = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
@@ -222,7 +227,8 @@ func probeCodex(env SetupEnv) (bool, []codexEntry) {
 	return true, codexModels(out)
 }
 
-// codexOffer splits the listed entries into the status fields.
+// codexOffer splits the listed entries into the status fields: the models in
+// order, and each one's efforts and default where codex reports them.
 func codexOffer(listed []codexEntry) ([]string, map[string][]string, map[string]string) {
 	if len(listed) == 0 {
 		return nil, nil, nil
@@ -291,7 +297,9 @@ func probeMuse(env SetupEnv) bool {
 	return !errors.Is(err, fs.ErrNotExist)
 }
 
-// museOffer splits muse's fixed catalog into the status fields.
+// museOffer splits muse's fixed catalog into the status fields: the models
+// in default order, each one's every-runnable efforts, and its default --
+// the shape codex's CLI reports, here known.
 func museOffer() ([]string, map[string][]string, map[string]string) {
 	efforts := make(map[string][]string, len(museModels))
 	defaults := make(map[string]string, len(museModels))
@@ -302,10 +310,10 @@ func museOffer() ([]string, map[string][]string, map[string]string) {
 	return museModels, efforts, defaults
 }
 
-// probeAgy asks `agy models`: exit 0 is the login signal, and the lines'
-// first tab-separated fields are the offer. A failure is asked once more:
-// the command fetches over the network, and a one-off failure would tell a
-// logged-in user to sign in.
+// probeAgy asks `agy models`: exit 0 is the login signal, because agy needs
+// no login verb, and the lines' first tab-separated fields are the offer.
+// A failure is asked once more: the command fetches over the network, and a
+// one-off failure would tell a logged-in user to sign in.
 func probeAgy(env SetupEnv) (bool, []string) {
 	for try := 0; try < 2; try++ {
 		out, exit, err := runProbe(env, "agy", "models")

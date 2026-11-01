@@ -1,6 +1,6 @@
-// Package release answers what relevo asks about its own distribution
-// without touching the network: how the binary was installed, and whether a
-// newer release exists in what the daemon cached.
+// Package release answers what relevo asks about its own distribution: how
+// the binary was installed, whether the daemon's cached check names a newer
+// release, and the network fetch and verified download behind both.
 package release
 
 import (

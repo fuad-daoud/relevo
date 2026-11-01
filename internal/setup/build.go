@@ -119,7 +119,9 @@ func pickedOne(q Question, tokens []string) (string, error) {
 }
 
 // cheapestPick is the one model the reviewer, security and lite-planner
-// actors share. Empty when no rule can name one.
+// actors share: claude's sonnet alias, then the codex model the offer lists
+// last, then muse's first catalog model, then agy's first flash model, else
+// its first, then opencode's first. Empty when no rule can name one.
 func cheapestPick(inv Inventory) string {
 	models := loggedModels(inv)
 	if len(models["claude"]) > 0 {

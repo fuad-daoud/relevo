@@ -260,7 +260,7 @@ func describeSetupAnswer(q Question, vals []string) string {
 }
 
 // askSetupRoles shows what the other roles get from the answers so far and
-// asks whether to keep that.
+// asks whether to keep that or pick each role; true means pick each role.
 func askSetupRoles(w io.Writer, sc *bufio.Scanner, qs []Question, answers Answers) (bool, error) {
 	derived := DerivedRoles(qs, answers)
 	var lines []string
@@ -366,7 +366,7 @@ func setupChoiceText(c Choice) string {
 
 // promptAnswerLine turns one typed line into an answer: a comma list of
 // numbers picks choices in the order typed, and anything else parses as an
-// --answer flag would.
+// --answer flag would and reports itself spelled.
 func promptAnswerLine(q Question, line string) ([]string, bool, error) {
 	tokens := strings.Split(line, ",")
 	if order, ok := numericTokens(tokens); ok {

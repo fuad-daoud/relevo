@@ -18,7 +18,9 @@ var rolePrompts = map[string]string{
 	"lite-planner": "Who writes small plans, for quick tasks the full planner would be heavy for?",
 }
 
-// roleQuestions are the optional role questions.
+// roleQuestions are the optional role questions. Their recommendations show
+// what an unanswered role gets from the recommended builder and planner;
+// DerivedRoles gives the same from the answers actually given.
 func roleQuestions(inv Inventory, builder, planner Question) []Question {
 	cheap := cheapestPick(inv)
 	if c, _, ok := choiceAndEffort(builder, cheap); ok {
@@ -63,9 +65,10 @@ func IsRole(id string) bool {
 }
 
 // DerivedRoles is what each role gets when its question goes unanswered:
-// the librarian writes with the builders and security reviews with the
-// planner; the reviewer and lite-planner keep an effort the answers already
-// picked their model at.
+// the librarian writes with the builders, security reviews with the
+// planner, and the reviewer and lite-planner take the model their own
+// question recommends -- at the effort the answers already picked it at,
+// when they did.
 func DerivedRoles(qs []Question, answers Answers) Answers {
 	out := Answers{}
 	if b := answers["builder"]; len(b) > 0 {

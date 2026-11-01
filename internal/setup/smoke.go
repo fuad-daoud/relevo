@@ -25,7 +25,8 @@ import (
 // SmokeName is the binding and the repo name the smoke round uses.
 const SmokeName = "setup-smoke"
 
-// smokeBudget bounds the wait: ten minutes means a builder that is stuck, not slow.
+// smokeBudget bounds the wait: a healthy machine closes the round in about a
+// minute, so ten minutes means a builder that is stuck, not slow.
 const smokeBudget = 10 * time.Minute
 
 // smokePlanText is the plan the smoke round sends; HELLO.md holding the line
@@ -232,7 +233,8 @@ func setupSmokeFinish(ctx context.Context, deps Deps, rt relevo.Runtime, b store
 
 // SmokeLimitFailure is the failure a round gets when its last builder hit a
 // usage limit with nobody left to take over; the row says when it resets and
-// how to add a fallback. nil when the round failed some other way.
+// how to add a fallback. The throwaway state goes, because its transcript
+// only repeats the limit. nil when the round failed some other way.
 func SmokeLimitFailure(ctx context.Context, rt relevo.Runtime, smokeDir string) error {
 	b, err := rt.Store.Load(SmokeName)
 	if err != nil || b.BuilderCandidate == "" {

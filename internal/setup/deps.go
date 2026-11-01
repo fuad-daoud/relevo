@@ -36,7 +36,8 @@ func (e *InternalError) Unwrap() error { return e.Err }
 // apply already printed is the whole report.
 type StepError struct {
 	Message string
-	Next    string
+	// Next is the fix it names.
+	Next string
 }
 
 func (e *StepError) Error() string { return e.Message }
@@ -45,7 +46,8 @@ func (e *StepError) Error() string { return e.Message }
 // it. It renders as a step row; the caller exits it as gate_active.
 type LimitError struct {
 	Message string
-	Next    string
+	// Next is the fix it names.
+	Next string
 }
 
 func (e *LimitError) Error() string { return e.Message }

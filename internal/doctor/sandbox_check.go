@@ -48,7 +48,8 @@ func sandboxChecks(env Env, d *db.DB, stateRoot, configRoot string, checks []Che
 }
 
 // serveMachineDB opens the machine database rt.Store holds, or nil when it
-// cannot be opened. A store whose open failed leaves the rows off.
+// cannot be opened. A store whose open failed leaves the serve and sandbox
+// port rows off.
 func serveMachineDB(rt relevo.Runtime) *db.DB {
 	d, err := rt.Store.DB()
 	if err != nil {

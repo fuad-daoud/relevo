@@ -307,7 +307,8 @@ func setupMarketplaceAdded(out []byte, exit int) bool {
 
 // runSetupMusePlugin installs the muse plugin: add the marketplace only when
 // unlisted, install, then approve, which muse requires before its hooks and
-// MCP servers run. An install exiting 0 succeeds however its first line reads.
+// MCP servers run. An install exiting 0 succeeds however its first line reads,
+// as in runSetupPlugin, which never parses install stdout on success.
 func runSetupMusePlugin(ctx context.Context) (SetupStepDoc, error) {
 	r := setupPluginRunner()
 	listOut, listExit, _ := r.Run(ctx, "muse", "plugins", "marketplace", "list")

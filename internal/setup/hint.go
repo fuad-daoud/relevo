@@ -11,7 +11,8 @@ import (
 // anyway, so the line only misdirects when candidates exist.
 const setupHint = "relevo is not set up yet: run relevo setup"
 
-// setupHintStream is the hint's writer, swappable so a test can read it.
+// setupHintStream is the hint's writer, swappable so a test can read it; nil
+// is os.Stderr as it stands at print time.
 var setupHintStream io.Writer
 
 // needsSetupHint is the pure rule for the unconfigured-machine hint: no

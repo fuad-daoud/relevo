@@ -38,8 +38,10 @@ type UpdateRequest struct {
 }
 
 type UpdateDecision struct {
-	Action  UpdateAction
-	Target  string
+	Action UpdateAction
+	// Target is the normalised tag to install or print.
+	Target string
+	// Message is the one sentence the CLI prints as is.
 	Message string
 }
 

@@ -218,9 +218,10 @@ func candidatesCheck() Check {
 	}
 }
 
-// clientKeyReplaced reads what this machine's own file recorded. A row
-// that will not read is reported as no swap: a corrupt row is worse to
-// interrupt an operator with than a missing warning.
+// clientKeyReplaced reads what this machine's own file recorded when an
+// arriving client key took the place of the one it held. A row that will
+// not read is reported as no swap: a corrupt row is worse to interrupt an
+// operator with than a missing warning.
 func clientKeyReplaced(cfg *config.Store) ClientKeyReplacedInput {
 	swapped, ok, err := cfg.ReadClientKeyReplaced()
 	if err != nil || !ok {
@@ -275,8 +276,9 @@ func RunReport(rt relevo.Runtime, L config.Loaded, deps Deps) (Report, error) {
 }
 
 // agentFileCheck reads the config's carried harness files and the drifted
-// ones, plus the rendered definitions of the config's own agents. Anything
-// it cannot open leaves what it could not read out.
+// ones, plus the rendered definitions of the config's own agents that a
+// person has edited against the role manifest. Anything it cannot open
+// leaves what it could not read out.
 func agentFileCheck(open func() (*config.Store, error)) Check {
 	store, err := open()
 	if err != nil {

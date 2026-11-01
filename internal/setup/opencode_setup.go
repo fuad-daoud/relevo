@@ -1,6 +1,6 @@
 package setup
 
-// opencode_cli.go asks the opencode question on a terminal: a catalog runs
+// opencode_setup.go asks the opencode question on a terminal: a catalog runs
 // to hundreds of models, so the reader picks providers first, then models.
 
 import (
@@ -41,7 +41,7 @@ func opencodeValue(provider, model string) string {
 }
 
 // askOpencodeModels walks the providers and returns the picked models as
-// opencode answer values.
+// opencode answer values, or [OpencodeNone] when none is picked.
 func askOpencodeModels(w io.Writer, sc *bufio.Scanner, q Question) ([]string, error) {
 	providers := opencodeProviders(q)
 	pq := Question{

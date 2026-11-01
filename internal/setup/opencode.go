@@ -19,13 +19,15 @@ const (
 	opencodePlannerVariant = "max"
 )
 
+// opencodeFree is the provider whose models need no login.
 const opencodeFree = "opencode"
 
 const OpencodeNone = "none"
 
-// probeOpencode lists the models opencode can run; the list is the login
-// probe too. A failure falls back to the lineup, because a missing key is a
-// doctor finding, not a reason to drop it.
+// probeOpencode lists the models opencode can run: `opencode models
+// --standalone` prints only logged-in providers' models plus the free ones,
+// so the list is the login probe too. A failure falls back to the lineup,
+// because a missing key is a doctor finding, not a reason to drop it.
 func probeOpencode(env SetupEnv) []string {
 	out, exit, err := runProbe(env, "opencode", "models", "--standalone")
 	if err != nil || exit != 0 {

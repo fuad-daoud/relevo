@@ -44,7 +44,8 @@ type Downloader struct {
 }
 
 // FetchBinary produces a verified, executable relevo binary for tag as a temp
-// file in destDir; nothing is written to disk before the checksum passes.
+// file in destDir. Nothing is written to disk before the checksum passes, and
+// no temp file is left behind on any error.
 func (d *Downloader) FetchBinary(ctx context.Context, tag, goos, goarch, destDir string) (string, error) {
 	if !IsReleaseTag(tag) {
 		return "", fmt.Errorf("%q: %w", tag, ErrBadTag)

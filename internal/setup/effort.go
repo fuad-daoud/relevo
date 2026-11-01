@@ -5,7 +5,9 @@ import (
 	"strings"
 )
 
-// effortWords are the effort names the harnesses spell, lightest first.
+// effortWords are the effort names the harnesses spell, lightest first: the
+// order an agy group lists its efforts in, and the suffixes agy names each
+// effort's model with.
 var effortWords = []string{"minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
 
 var effortWhy = map[string]string{
@@ -18,6 +20,7 @@ var effortWhy = map[string]string{
 	"ultra":   "deepest reasoning plus automatic task delegation",
 }
 
+// claudeEfforts is what `claude --effort` takes, for each of its aliases.
 var claudeEfforts = []string{"low", "medium", "high", "xhigh", "max"}
 
 // harnessChoices are one harness's models as the candidate questions list them.

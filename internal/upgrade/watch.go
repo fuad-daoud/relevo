@@ -35,6 +35,7 @@ func (a Action) String() string {
 	return "unknown"
 }
 
+// Decision is Check's answer, with Reason set when Action is Refused.
 type Decision struct {
 	Action Action
 	Reason string
@@ -92,6 +93,7 @@ func (w *Watcher) Check(ctx context.Context) Decision {
 	return Decision{Action: Reexec}
 }
 
+// Refused returns the identity this watcher refused, or nil.
 func (w *Watcher) Refused() *store.FileID { return w.refused }
 
 // reasonText is a preflight failure's first line, capped at 300 bytes: this
