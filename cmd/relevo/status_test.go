@@ -54,6 +54,6 @@ func TestStatusShapesOnAFreshMachineSaySoInsteadOfRefusing(t *testing.T) {
 		t.Setenv("CLAUDECODE", "")
 		t.Setenv("RELEVO_MASTERMIND", "")
 		_, _, err := captureOutput(t, func() error { return run([]string{"status", "--line", "--json"}) })
-		requireCLIError(t, err, codeUsage, "relevo mastermind list")
+		_ = requireCLIError(t, err, codeUsage, "relevo mastermind list")
 	})
 }

@@ -82,5 +82,5 @@ func TestStatusNameBypassesNarrowing(t *testing.T) {
 	_, _, err = captureOutput(t, func() error {
 		return run([]string{"status", "--name", "ghost", "--json"})
 	})
-	requireCLIError(t, err, codeBindingNotFound, "")
+	_ = requireCLIError(t, err, codeBindingNotFound, "")
 }
