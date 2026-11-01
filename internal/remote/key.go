@@ -18,9 +18,9 @@ var ErrKeyType = errors.New("invalid key type; ed25519 required")
 
 const pemTypePrivate = "RELEVO ED25519 PRIVATE KEY"
 
-// legacyPEMTypePrivate is the pre-rename private-key label, spelled out on
-// the next line. Old files still carry it, so it must keep parsing. Nothing
-// writes it: MarshalPrivate emits the current label only.
+// legacyPEMTypePrivate is the private-key label from before the rename. Old
+// files still carry it, so it must keep parsing. Nothing writes it:
+// MarshalPrivate emits the current label only.
 const legacyPEMTypePrivate = "RELAY ED25519 PRIVATE KEY" // name-guard: legacy
 
 // IsLegacyPrivatePEM reports whether data holds a PEM block of the pre-rename
