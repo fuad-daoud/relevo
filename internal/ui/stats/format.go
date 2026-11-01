@@ -142,7 +142,6 @@ func statsTableColumns(left, right []string, leftW, rightW, width int) []string 
 	return out
 }
 
-// One table under the other with three-cell gutters each side.
 func statsStackedTable(cells []string, width int) []string {
 	out := make([]string, 0, len(cells))
 	for _, c := range cells {

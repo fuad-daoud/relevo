@@ -15,7 +15,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/histq"
 )
 
-// Model is the dashboard screen's whole state.
 type Model struct {
 	db *db.DB // nil -> the host never enters the screen
 	// loc decides where a round's day starts (histq.Group's day axis) and
@@ -23,10 +22,10 @@ type Model struct {
 	loc *time.Location
 	now func() time.Time
 
-	query histq.Query // the applied query
-	text  string      // the applied query's text (prefs)
+	query histq.Query
+	text  string // the applied query's text (prefs)
 
-	input    textinput.Model // the / editor
+	input    textinput.Model
 	editing  bool
 	parseErr string // "" when none
 
@@ -34,7 +33,6 @@ type Model struct {
 	groups []histq.GroupRow // when query.By != none
 	tiles  histq.Tiles
 
-	// expanded is the group keys whose rounds are shown beneath them.
 	expanded map[string]bool
 
 	cursor   int // index into the visible lines (see visible())
@@ -55,7 +53,6 @@ type Model struct {
 	// (fetchDB below), so a test can hand the model literal rows.
 	fetchFn func(ctx context.Context, q histq.Query) ([]db.RoundRow, error)
 
-	// styles is the host's palette, set with SetStyles.
 	styles Styles
 
 	// Notice is a host-owned line the host drops in at view time: the
@@ -100,7 +97,6 @@ type Styles struct {
 	Chip      lipgloss.Style
 }
 
-// RowsMsg is one successful refresh: the rows the query selected.
 type RowsMsg struct {
 	Rows []db.RoundRow
 	At   time.Time
@@ -109,7 +105,6 @@ type RowsMsg struct {
 // ErrMsg is one failed refresh: the rows already on screen stay.
 type ErrMsg struct{ Err error }
 
-// JumpMsg is what the host receives when enter is pressed on a round row.
 type JumpMsg struct {
 	BindingName string
 	BindingID   string
@@ -117,10 +112,9 @@ type JumpMsg struct {
 	Live        bool // unknown here; host decides
 }
 
-// New builds the screen for d, in loc, reading the clock through now.
-// queryText and sortKey are the persisted prefs; an empty sortKey takes
-// each level's default. An unparseable stored query is no query at all:
-// the screen opens on every round rather than on a broken state.
+// New builds the screen: queryText and sortKey are the persisted prefs; an
+// empty sortKey takes each level's default. An unparseable stored query is no
+// query at all: the screen opens on every round rather than on a broken state.
 func New(d *db.DB, loc *time.Location, now func() time.Time, queryText, sortKey string) Model {
 	if loc == nil {
 		loc = time.Local
@@ -152,10 +146,8 @@ func New(d *db.DB, loc *time.Location, now func() time.Time, queryText, sortKey 
 	return m
 }
 
-// SetStyles hands the screen the host's palette.
 func (m *Model) SetStyles(s Styles) { m.styles = s }
 
-// Init is the first fetch.
 func (m Model) Init() tea.Cmd {
 	_, cmd := m.startFetch()
 	return cmd
@@ -243,7 +235,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateKeys is the un-editing key map.
 func (m Model) updateKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 	switch msg.String() {
 	case "/":
@@ -306,7 +297,6 @@ func (m Model) updateKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// selectable reports whether line i can receive the cursor.
 func (m Model) selectable(i int) bool {
 	lines := m.visible()
 	if i < 0 || i >= len(lines) {
@@ -315,7 +305,6 @@ func (m Model) selectable(i int) bool {
 	return lines[i].kind != lineDay
 }
 
-// moveCursor moves the cursor delta lines, clamped to the visible list.
 func (m *Model) moveCursor(delta int) {
 	dir := 1
 	if delta < 0 {
@@ -362,7 +351,6 @@ func (m *Model) clampCursor() {
 	m.moveCursorTo(m.cursor, 1)
 }
 
-// pageSize is one screenful of grid.
 func (m Model) pageSize() int {
 	n := m.gridHeight()
 	if n < 1 {
@@ -422,13 +410,12 @@ func (m Model) groupedLevel() bool {
 	return lines[m.cursor].kind == lineGroup
 }
 
-// grouped reports whether the applied query regroups at all.
 func (m Model) grouped() bool {
 	return m.query.By != histq.AxisNone && m.query.By != ""
 }
 
-// View draws the three fixed lines and the scrolled grid. The host
-// sets Notice before calling when it has one to show.
+// View draws the three fixed lines and the scrolled grid; the host sets
+// Notice before calling when it has one to show.
 func (m Model) View() string {
 	m.vp.Width = m.width
 	m.vp.Height = m.gridHeight()

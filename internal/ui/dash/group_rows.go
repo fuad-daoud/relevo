@@ -53,7 +53,6 @@ func (m Model) groupLayout() groupColLayout {
 	}
 }
 
-// groupLine is one group row.
 func (m Model) groupLine(g histq.GroupRow, cursor bool) string {
 	cw := m.width - 6
 	if cw < 0 {
@@ -170,7 +169,6 @@ func (m Model) appendGroupLast(parts []string, g histq.GroupRow, cursor bool) []
 	return append(parts, m.cell(lastStr, 9, true, m.styles.Dim, cursor))
 }
 
-// groupHeader labels the group grid's columns.
 func (m Model) groupHeader() string {
 	cw := m.width - 6
 	if cw < 0 {

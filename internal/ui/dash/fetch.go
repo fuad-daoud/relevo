@@ -14,7 +14,6 @@ import (
 // the screen literal rows instead of a database.
 type fetchFunc func(ctx context.Context, q histq.Query) ([]db.RoundRow, error)
 
-// fetchDB is the default fetch: one db.Query per refresh, then Apply.
 func (m Model) fetchDB() fetchFunc {
 	return func(ctx context.Context, q histq.Query) ([]db.RoundRow, error) {
 		if m.db == nil {
@@ -28,9 +27,8 @@ func (m Model) fetchDB() fetchFunc {
 	}
 }
 
-// startFetch begins one refresh and returns the command that will deliver
-// RowsMsg or ErrMsg. One refresh at a time: a second request while one is
-// in flight is dropped, not queued.
+// startFetch begins one refresh. One refresh at a time: a second request
+// while one is in flight is dropped, not queued.
 func (m Model) startFetch() (Model, tea.Cmd) {
 	if m.fetching {
 		return m, nil

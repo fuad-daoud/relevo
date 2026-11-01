@@ -50,7 +50,6 @@ var (
 	ArchivedStyle = FaintStyle.Italic(true)
 )
 
-// Chip renders text with one cell of padding in style s.
 func Chip(s lipgloss.Style, text string) string {
 	return s.Render(" " + text + " ")
 }

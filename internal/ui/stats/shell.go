@@ -43,12 +43,12 @@ type StatsMsg struct {
 // statsView is ':stats': it reads the report from a fetch and never opens the
 // database on the render path.
 type statsView struct {
-	window     string // "7d" | "30d" | "90d" | "all"
-	tab        int    // index into statsTabs
+	window     string
+	tab        int
 	rep        datastats.Report
-	loaded     bool  // a report has arrived at least once
-	err        error // the last fetch error
-	fetching   bool  // a fetch is in flight
+	loaded     bool // a report has arrived at least once
+	err        error
+	fetching   bool // a fetch is in flight
 	fetchedAt  time.Time
 	focus      int      // 0 = candidates panel, 1 = repos panel
 	cursor     [2]int   // selected row per focusable panel
@@ -87,7 +87,6 @@ func push(v widget.View, init tea.Cmd) tea.Cmd {
 	return func() tea.Msg { return widget.PushMsg{View: v, Init: init} }
 }
 
-// fetch is the async read: StatsInputs then Build, reported as a StatsMsg.
 func (v statsView) fetch(env widget.Env) tea.Cmd {
 	window := v.window
 	rt := env.Src.Base()
@@ -151,8 +150,7 @@ func (v statsView) Keys() []widget.KeyHelp {
 }
 
 // Context is the tabs row on the left and the windows and refresh state on the
-// right. The totals live in the overview's tiles. No dollars: tokens are
-// what a subscription lane can watch.
+// right. No dollars: tokens are what a subscription lane can watch.
 func (v statsView) Context(env widget.Env) (string, string) {
 	chips := make([]string, len(statsWindows))
 	for i, w := range statsWindows {
@@ -253,10 +251,9 @@ func (v statsView) tabLines(env widget.Env, width, height int) ([]string, int) {
 	return v.overviewLines(env, width, height)
 }
 
-// page is the body lines as Body would lay them out for the shell's current
-// size: the active tab at the body's width and the room it has under the head
-// line. sel is the tab's selected line, -1 when the tab has none. It is only
-// meaningful once a report is loaded and non-empty.
+// page is the body lines as Body would lay them out. sel is the tab's
+// selected line, -1 when the tab has none. It is only meaningful once a report
+// is loaded and non-empty.
 func (v statsView) page(env widget.Env) (lines []string, sel, avail int) {
 	avail = widget.BodyHeight(env) - 1
 	if !v.loaded || v.rep.Totals.Rounds == 0 {

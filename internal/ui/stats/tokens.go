@@ -193,11 +193,10 @@ func (v statsView) statsKindSeries(days []datastats.DayCost) []statsSeries {
 	return series
 }
 
-// statsStackedCharts is the candidate, provider and kind splits' body:
-// one full timeline chart per non-idle series, stacked in the order the series
-// arrive, then one faint line naming the idle ones. shared draws every chart on
-// one scale; windowTotal is the window's tokens, which each chart's share is
-// of.
+// statsStackedCharts is the candidate, provider and kind splits' body: one
+// full timeline chart per non-idle series, then one faint line naming the idle
+// ones. shared draws every chart on one scale; windowTotal is the window's
+// tokens, which each chart's share is of.
 func statsStackedCharts(series []statsSeries, days []datastats.DayCost, shared bool, width int, windowTotal int64) []string {
 	var active []statsSeries
 	var idle []string
@@ -310,9 +309,8 @@ func statsStackLabelW(max float64) int {
 	return w
 }
 
-// statsChartTitle is one stacked chart's title: the series name in the gutter,
-// then its total in bold and its share of the window muted, right aligned to
-// end at width-3.
+// statsChartTitle is one stacked chart's title, right aligned to end at
+// width-3.
 func statsChartTitle(name string, total, windowTotal int64, width int) string {
 	left := "   " + widget.TextStyle.Bold(true).Render(name)
 	right := widget.TextStyle.Bold(true).Render(datastats.ShortTokens(total))
@@ -326,9 +324,8 @@ func statsChartTitle(name string, total, windowTotal int64, width int) string {
 	return left + strings.Repeat(" ", pad) + right
 }
 
-// statsWeekLine is the tokens tab's footer: the window's last seven days
-// against the seven before, then the busiest day. The busiest-day clause goes
-// when every day is zero, and last week reads 0 under eight days.
+// statsWeekLine is the tokens tab's footer. The busiest-day clause goes when
+// every day is zero, and last week reads 0 under eight days.
 func statsWeekLine(days []datastats.DayCost) string {
 	var thisWeek, lastWeek int64
 	start := len(days) - 7
@@ -362,9 +359,8 @@ func statsWeekLine(days []datastats.DayCost) string {
 		widget.MutedStyle.Render(" "+datastats.ShortTokens(max))
 }
 
-// tokensTabLines is the tokens tab: the split chips, the total split's
-// timeline or the selected split's stacked charts, then the week line. With no
-// tokens in the window one faint line replaces the chart.
+// tokensTabLines is the tokens tab. With no tokens in the window one faint
+// line replaces the chart.
 func (v statsView) tokensTabLines(env widget.Env, width, height int) []string {
 	days := v.rep.Spend.Days
 	out := []string{statsSplitChips(v.split), ""}

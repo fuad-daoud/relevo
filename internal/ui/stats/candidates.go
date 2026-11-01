@@ -27,7 +27,6 @@ type statsCandCol struct {
 	Drop int
 }
 
-// statsCandCols is the candidates tab's column set, left to right.
 var statsCandCols = []statsCandCol{
 	{Head: "RNDS", W: 6},
 	{Head: "DONE", W: 6},
@@ -59,8 +58,6 @@ func statsCandVisible(width int) ([]statsCandCol, int) {
 	return visible, statsCandNameW(width, visible)
 }
 
-// statsCandNameW is the candidates table's name column: width - 6 less
-// the visible columns, the three-cell gap and the STATUS cell.
 func statsCandNameW(width int, visible []statsCandCol) int {
 	sum := 0
 	for _, c := range visible {
@@ -86,11 +83,10 @@ func (v statsView) statsCandStatus(token string, now time.Time) (string, lipglos
 	return "ready", widget.GreenStyle
 }
 
-// candidatesTabLines is the candidates tab: one full-width table of
-// every configured candidate -- the header row, then every overviewCandRows
-// row with no windowing, because the page scrolls -- two blank lines and the
+// candidatesTabLines is the candidates tab: every overviewCandRows row with
+// no windowing, because the page scrolls, then two blank lines and the
 // selected row's detail block. sel is the selected row's line, 1+i, which the
-// page follows. A table with no row is its header alone, and sel is -1.
+// page follows; with no row it is the header alone and sel is -1.
 func (v statsView) candidatesTabLines(env widget.Env, width int) ([]string, int) {
 	names := env.Src.Base().Candidates.NameOf
 	rows := v.overviewCandRows(names)
@@ -136,8 +132,7 @@ func (v statsView) candidatesTabLines(env widget.Env, width int) ([]string, int)
 	return out, 1 + cur
 }
 
-// accountTabLines is the candidates tab's account section: the same columns as
-// the candidate table, one row per login a round drew from. It is only reached
+// accountTabLines is the candidates tab's account section. It is only reached
 // when the report carries accounts, so a host with none shows the tab it
 // always did. Status is per candidate, so this table has none.
 func (v statsView) accountTabLines(width int) []string {
@@ -154,9 +149,6 @@ func (v statsView) accountTabLines(width int) []string {
 	return out
 }
 
-// statsCandCells is one candidates-tab row's plain parts: the name
-// fitted to the name column and the numbers right-aligned in each visible
-// column.
 func statsCandCells(s datastats.ScoreRow, name string, visible []statsCandCol, nameW int) (string, string) {
 	var b strings.Builder
 	for _, col := range visible {
@@ -179,9 +171,8 @@ func statsCandIdleCells(name string, visible []statsCandCol, nameW int) (string,
 	return datastats.FitKey(name, nameW, false), b.String()
 }
 
-// statsCandCell is one cell of a non-idle row. A lane with nothing
-// measured shows "·" where its median, ttft, per-round mean or cache share
-// would be.
+// statsCandCell is one non-idle row's cell: a lane with nothing measured
+// shows "·" where its median, ttft, per-round mean or cache share would be.
 func statsCandCell(s datastats.ScoreRow, head string) string {
 	k := s.TokenKinds
 	switch head {
@@ -215,11 +206,9 @@ func statsCandCell(s datastats.ScoreRow, head string) string {
 	return "·"
 }
 
-// statsCandDetail is the selected candidates row's detail block: the
-// name with its harness, provider and roles, then the round, binding and token
-// totals, then the measured split, then the rounds that reported token usage.
-// An idle row says it has no rounds instead of the last three lines. Each line
-// starts with the three-cell gutter and is cut to width-6.
+// statsCandDetail is the selected candidates row's detail block. An idle row
+// says it has no rounds instead of the last three lines. Each line starts
+// with the three-cell gutter and is cut to width-6.
 func (v statsView) statsCandDetail(env widget.Env, c statsOverviewCand) []string {
 	width := env.Width - 6
 	if width < 1 {
@@ -258,10 +247,9 @@ func statsCandMeta(env widget.Env, token string) string {
 	return strings.Join(parts, " · ")
 }
 
-// statsCandRoundLine is the detail block's second line: the rounds and
-// the bindings they ran on, then the lane's tokens and their share of the
-// window's. "round" and "binding" are singular at one; the share is omitted
-// when the window measured no token at all.
+// statsCandRoundLine is the detail block's second line. "round" and
+// "binding" are singular at one; the share is omitted when the window measured
+// no token at all.
 func (v statsView) statsCandRoundLine(s datastats.ScoreRow) string {
 	roundWord, bindingWord := "rounds", "bindings"
 	if s.Rounds == 1 {
@@ -283,12 +271,10 @@ func (v statsView) statsCandRoundLine(s datastats.ScoreRow) string {
 	return line + widget.MutedStyle.Render(" tokens")
 }
 
-// statsCandTokenLine is the detail block's third line, all muted: the
-// measured input, cache and output tokens, then the median, the ttft, the
-// report halts and the switches. The "in … out" group and its three trailing
-// spaces go when the lane measured no token, and the median and the ttft
-// clause go when their value is unknown, so a missing value never leaves an
-// empty clause behind.
+// statsCandTokenLine is the detail block's third line, all muted. The "in …
+// out" group and its three trailing spaces go when the lane measured no token,
+// and the median and the ttft clause go when their value is unknown, so a
+// missing value never leaves an empty clause behind.
 func statsCandTokenLine(s datastats.ScoreRow) string {
 	k := s.TokenKinds
 	var clauses []string

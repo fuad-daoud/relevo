@@ -122,15 +122,12 @@ func (g statsTimeGeom) colVals(vals []float64) []float64 {
 	return statsBuckets(vals, len(g.Cols)-1)
 }
 
-// statsChartOpts are a chart body's options: the plot rows, a fixed y
-// scale, and a minimum y-label width for the stacked charts.
 type statsChartOpts struct {
 	Rows     int     // the plot rows
 	FixedMax float64 // when > 0, the y scale is computed from this value instead of the data's column max
 	AxisW    int     // when > 0, the minimum y-label width
 }
 
-// tokensOf is a day series' token counts, one value per day, for a chart body.
 func tokensOf(days []datastats.DayCost) []float64 {
 	toks := make([]float64, len(days))
 	for i, d := range days {
@@ -139,8 +136,6 @@ func tokensOf(days []datastats.DayCost) []float64 {
 	return toks
 }
 
-// statsTimelineLines is the overview's chart body: the timeline of a day
-// series' tokens, drawn by statsTimelineVals.
 func statsTimelineLines(days []datastats.DayCost, width, rows int) []string {
 	return statsTimelineVals(tokensOf(days), days, width, statsChartOpts{Rows: rows})
 }
@@ -192,9 +187,8 @@ func statsTimelineScale(vals []float64, width int, o statsChartOpts) (g statsTim
 	return g, cols, axisW, m, step
 }
 
-// statsTimelinePlotRows draws the H plot rows: the y labels and rules on the
-// left, then one bar, grid or blank cell per plot column. A bar cell always
-// wins over a grid cell.
+// statsTimelinePlotRows draws the H plot rows. A bar cell always wins over a
+// grid cell.
 func statsTimelinePlotRows(cols []float64, g statsTimeGeom, H, m int, step float64, axisW, avail int, axisMax float64) []string {
 	// Tick j sits on row H - round(j*H/m), with row 0 at the top, so tick m is
 	// always row 0 and the ticks are as even as the division allows.
@@ -249,14 +243,12 @@ func statsTimelinePlotRows(cols []float64, g statsTimeGeom, H, m int, step float
 }
 
 // statsTimelineVals is the chart body under the heading: H plot rows, the axis
-// row and the date-label row, over vals, one value per day, with days supplying
-// the date labels. rows is the plot's row count and H is max(rows, m), so every
-// y interval keeps at least one row and a tiny rows still draws. A faint
-// gridline runs at every y tick (┈) and every x tick (┊) inside the plot; a bar
-// cell always wins over a grid cell. Each line starts with the three-cell gutter
-// and none extends past width-3. A positive o.FixedMax replaces the
-// data's column max as the y scale and o.AxisW widens the y-label column at its
-// narrowest, so stacked charts share a scale and start their plots on one column
+// row and the date-label row. rows is the plot's row count and H is
+// max(rows, m), so every y interval keeps at least one row. Each line starts
+// with the three-cell gutter and none extends past width-3. A positive
+// o.FixedMax replaces the data's column max as the y scale and o.AxisW widens
+// the y-label column at its narrowest, so stacked charts share a scale and
+// start their plots on one column
 func statsTimelineVals(vals []float64, days []datastats.DayCost, width int, o statsChartOpts) []string {
 	rows := o.Rows
 	g, cols, axisW, m, step := statsTimelineScale(vals, width, o)
@@ -285,11 +277,10 @@ func statsTimelineVals(vals []float64, days []datastats.DayCost, width int, o st
 	return out
 }
 
-// statsTimelineLabels is the chart's date row: each x tick column's first day
-// as MM-DD, five cells centred on the column's centre and placed right to
-// left. offset is the plot's first cell, so every stacked chart shares these
-// rules. A label that would leave the frame or crowd the one to
-// its right is skipped; its ┊ and ┴ stay.
+// statsTimelineLabels is the chart's date row: each x tick column's first
+// day as MM-DD. offset is the plot's first cell, so every stacked chart shares
+// these rules. A label that would leave the frame or crowd the one to its
+// right is skipped; its ┊ and ┴ stay.
 func statsTimelineLabels(days []datastats.DayCost, cols []float64, chunk int, centers []int, tickCol func(int) bool, offset, width int) string {
 	type placedLabel struct {
 		start int

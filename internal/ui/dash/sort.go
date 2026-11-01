@@ -31,8 +31,8 @@ func isRoundSortKey(s string) bool { return indexOf(roundSortKeys, s) >= 0 }
 
 func isGroupSortKey(s string) bool { return indexOf(groupSortKeys, s) >= 0 }
 
-// roundSortKey is the key the round rows sort by: sortKey when it names a
-// round column, "started" (newest first) otherwise.
+// roundSortKey is the round rows' sort key, "started" (newest first) unless
+// sortKey names a round column.
 func (m Model) roundSortKey() string {
 	if isRoundSortKey(m.sortKey) {
 		return m.sortKey
@@ -40,8 +40,8 @@ func (m Model) roundSortKey() string {
 	return roundSortKeys[0]
 }
 
-// groupSortKey is the key the group rows sort by: sortKey when it names a
-// group column, "tokens" otherwise.
+// groupSortKey is the group rows' sort key, "tokens" unless sortKey names a
+// group column.
 func (m Model) groupSortKey() string {
 	if isGroupSortKey(m.sortKey) {
 		return m.sortKey
