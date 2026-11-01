@@ -171,6 +171,9 @@ func TestCheckMigrateRefusesANewerSchema(t *testing.T) {
 // TestConcurrentOpenAppliesEachMigrationOnce pins the migration guard: the
 // in-transaction re-check is what makes one row per migration hold.
 func TestConcurrentOpenAppliesEachMigrationOnce(t *testing.T) {
+	// A file seeded from the template arrives migrated, so the guard this pins
+	// would never run: every Open here migrates for real.
+	swapFreshTemplate(t, "")
 	for i := 0; i < 20; i++ {
 		path := filepath.Join(t.TempDir(), "relevo.db")
 
@@ -669,6 +672,8 @@ func recordCreateMode(t *testing.T) func() os.FileMode {
 // the post-hoc chmod. The creation mode is read through the seam because that
 // chmod runs immediately after.
 func TestOpenCreatesPrivateFiles(t *testing.T) {
+	// A seeded file arrives by copy, so the creation this pins would not run.
+	swapFreshTemplate(t, "")
 	path := filepath.Join(t.TempDir(), "relevo.db")
 	recorded := recordCreateMode(t)
 

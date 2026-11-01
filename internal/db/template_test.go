@@ -27,8 +27,7 @@ func TestOpenSeedsAFreshPathFromTheTemplate(t *testing.T) {
 		t.Fatalf("read template: %v", err)
 	}
 
-	SetFreshTemplate(tpl)
-	t.Cleanup(func() { SetFreshTemplate("") })
+	swapFreshTemplate(t, tpl)
 
 	fresh := filepath.Join(dir, "fresh.db")
 	d, err := Open(fresh)
@@ -103,8 +102,7 @@ func TestOpenLeavesAnExistingFileAlone(t *testing.T) {
 		t.Fatal("fixture is broken: the existing file and the template must differ")
 	}
 
-	SetFreshTemplate(tpl)
-	t.Cleanup(func() { SetFreshTemplate("") })
+	swapFreshTemplate(t, tpl)
 
 	reopened, err := Open(existing)
 	if err != nil {
@@ -124,8 +122,7 @@ func TestOpenLeavesAnExistingFileAlone(t *testing.T) {
 }
 
 func TestOpenWithoutATemplateMigrates(t *testing.T) {
-	SetFreshTemplate("")
-	t.Cleanup(func() { SetFreshTemplate("") })
+	swapFreshTemplate(t, "")
 
 	d, err := Open(filepath.Join(t.TempDir(), "fresh.db"))
 	if err != nil {
@@ -144,8 +141,7 @@ func TestOpenWithoutATemplateMigrates(t *testing.T) {
 
 func TestSeedFailureFallsBackToMigrating(t *testing.T) {
 	dir := t.TempDir()
-	SetFreshTemplate(filepath.Join(dir, "missing.db"))
-	t.Cleanup(func() { SetFreshTemplate("") })
+	swapFreshTemplate(t, filepath.Join(dir, "missing.db"))
 
 	d, err := Open(filepath.Join(dir, "fresh.db"))
 	if err != nil {
@@ -160,4 +156,14 @@ func TestSeedFailureFallsBackToMigrating(t *testing.T) {
 	if want := embeddedVersion(t); got != want {
 		t.Errorf("Version = %d, want the embedded %d after the seed failed", got, want)
 	}
+}
+
+// swapFreshTemplate points Open at path for one test and puts back the template
+// that was installed before, so the tests after it keep seeding from the
+// package's template instead of migrating every fresh file.
+func swapFreshTemplate(t *testing.T, path string) {
+	t.Helper()
+	prev := freshTemplate
+	SetFreshTemplate(path)
+	t.Cleanup(func() { SetFreshTemplate(prev) })
 }
