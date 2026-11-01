@@ -12,12 +12,9 @@ import (
 // ownerStep is one step from a shared row toward the installation that owns it:
 // read column from parent, where parentKey holds the value fed in.
 type ownerStep struct {
-	// column is the column read from the parent table.
 	column string
-	// parent is the table to read it from.
 	parent string
-	// key is the parent column the incoming value is compared against.
-	key string
+	key    string
 }
 
 // ownerRule is how one shared table's rows resolve to the installation that owns
@@ -50,13 +47,10 @@ type ownerKind struct {
 }
 
 // OwnerRules is how each shared table's rows resolve to the installation that
-// owns them, in SharedTables order.
-//
-// This is the Go half of the resolution the outbox triggers already perform in
-// SQL. The triggers are immutable once applied, so a second hand-written copy of
-// their logic is where the two would drift; TestOwnerResolutionMatchesTriggers
-// compares each rule against the live trigger body, which is the only copy that
-// cannot go stale.
+// owns them, in SharedTables order. This is the Go half of the resolution the
+// outbox triggers already perform in SQL, so the two would drift;
+// TestOwnerResolutionMatchesTriggers compares each rule against the live
+// trigger body, which cannot go stale.
 var OwnerRules = map[string]ownerRule{
 	"repo":               {owner: "origin"},
 	"mastermind":         {owner: "origin"},
@@ -88,8 +82,6 @@ var OwnerRules = map[string]ownerRule{
 	}},
 }
 
-// creatorColumn returns "origin" for binding_record and binding, and empty string
-// for every other table.
 func creatorColumn(tbl string) string {
 	if tbl == "binding_record" || tbl == "binding" {
 		return "origin"
@@ -104,11 +96,8 @@ func CreatorColumn(tbl string) string {
 }
 
 // ownerExpression renders the rule's SQL for one row alias, in the shape the
-// outbox triggers write: a root's owner column, a child's nested parent
-// subqueries, or the discriminator's CASE for a table that has one.
-//
-// The same rendering serves the trigger comparison and the row lookup, so the
-// text a test pins against a trigger body is the text the query runs.
+// outbox triggers write. The same rendering serves the trigger comparison and
+// the row lookup, so the text the test pins is the text the query runs.
 func ownerExpression(rule ownerRule, alias string) string {
 	if len(rule.kinds) > 0 {
 		return ownerKindExpression(rule, alias)
@@ -130,8 +119,8 @@ func ownerExpression(rule ownerRule, alias string) string {
 }
 
 // ownerKindExpression renders the CASE a discriminator table's trigger writes.
-// The kinds are rendered in the rule's order, so the text a trigger is compared
-// against is ordered the way the trigger orders its WHEN arms.
+// The kinds render in the rule's order, matching the order of the trigger's
+// WHEN arms.
 func ownerKindExpression(rule ownerRule, alias string) string {
 	var b strings.Builder
 	b.WriteString("CASE " + alias + ".owner_kind")
@@ -144,10 +133,9 @@ func ownerKindExpression(rule ownerRule, alias string) string {
 
 // ResolveOwner returns the installation that owns one shared row, resolving it
 // the way the outbox triggers do. found is false when the row has no owner to
-// resolve to: the row is absent, or its parent is already gone, which is the
-// case a child removed by a cascade lands in. A caller that skips such an entry
-// is right to, because the parent's own delete entry carries the removal to every
-// importer.
+// resolve to: the row is absent, or its parent is already gone after a cascade.
+// Skipping such an entry is right: the parent's own delete entry carries the
+// removal to every importer.
 func (d *DB) ResolveOwner(tbl, pk string) (string, bool, error) {
 	return resolveOwner(context.Background(), d.sqlDB, tbl, pk)
 }
@@ -185,9 +173,9 @@ func resolveOwner(ctx context.Context, q queryer, tbl, pk string) (string, bool,
 }
 
 // ownerQuery builds the lookup for one row's owner: the rule's expression over
-// the row's own table, restricted by the primary key with every key value bound.
-// The table and column names come from SharedTables and OwnerRules, never from
-// the pk text, which is parsed into parameters.
+// the row's own table, restricted by the primary key. The table and column
+// names come from SharedTables and OwnerRules, never from the pk text, which
+// is parsed into parameters.
 func ownerQuery(shared SharedTable, rule ownerRule, keys []any) (string, []any) {
 	where := make([]string, len(shared.PrimaryKey))
 	args := make([]any, 0, len(keys))

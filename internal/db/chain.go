@@ -10,8 +10,7 @@ import (
 
 // Chains are durable state: one chains row per chain plus its append-only
 // chain_event trace. Membership lives in the row's four member columns, so a
-// closing binding finds its chain with one indexed lookup, and no binding
-// record changes.
+// closing binding finds its chain with one indexed lookup.
 
 // ChainRow is one chains row: the state machine's state, the resolved
 // settings, the plan copies the chain holds, and the names of its builder,
@@ -45,11 +44,11 @@ type ChainRow struct {
 	Server         string
 	MasterMindID   string
 	// PlanStartCommit is the commit the chain's current plan started at; ""
-	// for every chain created before the column existed.
+	// when the chain has no recorded start.
 	PlanStartCommit string
 	// WorkflowJSON is the chain's stored workflow definition and StateJSON its
-	// engine state; both are "" for every chain created before the columns
-	// existed. Parent names a fork's parent chain.
+	// engine state; both are "" when the chain stores neither. Parent names a
+	// fork's parent chain.
 	WorkflowJSON []byte
 	StateJSON    []byte
 	Parent       string
@@ -112,8 +111,8 @@ const chainCols = `id, origin, owner, name, status, reason, phase, step, plan, p
 	awaiting_member, awaiting_round, settings, builder, reviewer, planner, security,
 	base, branch, repo, worktree, feature, ticket, server, mastermind_id, created_at, updated_at, plan_start_commit`
 
-// chainCustomCols are the columns migration 021 adds, read only when the
-// database carries them.
+// chainCustomCols are the migration-021 custom-workflow columns, read only
+// when the database carries them.
 const chainCustomCols = `workflow, state, parent`
 
 func scanChain(s rowScanner, custom bool) (ChainRow, error) {
@@ -163,8 +162,8 @@ func (d *DB) chainScanner(s rowScanner) (ChainRow, error) {
 }
 
 // ChainGet returns owner's chain named name within this handle's origin, and
-// whether it was found. A database that predates the chains tables reads as
-// absent, never an error.
+// whether it was found. A database without the chains tables reads as absent,
+// never an error.
 func (d *DB) ChainGet(owner, name string) (ChainRow, bool, error) {
 	if !d.hasChains() {
 		return ChainRow{}, false, nil
@@ -208,8 +207,8 @@ func (d *DB) ChainGetByMember(owner, member string) (ChainRow, bool, error) {
 	return c, true, nil
 }
 
-// chainByMemberTable resolves a member through chain_member. A database that
-// predates the table reports nothing, so the caller falls back to the legacy
+// chainByMemberTable resolves a member through chain_member. A database
+// without the table reports nothing, so the caller falls back to the legacy
 // columns.
 func (d *DB) chainByMemberTable(owner, member string) (ChainRow, bool, error) {
 	c, err := d.chainScanner(d.sqlDB.QueryRowContext(context.Background(),
@@ -226,8 +225,8 @@ func (d *DB) chainByMemberTable(owner, member string) (ChainRow, bool, error) {
 	return c, true, nil
 }
 
-// ChainList returns owner's chains by name. A database that predates the
-// chains tables reads as empty.
+// ChainList returns owner's chains by name. A database without the chains
+// tables reads as empty.
 func (d *DB) ChainList(owner string) ([]ChainRow, error) {
 	if !d.hasChains() {
 		return nil, nil
@@ -250,8 +249,8 @@ func (d *DB) ChainList(owner string) ([]ChainRow, error) {
 
 const chainEventCols = `chain_id, seq, ts, phase, step, member, round, event, action, reason, plan`
 
-// ChainEvents returns chain id's trace rows in seq order. A database that
-// predates the chains tables reads as empty.
+// ChainEvents returns chain id's trace rows in seq order. A database without
+// the chains tables reads as empty.
 func (d *DB) ChainEvents(id string) ([]ChainEventRow, error) {
 	if !d.hasChains() {
 		return nil, nil
@@ -330,7 +329,7 @@ func (t *Tx) updateChain(id string, c ChainRow, updatedAt time.Time) error {
 }
 
 // chainCustomPut writes the custom-workflow columns, which are left out of the
-// legacy insert and update statements so a database that predates them still
+// legacy insert and update statements so a database without them still
 // round-trips.
 func (t *Tx) chainCustomPut(id string, c ChainRow) error {
 	if !t.hasChainCustom() {
@@ -359,11 +358,9 @@ func (t *Tx) insertChain(c ChainRow, createdAt, updatedAt time.Time) error {
 }
 
 // ChainDelete removes owner's chain named name, with its trace and its member
-// and check rows. No row is a no-op.
-//
-// The trace is deleted here rather than left to the foreign key's ON DELETE
-// CASCADE, for the reason RecordDelete gives: a cascaded child's outbox entry
-// carries no origin, so its delete would never be exported.
+// and check rows. The trace is deleted here rather than left to the foreign
+// key's ON DELETE CASCADE: a cascaded child's outbox entry carries no origin,
+// so its delete would never be exported.
 func (t *Tx) ChainDelete(owner, name string) error {
 	tables := []string{"chain_event"}
 	if t.hasChainCustom() {
@@ -379,8 +376,6 @@ func (t *Tx) ChainDelete(owner, name string) error {
 	return nil
 }
 
-// chainDeleteChildren removes the rows of tables for the chain named name,
-// before the chain row itself goes.
 func (t *Tx) chainDeleteChildren(owner, name string, tables []string) error {
 	scope := `SELECT id FROM chains WHERE ` + originScope + ` AND owner = ? AND name = ?`
 	for _, table := range tables {
@@ -392,9 +387,9 @@ func (t *Tx) chainDeleteChildren(owner, name string, tables []string) error {
 }
 
 // ChainEventPut stores one trace row under the seq the row names, and reports
-// whether it was new. A mirror that copies a server's trace must keep the
-// server's own seqs, so the row cannot be allocated here; a seq already stored
-// is left exactly as it is, which is what makes a re-copy a no-op.
+// whether it was new. A mirror keeps the server's own seqs, so the row cannot
+// be allocated here; a seq already stored is left as it is, which is what
+// makes a re-copy a no-op.
 func (t *Tx) ChainEventPut(id string, e ChainEventRow) (bool, error) {
 	res, err := t.exec(`INSERT OR IGNORE INTO chain_event (chain_id, seq, ts, phase, step, member, round, event, action, reason, plan)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -409,8 +404,8 @@ func (t *Tx) ChainEventPut(id string, e ChainEventRow) (bool, error) {
 	return n > 0, nil
 }
 
-// ChainEventAppend appends one trace row for chain id, with the next seq after
-// the chain's current maximum, so a caller never names a seq.
+// ChainEventAppend appends one trace row for chain id under the next seq after
+// the chain's current maximum.
 func (t *Tx) ChainEventAppend(id string, e ChainEventRow) error {
 	if _, err := t.exec(`INSERT INTO chain_event (chain_id, seq, ts, phase, step, member, round, event, action, reason, plan)
 		SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM chain_event WHERE chain_id = ?`,

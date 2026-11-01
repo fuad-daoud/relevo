@@ -50,12 +50,11 @@ type DB struct {
 	// origin is the installation id this handle scopes its records to. Empty
 	// means the installation file's id is unknown -- tests, and the peek
 	// runtime -- and every scoped query then matches only rows with an empty
-	// origin, exactly as before the column existed.
+	// origin.
 	origin string
 
 	// route is how this handle reaches the database: "file" for a direct open,
-	// "owner <sock>" for a dial. It is what `relevo doctor` reports and what a
-	// test asserts about the switch.
+	// "owner <sock>" for a dial. It is what `relevo doctor` reports.
 	route string
 
 	// sock is the owner socket a dialled handle opened, empty on a direct one.
@@ -132,8 +131,6 @@ func OpenRawReadOnly(path string) (*sql.DB, error) {
 	return openPool(path, time.Duration(busyTimeoutMS)*time.Millisecond, true)
 }
 
-// open routes through the test-only owner hop when one is installed, and opens
-// the file directly otherwise.
 func open(path string, o Options) (*DB, error) {
 	if hop := ownerHop; hop != nil {
 		sock, err := hop(path, o, func() (*DB, error) { return openDirect(path, o) })
