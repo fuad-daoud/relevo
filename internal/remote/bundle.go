@@ -91,20 +91,23 @@ func (t *BundleTransport) Snapshot(ctx context.Context, repo string, refs []stri
 	tmpPath := f.Name()
 	_ = f.Close()
 	if err := t.chownTemp(tmpPath); err != nil {
+		// Best-effort cleanup: removal failure changes nothing about the returned error.
 		_ = os.Remove(tmpPath)
 		return Snapshot{}, err
 	}
 
 	heads, empty, err := t.git.BundleCreate(ctx, repo, tmpPath, refs, since)
 	if err != nil {
+		// Best-effort cleanup: removal failure changes nothing about the returned error.
 		_ = os.Remove(tmpPath)
 		if errors.Is(err, git.ErrRefMissing) && strings.Contains(err.Error(), "since is not an ancestor") {
-			return Snapshot{}, fmt.Errorf("%w: %v", ErrSinceUnknown, err)
+			return Snapshot{}, fmt.Errorf("%w: %w", ErrSinceUnknown, err)
 		}
 		return Snapshot{}, err
 	}
 
 	if empty {
+		// Best-effort cleanup: removal failure changes nothing about the returned snapshot.
 		_ = os.Remove(tmpPath)
 		return Snapshot{
 			ContentType: ContentTypeGitBundle,
@@ -115,6 +118,7 @@ func (t *BundleTransport) Snapshot(ctx context.Context, repo string, refs []stri
 
 	opened, err := openBundleRegular(tmpPath)
 	if err != nil {
+		// Best-effort cleanup: removal failure changes nothing about the returned error.
 		_ = os.Remove(tmpPath)
 		return Snapshot{}, err
 	}
@@ -137,7 +141,8 @@ func (t *BundleTransport) Absorb(ctx context.Context, repo, contentType string, 
 		return nil, err
 	}
 	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
+	// Best-effort cleanup: removal failure changes nothing about the returned error.
+	defer func() { _ = os.Remove(tmpPath) }()
 	if err := t.chownTemp(tmpPath); err != nil {
 		_ = tmpFile.Close()
 		return nil, err
