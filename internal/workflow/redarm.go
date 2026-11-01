@@ -24,7 +24,6 @@ func RedArmChecks(def Definition, id string) []string {
 	return out
 }
 
-// redEdgeNames reports whether a check step's red edge routes to id.
 func redEdgeNames(step Step, id string) bool {
 	if step.Check == "" {
 		return false
@@ -37,10 +36,8 @@ func redEdgeNames(step Step, id string) bool {
 	return false
 }
 
-// IsZeroBudgetArm reports whether id is a repair arm a red check reaches whose
-// budget renders to zero: the arm applyBudget halts on rather than routing past.
-// A budget no red edge reaches, one with a round left, and one whose then
-// target is not a step are all not this halt.
+// IsZeroBudgetArm reports whether id is the zero-max repair arm applyBudget
+// halts on rather than routing past.
 func IsZeroBudgetArm(def Definition, id string) bool {
 	b := def.Steps[id].Budget
 	if b == nil || b.Then.Kind != TargetStep || renderLimit(def, b.Max) >= 1 {

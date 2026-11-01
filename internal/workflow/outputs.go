@@ -33,7 +33,6 @@ type Output struct {
 // Outputs maps an output key to its declaration.
 type Outputs map[string]Output
 
-// MarshalJSON renders the outputs in wire form.
 func (o Outputs) MarshalJSON() ([]byte, error) {
 	if o == nil {
 		return []byte("null"), nil
@@ -58,7 +57,6 @@ func (o Outputs) MarshalJSON() ([]byte, error) {
 	return json.Marshal(m)
 }
 
-// UnmarshalJSON reads outputs from JSON using decodeOutputs.
 func (o *Outputs) UnmarshalJSON(data []byte) error {
 	if string(data) == "null" {
 		*o = nil
@@ -76,7 +74,6 @@ func (o *Outputs) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// Outcomes returns the non-artifact output keys, sorted.
 func (o Outputs) Outcomes() []string {
 	keys := make([]string, 0, len(o))
 	for key, out := range o {
@@ -88,7 +85,6 @@ func (o Outputs) Outcomes() []string {
 	return keys
 }
 
-// Artifacts returns the artifact output keys, sorted.
 func (o Outputs) Artifacts() []string {
 	keys := make([]string, 0, len(o))
 	for key, out := range o {
@@ -100,10 +96,9 @@ func (o Outputs) Artifacts() []string {
 	return keys
 }
 
-// ParseOutputs reads an outputs map from JSON when the first non-space byte is
-// '{', and from YAML otherwise. The two formats are read with the same generic
-// decode and key-to-string conversion the definition parser uses, so they
-// produce the same Outputs by construction.
+// ParseOutputs reads an outputs map from JSON or YAML with the same generic
+// decode the definition parser uses, so the two formats produce the same
+// Outputs by construction.
 func ParseOutputs(data []byte) (Outputs, error) {
 	v, err := parseOutputValue(data)
 	if err != nil {
@@ -112,8 +107,6 @@ func ParseOutputs(data []byte) (Outputs, error) {
 	return decodeOutputs(v, "")
 }
 
-// parseOutputValue decodes YAML or JSON into the generic value the output
-// decoder reads, turning YAML map keys into strings.
 func parseOutputValue(data []byte) (any, error) {
 	if firstNonSpace(data) == '{' {
 		return parseOutputJSON(data)
@@ -235,8 +228,6 @@ func Footer(o Outputs, artifactPaths map[string]string) string {
 	return b.String()
 }
 
-// OutcomeLine renders one outcome's placeholder line: a count shows 0, and a
-// one-of names its first value and lists the rest after it.
 func OutcomeLine(key string, out Output) string {
 	if out.Kind == OutputCount {
 		return key + ": 0   # a count"

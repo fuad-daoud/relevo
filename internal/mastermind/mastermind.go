@@ -71,8 +71,8 @@ const MaxSessions = 20
 
 var (
 	idRe = regexp.MustCompile(`^mm_[a-z2-7]{12}$`)
-	// legacyPlRe is the `pl_` shape NewID minted before the rename: ids already
-	// written keep their spelling (state already written).
+	// legacyPlRe is the historical `pl_` id shape: ids already written keep
+	// their spelling.
 	legacyPlRe = regexp.MustCompile(`^pl_[a-z2-7]{12}$`)
 	// legacyIDRe is the shape of every mastermind id already in a real
 	// relevo.db: a 26-character Crockford base32 ULID (no I, L, O or U).
@@ -100,8 +100,8 @@ func NewID(rand io.Reader) (string, error) {
 }
 
 // ValidID reports whether id names a mastermind record: the `mm_` shape NewID
-// mints, the historical `pl_` shape it minted before the rename, or a legacy
-// ULID. New records mint `mm_`; existing ones keep their ids (D4).
+// mints, the historical `pl_` shape, or a legacy ULID. New records mint `mm_`;
+// existing ones keep their ids.
 func ValidID(id string) error {
 	if !idRe.MatchString(id) && !legacyPlRe.MatchString(id) && !legacyIDRe.MatchString(id) {
 		return fmt.Errorf("mastermind id %q must be mm_ followed by 12 characters of [a-z2-7], the historical pl_ shape, or a 26-character Crockford base32 ULID: %w", id, ErrInvalid)
@@ -109,7 +109,6 @@ func ValidID(id string) error {
 	return nil
 }
 
-// ValidName reports whether name has the shape [a-z][a-z0-9-]{0,31}.
 func ValidName(name string) error {
 	if !nameRe.MatchString(name) {
 		return fmt.Errorf("mastermind name %q must match [a-z][a-z0-9-]{0,31}: %w", name, ErrInvalid)
@@ -141,8 +140,6 @@ func DefaultName(agent, kind string, taken func(string) bool) string {
 	}
 }
 
-// Validate checks the required fields, the opencode and muse session rules,
-// and that host_started_at is 0 whenever host_pid is 0.
 func (r Record) Validate() error {
 	if err := ValidID(r.ID); err != nil {
 		return err

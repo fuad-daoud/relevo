@@ -29,8 +29,6 @@ func (v *validator) checkForks() {
 	}
 }
 
-// hasWriterRunStep reports whether the workflow contains at least one run step
-// with a writer actor.
 func (v *validator) hasWriterRunStep() bool {
 	for _, step := range v.def.Steps {
 		if kindOf(step) == "run" {
@@ -42,8 +40,6 @@ func (v *validator) hasWriterRunStep() bool {
 	return false
 }
 
-// checkForkChild resolves one fork child and wraps its problems under the fork
-// step.
 func (v *validator) checkForkChild(id, name string, given *Given) {
 	if v.env.Workflow == nil {
 		v.add(id, RuleFork, "fork-child: %s: does not resolve", name)

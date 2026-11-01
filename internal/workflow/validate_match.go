@@ -44,7 +44,6 @@ func (v *validator) checkRunMatches(id string, step Step) {
 	v.checkRunCoverage(id, step, actor.Outputs)
 }
 
-// checkRunMatch validates one on key against the actor's declarations.
 func (v *validator) checkRunMatch(id, key, actorName string, declared Outputs, seen map[string]bool) {
 	switch {
 	case key == "else", key == "done":
@@ -68,7 +67,6 @@ func (v *validator) checkRunMatch(id, key, actorName string, declared Outputs, s
 	}
 }
 
-// checkOutcomeMatch validates a key=value match against a declared outcome.
 func (v *validator) checkOutcomeMatch(id, key, name, value, actorName string, declared Outputs, seen map[string]bool) {
 	out, ok := declared[name]
 	switch {
@@ -98,7 +96,6 @@ func (v *validator) addOutcomeHint(id, actorName, name, value string, count bool
 	v.add(id, RuleMatch, "actor %q declares no outcome %q; declare it in actors.%s.outputs", actorName, name, actorName)
 }
 
-// checkBareMatch rejects an outcome key with no value, or an artifact key.
 func (v *validator) checkBareMatch(id, key string, declared Outputs) {
 	out, ok := declared[key]
 	switch {
@@ -131,8 +128,6 @@ func (v *validator) checkRunCoverage(id string, step Step, declared Outputs) {
 	}
 }
 
-// checkOutcomeCoverage covers one declared outcome: every one-of value, or both
-// count arms.
 func (v *validator) checkOutcomeCoverage(id, name string, out Output, on map[string]Target) {
 	switch out.Kind {
 	case OutputOneOf:
@@ -176,8 +171,6 @@ func (v *validator) checkEnumMatches(id string, step Step, resultKind, a, b stri
 	}
 }
 
-// hasMatch reports whether an on map carries a match, bare or under a result
-// prefix.
 func hasMatch(on map[string]Target, resultKind, name string) bool {
 	if _, ok := on[name]; ok {
 		return true

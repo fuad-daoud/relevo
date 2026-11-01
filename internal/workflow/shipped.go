@@ -22,7 +22,6 @@ func Default() Definition {
 	return def
 }
 
-// ShippedSeeds returns the seed names the shipped workflows resolve.
 func ShippedSeeds() []string {
 	return []string{"repair", "review", "correct", "scan", "fix"}
 }

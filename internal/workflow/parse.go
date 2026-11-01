@@ -12,8 +12,6 @@ import (
 	yaml "go.yaml.in/yaml/v3"
 )
 
-// Parse reads a workflow as JSON when the first non-space byte is '{', and as
-// YAML otherwise.
 func Parse(data []byte) (Definition, error) {
 	if firstNonSpace(data) == '{' {
 		return ParseJSON(data)
@@ -21,8 +19,6 @@ func Parse(data []byte) (Definition, error) {
 	return ParseYAML(data)
 }
 
-// firstNonSpace returns the first byte that is not whitespace, or 0 when the
-// document is empty or all whitespace.
 func firstNonSpace(data []byte) byte {
 	for _, b := range data {
 		switch b {
@@ -532,7 +528,6 @@ func onlyKeys(obj map[string]any, path string, allowed ...string) error {
 	return nil
 }
 
-// typeName names a decoded value's shape for an error message.
 func typeName(v any) string {
 	switch v.(type) {
 	case nil:
@@ -561,7 +556,6 @@ func orRoot(path string) string {
 	return path
 }
 
-// fieldPath extends a path with an object field.
 func fieldPath(base, key string) string {
 	if base == "" {
 		return key
@@ -569,7 +563,6 @@ func fieldPath(base, key string) string {
 	return base + "." + key
 }
 
-// entryPath extends a path with a map entry key.
 func entryPath(base, key string) string {
 	return base + "[" + strconv.Quote(key) + "]"
 }

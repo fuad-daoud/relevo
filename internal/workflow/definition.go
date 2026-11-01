@@ -12,7 +12,6 @@ import (
 // InputMode says whether a chain input is required, optional or absent.
 type InputMode string
 
-// The input modes a workflow declares.
 const (
 	InputNone     InputMode = "none"
 	InputOptional InputMode = "optional"
@@ -25,10 +24,8 @@ type Inputs struct {
 	Task  InputMode `json:"task"`
 }
 
-// ParamKind is the type of a param's value.
 type ParamKind string
 
-// The kinds a param may have.
 const (
 	ParamBool   ParamKind = "bool"
 	ParamInt    ParamKind = "int"
@@ -135,7 +132,6 @@ func (s Step) MarshalJSON() ([]byte, error) {
 // TargetKind tells a step target from done and from a halt.
 type TargetKind string
 
-// The kinds of target an on entry may name.
 const (
 	TargetStep TargetKind = "step"
 	TargetDone TargetKind = "done"
@@ -149,13 +145,10 @@ type Target struct {
 	Reason string
 }
 
-// StepTarget returns a target that goes to the named step.
 func StepTarget(step string) Target { return Target{Kind: TargetStep, Step: step} }
 
-// DoneTarget returns the target that finishes the chain.
 func DoneTarget() Target { return Target{Kind: TargetDone} }
 
-// HaltTarget returns a target that halts the chain with a reason.
 func HaltTarget(reason string) Target { return Target{Kind: TargetHalt, Reason: reason} }
 
 // MarshalJSON writes a target as a step id, the word done, or {halt: reason}.

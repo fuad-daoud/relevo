@@ -10,8 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// mastermindKeyPrefix is the kv prefix every record's row shares. Migration
-// 008 rewrites the historical "planner/" rows to this prefix.
+// mastermindKeyPrefix is the kv prefix every record's row shares.
 const mastermindKeyPrefix = "mastermind/"
 
 func registryKey(id string) string { return mastermindKeyPrefix + id }
@@ -99,7 +98,6 @@ func decodeRecord(key string, raw []byte) (Record, error) {
 	return rec, nil
 }
 
-// Get returns the record with that id, or ErrNotFound.
 func (r *DBRegistry) Get(id string) (Record, error) {
 	return r.getFrom(r.KV, id)
 }
@@ -118,7 +116,6 @@ func (r *DBRegistry) getFrom(kv db.KVTx, id string) (Record, error) {
 	return decodeRecord(registryKey(id), raw)
 }
 
-// ByName returns the record with that name, or ErrNotFound.
 func (r *DBRegistry) ByName(name string) (Record, error) {
 	return r.byNameFrom(r.KV, name)
 }
@@ -136,7 +133,6 @@ func (r *DBRegistry) byNameFrom(kv db.KVTx, name string) (Record, error) {
 	return Record{}, fmt.Errorf("%s: %w", name, ErrNotFound)
 }
 
-// BySession returns the record whose current session is (kind, sessionID).
 func (r *DBRegistry) BySession(kind, sessionID string) (Record, error) {
 	return r.bySessionFrom(r.KV, kind, sessionID)
 }
@@ -154,7 +150,6 @@ func (r *DBRegistry) bySessionFrom(kv db.KVTx, kind, sessionID string) (Record, 
 	return Record{}, fmt.Errorf("%s/%s: %w", kind, sessionID, ErrNotFound)
 }
 
-// ByHost returns the record holding that live (pid, startedAt).
 func (r *DBRegistry) ByHost(pid int, startedAt int64) (Record, error) {
 	return r.byHostFrom(r.KV, pid, startedAt)
 }

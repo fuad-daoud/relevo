@@ -12,7 +12,6 @@ import (
 // namePattern is the actor-name shape a workflow, a step and an actor share.
 var namePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
-// ValidName reports whether name is a valid workflow or actor name.
 func ValidName(name string) error {
 	if !namePattern.MatchString(name) {
 		return fmt.Errorf("workflow: bad name %q", name)
@@ -49,8 +48,6 @@ func RenderParams(def Definition, s string) string {
 	return b.String()
 }
 
-// paramNamed returns the param an inner reference text names, when it is a
-// params reference to a param the workflow declares.
 func paramNamed(def Definition, inner string) (Param, bool) {
 	name, ok := strings.CutPrefix(inner, "params.")
 	if !ok {
@@ -60,7 +57,6 @@ func paramNamed(def Definition, inner string) (Param, bool) {
 	return p, ok
 }
 
-// render is a param's inline value.
 func (p Param) render() string {
 	switch p.Kind {
 	case ParamBool:
@@ -101,7 +97,6 @@ func WithParams(def Definition, values map[string]string) (Definition, error) {
 	return out, nil
 }
 
-// withValue parses a string into the param's kind.
 func (p Param) withValue(s string) (Param, error) {
 	switch p.Kind {
 	case ParamBool:

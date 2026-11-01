@@ -7,9 +7,9 @@ import (
 	"strings"
 )
 
-// Next advances a run by one event. A terminal run, or an event that does not
-// name the close the run waits for, is returned unchanged with no actions, so
-// a replayed close can never advance a run twice.
+// Next advances a run by one event: a terminal run, or an event that does not
+// name the awaited close, is returned unchanged, so a replayed close can never
+// advance a run twice.
 func Next(def Definition, s State, e Event) (State, []Action) {
 	if s.Status.terminal() || !s.awaits(e) {
 		return s, nil
@@ -33,9 +33,6 @@ func Next(def Definition, s State, e Event) (State, []Action) {
 	}
 }
 
-// awaits reports whether an event names the close the state waits for. A run
-// step awaits a member and a round; a check step awaits a run id. A human
-// close matches whichever of the two the state holds.
 func (s State) awaits(e Event) bool {
 	switch e.Kind {
 	case EventStepClosed:
@@ -59,7 +56,6 @@ func (s State) awaits(e Event) bool {
 	}
 }
 
-// matchesChild reports whether a child_ended event closes a child the fork awaits.
 func (a Awaiting) matchesChild(e Event) bool {
 	if a.Step != e.Step || a.Merging {
 		return false
@@ -75,26 +71,21 @@ func (a Awaiting) matchesChild(e Event) bool {
 	return true
 }
 
-// matchesMerge reports whether a merge_closed event closes the merge the fork awaits.
 func (a Awaiting) matchesMerge(e Event) bool {
 	return a.Merging && a.Step == e.Step
 }
 
-// matchesRun reports whether an event closes the run step the state awaits. A
-// run awaiting has a member; a check awaiting does not.
 func (a Awaiting) matchesRun(e Event) bool {
 	return a.Member != "" && e.Step == a.Step && e.Member == a.Member && e.Round == a.Round
 }
 
-// matchesCheck reports whether an event closes the check the state awaits.
 func (a Awaiting) matchesCheck(e Event) bool {
 	return a.Member == "" && len(a.Children) == 0 && e.Step == a.Step && e.Run == a.Run
 }
 
-// stepClosed records a run step's close and routes it to the edge that matches.
-// A close that advances the run past a red check carries its override into the
-// action the trace stores, so the pass stays reviewable; a close that would
-// advance without one halts instead.
+// stepClosed records a run step's close and routes it on. A close that advances
+// past a red check carries its override into the action the trace stores, so
+// the pass stays reviewable; any other unproven advance halts instead.
 func (s State) stepClosed(def Definition, e Event) (State, []Action) {
 	s.recordStep(e)
 	key, t, ok := matchRun(def.Steps[e.Step].On, s.Results[e.Step])
@@ -109,13 +100,9 @@ func (s State) stepClosed(def Definition, e Event) (State, []Action) {
 }
 
 // redCheckGate reports the halt reason for a close that takes a pass edge while
-// a red check in front of it is still unanswered. It fires only on a pass edge --
-// the arm that lets a run move on with the gate unproven -- so a close that
-// routes onward for any other reason, a verdict of changes above all, is left
-// alone.
-//
-// An explicit override on the close answers the gate: the value lands in the
-// state, in the encoded event and in the action a trace row stores.
+// a red check in front of it is still unanswered; a close routing onward for any
+// other reason is left alone. An explicit override on the close answers the gate,
+// landing in the state, the encoded event and the action a trace row stores.
 func (s State) redCheckGate(def Definition, e Event, edge string) (string, bool) {
 	if !passEdge(edge) || e.Override != "" {
 		return "", false
@@ -128,19 +115,10 @@ func (s State) redCheckGate(def Definition, e Event, edge string) (string, bool)
 }
 
 // gatingRedCheck names the check whose red still gates a pass at the closing
-// step, or ok false when no red stands in its way. Three conditions narrow it
-// to the gate that is actually in front of this close:
-//
-//   - the closing step is downstream of the check, so a red on a branch this
-//     close never came through cannot gate it;
-//   - the check's latest result is red, so a check that never ran or last ran
-//     green has no verdict to overrule;
-//   - no recorded override has already answered the red.
-//
-// The last is what makes an answered red stale rather than pending: the
-// reviewer who passed over it recorded why and moved on, so a later pass in
-// another phase is not answerable by the same verdict -- it is gated by its own
-// phase's check, or by nothing.
+// step, or ok false when no red stands in its way. Only a check upstream of the
+// closing step whose latest result is red, with no recorded override answering
+// it, gates; an answered red is stale, so a later pass is gated by its own
+// phase's check or by nothing.
 func gatingRedCheck(def Definition, s State, at string) (string, bool) {
 	edges := stepEdges(def)
 	for _, id := range slices.Sorted(maps.Keys(def.Steps)) {
@@ -170,9 +148,8 @@ func overrodeGate(s State, downstream map[string]bool) bool {
 	return false
 }
 
-// passEdge reports whether an edge name is a pass arm: the bare word, or a
-// name=pass value arm. Those are the edges a close takes to say a gate is
-// satisfied.
+// passEdge reports whether an edge name is a pass arm: the edges a close takes
+// to say a gate is satisfied.
 func passEdge(edge string) bool {
 	if edge == passWord {
 		return true
@@ -181,13 +158,12 @@ func passEdge(edge string) bool {
 	return ok && value == passWord
 }
 
-// passWord is the outcome value that says a gate is satisfied.
 const passWord = "pass"
 
 // carryOverride stamps a close's override onto the actions it produced, so the
-// encoded action a trace row stores names the override beside the send it
-// caused. The reason is set too, so a trace row that renders only the reason
-// still shows why a red gate was passed.
+// encoded action a trace row stores names the override beside the send; the
+// reason is set too, so a row rendering only the reason still shows why a red
+// gate was passed.
 func carryOverride(actions []Action, e Event) []Action {
 	if e.Override == "" {
 		return actions
@@ -202,9 +178,8 @@ func carryOverride(actions []Action, e Event) []Action {
 	return actions
 }
 
-// unmatchedRun halts a run close that matched no edge: a caller-rendered halt
-// reason is used as it stands, a status other than done carries the runner's
-// reason, and an unmatched done names the outcomes.
+// unmatchedRun halts a run close that matched no edge, preferring a
+// caller-rendered halt reason, then the runner's reason, then the outcomes.
 func (s State) unmatchedRun(e Event) (State, []Action) {
 	if e.HaltReason != "" {
 		return halt(s, e.Step, e.HaltReason)
@@ -218,7 +193,6 @@ func (s State) unmatchedRun(e Event) (State, []Action) {
 	return halt(s, e.Step, e.Step+" "+e.Status+": "+e.Reason)
 }
 
-// doneUnmatchedReason names a done close's step and the outcomes it carried.
 func doneUnmatchedReason(e Event) string {
 	if len(e.Outcomes) == 0 {
 		return e.Step + " done: no edge matches"
@@ -226,7 +200,6 @@ func doneUnmatchedReason(e Event) string {
 	return e.Step + " done: no edge matches outcomes " + outcomesText(e.Outcomes)
 }
 
-// outcomesText renders a close's outcomes as sorted key=value pairs.
 func outcomesText(outcomes map[string]string) string {
 	pairs := make([]string, 0, len(outcomes))
 	for _, key := range slices.Sorted(maps.Keys(outcomes)) {
@@ -235,11 +208,10 @@ func outcomesText(outcomes map[string]string) string {
 	return strings.Join(pairs, ", ")
 }
 
-// matchRun returns the edge a run close takes and the name of the edge it
-// matched, so a caller can tell a pass arm from any other without re-deriving
-// the match. A status other than done matches only status=<s>; done tries the
-// declared value edges in sorted key order, then the count arms, then done and
-// status=done, then else. The name is "" when nothing matched.
+// matchRun returns the edge a run close takes and the matched edge's name, so a
+// caller can tell a pass arm from any other without re-deriving the match.
+// Other than done matches only status=<s>; done tries value edges in sorted key
+// order, then count arms, then done, status=done and else.
 func matchRun(on map[string]Target, r Result) (string, Target, bool) {
 	if r.Status != "done" {
 		key := "status=" + r.Status
@@ -260,7 +232,6 @@ func matchRun(on map[string]Target, r Result) (string, Target, bool) {
 	return "", Target{}, false
 }
 
-// edgeName is the matched edge's own name, or "" when it did not match.
 func edgeName(key string, ok bool) string {
 	if !ok {
 		return ""
@@ -268,8 +239,8 @@ func edgeName(key string, ok bool) string {
 	return key
 }
 
-// matchValue returns the first sorted edge name=value whose value the close
-// carries. An =0 edge is a count arm and is left to matchCount.
+// matchValue returns the first sorted name=value edge the close carries; an =0
+// edge is a count arm, left to matchCount.
 func matchValue(on map[string]Target, outcomes map[string]string) (string, Target, bool) {
 	for _, key := range slices.Sorted(maps.Keys(on)) {
 		name, value, ok := cutEq(key)
@@ -283,8 +254,6 @@ func matchValue(on map[string]Target, outcomes map[string]string) (string, Targe
 	return "", Target{}, false
 }
 
-// matchCount returns the count arm a close's outcome takes: name>0 for a
-// positive count, or name=0 for a zero one.
 func matchCount(on map[string]Target, outcomes map[string]string) (string, Target, bool) {
 	for _, key := range slices.Sorted(maps.Keys(on)) {
 		if name, ok := strings.CutSuffix(key, ">0"); ok {
@@ -300,7 +269,6 @@ func matchCount(on map[string]Target, outcomes map[string]string) (string, Targe
 	return "", Target{}, false
 }
 
-// cutEq splits name=value at its first equals sign.
 func cutEq(key string) (string, string, bool) {
 	i := strings.IndexByte(key, '=')
 	if i < 0 {
@@ -309,7 +277,6 @@ func cutEq(key string) (string, string, bool) {
 	return key[:i], key[i+1:], true
 }
 
-// checkClosed records a check's result and log, then routes on the result.
 func (s State) checkClosed(def Definition, e Event) (State, []Action) {
 	s.recordCheck(e)
 	t, ok := matchFork(def.Steps[e.Step].On, e.Result)
@@ -319,8 +286,8 @@ func (s State) checkClosed(def Definition, e Event) (State, []Action) {
 	return route(def, s, e.Step, t, 0)
 }
 
-// recordStep stores a run step's latest close, its override included, so the
-// override survives in the state a resume reads back.
+// recordStep stores a run step's latest close with its override, so the override
+// survives in the state a resume reads back.
 func (s State) recordStep(e Event) State {
 	s.Results = ensureResults(s.Results)
 	s.Results[e.Step] = Result{
@@ -330,7 +297,6 @@ func (s State) recordStep(e Event) State {
 	return s
 }
 
-// recordCheck stores a check's result outcome and its log artifact.
 func (s State) recordCheck(e Event) State {
 	s.Results = ensureResults(s.Results)
 	s.Results[e.Step] = Result{
@@ -342,7 +308,6 @@ func (s State) recordCheck(e Event) State {
 	return s
 }
 
-// ensureResults returns a results map ready to record into.
 func ensureResults(m map[string]Result) map[string]Result {
 	if m == nil {
 		return map[string]Result{}
@@ -350,7 +315,6 @@ func ensureResults(m map[string]Result) map[string]Result {
 	return m
 }
 
-// halt ends the run with a reason and asks the caller to halt.
 func halt(s State, at, reason string) (State, []Action) {
 	s.Status = StatusHalted
 	s.Reason = reason
@@ -358,20 +322,16 @@ func halt(s State, at, reason string) (State, []Action) {
 	return s, []Action{{Kind: ActionHalt, Step: at, Reason: reason}}
 }
 
-// stop ends the run because a human stopped it.
 func stop(s State) (State, []Action) {
 	s.Status = StatusStopped
 	return s, []Action{{Kind: ActionStop, Step: s.At}}
 }
 
-// finish ends the run because a target said done.
 func finish(s State) (State, []Action) {
 	s.Status = StatusDone
 	return s, []Action{{Kind: ActionFinish, Step: s.At}}
 }
 
-// route applies a target an edge or a budget then selected. A step target is
-// entered, continuing the walk; At becomes the step whose edge chose it.
 func route(def Definition, s State, from string, t Target, walked int) (State, []Action) {
 	s.At = from
 	switch t.Kind {

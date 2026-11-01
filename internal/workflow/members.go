@@ -65,7 +65,6 @@ func nextSteps(def Definition, step Step) []string {
 	return out
 }
 
-// stepTarget is the step a target names, or nothing when it finishes or halts.
 func stepTarget(t Target) []string {
 	if t.Kind == TargetStep {
 		return []string{t.Step}
