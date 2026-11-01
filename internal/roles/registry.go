@@ -195,110 +195,21 @@ func buildFile(f *File, set *candidate.Set, pol policy.Policy) (*Registry, error
 		row := f.Rows[name]
 		base, ok := byName[name]
 		if !ok {
-			// A new row's shape comes from the file. A writer
-			// defaults its gate to on -- a writer changes the tree, so the
-			// project's own check applies, exactly as for the built-in
-			// builder -- and a reader has no gate.
-			shape := harness.ShapeConsult
-			if row.Shape != nil && *row.Shape == "writer" {
-				shape = harness.ShapeBuilder
-			}
-			base = Role{
-				Name:        name,
-				Shape:       shape,
-				Check:       shape == harness.ShapeBuilder,
-				Builtin:     false,
-				Definitions: make(map[string]Definition),
-			}
+			base = newRowBase(name, row)
 			newNames = append(newNames, name)
 		}
 
-		if row.Check != nil {
-			base.Check = *row.Check
+		var err error
+		base, err = mergeRow(base, name, row, pol, tiers, offRaw)
+		if err != nil {
+			return nil, err
 		}
-		for kind, d := range row.Definitions {
-			base.Definitions[kind] = Definition{
-				Agent:    d.Agent,
-				Requires: append([]string(nil), d.Requires...),
-				Custom:   customDefinition(kind, d),
-			}
-		}
-		if row.Candidates != nil {
-			base.Candidates = append([]string(nil), row.Candidates...)
-		}
-		if row.Placement != nil {
-			base.Placement = append([]string(nil), row.Placement...)
-		}
-		if row.Scope != nil {
-			base.Scope = copyScope(row.Scope)
-		}
-		if len(row.Off) > 0 {
-			offRaw[name] = append([]string(nil), row.Off...)
-		}
-		if row.Tier != nil {
-			t, err := harness.ParseTier(*row.Tier)
-			if err != nil {
-				return nil, fmt.Errorf("roles.json: %s.tier: %v: %w", name, err, ErrBadRoles)
-			}
-			if max := pol.MaxTierOrDefault(); t.Above(max) {
-				return nil, fmt.Errorf("roles.json: %s.tier: %s exceeds max_tier %s: %w", name, t, max, ErrBadRoles)
-			}
-			tiers[name] = t
-		}
-		if row.Outputs != nil {
-			base.Outputs = copyOutputs(row.Outputs)
-		} else {
-			var agent string
-			for _, d := range base.Definitions {
-				if d.Agent != "" {
-					agent = d.Agent
-					break
-				}
-			}
-			base.Outputs = EffectiveOutputs(agent, nil)
-		}
-		base.Skills = append([]string(nil), row.Skills...)
 		byName[name] = base
 	}
 	names = append(names, newNames...)
 
 	for name, role := range byName {
-		role.Ordered = true
-		role.Ranked = nil
-		role.OffCount = 0
-		// offTokens is the canonical token of every raw off entry, so an
-		// entry that stays in Ranked can be marked without re-resolving.
-		offTokens := make(map[string]bool, len(offRaw[name]))
-		for _, raw := range offRaw[name] {
-			c, err := set.Resolve(raw)
-			if err != nil {
-				continue
-			}
-			offTokens[c.Ref().String()] = true
-		}
-		seen := make(map[string]bool, len(role.Candidates))
-		for i, tok := range role.Candidates {
-			c, err := set.Resolve(tok)
-			if err != nil {
-				// Tolerated here; `relevo config` warns about it.
-				continue
-			}
-			key := c.Ref().String()
-			if seen[key] {
-				continue
-			}
-			if _, ok := role.Definitions[c.Harness]; !ok {
-				continue
-			}
-			seen[key] = true
-			off := offTokens[key]
-			role.Ranked = append(role.Ranked, Ranked{Token: key, Position: i + 1, Off: off})
-			if off {
-				role.OffCount++
-			}
-		}
-		role.Resolved = canonicalTokens(role.Ranked)
-		byName[name] = role
+		byName[name] = rankRole(name, role, set, offRaw)
 	}
 
 	return &Registry{
@@ -309,6 +220,117 @@ func buildFile(f *File, set *candidate.Set, pol policy.Policy) (*Registry, error
 		set:    set,
 		pol:    pol,
 	}, nil
+}
+
+// newRowBase returns the starting Role for a row no built-in names. A writer
+// defaults its gate to on -- a writer changes the tree, so the project's own
+// check applies, exactly as for the built-in builder -- and a reader has no
+// gate.
+func newRowBase(name string, row Row) Role {
+	shape := harness.ShapeConsult
+	if row.Shape != nil && *row.Shape == "writer" {
+		shape = harness.ShapeBuilder
+	}
+	return Role{
+		Name:        name,
+		Shape:       shape,
+		Check:       shape == harness.ShapeBuilder,
+		Builtin:     false,
+		Definitions: make(map[string]Definition),
+	}
+}
+
+// mergeRow applies one file row onto base, in file order: check, definitions,
+// candidates, placement, scope, off, tier, outputs, skills. tiers and offRaw
+// collect the row's tier and off entries for the ranking pass.
+func mergeRow(base Role, name string, row Row, pol policy.Policy, tiers map[string]harness.Tier, offRaw map[string][]string) (Role, error) {
+	if row.Check != nil {
+		base.Check = *row.Check
+	}
+	for kind, d := range row.Definitions {
+		base.Definitions[kind] = Definition{
+			Agent:    d.Agent,
+			Requires: append([]string(nil), d.Requires...),
+			Custom:   customDefinition(kind, d),
+		}
+	}
+	if row.Candidates != nil {
+		base.Candidates = append([]string(nil), row.Candidates...)
+	}
+	if row.Placement != nil {
+		base.Placement = append([]string(nil), row.Placement...)
+	}
+	if row.Scope != nil {
+		base.Scope = copyScope(row.Scope)
+	}
+	if len(row.Off) > 0 {
+		offRaw[name] = append([]string(nil), row.Off...)
+	}
+	if row.Tier != nil {
+		t, err := harness.ParseTier(*row.Tier)
+		if err != nil {
+			return Role{}, fmt.Errorf("roles.json: %s.tier: %w: %w", name, err, ErrBadRoles)
+		}
+		if max := pol.MaxTierOrDefault(); t.Above(max) {
+			return Role{}, fmt.Errorf("roles.json: %s.tier: %s exceeds max_tier %s: %w", name, t, max, ErrBadRoles)
+		}
+		tiers[name] = t
+	}
+	if row.Outputs != nil {
+		base.Outputs = copyOutputs(row.Outputs)
+	} else {
+		var agent string
+		for _, d := range base.Definitions {
+			if d.Agent != "" {
+				agent = d.Agent
+				break
+			}
+		}
+		base.Outputs = EffectiveOutputs(agent, nil)
+	}
+	base.Skills = append([]string(nil), row.Skills...)
+	return base, nil
+}
+
+// rankRole resolves one role's candidates against set, marking the raw off
+// entries. Unresolvable entries are tolerated; `relevo config` warns about
+// them.
+func rankRole(name string, role Role, set *candidate.Set, offRaw map[string][]string) Role {
+	role.Ordered = true
+	role.Ranked = nil
+	role.OffCount = 0
+	// offTokens is the canonical token of every raw off entry, so an
+	// entry that stays in Ranked can be marked without re-resolving.
+	offTokens := make(map[string]bool, len(offRaw[name]))
+	for _, raw := range offRaw[name] {
+		c, err := set.Resolve(raw)
+		if err != nil {
+			continue
+		}
+		offTokens[c.Ref().String()] = true
+	}
+	seen := make(map[string]bool, len(role.Candidates))
+	for i, tok := range role.Candidates {
+		c, err := set.Resolve(tok)
+		if err != nil {
+			continue
+		}
+		key := c.Ref().String()
+		if seen[key] {
+			continue
+		}
+		if _, ok := role.Definitions[c.Harness]; !ok {
+			continue
+		}
+		seen[key] = true
+		off := offTokens[key]
+		role.Ranked = append(role.Ranked, Ranked{Token: key, Position: i + 1, Off: off})
+		if off {
+			role.OffCount++
+		}
+	}
+	role.Resolved = canonicalTokens(role.Ranked)
+	return role
 }
 
 // fileSource names where f came from: f.Source when it set one, else

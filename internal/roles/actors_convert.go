@@ -39,7 +39,7 @@ func FromActors(agents map[string]AgentEntry, actors map[string]Actor) (*File, [
 func rowFor(name string, actor Actor, agents map[string]AgentEntry) (Row, error) {
 	shape, defs, err := agentFor(actor.Agent, agents)
 	if err != nil {
-		return Row{}, fmt.Errorf("actor %s: %v: %w", name, err, ErrBadRoles)
+		return Row{}, fmt.Errorf("actor %s: %w: %w", name, err, ErrBadRoles)
 	}
 
 	// A builtin actor name keeps its builtin shape; a shape that would change
@@ -118,7 +118,7 @@ func agentFor(name string, agents map[string]AgentEntry) (string, map[string]Def
 	if entry.Source != "" {
 		src, err := agentsrc.Parse([]byte(entry.Source))
 		if err != nil {
-			return "", nil, fmt.Errorf("agent %q: %v", name, err)
+			return "", nil, fmt.Errorf("agent %q: %w", name, err)
 		}
 		defs := make(map[string]DefRow)
 		for _, kind := range agentsrc.RenderedKinds(src) {

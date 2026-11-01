@@ -58,29 +58,7 @@ func UnknownKeys(section string, body []byte) []string {
 			if !ok {
 				continue
 			}
-			for _, key := range slices.Sorted(maps.Keys(row)) {
-				if key == "native" {
-					defs, ok := row[key].(map[string]any)
-					if !ok {
-						continue
-					}
-					for _, kind := range slices.Sorted(maps.Keys(defs)) {
-						def, ok := defs[kind].(map[string]any)
-						if !ok {
-							continue
-						}
-						for _, defKey := range slices.Sorted(maps.Keys(def)) {
-							if !hasShapeKey(defKeys, defKey) {
-								paths = append(paths, name+".native."+kind+"."+defKey)
-							}
-						}
-					}
-					continue
-				}
-				if !hasShapeKey(agentKeys, key) {
-					paths = append(paths, name+"."+key)
-				}
-			}
+			paths = append(paths, unknownAgentKeys(name, row, agentKeys, defKeys)...)
 		}
 	case "actors":
 		actorKeys := jsonshape.Keys(reflect.TypeOf(Actor{}))
@@ -90,26 +68,83 @@ func UnknownKeys(section string, body []byte) []string {
 			if !ok {
 				continue
 			}
-			for _, key := range slices.Sorted(maps.Keys(row)) {
-				if key == "scope" {
-					scopeObj, ok := row[key].(map[string]any)
-					if !ok {
-						continue
-					}
-					for _, scopeKey := range slices.Sorted(maps.Keys(scopeObj)) {
-						if !hasShapeKey(scopeKeys, scopeKey) {
-							paths = append(paths, name+".scope."+scopeKey)
-						}
-					}
-					continue
-				}
-				if !hasShapeKey(actorKeys, key) {
-					paths = append(paths, name+"."+key)
-				}
-			}
+			paths = append(paths, unknownActorKeys(name, row, actorKeys, scopeKeys)...)
 		}
 	}
 
 	sort.Strings(paths)
+	return paths
+}
+
+// unknownAgentKeys returns one path per decoded key of one agents entry,
+// including the keys inside its native definitions, that the entry shape
+// does not declare.
+func unknownAgentKeys(name string, row map[string]any, agentKeys, defKeys []string) []string {
+	var paths []string
+	for _, key := range slices.Sorted(maps.Keys(row)) {
+		if key == "native" {
+			defs, ok := row[key].(map[string]any)
+			if !ok {
+				continue
+			}
+			paths = append(paths, unknownDefKeyPaths(name+".native.", defs, defKeys)...)
+			continue
+		}
+		if !hasShapeKey(agentKeys, key) {
+			paths = append(paths, name+"."+key)
+		}
+	}
+	return paths
+}
+
+// unknownActorKeys returns one path per decoded key of one actors entry,
+// including the keys inside its scope object, that the entry shape does not
+// declare.
+func unknownActorKeys(name string, row map[string]any, actorKeys, scopeKeys []string) []string {
+	var paths []string
+	for _, key := range slices.Sorted(maps.Keys(row)) {
+		if key == "scope" {
+			scopeObj, ok := row[key].(map[string]any)
+			if !ok {
+				continue
+			}
+			paths = append(paths, unknownScopeKeyPaths(name+".scope.", scopeObj, scopeKeys)...)
+			continue
+		}
+		if !hasShapeKey(actorKeys, key) {
+			paths = append(paths, name+"."+key)
+		}
+	}
+	return paths
+}
+
+// unknownDefKeyPaths returns one path per decoded key inside a definitions
+// map (prefix names the map: "role.native." or "role.definitions.") that the
+// definition shape does not declare.
+func unknownDefKeyPaths(prefix string, defs map[string]any, defKeys []string) []string {
+	var paths []string
+	for _, kind := range slices.Sorted(maps.Keys(defs)) {
+		def, ok := defs[kind].(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, defKey := range slices.Sorted(maps.Keys(def)) {
+			if !hasShapeKey(defKeys, defKey) {
+				paths = append(paths, prefix+kind+"."+defKey)
+			}
+		}
+	}
+	return paths
+}
+
+// unknownScopeKeyPaths returns one path per decoded key inside a scope object
+// (prefix names the entry's scope) that the scope shape does not declare.
+func unknownScopeKeyPaths(prefix string, scopeObj map[string]any, scopeKeys []string) []string {
+	var paths []string
+	for _, scopeKey := range slices.Sorted(maps.Keys(scopeObj)) {
+		if !hasShapeKey(scopeKeys, scopeKey) {
+			paths = append(paths, prefix+scopeKey)
+		}
+	}
 	return paths
 }
