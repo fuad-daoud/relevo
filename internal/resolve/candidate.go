@@ -505,11 +505,11 @@ func PlacementClause(p PlacementResolution) string {
 	return sb.String()
 }
 
-// ExplainResolution is the one line that says what was picked and why.
-// The pick log entry, the stderr line after a spawn, and `relevo config`
-// all render from it, so a pick the mastermind reads in `relevo log` is
-// word-for-word what bind printed. It names every
-// candidate by its token: stored notes and their parsers are unchanged by A1.
+// ExplainResolution is the one line that says what was picked and why. The
+// pick log entry, the stderr line after a spawn, and `relevo config` all
+// render from it, so a pick the mastermind reads in `relevo log` is
+// word-for-word what bind printed. It names every candidate by its token:
+// stored notes keep tokens because the parsers read tokens.
 func ExplainResolution(role string, res Resolution) string {
 	return explainResolution(role, res, identityName)
 }

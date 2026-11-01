@@ -10,9 +10,9 @@ import (
 
 // ParseOutcomes reads every declared outcome key from the bodies, which the
 // caller orders newest first. Each key takes the first body that gives a valid
-// value; the second result names the first failing key in sorted order --
-// missing when no body carries it, invalid when a body carries a value the
-// declaration does not admit.
+// value. The second result is the halt reason, "" when every key parsed: it
+// names the first failing key in sorted order -- missing when no body carries
+// it, invalid when a body carries a value the declaration does not admit.
 func ParseOutcomes(o Outputs, bodies ...[]byte) (map[string]string, string) {
 	values := make(map[string]string)
 	for _, key := range o.Outcomes() {
@@ -69,6 +69,8 @@ func outcomeInvalidReason(key string, out Output, val string) string {
 	return fmt.Sprintf("%s: %q is not one of %s", key, val, strings.Join(out.Values, ", "))
 }
 
+// MissingArtifact names the first declared artifact, in sorted order, that is
+// absent or empty, or returns "" when every one is written.
 func MissingArtifact(o Outputs, sizes map[string]int64) string {
 	for _, name := range o.Artifacts() {
 		if sizes[name] <= 0 {

@@ -104,11 +104,12 @@ func (p Per) names(id string) bool {
 }
 
 // applyBudget counts a step's visit and returns its then target once the count
-// passes the rendered max; a repeated-red event counts as over budget, so the
-// same failure the last repair already saw buys no second repair. A zero-max arm
-// of a red check halts instead of routing past it, since the failure it was meant
-// to fix would go unaddressed; an arm no red edge names, or one whose then is
-// done or a halt, is left alone.
+// passes the rendered max -- the target is zero when the step is still under
+// budget; a repeated-red event counts as over budget, so the same failure the
+// last repair already saw buys no second repair. A zero-max arm of a red check
+// halts instead of routing past it, since the failure it was meant to fix would
+// go unaddressed; an arm no red edge names, or one whose then is done or a
+// halt, is left alone.
 func applyBudget(def Definition, s State, id string, b *Budget) (State, Target) {
 	s.Visits[id]++
 	if renderLimit(def, b.Max) < 1 && redBudgetArm(def, id) && b.Then.Kind == TargetStep {
@@ -120,8 +121,8 @@ func applyBudget(def Definition, s State, id string, b *Budget) (State, Target) 
 	return s, Target{}
 }
 
-// redBudgetArm reports whether any check step's red edge names id: what makes
-// id a repair arm.
+// redBudgetArm reports whether any check step's red edge names id, which is
+// what makes id a repair arm: the step a failed check would spend a budget on.
 func redBudgetArm(def Definition, id string) bool {
 	return len(RedArmChecks(def, id)) > 0
 }

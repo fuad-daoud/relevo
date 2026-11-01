@@ -8,7 +8,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 )
 
-// Built-in instruction-shaped scan patterns.
+// builtInPatterns are the built-in instruction-shaped scan patterns.
 var builtInPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)<system-reminder`),
 	regexp.MustCompile(`(?i)</?(human|assistant)>`),

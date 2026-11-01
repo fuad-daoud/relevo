@@ -10,7 +10,7 @@ import (
 )
 
 // FromActors converts the agents and actors sections into a File, one row
-// per actor, so every consumer of *Registry keeps working unchanged.
+// per actor.
 //
 // Errors wrap ErrBadRoles, so config.Load handles them exactly as it
 // treats a bad roles file. The warnings name every agents entry no actor uses.

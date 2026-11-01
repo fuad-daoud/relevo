@@ -178,7 +178,9 @@ func (v verifyStart) fail(reason string) (store.Binding, error) {
 }
 
 // StartVerify starts this round's read-only reviewer at round close: the round
-// just closed (b.Round == round+1) and the caller holds the state lock. Every
+// just closed (b.Round == round+1) and the caller holds the state lock and
+// passes its tx. gateLog is the closed round's gate log path, "" when no gate
+// ran. Every
 // failure path appends one to_consult/ask "verify skipped: <why>" note and
 // returns (b, nil) -- a reviewer relevo could not start is not a round failure;
 // only a store error fails the call.
@@ -205,6 +207,8 @@ func StartVerify(ctx context.Context, d Deps, tx *store.Tx, b store.Binding, rou
 }
 
 // launch resolves the reviewer, stages the question and reserves the record.
+// Every failure past the worktree's creation goes through fail, which removes
+// the worktree.
 func (v verifyStart) launch(wt, diff, gateLog string) (store.Binding, error) {
 	c, role, tier, err := v.d.ResolveReviewer()
 	if err != nil {
@@ -261,7 +265,8 @@ func (v verifyStart) launch(wt, diff, gateLog string) (store.Binding, error) {
 	return v.start(b, consult, askPath, prompt, wt, c, role, tier)
 }
 
-// start launches the reserved reviewer and records it running.
+// start launches the reserved reviewer and records it running, rolling the
+// reservation back before every reported failure.
 func (v verifyStart) start(b store.Binding, consult store.Consult, askPath, prompt, wt string, c candidate.Candidate, role harness.RoleSpec, tier harness.Tier) (store.Binding, error) {
 	streamPath := v.d.Store.ConsultStreamPath(v.b.Name, v.round, consult.ID)
 	if err := v.d.Store.EnsureOutDir(v.b.Name); err != nil {

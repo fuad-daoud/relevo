@@ -1,6 +1,6 @@
-// Package chain reads stored trace rows and renders them as lines. It also
-// holds the member, phase, step and gate words those rows and a chain's
-// persisted columns share.
+// Package chain holds the chain rules above the workflow engine: member naming
+// and guards, check commands, seeds and paths, and the trace rows and
+// phase/step/gate words a chain's persisted columns share.
 package chain
 
 import (

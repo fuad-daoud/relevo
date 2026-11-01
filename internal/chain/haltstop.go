@@ -7,7 +7,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/refusal"
 )
 
-// The answer a stop gives a chain that has halted with no open member round.
+// ErrChainHalted is the answer a stop gives a chain that has halted with no
+// open member round.
 // It is its own class rather than ErrNothingToStop: there really is nothing to
 // stop, but the useful thing to say is why the verb cannot do anything and what
 // closes the chain instead -- the answer a human needs is `relevo done`, not a

@@ -178,8 +178,9 @@ func carryOverride(actions []Action, e Event) []Action {
 	return actions
 }
 
-// unmatchedRun halts a run close that matched no edge, preferring a
-// caller-rendered halt reason, then the runner's reason, then the outcomes.
+// unmatchedRun halts a run close that matched no edge: a caller-rendered halt
+// reason is used as it stands, a status other than done carries the runner's
+// reason, and an unmatched done names the outcomes.
 func (s State) unmatchedRun(e Event) (State, []Action) {
 	if e.HaltReason != "" {
 		return halt(s, e.Step, e.HaltReason)
@@ -209,9 +210,10 @@ func outcomesText(outcomes map[string]string) string {
 }
 
 // matchRun returns the edge a run close takes and the matched edge's name, so a
-// caller can tell a pass arm from any other without re-deriving the match.
-// Other than done matches only status=<s>; done tries value edges in sorted key
-// order, then count arms, then done, status=done and else.
+// caller can tell a pass arm from any other without re-deriving the match. A
+// status other than done matches only status=<s>; done tries value edges in
+// sorted key order, then count arms, then done, status=done and else. The name
+// is "" when nothing matched.
 func matchRun(on map[string]Target, r Result) (string, Target, bool) {
 	if r.Status != "done" {
 		key := "status=" + r.Status

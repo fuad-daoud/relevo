@@ -28,10 +28,11 @@ type Scratch struct {
 }
 
 // CreateScratch makes the throwaway worktree a reader round runs in: the
-// binding's HEAD plus its whole working state, with every difference unstaged
-// and nothing committed. On any failure no worktree is left behind; every
-// failure wraps ErrScratch and names the step that failed ("head", "snapshot",
-// "add", "materialize" or "leftover").
+// binding's HEAD plus its whole working state -- tracked edits, deletions and
+// untracked non-ignored files -- with every difference unstaged and nothing
+// committed. b.CWD itself is untouched. On any failure no worktree is left
+// behind; every failure wraps ErrScratch and names the step that failed
+// ("head", "snapshot", "add", "materialize" or "leftover").
 func CreateScratch(ctx context.Context, deps Deps, b store.Binding, round int) (Scratch, error) {
 	if deps.Git == nil || b.CWD == "" {
 		return Scratch{}, fmt.Errorf("%w: binding %s has no git tree", ErrScratch, b.Name)
@@ -222,9 +223,11 @@ func SweepScratch(ctx context.Context, deps Deps, keep func(binding string, roun
 }
 
 // removeScratchEntry removes one scratch worktree. With a binding record, the
-// binding's own tree names the repository; without one the worktree's .git
-// file names it instead. Both the .git read and the removal go through the
-// .worktrees root, so a plant that escapes it is refused.
+// binding's own tree names the repository. Without one -- the binding is gone
+// -- the worktree's .git file names it instead: the directory goes first, and
+// the RemoveWorktree call afterwards only prunes the now-stale admin entry.
+// Both the .git read and the removal go through the .worktrees root, so a
+// plant that escapes it is refused.
 func removeScratchEntry(ctx context.Context, deps Deps, root *os.Root, name, rel, path string) error {
 	if b, err := deps.Store.Load(name); err == nil {
 		return deps.Git.RemoveWorktree(ctx, b.CWD, path, true)

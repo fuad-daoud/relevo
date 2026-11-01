@@ -109,17 +109,18 @@ type policyRoleView struct {
 	serving []candidate.Candidate
 	// sole forces the "sole" tag on the single row. FormatPolicy means "one
 	// serving candidate"; FormatPolicyFor means "one row".
-	sole   bool
+	sole bool
+	// noRows is the line printed when there are no rows at all; "" prints
+	// nothing.
 	noRows string
 	res    Resolution
 	err    error
 }
 
 // formatPolicyRole renders one role's block. It is the single row renderer
-// both FormatPolicy and FormatPolicyFor call, so the two can never drift.
-// The gates are filtered to
-// the role here, so a gate scoped to another role never shows on this role's
-// rows or in its refusal.
+// both FormatPolicy and FormatPolicyFor call, so the two can never drift. The
+// gates are filtered to the role here, so a gate scoped to another role never
+// shows on this role's rows or in its refusal.
 func formatPolicyRole(sb *strings.Builder, v policyRoleView, set *candidate.Set, width int, gates []availability.Gate, hist availability.History, now time.Time, loc *time.Location) {
 	sb.WriteString(v.header + "\n")
 	if len(v.rows) == 0 {

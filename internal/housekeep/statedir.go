@@ -12,8 +12,9 @@ import (
 // EnsureRealDir creates dir under root after walking every component between
 // them and refusing anything on the way that is not a real directory. MkdirAll
 // on its own descends a symlink, so a runner who plants one inside its own
-// state directory would redirect the daemon's write out of it. root is that
-// deepest directory, so its own ancestors are never checked: a state root
+// state directory -- the deepest directory it may write -- would redirect the
+// daemon's write out of it. root is that deepest directory, so its own
+// ancestors are never checked: a state root
 // reached through a symlinked ancestor must not be refused. The walk cannot
 // close the check-then-MkdirAll window: portable Go has no
 // openat2/RESOLVE_NO_SYMLINKS, so a link swapped in after the check still wins.
@@ -49,10 +50,9 @@ func EnsureRealDir(root, dir string) error {
 // regular file. A round's state directory is runner-writable, so a link planted
 // at the log path must not be followed out of it. It duplicates proc's
 // unexported openAppend: widening it would export an API with no caller here.
-// The Lstat is the
-// refusal and O_NOFOLLOW the race backstop behind it; the Lstat also keeps a
-// planted fifo from blocking the open, which would wait for a reader that
-// never comes.
+// The Lstat is the refusal and O_NOFOLLOW the race backstop behind it; the
+// Lstat also keeps a planted fifo from blocking the open, which would wait for
+// a reader that never comes.
 func OpenAppendRegular(path string) (*os.File, error) {
 	if fi, err := os.Lstat(path); err == nil {
 		if !fi.Mode().IsRegular() {

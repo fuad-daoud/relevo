@@ -78,7 +78,8 @@ func SweepDue(last, now time.Time) bool {
 	return last.IsZero() || !now.Before(last.Add(SweepEvery))
 }
 
-// SweepTick is the sweep on the tick's own binding list and clock. A deps with
+// SweepTick is the daemon's hook: the sweep on the tick's own binding list
+// and clock. A deps with
 // no tmp root has nothing to sweep and is skipped. The walk reads the whole
 // root, so the hook runs it at most once per SweepEvery per daemon, on the
 // daemon's own first tick and never on a package-wide timer. last carries the
@@ -122,11 +123,10 @@ func tmpRoundKept(b *store.Binding, open bool, round int) bool {
 // sweepRoundDirs walks rounds/ and removes what the rule condemns. A binding's
 // log is read once per binding: the daemon ticks every few seconds over a
 // store that may hold a hundred records. Short entries match the expected set
-// derived
-// through the same helpers the prepare and remove routes use; long entries
-// still parse and keep the same rule, so they self-clean without a separate
-// migration. An entry whose round cannot be decided is kept: the sweep removes
-// what it is sure about, and the next tick reads again.
+// derived through the same helpers the prepare and remove routes use; long
+// entries still parse and keep the same rule, so they self-clean without a
+// separate migration. An entry whose round cannot be decided is kept: the
+// sweep removes what it is sure about, and the next tick reads again.
 func sweepRoundDirs(deps Deps, bindings []store.Binding) ([]string, error) {
 	entries, err := deps.Store.ListTmpEntries(deps.TmpRoot, SubRounds)
 	if err != nil {

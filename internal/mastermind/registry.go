@@ -10,7 +10,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// mastermindKeyPrefix is the kv prefix every record's row shares.
+// mastermindKeyPrefix is the kv prefix every record's row shares. Migration
+// 008 rewrites the historical "planner/" rows to this prefix.
 const mastermindKeyPrefix = "mastermind/"
 
 func registryKey(id string) string { return mastermindKeyPrefix + id }
@@ -18,7 +19,9 @@ func registryKey(id string) string { return mastermindKeyPrefix + id }
 // seenRefreshInterval is how stale seen_at must be before Touch rewrites it.
 const seenRefreshInterval = time.Minute
 
-// Registry owns the mastermind records.
+// Registry owns the mastermind records. Lookups return ErrNotFound when
+// nothing matches: BySession matches a record's current session, and ByHost a
+// live (pid, startedAt).
 type Registry interface {
 	Get(id string) (Record, error)
 	ByName(name string) (Record, error)

@@ -17,7 +17,8 @@ func NormRole(role string) string {
 	return role
 }
 
-// ActorShape returns store.ShapeWriter or store.ShapeReader for role in reg.
+// ActorShape returns store.ShapeWriter or store.ShapeReader for role in reg. A
+// name no role has is an error wrapping ErrUnknownRole.
 func ActorShape(reg *roles.Registry, role string) (string, error) {
 	r, ok := reg.Role(store.Binding{Role: NormRole(role)}.WriterRole())
 	if !ok {

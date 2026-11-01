@@ -69,12 +69,12 @@ func CPUPinText(b store.Binding) string {
 }
 
 // AssignRoundCPU gives b the core its round runs on, called by startRound
-// right before it builds the spec. It never fails: an empty
-// pool or a nil tx leaves RoundCPU nil, and a census error or an exhausted
-// pool leaves it nil so the round runs unpinned rather than failing. A
-// relaunch or a mid-round switch keeps its core when that core is still in
-// the pool and still free. The returned binding carries RoundCPU, so the
-// caller's tx.Save persists it.
+// right before it builds the spec. It never fails: an empty pool or a nil tx
+// (a caller with no round to pin) leaves RoundCPU nil, and a census error or
+// an exhausted pool leaves it nil so the round runs unpinned rather than
+// failing. A relaunch or a mid-round switch keeps its core when that core is
+// still in the pool and still free. The returned binding carries RoundCPU, so
+// the caller's tx.Save persists it.
 func AssignRoundCPU(deps Deps, tx *store.Tx, b store.Binding) store.Binding {
 	var pool []int
 	if deps.AllowedCPUs != "" {
