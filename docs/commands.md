@@ -166,7 +166,7 @@
 - `relevo done NAME|--name N|--pick` — mark a binding done; relaying stops.
   `--pick` chooses from a list in the terminal.
 - `relevo stop NAME|--name N` — kill the builder process and close its open
-  round without a report. See [Stopping a round](../README.md#stopping-a-round).
+  round without a report. See [Stopping a round](rounds.md#stopping-a-round).
 - `relevo unbind NAME|--name N|--pick [--archive] [--force]` — forget a binding, deleting its directory or
   archiving its record first. `--pick` chooses from a list in the terminal. A worktree relevo keeps
   (uncommitted changes, or a failed check or removal) keeps the binding too and the verb refuses;
