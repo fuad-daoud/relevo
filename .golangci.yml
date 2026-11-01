@@ -24,18 +24,7 @@ linters:
       # test reads best as one long function. Every other linter applies.
       - path: '_test\.go$'
         linters: [funlen, gocognit]
-      # One rule per package not yet cleaned; every linter is excluded for that
-      # path. A change that cleans a package deletes its rule.
-      - path: '^internal/e2e/'
-        text: '.*'
-      - path: '^internal/pick/'
-        text: '.*'
-      - path: '^internal/remote/[^/]+\.go$'
-        text: '.*'
-      - path: '^internal/roles/'
-        text: '.*'
-      - path: '^internal/setup/'
-        text: '.*'
+
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0

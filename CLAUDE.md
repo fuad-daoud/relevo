@@ -88,9 +88,9 @@ The ones a round most often breaks:
 - Non-test functions at most 70 lines, non-test files at most 600, one package per
   concept. A package imports only packages below it; a shared helper lives in
   the lower package, never copied.
-- `make check` enforces lint, comments and file size. Packages not yet cleaned
-  are listed as exclusions; a round that finishes one removes its entries, and
-  no exclusion is ever added to get green.
+- `make check` enforces lint, comments and file size over every package; only
+  tests are exempt from `funlen` and `gocognit`. No exclusion or allow-list
+  entry is ever added to get green.
 - CI fails when a package's coverage drops more than a point below
   `testdata/coverage-baseline.txt`. A round that moves code between packages
   regenerates it with `sh scripts/check-coverage.sh --write` and says so; no

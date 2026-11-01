@@ -135,7 +135,7 @@ func Parse(name string, raw []byte) (*File, []string, error) {
 	path := name
 	var rows map[string]Row
 	if err := json.Unmarshal(raw, &rows); err != nil {
-		return nil, nil, fmt.Errorf("%s: %v: %w", path, err, ErrBadRoles)
+		return nil, nil, fmt.Errorf("%s: %w: %w", path, err, ErrBadRoles)
 	}
 	if rows == nil {
 		// A top-level null decodes into a nil map without an error; the
@@ -161,100 +161,149 @@ func validate(path string, f *File) error {
 			return fmt.Errorf("%s: %s.%s: %s: %w", path, name, field, reason, ErrBadRoles)
 		}
 
-		if !roleNamePattern.MatchString(name) {
-			return fmt.Errorf("%s: %s: bad role name: %w", path, name, ErrBadRoles)
+		shape, err := validateRowNameShape(path, name, row, badField)
+		if err != nil {
+			return err
 		}
+		if err := validateRowGate(row, shape, badField); err != nil {
+			return err
+		}
+		if err := validateRowScope(row, shape, badField); err != nil {
+			return err
+		}
+		if err := validateRowSkills(row, badField); err != nil {
+			return err
+		}
+		if err := validateRowDefinitions(row, badField); err != nil {
+			return err
+		}
+		seen, err := validateRowCandidates(row, badField)
+		if err != nil {
+			return err
+		}
+		if err := validateRowOff(row, seen, badField); err != nil {
+			return err
+		}
+		if err := validateRowTier(row, badField); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
-		// shape
-		shape := harness.ShapeConsult
-		builtin, isBuiltin := harness.RoleByName(name)
+// validateRowNameShape checks the row's name and shape. It returns the shape
+// the gate and scope checks read: the built-in shape, or the writer word a
+// new row declares.
+func validateRowNameShape(path, name string, row Row, badField func(string, string) error) (harness.RoleShape, error) {
+	if !roleNamePattern.MatchString(name) {
+		return harness.ShapeConsult, fmt.Errorf("%s: %s: bad role name: %w", path, name, ErrBadRoles)
+	}
+
+	shape := harness.ShapeConsult
+	builtin, isBuiltin := harness.RoleByName(name)
+	if isBuiltin {
+		shape = builtin.Shape
+	}
+	if row.Shape != nil {
+		word := *row.Shape
+		if word != "writer" && word != "reader" {
+			return harness.ShapeConsult, badField("shape", "must be writer or reader")
+		}
 		if isBuiltin {
-			shape = builtin.Shape
-		}
-		if row.Shape != nil {
-			word := *row.Shape
-			if word != "writer" && word != "reader" {
-				return badField("shape", "must be writer or reader")
+			if word != shapeWord(builtin.Shape) {
+				return harness.ShapeConsult, badField("shape", "built-in role is "+shapeWord(builtin.Shape))
 			}
-			if isBuiltin {
-				if word != shapeWord(builtin.Shape) {
-					return badField("shape", "built-in role is "+shapeWord(builtin.Shape))
-				}
-			} else if word == "writer" {
-				// A new writer row is accepted. Shape is what the
-				// gate check below reads, so record the writer word as one.
-				shape = harness.ShapeBuilder
-			}
-		} else if !isBuiltin {
-			return badField("shape", "required for a new role")
+		} else if word == "writer" {
+			// A new writer row is accepted; record it as a builder shape
+			// for the gate check.
+			shape = harness.ShapeBuilder
 		}
+	} else if !isBuiltin {
+		return harness.ShapeConsult, badField("shape", "required for a new role")
+	}
+	return shape, nil
+}
 
-		// gate
-		if row.Check != nil && *row.Check && shape == harness.ShapeConsult {
-			return badField("gate", "a reader role has no gate")
-		}
+func validateRowGate(row Row, shape harness.RoleShape, badField func(string, string) error) error {
+	if row.Check != nil && *row.Check && shape == harness.ShapeConsult {
+		return badField("gate", "a reader role has no gate")
+	}
+	return nil
+}
 
-		// scope: a writer's declared paths; a reader has none.
-		if row.Scope != nil {
-			if shape == harness.ShapeConsult {
-				return badField("scope", "a reader role has no scope")
-			}
-			if err := row.Scope.Validate(); err != nil {
-				return badField("scope", err.Error())
-			}
+func validateRowScope(row Row, shape harness.RoleShape, badField func(string, string) error) error {
+	if row.Scope != nil {
+		if shape == harness.ShapeConsult {
+			return badField("scope", "a reader role has no scope")
 		}
-
-		if err := validateSkills(row.Skills); err != nil {
-			return badField("skills", err.Error())
+		if err := row.Scope.Validate(); err != nil {
+			return badField("scope", err.Error())
 		}
+	}
+	return nil
+}
 
-		// definitions
-		for _, kind := range sortedDefKinds(row.Definitions) {
-			d := row.Definitions[kind]
-			if _, ok := harness.Lookup(kind); !ok {
-				return badField("definitions."+kind, fmt.Sprintf("unknown harness %q (known: %v)", kind, knownKinds()))
-			}
-			if d.Agent == "" {
-				return badField("definitions."+kind+".agent", "required")
-			}
-			if !agentNamePattern.MatchString(d.Agent) {
-				return badField("definitions."+kind+".agent", fmt.Sprintf("bad name %q", d.Agent))
-			}
-			for i, req := range d.Requires {
-				if !agentNamePattern.MatchString(req) {
-					return badField(fmt.Sprintf("definitions.%s.requires[%d]", kind, i), fmt.Sprintf("bad name %q", req))
-				}
-			}
+func validateRowSkills(row Row, badField func(string, string) error) error {
+	if err := validateSkills(row.Skills); err != nil {
+		return badField("skills", err.Error())
+	}
+	return nil
+}
+
+func validateRowDefinitions(row Row, badField func(string, string) error) error {
+	for _, kind := range sortedDefKinds(row.Definitions) {
+		d := row.Definitions[kind]
+		if _, ok := harness.Lookup(kind); !ok {
+			return badField("definitions."+kind, fmt.Sprintf("unknown harness %q (known: %v)", kind, knownKinds()))
 		}
-
-		// candidates
-		seen := make(map[string]bool, len(row.Candidates))
-		for i, tok := range row.Candidates {
-			// An entry is a candidate name or a canonical token.
-			if !candidate.IsName(tok) {
-				if _, err := candidate.ParseRef(tok); err != nil {
-					return badField(fmt.Sprintf("candidates[%d]", i), fmt.Sprintf("%q: want a candidate name or harness/provider/model", tok))
-				}
-			}
-			if seen[tok] {
-				return badField(fmt.Sprintf("candidates[%d]", i), fmt.Sprintf("duplicate token %q", tok))
-			}
-			seen[tok] = true
+		if d.Agent == "" {
+			return badField("definitions."+kind+".agent", "required")
 		}
-
-		// off: every off entry must also be a candidate, as the same raw
-		// string.
-		for i, tok := range row.Off {
-			if !seen[tok] {
-				return badField(fmt.Sprintf("off[%d]", i), fmt.Sprintf("%q is not in candidates", tok))
+		if !agentNamePattern.MatchString(d.Agent) {
+			return badField("definitions."+kind+".agent", fmt.Sprintf("bad name %q", d.Agent))
+		}
+		for i, req := range d.Requires {
+			if !agentNamePattern.MatchString(req) {
+				return badField(fmt.Sprintf("definitions.%s.requires[%d]", kind, i), fmt.Sprintf("bad name %q", req))
 			}
 		}
+	}
+	return nil
+}
 
-		// tier
-		if row.Tier != nil {
-			if _, err := harness.ParseTier(*row.Tier); err != nil {
-				return badField("tier", err.Error())
+// validateRowCandidates checks the row's candidates. It returns every accepted
+// token, which the off check reads: an off entry must be one of them.
+func validateRowCandidates(row Row, badField func(string, string) error) (map[string]bool, error) {
+	seen := make(map[string]bool, len(row.Candidates))
+	for i, tok := range row.Candidates {
+		// An entry is a candidate name or a canonical token.
+		if !candidate.IsName(tok) {
+			if _, err := candidate.ParseRef(tok); err != nil {
+				return nil, badField(fmt.Sprintf("candidates[%d]", i), fmt.Sprintf("%q: want a candidate name or harness/provider/model", tok))
 			}
+		}
+		if seen[tok] {
+			return nil, badField(fmt.Sprintf("candidates[%d]", i), fmt.Sprintf("duplicate token %q", tok))
+		}
+		seen[tok] = true
+	}
+	return seen, nil
+}
+
+func validateRowOff(row Row, seen map[string]bool, badField func(string, string) error) error {
+	// Every off entry must also be a candidate, as the same raw string.
+	for i, tok := range row.Off {
+		if !seen[tok] {
+			return badField(fmt.Sprintf("off[%d]", i), fmt.Sprintf("%q is not in candidates", tok))
+		}
+	}
+	return nil
+}
+
+func validateRowTier(row Row, badField func(string, string) error) error {
+	if row.Tier != nil {
+		if _, err := harness.ParseTier(*row.Tier); err != nil {
+			return badField("tier", err.Error())
 		}
 	}
 	return nil
@@ -322,34 +371,46 @@ func rolesUnknownKeyWarnings(path string, raw []byte) []string {
 		if !ok {
 			continue
 		}
-		for _, key := range slices.Sorted(maps.Keys(row)) {
-			if key == "definitions" {
-				defs, ok := row[key].(map[string]any)
-				if !ok {
-					continue
-				}
-				for _, kind := range slices.Sorted(maps.Keys(defs)) {
-					def, ok := defs[kind].(map[string]any)
-					if !ok {
-						continue
-					}
-					for _, defKey := range slices.Sorted(maps.Keys(def)) {
-						if !hasShapeKey(defKeys, defKey) {
-							paths = append(paths, role+".definitions."+kind+"."+defKey)
-						}
-					}
-				}
-				continue
-			}
-			if !hasShapeKey(rowKeys, key) {
-				paths = append(paths, role+"."+key)
-			}
-		}
+		paths = append(paths, collectRowUnknownKeyPaths(role, row, rowKeys, defKeys)...)
 	}
 
 	sort.Strings(paths)
 
-	base := filepath.Base(path)
+	return formatUnknownKeyWarnings(filepath.Base(path), paths)
+}
+
+// collectRowUnknownKeyPaths returns one path per decoded key of one role's row
+// that Row's and DefRow's JSON shapes do not declare.
+func collectRowUnknownKeyPaths(role string, row map[string]any, rowKeys, defKeys []string) []string {
+	var paths []string
+	for _, key := range slices.Sorted(maps.Keys(row)) {
+		if key == "definitions" {
+			defs, ok := row[key].(map[string]any)
+			if !ok {
+				continue
+			}
+			for _, kind := range slices.Sorted(maps.Keys(defs)) {
+				def, ok := defs[kind].(map[string]any)
+				if !ok {
+					continue
+				}
+				for _, defKey := range slices.Sorted(maps.Keys(def)) {
+					if !hasShapeKey(defKeys, defKey) {
+						paths = append(paths, role+".definitions."+kind+"."+defKey)
+					}
+				}
+			}
+			continue
+		}
+		if !hasShapeKey(rowKeys, key) {
+			paths = append(paths, role+"."+key)
+		}
+	}
+	return paths
+}
+
+// formatUnknownKeyWarnings turns sorted key paths into one warning per path.
+func formatUnknownKeyWarnings(base string, paths []string) []string {
 	warnings := make([]string, 0, len(paths))
 	for _, p := range paths {
 		warnings = append(warnings, fmt.Sprintf("%s: unknown key %q (a typo, or a key a newer relevo reads)", base, p))

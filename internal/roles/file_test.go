@@ -162,6 +162,11 @@ func TestLoadValidation(t *testing.T) {
 			wantSubstring: `builder.candidates[1]: duplicate token "claude/anthropic/sonnet"`,
 		},
 		{
+			name:          "off entry not a candidate",
+			body:          `{"builder": {"candidates": ["claude/anthropic/sonnet"], "off": ["codex/openai/gpt-5.6-terra:high"]}}`,
+			wantSubstring: `builder.off[0]: "codex/openai/gpt-5.6-terra:high" is not in candidates`,
+		},
+		{
 			name:          "bad tier",
 			body:          `{"builder": {"tier": "god"}}`,
 			wantSubstring: "builder.tier: unknown tier",

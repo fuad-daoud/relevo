@@ -187,7 +187,9 @@ func askSetupQuestions(w io.Writer, r io.Reader, qs []Question, given Answers, r
 		}
 		return all
 	}
-	fmt.Fprintln(w, "Press Enter on any question to take the recommended answer.")
+	if _, err := fmt.Fprintln(w, "Press Enter on any question to take the recommended answer."); err != nil {
+		return nil, fmt.Errorf("print the setup prompt: %w", err)
+	}
 	rolesAsked, customize := false, false
 	for i := 0; i < len(qs); i++ {
 		q := qs[i]
@@ -247,7 +249,9 @@ func askSetupAnswer(w io.Writer, sc *bufio.Scanner, q Question) ([]string, error
 			return nil, err
 		}
 	}
-	fmt.Fprintf(w, "  -> %s\n", describeSetupAnswer(q, vals))
+	if _, err := fmt.Fprintf(w, "  -> %s\n", describeSetupAnswer(q, vals)); err != nil {
+		return nil, fmt.Errorf("print the setup answer: %w", err)
+	}
 	return vals, nil
 }
 
@@ -282,7 +286,9 @@ func askSetupRoles(w io.Writer, sc *bufio.Scanner, qs []Question, answers Answer
 	if err != nil {
 		return false, err
 	}
-	fmt.Fprintf(w, "  -> %s\n", vals[0])
+	if _, err := fmt.Fprintf(w, "  -> %s\n", vals[0]); err != nil {
+		return false, fmt.Errorf("print the roles answer: %w", err)
+	}
 	return vals[0] == "customize", nil
 }
 
@@ -309,7 +315,9 @@ func askSetupEfforts(w io.Writer, sc *bufio.Scanner, q Question, vals []string) 
 // answer typed out as values: it already says its effort, so none is asked.
 func askOneSetupQuestion(w io.Writer, sc *bufio.Scanner, q Question) (vals []string, spelled bool, err error) {
 	for tries := 0; tries < 3; tries++ {
-		writeSetupPrompt(w, q)
+		if err := writeSetupPrompt(w, q); err != nil {
+			return nil, false, err
+		}
 		if !sc.Scan() {
 			return nil, false, io.ErrUnexpectedEOF
 		}
@@ -321,26 +329,37 @@ func askOneSetupQuestion(w io.Writer, sc *bufio.Scanner, q Question) (vals []str
 		if err == nil {
 			return vals, spelled, nil
 		}
-		fmt.Fprintln(w, err)
+		if _, werr := fmt.Fprintln(w, err); werr != nil {
+			return nil, false, fmt.Errorf("print the setup prompt: %w", werr)
+		}
 	}
 	return nil, false, fmt.Errorf("%s: no usable answer after three prompts", q.ID)
 }
 
 // writeSetupPrompt renders one question: the prompt, every choice with the
 // recommended ones marked, then the answer line.
-func writeSetupPrompt(w io.Writer, q Question) {
-	fmt.Fprintf(w, "\n%s\n", q.Prompt)
+func writeSetupPrompt(w io.Writer, q Question) error {
+	if _, err := fmt.Fprintf(w, "\n%s\n", q.Prompt); err != nil {
+		return fmt.Errorf("print the setup prompt: %w", err)
+	}
 	for i, c := range q.Choices {
 		why := ""
 		if c.Why != "" {
 			why = " -- " + c.Why
 		}
-		fmt.Fprintf(w, "  %d. %s%s%s\n", i+1, setupChoiceText(c), recommendedMark(q, c), why)
+		if _, err := fmt.Fprintf(w, "  %d. %s%s%s\n", i+1, setupChoiceText(c), recommendedMark(q, c), why); err != nil {
+			return fmt.Errorf("print the setup prompt: %w", err)
+		}
 	}
 	if q.Multi {
-		fmt.Fprintln(w, "  e.g. 1,3 picks two, 1 first")
+		if _, err := fmt.Fprintln(w, "  e.g. 1,3 picks two, 1 first"); err != nil {
+			return fmt.Errorf("print the setup prompt: %w", err)
+		}
 	}
-	fmt.Fprint(w, "> ")
+	if _, err := fmt.Fprint(w, "> "); err != nil {
+		return fmt.Errorf("print the setup prompt: %w", err)
+	}
+	return nil
 }
 
 func recommendedMark(q Question, c Choice) string {

@@ -119,7 +119,6 @@ func TestBundleTransportOutboundThenInbound(t *testing.T) {
 	if moved2[branch] != c2 {
 		t.Fatalf("moved2[%s] = %q, want %q", branch, moved2[branch], c2)
 	}
-	lastShipped = snap2.Heads[branch]
 
 	// Server round 2 execution: produces commit c3
 	treeServer := strings.TrimSpace(runGit(t, bareServer, "rev-parse", c2+"^{tree}"))
@@ -236,7 +235,11 @@ func TestBundleTransportUnexpectedRef(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer snap.Body.Close()
+	t.Cleanup(func() {
+		if err := snap.Body.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 
 	bareB := t.TempDir()
 	runGit(t, bareB, "init", "--bare")
@@ -469,7 +472,11 @@ func TestBundlePathUnderStateRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
-	defer snap.Body.Close()
+	t.Cleanup(func() {
+		if err := snap.Body.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 
 	remover, ok := snap.Body.(*fileRemover)
 	if !ok {

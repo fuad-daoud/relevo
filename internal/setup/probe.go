@@ -47,7 +47,8 @@ func (runnerEnv) Run(name string, args ...string) ([]byte, int, error) {
 	if ctx.Err() != nil {
 		return out, -1, errProbeTimeout
 	}
-	if ee, ok := err.(*exec.ExitError); ok {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
 		return out, ee.ExitCode(), nil
 	}
 	return out, 0, err

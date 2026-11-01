@@ -416,17 +416,6 @@ func TestChainE2E(t *testing.T) {
 	}
 }
 
-// chainE2EStep is one expected trace row of a fixed-state-machine chain: the
-// member whose round closed, the event that close raised, the action it
-// produced, the part a send names, and the plan the row was written on.
-type chainE2EStep struct {
-	member string
-	event  chain.EventKind
-	action chain.ActionKind
-	to     string
-	plan   int
-}
-
 // chainFlowStep is one expected trace row of a workflow chain: the step the
 // close was on, the closing round, the member the action sends to, the workflow
 // event and action the engine wrote, the target step a send names, and the plan

@@ -49,5 +49,5 @@ func FlushHint() {
 	if w == nil {
 		w = os.Stderr
 	}
-	fmt.Fprintln(w, setupHint)
+	_, _ = fmt.Fprintln(w, setupHint)
 }

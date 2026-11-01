@@ -685,7 +685,11 @@ func runMasterMindHook(t *testing.T, reg *mastermind.DBRegistry, now func() time
 	if err != nil {
 		t.Fatalf("open $CLAUDE_ENV_FILE: %v", err)
 	}
-	defer f.Close()
+	t.Cleanup(func() {
+		if err := f.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	if _, err := io.WriteString(f, mastermind.EnvLine(rec.ID)); err != nil {
 		t.Fatalf("append $CLAUDE_ENV_FILE: %v", err)
 	}

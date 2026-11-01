@@ -107,7 +107,7 @@ func (e *Entry) UnmarshalJSON(data []byte) error {
 func ParseAgents(body []byte) (map[string]AgentEntry, []string, error) {
 	var entries map[string]AgentEntry
 	if err := json.Unmarshal(body, &entries); err != nil {
-		return nil, nil, fmt.Errorf("agents: %v: %w", err, ErrBadActors)
+		return nil, nil, fmt.Errorf("agents: %w: %w", err, ErrBadActors)
 	}
 	if entries == nil {
 		// A top-level null decodes into a nil map without an error; the
@@ -143,7 +143,7 @@ func validateAgent(name string, e AgentEntry) error {
 		}
 		src, err := agentsrc.Parse([]byte(e.Source))
 		if err != nil {
-			return fmt.Errorf("agents: %s: %v: %w", name, err, ErrBadActors)
+			return fmt.Errorf("agents: %s: %w: %w", name, err, ErrBadActors)
 		}
 		if src.Name != name {
 			return fmt.Errorf("agents: %s: source name is %q: %w", name, src.Name, ErrBadActors)
@@ -176,7 +176,7 @@ func validateAgent(name string, e AgentEntry) error {
 func ParseActors(body []byte) (map[string]Actor, []string, error) {
 	var actors map[string]Actor
 	if err := json.Unmarshal(body, &actors); err != nil {
-		return nil, nil, fmt.Errorf("actors: %v: %w", err, ErrBadActors)
+		return nil, nil, fmt.Errorf("actors: %w: %w", err, ErrBadActors)
 	}
 	if actors == nil {
 		return nil, nil, fmt.Errorf("actors: top-level value must be an object: %w", ErrBadActors)
@@ -226,7 +226,7 @@ func validateActor(name string, a Actor) error {
 
 	if a.Tier != "" {
 		if _, err := harness.ParseTier(a.Tier); err != nil {
-			return fmt.Errorf("actors: %s.tier: %v: %w", name, err, ErrBadActors)
+			return fmt.Errorf("actors: %s.tier: %w: %w", name, err, ErrBadActors)
 		}
 	}
 	for _, key := range slices.Sorted(maps.Keys(a.Outputs)) {
@@ -236,11 +236,11 @@ func validateActor(name string, a Actor) error {
 	}
 	if a.Scope != nil {
 		if err := a.Scope.Validate(); err != nil {
-			return fmt.Errorf("actors: %s.scope: %v: %w", name, err, ErrBadActors)
+			return fmt.Errorf("actors: %s.scope: %w: %w", name, err, ErrBadActors)
 		}
 	}
 	if err := validateSkills(a.Skills); err != nil {
-		return fmt.Errorf("actors: %s.%v: %w", name, err, ErrBadActors)
+		return fmt.Errorf("actors: %s.%w: %w", name, err, ErrBadActors)
 	}
 	return nil
 }

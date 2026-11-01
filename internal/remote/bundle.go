@@ -99,7 +99,7 @@ func (t *BundleTransport) Snapshot(ctx context.Context, repo string, refs []stri
 	if err != nil {
 		_ = os.Remove(tmpPath)
 		if errors.Is(err, git.ErrRefMissing) && strings.Contains(err.Error(), "since is not an ancestor") {
-			return Snapshot{}, fmt.Errorf("%w: %v", ErrSinceUnknown, err)
+			return Snapshot{}, fmt.Errorf("%w: %w", ErrSinceUnknown, err)
 		}
 		return Snapshot{}, err
 	}
@@ -137,7 +137,7 @@ func (t *BundleTransport) Absorb(ctx context.Context, repo, contentType string, 
 		return nil, err
 	}
 	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
+	defer func() { _ = os.Remove(tmpPath) }()
 	if err := t.chownTemp(tmpPath); err != nil {
 		_ = tmpFile.Close()
 		return nil, err

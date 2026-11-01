@@ -149,7 +149,7 @@ func ParsePublic(line string) (ed25519.PublicKey, error) {
 	}
 	raw, err := base64.StdEncoding.DecodeString(b64Key)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrKeyFormat, err)
+		return nil, fmt.Errorf("%w: %w", ErrKeyFormat, err)
 	}
 	if len(raw) != ed25519.PublicKeySize {
 		return nil, fmt.Errorf("%w: expected %d bytes, got %d", ErrKeyFormat, ed25519.PublicKeySize, len(raw))
