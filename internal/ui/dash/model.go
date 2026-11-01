@@ -97,6 +97,7 @@ type Styles struct {
 	Chip      lipgloss.Style
 }
 
+// RowsMsg is one successful refresh.
 type RowsMsg struct {
 	Rows []db.RoundRow
 	At   time.Time
@@ -105,6 +106,7 @@ type RowsMsg struct {
 // ErrMsg is one failed refresh: the rows already on screen stay.
 type ErrMsg struct{ Err error }
 
+// JumpMsg is what the host receives when enter is pressed on a round row.
 type JumpMsg struct {
 	BindingName string
 	BindingID   string

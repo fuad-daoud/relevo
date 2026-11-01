@@ -22,7 +22,8 @@ type View interface {
 // KeyHelp is one key's footer hint. Key is as displayed.
 type KeyHelp struct{ Key, Help string }
 
-// HelpKeyer provides an extended key list for the help overlay.
+// HelpKeyer is optional: a view that has it gives the help overlay an
+// extended key list.
 type HelpKeyer interface{ HelpKeys() []KeyHelp }
 
 // OffKeyer names which of a view's Keys do not apply right now: the footer

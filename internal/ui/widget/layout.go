@@ -19,6 +19,7 @@ func Fit(s string, width int) string {
 	return lipgloss.NewStyle().MaxWidth(width).Render(s)
 }
 
+// Pad pads s to width cells, truncating with an ellipsis past it.
 func Pad(s string, width int) string {
 	if w := lipgloss.Width(s); w < width {
 		return s + strings.Repeat(" ", width-w)

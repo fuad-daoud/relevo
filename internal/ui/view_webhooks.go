@@ -76,6 +76,9 @@ func webhooksCount(n int) string {
 	return "webhooks"
 }
 
+// webhooksLayout gives URL what width-6 leaves after FORMAT (8) and EVENTS
+// (34) and their 2-cell gaps; the header and data lines pad to the same 8 and
+// 34.
 func webhooksLayout(width int) (urlW, cw int) {
 	cw = width - 6
 	if cw < 0 {

@@ -11,7 +11,8 @@ import (
 // prefs is what the ui's preference document holds: the sort order, and
 // the dashboard's applied query and sort column. It lives in the machine
 // database's kv row "ui" (or "serve.ui" for the server ui) -- written by
-// the ui alone and read by nothing else.
+// the ui alone and read by nothing else. An older document's extra fields are
+// ignored by encoding/json, so it still loads.
 type prefs struct {
 	Sort string `json:"sort"` // "attention" | "name"
 	// Dashboard is the :rounds view's applied query text and its sort

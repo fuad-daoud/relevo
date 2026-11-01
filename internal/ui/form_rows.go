@@ -8,7 +8,8 @@ import (
 )
 
 // formLabel is one form row's label: padded to 11 cells, accent when its field
-// is focused and faint otherwise.
+// is focused and faint otherwise. 11 is formBox's 10-column label (form.go)
+// plus its separating space, so the two forms line up.
 func formLabel(label string, focused bool) string {
 	style := widget.FaintStyle
 	if focused {

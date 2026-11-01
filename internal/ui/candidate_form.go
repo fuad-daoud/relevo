@@ -224,8 +224,8 @@ func (f candidateForm) update(k tea.KeyMsg) (overlay, tea.Cmd, bool) {
 }
 
 // updateHarness is left/right on the harness row; landing on a listed
-// harness selects the provider it holds (or none), leaving one copies the
-// selected provider into the text field.
+// harness selects the provider it holds (or none), and leaving one for an open
+// harness copies the selected provider into the text field.
 func (f candidateForm) updateHarness(k tea.KeyMsg) candidateForm {
 	var delta int
 	switch k.String() {

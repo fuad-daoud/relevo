@@ -81,7 +81,7 @@ func (c cmdLine) matchCount(env widget.Env) int {
 	return len(c.allMatches(env))
 }
 
-// allMatches is every completion candidate before matches' cap of 8. Pure:
+// allMatches is matches before its cap of 8. Pure:
 // the tests drive it directly.
 func (c cmdLine) allMatches(env widget.Env) []command {
 	typed := strings.ToLower(c.typed())

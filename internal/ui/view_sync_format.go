@@ -9,6 +9,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
+// Every function here is pure: it formats snapshot values and reaches no
+// handle, clock or database.
+
 // syncOr renders value, or fallback when it is empty, so an absent field reads
 // as a statement rather than as an empty cell.
 func syncOr(value, fallback string) string {

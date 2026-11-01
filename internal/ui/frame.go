@@ -22,7 +22,9 @@ func needsYouCount(n int) string {
 	return fmt.Sprintf("%d need you", n)
 }
 
-// headerView draws row 1 without starting any gate or background work.
+// headerView is row 1: the relevo mark and crumbs on the left; attention,
+// version and the clock on the right. It draws no gates and no background
+// colour.
 func (m Model) headerView(env widget.Env) string {
 	var allCrumbs []string
 	for _, v := range m.stack {

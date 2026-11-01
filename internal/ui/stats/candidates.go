@@ -58,6 +58,8 @@ func statsCandVisible(width int) ([]statsCandCol, int) {
 	return visible, statsCandNameW(width, visible)
 }
 
+// statsCandNameW is width-6 less the visible columns, the three-cell gap
+// before STATUS, and STATUS itself.
 func statsCandNameW(width int, visible []statsCandCol) int {
 	sum := 0
 	for _, c := range visible {
@@ -206,8 +208,9 @@ func statsCandCell(s datastats.ScoreRow, head string) string {
 	return "·"
 }
 
-// statsCandDetail is the selected candidates row's detail block. An idle row
-// says it has no rounds instead of the last three lines. Each line starts
+// statsCandDetail is the selected candidates row's detail block: the name
+// line, then the round, token and measured lines. An idle row says it has no
+// rounds instead of the last three. Each line starts
 // with the three-cell gutter and is cut to width-6.
 func (v statsView) statsCandDetail(env widget.Env, c statsOverviewCand) []string {
 	width := env.Width - 6

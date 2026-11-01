@@ -29,7 +29,8 @@ const (
 
 // workflowEditStep is the state one edit loop carries between editor passes.
 // Everything here is data, so a pass can be decided without an editor, a
-// terminal or a runtime.
+// terminal or a runtime. saved is the workflow as stored, prev the buffer last
+// handed to the editor, and path the temp file that buffer lives in.
 type workflowEditStep struct {
 	name   string
 	saved  config.StoredWorkflow

@@ -9,7 +9,7 @@ import (
 // MaxErrorLines caps RenderError: a longer error ends with a trailing "…".
 const MaxErrorLines = 8
 
-// RenderError preserves the newlines the message already has, capped at
+// RenderError wraps err to width, keeping the newlines it already has, capped at
 // MaxErrorLines with a trailing "…" when it overflows.
 func RenderError(err error, width int) string {
 	if err == nil {

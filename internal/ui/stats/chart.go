@@ -242,7 +242,8 @@ func statsTimelinePlotRows(cols []float64, g statsTimeGeom, H, m int, step float
 	return out
 }
 
-// statsTimelineVals is the chart body under the heading: H plot rows, the axis
+// statsTimelineVals is the chart body under the heading, over vals (one value
+// per day, with days supplying the date labels): H plot rows, the axis
 // row and the date-label row. rows is the plot's row count and H is
 // max(rows, m), so every y interval keeps at least one row. Each line starts
 // with the three-cell gutter and none extends past width-3. A positive

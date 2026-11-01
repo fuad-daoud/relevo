@@ -25,7 +25,7 @@ const (
 	tabCount
 )
 
-// tabTitles is indexed by tab, as the tests expect.
+// tabTitles is indexed by tab; the tab bar and the tests both read it.
 var tabTitles = [tabCount]string{"prompt", "report", "transcript", "diff", "log", "artifacts"}
 
 // writerTabs is the tab bar a writer round draws.

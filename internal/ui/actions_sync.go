@@ -71,8 +71,8 @@ func (a *mastermindActions) syncVerb(ctx context.Context, verb string) (*wire.Sy
 	return res, nil
 }
 
-// SyncPush sends this machine's local change set, then re-reads, so the view
-// shows what the remote measured rather than what the push assumed.
+// SyncPush sends this machine's local change set; its result asks for a
+// re-read, so the view shows what the remote measured rather than what the push assumed.
 func (a *mastermindActions) SyncPush(ctx context.Context) widget.Result {
 	if _, err := a.syncVerb(ctx, wire.SyncVerbPush); err != nil {
 		return syncErrResult("push", err)

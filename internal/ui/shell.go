@@ -59,6 +59,8 @@ type Model struct {
 	// persistence.
 	actionLog []widget.ActionEntry
 
+	// noticeErr marks an action's error (red), noticeFaint a captured stderr
+	// line (faint); neither is the amber default.
 	noticeErr   bool
 	noticeFaint bool
 

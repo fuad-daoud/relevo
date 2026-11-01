@@ -78,7 +78,8 @@ func pathCompletion(value string) []string {
 // sendConfirmTitle is the send confirm's question: the file, the binding, the
 // round the send opens, and nothing else. The round is BindingStatus.Round:
 // the daemon advances it when a round closes, so the title names b.Round,
-// not b.Round+1.
+// not b.Round+1. A binding with a round open needs no guard here: Send refuses
+// it, and the refusal comes back as the action's error.
 func sendConfirmTitle(b view.BindingStatus, file string) string {
 	return fmt.Sprintf("Send %s to %s as round %d?", file, b.Key(), b.Round)
 }

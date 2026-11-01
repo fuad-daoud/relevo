@@ -8,8 +8,8 @@ import (
 )
 
 // Round rows cycle through roundSortKeys, group rows through groupSortKeys.
-// The two lists are disjoint, so Model.sortKey alone says which level a
-// key names.
+// A key in one list sorts that level and leaves the other at its default;
+// "tokens" is in both, so it sorts both levels.
 //
 // Direction: Model.sortDesc true is descending -- newest, biggest first,
 // the sensible default for every column here.
