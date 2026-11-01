@@ -1,6 +1,8 @@
 package relevo
 
 import (
+	"log/slog"
+
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/consent"
@@ -47,8 +49,14 @@ func sharedDocs(shared *db.DB) []synclog.SharedDoc {
 // error, so the export still describes the config as the store holds it.
 func captureEditedFiles(shared *db.DB) {
 	store := machineConfig(shared)
-	store.CaptureHookFiles()
-	store.CaptureAgentFiles()
+	// A capture failure leaves the export describing the store as it holds
+	// it; it is reported here rather than failing the export or the join.
+	if _, err := store.CaptureHookFiles(); err != nil {
+		slog.Warn("capture hook files failed", "err", err)
+	}
+	if _, err := store.CaptureAgentFiles(); err != nil {
+		slog.Warn("capture agent files failed", "err", err)
+	}
 }
 
 // machineConfig is the config store of one machine with the applier bound, so

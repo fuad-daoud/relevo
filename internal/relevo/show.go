@@ -292,71 +292,107 @@ func showSections(rt Runtime, name string, round int, actor, shape, output strin
 	case ShowPrompt:
 		res.Text, res.Missing, err = read(rt.Store.PromptPath(name, round))
 	case ShowReport, ShowOutput:
-		// reportPathFor: a reader's report is its artifact directory's output
-		// file, read through the artifact helper so a live, sealed or archived
-		// round all answer; --output is that same file whatever the shape, and
-		// a writer's report is the flat NNN-report.md.
-		if shape == store.ShapeReader || opts.Section == ShowOutput {
-			var text []byte
-			text, err = readOutput(rt, name, round, actor, output)
-			if err == nil {
-				res.Text, res.Missing = string(text), text == nil
-				if !res.Missing {
-					res.Text = view.WithFallbackHeader(entries, round, res.Text)
-				}
-			}
-		} else {
-			res.Text, res.Missing, err = read(rt.Store.ReportPath(name, round))
-		}
+		err = showReportSection(rt, name, round, actor, shape, output, entries, read, opts, res)
 	case ShowDiff:
 		res.Text, res.Missing, err = read(rt.Store.DiffPath(name, round))
 	case ShowDrift:
 		res.Text, res.Missing, err = read(rt.Store.DriftPath(name, round))
 	case ShowArtifacts:
-		if opts.ArtifactRel != "" {
-			// --artifact: one file's bytes, raw. An unlisted rel is
-			// ErrNoArtifact, which the caller reports as an error.
-			var data []byte
-			data, err = ReadArtifact(rt, name, round, actor, opts.ArtifactRel)
-			if err == nil {
-				res.Text = string(data)
-			}
-		} else {
-			res.Artifacts, err = RoundArtifacts(rt, name, round, actor, output)
-			if err == nil {
-				res.Missing = len(res.Artifacts) == 0
-			}
-		}
+		err = showArtifactsSection(rt, name, round, actor, output, opts, res)
 	case ShowTranscript:
-		// The round's transcript: its NNN-builder.log when one exists, and
-		// otherwise its stream rendered per segment.
-		var text []byte
-		var found bool
-		text, _, found, err = RoundTranscript(rt.Store, name, round, live, readBytes)
-		if err == nil {
-			res.Text, res.Missing = string(text), !found
-		}
+		err = showTranscriptSection(rt, name, round, live, readBytes, res)
 	case ShowGate:
-		// The round's gate log. Live, it is read through rt.Store.ReadFile,
-		// so a sealed round's log is found in the database exactly as a
-		// present one is; archived, it is the record's own sealed bytes.
-		res.Text, res.Missing, err = read(rt.Store.GateLogPath(name, round))
-		if err == nil && res.Missing {
-			err = showChainCheckGate(rt, name, round, read, list, res)
-		}
+		err = showGateSection(rt, name, round, read, list, res)
 	case ShowFindings:
 		res.Text, res.Missing, err = read(rt.Store.FindingsPath(name, round, opts.FindingsID))
 	case ShowLog:
-		for _, e := range entries {
-			if e.Round == round {
-				res.Events = append(res.Events, e)
-			}
-		}
+		showLogSection(round, entries, res)
 	}
 	if err != nil {
 		return err
 	}
 	return nil
+}
+
+// showReportSection resolves the report and output sections for one round:
+// reportPathFor -- a reader's report is its artifact directory's output file,
+// read through the artifact helper so a live, sealed or archived round all
+// answer; --output is that same file whatever the shape, and a writer's
+// report is the flat NNN-report.md.
+func showReportSection(rt Runtime, name string, round int, actor, shape, output string, entries []store.LogEntry, read func(path string) (text string, missing bool, err error), opts ShowOptions, res *ShowResult) error {
+	if shape == store.ShapeReader || opts.Section == ShowOutput {
+		text, err := readOutput(rt, name, round, actor, output)
+		if err != nil {
+			return err
+		}
+		res.Text, res.Missing = string(text), text == nil
+		if !res.Missing {
+			res.Text = view.WithFallbackHeader(entries, round, res.Text)
+		}
+		return nil
+	}
+	text, missing, err := read(rt.Store.ReportPath(name, round))
+	res.Text, res.Missing = text, missing
+	return err
+}
+
+// showArtifactsSection resolves the artifacts section: --artifact names one
+// file's raw bytes -- an unlisted rel is ErrNoArtifact, which the caller
+// reports as an error -- and otherwise the round's artifact list.
+func showArtifactsSection(rt Runtime, name string, round int, actor, output string, opts ShowOptions, res *ShowResult) error {
+	if opts.ArtifactRel != "" {
+		data, err := ReadArtifact(rt, name, round, actor, opts.ArtifactRel)
+		if err != nil {
+			return err
+		}
+		res.Text = string(data)
+		return nil
+	}
+	artifacts, err := RoundArtifacts(rt, name, round, actor, output)
+	if err != nil {
+		return err
+	}
+	res.Artifacts = artifacts
+	res.Missing = len(artifacts) == 0
+	return nil
+}
+
+// showTranscriptSection resolves the transcript section: the round's
+// NNN-builder.log when one exists, and otherwise its stream rendered per
+// segment.
+func showTranscriptSection(rt Runtime, name string, round int, live store.Endpoint, readBytes func(path string) ([]byte, bool, error), res *ShowResult) error {
+	text, _, found, err := RoundTranscript(rt.Store, name, round, live, readBytes)
+	if err != nil {
+		return err
+	}
+	res.Text, res.Missing = string(text), !found
+	return nil
+}
+
+// showGateSection resolves the gate section: the round's gate log, read
+// through rt.Store.ReadFile live so a sealed round's log is found in the
+// database exactly as a present one is -- and archived, the record's own
+// sealed bytes -- with the chain-check fallback behind it.
+func showGateSection(rt Runtime, name string, round int, read func(path string) (text string, missing bool, err error), list func() ([]string, error), res *ShowResult) error {
+	text, missing, err := read(rt.Store.GateLogPath(name, round))
+	if err != nil {
+		return err
+	}
+	res.Text, res.Missing = text, missing
+	if res.Missing {
+		return showChainCheckGate(rt, name, round, read, list, res)
+	}
+	return nil
+}
+
+// showLogSection resolves the log section: the binding's entries for the
+// round, in order.
+func showLogSection(round int, entries []store.LogEntry, res *ShowResult) {
+	for _, e := range entries {
+		if e.Round == round {
+			res.Events = append(res.Events, e)
+		}
+	}
 }
 
 // showArchived resolves opts against one archived record: the record's
@@ -441,39 +477,16 @@ func showDB(rt Runtime, binding db.BindingRow, opts ShowOptions) (ShowResult, er
 	if err != nil {
 		return ShowResult{}, err
 	}
-	total := len(allRounds)
 
-	round := opts.Round
-	if round == 0 {
-		completed := 0
-		for _, r := range allRounds {
-			if r.Outcome != db.OutcomeOpen && r.Number > completed {
-				completed = r.Number
-			}
-		}
-		if completed < 1 {
-			return ShowResult{}, ErrNoCompletedRound
-		}
-		round = completed
-	} else if round < 1 || round > total {
-		return ShowResult{}, refusal.Rangef("round %d: binding has %d rounds", round, total)
-	}
-
-	var target *db.Round
-	for i := range allRounds {
-		if allRounds[i].Number == round {
-			target = &allRounds[i]
-			break
-		}
-	}
-	if target == nil {
-		return ShowResult{}, refusal.Rangef("round %d: binding has %d rounds", round, total)
+	round, target, err := resolveDBRound(allRounds, opts)
+	if err != nil {
+		return ShowResult{}, err
 	}
 
 	res := ShowResult{
 		Name:    binding.Name,
 		Round:   round,
-		Rounds:  total,
+		Rounds:  len(allRounds),
 		Live:    false,
 		Section: opts.Section,
 	}
@@ -529,4 +542,40 @@ func showDB(rt Runtime, binding db.BindingRow, opts ShowOptions) (ShowResult, er
 		return ShowResult{}, err
 	}
 	return res, nil
+}
+
+// resolveDBRound resolves opts.Round against the database rows: with no
+// --round, the newest completed round, falling back to nothing completed yet;
+// an explicit round is bounded by the rows. The range bounds the round the
+// rows hold, since the numbers run from the first round on.
+func resolveDBRound(allRounds []db.Round, opts ShowOptions) (int, *db.Round, error) {
+	total := len(allRounds)
+
+	round := opts.Round
+	if round == 0 {
+		completed := 0
+		for _, r := range allRounds {
+			if r.Outcome != db.OutcomeOpen && r.Number > completed {
+				completed = r.Number
+			}
+		}
+		if completed < 1 {
+			return 0, nil, ErrNoCompletedRound
+		}
+		round = completed
+	} else if round < 1 || round > total {
+		return 0, nil, refusal.Rangef("round %d: binding has %d rounds", round, total)
+	}
+
+	var target *db.Round
+	for i := range allRounds {
+		if allRounds[i].Number == round {
+			target = &allRounds[i]
+			break
+		}
+	}
+	if target == nil {
+		return 0, nil, refusal.Rangef("round %d: binding has %d rounds", round, total)
+	}
+	return round, target, nil
 }

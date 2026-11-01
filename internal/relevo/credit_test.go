@@ -21,13 +21,6 @@ import (
 // shape of the credit class must land on the until-cleared gate, so a future
 // mapping of that class back onto a timed Until fails a named test.
 
-// creditFixtureLine is opencode-errors row 2, the observation behind this round:
-// an opencode provider.quota error whose message says the account cannot afford
-// the request. It is a real transcript fixture, not a string invented for the
-// test, and the setup below binds opencode so the fixture's own channel renders
-// it.
-const creditFixtureLine = `{"error":{"timestamp":1790451684929,"sessionID":"ses_b","error":{"type":"provider.quota","message":"This request requires more credits, or fewer max_tokens. You requested up to 131072 tokens, but can only afford 34217.","status":402}}}`
-
 // crashFixtureLine is the control, shared with outage_test.go: a builder that
 // died, naming no balance, no provider status, no 5xx and no reset, so nothing
 // but the crash path can claim it.
@@ -214,7 +207,7 @@ func TestReconcileHeadlessCreditExhaustedNoReportGatesUntilCleared(t *testing.T)
 		if rl := rateLimitedEntries(loadLedger(t, rt)); len(rl) != 0 {
 			t.Errorf("rate_limited entries = %+v, want none for a non-switchable round", rl)
 		}
-		if got.RoundExcluded != nil && len(got.RoundExcluded) != 0 {
+		if len(got.RoundExcluded) != 0 {
 			t.Errorf("RoundExcluded = %v, want empty", got.RoundExcluded)
 		}
 	})

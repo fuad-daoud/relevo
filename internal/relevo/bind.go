@@ -16,7 +16,7 @@ var ErrBuilderAlive = errors.New("builder is still alive; rebinding would abando
 
 // ErrNoMasterMindSession is mastermind.ErrNoMasterMind as bind, add, fork and
 // ask surface it: a hard error whose text is the fix.
-var ErrNoMasterMindSession = errors.New(`no relevo MasterMind for this session. Run "relevo mastermind init" once here, or enable the relevo plugin (relevo doctor).`)
+var ErrNoMasterMindSession = errors.New(`no relevo MasterMind for this session. Run "relevo mastermind init" once here, or enable the relevo plugin (relevo doctor)`)
 
 // ErrGitRequired reports a bind that needs a worktree with no git available.
 var ErrGitRequired = errors.New("relevo bind needs git; pass --cwd to bind a tree yourself")

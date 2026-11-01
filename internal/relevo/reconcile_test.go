@@ -387,7 +387,7 @@ func TestReconcileDiffCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Verify log order: KindDiff before KindReport
-	var diffIdx, reportIdx int = -1, -1
+	var diffIdx, reportIdx = -1, -1
 	diffCount := 0
 	for i, entry := range log {
 		if entry.Round == 1 && entry.Kind == store.KindDiff {

@@ -157,7 +157,7 @@ func TestStatsInputsCombinesBothOrigins(t *testing.T) {
 		t.Errorf("events = [%s %s], want the peer's older one first", in.History.Events[0].Token, in.History.Events[1].Token)
 	}
 	// HourCounts is what the panel renders, so the peer's hour must be there.
-	if got := availability.HourCounts(in.History, peerProv, availability.RateLimited, time.UTC); len(got) == 0 {
+	if got := availability.HourCounts(in.History, peerProv, availability.RateLimited, time.UTC); got == ([24]int{}) {
 		t.Error("HourCounts has no hour for the peer provider, so the panel would not show it")
 	}
 

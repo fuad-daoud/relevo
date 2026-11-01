@@ -28,13 +28,7 @@ linters:
       # path. A change that cleans a package deletes its rule.
       - path: '^internal/e2e/'
         text: '.*'
-      - path: '^internal/jsonshape/'
-        text: '.*'
-      - path: '^internal/patch/'
-        text: '.*'
       - path: '^internal/pick/'
-        text: '.*'
-      - path: '^internal/relevo/'
         text: '.*'
       - path: '^internal/remote/[^/]+\.go$'
         text: '.*'

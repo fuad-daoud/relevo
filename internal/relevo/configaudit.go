@@ -152,8 +152,8 @@ func pathUnder(path, prefix string) (a, rest string, ok bool) {
 		return "", "", false
 	}
 	after := ""
-	switch {
-	case body[0] == '[':
+	switch body[0] {
+	case '[':
 		end := strings.IndexByte(body, ']')
 		if end < 0 {
 			return "", "", false
@@ -162,7 +162,7 @@ func pathUnder(path, prefix string) (a, rest string, ok bool) {
 			return "", "", false
 		}
 		after = body[end+1:]
-	case body[0] == '.':
+	case '.':
 		body = body[1:]
 		if body == "" {
 			return "", "", false

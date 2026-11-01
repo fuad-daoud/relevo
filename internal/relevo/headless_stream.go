@@ -133,11 +133,19 @@ func readFrom(path string, off int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
 	if _, err := f.Seek(off, io.SeekStart); err != nil {
+		_ = f.Close()
 		return nil, err
 	}
-	return io.ReadAll(f)
+	data, err := io.ReadAll(f)
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	if err := f.Close(); err != nil {
+		return nil, fmt.Errorf("read stream %s: %w", path, err)
+	}
+	return data, nil
 }
 
 // appendLines appends lines, each newline-terminated, to the file at path in
@@ -148,9 +156,11 @@ func appendLines(path string, lines []string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	_, err = f.WriteString(strings.Join(lines, "\n") + "\n")
-	return err
+	if _, err := f.WriteString(strings.Join(lines, "\n") + "\n"); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // logTailLines is how much of a builder log the exit entry carries: enough to

@@ -44,7 +44,7 @@ func preflightDisk(rt Runtime, tree string) error {
 // repository's own settings answer, and a runtime with no Config reads the
 // repository default: on.
 func goFlagsEnv(ctx context.Context, rt Runtime, tree string, binding *store.Binding) ([]string, error) {
-	on := true
+	var on bool
 	if binding != nil && binding.Serve != nil && binding.Serve.Trimpath != "" {
 		on = binding.Serve.Trimpath != "off"
 	} else {

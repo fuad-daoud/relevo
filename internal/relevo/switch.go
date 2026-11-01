@@ -206,34 +206,9 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 			b.Name, reason, b.BuilderCandidate, b.RoundSwitches, limit))
 	}
 
-	pick := resolve.PickFor(ResolveDeps(rt))
-	gates := switchGates(rt, b)
-
-	// A limit gated the account this binding is on: retry the same candidate
-	// on the next ungated login of its pool before the actor order is walked
-	// at all. The rotation is decided here, purely.
-	var (
-		res     resolve.Resolution
-		next    account.Account
-		rotated bool
-	)
-	if a, ok := nextBuilder(b, pick); ok {
-		if c, cerr := rt.Candidates.Resolve(b.BuilderCandidate); cerr == nil {
-			res = resolve.Resolution{Candidate: c, How: resolve.HowRotation, Account: a.Name}
-			next, rotated = a, true
-		}
-	}
-	if !rotated {
-		var err error
-		res, err = resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, gates, "", b.WriterRole(), pick)
-		if err != nil {
-			if b.Builder.PID == 0 {
-				b = abandonSession(b)
-			}
-			return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf(
-				"%s: builder %s (%s); cannot switch: %v",
-				b.Name, reason, b.BuilderCandidate, err))
-		}
+	pick, res, next, rotated, b, stop, err := pickSwitchReplacement(ctx, rt, tx, b, reason)
+	if stop || err != nil {
+		return b, err
 	}
 
 	if closeOld {
@@ -266,6 +241,76 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	if err := freeRoundScope(ctx, rt, b); err != nil {
 		return b, err
 	}
+
+	b, old, startedAt, stopInstall, err := installSwitchReplacement(ctx, rt, tx, b, pick, res, next, rotated, counted, reason)
+	if stopInstall || err != nil {
+		return b, err
+	}
+
+	// The budget counts builders that failed, so it is spent only once the
+	// replacement is running: a start the host refused costs nothing, or the
+	// second such refusal would halt the round on a switch that never began. A
+	// rotation never counts either -- the pool bounds it naturally, since every
+	// login it leaves is gated.
+	if counted && !rotated {
+		b.RoundSwitches++
+	}
+
+	b.RoundStartedAt = startedAt
+
+	slog.Info("builder switched", "binding", b.Name, "round", b.Round,
+		"from", old, "to", res.Token(), "reason", reason, "switches", b.RoundSwitches)
+
+	return b, nil
+}
+
+// pickSwitchReplacement resolves the replacement builder: a limit that gated
+// the account this binding is on retries the same candidate on the next
+// ungated login of its pool before the actor order is walked at all, and
+// otherwise the policy order and the ledger's live gates pick. stop reports
+// the switch already ended in a halt, so the caller returns now.
+func pickSwitchReplacement(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, reason string) (resolve.AccountPick, resolve.Resolution, account.Account, bool, store.Binding, bool, error) {
+	pick := resolve.PickFor(ResolveDeps(rt))
+	gates := switchGates(rt, b)
+
+	// A limit gated the account this binding is on: retry the same candidate
+	// on the next ungated login of its pool before the actor order is walked
+	// at all. The rotation is decided here, purely.
+	var (
+		res     resolve.Resolution
+		next    account.Account
+		rotated bool
+	)
+	if a, ok := nextBuilder(b, pick); ok {
+		if c, cerr := rt.Candidates.Resolve(b.BuilderCandidate); cerr == nil {
+			res = resolve.Resolution{Candidate: c, How: resolve.HowRotation, Account: a.Name}
+			next, rotated = a, true
+		}
+	}
+	if !rotated {
+		var err error
+		res, err = resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, gates, "", b.WriterRole(), pick)
+		if err != nil {
+			if b.Builder.PID == 0 {
+				b = abandonSession(b)
+			}
+			nb, herr := haltAndSettle(ctx, rt, tx, b, fmt.Sprintf(
+				"%s: builder %s (%s); cannot switch: %v",
+				b.Name, reason, b.BuilderCandidate, err))
+			return resolve.AccountPick{}, resolve.Resolution{}, account.Account{}, false, nb, true, herr
+		}
+	}
+	return pick, res, next, rotated, b, false, nil
+}
+
+// installSwitchReplacement installs the picked replacement on the same round:
+// it inherits the mode, records the switch entry, and starts the round. stop
+// reports the install already ended -- in a halt, a break, or a refused
+// start, whose halt carries no error -- so the caller returns now. A resolve
+// failure the host refused never spends the round's switch budget and never
+// excludes the candidate, while a builder that failed breaks the binding the
+// way a halt does.
+func installSwitchReplacement(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, pick resolve.AccountPick, res resolve.Resolution, next account.Account, rotated, counted bool, reason string) (store.Binding, string, time.Time, bool, error) {
 
 	b = abandonSession(b)
 	old := b.BuilderCandidate
@@ -309,7 +354,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 			// reason and queues nothing, and nothing else retries it, so the
 			// switch's recorded reason would be the only account of the fault,
 			// in the state word alone.
-			return b, fmt.Errorf("%s: %w", reason, qerr)
+			return b, "", time.Time{}, true, fmt.Errorf("%s: %w", reason, qerr)
 		}
 		// The binding keeps the reason, name-stripped the way haltBinding
 		// records one, only when the entry that carries it was queued. A
@@ -320,7 +365,8 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		if queued {
 			next.Halt = strings.TrimPrefix(reason, b.Name+": ")
 		}
-		return deliverAndSettle(ctx, rt, tx, next)
+		next, derr := deliverAndSettle(ctx, rt, tx, next)
+		return next, "", time.Time{}, true, derr
 	}
 
 	// The whole install shares one opencode login, so a rotation must move the
@@ -350,7 +396,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	b = ClearHaltFields(b)
 
 	if err := tx.AppendLog(b.Name, switchEntry(now, b.Round, reason, res, prior)); err != nil {
-		return b, err
+		return b, "", time.Time{}, true, err
 	}
 
 	text := roundPrompt(rt, tx, b, rt.Store.PromptPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round))
@@ -364,31 +410,17 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		// anything about this round, and excluding it would keep it out of the
 		// resume that should pick it.
 		if hostStartError(err) {
-			return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf(
+			nb, herr := haltAndSettle(ctx, rt, tx, b, fmt.Sprintf(
 				"%s: switched builder to %s, which never started -- the host refused it: %v",
 				b.Name, res.Token(), err))
+			return nb, "", time.Time{}, true, herr
 		}
-		return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf(
+		nb, herr := haltAndSettle(ctx, rt, tx, b, fmt.Sprintf(
 			"%s: switched builder to %s but could not start round %d: %v",
 			b.Name, res.Token(), b.Round, err))
+		return nb, "", time.Time{}, true, herr
 	}
-	b = started
-
-	// The budget counts builders that failed, so it is spent only once the
-	// replacement is running: a start the host refused costs nothing, or the
-	// second such refusal would halt the round on a switch that never began. A
-	// rotation never counts either -- the pool bounds it naturally, since every
-	// login it leaves is gated.
-	if counted && !rotated {
-		b.RoundSwitches++
-	}
-
-	b.RoundStartedAt = now
-
-	slog.Info("builder switched", "binding", b.Name, "round", b.Round,
-		"from", old, "to", res.Token(), "reason", reason, "switches", b.RoundSwitches)
-
-	return b, nil
+	return started, old, now, false, nil
 }
 
 // hostStartError reports whether a startRound failure is the host refusing the

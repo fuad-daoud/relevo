@@ -58,6 +58,22 @@ func chainStartWorkflow(ctx context.Context, rt Runtime, opts ChainOptions) (Cha
 // chainResolveWorkflowStart runs every precondition of a workflow start
 // read-only.
 func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOptions) (chainWFStart, error) {
+	plan, err := chainResolveWorkflowBase(ctx, rt, opts)
+	if err != nil {
+		return chainWFStart{}, err
+	}
+	if plan, err = chainResolveWorkflowMembers(ctx, rt, opts, plan); err != nil {
+		return chainWFStart{}, err
+	}
+	if plan, err = chainResolveWorkflowPlacements(ctx, rt, opts, plan); err != nil {
+		return chainWFStart{}, err
+	}
+	return chainResolveWorkflowRemote(ctx, rt, opts, plan)
+}
+
+// chainResolveWorkflowBase resolves the definition, the repository, and the
+// workflow params read-only, seeding the start plan.
+func chainResolveWorkflowBase(ctx context.Context, rt Runtime, opts ChainOptions) (chainWFStart, error) {
 	def, _, err := resolve.ResolveWorkflow(rt.Config, opts.Workflow)
 	if err != nil {
 		return chainWFStart{}, err
@@ -95,38 +111,52 @@ func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOption
 	// above: a second probe from the caller's shell could name a prefix the
 	// chain's commit and cut never saw.
 	plan.subdir = housekeep.ResolveSubdir(ctx, rt.Git, repo)
+	return plan, nil
+}
+
+// chainResolveWorkflowMembers resolves the workflow's members read-only: the
+// plans, the member names, and each member's actor.
+func chainResolveWorkflowMembers(ctx context.Context, rt Runtime, opts ChainOptions, plan chainWFStart) (chainWFStart, error) {
 	if err := chainValidateWorkflowOpts(opts); err != nil {
 		return chainWFStart{}, err
 	}
-	if plan.ticket, err = chainTicket(ctx, rt, opts.Ticket, repo); err != nil {
+	var err error
+	if plan.ticket, err = chainTicket(ctx, rt, opts.Ticket, plan.repo); err != nil {
 		return chainWFStart{}, err
 	}
 	if plan.bodies, err = chainPlanBodiesFor(opts); err != nil {
 		return chainWFStart{}, err
 	}
 	given := workflow.Given{Plans: len(plan.bodies) > 0, Task: opts.Task != ""}
-	if err := chainValidateWorkflow(rt, def, given); err != nil {
+	if err := chainValidateWorkflow(rt, plan.def, given); err != nil {
 		return chainWFStart{}, err
 	}
 
 	actors := rt.RoleRegistry().WorkflowActors()
-	planned, err := chain.MemberNames(opts.Name, def, actors)
+	planned, err := chain.MemberNames(opts.Name, plan.def, actors)
 	if err != nil {
 		return chainWFStart{}, err
 	}
 	plan.planned = planned
-	plan.keeper = chain.WriterKeeper(def, workflow.UsedActors(def), actors)
+	plan.keeper = chain.WriterKeeper(plan.def, workflow.UsedActors(plan.def), actors)
 	if cap := chain.NameCap(opts.Name, planned); len(opts.Name) > cap {
 		return chainWFStart{}, refusal.New("chain name %q exceeds %d characters (the longest member suffix is %s)", opts.Name, cap, chain.LongestMemberSuffix(opts.Name, planned))
 	}
-	plan.members = chainWorkflowMembers(def, planned, plan.keeper)
+	plan.members = chainWorkflowMembers(plan.def, planned, plan.keeper)
 	if err := chainFreeNames(rt, plan.members); err != nil {
 		return chainWFStart{}, err
 	}
 	if plan.resolutions, err = chainResolveActors(rt, plan.members); err != nil {
 		return chainWFStart{}, err
 	}
-	synth := chainStartPlan{repo: repo, ticket: plan.ticket, members: plan.members, resolutions: plan.resolutions}
+	return plan, nil
+}
+
+// chainResolveWorkflowPlacements resolves every member's placement read-only
+// and records the caller's mastermind and the engine's start inputs.
+func chainResolveWorkflowPlacements(ctx context.Context, rt Runtime, opts ChainOptions, plan chainWFStart) (chainWFStart, error) {
+	synth := chainStartPlan{repo: plan.repo, ticket: plan.ticket, members: plan.members, resolutions: plan.resolutions}
+	var err error
 	if plan.placements, err = chainResolvePlacements(ctx, rt, opts, synth); err != nil {
 		return chainWFStart{}, err
 	}
@@ -135,7 +165,7 @@ func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOption
 		res.Placement = p
 		plan.resolutions[part] = res
 	}
-	if err := chainRefuseForkPlacedWriter(opts, def, plan); err != nil {
+	if err := chainRefuseForkPlacedWriter(opts, plan.def, plan); err != nil {
 		return chainWFStart{}, err
 	}
 
@@ -154,15 +184,21 @@ func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOption
 		items[i] = rt.Store.ChainPlanPath(opts.Name, i+1)
 	}
 	plan.in = workflow.StartInputs{Plans: items, Task: opts.Task}
+	return plan, nil
+}
 
+// chainResolveWorkflowRemote preflights a placed writer read-only: the remote
+// builder's create facts, refusing a check step the server cannot run.
+func chainResolveWorkflowRemote(ctx context.Context, rt Runtime, opts ChainOptions, plan chainWFStart) (chainWFStart, error) {
 	if !plan.placements[chain.MemberBuilder].Local() {
 		ropts := opts
 		ropts.BuilderActor = plan.keeper
-		synth.repo = repo
+		synth := chainStartPlan{repo: plan.repo, ticket: plan.ticket, members: plan.members, resolutions: plan.resolutions}
+		var err error
 		if plan.remote, err = chainRemotePreflight(ctx, rt, ropts, synth, plan.placements[chain.MemberBuilder]); err != nil {
 			return chainWFStart{}, err
 		}
-		if chainHasCheckStep(def) && !remote.HasFeature(plan.remote.who, remote.FeatureCheck) {
+		if chainHasCheckStep(plan.def) && !remote.HasFeature(plan.remote.who, remote.FeatureCheck) {
 			return chainWFStart{}, refusal.New("chain %s places a writer on server %s, which lacks the %q feature", plan.planned[0].Name, plan.remote.server, remote.FeatureCheck)
 		}
 	}

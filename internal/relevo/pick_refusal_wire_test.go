@@ -42,7 +42,9 @@ func TestPickRefusalFromWireRebuildsTheTypedRefusal(t *testing.T) {
 		wire(500, "", gated),
 		errors.New(gated),
 	} {
-		if got := pickRefusalFromWire(other); got != other {
+		// Both directions: a wrap still matches one way, so a single
+		// errors.Is would pass while the passthrough is broken.
+		if got := pickRefusalFromWire(other); !errors.Is(got, other) || !errors.Is(other, got) {
 			t.Errorf("pickRefusalFromWire(%v) = %v, want it unchanged", other, got)
 		}
 	}

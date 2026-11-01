@@ -13,11 +13,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
-type startCall struct {
-	Name, Kind, Pane string
-	Args             []string
-}
-
 type addWorktreeCall struct {
 	Dir, Path, Branch, Commit string
 }

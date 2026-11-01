@@ -10,6 +10,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/classify"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
+	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -26,7 +27,7 @@ type injectionScan struct {
 // call is bounded by context.WithTimeout(ctx, cfg.Timeout()). source is
 // "report" or "dialog"; the harness comes from b.Builder.Kind.
 func scanForInjection(ctx context.Context, rt Runtime, source string, b store.Binding, text []byte) injectionScan {
-	regexLines := housekeep.ScanLines(text, housekeep.CompileScanPatterns(rt.Policy))
+	regexLines := scanRegexFloor(rt, text)
 	regexCount := len(regexLines)
 	cfg := rt.Policy.Classify
 	if cfg == nil || rt.Classify == nil {
@@ -41,7 +42,19 @@ func scanForInjection(ctx context.Context, rt Runtime, source string, b store.Bi
 			Note:      "",
 		}
 	}
+	rec, kept := prepareClassifyParagraphs(cfg, text)
+	return judgeAndComposeScan(ctx, rt, cfg, source, b, regexLines, kept, rec)
+}
 
+// scanRegexFloor runs the regex patterns over the text: the floor every scan
+// reports, with or without the classifier.
+func scanRegexFloor(rt Runtime, text []byte) []int {
+	return housekeep.ScanLines(text, housekeep.CompileScanPatterns(rt.Policy))
+}
+
+// prepareClassifyParagraphs builds the classifier record for the scan and
+// trims the text to the paragraphs worth judging.
+func prepareClassifyParagraphs(cfg *policy.Classify, text []byte) (*store.ClassifyRecord, []classify.Paragraph) {
 	provider := ""
 	if cfg != nil {
 		provider = cfg.Provider
@@ -55,6 +68,14 @@ func scanForInjection(ctx context.Context, rt Runtime, source string, b store.Bi
 	kept, partial := classify.Trim(paras)
 	rec.Partial = partial
 	rec.Paragraphs = len(kept)
+	return rec, kept
+}
+
+// judgeAndComposeScan judges the prepared paragraphs and composes the scan
+// result: the empty paragraph set keeps the regex floor, a classifier
+// failure is a note, and the union of both signals is composed last.
+func judgeAndComposeScan(ctx context.Context, rt Runtime, cfg *policy.Classify, source string, b store.Binding, regexLines []int, kept []classify.Paragraph, rec *store.ClassifyRecord) injectionScan {
+	regexCount := len(regexLines)
 	if len(kept) == 0 {
 		by := ""
 		if regexCount > 0 {

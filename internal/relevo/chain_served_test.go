@@ -450,7 +450,7 @@ func TestWorkflowDirtyServedWriterCloseHalts(t *testing.T) {
 	fg.dirtyResult = true
 
 	var ev workflow.Event
-	rt.Store.WithLock(func(tx *store.Tx) error {
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
 		c, err := tx.Chain("shop")
 		if err != nil {
 			return err
@@ -463,7 +463,9 @@ func TestWorkflowDirtyServedWriterCloseHalts(t *testing.T) {
 			Body: []byte(chainDoneBody()), Outcome: "done", Round: 1,
 		})
 		return err
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if ev.Status != reporttail.OutcomeHalted {
 		t.Fatalf("event = %s %q, want halted: a dirty served close must not advance", ev.Status, ev.Reason)
 	}
@@ -488,7 +490,7 @@ func TestWorkflowCleanServedWriterCloseStillAdvances(t *testing.T) {
 	servedChainStart(t, rt, servedChainRequest("shop"))
 
 	var ev workflow.Event
-	rt.Store.WithLock(func(tx *store.Tx) error {
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
 		c, err := tx.Chain("shop")
 		if err != nil {
 			return err
@@ -501,7 +503,9 @@ func TestWorkflowCleanServedWriterCloseStillAdvances(t *testing.T) {
 			Body: []byte(chainDoneBody()), Outcome: "done", Round: 1,
 		})
 		return err
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if ev.Status != "" && ev.Status != "done" {
 		t.Fatalf("event = %s %q, want a completed step from a clean close", ev.Status, ev.Reason)
 	}

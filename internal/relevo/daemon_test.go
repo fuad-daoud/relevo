@@ -342,7 +342,7 @@ func TestTickIngestsLiveBindings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
-	defer d.Close()
+	t.Cleanup(func() { _ = d.Close() })
 	rt.DB = d
 
 	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
@@ -399,7 +399,7 @@ func assertIngestMirrorEmpty(t *testing.T, path string) {
 	if err != nil {
 		t.Fatalf("db.Open(%s): %v", path, err)
 	}
-	defer d.Close()
+	t.Cleanup(func() { _ = d.Close() })
 
 	stats, err := d.Stats()
 	if err != nil {
@@ -470,7 +470,7 @@ func TestTickRefreshesOncePastTTL(t *testing.T) {
 			if err != nil {
 				t.Fatalf("open store db: %v", err)
 			}
-			defer mdb.Close()
+			t.Cleanup(func() { _ = mdb.Close() })
 			// The cache is machine-local, so the fixture seeds and reads the
 			// file the pass reads it from.
 			mdb = mdb.LocalOrSelf()
@@ -532,7 +532,7 @@ func TestTickSurvivesFetchError(t *testing.T) {
 		if merr != nil {
 			t.Fatalf("open store db: %v", merr)
 		}
-		defer mdb.Close()
+		t.Cleanup(func() { _ = mdb.Close() })
 		// The cache is machine-local, so the fixture reads the file the pass
 		// writes.
 		mdb = mdb.LocalOrSelf()
@@ -551,7 +551,7 @@ func TestTickSurvivesFetchError(t *testing.T) {
 		if merr != nil {
 			t.Fatalf("open store db: %v", merr)
 		}
-		defer mdb.Close()
+		t.Cleanup(func() { _ = mdb.Close() })
 		mdb = mdb.LocalOrSelf()
 		stale := release.Cache{Latest: "v0.7.0", CheckedAt: now.Add(-2 * release.TTL), Source: "test"}
 		if err := release.Save(mdb, stale); err != nil {
@@ -711,7 +711,7 @@ func TestRefreshReleaseSuccessClearsTheBackoff(t *testing.T) {
 	if merr != nil {
 		t.Fatalf("open store db: %v", merr)
 	}
-	defer mdb.Close()
+	t.Cleanup(func() { _ = mdb.Close() })
 	cached, ok, err := release.Load(mdb.LocalOrSelf())
 	if err != nil || !ok {
 		t.Fatalf("release.Load = (ok %v, err %v), want the fetched answer saved", ok, err)

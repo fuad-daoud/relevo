@@ -905,7 +905,9 @@ func streamWrite(t *testing.T, rt Runtime, raw string) {
 	if _, err := f.WriteString(raw); err != nil {
 		t.Fatal(err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // readLog is webshop's round-1 builder log, "" when absent.

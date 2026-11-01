@@ -128,8 +128,50 @@ func chainPullMembers(rt Runtime, c db.ChainRow, view remote.ChainView) (db.Chai
 	if err != nil {
 		return c, err
 	}
+	return chainPullPersistMembers(rt, c, view, plan, repoRef, haveSibling)
+}
+
+// chainPullAddedBindings names the view's added members inside the pull's
+// lock: a missing binding gets a mirror built from the start plan, and every
+// member's column is written. With every member gone there is no sibling to
+// model a new binding on, so an unbuildable member is skipped.
+func chainPullAddedBindings(tx *store.Tx, cur *db.ChainRow, view remote.ChainView, plan chainServerPlan, repoRef *store.RepoRef, haveSibling bool, existing []db.ChainMemberRow) ([]db.ChainMemberRow, bool, error) {
+	var added []db.ChainMemberRow
+	changed := false
+	for _, mv := range view.Members {
+		if mv.Part == "" || mv.Name == "" || chain.MemberName(*cur, mv.Part) == mv.Name {
+			continue
+		}
+		if _, lerr := tx.Load(mv.Name); errors.Is(lerr, store.ErrNotFound) {
+			if !haveSibling {
+				continue
+			}
+			opts := ChainOptions{Name: cur.Name, Feature: cur.Feature, Ticket: cur.Ticket}
+			nb := chainMirrorMember(opts, plan, mv, db.NewID(), repoRef)
+			// A fresh mirror holds none of this member's rounds: the install
+			// in this same pass walks them from the first.
+			nb.Round = 1
+			if err := tx.Save(nb); err != nil {
+				return nil, false, err
+			}
+			added = append(added, db.ChainMemberRow{
+				Binding: nb.Name, Actor: nb.Role, Seq: len(existing) + len(added),
+			})
+		} else if lerr != nil {
+			return nil, false, lerr
+		}
+		setChainMemberColumn(cur, mv.Part, mv.Name)
+		changed = true
+	}
+	return added, changed, nil
+}
+
+// chainPullPersistMembers writes the view's members in one lock section: the
+// added bindings beside their chain_member rows, then the row itself when a
+// column moved. It returns the row it wrote.
+func chainPullPersistMembers(rt Runtime, c db.ChainRow, view remote.ChainView, plan chainServerPlan, repoRef *store.RepoRef, haveSibling bool) (db.ChainRow, error) {
 	out := c
-	err = rt.Store.WithLock(func(tx *store.Tx) error {
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
 		cur, err := tx.Chain(c.Name)
 		if err != nil {
 			return err
@@ -141,32 +183,9 @@ func chainPullMembers(rt Runtime, c db.ChainRow, view remote.ChainView) (db.Chai
 		if err != nil {
 			return err
 		}
-		var added []db.ChainMemberRow
-		changed := false
-		for _, mv := range view.Members {
-			if mv.Part == "" || mv.Name == "" || chain.MemberName(cur, mv.Part) == mv.Name {
-				continue
-			}
-			if _, lerr := tx.Load(mv.Name); errors.Is(lerr, store.ErrNotFound) {
-				if !haveSibling {
-					continue
-				}
-				opts := ChainOptions{Name: cur.Name, Feature: cur.Feature, Ticket: cur.Ticket}
-				nb := chainMirrorMember(opts, plan, mv, db.NewID(), repoRef)
-				// A fresh mirror holds none of this member's rounds: the install
-				// in this same pass walks them from the first.
-				nb.Round = 1
-				if err := tx.Save(nb); err != nil {
-					return err
-				}
-				added = append(added, db.ChainMemberRow{
-					Binding: nb.Name, Actor: nb.Role, Seq: len(existing) + len(added),
-				})
-			} else if lerr != nil {
-				return lerr
-			}
-			setChainMemberColumn(&cur, mv.Part, mv.Name)
-			changed = true
+		added, changed, err := chainPullAddedBindings(tx, &cur, view, plan, repoRef, haveSibling, existing)
+		if err != nil {
+			return err
 		}
 		if len(added) > 0 {
 			if err := tx.ChainMembersPut(cur.Name, added); err != nil {
@@ -218,18 +237,6 @@ func chainPullPlan(rt Runtime, c db.ChainRow) (plan chainServerPlan, repoRef *st
 	return plan, nil, false, nil
 }
 
-// chainPullShape is a member view's shape: the server's own word, or the
-// part-implied shape when a server predates the field.
-func chainPullShape(mv remote.ChainMemberView) string {
-	if mv.View.Shape != "" {
-		return mv.View.Shape
-	}
-	if mv.Part == chain.MemberBuilder {
-		return ""
-	}
-	return store.ShapeReader
-}
-
 func setChainMemberColumn(c *db.ChainRow, part, name string) {
 	switch part {
 	case chain.MemberBuilder:
@@ -248,6 +255,15 @@ func setChainMemberColumn(c *db.ChainRow, part, name string) {
 // round in that one critical section, so a pass either lands a whole run or
 // leaves the member where it was. An unfetchable round stops the run, and the
 // next pass resumes there.
+// chainPulledRound is one fetched round awaiting install: the round number,
+// its view, the fetched files, and its prompt.
+type chainPulledRound struct {
+	round  int
+	view   remote.BindingView
+	cf     *catchUpFetch
+	prompt []byte
+}
+
 func chainPullMember(ctx context.Context, rt Runtime, mv remote.ChainMemberView) error {
 	name := mv.Name
 	if name == "" {
@@ -259,13 +275,29 @@ func chainPullMember(ctx context.Context, rt Runtime, mv remote.ChainMemberView)
 	}
 	closed := mv.View.ClosedRound
 
-	type pulled struct {
-		round  int
-		view   remote.BindingView
-		cf     *catchUpFetch
-		prompt []byte
+	fs, bcf := chainPullFetchRounds(ctx, rt, b, mv, closed)
+	err = chainPullInstallRounds(ctx, rt, mv, b, fs, bcf)
+	for _, f := range fs {
+		f.cf.release()
 	}
-	var fs []pulled
+	if bcf != nil {
+		bcf.release()
+	}
+	if err != nil {
+		return err
+	}
+
+	chainPullAckMember(ctx, rt, mv, name, closed)
+	return nil
+}
+
+// chainPullFetchRounds fetches every missing closed round unlocked: each
+// round's files and prompt in server order, then the builder's catch-up
+// bundle. An unfetchable round stops the run, and the next pass resumes
+// there.
+func chainPullFetchRounds(ctx context.Context, rt Runtime, b store.Binding, mv remote.ChainMemberView, closed int) ([]chainPulledRound, *catchUpFetch) {
+	name := b.Name
+	var fs []chainPulledRound
 	for r := b.Round; r <= closed; r++ {
 		rv := chainRoundView(mv, r)
 		rb := b
@@ -281,7 +313,7 @@ func chainPullMember(ctx context.Context, rt Runtime, mv remote.ChainMemberView)
 			cf.release()
 			break
 		}
-		fs = append(fs, pulled{round: r, view: rv, cf: cf, prompt: prompt})
+		fs = append(fs, chainPulledRound{round: r, view: rv, cf: cf, prompt: prompt})
 	}
 
 	// The builder's branch catches up from one bundle: the newest closed
@@ -292,8 +324,15 @@ func chainPullMember(ctx context.Context, rt Runtime, mv remote.ChainMemberView)
 		bcf = &catchUpFetch{Round: closed}
 		fetchCatchUpBundle(ctx, rt, b, mv.View, bcf)
 	}
+	return fs, bcf
+}
 
-	err = rt.Store.WithLock(func(tx *store.Tx) error {
+// chainPullInstallRounds installs fetched rounds in one lock: every round in
+// that one critical section, so a pass either lands a whole run or leaves the
+// member where it was.
+func chainPullInstallRounds(ctx context.Context, rt Runtime, mv remote.ChainMemberView, b store.Binding, fs []chainPulledRound, bcf *catchUpFetch) error {
+	name := b.Name
+	return rt.Store.WithLock(func(tx *store.Tx) error {
 		cur, err := tx.Load(name)
 		if err != nil {
 			return err
@@ -355,26 +394,18 @@ func chainPullMember(ctx context.Context, rt Runtime, mv remote.ChainMemberView)
 		cur.Builder.RemoteLive = nil
 		return chainPullSaveIfChanged(tx, snap, cur)
 	})
-	for _, f := range fs {
-		f.cf.release()
-	}
-	if bcf != nil {
-		bcf.release()
-	}
-	if err != nil {
-		return err
-	}
+}
 
-	// The ack is cumulative and leaves only once the rounds are stored: a lost
-	// one is re-sent by the next pass, while the server's own AckedRound still
-	// trails the closed round.
+// chainPullAckMember acks the installed rounds once stored: the ack is
+// cumulative, so a lost one is re-sent by the next pass while the server's
+// own AckedRound still trails the closed round.
+func chainPullAckMember(ctx context.Context, rt Runtime, mv remote.ChainMemberView, name string, closed int) {
 	cur, lerr := rt.Store.Load(name)
 	if lerr == nil && closed > 0 && cur.Round > closed && mv.View.AckedRound < closed {
 		if _, aerr := rt.Remote.Ack(ctx, cur.Builder.Server, name, closed); aerr != nil {
 			slog.Warn("chain pull ack failed", "server", cur.Builder.Server, "name", name, "round", closed, "err", aerr)
 		}
 	}
-	return nil
 }
 
 // chainPullFinish copies the server's state onto the mirror and, when the

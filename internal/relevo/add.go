@@ -9,7 +9,9 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/resolve"
@@ -139,21 +141,91 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		}
 		opts.Ticket = ticket
 	}
+	if remote, out, rerr := addResolvePlacementRoute(ctx, rt, &opts, rec, haveRec); remote {
+		return out, rerr
+	}
+	res, tier, shape, rerr := addResolveRoleTier(ctx, rt, &opts, rec, haveRec)
+	if rerr != nil {
+		return AddResult{}, rerr
+	}
+	cut, rerr := addCutTree(ctx, rt, opts)
+	if rerr != nil {
+		return AddResult{}, rerr
+	}
+	rollback := func() {
+		if cut.worktree != "" && rt.Git != nil {
+			_ = rt.Git.RemoveWorktree(ctx, opts.Repo, cut.worktree, true)
+		}
+		// A branch Add cut itself is removed too, so a retry does not fail
+		// with "branch already exists".
+		if cut.createdBranch && rt.Git != nil {
+			_ = rt.Git.DeleteBranch(ctx, opts.Repo, cut.branch)
+		}
+	}
+
+	// The cut commit must hold the subdirectory, or every round would start
+	// in a path that does not exist.
+	if cut.subdir != "" {
+		exists, derr := rt.Git.DirAt(ctx, opts.Repo, cut.base, cut.subdir)
+		if derr != nil {
+			rollback()
+			return AddResult{}, derr
+		}
+		if !exists {
+			rollback()
+			return AddResult{}, refusal.New("subdirectory %s does not exist at %s: nothing to run the round in", cut.subdir, cut.base)
+		}
+	}
+
+	other, found, err := rt.Store.FindByCWD(cut.cwd)
+	if err != nil && !errors.Is(err, store.ErrAmbiguousCWD) {
+		rollback()
+		return AddResult{}, err
+	}
+	// Only a writer is refused here: a reader may share a writer's tree,
+	// so the refusal applies between two writers only.
+	if shape == store.ShapeWriter && found && other.Name != opts.Name && other.State != store.StateDone && other.Shape == store.ShapeWriter && !rt.Store.SameChain(opts.Name, other.Name) {
+		rollback()
+		return AddResult{}, fmt.Errorf("%s is driven by binding %q (builder %s, round %d): %w",
+			cut.cwd, other.Name, other.BuilderCandidate, other.Round, store.ErrCWDTaken)
+	}
+
+	return addPersistBinding(ctx, rt, opts, rec, res, tier, shape, cut, rollback)
+}
+
+// addCut is the tree an add runs in: either the cut worktree, an adopted
+// branch checked out into one, or a caller-supplied directory.
+type addCut struct {
+	cwd            string
+	worktree       string
+	branch         string
+	base           string
+	baseRef        string
+	existingBranch bool
+	createdBranch  bool
+	subdir         string
+}
+
+func addResolvePlacementRoute(ctx context.Context, rt Runtime, opts *AddOptions, rec mastermind.Record, haveRec bool) (bool, AddResult, error) {
+	// A reader is refused the writer-only knobs on every remote path below;
+	// an unknown actor resolves against the server's own roles.
+	shape, sherr := resolve.ActorShape(rt.RoleRegistry(), opts.Role)
+	readerOnly := sherr == nil && shape == store.ShapeReader
 	if opts.Server != "" {
 		// A reader runs on the server too, so the bind needs one advertising
 		// remote.FeatureReaders: an older server would run it as a writer and
-		// touch the served tree. An unknown role is left to the server.
-		if shape, rerr := resolve.ActorShape(rt.RoleRegistry(), opts.Role); rerr == nil && shape == store.ShapeReader {
+		// touch the served tree.
+		if readerOnly {
 			if err := requireRemoteReaders(ctx, rt, opts.Server); err != nil {
-				return AddResult{}, err
+				return true, AddResult{}, err
 			}
 			// A reader round has no check, so the writer-only knobs are
 			// refused here too.
 			if opts.Gate != "" {
-				return AddResult{}, refusal.BadInputf("--gate: a reader round has no check")
+				return true, AddResult{}, refusal.BadInputf("--gate: a reader round has no check")
 			}
 			if opts.Regate != nil {
-				return AddResult{}, refusal.BadInputf("--regate: a reader round has no check")
+				return true, AddResult{}, refusal.BadInputf("--regate: a reader round has no check")
 			}
 		}
 		// A caller that resolved the actor's list passes its choice in; only
@@ -161,7 +233,8 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		if opts.Placement.How == "" {
 			opts.Placement = resolve.PlacementResolution{Name: opts.Server, How: resolve.PlacementExplicit}
 		}
-		return addRemote(ctx, rt, opts, rec, haveRec)
+		out, rerr := addRemote(ctx, rt, *opts, rec, haveRec)
+		return true, out, rerr
 	}
 	// The placement is decided once, before anything is created: an explicit
 	// --local is taken as given, otherwise the actor's own list is probed.
@@ -170,53 +243,58 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 			store.Binding{Role: resolve.NormRole(opts.Role)}.WriterRole(), opts.Candidate, "", opts.Local,
 			resolve.PlacementFlags{Tier: opts.Tier, Feature: opts.Feature, Ticket: opts.Ticket})
 		if perr != nil {
-			return AddResult{}, perr
+			return true, AddResult{}, perr
 		}
 		opts.Placement = placement
 	}
 	if !opts.Placement.Local() {
 		opts.Server = opts.Placement.Name
-		if shape, rerr := resolve.ActorShape(rt.RoleRegistry(), opts.Role); rerr == nil && shape == store.ShapeReader {
+		if readerOnly {
 			if err := requireRemoteReaders(ctx, rt, opts.Server); err != nil {
-				return AddResult{}, err
+				return true, AddResult{}, err
 			}
 			if opts.Gate != "" {
-				return AddResult{}, refusal.BadInputf("--gate: a reader round has no check")
+				return true, AddResult{}, refusal.BadInputf("--gate: a reader round has no check")
 			}
 			if opts.Regate != nil {
-				return AddResult{}, refusal.BadInputf("--regate: a reader round has no check")
+				return true, AddResult{}, refusal.BadInputf("--regate: a reader round has no check")
 			}
 		}
-		return addRemote(ctx, rt, opts, rec, haveRec)
+		out, rerr := addRemote(ctx, rt, *opts, rec, haveRec)
+		return true, out, rerr
 	}
+	return false, AddResult{}, nil
+}
+
+func addResolveRoleTier(ctx context.Context, rt Runtime, opts *AddOptions, rec mastermind.Record, haveRec bool) (resolve.Resolution, harness.Tier, string, error) {
 	// An unknown actor is refused here, on the local path only: a remote
 	// binding's actor resolves against the server's own roles.json.
 	shape, err := resolve.ActorShape(rt.RoleRegistry(), opts.Role)
 	if err != nil {
-		return AddResult{}, err
+		return resolve.Resolution{}, "", "", err
 	}
 	// A reader round has no check, so the writer-only knobs are refused at
 	// add, naming the flag.
 	if shape == store.ShapeReader {
 		if opts.Gate != "" {
-			return AddResult{}, refusal.BadInputf("--gate: a reader round has no check")
+			return resolve.Resolution{}, "", "", refusal.BadInputf("--gate: a reader round has no check")
 		}
 		if opts.Regate != nil {
-			return AddResult{}, refusal.BadInputf("--regate: a reader round has no check")
+			return resolve.Resolution{}, "", "", refusal.BadInputf("--regate: a reader round has no check")
 		}
 	}
 	if err := store.ValidName(opts.Name); err != nil {
-		return AddResult{}, err
+		return resolve.Resolution{}, "", "", err
 	}
 	if opts.Feature != "" {
 		if err := store.ValidFeature(opts.Feature); err != nil {
-			return AddResult{}, err
+			return resolve.Resolution{}, "", "", err
 		}
 	}
 	// Refuse here, not just inside resolveBuilder: Add cuts its worktree
 	// before that runs, and a refused name must not leave one behind.
 	if _, err := builderAgentName(opts.Name); err != nil {
-		return AddResult{}, err
+		return resolve.Resolution{}, "", "", err
 	}
 	// Resolve before AddWorktree for the same reason builderAgentName runs
 	// here -- a refused add must leave no worktree.
@@ -225,11 +303,11 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	// gate tier reads them, and opts.Repo -- not cwd -- is the tree they key.
 	repoSet, err := RepoSettingsFor(ctx, rt, opts.Repo)
 	if err != nil {
-		return AddResult{}, err
+		return resolve.Resolution{}, "", "", err
 	}
 	res, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, resolve.AddSkillGates(ctx, ResolveDeps(rt), opts.CWD, opts.Repo, opts.Branch, opts.Base), opts.Candidate, roleName, resolve.PickFor(ResolveDeps(rt)))
 	if err != nil {
-		return AddResult{}, err
+		return resolve.Resolution{}, "", "", err
 	}
 	// The placement rides on the resolution, so the pick entry says where the
 	// binding landed.
@@ -244,132 +322,94 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		var tierErr error
 		tier, tierErr = resolve.ReaderTier(tier, c.Harness, rt.Policy)
 		if tierErr != nil {
-			return AddResult{}, tierErr
+			return resolve.Resolution{}, "", "", tierErr
 		}
 	}
 	if err := resolve.CheckTierCap(tier, rt.Policy, opts.AllowYolo); err != nil {
-		return AddResult{}, err
+		return resolve.Resolution{}, "", "", err
 	}
 
 	if !haveRec {
-		return AddResult{}, ErrNoMasterMindSession
+		return resolve.Resolution{}, "", "", ErrNoMasterMindSession
 	}
 	opts.MasterMindID = rec.ID
-	mastermindEP := recordEndpoint(rec)
 
 	if _, err := rt.Store.Load(opts.Name); err == nil {
-		return AddResult{}, refusal.BadInputf(
+		return resolve.Resolution{}, "", "", refusal.BadInputf(
 			"binding %q already exists: `relevo unbind %s` to start fresh, or `relevo bind --resume --name %s` to adopt it",
 			opts.Name, opts.Name, opts.Name)
 	} else if !errors.Is(err, store.ErrNotFound) {
-		return AddResult{}, err
+		return resolve.Resolution{}, "", "", err
 	}
+	return res, tier, shape, nil
+}
 
-	var (
-		cwd            string
-		worktree       string
-		branch         string
-		base           string
-		baseRef        string
-		existingBranch bool
-		createdBranch  bool
-	)
+func addCutTree(ctx context.Context, rt Runtime, opts AddOptions) (addCut, error) {
+	var cut addCut
 
 	// The subdirectory the round runs in, resolved once: a bind started below
 	// the root offsets its round by the prefix. --cwd never consults it.
-	subdir := ""
 	if opts.CWD == "" && rt.Git != nil {
-		subdir = housekeep.ResolveSubdir(ctx, rt.Git, opts.Repo)
+		cut.subdir = housekeep.ResolveSubdir(ctx, rt.Git, opts.Repo)
 	}
 
 	if opts.Branch != "" && opts.CWD != "" {
-		return AddResult{}, refusal.BadInputf("--branch and --cwd are exclusive")
+		return addCut{}, refusal.BadInputf("--branch and --cwd are exclusive")
 	}
 
 	if opts.CWD != "" {
 		info, err := os.Stat(opts.CWD)
 		if err != nil {
-			return AddResult{}, fmt.Errorf("stat %s: %w", opts.CWD, err)
+			return addCut{}, fmt.Errorf("stat %s: %w", opts.CWD, err)
 		}
 		if !info.IsDir() {
-			return AddResult{}, fmt.Errorf("%s is not a directory", opts.CWD)
+			return addCut{}, fmt.Errorf("%s is not a directory", opts.CWD)
 		}
-		cwd = opts.CWD
+		cut.cwd = opts.CWD
 	} else if opts.Branch != "" {
 		if rt.Git == nil {
-			return AddResult{}, ErrGitRequired
+			return addCut{}, ErrGitRequired
 		}
 		tip, createdTracking, err := resolveAdoptedBranch(ctx, rt, opts.Repo, opts.Branch)
 		if err != nil {
-			return AddResult{}, err
+			return addCut{}, err
 		}
-		cwd = rt.Store.WorktreePath(opts.Name)
-		if err := rt.Git.CheckoutWorktree(ctx, opts.Repo, cwd, opts.Branch); err != nil {
+		cut.cwd = rt.Store.WorktreePath(opts.Name)
+		if err := rt.Git.CheckoutWorktree(ctx, opts.Repo, cut.cwd, opts.Branch); err != nil {
 			if errors.Is(err, git.ErrBranchCheckedOut) {
-				return AddResult{}, fmt.Errorf("branch %s is checked out in another worktree (git worktree list); free it first", opts.Branch)
+				return addCut{}, fmt.Errorf("branch %s is checked out in another worktree (git worktree list); free it first", opts.Branch)
 			}
 			if createdTracking {
-				return AddResult{}, fmt.Errorf("%w; local branch %s now tracks origin/%s", err, opts.Branch, opts.Branch)
+				return addCut{}, fmt.Errorf("%w; local branch %s now tracks origin/%s", err, opts.Branch, opts.Branch)
 			}
-			return AddResult{}, err
+			return addCut{}, err
 		}
-		worktree, branch, base, existingBranch = cwd, opts.Branch, tip, true
+		cut.worktree, cut.branch, cut.base, cut.existingBranch = cut.cwd, opts.Branch, tip, true
 	} else {
 		if rt.Git == nil {
-			return AddResult{}, ErrGitRequired
+			return addCut{}, ErrGitRequired
 		}
 		// One cut shared with a chain's start, so the two can never drift.
-		cwd, branch, base, baseRef, err = cutWorktree(ctx, rt, opts.Name, opts.Repo, opts.Base)
+		var err error
+		cut.cwd, cut.branch, cut.base, cut.baseRef, err = cutWorktree(ctx, rt, opts.Name, opts.Repo, opts.Base)
 		if err != nil {
-			return AddResult{}, err
+			return addCut{}, err
 		}
-		worktree = cwd
-		createdBranch = true
+		cut.worktree = cut.cwd
+		cut.createdBranch = true
 	}
+	return cut, nil
+}
 
-	rollback := func() {
-		if worktree != "" && rt.Git != nil {
-			_ = rt.Git.RemoveWorktree(ctx, opts.Repo, worktree, true)
-		}
-		// A branch Add cut itself is removed too, so a retry does not fail
-		// with "branch already exists".
-		if createdBranch && rt.Git != nil {
-			_ = rt.Git.DeleteBranch(ctx, opts.Repo, branch)
-		}
-	}
-
-	// The cut commit must hold the subdirectory, or every round would start
-	// in a path that does not exist.
-	if subdir != "" {
-		exists, derr := rt.Git.DirAt(ctx, opts.Repo, base, subdir)
-		if derr != nil {
-			rollback()
-			return AddResult{}, derr
-		}
-		if !exists {
-			rollback()
-			return AddResult{}, refusal.New("subdirectory %s does not exist at %s: nothing to run the round in", subdir, base)
-		}
-	}
-
-	other, found, err := rt.Store.FindByCWD(cwd)
-	if err != nil && !errors.Is(err, store.ErrAmbiguousCWD) {
-		rollback()
-		return AddResult{}, err
-	}
-	// Only a writer is refused here: a reader may share a writer's tree,
-	// so the refusal applies between two writers only.
-	if shape == store.ShapeWriter && found && other.Name != opts.Name && other.State != store.StateDone && other.Shape == store.ShapeWriter && !rt.Store.SameChain(opts.Name, other.Name) {
-		rollback()
-		return AddResult{}, fmt.Errorf("%s is driven by binding %q (builder %s, round %d): %w",
-			cwd, other.Name, other.BuilderCandidate, other.Round, store.ErrCWDTaken)
-	}
+func addPersistBinding(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.Record, res resolve.Resolution, tier harness.Tier, shape string, cut addCut, rollback func()) (AddResult, error) {
+	mastermindEP := recordEndpoint(rec)
+	c := res.Candidate
 
 	bindOpts := BindOptions{
 		Name:         opts.Name,
 		Candidate:    c.Ref().String(),
 		MasterMindID: opts.MasterMindID,
-		CWD:          cwd,
+		CWD:          cut.cwd,
 		Headless:     opts.Headless,
 		Tier:         string(tier),
 		AllowYolo:    opts.AllowYolo,
@@ -387,8 +427,8 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	// fills them, so a peer builder gets a plain bind's defaults.
 	b := store.Binding{
 		Name:             opts.Name,
-		CWD:              cwd,
-		Subdir:           subdir,
+		CWD:              cut.cwd,
+		Subdir:           cut.subdir,
 		MasterMind:       mastermindEP,
 		MasterMindID:     opts.MasterMindID,
 		Builder:          builder,
@@ -397,11 +437,11 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		BuilderPinned:    res.How == resolve.HowExplicit,
 		Round:            1,
 		State:            store.StateActive,
-		Worktree:         worktree,
-		Branch:           branch,
-		Base:             base,
-		BaseRef:          baseRef,
-		ExistingBranch:   existingBranch,
+		Worktree:         cut.worktree,
+		Branch:           cut.branch,
+		Base:             cut.base,
+		BaseRef:          cut.baseRef,
+		ExistingBranch:   cut.existingBranch,
 		Repo:             opts.Repo,
 		Tier:             string(tier),
 		Role:             resolve.NormRole(opts.Role),
@@ -433,7 +473,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		b = stored
 	}
 
-	return AddResult{Binding: b, Worktree: worktree, Branch: branch, Base: base, Resolution: res}, nil
+	return AddResult{Binding: b, Worktree: cut.worktree, Branch: cut.branch, Base: cut.base, Resolution: res}, nil
 }
 
 // cutWorktree cuts relevo's own worktree for a new binding: the branch

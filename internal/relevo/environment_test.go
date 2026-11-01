@@ -34,7 +34,8 @@ func TestCheckDiskFreeNamesFirstShortPath(t *testing.T) {
 	if err == nil || err.Error() != want {
 		t.Fatalf("err = %v, want %q", err, want)
 	}
-	if _, ok := err.(*EnvironmentError); !ok {
+	var envErr *EnvironmentError
+	if !errors.As(err, &envErr) {
 		t.Errorf("err = %T, want *EnvironmentError", err)
 	}
 

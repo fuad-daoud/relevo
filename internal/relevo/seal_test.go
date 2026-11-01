@@ -57,7 +57,7 @@ func TestClosedRoundSealsOnceTheNextRoundCloses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
-	defer d.Close()
+	t.Cleanup(func() { _ = d.Close() })
 	rt.DB = d
 
 	// Tick 1 closes round 1. Its files must survive: the round it closes is
@@ -150,7 +150,9 @@ func TestClosedRoundSealsOnceTheNextRoundCloses(t *testing.T) {
 		t.Fatalf("StoreSource.Open: %v", err)
 	}
 	body, err := io.ReadAll(rc)
-	rc.Close()
+	if cerr := rc.Close(); cerr != nil {
+		t.Fatalf("StoreSource.Close: %v", cerr)
+	}
 	if err != nil || !bytes.Equal(body, report) {
 		t.Errorf("StoreSource.Open(report) = %q (err %v), want %q", body, err, report)
 	}

@@ -69,28 +69,7 @@ func readPromptFile(file string) ([]byte, error) {
 // the round-open refusal, except for a served binding halted in NEEDS YOU,
 // which the candidate re-points.
 func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts SendOptions) (preflight, error) {
-	// Read the caller's file first; it is the one input that does not depend
-	// on binding state.
-	body, err := readPromptFile(file)
-	if err != nil {
-		return preflight{}, err
-	}
-
-	var tier harness.Tier
-	tierFrom := "binding (fixed at bind; rebind to pick up config changes)"
-	if opts.Tier != "" {
-		t, err := harness.ParseTier(opts.Tier)
-		if err != nil {
-			return preflight{}, err
-		}
-		if err := resolve.CheckTierCap(t, rt.Policy, opts.AllowYolo); err != nil {
-			return preflight{}, err
-		}
-		tier = t
-		tierFrom = "round override (--tier)"
-	}
-
-	b, err := rt.Store.Load(name)
+	body, tier, tierFrom, b, err := loadBindingAndTier(rt, name, file, opts)
 	if err != nil {
 		return preflight{}, err
 	}
@@ -107,75 +86,9 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	if b.Shape == store.ShapeReader && opts.Verify != nil {
 		return preflight{}, errors.New("--verify: a reader round has no check")
 	}
-
-	// --candidate resolves the new candidate read-only and substitutes it in
-	// memory, so every later precondition (the argv, the advisory gate note,
-	// the dry run) is computed against the builder this round will actually
-	// use. Nothing is saved here: Send re-applies the change under its lock.
-	// A remote binding's candidates decide on the server, so only the token's
-	// shape is checked here.
-	var pick *resolve.Resolution
-	var repickFrom, repickWhy string
-	// remoteBuilder is what a remote binding's sendRemote is handed: the
-	// canonical token when --candidate resolved to one, else the argument as
-	// typed.
-	remoteBuilder := opts.Builder
-	if opts.Builder != "" {
-		entries, err := rt.Store.ReadLog(name)
-		if err != nil {
-			return preflight{}, err
-		}
-		if candidateSendRefused(b, entries) {
-			return preflight{}, &CandidateRoundOpenError{Name: name, Round: b.Round}
-		}
-		if b.Builder.Remote() {
-			// A remote binding's candidates decide on the server, so a
-			// value with "/" is only shape-checked here. A value with no
-			// "/" is a name, resolved locally to its canonical token: a
-			// candidate only the server has must be named by its token.
-			if strings.Contains(opts.Builder, "/") {
-				if _, err := candidate.ParseRef(opts.Builder); err != nil {
-					return preflight{}, fmt.Errorf("%w %s: %w", ErrBadBuilder, opts.Builder, err)
-				}
-			} else {
-				c, err := rt.Candidates.Resolve(opts.Builder)
-				if err != nil {
-					return preflight{}, fmt.Errorf("%w %s: unknown candidate %q; a candidate only the server has must be named by its harness/provider/model token", ErrBadBuilder, opts.Builder, opts.Builder)
-				}
-				remoteBuilder = c.Ref().String()
-			}
-		} else {
-			p, err := resolveSendBuilder(rt, b.WriterRole(), b.BuilderCandidate, opts.Builder, b.CWD)
-			if err != nil {
-				return preflight{}, err
-			}
-			if p != nil {
-				b2, err := applyBuilder(b, *p, rt.RoleRegistry(), rt.Policy, opts.AllowYolo)
-				if err != nil {
-					return preflight{}, err
-				}
-				b = b2
-				pick = p
-			}
-		}
-	}
-
-	// A binding whose candidate was edited or deleted holds a stale token,
-	// and a window edge between rounds moves a binding that was not pinned:
-	// pick again by the actor's order, exactly as a switch does, so every
-	// precondition below is computed against the builder this round will
-	// actually use.
-	if pick == nil {
-		old := b.BuilderCandidate
-		var res *resolve.Resolution
-		var why string
-		b, res, why, err = repickForRound(rt, b, opts.Builder != "", opts.AllowYolo)
-		if err != nil {
-			return preflight{}, err
-		}
-		if res != nil {
-			pick, repickFrom, repickWhy = res, old, why
-		}
+	b, pick, repickFrom, repickWhy, remoteBuilder, err := resolveSendCandidate(ctx, rt, name, b, opts)
+	if err != nil {
+		return preflight{}, err
 	}
 
 	if tier == "" {
@@ -212,34 +125,149 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 		remoteBuilder: remoteBuilder,
 	}
 
+	if b.Builder.Remote() {
+		return checkRemotePrefix(ctx, rt, pf)
+	}
+	return checkLocalLaunch(ctx, rt, name, pf)
+}
+
+func loadBindingAndTier(rt Runtime, name, file string, opts SendOptions) ([]byte, harness.Tier, string, store.Binding, error) {
+	// Read the caller's file first; it is the one input that does not depend
+	// on binding state.
+	body, err := readPromptFile(file)
+	if err != nil {
+		return nil, "", "", store.Binding{}, err
+	}
+
+	var tier harness.Tier
+	tierFrom := "binding (fixed at bind; rebind to pick up config changes)"
+	if opts.Tier != "" {
+		t, err := harness.ParseTier(opts.Tier)
+		if err != nil {
+			return nil, "", "", store.Binding{}, err
+		}
+		if err := resolve.CheckTierCap(t, rt.Policy, opts.AllowYolo); err != nil {
+			return nil, "", "", store.Binding{}, err
+		}
+		tier = t
+		tierFrom = "round override (--tier)"
+	}
+
+	b, err := rt.Store.Load(name)
+	if err != nil {
+		return nil, "", "", store.Binding{}, err
+	}
+	return body, tier, tierFrom, b, nil
+}
+
+func resolveSendCandidate(ctx context.Context, rt Runtime, name string, b store.Binding, opts SendOptions) (store.Binding, *resolve.Resolution, string, string, string, error) {
+	// --candidate resolves the new candidate read-only and substitutes it in
+	// memory, so every later precondition (the argv, the advisory gate note,
+	// the dry run) is computed against the builder this round will actually
+	// use. Nothing is saved here: Send re-applies the change under its lock.
+	// A remote binding's candidates decide on the server, so only the token's
+	// shape is checked here.
+	var pick *resolve.Resolution
+	var repickFrom, repickWhy string
+	// remoteBuilder is what a remote binding's sendRemote is handed: the
+	// canonical token when --candidate resolved to one, else the argument as
+	// typed.
+	remoteBuilder := opts.Builder
+	if opts.Builder != "" {
+		entries, err := rt.Store.ReadLog(name)
+		if err != nil {
+			return store.Binding{}, nil, "", "", "", err
+		}
+		if candidateSendRefused(b, entries) {
+			return store.Binding{}, nil, "", "", "", &CandidateRoundOpenError{Name: name, Round: b.Round}
+		}
+		if b.Builder.Remote() {
+			// A remote binding's candidates decide on the server, so a
+			// value with "/" is only shape-checked here. A value with no
+			// "/" is a name, resolved locally to its canonical token: a
+			// candidate only the server has must be named by its token.
+			if strings.Contains(opts.Builder, "/") {
+				if _, err := candidate.ParseRef(opts.Builder); err != nil {
+					return store.Binding{}, nil, "", "", "", fmt.Errorf("%w %s: %w", ErrBadBuilder, opts.Builder, err)
+				}
+			} else {
+				c, err := rt.Candidates.Resolve(opts.Builder)
+				if err != nil {
+					return store.Binding{}, nil, "", "", "", fmt.Errorf("%w %s: unknown candidate %q; a candidate only the server has must be named by its harness/provider/model token", ErrBadBuilder, opts.Builder, opts.Builder)
+				}
+				remoteBuilder = c.Ref().String()
+			}
+		} else {
+			p, err := resolveSendBuilder(rt, b.WriterRole(), b.BuilderCandidate, opts.Builder, b.CWD)
+			if err != nil {
+				return store.Binding{}, nil, "", "", "", err
+			}
+			if p != nil {
+				b2, err := applyBuilder(b, *p, rt.RoleRegistry(), rt.Policy, opts.AllowYolo)
+				if err != nil {
+					return store.Binding{}, nil, "", "", "", err
+				}
+				b = b2
+				pick = p
+			}
+		}
+	}
+
+	// A binding whose candidate was edited or deleted holds a stale token,
+	// and a window edge between rounds moves a binding that was not pinned:
+	// pick again by the actor's order, exactly as a switch does, so every
+	// precondition below is computed against the builder this round will
+	// actually use.
+	if pick != nil {
+		return b, pick, repickFrom, repickWhy, remoteBuilder, nil
+	}
+	old := b.BuilderCandidate
+	var res *resolve.Resolution
+	var why string
+	var err error
+	b, res, why, err = repickForRound(rt, b, opts.Builder != "", opts.AllowYolo)
+	if err != nil {
+		return store.Binding{}, nil, "", "", "", err
+	}
+	if res != nil {
+		pick, repickFrom, repickWhy = res, old, why
+	}
+	return b, pick, repickFrom, repickWhy, remoteBuilder, nil
+}
+
+func checkRemotePrefix(ctx context.Context, rt Runtime, pf preflight) (preflight, error) {
+	b := pf.b
 	// A remote binding's read-only prefix: the client and transport must be
 	// configured and the branch must resolve locally. Nothing here contacts
 	// the server, so a dry run of a remote binding is offline and safe.
-	if b.Builder.Remote() {
-		if rt.Remote == nil {
-			return preflight{}, ErrRemoteUnavailable
-		}
-		if rt.Git == nil {
-			return preflight{}, ErrGitRequired
-		}
-		if rt.Transport == nil {
-			return preflight{}, errors.New("no remote transport configured")
-		}
-		branchRef := b.Branch
-		if !strings.HasPrefix(branchRef, "refs/heads/") {
-			branchRef = "refs/heads/" + branchRef
-		}
-		sha, ok, err := rt.Git.RefSHA(ctx, b.Repo, branchRef)
-		if err != nil {
-			return preflight{}, fmt.Errorf("resolve branch %s: %w", b.Branch, err)
-		}
-		if !ok {
-			return preflight{}, fmt.Errorf("branch %s not found", b.Branch)
-		}
-		pf.remoteSHA = sha
-		return pf, nil
+	if rt.Remote == nil {
+		return preflight{}, ErrRemoteUnavailable
 	}
+	if rt.Git == nil {
+		return preflight{}, ErrGitRequired
+	}
+	if rt.Transport == nil {
+		return preflight{}, errors.New("no remote transport configured")
+	}
+	branchRef := b.Branch
+	if !strings.HasPrefix(branchRef, "refs/heads/") {
+		branchRef = "refs/heads/" + branchRef
+	}
+	sha, ok, err := rt.Git.RefSHA(ctx, b.Repo, branchRef)
+	if err != nil {
+		return preflight{}, fmt.Errorf("resolve branch %s: %w", b.Branch, err)
+	}
+	if !ok {
+		return preflight{}, fmt.Errorf("branch %s not found", b.Branch)
+	}
+	pf.remoteSHA = sha
+	return pf, nil
+}
 
+func checkLocalLaunch(ctx context.Context, rt Runtime, name string, pf preflight) (preflight, error) {
+	b := pf.b
+	tier := pf.tier
+	prompt := pf.prompt
 	if b.State == store.StateBroken {
 		return preflight{}, fmt.Errorf("binding %q is broken; rebind before sending", name)
 	}
@@ -285,7 +313,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 		return preflight{}, err
 	}
 	pf.prompt = prompt
-	argv, err := candidate.HeadlessLaunch(c, role, tier, roundBudget(b), prompt, housekeep.RoundTree(HousekeepDeps(rt), b), rt.Store.OutDir(b.Name), promptPath, chain.Dir(rt.Store, nil, name))
+	argv, err := candidate.HeadlessLaunch(c, role, tier, roundBudget(b), prompt, housekeep.RoundTree(HousekeepDeps(rt), b), rt.Store.OutDir(b.Name), pf.promptPath, chain.Dir(rt.Store, nil, name))
 	if err != nil {
 		return preflight{}, err
 	}
