@@ -9,8 +9,7 @@ import (
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
-// dbSyncAttemptDoc is the daemon's last steady attempt as `db sync status`
-// prints it.
+// dbSyncAttemptDoc is the daemon's last steady attempt.
 type dbSyncAttemptDoc struct {
 	Start     string `json:"start"`
 	End       string `json:"end"`
@@ -20,8 +19,8 @@ type dbSyncAttemptDoc struct {
 	Attention bool   `json:"attention,omitempty"`
 }
 
-// attemptDoc is the recorded attempt as a document, nil when the daemon has not
-// recorded one. The error is stored raw and sanitized where it is rendered.
+// attemptDoc is the recorded attempt as a document, nil until the daemon records
+// one; the error is stored raw and sanitized where rendered.
 func attemptDoc(a relevosync.Attempt) *dbSyncAttemptDoc {
 	if a.Start.IsZero() {
 		return nil
@@ -37,8 +36,7 @@ func attemptDoc(a relevosync.Attempt) *dbSyncAttemptDoc {
 }
 
 // dbSyncAttemptDetails is the status line's account of the last attempt: how it
-// ended and what it moved, so a machine whose attempts keep failing reads as
-// failing whatever its older times say.
+// ended and what it moved, so a machine whose attempts keep failing reads as failing.
 func dbSyncAttemptDetails(a *dbSyncAttemptDoc) string {
 	if a == nil {
 		return ""
@@ -56,10 +54,9 @@ func dbSyncAttemptDetails(a *dbSyncAttemptDoc) string {
 	return b.String()
 }
 
-// statusStamp renders a recorded moment as the UTC RFC 3339 instant a reader
-// can compare, or "" when nothing was ever recorded. A zero time is not 1970
-// here: it is a moment that never happened, and printing it as one would be a
-// true statement about the wrong thing.
+// statusStamp renders a recorded moment as the UTC RFC 3339 instant a reader can
+// compare, or "" when nothing was ever recorded; a zero time here is a moment
+// that never happened, not 1970.
 func statusStamp(at time.Time) string {
 	if at.IsZero() {
 		return ""

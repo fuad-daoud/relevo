@@ -1,9 +1,8 @@
 package main
 
 // The sync meter on `relevo status`: the account's month of Turso traffic and
-// the last complete hour's idle exports, read off the machine's local file.
-// The rule this file exists to hold is that the meter never fails a status --
-// the same rule the daemon notice runs on for its record.
+// the last complete hour's idle exports, read off the machine's local file. The
+// meter never fails a status.
 
 import (
 	"fmt"
@@ -13,10 +12,9 @@ import (
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
-// syncMeter reads one quota reading and one idle-export hour off the local
-// file beside the machine database. Any read error prints nothing: a status
-// must never fail because the meter could not be read, so each half answers
-// with its own ok and a failed read simply says nothing.
+// syncMeter reads one quota reading and one idle-export hour off the local file.
+// Any read error prints nothing: a status must never fail because the meter
+// could not be read.
 func syncMeter(st *store.Store, now time.Time) (relevosync.QuotaReading, bool, relevosync.ExportHour, bool) {
 	d, err := st.DB()
 	if err != nil {
@@ -37,10 +35,8 @@ func syncMeter(st *store.Store, now time.Time) (relevosync.QuotaReading, bool, r
 	return q, qok, idle, iok
 }
 
-// syncMeterNotice is the status line for the meter, as a function of the
-// readings and nothing else. The first thing over decides the notice: a pace
-// that has passed the quota outranks a share still climbing, which outranks a
-// pace worth mentioning, and idle exports come last. Calm reads as "".
+// syncMeterNotice is the status line for the meter: the first thing over decides,
+// a passed pace outranking a climbing share, and idle exports last. Calm reads as "".
 func syncMeterNotice(q relevosync.QuotaReading, qok bool, idle relevosync.ExportHour, iok bool) string {
 	switch {
 	case qok && q.PaceOver():

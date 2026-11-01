@@ -10,7 +10,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/git"
 )
 
-// adoptSlice collects the repeatable --adopt-cwd flag.
 type adoptSlice []string
 
 func (a *adoptSlice) String() string { return fmt.Sprint([]string(*a)) }
@@ -27,8 +26,8 @@ type dbRenameRepoFlagValues struct {
 	asJSON   *bool
 }
 
-// dbRenameRepoOwnFlags declares the flags db rename-repo adds to --json, so the
-// db dispatcher can list them beside db query's without declaring --json twice.
+// dbRenameRepoOwnFlags declares the flags db rename-repo adds to --json, so the db
+// dispatcher lists them beside db query's without declaring --json twice.
 func dbRenameRepoOwnFlags(fs *flag.FlagSet) *dbRenameRepoFlagValues {
 	v := &dbRenameRepoFlagValues{adopt: &adoptSlice{}}
 	v.from = fs.String("from", "", "the old origin URL")

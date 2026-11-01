@@ -71,8 +71,7 @@ func serveFlagSet() (*flag.FlagSet, *serveFlags) {
 	return fs, installServeFlags(fs)
 }
 
-// The registry only walks a flag set, so serveRunFlagSet discards the parsed
-// values.
+// serveRunFlagSet discards the parsed values: the registry only walks a flag set.
 func serveRunFlagSet(fs *flag.FlagSet) { installServeFlags(fs) }
 
 func serveRoot(fs *flag.FlagSet) (string, error) {
@@ -107,9 +106,9 @@ func pidAlive(pid int) bool {
 	return p.Signal(syscall.Signal(0)) == nil
 }
 
-// openMachineDB opens the machine database every serve verb reads clients,
-// TLS, the daemon pointer and config from. The caller closes it. It returns
-// the state root too, because the hook run log is keyed on it.
+// openMachineDB opens the machine database every serve verb reads clients, TLS,
+// the daemon pointer and config from. The caller closes it; the state root comes
+// back too because the hook run log is keyed on it.
 func openMachineDB() (*db.DB, string, error) {
 	root, err := tmpdir.DefaultRoot()
 	if err != nil {
@@ -122,9 +121,9 @@ func openMachineDB() (*db.DB, string, error) {
 	return d, root, nil
 }
 
-// adminRoot resolves the serve root an administrative verb should use, and
-// returns the machine database it read the daemon pointer and state markers
-// from. The caller closes the database.
+// adminRoot resolves the serve root an administrative verb should use, and the
+// machine database it read the daemon pointer and state markers from. The caller
+// closes the database.
 func adminRoot(fs *flag.FlagSet) (string, *db.DB, error) {
 	var state string
 	if f := fs.Lookup("state"); f != nil {
@@ -133,11 +132,9 @@ func adminRoot(fs *flag.FlagSet) (string, *db.DB, error) {
 	return adminRootFor(state)
 }
 
-// adminRootFor is adminRoot for a caller that has already read --state from
-// its own flag set. The `show`/`history` --owner routes take parsed values
-// rather than a FlagSet, and resolve their root through this so the four
-// resolution steps (daemon pointer, default root, stale note, initialised
-// check) stay in one place.
+// adminRootFor is adminRoot for a caller that already read --state. The --owner
+// routes take parsed values rather than a FlagSet, so the four resolution steps
+// stay in one place.
 func adminRootFor(state string) (string, *db.DB, error) {
 	def, err := defaultServeRoot()
 	if err != nil {
@@ -223,12 +220,9 @@ func cmdServe(args []string) error {
 	}
 }
 
-// serveTierRuntime is the Runtime cmdServeRun uses only to log the builder
-// tier at startup: candidates, policy, the server's gates and a clock.
-// reg is passed so the logged tier is the tier served rounds get: they resolve
-// through the same registry. Gates is the `serve.`-prefixed view of the
-// machine database, so a tier check that reads the gate record sees the
-// server-wide one.
+// serveTierRuntime is the Runtime cmdServeRun logs the builder tier with at
+// startup. reg is passed so the logged tier is the tier served rounds get, and
+// Gates is the server-wide `serve.`-prefixed view.
 func serveTierRuntime(candidates *candidate.Set, pol policy.Policy, reg *roles.Registry, root string, d *db.DB) relevo.Runtime {
 	var gates db.KV
 	if d != nil {
@@ -244,12 +238,9 @@ func serveTierRuntime(candidates *candidate.Set, pol policy.Policy, reg *roles.R
 	}
 }
 
-// scopeStatusText is the startup line's scopes word for a resolved spec:
-// "on (slice relevo.slice, 200%)", "on (200%)", "on (slice relevo.slice)",
-// "on", or "off" for nil. A spec carrying a gate quota gains
-// ", gate <quota>" inside the parentheses: "on (slice relevo.slice,
-// 200%, gate 300%)". A spec carrying an allowed_cpus pool gains
-// ", cpus <pool>, one per round": "on (cpus 0-2, one per round)".
+// scopeStatusText is the startup line's scopes word for a resolved spec, "off"
+// for nil. A gate quota reads as ", gate <quota>" and an allowed_cpus pool as
+// ", cpus <pool>, one per round".
 func scopeStatusText(sc *spawn.ScopeSpec) string {
 	if sc == nil {
 		return "off"
@@ -282,8 +273,8 @@ func serveAdminConfig(root string, d *db.DB) serve.Config {
 	}
 }
 
-// loadConfig imports any config file present into the open machine database
-// and returns the loaded config: the set every candidate-aware command needs.
+// loadConfig imports any config file present into the open machine database and
+// returns the set every candidate-aware command needs.
 func loadConfig(d *db.DB) (config.Loaded, error) {
 	cs := config.Open(d)
 
@@ -296,14 +287,13 @@ func loadConfig(d *db.DB) (config.Loaded, error) {
 		if _, err := cs.As("import", "imported "+dir).ImportFiles(dir, time.Now().UTC()); err != nil {
 			return config.Loaded{}, err
 		}
-		// Write a name for every stored candidate. Names are derived in
-		// memory by candidate.Parse either way, so a failure here is a
-		// warning, never a refusal to serve.
+		// Names are derived in memory by candidate.Parse either way, so a failure
+		// here warns, never refuses.
 		if _, err := cs.EnsureCandidateNames(); err != nil {
 			slog.Warn("candidate names not written to config", "err", err)
 		}
-		// A pre-actors config becomes actors plus agents. An error is a
-		// warning; the old config keeps working.
+		// A pre-actors config becomes actors plus agents; the old config keeps
+		// working, so an error warns.
 		if migrated, err := cs.MigrateToActors(); err != nil {
 			slog.Warn("config: roles not migrated to actors", "err", err)
 		} else if migrated {
@@ -315,12 +305,10 @@ func loadConfig(d *db.DB) (config.Loaded, error) {
 	return cs.Load()
 }
 
-// loadServeConfig opens the machine database exactly as newRuntime does
-// (tmpdir.DefaultRoot(), not --state), imports any config file present, and
-// returns the loaded config, the handle it read from and the state root; the
-// caller closes the handle. It is the one copy of that loading: cmdServeRun
-// starts a daemon with it. An admin verb that already holds the machine
-// database uses loadConfig directly.
+// loadServeConfig opens the machine database exactly as newRuntime does and
+// imports any config file present, returning the loaded config with the handle
+// and the state root; the caller closes the handle. It is the one copy of that
+// loading. An admin verb that already holds the machine database uses loadConfig.
 func loadServeConfig() (config.Loaded, *db.DB, string, error) {
 	d, root, err := openMachineDB()
 	if err != nil {
@@ -335,10 +323,8 @@ func loadServeConfig() (config.Loaded, *db.DB, string, error) {
 }
 
 // serveAdminConfigFrom is serveAdminConfig plus the loaded policy and roles
-// registry, which the census needs: `serve status` reports the builder cap the
-// server enforces, and that cap comes from serve.max_builders. It takes an
-// already-loaded config so a caller that also needs the candidates loads once:
-// loading is not a pure read.
+// registry, which the census needs for the builder cap. It takes an
+// already-loaded config because loading is not a pure read.
 func serveAdminConfigFrom(root string, d *db.DB, L config.Loaded) serve.Config {
 	cfg := serveAdminConfig(root, d)
 	cfg.Policy = L.Policy
@@ -347,8 +333,8 @@ func serveAdminConfigFrom(root string, d *db.DB, L config.Loaded) serve.Config {
 	return cfg
 }
 
-// Unlike serveAdminConfigWithCandidates, an empty candidates set is not an
-// error: the census is meaningful with no candidates.
+// An empty candidates set is not an error here: the census is meaningful with
+// no candidates.
 func serveAdminConfigWithPolicy(root string, d *db.DB) (serve.Config, error) {
 	L, err := loadConfig(d)
 	if err != nil {
@@ -358,13 +344,9 @@ func serveAdminConfigWithPolicy(root string, d *db.DB) (serve.Config, error) {
 }
 
 // serveAdminConfigWithCandidates is serveAdminConfigFrom plus the configured
-// candidates, which the gate verbs need: `relevo serve gates` projects the
-// ledger onto the candidate set, and the two edit verbs refuse a token no
-// candidate names.
-//
-// Unlike cmdServeRun, an empty candidates set is an error here: with no
-// candidate set to project onto, a ledger full of gates would render as
-// "no gates", which reads as "nothing is gated".
+// candidates, which the gate verbs need to project the ledger onto. An empty
+// candidates set is an error here: a ledger full of gates would otherwise render
+// as "no gates".
 func serveAdminConfigWithCandidates(root string, d *db.DB) (serve.Config, error) {
 	L, err := loadConfig(d)
 	if err != nil {
@@ -408,16 +390,14 @@ func cmdServeRun(args []string) error {
 	}
 	userMode := isoMode == isolate.ModeUser
 	containerMode := isoMode == isolate.ModeContainer
-	// A user-mode server keeps its state in one fixed root-owned place when
-	// --state is unset, so the daemon and its tenants agree on it regardless of
-	// whose HOME the daemon was started with.
+	// A user-mode server keeps its state in one fixed root-owned place when --state
+	// is unset, so the daemon and its tenants agree on it.
 	if userMode && fs.Lookup("state").Value.String() == "" {
 		root = serve.UserModeRoot
 	}
 
-	// The server's own installation: its rows carry its id as their origin,
-	// and WhoAmI advertises it so a client can link its row to this server's
-	// copy.
+	// The server's own installation: its rows carry its id as their origin, which
+	// WhoAmI advertises so a client can link its row to this server's copy.
 	inst, err := installation.Load(stateRoot)
 	if err != nil {
 		return err
@@ -432,9 +412,8 @@ func cmdServeRun(args []string) error {
 		slog.Info("builder tier", "tier", builderTier)
 	}
 
-	// Log each candidate harness's role-file coverage once at startup: a
-	// candidate whose kind is missing role files is gated on every pick,
-	// and this line is the only notice.
+	// Log each candidate harness's role-file coverage once at startup: a kind
+	// missing role files is gated on every pick, and this line is the only notice.
 	roles := harness.OSRoleChecker()
 	seenKinds := map[string]bool{}
 	for _, ref := range candidates.Refs() {
@@ -443,8 +422,8 @@ func cmdServeRun(args []string) error {
 			continue
 		}
 		seenKinds[r.Harness] = true
-		// The gate checks the builder's resolved definitions: in roles.json
-		// mode a custom name may be what the row launches.
+		// The gate checks the builder's resolved definitions: a custom name may be
+		// what the row launches.
 		spec, err := reg.Spec("builder", r.Harness)
 		if err != nil {
 			continue
@@ -458,29 +437,26 @@ func cmdServeRun(args []string) error {
 
 	reader, prices := newUsageReader(L.Prices)
 
-	// The hooks dispatcher runs on the machine database's run log, the same
-	// kv `hooks.log` the daemon writes, so a served round's hook runs are
-	// visible beside the local ones.
+	// The hooks dispatcher runs on the machine database's run log, the same kv the
+	// daemon writes, so a served round's hook runs are visible beside the local ones.
 	hooksCfg, err := resolveHooksConfig(L.Hooks, hooks.NewKVLog(db.TxKV{DB: d}))
 	if err != nil {
 		return err
 	}
 	dispatcher := newHooksDispatcher(hooksCfg, pol)
 
-	// Scopes are enabled by policy (default on) and confirmed by a startup
-	// probe; if systemd-run is missing or the user manager refuses, scopes
-	// are off for the daemon's lifetime with one log line.
+	// Scopes are enabled by policy and confirmed by a startup probe; if
+	// systemd-run is missing, scopes stay off for the daemon's lifetime.
 	scopesStatus := "off"
 	scope := scopeFromPolicy(pol.ScopeFor(true))
 	if userMode {
-		// User mode runs scopes off: systemd-run --user would target root's
-		// own user manager, not the tenant's. The cap still applies.
+		// User mode runs scopes off: systemd-run --user would target root's own user
+		// manager, not the tenant's. The cap still applies.
 		scope = nil
 		scopesStatus = "off (isolation=user)"
 	} else if containerMode {
-		// Container mode runs no systemd scope: bounds travel on the podman
-		// command, and the scope here is only the carrier of those bounds and
-		// the round's container name. No probe is taken. The cap still applies.
+		// Container mode runs no systemd scope: bounds travel on the podman command,
+		// and the scope here only carries those bounds. The cap still applies.
 		scopesStatus = "off (isolation=container)"
 	} else if scope != nil {
 		if err := proc.ProbeScopes(context.Background(), scope.Slice); err != nil {

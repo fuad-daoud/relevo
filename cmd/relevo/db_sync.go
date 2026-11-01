@@ -15,10 +15,8 @@ import (
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
-// dbSyncUsage is what a bare `relevo db sync` prints. It names the states
-// sync can be moved between plus the three one-shot calls, and each verb parses
-// its own flags rather than leaving them to the dispatcher. The R2 flags, their
-// line and their prose are in db_sync_r2.go, which is where they are installed.
+// dbSyncUsage is what a bare `relevo db sync` prints. Each verb parses its own
+// flags, and the R2 flags live in db_sync_r2.go, which is where they are installed.
 const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [--passphrase-stdin]\n" +
 	"       relevo db sync enable [--join-stdin] [--yes] [--timeout D] [--json]\n" +
 	"       relevo db sync enable --as INSTALLATION --yes [--url URL] [--timeout D] [--json]\n" +
@@ -75,23 +73,20 @@ const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [-
 	"handle. Local files keep every row and stay servable, and the remote is\n" +
 	"left alone.\n"
 
-// The name the remote is told this client is called. It is fixed rather than
-// configurable because it is identification, not a setting, and a per-machine
-// value would make the remote's view of a fleet unreadable.
+// dbSyncHandleName is the name the remote is told this client is called. It is
+// fixed rather than configurable because it is identification, not a setting,
+// and a per-machine value would make the remote's view of a fleet unreadable.
 const dbSyncHandleName = "relevo"
 
-// The default bound on one sync verb. It is the runner's own bound: a machine
-// that cannot reach its remote must be able to stop syncing, and to ask for a
-// status, without either waiting on a network that is not answering.
+// dbSyncDefaultTimeout bounds one sync verb. A machine that cannot reach its
+// remote must still stop syncing, and answer a status, without waiting on a
+// network that is not answering.
 const dbSyncDefaultTimeout = relevosync.DefaultTimeout
 
-// dbSyncFlagSet declares the bare `db sync` dispatcher's flags: none. It is a
-// dispatcher, and the registry lists it beside the other dispatchers with an
-// empty flag set.
+// dbSyncFlagSet declares the bare `db sync` dispatcher's empty flag set.
 func dbSyncFlagSet(*flag.FlagSet) {}
 
-// cmdDBSync dispatches `relevo db sync`'s verbs. A bare `relevo db sync` prints
-// the usage line, because the verb itself has nothing to run.
+// cmdDBSync dispatches `relevo db sync`'s verbs; a bare call prints the usage line.
 func cmdDBSync(args []string) error {
 	switch {
 	case len(args) > 0 && args[0] == "enable":
@@ -122,8 +117,8 @@ func cmdDBSync(args []string) error {
 	return errUsagePrinted
 }
 
-// dbSyncEnableFlagValues holds the pointers `db sync enable` parses into. The
-// R2 half is declared in db_sync_r2.go with the flags that install it.
+// dbSyncEnableFlagValues holds the pointers `db sync enable` parses into; the R2
+// half lives in db_sync_r2.go with the flags that install it.
 type dbSyncEnableFlagValues struct {
 	asJSON          *bool
 	remoteURL       *string
@@ -136,8 +131,6 @@ type dbSyncEnableFlagValues struct {
 	dbSyncR2Flags
 }
 
-// dbSyncEnableFlagSet defines those flags on fs and returns what they parse
-// into.
 func dbSyncEnableFlagSet(fs *flag.FlagSet) *dbSyncEnableFlagValues {
 	v := &dbSyncEnableFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the document the enable produced")
@@ -158,8 +151,6 @@ type dbSyncDisableFlagValues struct {
 	timeout *time.Duration
 }
 
-// dbSyncDisableFlagSet defines those flags on fs and returns what they parse
-// into.
 func dbSyncDisableFlagSet(fs *flag.FlagSet) *dbSyncDisableFlagValues {
 	v := &dbSyncDisableFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the document the disable produced")
@@ -173,8 +164,6 @@ type dbSyncRetryFlagValues struct {
 	rebuild *bool
 }
 
-// dbSyncRetryFlagSet defines those flags on fs and returns what they parse
-// into.
 func dbSyncRetryFlagSet(fs *flag.FlagSet) *dbSyncRetryFlagValues {
 	v := &dbSyncRetryFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the document the retry produced")
@@ -187,7 +176,6 @@ type dbSyncStatusFlagValues struct {
 	asJSON *bool
 }
 
-// dbSyncStatusFlagSet defines that flag on fs and returns what it parses into.
 func dbSyncStatusFlagSet(fs *flag.FlagSet) *dbSyncStatusFlagValues {
 	v := &dbSyncStatusFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print this machine's sync state as a JSON document")
@@ -195,15 +183,14 @@ func dbSyncStatusFlagSet(fs *flag.FlagSet) *dbSyncStatusFlagValues {
 }
 
 // dbSyncCallFlagValues is what push and pull share: the document flag and the
-// bound. Two verbs with the same two flags get one value struct rather than two
-// that can drift apart.
+// bound, in one struct so two verbs with the same two flags cannot drift apart.
 type dbSyncCallFlagValues struct {
 	asJSON  *bool
 	timeout *time.Duration
 }
 
-// dbSyncPushFlagSet and dbSyncPullFlagSet are the two installers the registry
-// walks. They declare the same two flags under the name each verb's help says.
+// dbSyncPushFlagSet and dbSyncPullFlagSet declare the same two flags under each
+// verb's own name.
 func dbSyncPushFlagSet(fs *flag.FlagSet) *dbSyncCallFlagValues {
 	v := &dbSyncCallFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the document the push produced")
@@ -218,20 +205,17 @@ func dbSyncPullFlagSet(fs *flag.FlagSet) *dbSyncCallFlagValues {
 	return v
 }
 
-// dbSyncTokenStdin is the reader --token-stdin reads. It is a var so a test can
-// hand the verb a token without a pipe, and so nothing here reads the caller's
-// real stdin by accident.
+// dbSyncTokenStdin is the reader --token-stdin reads; a var so a test can hand
+// the verb a token without a pipe, and nothing here reads the caller's real stdin.
 var dbSyncTokenStdin io.Reader = os.Stdin
 
-// dbSyncGetenv is the environment lookup the env route uses. It is a var for
-// the same reason, and it is the only place the environment is read.
+// dbSyncGetenv is the environment lookup; a var so tests control it, and the only
+// place the environment is read.
 var dbSyncGetenv = os.Getenv
 
-// dbSyncOutcomeDoc is what enable and disable print under --json: what the run
-// did, and for disable the warning a failed final export produces. RemoteURL is
-// what enable stored, and never the token: the URL is the thing a caller needs
-// to open the same remote, and the token is the one value on this surface that
-// must not be printed.
+// dbSyncOutcomeDoc is what enable and disable print under --json. RemoteURL is
+// what enable stored, never the token: the URL opens the same remote, and the
+// token is the one value on this surface that must not be printed.
 type dbSyncOutcomeDoc struct {
 	Enabled   bool     `json:"enabled"`
 	RemoteURL string   `json:"remote_url,omitempty"`
@@ -255,15 +239,10 @@ type dbSyncCallDoc struct {
 
 // cmdDBSyncEnable runs the enable path through the daemon.
 //
-// The token is resolved here and nowhere else: --token-stdin beats
-// TURSO_TOKEN, and the value is handed straight to the verb request. It is not
-// stored, logged, formatted into an error or echoed: the daemon puts it into the
-// local file with its own handles, and the only thing this process ever holds
-// it for is the length of the call below.
-//
-// Everything else -- the already-on read, the preflight, the seed decision, the
-// mark and the open -- happens on the daemon's side with its own handles, which
-// is why this command needs no daemon stopped and no file lock of its own.
+// The token is resolved here and nowhere else and is never stored, logged or
+// echoed: it is handed straight to the verb request, and the daemon files it
+// with its own handles. Everything else happens on the daemon's side, which is
+// why this command needs no daemon stopped and no file lock of its own.
 func cmdDBSyncEnable(args []string) error {
 	fs := flag.NewFlagSet("db sync enable", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -279,11 +258,9 @@ func cmdDBSyncEnable(args []string) error {
 		return err
 	}
 
-	// The code is parsed here, before anything is dialed. It is a pure function
-	// over the string, so a code this build cannot read -- a version it does not
-	// know, a truncated paste, something that is not a code at all -- is refused
-	// before a daemon is reached or a worker is started, and the remote and
-	// token it names are the ones that go on the wire.
+	// The code is parsed before anything is dialed, so a code this build cannot
+	// read is refused before a daemon is reached, and the remote and token it
+	// names are the ones that go on the wire.
 	code, err := dbSyncReadJoinCode(*v.joinStdin)
 	if err != nil {
 		return err
@@ -348,41 +325,34 @@ func cmdDBSyncEnable(args []string) error {
 }
 
 // enableContinuesLine is what an enable prints when the client's own wait runs
-// out before the daemon's reply. The join is not abandoned: the daemon performs
-// it with its own handles and does not stop when this process gives up on the
-// reply, so the line says where to watch it and how to resume it.
+// out first. The daemon finishes the join with its own handles, so the line says
+// where to watch it and how to resume it.
 const enableContinuesLine = "sync enable: the join is still running in the daemon; `relevo db sync status` shows it"
 
 // enableContinuesInDaemon reports whether a failed enable call is the client's
-// own bound running out after the frame reached the daemon, rather than a
-// request the daemon never received. A reply wait the caller's deadline ended
-// is a join in progress: the daemon holds the verb and finishes it either way,
-// and re-running enable resumes it if the daemon restarted. A deadline from the
-// dial, the handshake, or a frame only partly written is a real failure -- no
-// join was ever started, so there is nothing to report as still running.
+// own bound ending a reply wait after the frame reached the daemon. Only then is
+// a join in progress, which re-running enable resumes; a deadline from the dial,
+// the handshake or a partly written frame started no join, so there is nothing
+// still running to report.
 func enableContinuesInDaemon(err error) bool {
 	return errors.Is(err, client.ErrAwaitingReply) && errors.Is(err, context.DeadlineExceeded)
 }
 
-// verbDialSlack is what the local bound adds on top of the caller's timeout, so
-// the daemon's own budget and this client's wait for it are both covered: the
-// caller asked for the verb's work to take at most its timeout, and the process
-// that carries it needs a little longer to hand the answer back.
+// verbDialSlack is what the local bound adds on top of the caller's timeout,
+// covering the daemon's own budget and this client's wait for the answer back.
 const verbDialSlack = 5 * time.Second
 
 // dbSyncEnableToken resolves the token from its two routes. The flag beats the
-// environment, so a script that pipes a token cannot be overridden by whatever
-// the environment happens to carry.
+// environment, so a piped token cannot be overridden by whatever the
+// environment carries.
 //
-// Neither route yielding anything is not a refusal here but an empty answer: the
-// daemon holds the stored token and falls back to it, so a tokenless enable
-// resumes an interrupted join rather than raising a usage error, and a machine
-// with nothing stored is refused by the daemon's own preflight. This process
-// never says which route was tried or what either held.
+// Neither route yielding anything is an empty answer rather than a refusal: the
+// daemon falls back to the stored token, and a machine with nothing stored is
+// refused by the daemon's own preflight. This process never says what either
+// route held.
 func dbSyncEnableToken(join dbSyncJoin, fromStdin bool) ([]byte, error) {
-	// A code carries the token, and it carries the only one: a joiner is not
-	// handed this machine's environment, and a token from elsewhere would reach a
-	// remote the code never named.
+	// A code carries the only token: one from elsewhere would reach a remote the
+	// code never named.
 	if join.joining {
 		return join.token, nil
 	}
@@ -396,10 +366,8 @@ func dbSyncEnableToken(join dbSyncJoin, fromStdin bool) ([]byte, error) {
 	}
 	token, _, err := intake.Resolve()
 	if errors.Is(err, relevosync.ErrNoToken) {
-		// Neither route carried a token, and that is not this process's refusal
-		// to make: the daemon falls back to the stored one exactly as it does for
-		// the bucket secret. The tail goes out empty, and a machine with nothing
-		// stored is refused there, by the preflight, naming both routes.
+		// Neither route carried a token: the tail goes out empty, and a machine
+		// with nothing stored is refused by the preflight, naming both routes.
 		return nil, nil
 	}
 	if err != nil {
@@ -408,14 +376,11 @@ func dbSyncEnableToken(join dbSyncJoin, fromStdin bool) ([]byte, error) {
 	return token, nil
 }
 
-// cmdDBSyncDisable runs the turn-off through the daemon, in the order the
-// contract fixes.
+// cmdDBSyncDisable turns sync off through the daemon.
 //
 // No token is read here and none is passed: the daemon reads the stored one with
-// its own local handle and decides whether there is anything a final export could
-// do. A machine with no token or no remote pays no dial to find that out, and
-// one whose remote will not open still turns sync off -- which is the whole
-// reason the final export is best-effort.
+// its own handle. A remote that will not open still turns sync off, which is why
+// the final export is best-effort.
 func cmdDBSyncDisable(args []string) error {
 	fs := flag.NewFlagSet("db sync disable", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -456,8 +421,7 @@ func cmdDBSyncDisable(args []string) error {
 }
 
 // cmdDBSyncRetry clears a latched breaker through the daemon. It writes no
-// remote and moves no change set, so it needs no token and no timeout: the work
-// is the daemon's own local write, and the answer takes no network.
+// remote and moves no change set, so it needs no token and no timeout.
 func cmdDBSyncRetry(args []string) error {
 	fs := flag.NewFlagSet("db sync retry", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -489,9 +453,8 @@ func cmdDBSyncRetry(args []string) error {
 	return nil
 }
 
-// dbSyncRetryLine is the retry's human answer. A --rebuild that found no
-// replica to move still succeeded: the latch is cleared and the next attempt
-// bootstraps a fresh replica, so it says that rather than claiming a move.
+// dbSyncRetryLine is the retry's human answer. A --rebuild that found no replica
+// still succeeded, so it says that rather than claiming a move.
 func dbSyncRetryLine(rebuild bool, aside string) string {
 	switch {
 	case aside != "":
@@ -503,22 +466,19 @@ func dbSyncRetryLine(rebuild bool, aside string) string {
 	}
 }
 
-// dbSyncRebuiltLine is what a retry --rebuild prints: the latch is cleared and
-// the copy's folder is named, so the user can go straight to the evidence the
-// move kept.
+// dbSyncRebuiltLine names the folder a retry --rebuild moved the replica's copy into.
 func dbSyncRebuiltLine(aside string) string {
 	return fmt.Sprintf("sync retry: the latch is cleared; the replica is kept in %s and the next attempt bootstraps a fresh one", aside)
 }
 
 // dbSyncClassify maps a failure out of the sync package onto the frame's codes.
 // The refusals that name a fix are refused; a driver failure the user cannot fix
-// by reading the message is an internal failure with the bugreport command, and
-// an authorisation the remote refused is the one failure with its own code.
+// by reading the message is an internal failure, and an authorisation the remote
+// refused is the one failure with its own code.
 //
-// A failure that is already coded is passed through untouched. Re-wrapping one
-// would replace the code a caller chose with internal and append the original
-// text a second time, so a refusal raised two layers down would reach the user
-// as an internal failure with its own message quoted inside it.
+// A failure that is already coded passes through untouched: re-wrapping one
+// would replace the code a caller chose with internal and quote the message
+// a second time.
 func dbSyncClassify(err error) error {
 	var coded *cliError
 	if errors.As(err, &coded) {
@@ -539,10 +499,8 @@ func dbSyncClassify(err error) error {
 	case errors.Is(err, relevosync.ErrAuthRefused):
 		return fail(codeRemoteAuth, "%v", err)
 	case errors.Is(err, db.ErrPreflightRefused):
-		// The preflight's refusals are the answer, not a failure: nothing broke,
-		// and every message the joined error carries names the command or the
-		// flag that clears it. A bug report has no fix in it, so this code must
-		// never be the one the catalog points at `relevo bugreport` from.
+		// The preflight's refusals are the answer, not a failure: every message
+		// names the command or the flag that clears it.
 		return failWrap(codeRefused, err, "relevo db sync enable")
 	case errors.Is(err, db.ErrContended):
 		// A busy database is a refusal the reader can act on: nothing was

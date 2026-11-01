@@ -10,14 +10,11 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// serveLog is the body `relevo show <name> --owner <label> --log` calls. It
-// takes the parsed values: state is the resolved --state ("" for the default
-// root). It prints one owner's binding log from the server: the read-only
-// counterpart of `relevo log`. It resolves the owner with the same resolver
-// `serve unbind` uses, builds that owner's runtime, and renders through the
-// same printLog the client verb uses, so the output reads exactly like a
-// client's. It stamps nothing -- the viewed mark is the owner's, not the
-// admin's -- and creates nothing.
+// serveLog is the body `relevo show <name> --owner <label> --log` calls: state is
+// the resolved --state ("" for the default root). It prints one owner's binding
+// log from the server, the read-only counterpart of `relevo log`, rendered
+// through the same printLog so it reads exactly like a client's. It stamps
+// nothing and creates nothing.
 func serveLog(owner, state, name string, round, after int, asJSON, follow bool) error {
 	root, d, err := adminRootFor(state)
 	if err != nil {
@@ -48,14 +45,12 @@ func serveLog(owner, state, name string, round, after int, asJSON, follow bool) 
 	return nil
 }
 
-// serveShow is the body `relevo show <name> --owner <label>` calls. It takes
-// the parsed values: state is the resolved --state ("" for the default root)
-// and section the resolved section. It prints one owner's round from the
-// server: the read-only counterpart of `relevo show`. It reads live bindings
-// only -- opening the database would create it, and the database belongs to
-// the client that ran the work, not to the server admin's read -- and
-// prefixes the stderr header with the owner's label so the reader can see
-// whose round it is.
+// serveShow is the body `relevo show <name> --owner <label>` calls: state is the
+// resolved --state and section the resolved section. It prints one owner's round
+// from the server, the read-only counterpart of `relevo show`. It reads live
+// bindings only: opening the database would create it, and the database belongs
+// to the client that ran the work. It prefixes the stderr header with the
+// owner's label.
 func serveShow(owner, state, name string, round int, section relevo.ShowSection, asJSON bool, artifactRel string) error {
 	root, d, err := adminRootFor(state)
 	if err != nil {
@@ -80,9 +75,8 @@ func serveShow(owner, state, name string, round int, section relevo.ShowSection,
 		return exitCodeErr{code: 1}
 	}
 
-	// The owner read always peeks: it is the admin's read of another owner's
-	// binding, so it must stay read-only and never claim that owner's pending
-	// payload.
+	// The owner read always peeks: an admin's read of another owner's binding stays
+	// read-only and never claims that owner's pending payload.
 	opts := relevo.ShowOptions{Name: name, Round: round, Section: section, JSON: asJSON, Peek: true, ArtifactRel: artifactRel}
 	if err := printShow(rt, opts, false, false, label+"/"); err != nil {
 		return classifyReadErr(err)

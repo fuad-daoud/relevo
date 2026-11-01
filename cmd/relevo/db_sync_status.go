@@ -2,12 +2,6 @@ package main
 
 // The status document and the line that renders it, kept beside the verb that
 // prints them rather than in the sync CLI proper.
-//
-// The rule this file exists to hold is about what status may say. The endpoint
-// and the bucket are named because they are what a reader needs to tell this
-// machine's bucket from another's. The key id and the secret are not, in any
-// shape, because this document is printed on request, pasted into an issue and
-// read aloud, and a credential has no reason in any of those.
 
 import (
 	"fmt"
@@ -21,10 +15,8 @@ import (
 
 // dbSyncStatusDoc is `db sync status --json`: what this machine is set to be,
 // what its last exchange measured, and which origins need a human. TokenPresent
-// is a bool because the value is the one thing on this surface that must never
-// be printed. The R2 fields are omitempty for the same reason an unconfigured
-// machine renders no R2 clause on the line: bodies in a bucket are opt-in, and a
-// machine that has not turned them on is in the ordinary state.
+// is a bool because the value must never be printed. The R2 fields are omitempty
+// because bodies in a bucket are opt-in.
 type dbSyncStatusDoc struct {
 	Enabled      bool   `json:"enabled"`
 	RemoteURL    string `json:"remote_url,omitempty"`
@@ -34,25 +26,19 @@ type dbSyncStatusDoc struct {
 	// holds none and the remote does, and none otherwise.
 	Key string `json:"key,omitempty"`
 	// R2Configured says whether this machine holds a complete set of bucket
-	// credentials. R2Endpoint and R2Bucket describe where bodies would go, which
-	// is what a reader needs to tell this machine's bucket from another's. There
-	// is deliberately no field for the key id or the secret: this document is
-	// printed on request and read aloud, and a credential has no reason to be in
-	// either. See db_sync_r2.go, which is where the reader and renderer live.
+	// credentials; R2Endpoint and R2Bucket describe where bodies would go. See
+	// db_sync_r2.go, where the reader and renderer live.
 	R2Configured bool   `json:"r2_configured,omitempty"`
 	R2Endpoint   string `json:"r2_endpoint,omitempty"`
 	R2Bucket     string `json:"r2_bucket,omitempty"`
-	// Latched and LatchCause describe a breaker that stopped the machine until
-	// `relevo db sync retry`.
+	// Latched and LatchCause describe a breaker that stopped the machine until retry.
 	Latched    bool   `json:"latched,omitempty"`
 	LatchCause string `json:"latch_cause,omitempty"`
-	// RebuildAt and RebuildAside are the last automatic replica rebuild: when
-	// it ran and where the copy it kept is. Absent until one ran, so a machine
-	// that never rebuilt renders the document it always did.
+	// RebuildAt and RebuildAside are the last automatic replica rebuild, absent
+	// until one ran.
 	RebuildAt    string `json:"rebuild_at,omitempty"`
 	RebuildAside string `json:"rebuild_aside,omitempty"`
-	// Backlog is the count of this machine's operations the last attempt left
-	// unsent.
+	// Backlog is the count of this machine's operations the last attempt left unsent.
 	Backlog int64 `json:"backlog,omitempty"`
 	// LastExport and LastImport are the UTC instants the last completed
 	// exchange stamped, empty when it never completed one.
@@ -63,8 +49,7 @@ type dbSyncStatusDoc struct {
 	HeldOrigins []string `json:"held_origins,omitempty"`
 	Dropped     []string `json:"dropped,omitempty"`
 	Gaps        []string `json:"gaps,omitempty"`
-	// Fenced lists the bindings a takeover took from this machine, with how many
-	// of its local changes the takeover fenced. Nothing is deleted locally.
+	// Fenced lists the bindings a takeover took from this machine. Nothing is deleted locally.
 	Fenced []dbSyncFencedDoc `json:"fenced,omitempty"`
 	// IdentityTaken is the installation id this machine adopted whose claim
 	// another machine now holds. Export and import are stopped.
@@ -72,18 +57,15 @@ type dbSyncStatusDoc struct {
 	// AdoptPending is the installation id whose adoption is unfinished.
 	AdoptPending    string `json:"adopt_pending,omitempty"`
 	AdoptionPending string `json:"adoption_pending,omitempty"`
-	// Joining says a join is in progress and JoinSince is when it began, read
-	// from the machine-local join marker. The daemon finishes the join whether
-	// the enable that started it waited or not, so a machine can be joining
-	// while reading off.
+	// Joining says a join is in progress and JoinSince is when it began. The daemon
+	// finishes the join whether the enable waited or not.
 	Joining   bool   `json:"joining,omitempty"`
 	JoinSince string `json:"join_since,omitempty"`
 	// LastAttempt is the daemon's last steady attempt, absent until it has run
 	// one.
 	LastAttempt *dbSyncAttemptDoc `json:"last_attempt,omitempty"`
 	// Bytes is this month's traffic, absent until something moved, and
-	// QuotaTursoSync the allowance the Turso total is read against. They stay
-	// after the account reading arrived because JSON consumers may read them.
+	// QuotaTursoSync the allowance the Turso total is read against.
 	Bytes          *relevosync.ByteCounters `json:"bytes,omitempty"`
 	QuotaTursoSync int64                    `json:"quota_turso_sync,omitempty"`
 	// Storage is the last daily measurement of the replica and the bucket,
@@ -102,8 +84,7 @@ type dbSyncStatusDoc struct {
 
 // dbSyncAccountDoc is the meter reading as one machine reports it: the
 // account's month, this machine's own share, the quota, and the warnings the
-// reading already decided. Projected is absent while the month is too young
-// to project, so its presence is the projection's answer to "projectable".
+// reading already decided. Projected is absent while the month is too young to project.
 type dbSyncAccountDoc struct {
 	Month     string `json:"month"`
 	Total     int64  `json:"total"`
@@ -127,8 +108,7 @@ type dbSyncIdleDoc struct {
 
 // dbSyncAccount is the meter reading the quotas clause renders, rebuilt from
 // the document the reader filled. A projected figure is positive exactly when
-// the month was projectable and moved bytes, so the document needs no flag
-// beside it; read_at round-trips the instant statusStamp wrote.
+// the month was projectable, so the document needs no flag beside it.
 func dbSyncAccount(doc dbSyncStatusDoc) relevosync.QuotaReading {
 	if doc.Account == nil {
 		return relevosync.QuotaReading{}
@@ -149,7 +129,6 @@ func dbSyncAccount(doc dbSyncStatusDoc) relevosync.QuotaReading {
 	}
 }
 
-// dbSyncFencedDoc is one binding of the fenced list.
 type dbSyncFencedDoc struct {
 	Name      string `json:"name"`
 	OldWriter string `json:"old_writer"`
@@ -157,8 +136,7 @@ type dbSyncFencedDoc struct {
 	Count     int    `json:"count"`
 }
 
-// dbSyncFenced reads the takeover fences from the shared file, where the
-// binding rows and their terms live.
+// dbSyncFenced reads the takeover fences from the shared file.
 func dbSyncFenced(shared *db.DB) ([]dbSyncFencedDoc, error) {
 	fenced, err := shared.FencedSummary()
 	if err != nil {
@@ -172,10 +150,7 @@ func dbSyncFenced(shared *db.DB) ([]dbSyncFencedDoc, error) {
 }
 
 // dbSyncStatusLine is the one line `db sync status` prints, as a function of the
-// document and nothing else. Pulling it out of the verb is what lets the mapping
-// be pinned by bytes: the route a row arrived over is then nowhere in the line,
-// so a table of documents renders to the exact same table of strings whichever
-// handle the rows came out of.
+// document and nothing else: the route a row arrived over is nowhere in the line.
 func dbSyncStatusLine(doc dbSyncStatusDoc) string {
 	state := "off"
 	if doc.Enabled {
@@ -191,8 +166,7 @@ func dbSyncStatusLine(doc dbSyncStatusDoc) string {
 
 // dbSyncStatusDetails is the tail of the status line: each fact a reader can act
 // on, in a fixed order and only when it is set. A latch comes first because it
-// is the one state that stops the machine until a human acts; the rest is what
-// the last exchange measured and what it could not apply.
+// is the one state that stops the machine until a human acts.
 func dbSyncStatusDetails(doc dbSyncStatusDoc) string {
 	var b strings.Builder
 	if doc.Joining {
@@ -249,8 +223,8 @@ func dbSyncStatusDetails(doc dbSyncStatusDoc) string {
 }
 
 // dbSyncMeterWarning is the one reason the account's traffic earns a warning
-// on this line: the pace that has passed the quota outranks a share still
-// climbing, the same order `relevo status` puts its notices in.
+// on this line: a passed pace outranks a climbing share, the same order
+// `relevo status` uses.
 func dbSyncMeterWarning(doc dbSyncStatusDoc) string {
 	if doc.Account == nil {
 		return ""

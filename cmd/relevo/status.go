@@ -23,11 +23,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// filterReport narrows a status report to one binding. An empty name keeps
-// every row, because listing them all is what a bare `relevo status` is for.
-//
-// An unknown name is an error rather than an empty report: a silent blank
-// would read exactly like a healthy binding with nothing outstanding.
+// filterReport narrows a status report to one binding. An empty name keeps every
+// row; an unknown name is an error rather than an empty report, which would read
+// like a healthy binding.
 func filterReport(rep view.Report, name string) (view.Report, error) {
 	if name == "" {
 		return rep, nil
@@ -45,19 +43,17 @@ func filterReport(rep view.Report, name string) (view.Report, error) {
 	return view.Report{}, fail(codeBindingNotFound, "no binding named %q", name)
 }
 
-// statusChain reports whether name resolves to a chain rather than a binding.
-// A store that cannot answer -- no database, a read failure -- reads as "not a
-// chain", so the ordinary binding path still decides.
+// statusChain reports whether name resolves to a chain rather than a binding. A
+// store that cannot answer reads as "not a chain", so the binding path decides.
 func statusChain(rt relevo.Runtime, name string) bool {
 	_, err := rt.Store.Chain(name)
 	return err == nil
 }
 
-// statusScope resolves the one scope every status verb renders from, and
-// classifies what it could not resolve. An identity that stays ambiguous or
-// unknown is a refusal naming the next step, never a silent listing of every
-// mastermind and never a silent empty set; nothing here is ever internal,
-// because an agent can always be told which flag settles it.
+// statusScope resolves the one scope every status verb renders from. An identity
+// that stays ambiguous or unknown is a refusal naming the next step, never a
+// silent listing and never a silent empty set; nothing here is internal, because
+// an agent can always be told which flag settles it.
 func statusScope(mastermindRef string, allMasterMinds, allDone, named bool, rt relevo.Runtime) (relevo.Scope, *mastermind.Record, error) {
 	sc, rec, err := relevo.ResolveScope(mastermindRef, allMasterMinds, allDone, named, gcResolver(rt))
 	if err != nil {
@@ -70,10 +66,9 @@ func statusScope(mastermindRef string, allMasterMinds, allDone, named bool, rt r
 	return sc, rec, nil
 }
 
-// statusScopeOrNone is statusScope on a machine that may have no MasterMind
-// yet. With none registered and none named, nothing is bound to any of them,
-// so the empty scope (and a nil record) is the true answer, not a refusal: it
-// is often a newcomer's first command.
+// statusScopeOrNone is statusScope on a machine that may have no MasterMind yet.
+// With none registered and none named, the empty scope is the true answer, not a
+// refusal: it is often a newcomer's first command.
 func statusScopeOrNone(mastermindRef string, allMasterMinds, allDone, named bool, rt relevo.Runtime) (relevo.Scope, *mastermind.Record, error) {
 	sc, rec, err := statusScope(mastermindRef, allMasterMinds, allDone, named, rt)
 	if err != nil && mastermindRef == "" && noMasterMinds(rt) {
@@ -129,10 +124,9 @@ func cmdStatus(args []string) error {
 		return runStatusChains(*asJSON, *v.mastermind, *v.allMasterMinds)
 	}
 
-	// --line is the statusline: one row per builder of the calling
-	// mastermind, so it takes no binding and no other output mode. It also
-	// takes no --all-masterminds: it names one mastermind on its first line
-	// and in its document, which is no answer at all for every one of them.
+	// --line is the statusline: one row per builder of the calling mastermind, so it
+	// takes no binding and no other output mode, and no --all-masterminds: it names
+	// one mastermind, which is no answer for every one of them.
 	if *line {
 		if *all || *name != "" || len(fs.Args()) > 0 {
 			return fail(codeUsage, "--line cannot be combined with --all/--name")
@@ -159,14 +153,10 @@ func cmdStatus(args []string) error {
 		}
 	}
 
-	// A name that resolves to a chain -- including the chain's own builder
-	// member, `<n>` -- is the chain: `status <chain>` lists the chain row with
-	// its members under it. A name that is one of any chain's members is the
-	// chain too: the waiting notice names those members -- a done chain's
-	// stranded rows among them -- and every status surface collapses members,
-	// so answering through the chain is what makes the notice's own hint true.
-	// The lookups run before filterReport, so a chain name and a member name
-	// never come back as a missing binding.
+	// A name that resolves to a chain is the chain: `status <chain>` lists the chain
+	// row with its members under it, and a name that is one of any chain's members
+	// is the chain too, so the waiting notice's hint stays true. The lookups run
+	// before filterReport, so neither comes back as a missing binding.
 	isChain := target != "" && statusChain(rt, target)
 	if target != "" && !isChain {
 		if c, memberOf := chain.MemberChain(rt.Store.ChainByMember, target); memberOf {
@@ -182,18 +172,16 @@ func cmdStatus(args []string) error {
 	if isChain {
 		rep, err = relevo.ChainStatus(context.Background(), rt, target)
 	} else {
-		// sc is already resolved, so the rows are built for this scope alone
-		// instead of for the whole fleet and then filtered. ScopeReport below
-		// still runs, as the post-check.
+		// sc is already resolved, so the rows are built for this scope alone;
+		// ScopeReport below still runs as the post-check.
 		rep, err = relevo.ScopedStatus(context.Background(), rt, sc)
 	}
 	if err != nil {
 		return fail(codeInternal, "%v", err)
 	}
 
-	// A chain report already holds exactly the chain and its members, so it
-	// skips filterReport: narrowing it to the chain row alone would drop the
-	// members the named view exists to show.
+	// A chain report already holds exactly the chain and its members, so it skips
+	// filterReport: narrowing it would drop the members the named view shows.
 	if !isChain {
 		rep, err = filterReport(rep, target)
 		if err != nil {
@@ -202,9 +190,8 @@ func cmdStatus(args []string) error {
 	}
 	rep = relevo.ScopeReport(rep, sc)
 
-	// The mastermind's chat label is computed here, in the command a
-	// person ran, and only printed. internal/relevo.Status leaves it empty,
-	// so no label is ever computed on, or sent to, a server.
+	// The mastermind's chat label is computed here, in the command a person ran, and
+	// only printed: no label is ever computed on, or sent to, a server.
 	annotateMasterMindChat(rt, &rep, chatResolver())
 
 	if *asJSON {
@@ -213,26 +200,23 @@ func cmdStatus(args []string) error {
 		return enc.Encode(rep)
 	}
 
-	// One line above the rows, only when the daemon's cached check has
-	// seen a newer release. Read through the doctor's own Env so `status` and
-	// `doctor` can never disagree about the same file. JSON output above stays
-	// notice-free.
+	// One line above the rows, only when the daemon's cached check has seen a newer
+	// release. Read through the doctor's own Env so `status` and `doctor` never
+	// disagree. JSON output above stays notice-free.
 	env := doctor.NewEnv(rt.Store, releaseInputs())
 	running, latest, ok, kind := env.ReleaseState()
 	if notice := statusNotice(running, latest, ok, kind); notice != "" {
 		fmt.Println(notice)
 	}
-	// One line above the rows only when a daemon restart right now would
-	// kill a process running outside its own scope. The same computation
-	// doctor's restart row makes -- cheap, one small file read per running
-	// process. JSON output above stays notice-free.
+	// One line above the rows only when a daemon restart right now would kill a
+	// process running outside its own scope. The same computation doctor's restart
+	// row makes. JSON output above stays notice-free.
 	if notice := restartNotice(restartCheck(rt)); notice != "" {
 		fmt.Println(notice)
 	}
 
-	// The daemon's own version state, read from its record rather than
-	// probed. A read error prints nothing: a status must never fail because its
-	// record could not be read.
+	// The daemon's own version state, read from its record rather than probed: a
+	// read error prints nothing, since a status must never fail on it.
 	if daemonRunning, derr := rt.Store.DaemonRunning(); derr == nil {
 		if info, iok, ierr := rt.Store.ReadDaemonInfo(); ierr == nil {
 			if notice := daemonNotice(buildVersion(), info, iok, daemonRunning); notice != "" {
@@ -240,10 +224,9 @@ func cmdStatus(args []string) error {
 			}
 		}
 	}
-	// One line above the rows only when the account's month of Turso traffic
-	// or the last hour's idle exports need a human, read from the local file
-	// the same way and under the same rule: a read error prints nothing. JSON
-	// output above stays notice-free.
+	// One line above the rows only when the account's month of Turso traffic or the
+	// last hour's idle exports need a human, read from the local file under the
+	// same rule: a read error prints nothing. JSON output above stays notice-free.
 	q, qok, idle, iok := syncMeter(rt.Store, time.Now())
 	if notice := syncMeterNotice(q, qok, idle, iok); notice != "" {
 		fmt.Println(notice)
@@ -254,11 +237,8 @@ func cmdStatus(args []string) error {
 }
 
 // boardBlockFor reads one MasterMind's live board block from the state root's
-// files alone -- the pointer, server.json and a pid check, with no database
-// read. It is present only when the pointer names a scene, server.json
-// advertises the same scene, and the server's pid is alive with a matching
-// start. Any read error, a missing pointer, a scene mismatch or a dead pid
-// yields nil, never a failure.
+// files alone, with no database read. Any read error, missing pointer, scene
+// mismatch or dead pid yields nil, never a failure.
 func boardBlockFor(root, id string, procStart func(pid int) (int64, error)) *view.StatusLineBoard {
 	if root == "" || id == "" {
 		return nil
@@ -275,15 +255,11 @@ func boardBlockFor(root, id string, procStart func(pid int) (int64, error)) *vie
 	return &view.StatusLineBoard{Name: scene, Scope: string(board.ScopeLive), URL: url}
 }
 
-// runStatusline is statusline's body, reached through `status --line`: the
-// same output, COLUMNS and RELEVO_STATUSLINE_MARGIN, over the same scoped
-// report every other status surface reads. With asJSON it prints
-// StatusLineDoc instead of the text.
-//
-// A store or owner that cannot answer still prints nothing at all: the
-// statusline runs inside a prompt and must never fail one. The scope is the
-// exception, because a statusline that cannot say whose builders it is would
-// render an empty line that reads exactly like a healthy session.
+// runStatusline is statusline's body: the same scoped report every other status
+// surface reads, or StatusLineDoc with asJSON. A store or owner that cannot
+// answer still prints nothing: the statusline runs inside a prompt and must
+// never fail one. The scope is the exception: a statusline that cannot say whose
+// builders it is would read like a healthy session.
 func runStatusline(asJSON bool, mastermindRef string) error {
 	if fi, err := os.Stdin.Stat(); err != nil || view.ShouldDrainStdin(fi.Mode()) {
 		_, _ = io.Copy(io.Discard, os.Stdin)
@@ -304,11 +280,9 @@ func runStatusline(asJSON bool, mastermindRef string) error {
 	}
 	sc, rec, err := statusScope(mastermindRef, false, false, false, rt)
 	if err != nil && !asJSON && mastermindRef == "" && noMasterMinds(rt) {
-		// Before any MasterMind registers, the line says so: it is drawn under
-		// a newcomer's first prompt, and neither an error nor an empty line
-		// (which reads like a healthy session) is the truth. The document
-		// keeps refusing, since a null mastermind over no rows is that same
-		// healthy-looking answer.
+		// Before any MasterMind registers, the line says so: neither an error nor an
+		// empty line is the truth under a newcomer's first prompt. The document
+		// keeps refusing.
 		fmt.Println("relevo: no MasterMind yet")
 		return nil
 	}
@@ -323,9 +297,8 @@ func runStatusline(asJSON bool, mastermindRef string) error {
 		}
 		columns = view.StatusLineWidth(columns, os.Getenv("RELEVO_STATUSLINE_MARGIN"))
 		// The first line names the mastermind, so each terminal shows which
-		// mastermind it is. It is printed before the rows and survives a
-		// failure to read them: the line is the mastermind's identity, not a
-		// binding row.
+		// mastermind it is. It is printed before the rows and survives a failure
+		// to read them.
 		fmt.Print(view.RenderMasterMindLine(rec.Name, columns))
 		if root, rerr := tmpdir.DefaultRoot(); rerr == nil {
 			fmt.Print(view.RenderBoardLine(boardBlockFor(root, sc.MasterMindID, procStartUnix), rec.Name, columns))
@@ -362,9 +335,8 @@ func runStatusline(asJSON bool, mastermindRef string) error {
 	return nil
 }
 
-// runStatusChains prints chains and their steps in text or JSON format, under
-// the same scope every other status verb uses: a chain is a builder's row, so
-// a chain belongs to the mastermind that owns it.
+// runStatusChains prints chains and their steps under the same scope every other
+// status verb uses: a chain belongs to the mastermind that owns it.
 func runStatusChains(asJSON bool, mastermindRef string, allMasterMinds bool) error {
 	rt, err := newRuntime()
 	if err != nil {

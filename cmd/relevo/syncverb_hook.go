@@ -15,24 +15,14 @@ import (
 )
 
 // installSyncVerbHook makes the owner's socket the way a client asks for a sync
-// verb, and it is the whole of what removes the stop dance.
-//
-// The daemon already holds the shared file and the machine-local file beside it
-// under the lock, opened once in this function's caller. The hook runs every
-// verb against that pair, so a client asking for enable, push, pull or disable
-// never opens the file and never competes for the lock this process is holding.
-// A writer verb opens nothing itself, so it needs no stop to free a second open
-// for it.
-//
-// Nothing here re-decides what a verb means: the hook is a verb.Runner, which
-// is the same value the cockpit's sync actions drive. Serializing it against the
-// daemon's own seal and idle triggers needs the Daemon's guard, which is built
-// after the owner is served, so installSyncVerbSerializing rebinds the same hook
-// with that guard attached; until it does, a verb runs unserialized rather than
-// not at all.
-//
-// A nil server, or a handle with no local file, leaves the hook uninstalled and
-// the owner refuses the verb rather than answering as though sync had run.
+// verb, and it is the whole of what removes the stop dance. The daemon already
+// holds both files under the lock, so a client asking for a verb never opens the
+// file and never competes for it. Nothing here re-decides what a verb means: the
+// hook is a verb.Runner, the same value the cockpit's sync actions drive.
+// Serializing waits for the Daemon's guard, so installSyncVerbSerializing rebinds
+// the same hook once the daemon exists; until then a verb runs unserialized
+// rather than not at all. A nil server, or a handle with no local file, leaves
+// the hook uninstalled and the owner refuses the verb.
 func installSyncVerbHook(srv *owner.Server, d *db.DB) {
 	if srv == nil || d == nil {
 		return
@@ -45,35 +35,28 @@ func installSyncVerbHook(srv *owner.Server, d *db.DB) {
 }
 
 // buildVerbRunner resolves the machine-local handle and builds the runner the
-// hook and the cockpit share: one value over one pair of handles. Construction
-// itself is verb.NewRunner; this stays in cmd because resolving the handles
-// means the sync pipe, which lives below the verb package.
-//
-// A handle with no local file yields nil: there is no row sync could own, and
-// a runner built without one would have to be handed a nil seam. The guards
-// the runner waits on stay unset here: installSyncVerbSerializing binds them
-// once the daemon exists.
+// hook and the cockpit share. This stays in cmd because resolving the handles
+// means the sync pipe, which lives below the verb package. A handle with no
+// local file yields nil; installSyncVerbSerializing binds the guards once the
+// daemon exists.
 func buildVerbRunner(d *db.DB) *verb.Runner {
 	if d == nil {
 		return nil
 	}
 	local, err := relevosync.LocalHandle(d)
 	if err != nil {
-		// No machine-local file means no section and no token exist to read or
-		// write. Leaving the hook off makes the owner refuse with its own
-		// message rather than a verb answering from the shared file, which
-		// carries neither and would report a configured machine as unconfigured.
+		// Leaving the hook off makes the owner refuse rather than answer from the
+		// shared file, which would report a configured machine as unconfigured.
 		slog.Warn("relevo daemon: sync verbs are not served", "err", err)
 		return nil
 	}
-	// Before any worker can open the replica, so no driver file is read through a
-	// wider mode than the owner's.
+	// Narrow the sync files before any worker can open the replica, so no driver
+	// file is read through a wider mode than the owner's.
 	if err := syncpipe.SecureSyncFiles(d.Path()); err != nil {
 		slog.Warn("relevo daemon: could not narrow the sync files to owner-only", "err", err)
 	}
-	// The daemon has one place a worker is constructed. The client starts no
-	// process until a call drives it, and the opener below replaces it with one
-	// pointed at the remote and token an enable stored.
+	// The client starts no process until a call drives it, and the opener below
+	// replaces it with one pointed at the remote and token an enable stored.
 	inner := syncpipe.NewSyncRunner(syncpipe.Config{}, local)
 	inner.Blobs = func() blobstore.BlobStore { return relevosync.StoreFromLocal(local) }
 	replicaPath := syncpipe.ReplicaPath(d.Path())
@@ -87,17 +70,13 @@ func buildVerbRunner(d *db.DB) *verb.Runner {
 		Inner:       inner,
 		ClientName:  dbSyncHandleName,
 		Blobs:       relevosync.NewR2Store,
-		// The opener reads the machine-local rows at the moment an enable runs,
-		// so the worker it builds is pointed at the remote and token the
-		// enable just stored rather than the empty section the daemon started
-		// with.
+		// The opener reads the machine-local rows at the moment an enable runs, so the
+		// worker is pointed at the remote and token the enable just stored.
 		Open: func(context.Context) (synclog.LogTransport, error) {
 			return syncpipe.OpenSupervisor(d, local)
 		},
-		// A join's rows hold no bucket until the fleet's secrets document has
-		// been applied, and the document is only on the remote the worker is
-		// opened to read: the join's first worker starts with none, and the
-		// enable it became answers for handing the import a bucketed one.
+		// A join's rows hold no bucket until the fleet's secrets document has been
+		// applied: the join's first worker starts with none.
 		OpenNoBucket: func(context.Context) (synclog.LogTransport, bool, error) {
 			return syncpipe.OpenNoBucketSupervisor(d, local)
 		},
@@ -106,15 +85,9 @@ func buildVerbRunner(d *db.DB) *verb.Runner {
 
 // installSyncVerbSerializing rebinds the owner's verb hook with the daemon's
 // in-flight guard, so a verb and a tick cannot interleave: both record the same
-// markers and both hold the same remote handle, and two of them at once would
-// write each other's outcomes.
-//
-// A server whose hook the startup did not install stays without one: that is
-// the startup saying this machine's rows may not leave yet.
-//
-// It is called once the Daemon exists, which is after the owner is served, so
-// that the guard a verb waits on is the guard the seal hook and the idle tick
-// already take.
+// markers, and two at once would write each other's outcomes. A server whose hook
+// the startup did not install stays without one. It runs once the Daemon exists,
+// so the guard is the one the seal hook and the idle tick already take.
 func installSyncVerbSerializing(ctx context.Context, d *relevo.Daemon, srv *owner.Server, handle *db.DB) {
 	if srv == nil || handle == nil || srv.OnSyncVerb == nil {
 		return
@@ -127,7 +100,7 @@ func installSyncVerbSerializing(ctx context.Context, d *relevo.Daemon, srv *owne
 	runner.Trigger = func() { d.SyncNow(ctx) }
 	d.SetSyncVerbs(runner)
 	srv.OnSyncVerb = runner.OwnerVerb
-	// A reader's hint runs on the daemon's own context: the connection that
-	// carried it is gone by the time the attempt it queued is running.
+	// A reader's hint runs on the daemon's own context: the connection that carried
+	// it is gone by the time the attempt it queued is running.
 	srv.OnSyncFreshen = func() { d.Freshen(ctx) }
 }

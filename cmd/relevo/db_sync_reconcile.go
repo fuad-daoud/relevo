@@ -25,14 +25,12 @@ func dbSyncReconcileFlagSet(fs *flag.FlagSet) *dbSyncReconcileFlagValues {
 	return v
 }
 
-// dbSyncReconcileDoc is what `db sync reconcile --json` prints.
 type dbSyncReconcileDoc struct {
 	DryRun bool   `json:"dry_run"`
 	Report string `json:"report"`
 }
 
-// cmdDBSyncReconcile runs a reconcile, or previews one, through the daemon,
-// which holds the log transport.
+// cmdDBSyncReconcile runs a reconcile, or previews one, through the daemon.
 func cmdDBSyncReconcile(args []string) error {
 	fs := flag.NewFlagSet("db sync reconcile", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)

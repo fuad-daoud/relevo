@@ -22,7 +22,6 @@ type serveInitFlagValues struct {
 	asJSON *bool
 }
 
-// serveInitFlagSet defines those flags on fs and returns what they parse into.
 func serveInitFlagSet(fs *flag.FlagSet) *serveInitFlagValues {
 	v := &serveInitFlagValues{hosts: &hostSlice{}}
 	fs.Var(v.hosts, "host", "hostname or IP to include in certificate SANs")
@@ -55,9 +54,8 @@ func cmdServeInitRun(args []string) error {
 	}
 	defer func() { _ = d.Close() }()
 
-	// A user-mode server keeps its state at the fixed root-owned directory and
-	// needs the traversable 0711 modes; every other mode keeps the owner-only
-	// state root it always had.
+	// A user-mode server keeps its state at the fixed root-owned directory with
+	// traversable 0711 modes; every other mode keeps its owner-only state root.
 	L, err := loadConfig(d)
 	if err != nil {
 		return err
@@ -109,8 +107,6 @@ type serveEnrollFlagValues struct {
 	asJSON *bool
 }
 
-// serveEnrollFlagSet defines those flags on fs and returns what they parse
-// into.
 func serveEnrollFlagSet(fs *flag.FlagSet) *serveEnrollFlagValues {
 	v := &serveEnrollFlagValues{}
 	v.label = fs.String("label", "", "client label")
@@ -138,8 +134,7 @@ func cmdServeEnrollRun(args []string) error {
 		return fail(codeUsage, "serve enroll wants --label <label> --key \"<ed25519 line>\" [--user <unix user>] [--state <dir>]")
 	}
 
-	// A declared user is checked against this host before anything is written:
-	// an unknown name is refused with the exact command that creates it.
+	// A declared user is checked against this host before anything is written.
 	if *unixUser != "" {
 		if _, err := serve.CheckUnixUser(lookupUnixUser, *unixUser); err != nil {
 			return err
@@ -175,7 +170,6 @@ type serveRevokeFlagValues struct {
 	asJSON *bool
 }
 
-// serveRevokeFlagSet defines that flag on fs and returns what it parses into.
 func serveRevokeFlagSet(fs *flag.FlagSet) *serveRevokeFlagValues {
 	v := &serveRevokeFlagValues{}
 	_ = fs.String("state", "", "state directory")
@@ -229,8 +223,6 @@ type serveUnbindFlagValues struct {
 	asJSON *bool
 }
 
-// serveUnbindFlagSet defines those flags on fs and returns what they parse
-// into.
 func serveUnbindFlagSet(fs *flag.FlagSet) *serveUnbindFlagValues {
 	v := &serveUnbindFlagValues{}
 	v.owner = fs.String("owner", "", "client label or id")
@@ -271,8 +263,7 @@ func cmdServeUnbindRun(args []string) error {
 
 	res, err := serve.AdminUnbind(context.Background(), srv, *owner, name, *force)
 	if err != nil {
-		// A round still running on the binding is a state conflict the human
-		// can resolve with --force; anything else is classified as it comes.
+		// A round still running is a conflict the human resolves with --force.
 		if errors.Is(err, relevo.ErrWorktreeKept) {
 			return failNext(codeRefused, "relevo serve unbind --owner "+*owner+" "+name+" --force", "%v", err)
 		}
@@ -300,7 +291,6 @@ type serveGCFlagValues struct {
 	asJSON    *bool
 }
 
-// serveGCFlagSet defines those flags on fs and returns what they parse into.
 func serveGCFlagSet(fs *flag.FlagSet) *serveGCFlagValues {
 	v := &serveGCFlagValues{}
 	v.abandoned = fs.String("abandoned", "", "abandoned duration threshold")

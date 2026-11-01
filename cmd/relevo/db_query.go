@@ -19,8 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
-// dbUsage is what a bare `relevo db` prints: the verb only dispatches
-// subcommands, and it has three of them.
+// dbUsage is what a bare `relevo db` prints: the verb only dispatches subcommands.
 const dbUsage = "usage: relevo db query '<SQL>' [--json] [--limit N] [--timeout D] [--max-bytes N]\n" +
 	"       relevo db sync <enable|disable|status|push|pull>\n" +
 	"       relevo db rename-repo --from <url> --to <url> [--adopt-cwd <prefix>]... [--dry-run] [--json]\n" +
@@ -44,36 +43,31 @@ const dbUsage = "usage: relevo db query '<SQL>' [--json] [--limit N] [--timeout 
 	"already carries a different label is skipped unless --overwrite is given;\n" +
 	"an unknown id refuses the whole batch. --dry-run lists what would change.\n"
 
-// The db query defaults: a row cap and a byte cap that keep a broad SELECT
-// from filling memory, and a hold budget that leaves the owner's own open-lock
-// wait a margin.
+// The db query defaults: a row cap and a byte cap that keep a broad SELECT from
+// filling memory, and a hold budget that leaves the owner's open-lock wait a margin.
 const (
 	dbQueryDefaultLimit    = 1000
 	dbQueryDefaultTimeout  = 10 * time.Second
 	dbQueryDefaultMaxBytes = 16 * 1024 * 1024
 )
 
-// errQueryLimitReached stops the read once the row cap or the byte cap is hit.
-// cmdDBQuery treats it as a normal truncation, not a failure: it is the onRow
-// stop signal, not an engine error.
+// errQueryLimitReached stops the read once the row cap or the byte cap is hit;
+// cmdDBQuery treats it as truncation, not a failure.
 var errQueryLimitReached = errors.New("db query: row limit reached")
 
-// dbQueryRead is the read cmdDBQuery runs. It is a var so a test can replace it
-// with a read that ignores ctx, proving the deadline ends the command even when
-// the engine does not.
+// dbQueryRead is the read cmdDBQuery runs; a var so a test can prove the deadline
+// ends the command even when the engine ignores ctx.
 var dbQueryRead = func(ctx context.Context, d *db.DB, stmt string, onRow func([]string, []any) error) error {
 	return d.QueryReadOnly(ctx, stmt, onRow)
 }
 
 // dbQueryOut is where db query prints its rows, resolved to os.Stdout at call
-// time when nil. It is a seam so a test can capture the print, or stall it to
-// prove the handle is already closed by then.
+// time when nil; a seam so a test can capture the print.
 var dbQueryOut io.Writer
 
 // dbFlagSet declares the flags `relevo db`'s subcommands take. The verb itself
-// is a dispatcher and parses none, but the registry lists the flags a caller
-// reaches through it, and the parity test requires the installer to declare
-// exactly those.
+// parses none, but the registry lists the flags a caller reaches through it, so
+// the installer declares exactly those.
 func dbFlagSet(fs *flag.FlagSet) {
 	dbQueryFlagSet(fs)
 	dbRenameRepoOwnFlags(fs)
@@ -88,7 +82,6 @@ type dbQueryFlagValues struct {
 	maxBytes *int
 }
 
-// dbQueryFlagSet defines the flags on fs and returns what they parse into.
 func dbQueryFlagSet(fs *flag.FlagSet) *dbQueryFlagValues {
 	v := &dbQueryFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the rows as a JSON document")
@@ -98,8 +91,7 @@ func dbQueryFlagSet(fs *flag.FlagSet) *dbQueryFlagValues {
 	return v
 }
 
-// cmdDB dispatches `relevo db`'s subcommands. A bare `relevo db` prints the
-// usage line, because the verb itself has nothing to run.
+// cmdDB dispatches `relevo db`'s subcommands; a bare call prints the usage line.
 func cmdDB(args []string) error {
 	switch {
 	case len(args) > 0 && args[0] == "query":
@@ -115,10 +107,9 @@ func cmdDB(args []string) error {
 	return errUsagePrinted
 }
 
-// cmdDBQuery runs one read-only SQL statement against relevo.db and prints its
-// rows: a tabwriter table by default, and the columns/rows document under
-// --json. It is the supported replacement for `sqlite3 relevo.db`, which the
-// daemon's lock keeps out while the daemon runs.
+// cmdDBQuery runs one read-only SQL statement and prints its rows: a table by
+// default, the columns/rows document under --json. It replaces `sqlite3
+// relevo.db`, which the daemon's lock keeps out while the daemon runs.
 func cmdDBQuery(args []string) error {
 	fs := flag.NewFlagSet("db query", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -146,8 +137,6 @@ func cmdDBQuery(args []string) error {
 	if err != nil {
 		return err
 	}
-	// closed records that the handle is already released, so the deferred close
-	// does not run a second time.
 	closed := false
 	defer func() {
 		if !closed {
@@ -165,16 +154,13 @@ func cmdDBQuery(args []string) error {
 	onRow := func(cols []string, values []any) error {
 		columns = cols
 		if len(rows) >= *v.limit {
-			// One extra row proves another follows, so the cut is real rather
-			// than the statement returning exactly --limit rows.
+			// One extra row proves another follows, so the cut is real.
 			rowsCut = true
 			return errQueryLimitReached
 		}
 		add := dbQueryRowBytes(values)
 		if bytesHeld+add > *v.maxBytes {
-			// The row that would pass the budget is not appended at all, so
-			// one value larger than the whole budget stops the read before it
-			// is ever held.
+			// The row that would pass the budget is not appended at all.
 			bytesCut = true
 			return errQueryLimitReached
 		}
@@ -184,8 +170,7 @@ func cmdDBQuery(args []string) error {
 	}
 
 	// The read runs on its own goroutine so the deadline ends the command even
-	// when the engine ignores ctx inside a step. main's os.Exit then ends the
-	// process, and with it the direct flock the abandoned read still holds.
+	// when the engine ignores ctx inside a step.
 	readErr := make(chan error, 1)
 	go func() { readErr <- dbQueryRead(ctx, d, positional[0], onRow) }()
 
@@ -201,9 +186,8 @@ func cmdDBQuery(args []string) error {
 		return dbQueryTimeout(*v.timeout)
 	}
 
-	// Release the file before the note and the rows go out: a stalled stdout --
-	// a pipe nobody drains, `| less` then Ctrl-Z -- must not hold relevo.db.lock
-	// through the print, or the read-vs-open budget would not cover this phase.
+	// Release the file before the rows go out: a stalled stdout must not hold
+	// relevo.db.lock through the print.
 	_ = d.Close()
 	closed = true
 
@@ -226,7 +210,7 @@ func cmdDBQuery(args []string) error {
 
 // checkDBQueryBounds refuses a limit or byte cap below one and a timeout that
 // is not positive or exceeds ReadOnlyHoldBudget. The open-lock wait outlasts
-// the budget, so a longer deadline could hold the lock past any fixed wait.
+// the budget, so a longer deadline could hold the lock past it.
 func checkDBQueryBounds(limit int, timeout time.Duration, maxBytes int) error {
 	switch {
 	case limit < 1:
@@ -244,8 +228,7 @@ func checkDBQueryBounds(limit int, timeout time.Duration, maxBytes int) error {
 }
 
 // dbQueryRowBytes is one row's weight against --max-bytes: the length of every
-// blob and string, and a small constant for the rest, which carry no length of
-// their own once the row is held in memory.
+// blob and string, and a small constant for the rest.
 func dbQueryRowBytes(values []any) int {
 	const otherValueBytes = 8
 	n := 0
@@ -270,8 +253,7 @@ func dbQueryTimeout(timeout time.Duration) error {
 
 // classifyDBQuery maps the read-only seam's failure to the frame's codes: a
 // query argument that is not one statement is a usage error, and anything the
-// seam or the engine refused -- a disallowed keyword, a write, a syntax error
-// -- is refused with the engine's own message.
+// seam or the engine refused is refused with the engine's own message.
 func classifyDBQuery(err error) error {
 	if errors.Is(err, db.ErrNotOneStatement) || errors.Is(err, db.ErrPragmaNotReadOnly) || errors.Is(err, db.ErrRecursive) {
 		return failNext(codeUsage, "relevo help", "%v", err)
@@ -281,8 +263,7 @@ func classifyDBQuery(err error) error {
 
 // openDBQuery reaches relevo.db read-only: the owner when its socket answers,
 // the file itself when it does not, and one re-dial when the direct open finds
-// the daemon holding the file. It never starts the owner. ctx bounds the dial,
-// and an expired ctx refuses rather than falling back to a direct open.
+// the daemon holding the file. It never starts the owner.
 func openDBQuery(ctx context.Context) (*db.DB, error) {
 	root, err := tmpdir.DefaultRoot()
 	if err != nil {
@@ -308,9 +289,8 @@ func openDBQuery(ctx context.Context) (*db.DB, error) {
 	if !errors.Is(err, db.ErrLocked) {
 		return nil, failWrap(codeInternal, err, "open %s", path)
 	}
-	// The file is held, so the owner is the only reader. One more dial covers a
-	// daemon that bound its socket between the first attempt and the open;
-	// after that the file stays out of reach.
+	// One more dial covers a daemon that bound its socket between the first
+	// attempt and the open.
 	if d, derr := dialOwnerAdHoc(ctx, root, verbDialBudget); derr == nil {
 		return d, nil
 	}
@@ -340,11 +320,9 @@ func writeDBQueryJSON(w io.Writer, columns []string, rows [][]any) error {
 	return json.NewEncoder(w).Encode(dbQueryDoc{Columns: columns, Rows: rows})
 }
 
-// writeDBQueryTable prints one tabwriter row per record, the header first, so
-// the output lines up in a terminal the way sqlite3's did. Every header cell and
-// every value cell is sanitised: a value or a column name in relevo.db is
-// untrusted text, and a raw ESC would let it manipulate the terminal. --json
-// stays the machine form and is not sanitised.
+// writeDBQueryTable prints one tabwriter row per record, the header first. Every
+// cell is sanitised: a value or a column name in relevo.db is untrusted text,
+// and a raw ESC would let it manipulate the terminal.
 func writeDBQueryTable(w io.Writer, columns []string, rows [][]any) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	if len(columns) > 0 {

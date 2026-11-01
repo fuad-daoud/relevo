@@ -17,9 +17,9 @@ type dbRelabelFlagValues struct {
 	asJSON                 *bool
 }
 
-// dbRelabelOwnFlags declares the flags db relabel adds to the ones its db
-// siblings already declare: --dry-run belongs to db rename-repo's set and
-// --json to db query's, and a flag set cannot declare either twice.
+// dbRelabelOwnFlags declares the flags db relabel adds to its db siblings':
+// --dry-run belongs to rename-repo's set and --json to query's, and a set cannot
+// declare either twice.
 func dbRelabelOwnFlags(fs *flag.FlagSet) *dbRelabelFlagValues {
 	v := &dbRelabelFlagValues{}
 	v.file = fs.String("file", "", "a file of <id><TAB><label> lines")
@@ -73,8 +73,8 @@ func dbRelabelRun(args []string) error {
 	return nil
 }
 
-// relabelEntries resolves the one source the flags name into entries; every
-// refusal fires before the database is opened.
+// relabelEntries resolves the one source the flags name into entries, refusing
+// before the database is opened.
 func relabelEntries(file, binding, feature string, fs *flag.FlagSet) ([]db.RelabelEntry, error) {
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
@@ -99,8 +99,8 @@ func relabelEntries(file, binding, feature string, fs *flag.FlagSet) ([]db.Relab
 	return nil, fail(codeUsage, "relevo db relabel wants --file <tsv>, or --binding <id> with --feature <label>")
 }
 
-// parseRelabelFile reads <id><TAB><label> lines. It collects every offending
-// line into one refusal rather than stopping at the first.
+// parseRelabelFile reads <id><TAB><label> lines, collecting every offending line
+// into one refusal rather than stopping at the first.
 func parseRelabelFile(data string) ([]db.RelabelEntry, error) {
 	var entries []db.RelabelEntry
 	var problems []string
