@@ -287,6 +287,7 @@ if [ ! -s "$err" ]; then
 	echo "FAIL: missing origin/main: stderr is empty, want note"
 	fail=1
 fi
+assert_stdout "--print-base with no base to find gives ./..." "./..." --print-base
 git update-ref refs/remotes/origin/main HEAD
 
 # 9b. RELEVO_BASE: used when no --base/BASE is given, ahead of origin/main
@@ -299,6 +300,8 @@ RELEVO_BASE="$initial"
 export RELEVO_BASE
 assert_stdout "RELEVO_BASE with no origin/main gives a b c d e" "$want_a"
 assert_stdout "--direct with RELEVO_BASE and no origin/main gives only a" "example.test/fx/a" --direct
+assert_stdout "--print-base names RELEVO_BASE" "$initial" --print-base
+assert_stdout "--print-base names --base over RELEVO_BASE" "HEAD" --base HEAD --print-base
 assert_stdout "--base HEAD beats RELEVO_BASE" "" --base HEAD
 BASE=HEAD
 export BASE

@@ -75,7 +75,9 @@ board-assets:
 
 # check-affected is the builder's inner gate: the static checks, then go test
 # (no -race, no -count=1, so Go's test cache applies) over only the packages
-# a change reaches. The full gate is CI's job (race, every package, coverage).
+# a change reaches, then each changed package's coverage against the same
+# package at the base, measured here. The full gate is CI's job (race, every
+# package, the coverage baseline).
 # BASE overrides the base ref. When BASE is empty, RELEVO_BASE (set by relevo
 # in a round) is used, then git merge-base HEAD origin/main.
 check-affected:
@@ -84,7 +86,10 @@ check-affected:
 	if [ -z "$$pkgs" ]; then \
 		echo "no Go package affected; tests skipped"; \
 	else \
-		go test $$pkgs; \
+		out=$$(mktemp); \
+		go test -cover $$pkgs > "$$out" 2>&1; st=$$?; cat "$$out"; \
+		if [ $$st -eq 0 ]; then BASE="$(BASE)" sh scripts/check-coverage-delta.sh "$$out"; st=$$?; fi; \
+		rm -f "$$out"; exit $$st; \
 	fi
 
 # check-quick is the inner loop, not the gate: the static checks, then the
