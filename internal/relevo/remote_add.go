@@ -38,26 +38,6 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		return AddResult{}, err
 	}
 	mastermindEP := recordEndpoint(rec)
-	// From here on the server will hold a binding this client does not yet.
-	// Every later failure unbinds it on the server best-effort before
-	// returning the original error, and removes the local branch relevo cut
-	// once CreateBranch itself has succeeded.
-	branchCreated := false
-	defer func() {
-		if err == nil {
-			return
-		}
-		if unbindErr := rt.Remote.Unbind(ctx, opts.Server, opts.Name, true); unbindErr != nil {
-			slog.Warn("unbind after failed add", "server", opts.Server, "name", opts.Name, "err", unbindErr)
-			err = fmt.Errorf("%w; server binding %s on %s could not be removed: %w", err, opts.Name, opts.Server, unbindErr)
-		}
-		if branchCreated {
-			if delErr := rt.Git.DeleteBranch(ctx, opts.Repo, input.branch); delErr != nil {
-				slog.Warn("delete branch after failed add", "repo", opts.Repo, "branch", input.branch, "err", delErr)
-				err = fmt.Errorf("%w; local branch %s could not be removed: %w", err, input.branch, delErr)
-			}
-		}
-	}()
 
 	// The gate resolves exactly as the local path does: with the client's
 	// policy, the actor's role and the repository's own settings, read on the
@@ -95,6 +75,26 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		}
 		return AddResult{}, pickRefusalFromWire(err)
 	}
+	// From here on the server will hold a binding this client does not yet.
+	// Every later failure unbinds it on the server best-effort before
+	// returning the original error, and removes the local branch relevo cut
+	// once CreateBranch itself has succeeded.
+	branchCreated := false
+	defer func() {
+		if err == nil {
+			return
+		}
+		if unbindErr := rt.Remote.Unbind(ctx, opts.Server, opts.Name, true); unbindErr != nil {
+			slog.Warn("unbind after failed add", "server", opts.Server, "name", opts.Name, "err", unbindErr)
+			err = fmt.Errorf("%w; server binding %s on %s could not be removed: %w", err, opts.Name, opts.Server, unbindErr)
+		}
+		if branchCreated {
+			if delErr := rt.Git.DeleteBranch(ctx, opts.Repo, input.branch); delErr != nil {
+				slog.Warn("delete branch after failed add", "repo", opts.Repo, "branch", input.branch, "err", delErr)
+				err = fmt.Errorf("%w; local branch %s could not be removed: %w", err, input.branch, delErr)
+			}
+		}
+	}()
 	return createAndMirrorBinding(ctx, rt, opts, input, base, feat, mastermindEP, view, &branchCreated)
 }
 
