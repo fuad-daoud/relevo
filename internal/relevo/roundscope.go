@@ -13,8 +13,7 @@ import (
 // scopeRunning reports whether unit's scope is loaded and not yet gone. It is
 // the single gate for "scopes are off": false when the runtime has no scope
 // template, when the runner cannot probe one, and when the probe fails (the
-// error is logged). A caller that needs only this answer never repeats the
-// gate.
+// error is logged).
 func scopeRunning(ctx context.Context, rt Runtime, unit string) bool {
 	if rt.Scope == nil {
 		return false
@@ -109,21 +108,14 @@ const (
 // process, and is what a switch-resend calls before it starts one.
 //
 // The replacement is the SAME round on the same binding, so it asks systemd for
-// the same unit name the process it replaces is still using. systemd-run
-// refuses that with "Unit ... was already loaded", and the refusal arrives as
-// an ordinary Start error, which the spawn path reads as a candidate failure.
-// So the unit is freed here first: probed, ended if loaded, then polled until
-// the host agrees it is gone. A scope that is not loaded, and a binding with
-// scopes off, are no-ops -- the round can start immediately.
+// the same unit name the process it replaces is still using, which systemd
+// refuses as already loaded, and the spawn path would read that Start error as
+// a candidate failure. The unit is freed here first: probed, ended if loaded,
+// then polled until the host agrees it is gone.
 //
 // A unit still loaded after the deadline, and a runner that can see a scope but
-// not end one, are both ErrScopeActive: retryable, with nothing spawned, no
-// gate recorded and no candidate touched. The caller defers, and the next tick
-// tries the whole switch again once the host has finished reaping.
-//
-// Unlike endEarlierRoundScope this takes a binding rather than a unit, because
-// the caller has one and both of them derive the unit the same way -- endRoundScope
-// next to it, so a future send.go adoption moves no code.
+// not end one, are both ErrScopeActive: retryable, with nothing spawned and
+// nothing gated, so the next tick retries the switch.
 func freeRoundScope(ctx context.Context, rt Runtime, b store.Binding) error {
 	unit := scopeUnitName(b)
 	if !scopeRunning(ctx, rt, unit) {

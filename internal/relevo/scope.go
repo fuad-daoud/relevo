@@ -9,11 +9,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// Scope is what one status-shaped surface shows: which mastermind's rows, and
-// which of them survive the DONE rule. An empty MasterMindID is every
-// mastermind's, which is what --all-masterminds asks for. Named marks a view
-// that already answered by name, so no scope narrowing applies to it: asking
-// for one binding or chain is a request for that specific thing.
+// Scope narrows a status-shaped surface to one mastermind's rows, hiding DONE
+// unless the scope keeps them. An empty MasterMindID is every mastermind's,
+// which is what --all-masterminds asks for. Named marks a view that already
+// answered by name, so no scope narrowing applies to it.
 type Scope struct {
 	MasterMindID string
 	All          bool

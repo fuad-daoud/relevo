@@ -22,13 +22,10 @@ const transportPromptFormat = `Your previous turn was cut off by a connection er
 // step relevo aborted.
 const stallPromptFormat = `Your model went silent and relevo aborted the step. Continue from the tree as it stands and do not redo finished work. ` + backgroundDiedSentence + ` Finish in the foreground: write the report to %s, then create %s.`
 
-// stallReaderNote is the extra sentence a reader's continuation gains.
 const stallReaderNote = "Your model went silent and relevo aborted the step."
 
-// transportReaderNote is the extra sentence a reader's continuation gains.
 const transportReaderNote = "Your previous turn was cut off by a connection error."
 
-// sameSessionResumes counts this round's same-session resume entries naming sess.
 func sameSessionResumes(entries []store.LogEntry, round int, sess string) int {
 	prefix := sameSessionNotePrefix + " " + sess + " "
 	var n int

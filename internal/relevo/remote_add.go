@@ -52,7 +52,6 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 	// server's own paths join it in.
 	subdir := housekeep.ResolveSubdir(ctx, rt.Git, opts.Repo)
 
-	// 1. store.ValidName; binding must not exist locally.
 	if err := store.ValidName(opts.Name); err != nil {
 		return AddResult{}, err
 	}
@@ -89,8 +88,6 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		existingBranch = true
 		base = tip
 	} else {
-		// 2. base := opts.Base if given else rt.Git.HeadCommit(opts.Repo)
-		// resolve to a full sha with RefSHA(opts.Repo, base) when it is not 40-hex; missing -> error
 		if base == "" {
 			var err error
 			base, err = rt.Git.HeadCommit(ctx, opts.Repo)
@@ -110,7 +107,6 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		}
 	}
 
-	// 3. root := rt.Git.RootCommit(opts.Repo); repoID := remote.RepoID(root)
 	root, err := rt.Git.RootCommit(ctx, opts.Repo)
 	if err != nil {
 		return AddResult{}, fmt.Errorf("root commit: %w", err)
@@ -132,9 +128,8 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		return AddResult{}, fmt.Errorf("%w for %s: a remote builder commits as you; set git config user.name and git config user.email (in the repo or --global)", remote.ErrNoGitIdentity, opts.Repo)
 	}
 
-	// 4. candidate := opts.Candidate; if non-empty, rt.Remote.Candidates(server) must list it, by canonical
-	// token or by name (else error naming the server's candidates); if empty, leave "" and let the server pick.
-	// The canonical token is what travels.
+	// A non-empty candidate must be listed by the server, by canonical token
+	// or by name; if empty the server picks. The canonical token is what travels.
 	candidateStr := opts.Candidate
 	if candidateStr != "" {
 		candResp, err := rt.Remote.Candidates(ctx, opts.Server)
@@ -214,15 +209,14 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		return AddResult{}, fmt.Errorf("server %s does not run custom actors (actor %q); upgrade it", opts.Server, opts.Role)
 	}
 
-	// 5. view := rt.Remote.CreateBinding(ctx, server, {Name, RepoID, BaseCommit: base, Candidate, RoundCap, RoundTimeoutMS, Tier})
-	// HTTPError 409 -> the server already has this binding for this client, with
-	// no local counterpart here; only `relevo serve unbind` on the server can
+	// A 409 means the server already has this binding for this client with no
+	// local counterpart here; only `relevo serve unbind` on the server can
 	// clear that, since a local `relevo bind --resume` has nothing to resume.
 	// The two ids the link needs: this client's installation, and a record id
 	// minted here so both sides know the client's row from the start. They
 	// travel only to a server that advertises FeatureOrigin, which stores them
 	// as its row's link; the fields are empty otherwise and the wire omits
-	// them, so an older server sees exactly today's request.
+	// them, so a server without the feature sees a request it understands.
 	clientInstallation := ""
 	clientBindingID := ""
 	if slices.Contains(who.Features, remote.FeatureOrigin) {
@@ -307,8 +301,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		}
 	}()
 
-	// 6. rt.Git.CreateBranch(opts.Repo, "relevo/"+name, base) -- after the server agreed, so a refused create leaves no branch
-	// ErrBranchExists -> error "branch relevo/api exists; delete it or pick another name"
+	// The branch is cut after the server agreed, so a refused create leaves no branch.
 	// In --branch mode the branch already exists and relevo did not create it:
 	// there is nothing to create, and branchCreated stays false so the
 	// deferred cleanup above never deletes a branch relevo did not make.
@@ -322,11 +315,8 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		branchCreated = true
 	}
 
-	// 7. b := Binding{Name, CWD: opts.Repo, Repo: opts.Repo, Branch, Base: base, MasterMind: <as Add fills it>,
-	//                 Builder: Endpoint{Mode: ModeRemote, Server: server, Kind: <kind from view.Candidate's harness, "" if unknown>,
-	//                                   AgentName: name},
-	//                 BuilderCandidate: view.Candidate, Round: 1, State: active, RoundCap/Timeout as Add}
-	// Save under lock; append the same pick log entry Add writes, with the candidate the server reported.
+	// Saved under lock with the same pick log entry Add writes, carrying the
+	// candidate the server reported.
 	builderKind := ""
 	var cand candidate.Candidate
 	if view.Candidate != "" {

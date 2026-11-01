@@ -14,14 +14,12 @@ type watchKey struct {
 	startedAt int64
 }
 
-// Watched is the daemon's in-memory set of the processes it has seen alive.
-// It answers the one question lostToRestart needs: was this process already
-// known to be running to the daemon that is judging it?
-//
-// A nil *Watched is valid and has seen nothing, so a CLI one-shot, which
-// never creates one, is judged as having seen nothing. It is deliberately
-// never persisted: a daemon that has just started has, by definition, seen
-// nothing.
+// Watched is the daemon's in-memory set of the processes it has seen alive,
+// answering the one question lostToRestart needs: was this process already
+// known to be running to the daemon judging it? A nil *Watched is valid and
+// has seen nothing, so a CLI one-shot, which never creates one, is judged as
+// having seen nothing. It is deliberately never persisted: a daemon that has
+// just started has, by definition, seen nothing.
 type Watched struct {
 	mu   sync.Mutex
 	seen map[watchKey]struct{}
@@ -33,9 +31,9 @@ func NewWatched() *Watched {
 }
 
 // Mark records that pid, started when startedAt says, was seen alive. It is
-// nil-safe and ignores a pid that cannot be a real process (pid <= 0) and a
-// start time that was never recorded (startedAt == 0), so a call site may
-// Mark unconditionally on a liveness observation it trusts.
+// nil-safe and ignores a pid that cannot be real (pid <= 0) and a start time
+// never recorded (startedAt == 0), so a call site may Mark unconditionally on
+// a liveness observation it trusts.
 func (w *Watched) Mark(pid int, startedAt int64) {
 	if w == nil || pid <= 0 || startedAt == 0 {
 		return
@@ -61,14 +59,13 @@ func (w *Watched) Seen(pid int, startedAt int64) bool {
 	return ok
 }
 
-// lostToRestart is the one predicate for "this daemon never saw it alive,
-// and it started before this daemon did, so this daemon's own restart must
-// have taken it down". It is true only when every clause holds:
+// lostToRestart is the one predicate for "this daemon never saw it alive, and
+// it started before this daemon did, so this daemon's own restart must have
+// taken it down". It is true only when every clause holds:
 //   - rt.StartedAt is non-zero, so only the daemon ever answers true and a
 //     CLI one-shot never does;
-//   - startedAt was recorded;
-//   - the process started before this daemon;
-//   - Watched has not seen it. A nil Watched has seen nothing.
+//   - startedAt was recorded, and the process started before this daemon;
+//   - Watched has not seen it (a nil Watched has seen nothing).
 func lostToRestart(rt Runtime, pid int, startedAt int64) bool {
 	if rt.StartedAt.IsZero() || startedAt == 0 {
 		return false

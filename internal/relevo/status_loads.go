@@ -98,8 +98,7 @@ func (l *rowLoads) waitMap() map[string]*delivery.WaitClaim {
 
 // masterMindName is the record's name for b's mastermind: the report's bulk map
 // when there is one, a single Get on the single-row path. A nil map, an absent
-// id and a failed Get all leave the name empty, the direction the caller's
-// comment has always required.
+// id and a failed Get all leave the name empty.
 func (l *rowLoads) masterMindName(rt Runtime, b store.Binding) string {
 	if b.MasterMindID == "" {
 		return ""
@@ -145,7 +144,7 @@ func loadRows(ctx context.Context, rt Runtime, bindings []store.Binding) *rowLoa
 
 // loadMasterMinds resolves every distinct mastermind id the report names, once
 // each, into a map. A Get error leaves the id absent, so only that binding's
-// name goes empty, exactly as the per-row lookup behaved.
+// name goes empty, as the per-row lookup reads it.
 func loadMasterMinds(rt Runtime, bindings []store.Binding) map[string]mastermind.Record {
 	out := make(map[string]mastermind.Record)
 	if rt.MasterMinds == nil {
@@ -169,8 +168,8 @@ func loadMasterMinds(rt Runtime, bindings []store.Binding) map[string]mastermind
 // loadClaimMap is the report's one push-claim read. ok is false when the
 // store has no bulk surface, and each row then reads its claim directly. A
 // read error reads as no live claim at all -- the empty map is authoritative --
-// because a claims read must never fail the report, and every failure has
-// always read as not live.
+// because a claims read must never fail the report, and every failure reads
+// as not live.
 func loadClaimMap(rt Runtime, now time.Time) (map[string]*delivery.Claim, bool) {
 	if rt.Channels == nil {
 		return nil, false
@@ -186,7 +185,6 @@ func loadClaimMap(rt Runtime, now time.Time) (map[string]*delivery.Claim, bool) 
 	return claims, true
 }
 
-// loadWaitMap is loadClaimMap's wait-side twin, keyed by binding name.
 func loadWaitMap(rt Runtime, now time.Time) (map[string]*delivery.WaitClaim, bool) {
 	if rt.Waits == nil {
 		return nil, false
@@ -204,8 +202,7 @@ func loadWaitMap(rt Runtime, now time.Time) (map[string]*delivery.WaitClaim, boo
 
 // loadLedgerOnce reads and decodes the availability ledger once for a report.
 // A load failure is reported on stderr exactly once and read as an empty
-// ledger: Gates has always reported it that way, and a bookkeeping file must
-// not take status down.
+// ledger: a bookkeeping file must not take status down.
 func loadLedgerOnce(rt Runtime) availability.Ledger {
 	if rt.Gates == nil {
 		return availability.Ledger{}

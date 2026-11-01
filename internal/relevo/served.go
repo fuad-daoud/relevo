@@ -272,7 +272,6 @@ func PickServedCandidateFor(rt Runtime, role, token string) (string, string, err
 	return res.Candidate.Ref().String(), res.Candidate.Harness, nil
 }
 
-// PickServedCandidate is PickServedCandidateFor for the built-in builder role.
 func PickServedCandidate(rt Runtime, token string) (string, string, error) {
 	return PickServedCandidateFor(rt, "builder", token)
 }

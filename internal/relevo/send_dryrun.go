@@ -8,9 +8,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// DryRun is what SendDryRun found: the round Send would open, the builder it
-// would go to, the paths and the head of the prompt. It is a description only;
-// nothing was written.
+// DryRun describes the round Send would open and where it would go. It is a
+// description only; nothing was written.
 type DryRun struct {
 	Name      string `json:"name"`
 	Round     int    `json:"round"`
@@ -57,8 +56,6 @@ func SendDryRun(ctx context.Context, rt Runtime, name, file string, opts SendOpt
 		TierFrom:    pf.tierFrom,
 		PromptHead:  promptHead(pf.prompt),
 	}
-	// CandidateName is set only when the set holds the token; otherwise the
-	// text falls back to printing Candidate.
 	if name, ok := rt.Candidates.NameFor(pf.b.BuilderCandidate); ok {
 		d.CandidateName = name
 	}
@@ -68,7 +65,6 @@ func SendDryRun(ctx context.Context, rt Runtime, name, file string, opts SendOpt
 	return d, nil
 }
 
-// dryRunMode names the builder's shape as the dry run prints it.
 func dryRunMode(b store.Binding) string {
 	if b.Builder.Remote() {
 		return "remote"

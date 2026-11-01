@@ -145,8 +145,6 @@ func ServedSetGate(ctx context.Context, rt Runtime, name string, req remote.SetG
 	})
 }
 
-// validServedCheck refuses a check request that cannot be stored or run: a
-// missing or oversized id, or a missing or oversized command.
 func validServedCheck(req remote.CreateCheckRequest) error {
 	if req.ID == "" {
 		return fmt.Errorf("%w: id is required", ErrInvalidCheck)
@@ -163,9 +161,8 @@ func validServedCheck(req remote.CreateCheckRequest) error {
 	return nil
 }
 
-// validServedGate refuses a gate update that names nothing to write, an
-// oversized command, or a negative repair budget. A negative budget has no
-// meaning as a count of rounds and would be stored as one.
+// validServedGate refuses a gate update with a negative repair budget: it has
+// no meaning as a count of rounds and would be stored as one.
 func validServedGate(req remote.SetGateRequest) error {
 	if req.Gate == nil && req.Regate == nil {
 		return fmt.Errorf("%w: gate or regate is required", ErrInvalidCheck)
@@ -179,8 +176,6 @@ func validServedGate(req remote.SetGateRequest) error {
 	return nil
 }
 
-// servedCheckRunnable refuses a check the binding cannot run: a reader round has
-// no check, and a binding with no worktree has no tree to run one in.
 func servedCheckRunnable(b store.Binding) error {
 	if b.Shape == store.ShapeReader {
 		return ErrReaderHasNoCheck
@@ -255,7 +250,6 @@ func servedCheckStep(ctx context.Context, rt Runtime, b store.Binding) (store.Bi
 	return b, true
 }
 
-// applyServedCheckRecord copies a finished run's outcome onto the stored run.
 func applyServedCheckRecord(run *store.CheckRun, rec *store.GateRecord) {
 	run.Result = rec.Result
 	run.ExitCode = rec.ExitCode
@@ -297,7 +291,6 @@ func servedCheckGateRun(r store.CheckRun) store.GateRun {
 	}
 }
 
-// servedCheckView is the wire view of one stored run.
 func servedCheckView(rt Runtime, run store.CheckRun) remote.CheckView {
 	tail, cut := servedCheckLogTail(rt.Store.ReadFile, run.LogPath)
 	return remote.CheckView{

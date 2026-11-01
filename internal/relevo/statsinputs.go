@@ -28,8 +28,7 @@ func StatsInputs(rt Runtime, since time.Time) (in stats.Inputs, warnings []strin
 
 	// A latency read failure warns and leaves the report without ttft values.
 	// Latency and the history below both read the two history tables, so
-	// every origin's rows inside the window are combined -- the whole point
-	// of the tables over the two kv documents they replaced.
+	// every origin's rows inside the window are combined.
 	deps := AvailabilityDeps(rt)
 	var lat availability.LatencyHistory
 	if loaded, lerr := availability.LoadLatency(deps); lerr != nil {

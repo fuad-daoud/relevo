@@ -55,10 +55,9 @@ var (
 
 // WorkflowError is the one failure the workflow operations return: the class a
 // caller maps to its own vocabulary, the workflow it happened to, and the whole
-// message to show. Text is complete, so a caller renders it verbatim rather than
-// formatting a class's own wording a second time. The validation problems are
-// carried beside it, so a caller with room for one line each shows them there
-// instead of splitting the joined message back apart.
+// message to show. Text is complete, so a caller renders it verbatim. The
+// validation problems are carried beside it, so a caller with room for one line
+// each shows them there instead of splitting the joined message back apart.
 type WorkflowError struct {
 	class    error
 	name     string
@@ -81,14 +80,13 @@ func (e *WorkflowError) Workflow() string { return e.name }
 // rules reported them. Every class but the invalid one carries none.
 func (e *WorkflowError) Problems() []string { return e.problems }
 
-// workflowErrorf builds a classed failure with a complete message.
 func workflowErrorf(class error, name, format string, args ...any) error {
 	return &WorkflowError{class: class, name: name, text: fmt.Sprintf(format, args...)}
 }
 
-// workflowProblemsf is the invalid-definition failure: the same message the CLI
-// has always printed, plus the problems themselves, so a caller that shows them
-// one per line never has to split the joined text.
+// workflowProblemsf is the invalid-definition failure: the joined message plus
+// the problems themselves, so a caller that shows them one per line never has
+// to split the joined text.
 func workflowProblemsf(name string, problems []string) error {
 	err := workflowErrorf(ErrWorkflowInvalid, name, "%s", joinProblems(problems))
 	we := err.(*WorkflowError)
@@ -143,11 +141,10 @@ func WorkflowNameProblem(got, want string) string {
 
 // WorkflowSource returns a workflow's source text as the user wrote it. The
 // saved workflows are consulted first, so a workflow that shadows the shipped
-// name serves its own source the way the CLI did before --force existed as a
-// special case here. The shipped workflow has no source to show, because it
-// ships as a parsed definition and ResolveWorkflow has no text for it, so an
-// unsaved shipped name reports shipped with empty text and the caller renders
-// the definition instead.
+// name serves its own source. The shipped workflow has no source to show,
+// because it ships as a parsed definition and ResolveWorkflow has no text for
+// it, so an unsaved shipped name reports shipped with empty text and the caller
+// renders the definition instead.
 func WorkflowSource(rt Runtime, name string) (string, bool, error) {
 	saved, err := loadWorkflows(rt)
 	if err != nil {
@@ -165,12 +162,9 @@ func WorkflowSource(rt Runtime, name string) (string, bool, error) {
 // WorkflowAdd reads path, validates the workflow it holds against the actors
 // this machine has, and saves its source beside the definition. file: seeds are
 // embedded relative to the file, so the file itself is not needed again. It
-// returns the name it stored.
-//
-// replace allows a saved workflow of the same name to be overwritten, and force
-// allows the name to shadow the shipped one. Neither implies the other: a name
-// can be saved over without shadowing anything, and a shipped name can be
-// shadowed without replacing anything.
+// returns the name it stored. replace allows a saved workflow of the same name
+// to be overwritten, and force allows the name to shadow the shipped one;
+// neither implies the other.
 func WorkflowAdd(rt Runtime, path string, replace, force bool) (string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -199,8 +193,8 @@ func WorkflowAdd(rt Runtime, path string, replace, force bool) (string, error) {
 // WorkflowRemove drops a saved workflow, leaving the rest of the section in
 // place. A shipped workflow is refused along with an unknown one: it is not
 // saved, so there is nothing here that could remove it. A saved workflow that
-// shadows the shipped one is not refused -- it is a saved workflow, and removing
-// it is how the shadow goes away.
+// shadows the shipped one is not refused: removing it is how the shadow goes
+// away.
 func WorkflowRemove(rt Runtime, name string) error {
 	saved, err := loadWorkflows(rt)
 	if err != nil {
@@ -246,10 +240,10 @@ func WorkflowEdit(rt Runtime, name string, source []byte, def workflow.Definitio
 
 // WorkflowDefinition returns the parsed definition of a saved workflow: the
 // source with its file: seeds already replaced by the contents they named when
-// the workflow was saved. A shipped workflow is refused with ErrWorkflowNotSaved,
-// because a caller asking for a saved one wants the saved one and nothing else;
-// a caller that wants the shipped definition asks for it by WorkflowList or by
-// workflow.Default.
+// the workflow was saved. A shipped workflow is refused with
+// ErrWorkflowNotSaved: a caller asking for a saved one wants the saved one and
+// nothing else, and a caller that wants the shipped definition asks for it by
+// WorkflowList or by workflow.Default.
 func WorkflowDefinition(rt Runtime, name string) (workflow.Definition, error) {
 	saved, err := loadWorkflows(rt)
 	if err != nil {
@@ -266,9 +260,8 @@ func WorkflowDefinition(rt Runtime, name string) (workflow.Definition, error) {
 // actors this machine has, and returns one rendered line per failure in the
 // order the rules report them. It returns the problems rather than a joined
 // error so a caller can show them inline; joinProblems joins them for a caller
-// that has one place to put them.
-//
-// Given is nil, so a rule about the chain's inputs is left to chain start.
+// that has one place to put them. Given is nil, so a rule about the chain's
+// inputs is left to chain start.
 func WorkflowValidateProblems(rt Runtime, def workflow.Definition) []string {
 	env := workflow.Env{
 		Actors: rt.RoleRegistry().WorkflowActors(),
@@ -414,7 +407,6 @@ func workflowSection(rt Runtime, name string, source []byte, def workflow.Defini
 	return body, nil
 }
 
-// putWorkflows stores body as the workflows section, recorded under actor.
 func putWorkflows(rt Runtime, actor, message string, body []byte) error {
 	if rt.Config == nil {
 		return workflowErrorf(ErrWorkflowStore, "", "no config store")
@@ -425,7 +417,6 @@ func putWorkflows(rt Runtime, actor, message string, body []byte) error {
 	return nil
 }
 
-// writeWorkflows renders next as the whole section and stores it.
 func writeWorkflows(rt Runtime, actor, message string, next map[string]config.StoredWorkflow) error {
 	body, err := config.EncodeWorkflows(next)
 	if err != nil {
@@ -434,7 +425,6 @@ func writeWorkflows(rt Runtime, actor, message string, next map[string]config.St
 	return putWorkflows(rt, actor, message, body)
 }
 
-// workflowSummary is one row of the list, built from the definition it lists.
 func workflowSummary(name, origin string, def workflow.Definition) WorkflowSummary {
 	return WorkflowSummary{
 		Name:        name,

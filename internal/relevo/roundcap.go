@@ -27,7 +27,6 @@ func (e *roundCapError) Error() string {
 
 func (e *roundCapError) Unwrap() error { return ErrRoundCap }
 
-// roundCapRefusal builds the typed cap refusal for one binding.
 func roundCapRefusal(name string, cap int) error { return &roundCapError{name: name, cap: cap} }
 
 // chainMemberCapSlack is the headroom above a chain's own plan, correction and

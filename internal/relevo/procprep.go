@@ -24,10 +24,8 @@ const (
 	procKindCheck procKind = "check"
 )
 
-// procRequest is one process about to be started or relaunched: what it is,
-// the key that identifies it within its kind, the tree it will run in, and
-// the binding when there is one. A round is named by its binding; a check has
-// a key and no binding.
+// procRequest is one process about to be started or relaunched. A round is
+// named by its binding; a check has a key and no binding.
 type procRequest struct {
 	kind    procKind
 	key     string
@@ -36,17 +34,11 @@ type procRequest struct {
 }
 
 // prepareProc is the one seam where a process is prepared before it starts.
-// It returns the temp directory to set on the ProcSpec's TmpDir, the env
-// entries to append to the spec, and a cleanup that undoes the preparation
-// when the start never happens: once the process is running, the process's
-// own route owns what was prepared -- a round through its close and kill
-// hooks, a check through its advance -- and removes it. A runtime with no
-// tmp root -- container mode, whose processes see the container's own
-// /tmp, and any host that names none -- prepares nothing and errors never.
-//
-// What it prepares is the process's private temp directory under the
-// runtime's tmp root, named by the rule for the request's kind and key; a
-// kind whose rule names no directory passes through with nothing prepared.
+// It returns the temp directory for the ProcSpec's TmpDir, env entries, and a
+// cleanup for when the start never happens: once running, the process's own
+// route owns what was prepared. A runtime with no tmp root -- container mode,
+// whose processes see the container's own /tmp -- prepares nothing and errors
+// never.
 func prepareProc(ctx context.Context, rt Runtime, req procRequest) (string, []string, func(), error) {
 	if err := preflightDisk(rt, req.tree); err != nil {
 		return "", nil, nil, err
@@ -63,8 +55,6 @@ func prepareProc(ctx context.Context, rt Runtime, req procRequest) (string, []st
 	return dir, env, undo, nil
 }
 
-// prepareTmp makes the request's private temp directory, and returns the
-// cleanup that takes it away again.
 func prepareTmp(rt Runtime, req procRequest) (string, func(), error) {
 	if rt.TmpRoot == "" {
 		return "", func() {}, nil
@@ -144,8 +134,7 @@ func builderEnv(b store.Binding) []string {
 // harness session relevo spawns for a round must not read itself as a
 // MasterMind or planner, so the marker is what its consent hooks go silent on.
 // The spawn appends the marker after the deny filter, so a stale RELEVO_RUNNER
-// in the daemon's own environment cannot shadow it. The binding's base commit
-// follows the marker when it has one. Pure.
+// in the daemon's own environment cannot shadow it. Pure.
 func roundEnv(b store.Binding) []string {
 	return append(append(builderEnv(b), mastermind.RunnerEnvEntry(b.Name)), baseEnvEntry(b)...)
 }
@@ -154,8 +143,7 @@ func roundEnv(b store.Binding) []string {
 // identity and runner marker, plus the account home entry last. Appending it
 // after the marker puts it after proc.ChildEnv's deny filter, so the account's
 // value is the later of two entries of the same name and a stale parent value
-// cannot win. A nil account is exactly roundEnv's output, so a host with no
-// accounts configured spawns the environment it always did.
+// cannot win. A nil account is exactly roundEnv's output.
 func roundEnvFor(b store.Binding, a *account.Account) []string {
 	return append(roundEnv(b), accountEnvEntry(a)...)
 }

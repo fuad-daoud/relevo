@@ -42,8 +42,6 @@ func planHasSteps(body []byte) bool {
 	return bullets >= 2 || nonEmpty >= 3
 }
 
-// chainStepWritesPlan reports whether a step renders a shipped seed whose
-// output is the plan the next builder round runs.
 func chainStepWritesPlan(def workflow.Definition, step string) bool {
 	switch def.Steps[step].Seed {
 	case "shipped:correct", "shipped:fix":

@@ -73,12 +73,10 @@ func waitLive(rt Runtime, name string, waits map[string]*delivery.WaitClaim) boo
 	return err == nil && c != nil
 }
 
-// statusConfig carries Status's options.
 type statusConfig struct {
 	detail bool
 }
 
-// StatusOption is one option on Status.
 type StatusOption func(*statusConfig)
 
 // Detail turns the detail figures -- Live, LiveUsage and Headless.Tail -- on
@@ -89,7 +87,6 @@ func Detail(on bool) StatusOption {
 	return func(c *statusConfig) { c.detail = on }
 }
 
-// statusConfigOf folds opts over the default-on detail figures.
 func statusConfigOf(opts []StatusOption) statusConfig {
 	cfg := statusConfig{detail: true}
 	for _, opt := range opts {
@@ -182,8 +179,6 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, cfg statusConfi
 	return statusRowWith(ctx, rt, b, cfg, nil)
 }
 
-// buildReport is buildReportWith with the detail figures on, for callers
-// whose rows name a diff, a usage figure and a log tail.
 func buildReport(ctx context.Context, rt Runtime, bindings []store.Binding) (view.Report, error) {
 	return buildReportWith(ctx, rt, bindings, statusConfig{detail: true})
 }

@@ -34,13 +34,12 @@ var (
 	gateTmpRe     = regexp.MustCompile(`\S*/tmp/\S*`)
 )
 
-// gateSignature is a stable fingerprint of a gate log's content.
-// Timestamps, durations, large integers, hex runs and /tmp paths are dropped,
-// the remaining lines are trimmed, emptied lines discarded, the rest sorted,
-// and the whole thing hashed, so two runs of the same failure hash the same
-// however much of the output was clock, timing or tempdir noise. "" when the
-// file cannot be read: the caller then skips the stall bound rather than
-// treating an unreadable log as a repeat.
+// gateSignature is a stable fingerprint of a gate log's content: the lines the
+// noise above leaves are trimmed, emptied lines discarded, the rest sorted and
+// hashed, so two runs of the same failure hash the same however much of the
+// output was clock, timing or tempdir noise. "" when the file cannot be read:
+// the caller then skips the stall bound rather than treating an unreadable log
+// as a repeat.
 func gateSignature(read func(string) ([]byte, error), logPath string) string {
 	data, err := read(logPath)
 	if err != nil {
@@ -120,16 +119,14 @@ func repairDecision(b store.Binding, sig string) (ok bool, why string) {
 }
 
 // startRepairRound stages and hands over round failedRound+1 after a failing
-// gate. It is called on the tick that closed round failedRound,
-// after the report has been queued to the mastermind, with the binding already
-// advanced (`b.Round == failedRound+1`, RoundStartedAt zero).
+// gate. It is called on the tick that closed round failedRound, after the
+// report has been queued, with the binding already advanced (`b.Round ==
+// failedRound+1`, RoundStartedAt zero).
 //
 // repairDecision holds the two bounds that end the loop with NEEDS YOU instead
 // of another repair, so a caller that must decide without opening the round
-// reaches the same answer. Otherwise it writes round N+1's plan, hands it to
-// the builder the way Send does (a fresh process for a headless binding, a
-// prompt for a pane), logs `repair k/M` on the round's plan entry, and opens
-// the round exactly as a Send would.
+// reaches the same answer. Otherwise it opens round N+1 with the same fields
+// Send sets, and the two must stay in step.
 //
 // Preconditions: the round just closed; rec.Result == "fail"; b.Regate > 0.
 func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, rec store.GateRecord, failedRound int) (store.Binding, error) {

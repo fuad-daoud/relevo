@@ -78,7 +78,6 @@ func repickForRound(rt Runtime, b store.Binding, named, allowYolo bool) (store.B
 	return next, &res, repickWindow, nil
 }
 
-// repickLine is the printed reason for a re-pick that left from.
 func repickLine(rt Runtime, from, why string, res resolve.Resolution) string {
 	pick := resolve.PickText("builder", res, rt.Candidates)
 	if why == repickStaleToken {

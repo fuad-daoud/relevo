@@ -19,16 +19,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// SendResult is what one successful Send produced.
 type SendResult struct {
-	Round int    // the round the plan was filed under
+	Round int
 	Drift string // the drift line for stdout, or "" when there is nothing to say
 	// Pick is the pick line when SendOptions.Builder changed the builder (the
 	// KindPick note), or "" otherwise. For the CLI to print.
 	Pick string
 }
 
-// SendOptions is what a send may add to the plan file.
 type SendOptions struct {
 	Tier      string // "" means the binding's Tier; else a one-round override (headless only)
 	AllowYolo bool
@@ -81,8 +79,8 @@ type RemoteSendDeps struct {
 // Send's exact wording.
 type preflight struct {
 	b        store.Binding // the binding as loaded (read-only; Send re-loads under the lock)
-	body     []byte        // the plan file's bytes
-	tier     harness.Tier  // effective tier for this round (opts.Tier parsed, or the stored tier); the cap is checked as it is derived for a local launch, while a served round's tier is capped by the server
+	body     []byte
+	tier     harness.Tier // effective tier for this round (opts.Tier parsed, or the stored tier); the cap is checked as it is derived for a local launch, while a served round's tier is capped by the server
 	tierFrom string
 	argv     []string            // headless: headlessLaunch's argv (proves the launch is well-formed); nil for remote
 	gate     *availability.Gate  // advisory: a gate on b.BuilderCandidate (rate-limited or roles_missing), nil when none
@@ -111,9 +109,7 @@ var sendAfterSpawn func(name string) error
 // as the prompt of a fresh process started in the binding's tree. It
 // returns a SendResult describing the round and any between-rounds drift.
 //
-// Every precondition that needs no lock lives in sendPreflight, which
-// `relevo send --dry-run` calls too. The in-lock checks stay: they guard
-// against a change between the preflight and the lock.
+// The in-lock checks stay: they guard against a change between the preflight and the lock.
 func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) (SendResult, error) {
 	pf, err := sendPreflight(ctx, rt, name, file, opts)
 	if err != nil {
@@ -235,8 +231,6 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 
 		text := composePrompt(rt, b, planPath, reportPath, donePath)
 
-		// Defer stages the round without spawning: the caller (serve.admit
-		// or relevo.Admit) starts the builder later.
 		deferred := opts.Defer
 
 		late := false

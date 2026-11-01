@@ -16,35 +16,30 @@ import (
 )
 
 // streamTailWindow is the first, and smallest, backwards window streamTail
-// reads: 64 KiB. It doubles until it yields the wanted number of rendered
-// lines or covers the whole file. The spike measured up to 271 KB of stream
-// for 40 rendered lines, so one fixed 64 KiB window is not enough.
+// reads: 64 KiB, doubling until it yields the wanted rendered lines or covers
+// the whole file. The spike measured up to 271 KB of stream for 40 rendered
+// lines, so one fixed 64 KiB window is not enough.
 const streamTailWindow = 64 * 1024
+
+// lineRenderer turns one raw line of a stream -- with the harness kind of the
+// segment that holds it -- into the lines a reader or a scan sees: a reader
+// renders through streamRenderer, a limit scan through transcript.LimitLines,
+// which keeps only the lines the harness itself wrote.
+type lineRenderer func(kind string, line []byte) []string
 
 // renderStream renders every complete line of a round's stream -- up to the
 // last '\n'; a trailing partial line is ignored -- into the bytes
 // drainFile+appendLines would have appended to an empty log for the same
-// stream: each non-empty Render result, joined with '\n' and terminated with
-// one. The reader's renderer is one per pass, of the harness kind of the
-// segment that contains each line's absolute offset (segmentKind); a later
-// line can never change an earlier one, so the rendering's prefix is stable as
-// the stream grows, which serve's files/log?from= offsets and the client
-// mirror depend on.
-//
-// lineRenderer turns one raw line of a stream -- with the harness kind of the
-// segment that holds it -- into the lines a reader or a scan sees. Rendering
-// for a reader is a transcript.Renderer through streamRenderer; a limit scan
-// uses transcript.LimitLines, which keeps only the lines the harness itself
-// wrote.
-type lineRenderer func(kind string, line []byte) []string
-
+// stream. The reader's renderer is one per pass, of the harness kind of the
+// segment holding each line's absolute offset; a later line can never change
+// an earlier one, so the rendering's prefix is stable as the stream grows,
+// which serve's files/log?from= offsets and the client mirror depend on.
 func renderStream(stream []byte, segs []store.StreamSegment, fallback string) []byte {
 	return renderStreamFrom(stream, 0, segs, fallback, streamRenderer())
 }
 
 // renderStreamFrom renders a window starting at base, keeping the lines'
-// absolute offsets in the whole stream so segment kinds stay correct. render
-// is the one place the reader and the limit scan differ.
+// absolute offsets in the whole stream so segment kinds stay correct.
 func renderStreamFrom(stream []byte, base int64, segs []store.StreamSegment, fallback string, render lineRenderer) []byte {
 	end := bytes.LastIndexByte(stream, '\n')
 	if end < 0 {
@@ -72,8 +67,6 @@ func renderedLines(rendered []byte) []string {
 	return strings.Split(s, "\n")
 }
 
-// joinTailLines is the last n of lines joined with '\n', or "" when there are
-// none or n <= 0.
 func joinTailLines(lines []string, n int) string {
 	if n <= 0 || len(lines) == 0 {
 		return ""
@@ -84,26 +77,18 @@ func joinTailLines(lines []string, n int) string {
 	return strings.Join(lines, "\n")
 }
 
-// streamTail is the last n lines of a round's stream rendered for humans:
-// exactly logTail's conventions (no trailing newline, "" for a missing or
-// empty file, or n <= 0), but over renderStream's output, whose entries may
-// themselves contain newlines.
-//
-// from is the earliest byte it may read: 0 for the whole file, a later offset
-// to ignore bytes another process wrote into the same file. When path exists
-// on disk it reads backwards in doubling windows (streamTailWindow first),
-// dropping the first, partial line of a window that does not start at from and
-// rendering the rest with their absolute offsets. When the file is not on disk
-// -- a sealed round -- it reads it whole through read and renders the bytes at
-// from or later.
+// streamTail is the last n lines of a round's stream rendered for humans, over
+// renderStream's output whose entries may themselves contain newlines: tailWith
+// with the reader's renderer. from is the earliest byte it may read: 0 for the
+// whole file, a later offset to ignore bytes another process wrote into the
+// same file.
 func streamTail(path string, read func(string) ([]byte, error), segs []store.StreamSegment, fallback string, n int, from int64) string {
 	return tailWith(path, read, segs, fallback, n, from, streamRenderer())
 }
 
 // streamRenderer is the reader's lineRenderer: one Renderer for the whole
-// pass, so a claude call and its result rendered in the same pass keep the
-// span between them. A scan never uses it: scanTail renders with
-// transcript.LimitLines, which is stateless.
+// pass, so a call and its result rendered in the same pass keep the span
+// between them. A scan never uses it.
 func streamRenderer() lineRenderer {
 	r := transcript.NewRenderer()
 	return func(kind string, line []byte) []string { return r.Render(kind, line) }
@@ -111,19 +96,18 @@ func streamRenderer() lineRenderer {
 
 // scanTail is streamTail's sibling for a limit scan: the same bytes, read the
 // same way, but each line is rendered with transcript.LimitLines, so only the
-// lines the harness itself wrote reach the patterns. This writer's "lines" are
-// the harness-authored text of each raw line, and the reset time is parsed from
-// the same text, so model text, tool output, a successful result and thinking
-// can never gate a provider.
+// lines the harness itself wrote reach the patterns -- and the reset time is
+// parsed from that same text, so model text, tool output and thinking can
+// never gate a provider.
 func scanTail(path string, read func(string) ([]byte, error), segs []store.StreamSegment, fallback string, n int, from int64) string {
 	text, _ := scanTailBoth(path, read, segs, fallback, n, from)
 	return text
 }
 
 // scanTailBoth is scanTail paired with the structured reset the same bytes
-// carry: one pass, no new I/O. The render closure sees every raw line the
-// scan already reads, keeping the last quota instant and the last allowance
-// window instant; the failure's own instant wins over the window's.
+// carry: one pass, no new I/O. The render closure keeps the last quota and
+// allowance instants from the lines the scan already reads; the failure's own
+// instant wins over the window's.
 func scanTailBoth(path string, read func(string) ([]byte, error), segs []store.StreamSegment, fallback string, n int, from int64) (string, int64) {
 	var quotaMS, allowMS int64
 	render := func(kind string, line []byte) []string {
@@ -144,17 +128,13 @@ func scanTailBoth(path string, read func(string) ([]byte, error), segs []store.S
 }
 
 // tailWith renders the last n lines of a round's stream with render, using
-// logTail's conventions (no trailing newline, "" for a missing or empty
-// file, or n <= 0), over renderStream's output, whose entries may themselves
-// contain newlines.
-//
-// from is the earliest byte it may read: 0 for the whole file, a later offset
-// to ignore bytes another process wrote into the same file. When path exists
-// on disk it reads backwards in doubling windows (streamTailWindow first),
-// dropping the first, partial line of a window that does not start at from and
-// rendering the rest with their absolute offsets. When the file is not on disk
-// -- a sealed round -- it reads it whole through read and renders the bytes at
-// from or later.
+// logTail's conventions (no trailing newline, "" for a missing or empty file,
+// or n <= 0). from is the earliest byte it may read: 0 for the whole file, a
+// later offset to ignore bytes another process wrote into the same file. When
+// path exists on disk it reads backwards in doubling windows
+// (streamTailWindow first), dropping the first, partial line of a window that
+// does not start at from; when the file is not on disk -- a sealed round -- it
+// reads it whole through read and renders the bytes at from or later.
 func tailWith(path string, read func(string) ([]byte, error), segs []store.StreamSegment, fallback string, n int, from int64, render lineRenderer) string {
 	if n <= 0 {
 		return ""
@@ -217,9 +197,8 @@ func diskStreamTail(path string, segs []store.StreamSegment, fallback string, n 
 }
 
 // builderTail is the last n lines of a round's builder output: the log when
-// the endpoint writes one (LogPath is this round's BuilderLogPath: a legacy
-// round, see legacyLog), otherwise the rendered stream's tail, which holds the
-// builder's stderr too.
+// the endpoint writes one (a legacy round's own BuilderLogPath, see legacyLog),
+// otherwise the rendered stream's tail, which holds the builder's stderr too.
 func builderTail(rt Runtime, b store.Binding, n int) string {
 	if b.Builder.LogPath != "" && b.Builder.LogPath == rt.Store.BuilderLogPath(b.Name, b.Round) {
 		return logTail(b.Builder.LogPath, n)
@@ -230,9 +209,8 @@ func builderTail(rt Runtime, b store.Binding, n int) string {
 // currentBuilderTail is builderTail's read starting at the current builder
 // process's first byte. A mid-round switch appends the new process's bytes to
 // the same stream file, so scanning the whole round would charge the outgoing
-// builder's lines -- and its provider's quota text -- to the incoming one.
-// The legacy-log branch needs no cut: such a round's log is the round's own,
-// as in builderTail.
+// builder's lines -- and its provider's quota text -- to the incoming one. The
+// legacy-log branch needs no cut: such a round's log is the round's own.
 func currentBuilderTail(rt Runtime, b store.Binding, n int) string {
 	if b.Builder.LogPath != "" && b.Builder.LogPath == rt.Store.BuilderLogPath(b.Name, b.Round) {
 		return logTail(b.Builder.LogPath, n)
@@ -288,10 +266,10 @@ func limitScan(ctx context.Context, rt Runtime, b store.Binding) (string, int64)
 	return currentBuilderScan(rt, b, availability.LimitScanLines)
 }
 
-// roundSegments is the segment list of one round: the live endpoint's own
-// when it holds that round and has segments, otherwise the round's stored
-// NNN-builder-segments.json row, otherwise nil (the caller then renders with
-// the fallback kind). A decode error is a warning and nil.
+// roundSegments is the segment list of one round: the live endpoint's own when
+// it holds that round and has segments, otherwise the round's stored
+// NNN-builder-segments.json row, otherwise nil. A decode error is a warning
+// and nil.
 func roundSegments(live store.Endpoint, round int, read func(string) ([]byte, bool, error), segPath string) []store.StreamSegment {
 	if live.StreamRound == round && len(live.StreamSegments) > 0 {
 		return live.StreamSegments
@@ -313,11 +291,9 @@ func roundSegments(live store.Endpoint, round int, read func(string) ([]byte, bo
 }
 
 // RoundTranscript answers "what did the builder write in round N" for every
-// reader: the round's NNN-builder.log when one exists (older rounds that
-// still have one), otherwise the round's stream rendered per
-// segment, otherwise not found. read reports a miss as found=false, err=nil,
-// exactly as readFileMissing and ArchivedFile do; a real read error is
-// returned as is.
+// reader: the round's NNN-builder.log when one exists, otherwise the round's
+// stream rendered per segment, otherwise not found. read reports a miss as
+// found=false, err=nil; a real read error is returned as is.
 func RoundTranscript(st *store.Store, name string, round int, live store.Endpoint,
 	read func(path string) ([]byte, bool, error)) (text []byte, source string, found bool, err error) {
 	logPath := st.BuilderLogPath(name, round)
@@ -380,7 +356,7 @@ func defaultRound(rt Runtime, b store.Binding, completed int, section ShowSectio
 // openTranscriptRound returns the binding's open round when it has a readable
 // transcript: its mirrored builder log, or its stream. found is false when the
 // open round has neither, so a transcript default can fall back to the newest
-// completed round. RoundTranscript owns the read; this only names the round.
+// completed round.
 func openTranscriptRound(rt Runtime, b store.Binding) (round int, found bool, err error) {
 	if b.Round < 1 {
 		return 0, false, nil
@@ -395,14 +371,12 @@ func openTranscriptRound(rt Runtime, b store.Binding) (round int, found bool, er
 }
 
 // openRoundTranscriptRound reports whether an explicit --round transcript read
-// may name the round it asks for. A server-chain member installs its rounds only
-// at close, so the round in flight is outside the prompt-entry range that
-// bounds an explicit --round; when the requested round is that open round and
-// the open round has a readable transcript, it is answered from the same mirror
-// the default reads. Any other round, an open round with no readable
-// transcript, and every section that is not a transcript report false, so the
-// caller's out-of-range refusal stands. RoundTranscript owns the read, so this
-// adds no call Show did not already make and no network round trip.
+// may name the round it asks for. A server-chain member installs its rounds
+// only at close, so the round in flight is outside the prompt-entry range that
+// bounds an explicit --round; when the requested round is that open round with
+// a readable transcript, it is answered from the same mirror the default
+// reads. Anything else reports false, so the caller's out-of-range refusal
+// stands; this adds no call Show did not already make and no network round trip.
 func openRoundTranscriptRound(rt Runtime, b store.Binding, section ShowSection, round int) (bool, error) {
 	if section != ShowTranscript {
 		return false, nil

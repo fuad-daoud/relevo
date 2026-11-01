@@ -18,8 +18,8 @@ func (d *Daemon) pullWindowLocked(now time.Time) time.Duration {
 
 // syncSlot runs attempts for as long as triggers kept arriving during the last
 // one, then releases the slot. The dirty check and the release share one
-// critical section, so a trigger either lands before it and is rerun, or lands
-// after the slot is free and starts its own attempt; none is lost between.
+// critical section, so no trigger is lost between them: one that lands before
+// it is rerun, one that lands after starts its own attempt.
 func (d *Daemon) syncSlot(ctx context.Context, runner *relevosync.Runner, st *store.Store) {
 	released := false
 	defer func() {
@@ -99,9 +99,9 @@ func (d *Daemon) exportIfPending(ctx context.Context, now time.Time) {
 }
 
 // outboxPending reports whether the machine has writes waiting to be exported:
-// a row in the shared file's outbox, or a document signal in the local file. It
-// reads the daemon's own handle and never opens one: a machine with no database
-// has nothing waiting.
+// a row in the shared file's outbox, or a document signal in the local file.
+// It reads the daemon's own handle and never opens one: a machine with no
+// database has nothing waiting.
 func (d *Daemon) outboxPending() bool {
 	if d.rt.Store == nil {
 		return false
@@ -132,7 +132,7 @@ func (d *Daemon) outboxPending() bool {
 // holdsSigningKey reports whether this machine can sign a document entry. A
 // locked machine keeps its document signals unexported, so counting them would
 // start an attempt every debounce that can never clear them. The key is read
-// through the runner the tick drives, which is the one the exporter signs with.
+// through the runner the tick drives -- the one the exporter signs with.
 func (d *Daemon) holdsSigningKey() bool {
 	runner := d.syncRunner()
 	if runner == nil || runner.Local == nil {
@@ -148,8 +148,8 @@ func (d *Daemon) holdsSigningKey() bool {
 
 // Freshen is a hint from a reader that it wants current data: it queues an
 // attempt unless one began within exportDebounce. It never waits and never
-// blocks the owner connection that carried the hint, and it goes through the
-// same slot and breaker as every other trigger.
+// blocks the owner connection that carried the hint, going through the same
+// slot and breaker as every other trigger.
 func (d *Daemon) Freshen(ctx context.Context) {
 	now := d.syncClock()()
 	d.syncMu.Lock()

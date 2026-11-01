@@ -22,16 +22,13 @@ const silenceCPUFloor = 2 * 100
 // silenceKinds are the builder kinds whose silence is told apart from a stall.
 var silenceKinds = map[string]bool{"opencode": true}
 
-// silenceVerdict reports whether a model has gone silent: no stream byte for
-// at least after, while the process tree is known not to be burning CPU. An
-// unknown CPU never reads as silent, because a failed read is not evidence.
+// silenceVerdict reports whether a model has gone silent. An unknown CPU
+// never reads as silent, because a failed read is not evidence.
 func silenceVerdict(lastEvent, now time.Time, after time.Duration, cpuBusy, cpuKnown bool) (silent bool, quiet time.Duration) {
 	quiet = now.Sub(lastEvent)
 	return cpuKnown && !cpuBusy && quiet >= after, quiet
 }
 
-// silenceDue reports whether b is a live builder of a kind silence applies to
-// in an open round.
 func silenceDue(b store.Binding) bool {
 	return silenceKinds[b.Builder.Kind] && b.Builder.PID != 0 && !b.RoundStartedAt.IsZero()
 }

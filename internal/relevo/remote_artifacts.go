@@ -66,7 +66,6 @@ func firstBadArtifactRel(files []remote.ArtifactFile) int {
 	return -1
 }
 
-// artifactListTotal sums the listing's sizes.
 func artifactListTotal(files []remote.ArtifactFile) int64 {
 	var total int64
 	for _, f := range files {
@@ -75,7 +74,6 @@ func artifactListTotal(files []remote.ArtifactFile) int64 {
 	return total
 }
 
-// hasArtifactRel reports whether the listing holds rel.
 func hasArtifactRel(files []remote.ArtifactFile, rel string) bool {
 	for _, f := range files {
 		if f.Rel == rel {
@@ -85,8 +83,7 @@ func hasArtifactRel(files []remote.ArtifactFile, rel string) bool {
 	return false
 }
 
-// fetchedArtifact is one downloaded artifact waiting for the apply half: the
-// path it belongs at, and the temp file beside it.
+// fetchedArtifact is one downloaded artifact waiting for the apply half.
 type fetchedArtifact struct {
 	Final string
 	Temp  string

@@ -150,24 +150,21 @@ type Runtime struct {
 	Git Git
 	// SkillExists reports whether a skill file is on disk; nil means os.Stat.
 	SkillExists func(string) bool
-	// Runner starts and stops headless builder processes. cmd/relevo
-	// wires proc.New(); tests wire fakeRunner. Nil means no headless path
-	// can run, and reports ErrRunnerUnavailable.
+	// Runner starts and stops headless builder processes. Nil means no headless
+	// path can run, and reports ErrRunnerUnavailable.
 	Runner spawn.Runner
-	// CPUTicks reads a builder process tree's CPU; nil reads /proc. Tests
-	// set it because a fake builder has no process to read.
+	// CPUTicks reads a builder process tree's CPU; nil reads /proc.
 	CPUTicks   func(pid int) (uint64, bool)
 	Store      *store.Store
 	Candidates *candidate.Set
 
 	// TmpRoot is the state directory this runtime's rounds and checks create
 	// their per-process entries under, through the store's tmp-entry helpers.
-	// Empty means no per-process dirs: every test, and container mode, whose
-	// builders see the container's own /tmp instead of any host path.
+	// Empty means no per-process dirs: every test, and container mode.
 	TmpRoot string
 
 	// DiskFree reads the free bytes under a path for the disk preflight; nil
-	// reads the filesystem. Tests set it so no disk is ever filled.
+	// reads the filesystem.
 	DiskFree func(path string) (uint64, error)
 
 	// Accounts is the configured login pool: the logins a pick may draw a
@@ -176,8 +173,7 @@ type Runtime struct {
 
 	// OpencodeAuth is the install-global opencode credential row: reading
 	// which login is active and flipping it. Nil means this host has no
-	// opencode seam -- every test that does not set one, and any host with no
-	// opencode accounts -- so no flip is attempted.
+	// opencode seam, so no flip is attempted.
 	OpencodeAuth OpencodeAuth
 
 	// Gates is where the availability ledger and the availability history live
@@ -194,52 +190,43 @@ type Runtime struct {
 	// open a transaction. It is what the gates document records its write
 	// stamps and its export signal in, so both belong to the same transaction
 	// as the ledger write that caused them. Nil whenever Gates is not that
-	// file -- the serve-wide ledger under its own prefix, a test double -- and
-	// then a gate write is stamped nowhere and signals nothing.
+	// file, and then a gate write is stamped nowhere and signals nothing.
 	GatesDB *db.DB
 
 	// GatesLocal is the host's machine-local ledger row "ledger", set only on
-	// the server's runtimes (internal/serve runtimeAt) beside a Gates bound to
-	// the `serve.`-prefixed row. When it is set, AvailabilityDeps binds
-	// Deps.Gates to the union of the two rows: gates recorded by `relevo gate`
-	// on the server host, and gates the synced gates document applied there,
-	// steer served picks and switches exactly as they steer local ones.
-	// Reading the union never double-counts a subject live in both rows, and
-	// writing through it keeps every entry in its own row: a served write
-	// lands in "serve.ledger", never in the host's own.
+	// the server's runtimes beside a Gates bound to the `serve.`-prefixed row.
+	// When it is set, AvailabilityDeps binds Deps.Gates to the union of the
+	// two rows, so both steer served picks and switches exactly as they steer
+	// local ones. Reading the union never double-counts a subject live in both
+	// rows, and writing through it keeps every entry in its own row: a served
+	// write lands in "serve.ledger", never in the host's own.
 	GatesLocal db.KV
 
 	// SyncNow asks for a sync attempt now rather than at the end of the export
 	// debounce, which is what a gate a person just recorded is worth. The daemon
-	// installs its own; nil on a CLI one-shot with no daemon to ask, and in
-	// every test, and then the
-	// next ordinary trigger exports the gate.
+	// installs its own; nil on a CLI one-shot with no daemon to ask, and then
+	// the next ordinary trigger exports the gate.
 	SyncNow func()
 
 	// InFlight counts the live rounds per candidate token across every binding
 	// the resolver knows, leaving out the binding named by its argument. Nil
-	// means a walk over Store; the server sets its machine-wide walk.
+	// means a walk over Store.
 	InFlight func(except string) map[string]int
 
-	// DB is relevo's sqlite database.
-	// Nil means no database: only `relevo db *` opens one, never the shared
-	// runtime constructor, so every call site must treat nil the same as a
-	// machine with no db.
+	// DB is relevo's sqlite database. Nil means no database, so every call site
+	// must treat nil the same as a machine with no db.
 	DB *db.DB
 
 	// History is the shared file the availability_event and latency_sample rows
-	// are read from and written into, when one is open. It is the shared file
-	// rather than the machine-local one Gates and Latency bind, because a history
-	// row travels through the outbox like every other shared row while a kv
-	// document travels as a document; buildRuntime sets it beside the local
-	// handle it binds those two to.
+	// are read from and written into, when one is open. It is the shared file,
+	// not the machine-local one Gates and Latency bind, because a history row
+	// travels through the outbox like every other shared row, while a kv
+	// document travels as a document.
 	//
-	// It is separate from DB rather than the same field because the two answer
-	// different questions. DB is the handle a verb owns and writes whole records
-	// through, and only a few verbs open one; History is needed by every surface
-	// that renders a gate or a latency figure, so a runtime with no DB still has
-	// one. historyDB resolves the pair for AvailabilityDeps, so a test or a
-	// caller that sets either alone still gets the file.
+	// It is separate from DB because the two answer different questions: History
+	// is needed by every surface that renders a gate or a latency figure, so a
+	// runtime with no DB still has one. historyDB resolves the pair for
+	// AvailabilityDeps, so a caller that sets either alone still gets the file.
 	History *db.DB
 
 	// Config is the database-backed config store newRuntime imports into and
@@ -248,33 +235,28 @@ type Runtime struct {
 	Config *config.Store
 
 	// Policy is ~/.config/relevo/policy.json: the mastermind's candidate order
-	// per role. The zero value means nothing is ordered, so
-	// tests that do not set it behave as a machine with no policy file.
+	// per role. The zero value means nothing is ordered, which reads as a
+	// machine with no policy file.
 	Policy policy.Policy
 
 	// Registry is the roles registry: roles.json merged over the built-ins,
 	// or the legacy derivation. nil means "derive the legacy registry from
-	// Candidates and Policy on demand", which is what every existing
-	// test gets, since tests don't set it.
+	// Candidates and Policy on demand".
 	Registry *roles.Registry
 
 	// ConfigWarnings collects the unknown-key and skipped-candidate warnings
 	// the last config load produced (candidates.json then policy.json). They
 	// never fail a command: `relevo doctor` renders them in a `config` row and
-	// the daemon logs each once. newRuntime fills it without
-	// printing; the daemon's ConfigWatcher refills it on reload.
+	// the daemon logs each once.
 	ConfigWarnings []string
 
 	// Usage reads what a round consumed from the harness's own record.
-	// Nil means every round records Basis unknown, note
-	// "no reader"; tests that do not set it behave as a machine with no
-	// reader.
+	// Nil means every round records Basis unknown, note "no reader".
 	Usage usage.Reader
 
 	// Classify judges report and dialog paragraphs for instruction-shaped
-	// content beside the regex scan. Nil means no classifier is
-	// configured and the regex result stands alone; cmd/relevo wires
-	// classify.Resolve, tests wire *classify.Fake.
+	// content beside the regex scan. Nil means no classifier is configured
+	// and the regex result stands alone.
 	Classify classify.Classifier
 
 	// Prices is ~/.config/relevo/prices.json over the embedded default. The
@@ -282,9 +264,7 @@ type Runtime struct {
 	Prices usage.Prices
 
 	// Fetcher reads the newest published release tag for the day-cached
-	// staleness check. Nil means no check runs at all: a served
-	// daemon, an air-gapped build and every test that does not set it skip
-	// the check. cmd/relevo wires release.NewHTTPFetcher.
+	// staleness check. Nil means no check runs at all.
 	Fetcher release.Fetcher
 
 	Now       func() time.Time
@@ -299,8 +279,7 @@ type Runtime struct {
 	// triggers skip and the statusline reads markers nobody writes.
 	Sync *sync.Runner
 
-	// NewID mints a consult id. Nil means a crypto/rand id, so no production
-	// call site has to set it and tests can make ids deterministic.
+	// NewID mints a consult id. Nil means a crypto/rand id.
 	NewID func() string
 
 	// StartedAt is when this daemon process started; zero means unknown
@@ -310,55 +289,46 @@ type Runtime struct {
 	StartedAt time.Time
 
 	// Watched is the daemon's in-memory record of the processes it has seen
-	// alive. Only `relevo daemon` sets one (relevo.NewWatched); a nil
-	// *Watched has seen nothing, so CLI one-shots never report a pid as seen.
+	// alive. A nil *Watched has seen nothing, so CLI one-shots never report
+	// a pid as seen.
 	Watched *Watched
 
 	// AuthGrace is the daemon's in-memory record of when each binding's server
-	// first answered a transient auth error. Only `relevo daemon`
-	// sets one (relevo.NewAuthGrace); a nil *AuthGrace never expires, so
+	// first answered a transient auth error. A nil *AuthGrace never expires, so
 	// CLI one-shots never halt on a transient 401.
 	AuthGrace *AuthGrace
 
 	// Roles checks whether a harness kind's shipped role files are present
 	// on disk, so a candidate whose harness has none installed is gated
-	// before it is picked. Nil means no check; cmd/relevo wires
-	// harness.OSRoleChecker().
+	// before it is picked. Nil means no check.
 	Roles harness.RoleChecker
 
 	// Scope is the template a served headless round's ProcSpec.Scope is
-	// filled from; its Unit is always empty here, since
-	// startRound fills in the per-round unit name. Nil means no scopes
-	// (the local daemon, CI, or a server whose scope probe failed).
+	// filled from; its Unit is always empty here, since startRound fills in
+	// the per-round unit name. Nil means no scopes.
 	Scope *spawn.ScopeSpec
 
 	// HeldCPUs returns the cores held by live rounds other than the binding
 	// named self, in every store that shares this host's pool. Nil
-	// means the local census, which reads only the caller's tx. The server sets
-	// it to a closure over its owner root, so internal/relevo stays unaware of
-	// owners.
+	// means the local census, which reads only the caller's tx.
 	HeldCPUs func(tx *store.Tx, self string) ([]int, error)
 
 	// Channels arbitrates a mastermind's mailbox between the daemon and a live
-	// `relevo push` holder.
-	// Nil means no claims exist, so DeliverPending leaves the entry pending
-	// for `relevo wait`; cmd/relevo wires delivery.KVClaims.
+	// `relevo push` holder. Nil means no claims exist, so DeliverPending leaves
+	// the entry pending for `relevo wait`.
 	Channels delivery.ClaimStore
 
 	// Waits is where `relevo wait` records that it is polling, so a status
 	// read can tell a pull payload a live wait is about to collect from one
-	// nobody is coming for. Wait writes and refreshes a registration per
-	// binding on every poll and removes it on the way out; statusRow only
-	// reads. Nil means no registrations exist and every wait reads as not
-	// live, which is the safe direction: a payload nobody is waiting on
-	// still escalates. cmd/relevo wires delivery.KVWaitClaims.
+	// nobody is coming for. Nil means no registrations exist and every wait
+	// reads as not live, which is the safe direction: a payload nobody is
+	// waiting on still escalates.
 	Waits delivery.WaitClaimStore
 
 	// MasterMinds is the mastermind registry. bind, add, fork and
 	// ask resolve their mastermind through it, and the daemon back-fills a
-	// binding with no MasterMindID set. Nil means no registry is
-	// configured -- tests, and embedded callers with none -- and
-	// resolution then fails with ErrNoMasterMind.
+	// binding with no MasterMindID set. Nil means no registry is configured
+	// and resolution then fails with ErrNoMasterMind.
 	MasterMinds mastermind.Registry
 
 	// ProcStart reads a process's start time in Unix seconds, the pid-reuse
@@ -368,8 +338,7 @@ type Runtime struct {
 
 	// MuseHost is the nearest ancestor of the caller's parent pid whose
 	// command name is `muse`, the host a muse record resolves and heals
-	// through. Nil falls back to the parent pid. cmd/relevo wires the
-	// /proc reader.
+	// through. Nil falls back to the parent pid.
 	MuseHost func(ppid int) (pid int, ok bool)
 
 	// OpencodeSession finds an opencode session id for the working directory.
@@ -389,13 +358,12 @@ type Runtime struct {
 	// SessionReaper deletes harness sessions relevo abandoned, so a harness
 	// that resumes its own sessions cannot restart a round relevo wrote off.
 	// Nil means deletes are skipped and the abandoned entries stay on the
-	// binding; cmd/relevo wires the real one.
+	// binding.
 	SessionReaper SessionDeleter
 
 	// CloseServedRound records an owned binding's closed round, through the
 	// server package that owns the served close. Nil keeps the binding
-	// unchanged, which is what a hook-less test runtime gets; both production
-	// builders wire the serve implementation.
+	// unchanged.
 	CloseServedRound func(ctx context.Context, rt Runtime, b store.Binding) store.Binding
 
 	// RemoteSend ships rounds to a remote server through internal/uplink.
@@ -425,8 +393,8 @@ func IngestDeps(rt Runtime) ingest.Deps {
 }
 
 // AvailabilityDeps builds internal/availability's Deps from rt. Now carries
-// through nil-safe as time.Now, since a zero Runtime (a test) has no clock; the
-// roles registry is passed as the lazy builder rt.RoleRegistry, so availability
+// through nil-safe as time.Now, since a zero Runtime has no clock; the roles
+// registry is passed as the lazy builder rt.RoleRegistry, so availability
 // never builds it eagerly.
 //
 // History is historyDB(rt) -- the shared file, whose outbox is the one the sync
@@ -461,9 +429,8 @@ func AvailabilityDeps(rt Runtime) availability.Deps {
 }
 
 // historyDB is the shared file the two history tables are reached through:
-// History where a runtime sets one, else DB. The fallback is the daemon's shape,
-// which sets both to the same handle, and the shape a test uses when it sets only
-// DB; a runtime that sets neither is a machine with no database and reads empty.
+// History where a runtime sets one, else DB; a runtime that sets neither is
+// a machine with no database and reads empty.
 func historyDB(rt Runtime) *db.DB {
 	if rt.History != nil {
 		return rt.History

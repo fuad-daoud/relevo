@@ -54,17 +54,16 @@ const readerFenceNote = "Your block's opening and closing ``` fences are missing
 // plan instead of writing it, and the plan must be the final message itself.
 const planNudgeNote = "Your final message must be the plan itself, as numbered steps; do not write it to a file and do not point to one."
 
-// planNudgeLimit is how many continuations a plan-writing reader is granted for
-// an output with no plan steps: after it the round closes and the chain halts.
+// planNudgeLimit caps continuations for a plan-less output: after it the round
+// closes and the chain halts.
 const planNudgeLimit = 1
 
-// readerNudgeLimit is how many continuations a reader is granted before halting.
+// readerNudgeLimit is how many continuations a reader gets before it halts.
 const readerNudgeLimit = 2
 
-// writerNudgeLimit is how many nudges a writer is granted before switching.
+// writerNudgeLimit is how many nudges a writer gets before it is switched.
 const writerNudgeLimit = 1
 
-// nudgeLimit returns the continuation/nudge limit for b's shape.
 func nudgeLimit(shape string) int {
 	if shape == store.ShapeReader {
 		return readerNudgeLimit
@@ -72,8 +71,6 @@ func nudgeLimit(shape string) int {
 	return writerNudgeLimit
 }
 
-// nudgePrompt renders nudgePromptFormat for one round's report and done paths,
-// plus the shell-timeout note when the builder's harness is opencode.
 func nudgePrompt(reportPath, donePath, kind string) string {
 	prompt := fmt.Sprintf(nudgePromptFormat, reportPath, donePath)
 	if kind == string(account.OpenCode) {
@@ -82,10 +79,9 @@ func nudgePrompt(reportPath, donePath, kind string) string {
 	return prompt
 }
 
-// nudgePromptFor renders the nudge prompt for b: a writer is told its round's
-// report and done paths, a reader is told to continue to its deliverable. A
-// reader whose block lost its fences is told so, because the generic wording
-// would send it looking for a missing block it in fact wrote.
+// nudgePromptFor renders the nudge prompt for b; a reader whose block lost its
+// fences is told so, because the generic wording would send it looking for a
+// missing block it in fact wrote.
 func nudgePromptFor(rt Runtime, b store.Binding) string {
 	done := rt.Store.DonePath(b.Name, b.Round)
 	if b.Shape != store.ShapeReader {
@@ -101,9 +97,6 @@ func nudgePromptFor(rt Runtime, b store.Binding) string {
 	return prompt
 }
 
-// memberWritesPlan reports whether b is a chain member whose awaited step
-// writes the plan a builder runs next. A binding outside a chain, a chain with
-// no readable workflow or state, and any other step all give false.
 func memberWritesPlan(rt Runtime, b store.Binding) bool {
 	c, err := rt.Store.ChainByMember(b.Name)
 	if err != nil {
@@ -120,10 +113,8 @@ func memberWritesPlan(rt Runtime, b store.Binding) bool {
 	return chainStepWritesPlan(def, st.Awaiting.Step)
 }
 
-// nudgesSincePlan returns the count of nudge switch entries that follow the
-// latest prompt sent for round: a prompt is nudged up to its shape limit, and a
-// resend of the same round (a newer prompt entry) resets the count. A round
-// with no prompt entry in entries has had none.
+// nudgesSincePlan counts nudge switch entries after the latest prompt for round;
+// a resend of the same round resets the count.
 func nudgesSincePlan(entries []store.LogEntry, round int) int {
 	plan := -1
 	for i, e := range entries {
@@ -144,17 +135,13 @@ func nudgesSincePlan(entries []store.LogEntry, round int) int {
 }
 
 // nudgeResume resumes the session of a builder that ended its turn with code
-// 0 without writing either the report or the done marker: the process it left
-// behind is gone and nothing will wake it, so relevo sends one fixed nudge
-// into the same session and hands the round back to it. It is once per plan --
-// a resend of the round allows another -- and is not counted against
-// max_switches, because the builder did not fail, its turn simply ended.
+// 0 without writing the report or the done marker: the process is gone and
+// nothing will wake it. It is once per plan -- a resend of the round allows
+// another -- and is not counted against max_switches, because the builder did
+// not fail, its turn simply ended.
 //
-// The caller's existing exit path is the fallback: a missing precondition, or
-// a resume that cannot start, returns the binding untouched and lets the
-// caller switch (or halt) exactly as it did before. relevo does not attempt a
-// fresh relaunch from here, because that is what the caller's switch already
-// does.
+// A missing precondition, or a resume that cannot start, returns the binding
+// untouched and lets the caller switch or halt exactly as it did before.
 func nudgeResume(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, codeText string, now time.Time) (store.Binding, bool, error) {
 	if codeText != "0" || b.Builder.StreamSessionID == "" {
 		return b, false, nil
@@ -188,9 +175,7 @@ func nudgeResume(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	return settleResumed(tx, b, next, keep, prior, note, now)
 }
 
-// settleResumed is the tail both same-session resumes share: the resumed
-// round keeps its clock and goes active, and one switch entry carries the
-// outgoing segment's usage.
+// settleResumed is the tail both same-session resumes share.
 func settleResumed(tx *store.Tx, b, next store.Binding, keep time.Time, prior *usage.Usage, note string, now time.Time) (store.Binding, bool, error) {
 	next.RoundStartedAt = keep
 	next.State = store.StateActive

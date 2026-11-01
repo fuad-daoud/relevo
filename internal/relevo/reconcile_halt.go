@@ -15,16 +15,13 @@ import (
 // haltBinding stops relaying and asks for a human, exactly once per round.
 //
 // The dedup keys on HaltNotifiedRound rather than on State because State is
-// rewritten by other steps of the same tick, which is what made every earlier
-// State-keyed guard log once per poll instead of once. Per round is also the
-// behaviour a human wants: one log line per round that goes wrong.
+// rewritten by other steps of the same tick. Per round is also the behaviour
+// a human wants: one log line per round that goes wrong.
 //
-// The same key decides the queued entry: setting the state word and nothing
-// more left a MasterMind with no push route never hearing about the halt.
-// haltBinding therefore needs the caller's tx to write that entry, which is
-// why every halt site threads one through -- the entry has to land in the same
-// critical section as the halt itself, or a crash between them leaves a halted
-// binding the log never mentioned.
+// The same key decides the queued entry, which is why every halt site threads
+// the caller's tx through: the entry has to land in the same critical section
+// as the halt itself, or a crash between them leaves a halted binding the log
+// never mentioned, and a MasterMind with no push route would never hear it.
 //
 // entryRound is the round the entry is filed under, which is b.Round at every
 // site but one: queueReport's post-advance halts have already advanced the
@@ -32,16 +29,14 @@ import (
 // the halt. It is threaded rather than inferred for that reason -- see
 // closedRoundHalt.
 //
-// The reason is written inside the notification guard rather than beside it.
-// The guard is what decides whether this halt is told to anyone, and a halt it
-// dedupes queues no entry -- so a reason written on that path is one no entry
-// ever carried. That is not only a lost line: a post-advance halt (the reader
-// artifact cap, a scope refusal) stamps the key with the round the binding has
-// just advanced to, so the next tick's halt of that round -- the round cap, the
-// round timeout -- finds the key already equal, is deduped, and would otherwise
-// overwrite the reason the mastermind actually received with a reason nothing
-// says. HaltAt is written with it for the same reason: it marks when the
-// notified halt began.
+// The reason is written inside the notification guard rather than beside it:
+// a halt the guard dedupes queues no entry, so a reason written on that path
+// is one no entry ever carried. A post-advance halt stamps the key with the
+// round the binding has just advanced to, so the next tick's halt of that
+// round finds the key already equal, is deduped, and would otherwise overwrite
+// the reason the mastermind actually received with a reason nothing says.
+// HaltAt is written with it for the same reason: it marks when the notified
+// halt began.
 func haltBinding(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entryRound int, message string) (store.Binding, error) {
 	return haltBindingKind(ctx, rt, tx, b, entryRound, message, "")
 }
@@ -247,8 +242,7 @@ func queueHalt(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, e
 	if tx == nil {
 		// A caller with no transaction cannot queue. Refusing loudly would
 		// fail the whole tick over a notification, so the halt stands and the
-		// state word is still set; the entry is lost, which is the old
-		// behaviour rather than a broken one.
+		// state word is still set; the entry is lost.
 		slog.Warn("halt not queued: no transaction", "binding", b.Name, "round", b.Round)
 		return nil
 	}

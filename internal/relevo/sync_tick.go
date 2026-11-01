@@ -25,14 +25,11 @@ const outboxTruncateInterval = 5 * time.Minute
 
 // SyncNow queues an attempt without waiting out the export debounce. It is the
 // whole of what a gate write asks for: the gate is already stamped and
-// signalled by the time it is called, and a person who has just recorded a
-// rate limit wants the other machines to see it in seconds rather than a
-// quarter of a minute from now.
-//
-// It bypasses only the age check. Every other rule still applies -- sync off,
-// a breaker that is not due, and the slot itself -- so a burst of gate writes
-// inside one attempt costs the one rerun the in-flight flag already provides
-// rather than an attempt each.
+// signalled by the time it is called, and a person who just recorded a rate
+// limit wants the other machines to see it in seconds. It bypasses only the age
+// check -- sync off, a breaker that is not due, and the slot itself still
+// apply -- so a burst of gate writes inside one attempt costs the one rerun the
+// in-flight flag already provides rather than an attempt each.
 func (d *Daemon) SyncNow(ctx context.Context) {
 	if d == nil {
 		return
@@ -42,14 +39,11 @@ func (d *Daemon) SyncNow(ctx context.Context) {
 
 // queueSync hands a sync to the background and returns at once. The seal that
 // triggered it has already committed, so the round is on disk either way: a
-// network that never answers delays the other machines' copy of it and nothing
-// else.
-//
-// A trigger arriving while an attempt holds the slot marks the slot dirty
+// network that never answers delays only the other machines' copy of it. A
+// trigger arriving while an attempt holds the slot marks the slot dirty
 // instead of starting a second attempt: the one in flight may have read the
 // outbox before the write that caused this trigger, so it runs once more when
-// it ends. Attempts still never pile up behind a slow network -- any number of
-// triggers during one attempt cost one rerun.
+// it ends, and attempts never pile up behind a slow network.
 func (d *Daemon) queueSync(ctx context.Context) {
 	// The store is read here rather than inside the goroutine, so a refresh
 	// that replaces the runtime mid-attempt cannot hand the pipeline a second
@@ -85,13 +79,12 @@ func (d *Daemon) queueSync(ctx context.Context) {
 	go d.syncSlot(ctx, runner, st)
 }
 
-// idleSync runs the window's one pipeline, or does nothing at all.
-//
-// The window is measured from the last window this daemon opened rather than
-// from the last attempt that succeeded: the breaker owns the backoff, so a
-// failed attempt is retried by the next window or by the next seal, and this
-// window only decides when to ask. Between windows, an outbox with entries in
-// it asks for an export once the last attempt is old enough.
+// idleSync runs the window's one pipeline, or does nothing at all. The window
+// is measured from the last window this daemon opened rather than the last
+// attempt that succeeded: the breaker owns the backoff, so a failed attempt is
+// retried by the next window or the next seal, and this window only decides
+// when to ask. Between windows, an outbox with entries asks for an export once
+// the last attempt is old enough.
 func (d *Daemon) idleSync(ctx context.Context) {
 	runner := d.syncRunner()
 	if !runner.On() {
@@ -118,10 +111,9 @@ func (d *Daemon) idleSync(ctx context.Context) {
 
 // runSync is the shared body of every trigger: it drives the steady pipeline
 // over the shared file and says what happened once, at a level a human reads.
-//
 // It asks Enabled here rather than before the slot was taken: a verb replaces
-// the runner's transport under the same slot, and this read is what the slot is
-// for.
+// the runner's transport under the same slot, and this read is what the slot
+// is for.
 func (d *Daemon) runSync(ctx context.Context, runner *relevosync.Runner, st *store.Store) {
 	if !runner.Enabled() {
 		return
@@ -133,7 +125,7 @@ func (d *Daemon) runSync(ctx context.Context, runner *relevosync.Runner, st *sto
 	}
 	// A daemon that starts on a machine already marked on holds the placeholder
 	// a fresh runner is built with, which names no remote: the stored rows are
-	// read only when something opens the transport. The verbs open it on demand,
+	// read only when something opens the transport. The verbs open it on demand
 	// and the tick takes the same route, so a reboot, an upgrade or a re-exec
 	// does not leave the pipeline starting workers with no origin or remote.
 	if d.syncVerbs != nil {
@@ -163,8 +155,8 @@ func (d *Daemon) runSync(ctx context.Context, runner *relevosync.Runner, st *sto
 
 // syncRunner is the runner the tick drives: the one the owner's verbs share
 // when the owner is served, so a client built lazily for a verb is reused by
-// the tick rather than each path opening its own; otherwise the runtime's own
-// seam, which is what a test hands a daemon.
+// the tick; otherwise the runtime's own seam, which is what a test hands a
+// daemon.
 func (d *Daemon) syncRunner() *relevosync.Runner {
 	if d.syncVerbs != nil && d.syncVerbs.Runner != nil {
 		return d.syncVerbs.Runner
@@ -181,18 +173,15 @@ func (d *Daemon) syncClock() func() time.Time {
 }
 
 // truncateOutbox empties the machine's outbox on a window while its own local
-// mark says sync is off.
-//
-// The outbox is filled by SQL triggers on every shared-table write, whatever
-// else the process does, so a machine that never syncs collects one entry per
+// mark says sync is off. The outbox is filled by SQL triggers on every
+// shared-table write, so a machine that never syncs collects one entry per
 // write for as long as it stays installed. Each entry names a row rather than
 // carrying it, so dropping the entries discards no history: the reconcile that
-// runs when sync is turned on re-derives what changed.
-//
-// The gate is the machine-local enabled mark, not the runtime's sync seam,
-// because a machine with no engine wired at all is exactly the machine whose
-// outbox nobody drains. The mark is read through the shared handle's local file,
-// so it costs no second handle and touches nothing that leaves the machine.
+// runs when sync is turned on re-derives what changed. The gate is the
+// machine-local enabled mark, not the runtime's sync seam, because a machine
+// with no engine wired at all is exactly the machine whose outbox nobody
+// drains. The mark is read through the shared handle's local file, so it costs
+// no second handle and touches nothing that leaves the machine.
 func (d *Daemon) truncateOutbox() {
 	if time.Since(d.outboxTruncatedAt) < outboxTruncateInterval {
 		return

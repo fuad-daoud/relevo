@@ -28,10 +28,10 @@ func readerDeliverablePresent(rt Runtime, b store.Binding) bool {
 	if b.Shape != store.ShapeReader {
 		return false
 	}
-	// A chain member's close keeps the historic file-or-block rule. The
-	// chain engine halts an undelivered member through the outcome parse,
-	// while the tightened rule below would strand the chain running behind
-	// an exited-without-report binding halt, which is strictly worse.
+	// A chain member's close keeps the file-or-block rule: the chain engine
+	// halts an undelivered member through the outcome parse, while the rule
+	// below would strand the chain running behind an exited-without-report
+	// binding halt.
 	if _, merr := rt.Store.ChainByMember(b.Name); merr == nil {
 		if present, empty := view.ReaderOutputPresent(reportPathFor(rt, b)); present && !empty {
 			return true
@@ -75,8 +75,7 @@ func readerPlanBody(rt Runtime, b store.Binding) []byte {
 
 // readerPlanNudgeDue reports whether an exited plan-writing reader owes its one
 // continuation: it ended cleanly with a session to resume and an output that
-// holds no plan steps, and the prompt has not been nudged yet. Every other case
-// closes as it always did, and the chain's plan gate halts it.
+// holds no plan steps, and the prompt has not been nudged yet.
 func readerPlanNudgeDue(rt Runtime, b store.Binding, entries []store.LogEntry, codeText string) bool {
 	if b.Shape != store.ShapeReader || codeText != "0" || b.Builder.StreamSessionID == "" {
 		return false
@@ -169,9 +168,6 @@ func readerLostFences(rt Runtime, b store.Binding) bool {
 	return false
 }
 
-// readerUndeliveredReason builds the halt reason for a reader that ended
-// without its deliverable. It names the binding, the output label, the
-// continuation count and the show command to inspect the transcript.
 func readerUndeliveredReason(rt Runtime, b store.Binding, continuations int) string {
 	label := readerOutputLabel(rt, b)
 	unit := "continuations"
