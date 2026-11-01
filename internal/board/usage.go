@@ -1,3 +1,5 @@
+// Package board owns the board scenes `relevo board` serves: Excalidraw
+// scenes and single-file HTML boards, in the repo scope and the live scope.
 package board
 
 import (
@@ -15,7 +17,6 @@ type usageError struct{ msg string }
 func (e *usageError) Error() string { return e.msg }
 func (e *usageError) Unwrap() error { return ErrUsage }
 
-// usagef builds that refusal.
 func usagef(format string, args ...any) error {
 	return &usageError{msg: fmt.Sprintf(format, args...)}
 }

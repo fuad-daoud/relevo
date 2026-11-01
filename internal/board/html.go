@@ -9,21 +9,19 @@ import (
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 )
 
-// htmlBoardFile is the one file name an HTML board has, in both scopes. A path
-// must name the file -- never a bare slug directory -- so a path can never
-// collide with a subverb name the way a bare slug could.
+// htmlBoardFile is the one file name an HTML board has, in both scopes. A
+// path must name the file, never a bare slug directory, so a path can never
+// collide with a subverb name.
 const htmlBoardFile = "board.html"
 
-// htmlBoardUsage is the shape refusal both resolvers quote, so the two scopes
+// htmlBoardUsage is the shape refusal both resolvers quote, so both scopes
 // name the same rule the same way.
 const htmlBoardUsage = "board path must end in /%s: %s"
 
-// ResolveHTML turns arg into the repo-scope board path. It mirrors Resolve: the
-// path is resolved against cwd and must, after symlinks are resolved on its
-// deepest existing ancestor, sit under repoRoot. The shape is stricter than the
-// Excalidraw one -- <slug>/board.html, with the parent directory a scene slug --
-// so a path always names the board file itself. A missing file is accepted: it
-// is a new board, and nothing is created until Promote writes one.
+// ResolveHTML turns arg into the repo-scope board path. It mirrors Resolve,
+// but the shape is stricter -- <slug>/board.html -- so a path always names
+// the board file itself. A missing file is accepted: it is a new board, and
+// nothing is created until Promote writes one.
 func ResolveHTML(repoRoot, cwd, arg string) (Resolved, error) {
 	root := filepath.Clean(repoRoot)
 	if real, err := filepath.EvalSymlinks(repoRoot); err == nil {
@@ -59,12 +57,10 @@ func ResolveHTML(repoRoot, cwd, arg string) (Resolved, error) {
 	return Resolved{Scope: ScopeRepo, Scene: slug, Path: path}, nil
 }
 
-// ResolveLiveHTMLArg classifies arg as a live board path. It returns ok true
-// with the resolved board when arg names <liveRoot>/<id>/<slug>/board.html, and
-// ok false when arg is not under the live root at all, so the caller falls back
-// to the repo scope. A path under the live root that is not live-shaped -- a
-// malformed id, a bad slug, a wrong file name, nested directories, or a
-// symlinked parent that escapes -- is a usage refusal.
+// ResolveLiveHTMLArg classifies arg as a live board path: ok when arg names
+// <liveRoot>/<id>/<slug>/board.html, not ok when arg is not under the live
+// root at all, so the caller falls back to the repo scope. A path under the
+// live root that is not live-shaped is a usage refusal.
 func ResolveLiveHTMLArg(liveRoot, cwd, arg string) (Resolved, bool, error) {
 	path := arg
 	if !filepath.IsAbs(path) {
@@ -72,10 +68,9 @@ func ResolveLiveHTMLArg(liveRoot, cwd, arg string) (Resolved, bool, error) {
 	}
 	path = filepath.Clean(path)
 
-	// Classification is textual (the raw live root against the raw path), so a
-	// path that is under the live root by name but escapes it through a symlink
-	// is still classified live and refused below, not silently treated as a repo
-	// path. Confinement below is the resolving check.
+	// Classification is textual, so a path under the live root by name that
+	// escapes it through a symlink is still classified live and refused below,
+	// not treated as a repo path.
 	rawRoot := filepath.Clean(liveRoot)
 	rel, err := filepath.Rel(rawRoot, path)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
@@ -97,17 +92,17 @@ func ResolveLiveHTMLArg(liveRoot, cwd, arg string) (Resolved, bool, error) {
 		return Resolved{}, false, err
 	}
 
-	// Confinement: after symlinks are resolved on the deepest existing ancestor
-	// the path must still sit under <live root>/<id>, so a symlinked parent can
-	// never steer a read or a write outside the live directory.
+	// Confinement: after symlinks are resolved the path must still sit under
+	// <live root>/<id>, so a symlinked parent can never steer a read or a
+	// write outside the live directory.
 	realRoot := evalExisting(liveRoot)
 	liveDir := filepath.Join(realRoot, id)
 	full := evalExisting(path)
 	if !underRoot(liveDir, full) {
 		return Resolved{}, false, usagef("%s is outside the live directory %s", path, liveDir)
 	}
-	// Both paths leave canonicalized, so callers never compare two spellings of
-	// one directory.
+	// Both paths leave canonicalized, so callers never compare two spellings
+	// of one directory.
 	return Resolved{Scope: ScopeLive, Scene: slug, Path: full, LiveDir: liveDir}, true, nil
 }
 
@@ -130,9 +125,8 @@ func ResolveLiveHTMLDir(repoRoot, liveDir, name string) (Resolved, error) {
 	}, nil
 }
 
-// htmlBoardSlug reads the scene slug off a resolved board.html path and refuses
-// the two ways the shape can be wrong: a file name that is not board.html, and a
-// parent directory that is not a scene slug.
+// htmlBoardSlug reads the scene slug off a resolved board.html path,
+// refusing a wrong file name or a parent that is not a scene slug.
 func htmlBoardSlug(path, arg string) (string, error) {
 	if filepath.Base(path) != htmlBoardFile {
 		return "", usagef(htmlBoardUsage, htmlBoardFile, arg)
@@ -144,9 +138,9 @@ func htmlBoardSlug(path, arg string) (string, error) {
 	return slug, nil
 }
 
-// LoadHTML reads the board at path under the same cap as a scene write, so an
-// oversized board is refused whole rather than read in part. A missing file is
-// not an error: it is a new board with an empty etag.
+// LoadHTML reads the board at path under the same cap as a scene write, so
+// an oversized board is refused whole rather than read in part. A missing
+// file is a new board with an empty etag, not an error.
 func LoadHTML(path string) (data []byte, etag string, isNew bool, err error) {
 	fi, err := os.Stat(path)
 	if err != nil {
@@ -161,10 +155,11 @@ func LoadHTML(path string) (data []byte, etag string, isNew bool, err error) {
 	return Load(path)
 }
 
-// Promote copies a live board file to a repo board file atomically. A missing
-// source is ErrNotFound and an existing target without force is ErrInvalid, so
-// both refusals surface as the CLI's refused code rather than a crash. The
-// destination's own shape is the caller's to resolve: Promote only moves bytes.
+// Promote copies a live board file to a repo board file atomically. A
+// missing source is ErrNotFound and an existing target without force is
+// ErrInvalid, so both surface as the CLI's refused code rather than a crash.
+// The destination's shape is the caller's to resolve: Promote only moves
+// bytes.
 func Promote(src, dst string, force bool) error {
 	if _, err := os.Stat(src); err != nil {
 		if os.IsNotExist(err) {

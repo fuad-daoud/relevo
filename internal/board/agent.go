@@ -12,21 +12,19 @@ import (
 	"time"
 )
 
-// annotateGap is the distance the default position leaves below the scene's
-// current bounds: Excalidraw's DEFAULT_GRID_SIZE.
+// annotateGap is the clearance the default position keeps below the scene's
+// bounds: Excalidraw's DEFAULT_GRID_SIZE.
 const annotateGap = 20
 
-// The two text metrics the element builder emits, from Cascadia's advance and
-// 0.18.1's DEFAULT_FONT_SIZE and line height: a twelve-pixel cell per byte and
-// twenty-four per line.
+// textCellWidth and textLineHeight are the element builder's text metrics,
+// from Cascadia's advance and 0.18.1's DEFAULT_FONT_SIZE and line height.
 const (
 	textCellWidth  = 12
 	textLineHeight = 24
 )
 
 // AgentText is one text element as the agent leg reads it: the four fields a
-// caller needs to place and describe a label, in the order the JSON document
-// carries them.
+// caller needs to place and describe a label.
 type AgentText struct {
 	ID   string  `json:"id"`
 	X    float64 `json:"x"`
@@ -34,9 +32,8 @@ type AgentText struct {
 	Text string  `json:"text"`
 }
 
-// sceneElement is one element as the agent leg decodes it. The four numeric
-// fields are pointers so a wrong type is an invalid scene while an absent one
-// is zero; text defaults to the empty string.
+// sceneElement is one element as the agent leg decodes it. The numeric
+// fields are pointers so a wrong type refuses while an absent one reads zero.
 type sceneElement struct {
 	ID        string   `json:"id"`
 	Type      string   `json:"type"`
@@ -54,9 +51,8 @@ type notFoundError struct{ msg string }
 func (e *notFoundError) Error() string { return e.msg }
 func (e *notFoundError) Unwrap() error { return ErrNotFound }
 
-// decodeElements validates body as a scene and decodes every element. A wrong
-// field type is ErrInvalid; a missing scene is the caller's concern, so this
-// reads bytes only.
+// decodeElements validates body as a scene and decodes every element. A
+// missing scene is the caller's concern, so this reads bytes only.
 func decodeElements(data []byte) ([]sceneElement, error) {
 	if err := ValidateScene(data); err != nil {
 		return nil, err
@@ -78,8 +74,8 @@ func decodeElements(data []byte) ([]sceneElement, error) {
 	return out, nil
 }
 
-// TextElements lists the scene's non-deleted text elements in array order. A
-// missing scene is ErrNotFound, never a new scene.
+// TextElements lists the scene's non-deleted text elements in array order;
+// a missing scene is ErrNotFound, never a new scene.
 func TextElements(path string) ([]AgentText, error) {
 	data, _, isNew, err := Load(path)
 	if err != nil {
@@ -103,8 +99,8 @@ func TextElements(path string) ([]AgentText, error) {
 }
 
 // AnnotateOptions is what one annotation asks for. HasX and HasY record
-// whether the caller gave the coordinate, so a lone member and a zero are
-// different requests. Theme supplies the stroke colour.
+// whether the caller gave the coordinate, so a lone member reads differently
+// from a zero.
 type AnnotateOptions struct {
 	Text  string
 	X     float64
@@ -114,9 +110,8 @@ type AnnotateOptions struct {
 	Theme *Theme
 }
 
-// annotateElement is the appended element, field for field in 0.18.1's order.
-// Every value is ours; customData is absent because 0.18.1 leaves it
-// undefined.
+// annotateElement is the appended element, field for field in 0.18.1's
+// order; customData is absent because 0.18.1 leaves it undefined.
 type annotateElement struct {
 	ID              string   `json:"id"`
 	Type            string   `json:"type"`
@@ -155,8 +150,8 @@ type annotateElement struct {
 	LineHeight      float64  `json:"lineHeight"`
 }
 
-// The three non-deterministic values, each behind a seam so a board test pins
-// the element byte-for-byte and a cmd test only shape-checks the result.
+// newElementID, newElementSeed and elementNow are the non-deterministic
+// values, each behind a seam so a test pins the element byte-for-byte.
 var (
 	newElementID = func() (string, error) {
 		b := make([]byte, 16)
@@ -169,8 +164,8 @@ var (
 	elementNow     = func() int64 { return time.Now().UnixMilli() }
 )
 
-// normalizeText applies the two rewrites 0.18.1 makes before it measures: a tab
-// becomes eight spaces and every line ending becomes a newline.
+// normalizeText applies the two rewrites 0.18.1 makes before it measures: a
+// tab becomes eight spaces and every line ending becomes a newline.
 func normalizeText(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.ReplaceAll(s, "\r", "\n")
@@ -191,15 +186,13 @@ func estimateTextWidth(s string) float64 {
 	return float64(textCellWidth * max)
 }
 
-// estimateTextHeight is twenty-four pixels per line.
 func estimateTextHeight(s string) float64 {
 	return float64(textLineHeight * len(strings.Split(normalizeText(s), "\n")))
 }
 
-// buildElementBytes marshals the one element an annotation appends: a text
-// element at (x, y) in theme's ink, sized by the estimate. The three
-// non-deterministic values come from their seams. It returns the minted id
-// beside the bytes, so a caller can report it.
+// buildElementBytes marshals the one element an annotation appends, sized
+// by the estimate. The non-deterministic values come from their seams; the
+// minted id returns beside the bytes so a caller can report it.
 func buildElementBytes(text string, x, y float64, theme *Theme) (string, []byte, error) {
 	id, err := newElementID()
 	if err != nil {
@@ -242,10 +235,9 @@ func buildElementBytes(text string, x, y float64, theme *Theme) (string, []byte,
 	return id, raw, nil
 }
 
-// elementsClose locates the last top-level "elements" array and the offset
-// just after its last non-whitespace byte before the closing bracket, where an
-// appended element's bytes belong. empty reports an array with nothing in it,
-// which takes no comma.
+// elementsClose locates the last top-level "elements" array and the offset an
+// appended element's bytes belong at. empty reports an array with nothing in
+// it, which takes no comma.
 func elementsClose(data []byte) (at int, empty bool, err error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	tok, err := dec.Token()
@@ -309,9 +301,9 @@ func spliceElement(data, element []byte) ([]byte, error) {
 	return out, nil
 }
 
-// defaultPosition is where an element lands with no coordinates: left-aligned
-// with the scene's leftmost element and one gap below its lowest edge. An
-// empty scene is the origin; deleted elements never move it.
+// defaultPosition is where an element lands with no coordinates:
+// left-aligned with the scene's leftmost element and one gap below its lowest
+// edge. An empty scene is the origin; deleted elements never move it.
 func defaultPosition(els []sceneElement) (float64, float64) {
 	minX := math.Inf(1)
 	maxY := math.Inf(-1)
@@ -333,8 +325,8 @@ func defaultPosition(els []sceneElement) (float64, float64) {
 }
 
 // Annotate appends one text element to the scene at path and returns it. A
-// missing scene is ErrNotFound, a non-finite coordinate or a malformed request
-// is ErrUsage, and the rest of the scene keeps every byte.
+// missing scene is ErrNotFound, a malformed request is ErrUsage, and the
+// rest of the scene keeps every byte.
 func Annotate(path string, opts AnnotateOptions) (AgentText, error) {
 	if opts.Text == "" {
 		return AgentText{}, usagef("--text must not be empty")
