@@ -5,20 +5,14 @@ import (
 	"strings"
 )
 
-// The code-line rule for a table language: two sources differ only in
-// comments when every comment is removed and the remaining lines match one
-// for one, in order. A line is compared after its comment spans are cut out
-// and its trailing whitespace is trimmed; a line that is empty, or empty
-// once its comments are cut out, is dropped from both sides. Leading
-// whitespace is code: indentation is significant in Python and YAML, so it
-// is never free. A string literal is code too: a change inside one is a
-// code change, so a docstring stays out of scope.
+// The code-line rule for a table language: two sources differ only in comments
+// when every comment is removed and the remaining lines match one for one, in
+// order, after trailing whitespace is trimmed and emptied lines are dropped.
+// Leading whitespace is code: indentation is significant in Python and YAML. A
+// string literal is code too, so a docstring stays out of scope.
 
-// judgeComments judges an M-status table-language file: in scope exactly
-// when the code lines and the ordered directive lists are equal. It mirrors
-// judgeGo's reasons: an unlexable side is cannot judge, differing code
-// lines are code change, and differing directive lists are directive
-// comment.
+// judgeComments judges an M-status table-language file: in scope exactly when
+// the code lines and ordered directive lists are equal, with judgeGo's reasons.
 func judgeComments(l *lang, oldSrc, newSrc []byte) (ok bool, reason string) {
 	o := lex(l, oldSrc)
 	n := lex(l, newSrc)
@@ -34,9 +28,6 @@ func judgeComments(l *lang, oldSrc, newSrc []byte) (ok bool, reason string) {
 	return true, ""
 }
 
-// codeLinesEqual compares the two sources' code lines one for one, in
-// order: every line with its comment spans cut out and its trailing
-// whitespace trimmed, the lines left empty dropped from both sides.
 func codeLinesEqual(oldSrc []byte, oldSpans []span, newSrc []byte, newSpans []span) bool {
 	old := codeLines(oldSrc, oldSpans)
 	new := codeLines(newSrc, newSpans)
@@ -51,10 +42,9 @@ func codeLinesEqual(oldSrc []byte, oldSpans []span, newSrc []byte, newSpans []sp
 	return true
 }
 
-// codeLines returns src's code lines: each line with its comment spans cut
-// out and its trailing whitespace trimmed, the lines left empty dropped.
-// The spans are the ones lex found, in scan order, and a block comment's
-// span may run across several lines.
+// codeLines returns src's code lines: each line with its comment spans cut out
+// and trailing whitespace trimmed, emptied lines dropped. Spans are in scan
+// order, and a block comment's span may run across lines.
 func codeLines(src []byte, spans []span) []string {
 	out := []string{}
 	si := 0

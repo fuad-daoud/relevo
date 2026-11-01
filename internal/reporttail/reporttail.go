@@ -148,8 +148,6 @@ func continueLastItem(tail *Tail, key, line string) {
 	setList(tail, key, items)
 }
 
-// stripListItem reports whether line is a "- item" list entry and returns the
-// entry's unquoted content.
 func stripListItem(line string) (string, bool) {
 	if !strings.HasPrefix(line, "-") {
 		return "", false
@@ -192,15 +190,11 @@ func applyListKey(tail *Tail, lines []string, i, closeIdx int, key, val string) 
 	return i, nil
 }
 
-// FindRelevoBlock locates the LAST ```relevo fence among lines and its closing
-// fence, returning their indices. There is no block when openIdx is -1. A
-// closing fence is optional: a block whose fence never arrives runs to end of
-// file, which is the only thing that can follow it, and closeIdx is then
-// len(lines).
-//
-// The block ends at its closing fence; anything after it is not the block's
-// concern. A caller that must not cut text after the block checks for it
-// itself, with textAfter.
+// FindRelevoBlock locates the LAST ```relevo fence and its closing fence. No
+// block when openIdx is -1. A closing fence is optional: an unclosed block runs
+// to end of file, the only thing that can follow it, and closeIdx is then
+// len(lines). Anything after the closing fence is not the block's concern; a
+// caller that must not cut it checks with textAfter.
 func FindRelevoBlock(lines []string) (openIdx, closeIdx int) {
 	openIdx = -1
 	for i, line := range lines {
@@ -239,14 +233,11 @@ func textAfter(lines []string, closeIdx int) bool {
 	return false
 }
 
-// RelevoBlock is one fenced relevo block: the index of its opening fence and
-// of what closes it, the next ``` fence or end of file.
 type RelevoBlock struct{ Open, Close int }
 
-// RelevoBlocks returns every fenced relevo block in lines, in file order:
-// each ```relevo opening fence paired with the next ``` closing fence, and an
-// opening fence with no closing fence after it paired with end of file, the
-// only thing that can follow it. No block returns nil.
+// RelevoBlocks returns every fenced relevo block in lines, in file order, each
+// opening fence paired with the next closing fence or end of file. No block
+// returns nil.
 func RelevoBlocks(lines []string) []RelevoBlock {
 	var blocks []RelevoBlock
 	for i := 0; i < len(lines); i++ {
@@ -282,17 +273,12 @@ func SplitFenceLines(body []byte) []string {
 	return lines
 }
 
-// StripTail returns body without its trailing relevo block. Pure; no I/O;
-// total. The block is located with the same parser the round close uses, so
-// "the block" means exactly what the close's outcome parse means by it.
-//
-//   - empty body → nil.
-//   - no ```relevo fence → body byte-identical.
-//   - closing fence is followed by prose → body byte-identical; cutting the
-//     block would eat the prose.
-//   - otherwise (well-formed block or unclosed fence): lines before the
-//     opening fence with trailing blank lines dropped, joined with "\n" and
-//     terminated by exactly one "\n"; an empty slice returns nil.
+// StripTail returns body without its trailing relevo block. Pure; no I/O; total.
+// The block is located with the same parser the round close uses, so "the block"
+// means what the close's outcome parse means by it. Empty body returns nil; no
+// fence or prose after the closing fence returns body byte-identical, since
+// cutting would eat the prose; otherwise the lines before the opening fence
+// with trailing blanks dropped, joined with "\n" and one trailing "\n".
 func StripTail(body []byte) []byte {
 	if len(body) == 0 {
 		return nil
@@ -337,11 +323,10 @@ func setList(tail *Tail, key string, vals []string) {
 	}
 }
 
-// scalarRune is one rune of a scanned string plus the two facts the escape
-// rules give it: whether it lies outside every quoted scalar, and whether it
-// opens a YAML escape instead of standing for itself.
+// scalarRune is one rune of a scanned string plus whether it lies outside every
+// quoted scalar and whether it opens a YAML escape instead of standing for
+// itself.
 type scalarRune struct {
-	// Index and Size locate the rune in the scanned string.
 	Index int
 	Size  int
 	Rune  rune
@@ -356,10 +341,7 @@ type scalarRune struct {
 
 // scanScalars walks s and calls fn for every rune until fn says stop. This is
 // the one place the YAML escape rules live, so every caller agrees on where a
-// scalar ends: inside a " scalar a backslash escapes the next rune, which makes
-// an escaped quote and an escaped backslash literal, and inside a ' scalar a
-// doubled single quote is one literal quote. A caller therefore never mistakes
-// an escaped quote for a closer.
+// scalar ends and never mistakes an escaped quote for a closer.
 func scanScalars(s string, fn func(scalarRune) bool) {
 	var quote rune
 	literal := false
@@ -371,10 +353,8 @@ func scanScalars(s string, fn func(scalarRune) bool) {
 			sr.Escape = true
 			literal = true
 		case quote == '\'' && r == '\'' && !literal:
-			// A doubled '' is the escaped pair: the first quote marks the
-			// escape and the second clears it. Any other ' closes the scalar,
-			// exactly as a lone " closes a double-quoted one, so the rune after
-			// it is syntax again.
+			// A doubled '' is one escaped quote; any other ' closes the scalar,
+			// so the rune after it is syntax again.
 			if i+size < len(s) && s[i+size] == '\'' {
 				sr.Escape = true
 				literal = true
@@ -425,10 +405,8 @@ func StripComment(line string) string {
 	return line[:cut]
 }
 
-// UnquoteScalar removes one layer of matching single or double quotes around a
-// trimmed scalar and resolves the escapes inside it: an escaped quote and an
-// escaped backslash in a double-quoted scalar, a doubled single quote in a
-// single-quoted one.
+// UnquoteScalar removes one layer of matching quotes around a trimmed scalar and
+// resolves the escapes inside it.
 func UnquoteScalar(s string) string {
 	s = strings.TrimSpace(s)
 	if len(s) < 2 {

@@ -43,10 +43,9 @@ type lexer struct {
 	yamlPend bool      // a block scalar header was just consumed
 }
 
-// lex scans src with l's rules. Every comment becomes a span; a comment
-// that is a directive also joins the ordered list, in file order; an
-// unterminated form is an error. Each pass records its position at the top,
-// and a pass that ends without moving forward is the errStuck guard.
+// lex scans src with l's rules. Every comment becomes a span, and a directive
+// also joins the ordered list, in file order; an unterminated form is an error.
+// Each pass records its position, and one ending without moving is errStuck.
 func lex(l *lang, src []byte) lexOut {
 	x := &lexer{l: l, src: src}
 	for x.i < len(src) && x.out.err == nil {
@@ -170,7 +169,6 @@ func (x *lexer) blockComment(start int, open, close string, nest bool) bool {
 	return true
 }
 
-// hasPrefixAt reports whether the source has s at j.
 func (x *lexer) hasPrefixAt(j int, s string) bool {
 	return j+len(s) <= len(x.src) && string(x.src[j:j+len(s)]) == s
 }
@@ -189,9 +187,8 @@ func (x *lexer) wordStart(i int) bool {
 }
 
 // atString consumes a string literal starting at x.i, if one does. Longer
-// openers are tried before shorter ones, so """ wins over ". The interp
-// flag marks a string kind whose interpolations, ${...} or \(..., may hold
-// nested quotes.
+// openers are tried before shorter ones, so """ wins over ". Interpolations,
+// ${...} or \(..., may hold nested quotes.
 func (x *lexer) atString() bool {
 	l, src, i := x.l, x.src, x.i
 	switch {
@@ -304,7 +301,6 @@ func (x *lexer) scanLiteral(i int, close string, esc, interp bool) bool {
 	return true
 }
 
-// luaLongString scans a [[...]] or [=[...]=] long string.
 func (x *lexer) luaLongString(i int) bool {
 	n := longOpener(x.src, i)
 	if n < 0 {
@@ -338,9 +334,8 @@ func (x *lexer) atArith() bool {
 	return false
 }
 
-// atHeredocOpener queues a heredoc, if a << redirection starts at x.i:
-// <<WORD, <<-WORD, <<'WORD', <<"WORD" and <<\WORD. Inside arithmetic a <<
-// is a shift, not a heredoc, and <<< is a here-string.
+// atHeredocOpener queues a heredoc if a << redirection starts at x.i. Inside
+// arithmetic a << is a shift, not a heredoc, and <<< is a here-string.
 func (x *lexer) atHeredocOpener() bool {
 	if !x.l.heredoc || x.i+1 >= len(x.src) || x.src[x.i] != '<' || x.src[x.i+1] != '<' {
 		return false
@@ -447,9 +442,8 @@ func (x *lexer) atYamlHeader() bool {
 	return true
 }
 
-// scanYamlBody consumes a block scalar's body: every blank line and every
-// line that starts with whitespace is the scalar's content, which is code,
-// and the first line that starts at column 0 ends the scalar.
+// scanYamlBody consumes a block scalar's body: blank lines and indented lines
+// are the scalar's content, and the first line at column 0 ends it.
 func (x *lexer) scanYamlBody() {
 	for x.i < len(x.src) {
 		eol := lineEnd(x.src, x.i)
@@ -479,7 +473,6 @@ func isDirective(l *lang, text string, start int) bool {
 	return false
 }
 
-// lineEnd returns the index of the newline at or after from, or len(src).
 func lineEnd(src []byte, from int) int {
 	if i := bytes.IndexByte(src[from:], '\n'); i >= 0 {
 		return from + i
@@ -513,7 +506,6 @@ func longCloser(src []byte, j, n int) int {
 	return -1
 }
 
-// byteAt returns src[i], or 0 when i is past the end.
 func byteAt(src []byte, i int) byte {
 	if i < len(src) {
 		return src[i]

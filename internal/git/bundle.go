@@ -166,14 +166,13 @@ func (c *Client) BundleHeads(ctx context.Context, dir, path string) (map[string]
 // FetchBundle verifies the bundle file at path and fetches each ref in refs that
 // the bundle carries.
 //
-// The fetch is one ref at a time, in refs order, with refspec <ref>:<ref>
-// without a leading '+', so every update is a fast-forward. A failed update
-// stops the loop and refs already moved stay moved: callers treat a partial
-// absorb as retryable, and a re-run is idempotent because a ref already at its
-// target SHA is a no-op. The fetch runs with git's own auto-maintenance off:
-// a round-close fetch must not trigger a repack, because a repack rewrites
-// refs while the fetch reads them and the fetch then dies on a bad object for
-// a round the store already holds.
+// The fetch is one ref at a time, in refs order, with refspec <ref>:<ref> and no
+// leading '+', so every update is a fast-forward. A failed update stops the loop
+// and refs already moved stay moved: callers treat a partial absorb as retryable,
+// and a re-run is idempotent because a ref already at its target SHA is a no-op.
+// Auto-maintenance is off: a round-close fetch must
+// not trigger a repack, which rewrites refs while the fetch reads them and dies
+// on a bad object for a round held.
 func (c *Client) FetchBundle(ctx context.Context, dir, path string, refs []string) (map[string]string, error) {
 	_, err := c.run(ctx, dir, nil, "bundle", "verify", path)
 	if err != nil {

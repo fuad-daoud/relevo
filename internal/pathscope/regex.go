@@ -15,13 +15,12 @@ const (
 	regexAmbiguous        // ')' or '}': both readings stay live
 )
 
-// atRegex consumes a regex literal starting at x.i, if one does. A '/' that
-// is neither '//' nor '/*' -- atComment ran first -- starts a regex when the
+// atRegex consumes a regex literal starting at x.i, if one does. A '/' that is
+// neither '//' nor '/*' -- atComment ran first -- starts a regex when the
 // previous significant token allows an expression to start, and is division
 // otherwise. After ')' or '}' both readings are live: a marker later on the
-// line makes the lexer refuse the file, and without one the regex is taken
-// when it closes on its line and division when it does not. A regex that
-// does not close on its line is refused.
+// line refuses the file, and without one the regex is taken when it closes on
+// its line and division when it does not.
 func (x *lexer) atRegex() bool {
 	if !x.l.regex || x.src[x.i] != '/' {
 		return false
@@ -72,8 +71,6 @@ func (x *lexer) regexClass(i int) int {
 	return regexDivision
 }
 
-// isRegexPunct reports whether c is one of the bytes after which a regex
-// literal may start.
 func isRegexPunct(c byte) bool {
 	return strings.IndexByte("(,=:[!&|?{};+-*%<>~^", c) >= 0
 }
@@ -90,11 +87,9 @@ func jsRegexKeyword(w string) bool {
 	return false
 }
 
-// prevToken returns the previous significant token before i: "" at the start
-// of the source, the byte of a punctuation token, the text of an identifier
-// or keyword, or a run of dots -- ... is one token, the spread. Whitespace
-// is skipped, and a recorded comment span is skipped whole: a comment is not
-// a token, so the token before it is what a '/' after it sees.
+// prevToken returns the previous significant token before i: "" at the start, a
+// punctuation byte, an identifier or keyword, or a run of dots. Whitespace and
+// recorded comment spans are skipped whole: a comment is not a token.
 func (x *lexer) prevToken(i int) string {
 	j := i
 	for {
@@ -192,25 +187,20 @@ func (x *lexer) scanRegex(i int) (int, bool) {
 	return 0, false
 }
 
-// isWordByte reports whether c can be part of an identifier or number.
 func isWordByte(c byte) bool {
 	return c == '_' || c == '$' || (c >= 'a' && c <= 'z') ||
 		(c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 }
 
-// isSpaceByte reports whether c is whitespace the token scan skips.
 func isSpaceByte(c byte) bool {
 	return c == ' ' || c == '\t' || c == '\r' || c == '\n'
 }
 
-// atXMLLiteral refuses a Scala file whose XML literal position the lexer
-// cannot model: '<' where an expression may start opens one, and its
-// content is a language of its own, tags and all. A '<' that follows an
-// operand is a comparison and stays code, and so is '<' that opens one of
-// the operators -- <-, <:, <= -- whose next byte cannot start an XML name.
-// After ')' or '}' both readings are live: only a letter, '_' or '!' can
-// open the XML form there, and a comment marker anywhere later in the file
-// makes the two unreadable apart, so the file is refused.
+// atXMLLiteral refuses a Scala file whose XML literal position the lexer cannot
+// model: '<' where an expression may start opens one, whose content is a
+// language of its own. A '<' after an operand is a comparison and stays code,
+// as does one opening <-, <:, or <=. After ')' or '}' only a letter, '_' or '!'
+// can open the XML form, and a comment marker anywhere later refuses the file.
 func (x *lexer) atXMLLiteral() bool {
 	if !x.l.scalaXML || x.src[x.i] != '<' {
 		return false

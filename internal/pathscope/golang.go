@@ -130,8 +130,7 @@ func detectCgo(tokens []goToken) bool {
 }
 
 // judgeGo judges an M-status .go file: in scope exactly when the non-comment
-// token streams and the ordered directive lists are equal. ok is false with
-// the reason it was refused otherwise.
+// token streams and ordered directive lists are equal.
 func judgeGo(oldSrc, newSrc []byte) (ok bool, reason string) {
 	if !parsesCleanly(oldSrc) || !parsesCleanly(newSrc) {
 		return false, ReasonCannotJudge

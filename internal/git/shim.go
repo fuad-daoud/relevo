@@ -8,21 +8,17 @@ import (
 )
 
 // ShimSource is POSIX sh. Every worktree of one repository shares a single
-// stash stack, so a builder's `git stash pop` can take another lane's work.
-// A push gets pushInsteadOf rewrites that turn every network URL into an
-// unknown scheme, so it fails before connecting: publishing is the
-// MasterMind's, and a round that pushed has put unreviewed commits on a PR. A
-// push to a local path still runs, because test suites push to temporary bare
-// repositories. A remote with an explicit pushurl is not rewritten; git
-// applies pushInsteadOf to url only, and insteadOf would break fetch too.
-// It finds the subcommand after git's global options (those that take a
-// separate value are skipped with it), and finds the real git on PATH while
-// skipping its own directory by canonical path, so a duplicate PATH entry or a
-// symlinked state directory cannot make it exec itself. It drops its own
-// directory from the PATH it hands on: a nested relevo (a test daemon under a
-// served round) puts a second shim ahead of this one, and two shims that each
-// skip only themselves exec each other forever. exec keeps stdin, arguments,
-// output and the exit code untouched.
+// stash stack, so a builder's `git stash pop` can take another lane's work. A
+// push gets pushInsteadOf rewrites turning every network URL into an unknown
+// scheme, so it fails before connecting: publishing is the MasterMind's. A push
+// to a local path still runs, for test suites pushing to temporary bare
+// repositories. A remote with an explicit pushurl is not rewritten; git applies
+// pushInsteadOf to url only, and insteadOf would break fetch too. It finds the
+// subcommand after git's global options, and the real git on PATH while skipping
+// its own directory by canonical path, so a duplicate PATH entry or symlinked
+// state directory cannot make it exec itself. It drops its own directory from
+// the PATH it hands on: a nested relevo puts a second shim ahead of this one,
+// and two shims each skipping only themselves exec each other forever.
 const ShimSource = `#!/bin/sh
 self_dir=$(cd "$(dirname "$0")" && pwd -P)
 self=$self_dir/$(basename "$0")

@@ -13,9 +13,8 @@ import (
 )
 
 // TreeFingerprint is a short, stable hash of dir's HEAD and porcelain status,
-// the daemon's cheap "did the tree move?" signal. It reads no diff and writes
-// no snapshot. An unborn HEAD is not an error: rev-parse fails there and the
-// fingerprint is the status alone.
+// the daemon's cheap "did the tree move?" signal. An unborn HEAD is not an
+// error: rev-parse fails there and the fingerprint is the status alone.
 func (c *Client) TreeFingerprint(ctx context.Context, dir string) (string, error) {
 	head, err := c.run(ctx, dir, nil, "rev-parse", "HEAD")
 	if err != nil {
@@ -183,10 +182,9 @@ func (c *Client) ShowPrefix(ctx context.Context, dir string) (string, error) {
 }
 
 // DirAt reports whether ref names a directory at path: the entry ls-tree lists
-// must be a tree, not a blob. ok is false when ref has no such entry at all, so
-// only an entry that is a directory counts. path is relative to the tree root;
-// --full-tree keeps it so when dir is a subdirectory, where ls-tree would
-// otherwise resolve path against dir.
+// must be a tree, not a blob. path is relative to the tree root; --full-tree
+// keeps it so when dir is a subdirectory, where ls-tree would otherwise resolve
+// path against dir.
 func (c *Client) DirAt(ctx context.Context, dir, ref, path string) (bool, error) {
 	out, err := c.run(ctx, dir, nil, "ls-tree", "-z", "--full-tree", ref, "--", path)
 	if err != nil {
@@ -220,7 +218,6 @@ func (c *Client) DeleteRef(ctx context.Context, dir, ref string) error {
 	return err
 }
 
-// ListRefs returns every ref whose name begins with prefix, in git's order.
 func (c *Client) ListRefs(ctx context.Context, dir, prefix string) ([]string, error) {
 	out, err := c.run(ctx, dir, nil, "for-each-ref", "--format=%(refname)", prefix)
 	if err != nil {

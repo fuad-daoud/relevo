@@ -23,8 +23,7 @@ func (c *Client) ChangedFiles(ctx context.Context, dir, from, to string) ([]path
 	return parseRawDiff(out)
 }
 
-// ReadBlob reads one blob's contents by its git object id, as the scope
-// check's comment judge needs.
+// ReadBlob reads one blob's contents by its git object id.
 func (c *Client) ReadBlob(ctx context.Context, dir, oid string) ([]byte, error) {
 	return c.run(ctx, dir, nil, "cat-file", "blob", oid)
 }
@@ -33,7 +32,7 @@ func (c *Client) ReadBlob(ctx context.Context, dir, oid string) ([]byte, error) 
 //
 //	:<oldmode> <newmode> <oldsha> <newsha> <status>\0<path>\0
 //
-// records. It is exported to no one; the Client methods above are the seam.
+// records.
 func parseRawDiff(out []byte) ([]pathscope.Change, error) {
 	if len(out) == 0 {
 		return nil, nil
