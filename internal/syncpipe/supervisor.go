@@ -1,11 +1,9 @@
 package syncpipe
 
-// The supervisor is the daemon's half of the worker's life: it drives one worker
-// at a time, writes the in-call marker around every call, counts a call that
-// does not come back, and drops a worker the pipe can no longer use so the next
-// call gets a fresh process. It is the synclog transport the exporter, importer
-// and reconcile are handed, so the daemon has one place that both drives the
-// pipe and decides what a failed call means.
+// The supervisor is the daemon's half of the worker's life: one worker at a time,
+// the in-call marker around every call, a count of calls never returning, and a
+// drop of unusable pipes. It is the synclog transport the exchange is handed, so
+// driving and failure meaning live in one place.
 
 import (
 	"context"
@@ -17,15 +15,12 @@ import (
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
-// Supervisor drives a worker through the breaker's accounting. One call runs at
-// a time under its lock, so two triggers sharing it cannot interleave on a pipe
-// that carries one request in flight.
+// Supervisor drives a worker through the breaker's accounting, one call at a time
+// under its lock, since the pipe carries one request in flight.
 type Supervisor struct {
 	cfg     Config
 	breaker *relevosync.Breaker
 
-	// mu serializes calls: one call runs at a time because the pipe carries one
-	// request at a time.
 	mu sync.Mutex
 	// clientMu guards client, and is separate from mu so Cancel can reach the
 	// worker a call is blocked on without waiting that call out.
@@ -33,18 +28,14 @@ type Supervisor struct {
 	client   *Client
 }
 
-// NewSupervisor returns a supervisor that starts workers from cfg and keeps
-// their accounting in b.
 func NewSupervisor(cfg Config, b *relevosync.Breaker) *Supervisor {
 	return &Supervisor{cfg: cfg, breaker: b}
 }
 
-// NewSyncRunner returns the daemon's sync holder: a runner whose log transport
-// is a supervisor that starts workers from cfg and accounts for them through the
-// machine-local kv local names. It is the one place a pipe client is
-// constructed, so a daemon holds a single worker however many calls it carries.
-// cfg names what the worker is started with; a caller leaves it empty until an
-// enable has decided the remote, because construction alone starts no process.
+// NewSyncRunner returns the daemon's sync holder: a runner on a supervisor
+// starting workers from cfg through the local breaker. It is the one construction
+// site, so a daemon holds a single worker. cfg stays empty until an enable decides
+// the remote: construction starts no process.
 func NewSyncRunner(cfg Config, local relevosync.Local) *relevosync.Runner {
 	return &relevosync.Runner{
 		Client: NewSupervisor(cfg, relevosync.NewBreaker(local)),
@@ -52,22 +43,16 @@ func NewSyncRunner(cfg Config, local relevosync.Local) *relevosync.Runner {
 	}
 }
 
-// The supervisor is the transport the exchange drives. Naming it here means a
-// method the transport needs cannot be lost without the tree failing to build.
-//
-// It is also the blob mover: the exporter and reconcile take their mover from
-// the transport they were handed, and this is the transport the daemon hands
-// them. One object numbers the entries and stores the bodies they point at, so
-// a caller cannot pair an append path with a bucket that is not there.
+// The supervisor is the driven transport; naming it here turns a lost method into
+// a build error. It is also the blob mover: the entry numberer is the body storer,
+// so no caller pairs an append path with an absent bucket.
 var _ synclog.LogTransport = (*Supervisor)(nil)
 var _ synclog.BlobTransport = (*Supervisor)(nil)
 
-// Ready reports whether this supervisor names a remote and a token, so a caller
-// can tell a worker an enable built from the placeholder a daemon holds before
-// one did. It reads the config and starts nothing.
+// Ready reports whether this supervisor names a remote and a token. It reads the
+// config and starts nothing.
 func (s *Supervisor) Ready() bool { return s.cfg.URL != "" && s.cfg.Token != "" }
 
-// Append writes one batch of this origin's entries.
 func (s *Supervisor) Append(entries []synclog.Entry) ([]synclog.Entry, error) {
 	return s.AppendSigned(entries, synclog.Boundary{})
 }
@@ -86,7 +71,6 @@ func (s *Supervisor) AppendSigned(entries []synclog.Entry, boundary synclog.Boun
 	return out, err
 }
 
-// Pull reads every other origin's entries past the marks given.
 func (s *Supervisor) Pull(marks map[string]int) ([]synclog.Entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -99,7 +83,6 @@ func (s *Supervisor) Pull(marks map[string]int) ([]synclog.Entry, error) {
 	return out, err
 }
 
-// Head returns one origin's latest entry per row.
 func (s *Supervisor) Head(origin string) ([]synclog.HeadRow, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -112,7 +95,6 @@ func (s *Supervisor) Head(origin string) ([]synclog.HeadRow, error) {
 	return out, err
 }
 
-// Stats reports what the log holds.
 func (s *Supervisor) Stats() (synclog.Stats, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -125,9 +107,9 @@ func (s *Supervisor) Stats() (synclog.Stats, error) {
 	return out, err
 }
 
-// PublishMarks records how far this installation has applied of each origin.
-// It runs through the breaker like every other call, because a worker that
-// stops answering a publish is a dead worker whatever it was doing.
+// PublishMarks records how far this installation applied of each origin, through
+// the breaker like every call: a worker silent on a publish is dead whatever it
+// was doing.
 func (s *Supervisor) PublishMarks(marks map[string]int, at time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -135,9 +117,7 @@ func (s *Supervisor) PublishMarks(marks map[string]int, at time.Time) error {
 }
 
 // PublishTraffic writes this installation's traffic row and answers with every
-// origin's row. It runs through the breaker like every other call, for the
-// reason PublishMarks gives: a worker that stops answering is dead whatever
-// it was doing.
+// origin's, through the breaker for the reason PublishMarks gives.
 func (s *Supervisor) PublishTraffic(row synclog.TrafficRow) (map[string]synclog.TrafficRow, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -150,16 +130,13 @@ func (s *Supervisor) PublishTraffic(row synclog.TrafficRow) (map[string]synclog.
 	return out, err
 }
 
-// The traffic publisher is an optional interface the runner asserts at run
-// time, so a transport that lost its method would build and test green while
-// every machine silently stopped publishing. These make that a build error for
-// the two transports production drives.
+// The traffic publisher is asserted at use, so a lost method would build green
+// while silently stopping publishing; these make that a build error.
 var (
 	_ synclog.TrafficPublisher = (*Supervisor)(nil)
 	_ synclog.TrafficPublisher = (*Client)(nil)
 )
 
-// ReadMarks answers with every published mark and each origin's size.
 func (s *Supervisor) ReadMarks() (synclog.MarkState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -172,7 +149,6 @@ func (s *Supervisor) ReadMarks() (synclog.MarkState, error) {
 	return out, err
 }
 
-// PullRange reads one page of an origin's entries in (after, upto].
 func (s *Supervisor) PullRange(origin string, after, upto int) ([]synclog.Entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -185,7 +161,6 @@ func (s *Supervisor) PullRange(origin string, after, upto int) ([]synclog.Entry,
 	return out, err
 }
 
-// CompactOwn drops this installation's superseded entries up to floor.
 func (s *Supervisor) CompactOwn(floor int) (synclog.CompactResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -198,7 +173,6 @@ func (s *Supervisor) CompactOwn(floor int) (synclog.CompactResult, error) {
 	return out, err
 }
 
-// KeyMeta reads the passphrase material the remote holds.
 func (s *Supervisor) KeyMeta(ctx context.Context) (synclog.KeyMeta, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -211,8 +185,8 @@ func (s *Supervisor) KeyMeta(ctx context.Context) (synclog.KeyMeta, error) {
 	return out, err
 }
 
-// KeyInit writes the passphrase material where the remote holds none and
-// answers with what it holds afterwards.
+// KeyInit writes the passphrase material where the remote holds none, answering
+// with what it holds.
 func (s *Supervisor) KeyInit(ctx context.Context, key synclog.KeyMeta) (synclog.KeyMeta, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -225,7 +199,6 @@ func (s *Supervisor) KeyInit(ctx context.Context, key synclog.KeyMeta) (synclog.
 	return out, err
 }
 
-// KeyRekey rotates the log's key to the epoch the spec names.
 func (s *Supervisor) KeyRekey(ctx context.Context, spec synclog.KeyRekeySpec) (synclog.KeyMeta, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -238,15 +211,13 @@ func (s *Supervisor) KeyRekey(ctx context.Context, spec synclog.KeyRekeySpec) (s
 	return out, err
 }
 
-// PublishEpochCut extends this installation's own cut to the one named.
 func (s *Supervisor) PublishEpochCut(ctx context.Context, cut synclog.EpochCut) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.drive("key_cut", func(c *Client) error { return c.PublishEpochCut(ctx, cut) })
 }
 
-// ClaimIdentity records this machine's claim on origin, or only reads it when
-// the token is empty.
+// ClaimIdentity records this machine's claim on origin; an empty token only reads.
 func (s *Supervisor) ClaimIdentity(ctx context.Context, origin, token string, at time.Time) (string, time.Time, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -260,14 +231,12 @@ func (s *Supervisor) ClaimIdentity(ctx context.Context, origin, token string, at
 	return winner, claimedAt, err
 }
 
-// BlobStagingDir is the folder bodies are written to before they are put. It is
-// the supervisor's own rather than a caller's, so the exporter writing the file
-// and the worker reading it are named from one place.
+// BlobStagingDir is the folder bodies stage in before a put: the supervisor's own,
+// so writer and worker name it from one place.
 func (s *Supervisor) BlobStagingDir() string { return s.cfg.BlobStaging }
 
-// PutBlob uploads the body staged at stagingPath under key. It runs through the
-// breaker like every other call, because a worker that stops answering a blob
-// put is a dead worker whatever it was doing when it stopped.
+// PutBlob uploads the staged body under key, through the breaker like every call:
+// a worker silent on a put is dead whatever it was doing.
 func (s *Supervisor) PutBlob(key, stagingPath string) (int64, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -283,7 +252,6 @@ func (s *Supervisor) PutBlob(key, stagingPath string) (int64, bool, error) {
 	return bytes, skipped, err
 }
 
-// GetBlob writes the body under key to stagingPath.
 func (s *Supervisor) GetBlob(key, stagingPath string, max int64) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -296,11 +264,10 @@ func (s *Supervisor) GetBlob(key, stagingPath string, max int64) (int64, error) 
 	return n, err
 }
 
-// Cancel stops the current worker and keeps nothing to reuse. It does not take
-// the call lock, so a cancel issued while a call is in flight returns at once:
-// the kill releases that call, which settles once on the deliberate-stop path
-// and is not counted as a death. The next call starts a fresh process rather
-// than driving a pipe whose other end is gone.
+// Cancel stops the current worker and keeps nothing to reuse, without the call
+// lock, so a cancel during a call returns at once. The kill releases that call on
+// the deliberate-stop path, uncounted; the next call starts fresh rather than
+// driving a dead pipe.
 func (s *Supervisor) Cancel() {
 	c := s.current()
 	if c == nil {
@@ -310,17 +277,17 @@ func (s *Supervisor) Cancel() {
 	c.cancel()
 }
 
-// Close stops the worker for good. It is what the daemon runs on shutdown and
-// before a re-exec, so no worker outlives the daemon that started it.
+// Close stops the worker for good, on shutdown and before re-exec, so no worker
+// outlives its daemon.
 func (s *Supervisor) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.drop()
 }
 
-// drive runs one call through the current worker under the breaker's
-// accounting. The marker is written before the call and settled once the call
-// returns, which is what decides whether the worker is kept.
+// drive runs one call through the current worker under the breaker's accounting.
+// The marker is written before and settled after, deciding whether the worker is
+// kept.
 func (s *Supervisor) drive(verb string, fn func(*Client) error) error {
 	if err := s.breaker.Begin(verb); err != nil {
 		return err
@@ -332,7 +299,6 @@ func (s *Supervisor) drive(verb string, fn func(*Client) error) error {
 	return s.settle(c, fn(c))
 }
 
-// worker returns the running worker, starting one if none is open.
 func (s *Supervisor) worker() (*Client, error) {
 	if c := s.current(); c != nil {
 		return c, nil
@@ -345,11 +311,9 @@ func (s *Supervisor) worker() (*Client, error) {
 	return c, nil
 }
 
-// settle records what the call did. A reply -- success or refusal -- clears the
-// in-call marker and keeps the worker; a call that did not come back drops the
-// worker and counts the death the marker names. A call stopped by Cancel is the
-// one deliberate stop: it clears the marker so the next start does not count it,
-// and leaves the death count alone.
+// settle records what the call did. Success or refusal clears the marker and keeps
+// the worker; a call never returning drops the worker and counts the death. A
+// Cancelled call clears the marker uncounted.
 func (s *Supervisor) settle(c *Client, err error) error {
 	switch {
 	case err == nil:
@@ -380,15 +344,14 @@ func (s *Supervisor) settle(c *Client, err error) error {
 	}
 }
 
-// current returns the worker a call would use, without waiting for one in
-// flight: Cancel reaches a blocked call's worker this way instead of through mu.
+// current returns the worker in use without waiting out a call: Cancel reaches a
+// blocked call's worker this way, not through mu.
 func (s *Supervisor) current() *Client {
 	s.clientMu.Lock()
 	defer s.clientMu.Unlock()
 	return s.client
 }
 
-// install makes c the worker calls use.
 func (s *Supervisor) install(c *Client) {
 	s.clientMu.Lock()
 	s.client = c
@@ -404,9 +367,8 @@ func (s *Supervisor) forget(c *Client) {
 	s.clientMu.Unlock()
 }
 
-// drop stops the current worker for good and forgets it. The shutdown request
-// comes first so a worker that honours it exits cleanly; a worker a call holds
-// is reached by Cancel instead, which kills it without the call lock.
+// drop stops the current worker for good and forgets it. Shutdown is asked first
+// for a clean exit; a call-held worker is reached by Cancel instead.
 func (s *Supervisor) drop() error {
 	c := s.current()
 	if c == nil {

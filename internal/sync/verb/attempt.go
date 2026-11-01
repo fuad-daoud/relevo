@@ -4,21 +4,13 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 )
 
-// The attempt verb is what a one-shot reaches the running daemon through when
-// it has just written something worth the other machines seeing in seconds: a
-// rate limit a person recorded with `relevo gate` is stamped and signalled in
-// its own process, and this is how that write leaves sooner than the export
-// debounce would have it.
+// The attempt verb hurries one just-made write to the other machines sooner than
+// the export debounce would.
 
-// attempt queues an attempt for the write a client has just made, bypassing
-// only the export debounce. Every other rule still applies inside the daemon's
-// own trigger -- sync off, a breaker that is not due, and the in-flight slot --
-// so a client sending several of these costs the one rerun the slot provides
-// rather than an attempt each.
-//
-// A runner with no trigger installed answers OK rather than refusing: the write
-// the client made is on disk and signalled, so the ordinary triggers will send
-// it, and a refusal here would read as a failure of a gate that did land.
+// attempt queues an attempt for a just-made write, bypassing only the export
+// debounce; every other rule still applies, so several of these cost one rerun.
+// A runner with no trigger answers OK: the write is on disk and signalled, so
+// the ordinary triggers send it.
 func (v *Runner) attempt() *wire.SyncResult {
 	if v.Trigger != nil {
 		v.Trigger()

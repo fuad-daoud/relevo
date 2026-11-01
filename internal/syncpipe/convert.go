@@ -10,15 +10,13 @@ import (
 	"github.com/fuad-daoud/relevo/internal/syncworker"
 )
 
-// The wire names the log's own columns and the daemon names Go fields, so every
-// entry crosses this boundary twice. Both directions are written out rather
-// than reflected over, because a field the reflection missed would be one that
-// silently became its zero value on the far side of a pipe -- which is the
-// failure a transport cannot detect and a reader would act on anyway.
+// The wire names the log's columns and the daemon names Go fields, so every entry
+// crosses twice. Both directions are written out, not reflected: a missed field
+// would silently become its zero value across the pipe, which no transport detects
+// and a reader acts on anyway.
 
-// entriesToWire renders this origin's batch for an export. A batch arrives
-// numbered whatever the writer guessed, and the transport numbers it again, so
-// nothing the caller sent can name a position in the log.
+// entriesToWire renders this origin's batch for export. The batch arrives numbered
+// by guess and the transport numbers again, so nothing sent can name a log position.
 func entriesToWire(entries []synclog.Entry) []syncworker.Entry {
 	if len(entries) == 0 {
 		return nil
@@ -49,10 +47,9 @@ func entriesToWire(entries []synclog.Entry) []syncworker.Entry {
 	return out
 }
 
-// entriesFromWire reads back what an export numbered or a pull returned. The
-// entries are taken as they arrive rather than checked here: the numbers are
-// the transport's to hand out, and the importer already refuses to go backwards
-// from the mark it holds.
+// entriesFromWire reads back numbered exports or pulled entries. Numbers are the
+// transport's to hand out; the importer already refuses backwards moves from its
+// mark.
 func entriesFromWire(entries []syncworker.Entry) []synclog.Entry {
 	if len(entries) == 0 {
 		return nil
@@ -83,12 +80,10 @@ func entriesFromWire(entries []syncworker.Entry) []synclog.Entry {
 	return out
 }
 
-// PublishMarks records how far this installation has applied of each origin.
-//
-// The request carries no reader: the worker takes its own from hello, so a
-// caller here cannot name a machine that is not this one. What it does carry is
-// the time, because only this process knows when it reached those sequences and
-// a mark's age is what decides whether its reader still counts towards a floor.
+// PublishMarks records how far this installation applied of each origin. The
+// request carries no reader: the worker takes its own from hello. It carries the
+// time, since only this process knows when it arrived and a mark's age decides
+// whether its reader still counts.
 func (c *Client) PublishMarks(marks map[string]int, at time.Time) error {
 	_, err := c.call(syncworker.Request{
 		Verb:    syncworker.VerbPublishMarks,
@@ -98,12 +93,9 @@ func (c *Client) PublishMarks(marks map[string]int, at time.Time) error {
 	return err
 }
 
-// ReadMarks answers with every published mark and each origin's size.
-//
-// A reply with nothing in it is a refusal rather than an empty log: the worker
-// always fills the field it answers with, so a reply without one is a worker
-// that did not do what was asked. Reading it as "no reader has published"
-// would floor every origin at nothing.
+// ReadMarks answers with every published mark and each origin's size. An empty
+// reply is a refusal, not an empty log: the worker always fills the field, so a
+// missing one did not do what was asked.
 func (c *Client) ReadMarks() (synclog.MarkState, error) {
 	resp, err := c.call(syncworker.Request{Verb: syncworker.VerbReadMarks})
 	if err != nil {
@@ -116,14 +108,9 @@ func (c *Client) ReadMarks() (synclog.MarkState, error) {
 }
 
 // PublishTraffic writes this installation's traffic row and answers with every
-// origin's row the log holds.
-//
-// The request carries no origin: the worker keys the row with its own from
-// hello, so a caller here cannot name a machine that is not this one.
-//
-// A reply with no rows is a refusal rather than an empty account: the worker
-// always answers with the rows it holds after its own write, so one without
-// them did not do what was asked.
+// origin's held row. The request carries no origin: the worker keys from hello.
+// An empty reply is a refusal: the worker always answers with rows after its own
+// write.
 func (c *Client) PublishTraffic(row synclog.TrafficRow) (map[string]synclog.TrafficRow, error) {
 	resp, err := c.call(syncworker.Request{
 		Verb:    syncworker.VerbPublishTraffic,
@@ -138,7 +125,6 @@ func (c *Client) PublishTraffic(row synclog.TrafficRow) (map[string]synclog.Traf
 	return trafficRowsFromWire(resp.Traffic), nil
 }
 
-// PullRange reads one page of an origin's entries in (after, upto].
 func (c *Client) PullRange(origin string, after, upto int) ([]synclog.Entry, error) {
 	resp, err := c.call(syncworker.Request{Verb: syncworker.VerbPullRange, Origin: origin, AfterSeq: after, Upto: upto})
 	if err != nil {
@@ -147,8 +133,8 @@ func (c *Client) PullRange(origin string, after, upto int) ([]synclog.Entry, err
 	return entriesFromWire(resp.Entries), nil
 }
 
-// CompactOwn drops this installation's superseded entries up to floor. The
-// request names no origin: the worker compacts its own, from hello.
+// CompactOwn drops superseded entries to floor. The request names no origin: the
+// worker compacts its own, from hello.
 func (c *Client) CompactOwn(floor int) (synclog.CompactResult, error) {
 	resp, err := c.call(syncworker.Request{Verb: syncworker.VerbCompact, Floor: floor})
 	if err != nil {
@@ -157,27 +143,23 @@ func (c *Client) CompactOwn(floor int) (synclog.CompactResult, error) {
 	return synclog.CompactResult{Dropped: resp.Dropped, Floor: resp.Floor}, nil
 }
 
-// KeyMeta reads the passphrase material the remote holds.
+// KeyMeta reads the passphrase material the remote holds. A missing field is a
+// refusal, not "no key": the worker always answers with the asked field, and "no
+// key" would wrongly restart setup.
 func (c *Client) KeyMeta(ctx context.Context) (synclog.KeyMeta, error) {
 	resp, err := c.call(syncworker.Request{Verb: syncworker.VerbKeyMeta})
 	if err != nil {
 		return synclog.KeyMeta{}, err
 	}
 	if resp.KeyMeta == nil {
-		// The worker always answers with the field it was asked about, so an
-		// answer without one is a worker that did not do what was asked. Reading
-		// it as "no key" would take the caller down the setup path again.
 		return synclog.KeyMeta{}, errors.New("syncpipe: the worker answered key_meta with no key")
 	}
 	return keyMetaFromWire(*resp.KeyMeta), nil
 }
 
-// KeyInit writes the passphrase material where the remote holds none and
-// answers with what it holds afterwards.
-//
-// The answer is used rather than the request on purpose: two machines running
-// --new at once each write their own salt, and only the answer tells either of
-// them which one the log is actually keyed by.
+// KeyInit writes the passphrase material where the remote holds none, answering
+// with what it holds. The answer rules, not the request: two concurrent --new
+// writers each write their own salt, and only the answer says which keyed the log.
 func (c *Client) KeyInit(ctx context.Context, key synclog.KeyMeta) (synclog.KeyMeta, error) {
 	resp, err := c.call(syncworker.Request{
 		Verb:    syncworker.VerbKeyInit,
@@ -192,7 +174,6 @@ func (c *Client) KeyInit(ctx context.Context, key synclog.KeyMeta) (synclog.KeyM
 	return keyMetaFromWire(*resp.KeyMeta), nil
 }
 
-// keyToWire renders the passphrase material for a key_init or a key_rekey.
 func keyToWire(key synclog.KeyMeta) *syncworker.KeyMeta {
 	return &syncworker.KeyMeta{
 		Salt:    key.Salt,
@@ -204,7 +185,6 @@ func keyToWire(key synclog.KeyMeta) *syncworker.KeyMeta {
 	}
 }
 
-// keyMetaFromWire reads back the passphrase material the worker answered with.
 func keyMetaFromWire(k syncworker.KeyMeta) synclog.KeyMeta {
 	return synclog.KeyMeta{
 		Salt:    k.Salt,
@@ -216,8 +196,8 @@ func keyMetaFromWire(k syncworker.KeyMeta) synclog.KeyMeta {
 	}
 }
 
-// KeyRekey rotates the log's key to the epoch the spec names and answers with
-// what the remote holds afterwards.
+// KeyRekey rotates the log's key to the spec's epoch, answering with what the
+// remote holds.
 func (c *Client) KeyRekey(ctx context.Context, spec synclog.KeyRekeySpec) (synclog.KeyMeta, error) {
 	resp, err := c.call(syncworker.Request{
 		Verb:    syncworker.VerbKeyRekey,
@@ -246,8 +226,8 @@ func (c *Client) PublishEpochCut(ctx context.Context, cut synclog.EpochCut) erro
 	return err
 }
 
-// ClaimIdentity records this machine's claim on origin and answers with the
-// claim the remote holds afterwards; an empty token only reads it.
+// ClaimIdentity records this machine's claim on origin, answering with what the
+// remote holds; an empty token only reads.
 func (c *Client) ClaimIdentity(ctx context.Context, origin, token string, at time.Time) (string, time.Time, error) {
 	resp, err := c.call(syncworker.Request{
 		Verb:       syncworker.VerbClaim,
@@ -265,7 +245,6 @@ func (c *Client) ClaimIdentity(ctx context.Context, origin, token string, at tim
 	return resp.ClaimToken, claimedAt, nil
 }
 
-// cutsToWire renders the cuts a key_rekey writes.
 func cutsToWire(cuts map[string]synclog.EpochCut) map[string]syncworker.EpochCut {
 	if len(cuts) == 0 {
 		return nil
@@ -277,9 +256,6 @@ func cutsToWire(cuts map[string]synclog.EpochCut) map[string]syncworker.EpochCut
 	return out
 }
 
-// epochCutsFromWire reads back the cuts a read_marks answered with. The two
-// shapes name the same three fields, so the map carries through one row at a
-// time, the way every conversion above does.
 func epochCutsFromWire(cuts map[string]syncworker.EpochCut) map[string]synclog.EpochCut {
 	if len(cuts) == 0 {
 		return nil
@@ -291,11 +267,8 @@ func epochCutsFromWire(cuts map[string]syncworker.EpochCut) map[string]synclog.E
 	return out
 }
 
-// marksToWire renders this reader's published positions.
-//
-// The order is sorted so a request's line is the same for the same marks every
-// time: the wire is what a golden line and a failing diff are read against, and
-// a map's own order would make it neither.
+// marksToWire renders this reader's published positions, sorted so the same marks
+// always write the same request line.
 func marksToWire(marks map[string]int) []syncworker.Mark {
 	if len(marks) == 0 {
 		return nil
@@ -312,7 +285,6 @@ func marksToWire(marks map[string]int) []syncworker.Mark {
 	return out
 }
 
-// markStateFromWire reads back what a read_marks answered with.
 func markStateFromWire(s syncworker.MarkState) synclog.MarkState {
 	out := synclog.MarkState{
 		Floors:     s.Floors,
@@ -334,7 +306,6 @@ func markStateFromWire(s syncworker.MarkState) synclog.MarkState {
 	return out
 }
 
-// trafficRowToWire renders this installation's row for a publish.
 func trafficRowToWire(row synclog.TrafficRow) *syncworker.TrafficRow {
 	return &syncworker.TrafficRow{
 		Month: row.Month,
@@ -344,8 +315,6 @@ func trafficRowToWire(row synclog.TrafficRow) *syncworker.TrafficRow {
 	}
 }
 
-// trafficRowsFromWire reads back the rows a publish answered with, one per
-// origin.
 func trafficRowsFromWire(rows map[string]syncworker.TrafficRow) map[string]synclog.TrafficRow {
 	out := make(map[string]synclog.TrafficRow, len(rows))
 	for origin, row := range rows {
@@ -359,7 +328,6 @@ func trafficRowsFromWire(rows map[string]syncworker.TrafficRow) map[string]syncl
 	return out
 }
 
-// headFromWire reads back a page of an origin's latest state per row.
 func headFromWire(rows []syncworker.HeadRow) []synclog.HeadRow {
 	if len(rows) == 0 {
 		return nil
@@ -376,11 +344,9 @@ func headFromWire(rows []syncworker.HeadRow) []synclog.HeadRow {
 	return out
 }
 
-// statsFromWire reads back what the log holds, and what the worker has moved.
-//
-// The four byte counters are carried through rather than summed here: they are
-// already cumulative, and adding to them a second time would count every call
-// the worker made once per stats reply the daemon asked for.
+// statsFromWire reads back what the log holds and moved. Byte counters carry
+// through: already cumulative, summing again would count every worker call twice
+// per stats reply.
 func statsFromWire(s syncworker.Stats) synclog.Stats {
 	return synclog.Stats{
 		Entries:       s.Entries,

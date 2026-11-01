@@ -1,10 +1,8 @@
 package synclog
 
-// Turning the refs in a batch back into the stored bytes they name, before the
-// batch's transaction opens. A fetch is network and can be slow, so it happens
-// outside the transaction; and every check on what came back happens before any
-// row is written, so a body that fails one leaves the file and the mark where
-// they were.
+// Refs become bytes before the batch's transaction opens: a fetch is network
+// and can be slow, and every check runs before any row is written, so a body
+// failing one leaves the file and the mark where they were.
 
 import (
 	"crypto/sha256"
@@ -20,21 +18,19 @@ import (
 	"github.com/fuad-daoud/relevo/internal/blobstore"
 )
 
-// fetchWorkers bounds the fetches in flight for one batch. Four keeps a batch of
-// many large bodies from serialising on round trips without opening a connection
-// per body.
+// fetchWorkers bounds the fetches in flight for one batch: four parallelises
+// round trips without a connection per body.
 const fetchWorkers = 4
 
-// ErrBlobMismatch reports a fetched object that is not the one its ref names:
-// the wrong length or the wrong digest. It is transient on purpose -- a store
-// that served a truncated or tampered object may serve the right one next time --
-// so the origin is held and retried rather than latched or applied.
+// ErrBlobMismatch reports a fetched object that is not the one its ref names.
+// It is transient on purpose, so the origin is held and retried rather than
+// latched or applied.
 var ErrBlobMismatch = errors.New("synclog: the fetched body is not the one its ref names")
 
 var errNoMover = errors.New("synclog: this machine has no blob store to fetch a body from")
 
-// missingBlob is a ref whose object the store does not hold. It carries the
-// entry so the importer can name the row, which the bare sentinel cannot.
+// missingBlob is a ref whose object the store does not hold, carrying the
+// entry so the importer can name the row.
 type missingBlob struct {
 	entry  Entry
 	column string
@@ -46,10 +42,8 @@ func (m *missingBlob) Error() string {
 
 func (m *missingBlob) Unwrap() error { return ErrBlobMissing }
 
-// Stall is one origin held for a run: a body its batch refers to could not be
-// fetched and checked, or the snapshot up to its floor could not be applied.
-// Nothing of it applied and the mark did not move, so the next attempt reads the
-// same entries again. Reason says which.
+// Stall is one origin held for a run with nothing applied and the mark unmoved,
+// so the next attempt reads the same entries. Reason says which.
 type Stall struct {
 	Origin string
 	// Label is the name that installation's own file carries.
@@ -57,12 +51,11 @@ type Stall struct {
 	Reason string
 }
 
-// String is the report a stall reads as: the installation and why it waits.
 func (s Stall) String() string {
 	return fmt.Sprintf("%s is held: %s; it is retried on the next attempt", s.Label, s.Reason)
 }
 
-// stallError carries a stall up from the fetch to the loop that records it.
+// stallError carries a stall to the loop recording it.
 type stallError struct {
 	origin string
 	cause  error
@@ -72,19 +65,16 @@ func (s *stallError) Error() string { return s.cause.Error() }
 
 func (s *stallError) Unwrap() error { return s.cause }
 
-// refSlot is one ref in a batch: the entry that holds it, and the column it
-// stands in for.
+// refSlot is one ref in a batch: its entry and the column it stands in for.
 type refSlot struct {
 	entry  int
 	column blobColumn
 	ref    BlobRef
 }
 
-// resolveRefs replaces every ref in the batch's bodies with the stored bytes it
-// names. An object the store does not hold is a *missingBlob; a fetched body
-// that fails its length or digest check is ErrBlobMismatch; a ref whose codec
-// disagrees with the row's own codec column is ErrInvalid, because the entry
-// contradicts itself and no fetch can fix that.
+// resolveRefs replaces every ref with the bytes it names: a missing object is a
+// *missingBlob, a failed check ErrBlobMismatch, a codec disagreeing with the row
+// ErrInvalid, since the entry contradicts itself and no fetch can fix that.
 func resolveRefs(m BlobMover, stagingDir string, batch []Entry) error {
 	fields := make(map[int]map[string]json.RawMessage)
 	slots, err := refSlots(batch, fields)
@@ -118,9 +108,8 @@ func resolveRefs(m BlobMover, stagingDir string, batch []Entry) error {
 	return nil
 }
 
-// refSlots finds the refs in a batch and checks each against the row's codec
-// column. A body that does not parse is left for applyEntry to refuse, which
-// names it properly.
+// refSlots finds the refs in a batch, checking each against the row's codec
+// column. An unparsable body is left for applyEntry to refuse, which names it.
 func refSlots(batch []Entry, fields map[int]map[string]json.RawMessage) ([]refSlot, error) {
 	var slots []refSlot
 	for k, e := range batch {
@@ -160,9 +149,8 @@ func refSlots(batch []Entry, fields map[int]map[string]json.RawMessage) ([]refSl
 	return slots, nil
 }
 
-// checkBatchBytes refuses a batch whose distinct bodies add up past
-// MaxBatchBlobBytes, from the lengths the refs declare and before anything is
-// fetched, so a forged batch costs no download.
+// checkBatchBytes refuses a batch past MaxBatchBlobBytes from declared lengths,
+// before anything is fetched, so a forged batch costs no download.
 func checkBatchBytes(batch []Entry, slots []refSlot) error {
 	sizes := make(map[string]int64, len(slots))
 	var total int64
@@ -181,9 +169,8 @@ func checkBatchBytes(batch []Entry, slots []refSlot) error {
 	return nil
 }
 
-// codecOf reads a codec column out of a body. An absent column is plain, as in a
-// file that predates the column; a value that is not a whole number reads as -1,
-// which no ref carries.
+// codecOf reads a codec column out of a body. Absent is plain, as in a file
+// predating the column; non-whole reads as -1, which no ref carries.
 func codecOf(f map[string]json.RawMessage, name string) int {
 	raw, ok := f[name]
 	if !ok {
@@ -196,9 +183,8 @@ func codecOf(f map[string]json.RawMessage, name string) int {
 	return n
 }
 
-// fetchAll fetches each distinct object once, four at a time, and returns the
-// bytes per slot. Two slots naming the same object share one fetch, because both
-// would otherwise stage under the same file name at once.
+// fetchAll fetches each distinct object once, four at a time. Same-object slots
+// share one fetch, or both would stage under one file name at once.
 func fetchAll(m BlobMover, stagingDir string, batch []Entry, slots []refSlot) ([][]byte, error) {
 	var order []string
 	first := make(map[string]int)
@@ -237,8 +223,7 @@ func fetchAll(m BlobMover, stagingDir string, batch []Entry, slots []refSlot) ([
 	return out, nil
 }
 
-// failedFetch makes a missing object a *missingBlob that names the row, and
-// leaves every other failure as it was.
+// failedFetch names the row of a missing object, leaving other failures as is.
 func failedFetch(batch []Entry, s refSlot, err error) error {
 	if errors.Is(err, ErrBlobMissing) {
 		return &missingBlob{entry: batch[s.entry], column: s.column.column}
@@ -246,8 +231,8 @@ func failedFetch(batch []Entry, s refSlot, err error) error {
 	return err
 }
 
-// fetchOne stages one object, checks its length and digest, and returns its
-// bytes. The staging file is removed whatever the outcome.
+// fetchOne stages one object, checks length and digest, and returns its bytes,
+// removing the staging file whatever the outcome.
 func fetchOne(m BlobMover, stagingDir, key string, ref BlobRef) ([]byte, error) {
 	path := filepath.Join(stagingDir, ref.SHA256)
 	defer func() { _ = os.Remove(path) }()
@@ -275,10 +260,9 @@ func fetchOne(m BlobMover, stagingDir, key string, ref BlobRef) ([]byte, error) 
 	return body, nil
 }
 
-// fetchAndApply resolves a batch's refs and applies it. What the fetch can say
-// decides what the batch becomes: a missing object ends the run with a message
-// naming the row, a self-contradicting ref is a refusal and so dropped, and
-// anything else holds the origin with nothing applied.
+// fetchAndApply resolves a batch's refs and applies it: a missing object ends the
+// run naming the row, a self-contradicting ref is dropped, anything else holds
+// the origin with nothing applied.
 func (i *Importer) fetchAndApply(batch, rows []Entry, docs int, marks map[string]int) (int, []Drop, error) {
 	err := resolveRefs(i.mover, i.staging, rows)
 	var missing *missingBlob
@@ -294,9 +278,8 @@ func (i *Importer) fetchAndApply(batch, rows []Entry, docs int, marks map[string
 	}
 }
 
-// missingError names the row whose body is gone: for a round file the binding,
-// round and file, for a transcript the owner and seq, and always the origin's
-// label, because the fix is to restore the object or re-export from that machine.
+// missingError names the row whose body is gone, with the origin's label,
+// because the fix is to restore the object or re-export from that machine.
 func (i *Importer) missingError(m *missingBlob) error {
 	names, err := i.labels()
 	if err != nil {
@@ -310,7 +293,6 @@ func (i *Importer) missingError(m *missingBlob) error {
 		label, i.describeRow(m.entry), m.column, ErrBlobMissing)
 }
 
-// describeRow says which row an entry names in the terms a reader knows.
 func (i *Importer) describeRow(e Entry) string {
 	values, err := DecodeBody(e.Body)
 	if err != nil {

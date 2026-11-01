@@ -7,8 +7,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
-// enableWarning is what an enable that succeeded still has to say: a join the
-// quota guard could not check, and whatever the join's import left undone.
+// enableWarning is what a successful enable still has to say: an unchecked join
+// and the import's leftovers.
 func enableWarning(res relevosync.EnableResult) string {
 	var out []string
 	if res.Guarded && !res.Estimate.Known {
@@ -20,9 +20,9 @@ func enableWarning(res relevosync.EnableResult) string {
 	return strings.Join(append(out, importWarnings(res.Imported)...), "; ")
 }
 
-// importWarnings is what the join's import left undone. The enable still
-// succeeds -- a stalled origin is read again by the steady ticks and a dropped
-// row is gone for good -- but whoever turned sync on has to hear about both.
+// importWarnings is what the join's import left undone. The enable still succeeds,
+// but the owner hears both: a stalled origin is reread by steady ticks, a dropped
+// row is gone for good.
 func importWarnings(r synclog.ImportResult) []string {
 	var out []string
 	for _, s := range r.Stalled {

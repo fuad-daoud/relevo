@@ -2,7 +2,6 @@ package synclog
 
 import "fmt"
 
-// PullRange returns one origin's entries with after < seq <= upto.
 func (m *MemTransport) PullRange(origin string, after, upto int) ([]Entry, error) {
 	m.log.mu.Lock()
 	defer m.log.mu.Unlock()
@@ -16,7 +15,6 @@ func (m *MemTransport) PullRange(origin string, after, upto int) ([]Entry, error
 	return out, nil
 }
 
-// CompactOwn compacts this handle's own origin.
 func (m *MemTransport) CompactOwn(floor int) (CompactResult, error) {
 	dropped, err := m.Compact(m.origin, floor)
 	if err != nil {
@@ -27,12 +25,10 @@ func (m *MemTransport) CompactOwn(floor int) (CompactResult, error) {
 	return CompactResult{Dropped: dropped, Floor: m.log.floors[m.origin]}, nil
 }
 
-// Compact drops origin's superseded entries up to floor and raises the origin's
-// recorded floor to it, under one lock so no reader sees one without the other.
-// The floor only rises; a lower one drops what it covers and records nothing.
-//
-// A floor past the origin's head is refused, and one that falls inside a batch
-// is moved down to the end of the batch before it, as the worker does.
+// Compact drops origin's superseded entries to floor and raises its recorded
+// floor, under one lock so no reader sees one without the other. The floor only
+// rises. A floor past head is refused; one inside a batch moves down to the batch
+// before, as the worker does.
 func (m *MemTransport) Compact(origin string, floor int) (int, error) {
 	l := m.log
 	l.mu.Lock()

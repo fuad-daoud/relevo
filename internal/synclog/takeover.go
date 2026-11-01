@@ -9,15 +9,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// CtlTakeover is the reserved table of the entry that moves a binding's writer
-// without the old writer's consent.
+// CtlTakeover is the reserved table moving a binding's writer without the old
+// writer's consent.
 const CtlTakeover = "ctl:takeover"
 
-// IsCtlTable reports whether tbl names a control entry rather than a shared row.
 func IsCtlTable(tbl string) bool { return strings.HasPrefix(tbl, "ctl:") }
 
-// Takeover is the body of a ctl:takeover entry: the writer the binding left, the
-// last of its entries that stays valid, and the machine that took it.
+// Takeover is a ctl:takeover body: the left writer, its last valid entry, and the
+// taker.
 type Takeover struct {
 	RecordID  string `json:"record_id"`
 	BindingID string `json:"binding_id"`
@@ -26,15 +25,15 @@ type Takeover struct {
 	Taker     string `json:"taker"`
 }
 
-// TakeoverPK keys the entry by root and old writer, so a later takeover of the
-// same pair supersedes an earlier one in compaction and the fence only rises.
+// TakeoverPK keys the entry by root and old writer, so a later takeover supersedes
+// in compaction and the fence only rises.
 func TakeoverPK(recordID, oldWriter string) string {
 	raw, _ := json.Marshal([]string{recordID, oldWriter})
 	return string(raw)
 }
 
-// NewTakeover builds the takeover entry. After is the old writer's entry the
-// fence names, so no importer flips the writer before applying through it.
+// NewTakeover builds the takeover entry. After names the old writer's fenced
+// entry, so no importer flips the writer before applying through it.
 func NewTakeover(origin string, t Takeover, schemaVersion int, at time.Time) (Entry, error) {
 	if t.RecordID == "" || t.OldWriter == "" || t.Taker == "" || t.Upto < 0 || t.Taker != origin || t.Taker == t.OldWriter {
 		return Entry{}, fmt.Errorf("synclog: takeover body is incomplete or not the taker's own: %w", ErrInvalid)
@@ -53,7 +52,6 @@ func NewTakeover(origin string, t Takeover, schemaVersion int, at time.Time) (En
 	return e, nil
 }
 
-// DecodeTakeover reads a takeover body and checks it against its entry.
 func DecodeTakeover(e Entry) (Takeover, error) {
 	var t Takeover
 	if e.Table != CtlTakeover || e.Op != OpUpsert {
@@ -68,12 +66,9 @@ func DecodeTakeover(e Entry) (Takeover, error) {
 	return t, nil
 }
 
-// applyTakeover writes a takeover entry's effect on one importer: both roots
-// flip to the taker, the old writer's term is raised to the fence, a taker that
-// had been fenced earlier keeps that term and records this entry as its regrant,
-// and, when this installation is the old writer, the root is recorded as left.
-// Whatever the flip queued for this installation is discarded: an import never
-// exports, and a fenced change is only one the exporter drops later.
+// applyTakeover writes a takeover's effect: both roots flip to the taker, the old
+// term rises to the fence, and this installation's queued flip is discarded, since
+// an import never exports.
 func applyTakeover(tx *db.Tx, e Entry, transport LogTransport, now time.Time) error {
 	t, err := DecodeTakeover(e)
 	if err != nil {
@@ -115,8 +110,6 @@ func applyTakeover(tx *db.Tx, e Entry, transport LogTransport, now time.Time) er
 	return nil
 }
 
-// recordOwnFencedEntries records entries this origin wrote for the taken-over binding
-// above the fence (upto) in sync_fenced_change.
 func recordOwnFencedEntries(tx *db.Tx, t Takeover, transport LogTransport, now time.Time) error {
 	state, err := transport.ReadMarks()
 	if err != nil {
@@ -177,9 +170,9 @@ func isTakeoverRoot(t Takeover, rootID string) bool {
 		(t.BindingID != "" && rootID == t.BindingID)
 }
 
-// exportCtl appends the control entries a takeover queued, before the rows that
-// follow them, so an importer applies the fence before the taker's first write.
-// A locked machine keeps them queued: a control entry must be signed.
+// exportCtl appends queued control entries before the rows following them, so the
+// fence applies before the taker's first write. Locked keeps them queued: control
+// entries must be signed.
 func (e *Exporter) exportCtl() (int, error) {
 	if len(e.key) == 0 {
 		return 0, nil
@@ -212,8 +205,8 @@ func (e *Exporter) exportCtl() (int, error) {
 	return len(entries), e.db.DropPendingCtl(len(pending))
 }
 
-// noteSchema records the highest schema version a verified batch carries, once
-// per increase: a hand-over reads it to refuse a target that has not upgraded.
+// noteSchema records a verified batch's highest schema version, once per increase:
+// a hand-over reads it to refuse an unupgraded target.
 func (i *Importer) noteSchema(origin string, batch []Entry) error {
 	if i.schemaSeen == nil {
 		i.schemaSeen = map[string]int{}

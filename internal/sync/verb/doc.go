@@ -1,3 +1,3 @@
-// Package verb is the sync verbs' surface: the failure classification, the
-// refusal answers, and the frame-tail intake the verbs run on.
+// Package verb is the sync verbs' surface: failure classification, refusal
+// answers, and frame-tail intake.
 package verb

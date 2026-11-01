@@ -9,31 +9,19 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// blobTag is the one JSON shape that is not a column value: a BLOB travels as a
-// single-key object carrying its base64 text. JSON has no byte type, so without
-// the tag a blob would arrive as the same string a TEXT column holding base64
-// would, and the importer could not tell a compressed transcript body from text
-// that merely looks like one.
+// blobTag marks a BLOB's base64 text as bytes. JSON has no byte type, so without
+// the tag the importer could not tell a compressed body from text merely looking
+// like one.
 const blobTag = "$blob"
 
-// RefValue is a column value that is not in the entry at all: the entry names
-// the object in the blob store that holds it, and the importer fetches the
-// bytes before the row can be applied. It is a type of its own rather than a
-// BlobRef because the two travel differently -- a BlobRef is a value a caller
-// holds, a RefValue is a value standing in for one that stayed behind -- and a
-// body that carried a bare ref object would be indistinguishable from a column
-// whose value happens to be a structure.
+// RefValue is a column value not in the entry: the importer fetches the bytes
+// before applying. It is its own type because a bare ref object would be
+// indistinguishable from a structured column value.
 type RefValue struct{ BlobRef }
 
-// EncodeBody turns one row read from the file into the body an entry carries:
-// every column under its own name, in the type the file stored it as. A NULL
-// stays a JSON null so a column set to nothing is distinguishable from one that
-// was never set.
-//
-// The row is encoded exactly as stored. The compressed bodies of migration 013
-// travel as their bytes with their codec column beside them, so a body that
-// arrives is byte-identical to the one that left and no re-compression can
-// decide differently than the writer did.
+// EncodeBody turns one file row into the body an entry carries. A NULL stays
+// JSON null, so nothing is distinguishable from never set. The row is encoded
+// exactly as stored, so an arriving body is byte-identical to the one that left.
 func EncodeBody(row db.ExchangeRow) (json.RawMessage, error) {
 	values := make(map[string]json.RawMessage, len(row.Columns))
 	for _, col := range row.Columns {
@@ -50,9 +38,8 @@ func EncodeBody(row db.ExchangeRow) (json.RawMessage, error) {
 	return body, nil
 }
 
-// encodeValue renders one stored value as JSON. The stored types are named
-// rather than reflected over so a value the file cannot hold is refused here
-// instead of arriving at an importer as a type nothing can bind.
+// encodeValue renders one stored value as JSON. Types are named, not reflected,
+// so an unstorable value is refused here rather than arriving as an unbindable one.
 func encodeValue(value any) (json.RawMessage, error) {
 	switch v := value.(type) {
 	case nil:
@@ -74,23 +61,19 @@ func encodeValue(value any) (json.RawMessage, error) {
 	}
 }
 
-// DecodeBody turns an entry's body into the row's columns. Every key in the body
-// is kept, including one this machine's schema does not declare: the body was
-// written by another installation and the importer is what knows which of this
-// machine's columns to name in SQL, so a key it does not recognise is dropped
-// there rather than here.
+// DecodeBody turns an entry's body into the row's columns. Every key is kept,
+// even undeclared ones: the importer knows which columns to name in SQL, so
+// unknown keys drop there, not here.
 func DecodeBody(body json.RawMessage) (map[string]any, error) {
 	dec := json.NewDecoder(bytes.NewReader(body))
-	// Numbers are read as written. Going through float64 would round an integer
-	// wider than 2^53 before the importer ever sees it.
+	// Numbers are read as written: float64 would round an integer wider than 2^53.
 	dec.UseNumber()
 	var raw map[string]json.RawMessage
 	if err := dec.Decode(&raw); err != nil {
 		return nil, fmt.Errorf("synclog: decode body: %w: %w", err, ErrInvalid)
 	}
-	// The decoder stops at the end of the object, so a body with a second value
-	// or trailing bytes behind it would otherwise decode as its own prefix. An
-	// importer that bound such a body would be acting on half of it.
+	// The decoder stops at the object's end, so trailing bytes would otherwise
+	// decode as the prefix, and the importer would act on half a body.
 	if expectEOF(dec) != nil {
 		return nil, fmt.Errorf("synclog: decode body: text after the object: %w", ErrInvalid)
 	}
@@ -105,10 +88,8 @@ func DecodeBody(body json.RawMessage) (map[string]any, error) {
 	return out, nil
 }
 
-// decodeValue renders one JSON value back as the type the file stored it as: a
-// blob as bytes, an integral number as an integer, null as nil. A body is
-// untrusted input, so anything else is refused rather than passed on as a type
-// the caller would have to reason about.
+// decodeValue renders one JSON value as the stored type. A body is untrusted
+// input, so anything else is refused rather than passed on.
 func decodeValue(raw json.RawMessage) (any, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
@@ -133,15 +114,10 @@ func decodeValue(raw json.RawMessage) (any, error) {
 	}
 }
 
-// decodeObject reads one tagged value. The two tags answer different questions:
-// $blob says the bytes are here, $ref says they are in the store and names the
-// object. They are read apart because only one of them leaves the importer with
-// a value it can bind, and an entry that pointed at a body it had not fetched
-// would apply a row of missing columns.
-//
-// Both tags require an object of exactly the tag and nothing beside it. A
-// second key is refused rather than ignored, so a body cannot carry a structure
-// past a reader that would bind its contents under a name the writer chose.
+// decodeObject reads one tagged value: $blob says the bytes are here, $ref says
+// they are in the store. Only one leaves the importer with a bindable value.
+// Both require exactly the tag and nothing beside it, so no body smuggles a
+// structure past the reader.
 func decodeObject(raw json.RawMessage) (any, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
@@ -160,9 +136,8 @@ func decodeObject(raw json.RawMessage) (any, error) {
 	return decodeBlob(raw)
 }
 
-// decodeBlob returns the bytes a tagged BLOB carries. An object is only a blob
-// when it is exactly the tag and a string: any other object is refused, so a
-// body cannot smuggle a structure past a reader that would bind its contents.
+// decodeBlob returns the bytes a tagged BLOB carries, refusing any other object
+// so no body smuggles a structure past the reader.
 func decodeBlob(raw json.RawMessage) ([]byte, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
@@ -186,8 +161,8 @@ func decodeBlob(raw json.RawMessage) ([]byte, error) {
 	return decoded, nil
 }
 
-// decodeNumber binds an integral number as the integer its column holds and any
-// other number as a real, so a column's storage class survives the exchange.
+// decodeNumber binds an integral number as an integer and any other as a real,
+// so a column's storage class survives.
 func decodeNumber(raw json.RawMessage) (any, error) {
 	num := json.Number(string(raw))
 	if i, err := num.Int64(); err == nil {

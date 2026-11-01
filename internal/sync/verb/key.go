@@ -19,9 +19,8 @@ func keyedExporter(shared *db.DB, t synclog.LogTransport) (*synclog.Exporter, er
 	return e, nil
 }
 
-// keyedReconciler is a reconciler that signs with the machine's stored key, as
-// the steady export does, so a repair appends entries a peer verifies like any
-// other.
+// keyedReconciler signs with the machine's stored key, so a repair appends
+// entries a peer verifies like any other.
 func keyedReconciler(shared *db.DB, t synclog.LogTransport) (*synclog.Reconciler, error) {
 	key, err := relevosync.SigningKey(shared.Local())
 	if err != nil {
@@ -33,8 +32,8 @@ func keyedReconciler(shared *db.DB, t synclog.LogTransport) (*synclog.Reconciler
 	return r, nil
 }
 
-// keyedImporter is an importer that verifies with the machine's stored
-// keyring -- the whole chain, not only its newest key.
+// keyedImporter verifies with the machine's stored keyring: the whole chain, not
+// only the newest key.
 func keyedImporter(shared *db.DB, t synclog.LogTransport) (*synclog.Importer, error) {
 	i := synclog.NewImporter(shared, t)
 	if err := relevosync.BindVerifier(i, shared.Local()); err != nil {
@@ -44,7 +43,6 @@ func keyedImporter(shared *db.DB, t synclog.LogTransport) (*synclog.Importer, er
 	return i, nil
 }
 
-// ExportOnce exports with the machine's stored key.
 func ExportOnce(shared *db.DB, t synclog.LogTransport) (synclog.ExportResult, error) {
 	e, err := keyedExporter(shared, t)
 	if err != nil {
@@ -53,7 +51,6 @@ func ExportOnce(shared *db.DB, t synclog.LogTransport) (synclog.ExportResult, er
 	return e.Export()
 }
 
-// ImportOnce imports with the machine's stored key.
 func ImportOnce(shared *db.DB, t synclog.LogTransport) (synclog.ImportResult, error) {
 	i, err := keyedImporter(shared, t)
 	if err != nil {

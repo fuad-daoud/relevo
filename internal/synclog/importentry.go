@@ -8,14 +8,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// sweepEntries applies a slice of entries in order in the current transaction.
-// An entry that succeeds increments applied.
-// An entry that fails with ErrInvalid is an immediate refusal (the transaction
-// must be rolled back and the entry dropped).
-// An entry that fails with db.ErrInvalid is a constraint refusal (FK or UNIQUE);
-// it leaves the transaction open and is set aside in deferred with its error
-// recorded in defErrs.
-// Any other error halts the transaction.
+// sweepEntries applies entries in order in the current transaction. ErrInvalid is
+// an immediate refusal, rolling back and dropping the entry; db.ErrInvalid is a
+// constraint refusal, deferred with its error; any other error halts.
 func sweepEntries(tx *db.Tx, entries []Entry, transport LogTransport, now time.Time) (applied int, deferred []Entry, defErrs []error, refusal *entryRefusal, err error) {
 	for n, e := range entries {
 		handled, aerr := applyEntry(tx, e, transport, now)
@@ -37,9 +32,8 @@ func sweepEntries(tx *db.Tx, entries []Entry, transport LogTransport, now time.T
 	return applied, deferred, defErrs, nil, nil
 }
 
-// retryPasses retries deferred entries in passes while each pass makes progress.
-// When passes stop (no progress or limit reached), remaining entries and their
-// latest errors are returned to be dropped individually.
+// retryPasses retries deferred entries while each pass lands something; the
+// remainder is dropped individually.
 func retryPasses(tx *db.Tx, deferred []Entry, defErrs []error, maxPasses int, transport LogTransport, now time.Time) (applied int, remaining []Entry, remainingErrs []error, refusal *entryRefusal, err error) {
 	cur := deferred
 	curErrs := defErrs
@@ -63,11 +57,9 @@ func retryPasses(tx *db.Tx, deferred []Entry, defErrs []error, maxPasses int, tr
 	return applied, cur, curErrs, nil, nil
 }
 
-// writeBatch attempts to apply a batch of rows within one transaction.
-// If an entry is refused with ErrInvalid, the transaction rolls back and the
-// refusal is reported so the batch can be retried without that entry.
-// Remaining deferred entries after all passes become individual drops, and the
-// mark moves in the same transaction.
+// writeBatch applies a batch of rows in one transaction, retrying without a
+// refused entry and dropping the unresolvable remainder, with the mark moving in
+// the same transaction.
 func (i *Importer) writeBatch(batch, rows []Entry, docs, priorDrops int, marks map[string]int) (applied int, drops []Drop, refusal *entryRefusal, err error) {
 	origin := batch[0].Origin
 	var signedAt int
@@ -115,10 +107,8 @@ func (i *Importer) writeBatch(batch, rows []Entry, docs, priorDrops int, marks m
 	return applied, drops, nil, err
 }
 
-// applyEntries applies rows for one batch, isolating individual entry refusals
-// without abandoning the batch. An entry failing ErrInvalid causes a rollback
-// and retry without that entry; entries failing db.ErrInvalid are retried in
-// passes and refused individually if unresolved.
+// applyEntries applies one batch's rows, rolling back and retrying without each
+// ErrInvalid refusal; db.ErrInvalid entries retry in passes, then drop singly.
 func (i *Importer) applyEntries(batch, rows []Entry, docs int, marks map[string]int) (int, []Drop, error) {
 	var totalDrops []Drop
 	for {
@@ -153,7 +143,6 @@ func indexOfEntry(entries []Entry, target Entry) int {
 	return -1
 }
 
-// applyEntry writes one entry, and reports whether it did its work.
 func applyEntry(tx *db.Tx, e Entry, transport LogTransport, now time.Time) (bool, error) {
 	if IsCtlTable(e.Table) {
 		if e.Table != CtlTakeover {

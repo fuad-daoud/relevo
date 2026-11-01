@@ -6,7 +6,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// HoldError indicates an entry caused the origin to be held rather than dropped.
 type HoldError struct {
 	Reason string
 }
@@ -15,14 +14,12 @@ func (h *HoldError) Error() string {
 	return h.Reason
 }
 
-// decision is what authorize decided about an entry before it is written.
 type decision struct {
 	owner        string
 	isHandover   bool
 	targetWriter string
 }
 
-// isBindingFamily reports whether tbl is in the binding or binding_record tree.
 func isBindingFamily(tbl string) bool {
 	switch tbl {
 	case "binding", "binding_record", "binding_event", "round_file", "round", "event", "artifact", "transcript":
@@ -129,7 +126,6 @@ func findRootIDAndTable(tx *db.Tx, e Entry, values map[string]any) (string, stri
 	}
 }
 
-// resolveRootAndWriter resolves the root ID and the root row's current writer for entry e.
 func resolveRootAndWriter(tx *db.Tx, e Entry, values map[string]any) (rootID string, currentWriter string, foundRoot bool, err error) {
 	rootTable, rID := findRootIDAndTable(tx, e, values)
 	if rID == "" || rootTable == "" {
@@ -209,10 +205,9 @@ func authorizeAbsentRoot(tx *db.Tx, e Entry, rootID string, values map[string]an
 	return decision{owner: e.Origin}, nil
 }
 
-// refuseEmptyWriter refuses a binding upsert whose body names an empty writer
-// over a row that has one: applied, it would hand the row to every machine. A
-// body without the key (an exporter older than the writer column) and a stored
-// writer of "" (a legacy row) are not a strip.
+// refuseEmptyWriter refuses a binding upsert naming an empty writer over a row
+// that has one: applied, it would hand the row to every machine. A body without
+// the key and a stored "" are not a strip.
 func refuseEmptyWriter(e Entry, currentWriter string, values map[string]any) error {
 	if (e.Table != "binding" && e.Table != "binding_record") || e.Op != OpUpsert || currentWriter == "" {
 		return nil
@@ -261,7 +256,6 @@ func authorizePresentRoot(tx *db.Tx, e Entry, rootID, currentWriter string, valu
 		e.Table, e.PK, e.Origin, currentWriter, errNotOwner, ErrInvalid)
 }
 
-// authorize evaluates whether entry e is valid to write under ownership and term rules.
 func authorize(tx *db.Tx, e Entry, values map[string]any) (decision, error) {
 	if !isBindingFamily(e.Table) {
 		return authorizeNonBinding(tx, e)

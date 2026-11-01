@@ -7,12 +7,10 @@ import (
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
-// reconcile compares this machine's file against what the log holds for its
-// origin and appends the difference: an upsert for every row head lacks or
-// holds stale, and a delete for every head row the file no longer holds. It is
-// the repair for a log that missed this machine's writes, which the outbox
-// cannot answer because it holds only what was written since the last export.
-// The dry run walks the same differences and appends nothing.
+// reconcile appends this file's difference from the log: upserts for missing or
+// stale rows, deletes for vanished ones. It repairs writes the outbox cannot
+// answer, holding only post-export writes. The dry run walks the same differences
+// and appends nothing.
 func (v *Runner) reconcile(ctx context.Context, verb *wire.SyncVerb) *wire.SyncResult {
 	transport, err := v.drive(ctx)
 	if err != nil {
