@@ -37,8 +37,6 @@ type modalOverlay interface {
 	modal(width int) (title string, rows []string, want int, danger bool)
 }
 
-// overlayKeyer is optionally implemented by an overlay that shows its own keys
-// in the footer while it is up.
 type overlayKeyer interface{ keys() []widget.KeyHelp }
 
 // confirmBox is a one-line yes/no confirm: y runs onYes, any other key cancels.
@@ -101,7 +99,6 @@ func (c confirmBox) view(width int) []string {
 	return out
 }
 
-// keys is the confirm's footer: y runs it, n cancels.
 func (c confirmBox) keys() []widget.KeyHelp {
 	yes := c.yes
 	if yes == "" {
@@ -173,7 +170,7 @@ func (p promptBox) update(k tea.KeyMsg) (overlay, tea.Cmd, bool) {
 
 // completeTab is tab inside a prompt: a completion function lists what the
 // value the first tab started from can become and cycles the matches; a fixed
-// choice list cycles as it always has.
+// choice list cycles.
 func (p promptBox) completeTab() promptBox {
 	if p.complete != nil {
 		if !p.tabbed {
@@ -207,8 +204,6 @@ func (p promptBox) view(width int) []string {
 	return out
 }
 
-// modal renders the prompt as a boxed modal: blank, the title in text,
-// blank, the input, the choices hint, the error, blank.
 func (p promptBox) modal(width int) (string, []string, int, bool) {
 	const want = 72
 	kind := p.kind
@@ -231,7 +226,6 @@ func (p promptBox) modal(width int) (string, []string, int, bool) {
 	return kind, rows, want, false
 }
 
-// keys is the prompt's footer: enter, tab when it can complete, esc.
 func (p promptBox) keys() []widget.KeyHelp {
 	keys := []widget.KeyHelp{{Key: "enter", Help: "ok"}}
 	if len(p.choices) > 0 || p.complete != nil {
@@ -251,8 +245,7 @@ func mastermindConfirmLine(b view.BindingStatus, wait string) string {
 	return "MasterMind " + b.MasterMindName + " " + wait
 }
 
-// stopConfirmLines is x's confirm body: who else is affected, what is being
-// stopped, and the keys. Pure, so it is tested directly.
+// stopConfirmLines is x's confirm body. Pure, so it is tested directly.
 func stopConfirmLines(b view.BindingStatus, now time.Time) []string {
 	var lines []string
 	if l := mastermindConfirmLine(b, "is waiting on this round"); l != "" {
@@ -262,7 +255,6 @@ func stopConfirmLines(b view.BindingStatus, now time.Time) []string {
 	return lines
 }
 
-// ownershipConfirmLines is D and u's confirm body: the ownership line.
 func ownershipConfirmLines(b view.BindingStatus) []string {
 	var lines []string
 	if l := mastermindConfirmLine(b, "owns this binding"); l != "" {
@@ -271,7 +263,6 @@ func ownershipConfirmLines(b view.BindingStatus) []string {
 	return lines
 }
 
-// joinFacts joins the non-empty facts with the confirm's middot.
 func joinFacts(parts ...string) string {
 	var kept []string
 	for _, p := range parts {
@@ -282,7 +273,6 @@ func joinFacts(parts ...string) string {
 	return strings.Join(kept, " · ")
 }
 
-// stopCmd is the x key's confirm on b.
 func stopCmd(env widget.Env, b view.BindingStatus) tea.Cmd {
 	key := b.Key()
 	return openOverlay(confirmBox{
@@ -297,7 +287,6 @@ func stopCmd(env widget.Env, b view.BindingStatus) tea.Cmd {
 	})
 }
 
-// doneCmd is the D key's confirm on b.
 func doneCmd(env widget.Env, b view.BindingStatus) tea.Cmd {
 	key := b.Key()
 	return openOverlay(confirmBox{
@@ -312,7 +301,6 @@ func doneCmd(env widget.Env, b view.BindingStatus) tea.Cmd {
 	})
 }
 
-// unbindCmd is the u key's confirm on b.
 func unbindCmd(env widget.Env, b view.BindingStatus) tea.Cmd {
 	key := b.Key()
 	return openOverlay(confirmBox{
@@ -327,9 +315,8 @@ func unbindCmd(env widget.Env, b view.BindingStatus) tea.Cmd {
 	})
 }
 
-// gateCmd is the g key's one form on b: the duration and the reason,
-// validated and submitted together. The duration must parse and be positive,
-// or the form stays open on that field.
+// gateCmd is the g key's one form on b; the duration must parse and be
+// positive, or the form stays open on that field.
 func gateCmd(env widget.Env, b view.BindingStatus) tea.Cmd {
 	key := b.Key()
 	subject := b.BuilderCandidate
@@ -374,8 +361,8 @@ func gateCmd(env widget.Env, b view.BindingStatus) tea.Cmd {
 	})
 }
 
-// shellCmd is the o key: a shell in the binding's tree, with the terminal
-// released and restored. A failure to start one is a notice.
+// shellCmd is the o key: a shell in the binding's tree. A failure to start
+// one is a notice.
 func shellCmd(env widget.Env, key string) tea.Cmd {
 	cmd, err := env.Actions.Shell(key)
 	if err != nil {

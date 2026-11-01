@@ -19,32 +19,29 @@ import (
 // machine's core count and the view's defaults stay deterministic.
 var numCPU = runtime.NumCPU
 
-// settingsDocMsg is one ConfigDoc load's reply for ':settings'.
 type settingsDocMsg struct {
 	doc relevo.ConfigDoc
 	err error
 }
 
-// settingsView is ':settings': every policy setting with its default,
-// in 6 groups, the cursor row's detail block, the group forms and reset.
+// settingsView is ':settings': every policy setting with its default, in 6
+// groups.
 type settingsView struct {
 	doc     relevo.ConfigDoc
 	err     error // the last ConfigDoc error; shown centred like candidates' error state
 	loaded  bool
 	cur     int // cursor over the 18 settings, never a group rule
-	top     int // first body line shown (page follows the cursor)
+	top     int
 	actions bool
 }
 
-// newSettingsView builds ':settings' and the command that loads its doc.
-// env.Actions must be non-nil: execLine refuses the command
-// otherwise.
+// newSettingsView builds ':settings'; env.Actions must be non-nil, as
+// execLine refuses the command otherwise.
 func newSettingsView(env widget.Env) (settingsView, tea.Cmd) {
 	v := settingsView{actions: env.Actions != nil}
 	return v, settingsDocCmd(env)
 }
 
-// settingsDocCmd reads the stored config off the update loop.
 func settingsDocCmd(env widget.Env) tea.Cmd {
 	return func() tea.Msg {
 		doc, err := env.Actions.ConfigDoc()
@@ -111,8 +108,6 @@ func checkSentence(doc relevo.ConfigDoc) string {
 	return list + " run it after each round."
 }
 
-// wrapText greedily wraps s at word boundaries so no line exceeds width
-// cells.
 func wrapText(s string, width int) []string {
 	if width <= 0 {
 		return []string{s}
@@ -134,7 +129,6 @@ func wrapText(s string, width int) []string {
 	return append(lines, cur)
 }
 
-// pluralSetting is "setting" for 1, "settings" otherwise.
 func pluralSetting(n int) string {
 	if n == 1 {
 		return "setting"
@@ -157,7 +151,6 @@ func settingsLayout(width int) (settingW, valueW, defaultW, cw int) {
 	return
 }
 
-// settingsHeaderLine is the table's header row, in faint bold.
 func settingsHeaderLine(settingW, valueW, defaultW, cw int) string {
 	style := widget.FaintStyle.Bold(true)
 	cells := []candCell{
@@ -209,9 +202,8 @@ func settingsDataLine(s relevo.Setting, sel bool, settingW, valueW, defaultW, cw
 	return candLine(cells, sel, cw)
 }
 
-// settingsDetailLines is the cursor row's detail block: the key and its
-// value, then the row's sentence(s), wrapped, dim. gate.default's sentence is
-// followed by the check sentence.
+// settingsDetailLines is the cursor row's detail block; gate.default's
+// sentence is followed by the check sentence.
 func settingsDetailLines(doc relevo.ConfigDoc, row relevo.Setting, width int) []string {
 	first := "   " + widget.FaintStyle.Bold(true).Render(row.Key) + "   " + widget.MutedStyle.Render(row.Value)
 	out := []string{widget.Fit(first, width)}
@@ -227,8 +219,6 @@ func settingsDetailLines(doc relevo.ConfigDoc, row relevo.Setting, width int) []
 	return out
 }
 
-// settingsLineOf is the body line setting idx sits on: the blank line,
-// the header, then one rule line per group boundary reached by idx.
 func settingsLineOf(settings []relevo.Setting, idx int) int {
 	line := 2
 	group := ""
@@ -245,9 +235,6 @@ func settingsLineOf(settings []relevo.Setting, idx int) int {
 	return line
 }
 
-// bodyLines is the whole body before it is windowed: a blank line, the
-// header, the grouped table and one blank line, then the cursor row's detail
-// block.
 func (v settingsView) bodyLines(width int) []string {
 	settings := relevo.Settings(v.doc, numCPU())
 	settingW, valueW, defaultW, cw := settingsLayout(width)
@@ -279,7 +266,6 @@ func (v settingsView) bodyLines(width int) []string {
 	return append(lines, settingsDetailLines(v.doc, settings[cur], width)...)
 }
 
-// follow scrolls the page so the cursor's table row stays visible.
 func (v *settingsView) follow(env widget.Env) {
 	settings := relevo.Settings(v.doc, numCPU())
 	if len(settings) == 0 {
@@ -312,7 +298,6 @@ func (v *settingsView) follow(env widget.Env) {
 
 func (v settingsView) Crumbs() []string { return []string{"settings"} }
 
-// Capturing is always false: the view owns no text input of its own.
 func (v settingsView) Capturing() bool { return false }
 
 // Keys are the view's own keys, shown only when the shell has an
@@ -328,7 +313,6 @@ func (v settingsView) Keys() []widget.KeyHelp {
 	}
 }
 
-// HelpKeys is the help overlay's key list: the same set plus ↑↓ move.
 func (v settingsView) HelpKeys() []widget.KeyHelp {
 	if !v.actions {
 		return nil
@@ -340,8 +324,7 @@ func (v settingsView) HelpKeys() []widget.KeyHelp {
 	}
 }
 
-// Context is the counts line on the left; the right side is empty this
-// round (round 2 adds the revision).
+// Context is the counts line on the left; the right side is empty.
 func (v settingsView) Context(env widget.Env) (string, string) {
 	settings := relevo.Settings(v.doc, numCPU())
 	set := 0
@@ -357,9 +340,9 @@ func (v settingsView) Context(env widget.Env) (string, string) {
 	return left, ""
 }
 
-// pagedBody windows lines to the height page at top. lines must already hold
-// the full body: callers build it only once the doc has loaded, so the
-// loading and error frames never touch the table.
+// pagedBody windows lines to the height page at top; lines must already hold
+// the full body, built only once the doc has loaded, so the loading and error
+// frames never touch the table.
 func pagedBody(loaded bool, err error, lines []string, top, width, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
@@ -416,7 +399,6 @@ func (v settingsView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd)
 	return v, nil
 }
 
-// updateKey is the view's own keys.
 func (v settingsView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	settings := relevo.Settings(v.doc, numCPU())
 	n := len(settings)

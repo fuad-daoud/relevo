@@ -59,15 +59,12 @@ type Model struct {
 	// persistence.
 	actionLog []widget.ActionEntry
 
-	// noticeErr and noticeFaint pick the notice's style: a red failure, a
-	// faint captured stderr line, or the amber default.
 	noticeErr   bool
 	noticeFaint bool
 
 	prefs prefs // the reduced prefs struct; saved on every widget.PrefMsg
 }
 
-// newModel builds the shell at ':fleet'.
 func newModel(ctx context.Context, src widget.Source, opts Options) Model {
 	m := Model{
 		src:            src,
@@ -119,10 +116,8 @@ func (m Model) setPref(key, value string) Model {
 	return m
 }
 
-// top is the top view.
 func (m Model) top() widget.View { return m.stack[len(m.stack)-1] }
 
-// env is what the shell lends a view on every call.
 func (m Model) env() widget.Env {
 	return widget.Env{
 		Ctx:       m.ctx,
@@ -163,8 +158,6 @@ func (m Model) Init() tea.Cmd {
 	)
 }
 
-// Update routes one message. It delegates keys to updateKey and the
-// stack-wide cases to updateStack.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -258,10 +251,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m.updateStack(msg)
 }
 
-// updateStatus stores a statusMsg as today, then runs the start command
-// once the first one has arrived. A status the watchdog called slow
-// refetches on landing rather than waiting out the tick interval, so the
-// first paint is never followed by an interval of stale rows.
+// updateStatus stores a statusMsg as today, then runs the start command once.
+// A status the watchdog called slow refetches on landing, so the first paint
+// is never followed by an interval of stale rows.
 func (m Model) updateStatus(msg statusMsg) (tea.Model, tea.Cmd) {
 	m.statusInFlight = false
 	if msg.err != nil {
@@ -299,9 +291,9 @@ func (m Model) onWatchdog() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// finishAction applies one actionMsg: the notice is the first
-// line of Text, or the error in widget.ErrorStyle; the whole text -- or the error --
-// is appended to ':log'; and a Refresh refetches status immediately.
+// finishAction applies one actionMsg: the notice is the first line of Text
+// while ':log' keeps the whole text, and a Refresh refetches status
+// immediately.
 func (m Model) finishAction(msg actionMsg) (tea.Model, tea.Cmd) {
 	delete(m.running, msg.key)
 	m.noticeErr = false
@@ -331,7 +323,6 @@ func (m Model) finishAction(msg actionMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// updateKey is the key routing, the first rule that applies.
 func (m Model) updateKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.notice = ""
 	if k.String() == "ctrl+c" {
@@ -390,8 +381,8 @@ func (m Model) updateKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 const wheelStep = 3
 
 // updateMouse turns one wheel event into wheelStep arrow keys for the top
-// view, and throws away every other mouse event. It is never forwarded
-// to updateStack.
+// view; every other mouse event is thrown away and nothing is forwarded to
+// updateStack.
 func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	var k tea.KeyMsg
 	switch {
@@ -421,7 +412,6 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// updateTop forwards one message to the top view alone.
 func (m Model) updateTop(msg tea.Msg) (tea.Model, tea.Cmd) {
 	i := len(m.stack) - 1
 	next, cmd := m.stack[i].Update(msg, m.env())
@@ -429,8 +419,6 @@ func (m Model) updateTop(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// updateStack forwards one message to every view, bottom to top, replacing
-// each at its index and batching their commands.
 func (m Model) updateStack(msg tea.Msg) (tea.Model, tea.Cmd) {
 	env := m.env()
 	var cmds []tea.Cmd
@@ -447,7 +435,6 @@ func (m Model) updateStack(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// widget.View draws the frame: header, context, error block, body, rule, keys.
 func (m Model) View() string {
 	if !m.ready {
 		return "loading…"
@@ -462,7 +449,6 @@ func (m Model) View() string {
 	return joinLines(rows)
 }
 
-// joinLines joins rows with newlines.
 func joinLines(rows []string) string {
 	out := ""
 	for i, r := range rows {

@@ -15,9 +15,9 @@ import (
 )
 
 // roundPane is one binding's round detail: its state, its fetch
-// orchestration and its rendering, lifted out of Model. Model
-// holds exactly one and lends it the fields it cannot own -- src, ctx, now,
-// report, width and rows -- through syncPane on every call.
+// orchestration and its rendering. Model holds exactly one and lends it the
+// fields it cannot own -- src, ctx, now, report, width and rows -- through
+// syncPane on every call.
 type roundPane struct {
 	src     widget.Source
 	ctx     context.Context
@@ -26,14 +26,13 @@ type roundPane struct {
 	detail  detailModel
 	actions bool // widget.Actions != nil: action keys are shown
 
-	// tabInFlight is the pane's own fetch guard, moved from
-	// Model.tabInFlight: true while a fetch is in flight for the tab on
-	// screen. It is separate from statusInFlight because a terminal read
-	// can block.
+	// tabInFlight is the pane's own fetch guard: true while a fetch is in
+	// flight for the tab on screen. It is separate from statusInFlight
+	// because a terminal read can block.
 	tabInFlight bool
 
 	// reader is the row's shape: true for a reader round, whose tabs are
-	// prompt, artifacts, log and transcript (round 5b). artifactSel is the
+	// prompt, artifacts, log and transcript. artifactSel is the
 	// artifacts tab's cursor, an index into the fetched list, and
 	// baselineHead is the binding's RoundBaselineHead for line 1's scratch
 	// cell.
@@ -41,15 +40,12 @@ type roundPane struct {
 	artifactSel  int
 	baselineHead string
 
-	// width and rows are the pane's geometry: today's Model.paneWidth()
-	// and Model.bodyRows().
+	// width and rows are the pane's geometry, from Model.paneWidth() and
+	// Model.bodyRows().
 	width int
 	rows  int
 }
 
-// tabs is the tab bar's tabs in the order it draws them: a reader round shows
-// prompt, artifacts, log and transcript; a writer round keeps today's prompt,
-// report, transcript, diff and log.
 func (p roundPane) tabs() []tab {
 	if p.reader {
 		return readerTabs
@@ -57,8 +53,8 @@ func (p roundPane) tabs() []tab {
 	return writerTabs
 }
 
-// tabLabel is one tab's label: the artifacts tab names the file count once its
-// list has been fetched ("artifacts 2"), every other tab is its own title.
+// tabLabel is one tab's label: the artifacts tab names the file count once
+// its list has been fetched.
 func (p roundPane) tabLabel(t tab) string {
 	if t == tabArtifacts {
 		if n := artifactCount(p.detail.cache[tabArtifacts]); n > 0 {
@@ -68,9 +64,8 @@ func (p roundPane) tabLabel(t tab) string {
 	return tabTitles[t]
 }
 
-// headRows returns the number of furniture rows before the viewport: the
-// tokens line, the tab bar and the source line. Both shapes of round draw
-// the same head (round 5b).
+// headRows is the furniture rows before the viewport: the tokens line, the
+// tab bar and the source line. Both shapes of round draw the same head.
 func (p roundPane) headRows() int {
 	return 6
 }
@@ -85,8 +80,6 @@ func (p roundPane) contentWidth() int {
 	return cw
 }
 
-// viewportHeight is the rows left for the viewport after the pane's own
-// furniture, floored at 0.
 func (p roundPane) viewportHeight() int {
 	h := p.rows - p.headRows()
 	if h < 0 {
@@ -134,9 +127,8 @@ func (p roundPane) reportFetch() tea.Cmd {
 	return fetchFor(p.ctx, p.src, tabReport, p.detail.name, p.detail.round, 1, p.artifactSel, p.detail.live)
 }
 
-// startFetch issues whatever the pane must read now: the visible tab's fetch,
-// and a reader round's artifact list, in one command. It is a no-op while a
-// fetch is in flight, and marks the pane in flight when it returns one.
+// startFetch issues whatever the pane must read now, in one command. It is a
+// no-op while a fetch is in flight.
 func (p *roundPane) startFetch() tea.Cmd {
 	if p.tabInFlight {
 		return nil
@@ -169,8 +161,6 @@ func (p roundPane) detailFetch() tea.Cmd {
 	return fetchStatusRow(p.ctx, p.src, p.detail.name)
 }
 
-// batchCmds joins commands into one, dropping the nil ones: the pane issues
-// its tab fetch and its detail-row fetch side by side on the open.
 func batchCmds(cmds ...tea.Cmd) tea.Cmd {
 	out := make([]tea.Cmd, 0, len(cmds))
 	for _, c := range cmds {
@@ -210,7 +200,7 @@ func (p roundPane) pointDetailAt(key string) (roundPane, tea.Cmd) {
 	vp := viewport.New(p.contentWidth(), p.viewportHeight())
 	// The row's shape, a chain row's member round and the round's baseline
 	// head live on the binding, not the status document: a reader round's tabs,
-	// card and context row are keyed on them (round 5b). A key the runtime
+	// card and context row are keyed on them. A key the runtime
 	// cannot resolve, or a read that fails, leaves the pane a writer's.
 	//
 	// A live chain's row stands in for its members, and its builder member
@@ -286,8 +276,8 @@ func (p roundPane) pointDetailAtHist(h relevo.HistoryBinding) (roundPane, tea.Cm
 }
 
 // fillViewport sets the viewport to the active tab's body, wrapped to the
-// viewport's width, keeping the current offset (the viewport clamps it).
-// Every SetContent goes through here so a resize re-wraps.
+// viewport's width. Every SetContent goes through here so a resize re-wraps;
+// the current offset is kept (the viewport clamps it).
 func (p *roundPane) fillViewport() {
 	y := p.detail.vp.YOffset
 	if p.detail.name == "" {
@@ -331,8 +321,8 @@ func (p roundPane) invalidate() (roundPane, tea.Cmd, bool) {
 			// A terminal refetches on every visible tick.
 			continue
 		}
-		p.detail.cache[t] = tabContent{} // loaded=false
-		p.detail.scroll[t] = 0           // reset parked offset on invalidation
+		p.detail.cache[t] = tabContent{}
+		p.detail.scroll[t] = 0
 	}
 	if cmd := p.startFetch(); cmd != nil {
 		return p, cmd, false
@@ -353,8 +343,8 @@ func (p roundPane) stepRound(delta int) (roundPane, tea.Cmd) {
 	p.detail.round = next
 	p.artifactSel = 0
 	for t := tab(0); t < tabCount; t++ {
-		p.detail.cache[t] = tabContent{} // loaded=false
-		p.detail.scroll[t] = 0           // reset parked offset on invalidation
+		p.detail.cache[t] = tabContent{}
+		p.detail.scroll[t] = 0
 	}
 	p.fillViewport()
 	if cmd := p.startFetch(); cmd != nil {
@@ -400,7 +390,6 @@ func (p roundPane) onTab(msg tabMsg) roundPane {
 	return p
 }
 
-// cycleTab is tab / shift+tab, over the shape's own tabs.
 func (p roundPane) cycleTab(msg tea.KeyMsg) (roundPane, tea.Cmd) {
 	tabs := p.tabs()
 	i := 0
@@ -417,11 +406,11 @@ func (p roundPane) cycleTab(msg tea.KeyMsg) (roundPane, tea.Cmd) {
 }
 
 func (p roundPane) switchTab(next tab) (roundPane, tea.Cmd) {
-	p.detail.scroll[p.detail.active] = p.detail.vp.YOffset // park
+	p.detail.scroll[p.detail.active] = p.detail.vp.YOffset
 	p.detail.active = next
 	c := p.detail.cache[next]
 	p.fillViewport()
-	p.detail.vp.SetYOffset(p.detail.scroll[next]) // restore
+	p.detail.vp.SetYOffset(p.detail.scroll[next])
 	if next == tabTerminal && p.detail.follow {
 		p.detail.vp.GotoBottom()
 	}
@@ -454,7 +443,6 @@ func (p roundPane) detailHeader() string {
 	return s
 }
 
-// sourceLine says, in one faint line, what the viewport is showing.
 func (p roundPane) sourceLine() string {
 	if p.detail.name == "" {
 		return ""
@@ -464,8 +452,8 @@ func (p roundPane) sourceLine() string {
 		return widget.FaintStyle.Render("loading…")
 	}
 	if p.detail.active == tabArtifacts {
-		// The header carries the count and the total size (round 5b); a
-		// source line here would only repeat them.
+		// The header carries the count and the total size; a source line
+		// here would only repeat them.
 		return ""
 	}
 	var s string
@@ -549,12 +537,11 @@ func (p roundPane) hintLine(b *view.BindingStatus) (string, bool) {
 	return widget.AccentStyle.Render("relevo: ") + widget.TextStyle.Render(b.Waiting.Hint), true
 }
 
-// view draws exactly rows rows at width.
 func (p roundPane) view(width int) string {
 	b := row(p.report, p.detail.name)
 	out := []string{p.tokensLine(b), "", p.tabsRow(), ""}
 	// A reader round's artifacts tab draws no source line: the header
-	// already carries the count and the size (round 5b).
+	// already carries the count and the size.
 	if s := p.sourceLine(); s != "" {
 		out = append(out, "     "+s, "")
 	}

@@ -15,8 +15,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// mastermindSource is the single-runtime source `relevo ui` always had: no
-// branch, every key resolves to rt under its own name.
+// mastermindSource is the single-runtime source: no branch, every key
+// resolves to rt under its own name.
 type mastermindSource struct {
 	rt relevo.Runtime
 }
@@ -47,13 +47,11 @@ func (s mastermindSource) MarkViewed(key string) {
 	_ = s.rt.Store.MarkViewed(key, time.Now())
 }
 
-// serverSource reads every enrolled client's store on a serve box, through
-// serve.FlatStatus and Server.OwnerRuntime.
+// serverSource reads every enrolled client's store on a serve box.
 type serverSource struct {
 	srv *serve.Server
 }
 
-// ServerSource wraps a serve server as a widget widget.Source.
 func ServerSource(srv *serve.Server) widget.Source {
 	return serverSource{srv: srv}
 }
@@ -68,10 +66,8 @@ func (s serverSource) Status(ctx context.Context) (view.Report, error) {
 func (s serverSource) Runtime(key string) (relevo.Runtime, string, bool) {
 	// The owner part is a ClientID ("SHA256:<base64>") whose base64
 	// alphabet includes '/', so the separator is the LAST slash, never
-	// the first: splitting at the first broke resolution outright for
-	// every client whose digest happens to contain one (~half of ids).
-	// Binding names cannot contain '/' (they are filesystem-safe), so
-	// the last slash is unambiguous.
+	// the first. Binding names cannot contain '/' (they are
+	// filesystem-safe), so the last slash is unambiguous.
 	i := strings.LastIndexByte(key, '/')
 	if i <= 0 || i == len(key)-1 {
 		return relevo.Runtime{}, "", false
@@ -102,8 +98,6 @@ func notTTY() bool {
 	return err != nil || info.Mode()&os.ModeCharDevice == 0
 }
 
-// pipeRefusal is the full refusal line: hint when set, today's mastermind
-// text otherwise.
 func pipeRefusal(hint string) error {
 	if hint == "" {
 		hint = "relevo ui needs a terminal; use `relevo status` when piping"
@@ -156,8 +150,7 @@ func RunSource(ctx context.Context, src widget.Source, opts Options) error {
 
 // runResult maps bubbletea's exit into RunSource's (and Run's) contract: a
 // cancelled context is a clean exit, not an error. Kept separate so it can
-// be tested without starting a terminal program -- the test that did that
-// failed anywhere without a tty, including every CI runner.
+// be tested without starting a terminal program.
 func runResult(ctx context.Context, err error) error {
 	if ctx.Err() != nil && (errors.Is(err, tea.ErrProgramKilled) || errors.Is(err, tea.ErrInterrupted)) {
 		return nil

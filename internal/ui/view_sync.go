@@ -43,11 +43,10 @@ type syncMsg struct {
 // last reported, which installations have written into this database, and which
 // remote bindings are still waiting to be bound.
 //
-// It reads like :stats and not like :servers: every value it draws arrives in a
-// snapshot message, so the render path performs no I/O and opens no handle. That
-// is the view's whole safety property -- a sync view is the one screen a user
-// opens when something has already gone wrong, and it must not be able to make
-// anything worse.
+// Every value it draws arrives in a snapshot message, so the render path
+// performs no I/O and opens no handle. That is the view's whole safety
+// property -- a sync view is the one screen a user opens when something has
+// already gone wrong, and it must not be able to make anything worse.
 type syncView struct {
 	snap    widget.SyncSnapshot
 	loaded  bool
@@ -121,7 +120,6 @@ func newSyncView(env widget.Env) (widget.View, tea.Cmd) {
 	return v, syncSnapshotCmd(env)
 }
 
-// syncSnapshotCmd reads the whole snapshot off the update loop.
 func syncSnapshotCmd(env widget.Env) tea.Cmd {
 	return func() tea.Msg {
 		if env.Actions == nil {
@@ -155,7 +153,6 @@ func (v syncView) Keys() []widget.KeyHelp {
 	}
 }
 
-// HelpKeys is the help overlay's key list: the same set.
 func (v syncView) HelpKeys() []widget.KeyHelp { return v.Keys() }
 
 // OffKeys are the keys that do not apply right now. Nothing about a machine's
@@ -170,8 +167,6 @@ func (v syncView) OffKeys(env widget.Env) []string {
 	return []string{"p", "l", "t"}
 }
 
-// Context is the state line: what sync is doing, and how much of this machine
-// is still waiting on a human.
 func (v syncView) Context(env widget.Env) (string, string) {
 	if !v.loaded {
 		return "", ""
@@ -184,7 +179,6 @@ func (v syncView) Context(env widget.Env) (string, string) {
 	return left, right
 }
 
-// syncUnlinkedWord is the phrase for a count of rows waiting to be bound.
 func syncUnlinkedWord(n int) string {
 	if n == 1 {
 		return "unlinked binding"
@@ -255,8 +249,6 @@ func (v syncView) Body(env widget.Env, width, height int) string {
 	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
-// bodyLines is the whole body before it is windowed: the form when sync is off,
-// the status block and the two lists when it is on.
 func (v syncView) bodyLines(width int) []string {
 	if v.SyncToken() == relevosync.TokenOff {
 		return v.preOnLines()
@@ -264,12 +256,9 @@ func (v syncView) bodyLines(width int) []string {
 	return v.postOnLines(width)
 }
 
-// remote is, that a token is present without ever being shown, what the first
-// upload will cost, exactly what crosses and what is locked off, and the confirm
-// that names the database a confirmation would seed.
-//
-// It never prints the token, not masked to a hint and not truncated: the only
-// fact about it the view states is whether one exists.
+// preOnLines is the form for a machine with sync off. It never prints the
+// token, not masked to a hint and not truncated: the only fact about it the
+// view states is whether one exists.
 func (v syncView) preOnLines() []string {
 	lines := []string{""}
 	lines = append(lines, syncLine("remote", syncOr(v.snap.RemoteURL, "not configured"), widget.MutedStyle))
@@ -303,8 +292,8 @@ func (v syncView) confirmLines() []string {
 	}
 }
 
-// tokenPhrase says whether a token exists and, when it does, only that. The
-// value is not read by this view and could not be rendered if it were.
+// tokenPhrase says whether a token exists and, when it does, only that: the
+// value is not read by this view.
 func (v syncView) tokenPhrase() string {
 	if !v.snap.TokenSet {
 		return "absent · nothing reads it while sync is off"
@@ -324,7 +313,6 @@ func (v syncView) uploadEstimate() string {
 		syncBytes(int64(float64(v.snap.SharedBytes)*syncWireOverhead)), local)
 }
 
-// postOnLines is the status block and the two lists, for a machine that is on.
 func (v syncView) postOnLines(width int) []string {
 	lines := []string{""}
 	lines = append(lines, syncLine("sync", v.SyncToken()+" · "+v.statePhrase(), syncTokenStyle(v.SyncToken())))
@@ -502,8 +490,7 @@ func (v syncView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	return v, nil
 }
 
-// updateKey is the view's own keys. Each one records exactly one call, or opens
-// one confirm that will.
+// updateKey records exactly one call per key, or opens one confirm that will.
 func (v syncView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	switch k.String() {
 	case "p":

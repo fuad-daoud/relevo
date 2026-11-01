@@ -18,22 +18,20 @@ import (
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
-// auditLogMsg is one ConfigLog load's reply.
 type auditLogMsg struct {
 	revs []db.RevisionRow
 	err  error
 }
 
-// auditChangesMsg is one ConfigChanges load's reply: rev's changes, cached by
-// both the list and, when it is the revision it shows, the pushed revision
-// view.
+// auditChangesMsg is one ConfigChanges load's reply, cached by both the list
+// and the pushed revision view.
 type auditChangesMsg struct {
 	rev   int64
 	lines []relevo.ChangeLine
 	err   error
 }
 
-// auditPreviewMsg is one RollbackPreview reply: the reply opens the confirm, or
+// auditPreviewMsg is one RollbackPreview reply: it opens the confirm, or
 // turns into a notice.
 type auditPreviewMsg struct {
 	rev   int64
@@ -41,9 +39,7 @@ type auditPreviewMsg struct {
 	err   error
 }
 
-// auditView is ':audit': the config revisions grouped by day, newest first,
-// each row's change count, the cursor revision's changes in human words, and
-// the R key.
+// auditView is ':audit': the config revisions grouped by day, newest first.
 type auditView struct {
 	revs       []db.RevisionRow
 	err        error // the last ConfigLog error; shown centred like candidates' doc error
@@ -55,8 +51,8 @@ type auditView struct {
 	changesErr map[int64]error
 }
 
-// newAuditView builds ':audit' and the command that loads its log.
-// env.Actions must be non-nil: execLine refuses the command otherwise.
+// newAuditView builds ':audit' and the command that loads its log; env.Actions
+// must be non-nil, as execLine refuses the command otherwise.
 func newAuditView(env widget.Env) (widget.View, tea.Cmd) {
 	v := auditView{
 		actions:    env.Actions != nil,
@@ -66,7 +62,6 @@ func newAuditView(env widget.Env) (widget.View, tea.Cmd) {
 	return v, auditLogCmd(env)
 }
 
-// auditLogCmd reads the stored revisions off the update loop.
 func auditLogCmd(env widget.Env) tea.Cmd {
 	return func() tea.Msg {
 		revs, err := env.Actions.ConfigLog()
@@ -74,7 +69,6 @@ func auditLogCmd(env widget.Env) tea.Cmd {
 	}
 }
 
-// auditChangesCmd reads one revision's changes off the update loop.
 func auditChangesCmd(env widget.Env, rev int64) tea.Cmd {
 	return func() tea.Msg {
 		lines, err := env.Actions.ConfigChanges(rev)
@@ -82,7 +76,6 @@ func auditChangesCmd(env widget.Env, rev int64) tea.Cmd {
 	}
 }
 
-// auditPreviewCmd asks what rolling back to rev would change.
 func auditPreviewCmd(env widget.Env, rev int64) tea.Cmd {
 	return func() tea.Msg {
 		lines, err := env.Actions.RollbackPreview(rev)
@@ -92,11 +85,10 @@ func auditPreviewCmd(env widget.Env, rev int64) tea.Cmd {
 
 func (v auditView) Crumbs() []string { return []string{"audit"} }
 
-// Capturing is always false: the view owns no text input of its own.
 func (v auditView) Capturing() bool { return false }
 
-// Keys are the list's keys. `R` needs the shell's write seam; `enter`
-// does not, because opening a revision changes nothing.
+// Keys are the list's keys: `R` needs the shell's write seam, `enter` does
+// not, because opening a revision changes nothing.
 func (v auditView) Keys() []widget.KeyHelp {
 	keys := []widget.KeyHelp{{Key: "enter", Help: "all changes"}}
 	if v.actions {
@@ -112,7 +104,7 @@ func (v auditView) HelpKeys() []widget.KeyHelp {
 }
 
 // Context is the counts line on the left and the newest config version on the
-// right: m is the sum of every row's CHANGES.
+// right.
 func (v auditView) Context(env widget.Env) (string, string) {
 	total := 0
 	for _, r := range v.revs {
@@ -194,8 +186,6 @@ func (v auditView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	return v, nil
 }
 
-// updateKey is the list's own keys: movement over revisions, enter to
-// open the cursor revision's changes, R to roll back to it.
 func (v auditView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	n := len(v.revs)
 	switch k.String() {
@@ -318,7 +308,6 @@ func auditMessageWidth(cw int) int {
 	return w
 }
 
-// padLeft pads s to width cells on the left, so the text is right-aligned.
 func padLeft(s string, width int) string {
 	if w := lipgloss.Width(s); w < width {
 		return strings.Repeat(" ", width-w) + s
@@ -326,8 +315,8 @@ func padLeft(s string, width int) string {
 	return s
 }
 
-// auditHeaderLine is the table's header row, in faint bold, with the
-// REV and CHANGES columns right-aligned as their numbers are.
+// auditHeaderLine is the table's header row, in faint bold; REV and CHANGES
+// are right-aligned as their numbers are.
 func auditHeaderLine(cw int) string {
 	style := widget.FaintStyle.Bold(true)
 	cells := []candCell{
@@ -340,9 +329,8 @@ func auditHeaderLine(cw int) string {
 	return candLine(cells, false, cw)
 }
 
-// auditDataLine is one revision's table row: the local time, the
-// revision number (bold on the cursor), the source, the message, and the change
-// count, faint at zero.
+// auditDataLine is one revision's table row; the change count is faint at
+// zero.
 func auditDataLine(r db.RevisionRow, sel bool, cw int) string {
 	revStyle := widget.MutedStyle
 	if sel {
@@ -379,7 +367,6 @@ func auditDayRule(label string, n, cw int) string {
 	return "   " + widget.Fit(content, cw) + "   "
 }
 
-// auditDayCount is the size of the day group that starts at revision i.
 func auditDayCount(env widget.Env, revs []db.RevisionRow, i int) int {
 	day := dash.DayLabel(revs[i].At, env.Now, time.Local)
 	n := 0
@@ -402,10 +389,8 @@ func revisionChangeCount(r db.RevisionRow) int {
 	return len(arr)
 }
 
-// bodyLines is the whole body before it is windowed: a blank line under the
-// context row, the table with a rule per day, two blank lines and the cursor
-// revision's detail block. It returns the cursor row's body line too, so
-// follow can scroll to it.
+// bodyLines is the whole body before it is windowed. It returns the cursor
+// row's body line too, so follow can scroll to it.
 func (v auditView) bodyLines(env widget.Env, width int) ([]string, int) {
 	cw := auditTableWidth(width)
 	lines := []string{"", auditHeaderLine(cw)}
@@ -429,9 +414,8 @@ func (v auditView) bodyLines(env widget.Env, width int) ([]string, int) {
 	return append(lines, v.detailLines(env, width, room)...), sel
 }
 
-// detailLines is the cursor revision's detail block: the revision's
-// header, then one line per change, up to the room left above the footer, with
-// the ones that do not fit counted in a last line.
+// detailLines is the cursor revision's detail block: the header, then one
+// line per change, the ones that do not fit counted in a last line.
 func (v auditView) detailLines(env widget.Env, width, room int) []string {
 	if len(v.revs) == 0 {
 		return nil
@@ -468,8 +452,8 @@ func (v auditView) detailLines(env widget.Env, width, room int) []string {
 }
 
 // auditPreviewOpen turns a RollbackPreview reply into the command the view
-// returns: a notice for a refusal, an error or a no-change, else the
-// danger confirm that lists exactly what the roll back would change.
+// returns: a notice, or the danger confirm listing what the roll back would
+// change.
 func auditPreviewOpen(env widget.Env, newest int64, msg auditPreviewMsg) tea.Cmd {
 	var refused *relevo.RollbackRefused
 	switch {
@@ -493,9 +477,8 @@ func auditPreviewOpen(env widget.Env, newest int64, msg auditPreviewMsg) tea.Cmd
 	})
 }
 
-// auditConfirmLines is the danger confirm's body: the first change the
-// roll back undoes, every further one indented under it, then the revision it
-// saves as and the revisions it keeps.
+// auditConfirmLines is the danger confirm's body: what the roll back undoes,
+// the revision it saves as, and the revisions it keeps.
 func auditConfirmLines(newest int64, lines []relevo.ChangeLine, innerW int) []string {
 	label := func(l string) string { return widget.Pad(l, 11) }
 	out := make([]string, 0, len(lines)+3)

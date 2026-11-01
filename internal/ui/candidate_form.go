@@ -18,11 +18,8 @@ import (
 )
 
 // candidateForm is the one overlay the `:candidates` view uses to add and to
-// edit a candidate (round 3): a harness chip row, a provider row (chips on
-// a harness with a provider list, a text field with suggestions on one
-// without), a model field and a read-only name row. It validates on every
-// render: modal rebuilds the edit with relevo.AddCandidate/EditCandidate over
-// its doc.
+// edit a candidate. It validates on every render: modal rebuilds the edit
+// with relevo.AddCandidate/EditCandidate over its doc.
 type candidateForm struct {
 	ctx     context.Context
 	actions widget.Actions
@@ -67,8 +64,6 @@ func newCandidateForm(env widget.Env, doc relevo.ConfigDoc, editing, slots, harn
 	f.modelIn = newFormInput(false)
 
 	if editing != "" {
-		// Editing: prefill the harness, provider and model from the entry,
-		// then start on the model with the cursor at its end.
 		if c, ok := candByName(doc, editing); ok {
 			f.hsel = candIndex(f.kinds, c.Harness)
 			if f.hsel < 0 {
@@ -93,7 +88,6 @@ func newCandidateForm(env widget.Env, doc relevo.ConfigDoc, editing, slots, harn
 	return f
 }
 
-// candByName returns the candidate named name, ok false when none has it.
 func candByName(doc relevo.ConfigDoc, name string) (candidate.Candidate, bool) {
 	for _, c := range doc.Candidates {
 		if c.Name == name {
@@ -135,8 +129,6 @@ func (f candidateForm) setFocus(i int) candidateForm {
 	return f
 }
 
-// input is what the form would submit: the selected kind, and the provider the
-// selected chips or the typed field hold.
 func (f candidateForm) input() relevo.CandidateInput {
 	provider := f.provIn.Value()
 	if h, ok := harness.Lookup(f.kinds[f.hsel]); ok && h.Providers != nil && f.psel >= 0 && f.psel < len(h.Providers) {
@@ -149,8 +141,6 @@ func (f candidateForm) input() relevo.CandidateInput {
 	}
 }
 
-// check rebuilds this form's edit: AddCandidate when adding, EditCandidate when
-// editing.
 func (f candidateForm) check() (relevo.ConfigEdit, error) {
 	if f.editing == "" {
 		return relevo.AddCandidate(f.doc, f.input())
@@ -163,8 +153,6 @@ func (f candidateForm) preview() string {
 	return relevo.PreviewCandidateName(f.doc, f.editing, f.input())
 }
 
-// suggestions is the distinct providers doc.Candidates already use with the
-// selected kind, in stored order.
 func (f candidateForm) suggestions() []string {
 	kind := f.kinds[f.hsel]
 	seen := make(map[string]bool, len(f.doc.Candidates))
@@ -179,8 +167,6 @@ func (f candidateForm) suggestions() []string {
 	return out
 }
 
-// gateFor is the gate on the provider named provider, if any: a Gated entry
-// whose token's provider segment equals it.
 func (f candidateForm) gateFor(provider string) (availability.Gate, bool) {
 	if provider == "" {
 		return availability.Gate{}, false
@@ -197,7 +183,6 @@ func (f candidateForm) gateFor(provider string) (availability.Gate, bool) {
 	return availability.Gate{}, false
 }
 
-// modelPlaceholder is the model field's hint when it is empty.
 func (f candidateForm) modelPlaceholder() string {
 	if f.kinds[f.hsel] == "opencode" && f.input().Provider != "" {
 		return "the model id after " + f.input().Provider + "/"
@@ -205,7 +190,6 @@ func (f candidateForm) modelPlaceholder() string {
 	return "the model id"
 }
 
-// keys are the form's own keys, shown in the footer through overlayKeyer.
 func (f candidateForm) keys() []widget.KeyHelp {
 	submit := "add"
 	if f.editing != "" {
@@ -214,9 +198,6 @@ func (f candidateForm) keys() []widget.KeyHelp {
 	return []widget.KeyHelp{{Key: "enter", Help: submit}, {Key: "tab", Help: "next field"}, {Key: "esc", Help: "cancel"}}
 }
 
-// update handles one key: esc closes, tab moves focus, the harness row
-// takes left/right, the provider row takes left/right (listed) or up/down and
-// typing (open), the model row takes every key, and enter submits.
 func (f candidateForm) update(k tea.KeyMsg) (overlay, tea.Cmd, bool) {
 	switch k.String() {
 	case "esc":
@@ -242,9 +223,9 @@ func (f candidateForm) update(k tea.KeyMsg) (overlay, tea.Cmd, bool) {
 	}
 }
 
-// updateHarness is left/right on the harness row. Landing on a listed harness
-// selects the provider it already holds (or none); leaving one for an open
-// harness copies the selected provider into the text field.
+// updateHarness is left/right on the harness row; landing on a listed
+// harness selects the provider it holds (or none), leaving one copies the
+// selected provider into the text field.
 func (f candidateForm) updateHarness(k tea.KeyMsg) candidateForm {
 	var delta int
 	switch k.String() {
@@ -276,9 +257,6 @@ func (f candidateForm) updateHarness(k tea.KeyMsg) candidateForm {
 	return f
 }
 
-// updateProvider is the provider row's keys: left/right over a listed harness's
-// chips, or up/down through the suggestions and typing into the field on one
-// without.
 func (f candidateForm) updateProvider(k tea.KeyMsg) (overlay, tea.Cmd, bool) {
 	if h, ok := harness.Lookup(f.kinds[f.hsel]); ok && h.Providers != nil {
 		n := len(h.Providers)
@@ -309,8 +287,6 @@ func (f candidateForm) updateProvider(k tea.KeyMsg) (overlay, tea.Cmd, bool) {
 	return f, nil, false
 }
 
-// movePSel is one step of a listed harness's provider selection: 0 from -1 in
-// either direction, else delta with wrapping.
 func (f candidateForm) movePSel(delta, n int) int {
 	if n == 0 {
 		return -1
@@ -321,8 +297,6 @@ func (f candidateForm) movePSel(delta, n int) int {
 	return ((f.psel+delta)%n + n) % n
 }
 
-// cycleSuggestion moves the suggestion cursor by delta and fills the provider
-// field with the provider it lands on.
 func (f candidateForm) cycleSuggestion(delta int) candidateForm {
 	s := f.suggestions()
 	if len(s) == 0 {
@@ -374,14 +348,11 @@ func (f candidateForm) submit() (overlay, tea.Cmd, bool) {
 	return f, nil, false
 }
 
-// view is the overlay interface's body: the modal's rows.
 func (f candidateForm) view(width int) []string {
 	_, rows, _, _ := f.modal(width)
 	return rows
 }
 
-// modal draws the form box: title `add candidate` or `edit <name>`,
-// want 90, rows in the listed order.
 func (f candidateForm) modal(width int) (string, []string, int, bool) {
 	const want = 90
 	kind := "add candidate"
@@ -444,9 +415,6 @@ func (f candidateForm) modal(width int) (string, []string, int, bool) {
 	return kind, rows, want, false
 }
 
-// providerNote is the row under the provider field (row 6): on a listed
-// harness the provider error, else the suggestion chips (or `new provider` in
-// accent when the typed value matches none of them).
 func (f candidateForm) providerNote(fe *relevo.FieldError, showErr bool) string {
 	if showErr {
 		return formError(fe.Msg)
@@ -469,9 +437,6 @@ func (f candidateForm) providerNote(fe *relevo.FieldError, showErr bool) string 
 	return formSubRow(formChips(s, sel, false))
 }
 
-// nameRow is the read-only name row: the name the model would give, the
-// `was <old> · still <slots>` note when an edit changes it, and
-// `follows the model` while an add has no model yet.
 func (f candidateForm) nameRow() string {
 	label := formLabel("name", false)
 	name := f.preview()
@@ -494,9 +459,6 @@ func (f candidateForm) nameRow() string {
 	return row
 }
 
-// infoLines are the muted notes under the name: a gate on the provider,
-// the note that an edit keeping a gated provider stays gated, and the note that
-// nothing picks a candidate until an actor lists it.
 func (f candidateForm) infoLines() []string {
 	var out []string
 	input := f.input()
@@ -522,7 +484,6 @@ func (f candidateForm) infoLines() []string {
 	return out
 }
 
-// asFieldError is err as a *relevo.FieldError, nil when it is not one.
 func asFieldError(err error) *relevo.FieldError {
 	var fe *relevo.FieldError
 	if errors.As(err, &fe) {
@@ -531,7 +492,6 @@ func asFieldError(err error) *relevo.FieldError {
 	return nil
 }
 
-// fieldIndex is a FieldError field's index in the form's touched array.
 func fieldIndex(field string) int {
 	switch field {
 	case "harness":
