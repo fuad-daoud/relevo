@@ -9,20 +9,17 @@ import (
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
-// Config is the name the config document travels under, as `doc:config` on the
-// log.
+// Config is the name the config document travels under, as `doc:config` on the log.
 const Config = "config"
 
-// supersededSourcePrefix labels the revision an arriving item lands when it
-// would leave this machine's merged config invalid. It reads as what happened
-// rather than as a transport detail: the entry was newer than what this machine
-// holds and still lost, because taking it would have broken the config.
+// supersededSourcePrefix labels the revision an arriving item lands under when it
+// would leave the merged config invalid: the entry was newer and still lost
+// because taking it would have broken the config.
 const supersededSourcePrefix = "sync-superseded:"
 
 // SharedDoc is the config document as a synclog SharedDoc. One key is one
 // candidate, agent, actor, account or server, or one whole-section body for the
-// sections that have no items to speak of; the sync section is not among them,
-// because a sync setting is this machine's answer to its own peer and travels
+// sections with no items; the sync section is excluded because its settings travel
 // with the connection rather than in the config.
 type SharedDoc struct {
 	store *Store
@@ -38,11 +35,10 @@ func (d *SharedDoc) Name() string { return Config }
 // register once it has one.
 func (s *Store) Doc() *SharedDoc { return NewSharedDoc(s) }
 
-// Items returns the shared document as one value per syncable key. It reads
-// the shared layer and never the local one, because the local layer holds the
-// machine fields the exporter must not send and has stripped out of the shared
-// bodies already; merging it here would put this machine's directories back
-// into every entry.
+// Items returns the shared document as one value per syncable key. It reads the
+// shared layer and never the local one, which holds the machine fields the
+// exporter must not send; merging it here would put this machine's directories
+// back into every entry.
 func (d *SharedDoc) Items() (map[string]json.RawMessage, error) {
 	if err := d.store.localLayerReady(); err != nil {
 		return nil, err
@@ -89,9 +85,9 @@ func (d *SharedDoc) Items() (map[string]json.RawMessage, error) {
 	return items, nil
 }
 
-// itemsOf is one value per syncable key of a shared document. A section that
-// does not split into named items is an error, or with lenient is left out: a
-// body written before its items had names has no keys to stamp.
+// itemsOf is one value per syncable key of a shared document. A section that does
+// not split into named items is an error, or with lenient is left out: a body with
+// no named items has no keys to stamp.
 func itemsOf(shared Doc, lenient bool) (map[string]json.RawMessage, error) {
 	out := map[string]json.RawMessage{}
 	for _, sec := range Sections {
@@ -116,9 +112,8 @@ func itemsOf(shared Doc, lenient bool) (map[string]json.RawMessage, error) {
 	return out, nil
 }
 
-// ItemUpdatedAt is when the section a key lives in was last written, which is
-// as fine as the document records: an item of a per-item section carries its
-// section's time.
+// ItemUpdatedAt is when the section a key lives in was last written: an item of a
+// per-item section carries its section's time.
 func (d *SharedDoc) ItemUpdatedAt(key string) (time.Time, bool, error) {
 	sec, _, err := splitKey(key)
 	if err != nil {
@@ -127,8 +122,8 @@ func (d *SharedDoc) ItemUpdatedAt(key string) (time.Time, bool, error) {
 	return d.store.db.ConfigUpdatedAt(string(sec))
 }
 
-// ItemWriteStamp is the stamp recorded when key was last written on this
-// machine. An item that arrived from a peer records none.
+// ItemWriteStamp is the stamp recorded when key was last written on this machine;
+// a peer-arrived item records none.
 func (d *SharedDoc) ItemWriteStamp(key string) (synclog.Stamp, bool, error) {
 	text, ok, err := d.store.db.ConfigWriteStamp(key)
 	if err != nil || !ok {
@@ -138,7 +133,7 @@ func (d *SharedDoc) ItemWriteStamp(key string) (synclog.Stamp, bool, error) {
 	return stamp, err == nil, err
 }
 
-// ItemWriteStampIn is ItemWriteStamp read inside the importer's transaction.
+// ItemWriteStampIn is ItemWriteStamp inside the importer's transaction.
 func (d *SharedDoc) ItemWriteStampIn(t *db.Tx, key string) (synclog.Stamp, bool, error) {
 	text, ok, err := t.ConfigWriteStamp(key)
 	if err != nil || !ok {
@@ -148,21 +143,16 @@ func (d *SharedDoc) ItemWriteStampIn(t *db.Tx, key string) (synclog.Stamp, bool,
 	return stamp, err == nil, err
 }
 
-// syncs reports whether a section is part of the shared document at all. The
-// sync section is not: its settings say how this machine talks to its peer,
-// which is this machine's business and would be overwritten by whichever peer
-// answered last.
+// syncs reports whether a section is part of the shared document. The sync section
+// is not: its settings are this machine's business and would be overwritten by
+// whichever peer answered last.
 func syncs(sec Section) bool { return sec != Sync }
 
-// Apply writes one key's value, or removes the key when value is nil. It only
-// ever writes the shared layer, and drops the fields naming things on this
-// machine from the arriving value, so an arriving item can neither redirect an
-// account's directory or this host's serve policy nor carry a peer's into the
-// shared body this machine re-exports.
-//
-// A value that would leave the merged config invalid is refused and recorded as
-// superseded: the entry is newer than what this machine holds, so the choice is
-// between taking a config that does not resolve and keeping one that does.
+// Apply writes one key's value, or removes the key when value is nil. It writes only
+// the shared layer and drops the fields naming things on this machine, so an arriving
+// item can neither redirect a directory or serve policy nor carry a peer's into the
+// re-exported body. A value that would leave the merged config invalid is refused and
+// recorded as superseded.
 func (d *SharedDoc) Apply(key string, value json.RawMessage) error {
 	sec, name, err := splitKey(key)
 	if err != nil {
@@ -175,14 +165,9 @@ func (d *SharedDoc) Apply(key string, value json.RawMessage) error {
 }
 
 // applyKey writes one key's value in one transaction: the prospective shared
-// document is merged with the local layer and validated as the reader would
-// see it, so a write the reader would refuse is refused here rather than
-// leaving Load broken behind it.
-//
-// A refusal is still a transaction that commits, because the record of why the
-// entry lost has to outlive the call that reported it. The refusal is therefore
-// carried out of the transaction and returned once it has committed, rather
-// than returned from inside it where it would take the record with it.
+// document is merged with the local layer and validated as the reader would see
+// it, so a write the reader would refuse is refused here. A refusal still commits,
+// because the record of why the entry lost must outlive the reporting call.
 func (s *Store) applyKey(sec Section, name string, value json.RawMessage) error {
 	var refusal error
 	err := s.db.Tx(func(t *db.Tx) error {
@@ -203,10 +188,9 @@ func (s *Store) applyKey(sec Section, name string, value json.RawMessage) error 
 	return refusal
 }
 
-// applyKeyIn is applyKey inside a caller's transaction, and records nothing for
-// a refusal: the caller decides whether the item is lost for good or may be
-// retried once the keys it depends on have landed. The second result is a
-// failure of the store itself.
+// applyKeyIn is applyKey inside a caller's transaction, and records nothing for a
+// refusal: the caller decides whether the item is lost or retried once its
+// dependencies land. The second result is a failure of the store itself.
 func (s *Store) applyKeyIn(t *db.Tx, sec Section, name string, value json.RawMessage) (refusal error, hard error) {
 	unstamped := *s
 	unstamped.unstamped = true
@@ -291,18 +275,17 @@ func (s *Store) applyKeyIn(t *db.Tx, sec Section, name string, value json.RawMes
 	return nil, nil
 }
 
-// queueAgentRender asks for the re-render an arriving agents item needs. A
-// store with no renderer bound still lands the item and its files; only the
-// render is skipped.
+// queueAgentRender asks for the re-render an arriving agents item needs. A store with
+// no renderer still lands the item and its files; only the render is skipped.
 func (s *Store) queueAgentRender(agent string) {
 	if s.rerender != nil {
 		s.rerender(agent)
 	}
 }
 
-// validateArrivingItem refuses an arriving agents item before anything is
-// stored, because a stored item that capture then rejects would halt every
-// later export. A delete, and every other section, passes.
+// validateArrivingItem refuses an arriving agents item before anything is stored,
+// because a stored item that capture then rejects would halt every later export.
+// A delete, and every other section, passes.
 func validateArrivingItem(sec Section, name string, value json.RawMessage) error {
 	if sec != Agents || len(value) == 0 {
 		return nil
@@ -318,7 +301,8 @@ func validateArrivingItem(sec Section, name string, value json.RawMessage) error
 	return nil
 }
 
-// docKeyOf is the doc key of one item, or of a whole section.
+// docKeyOf is the doc key of one item, or of a whole section; per-item sections use
+// the item key.
 func docKeyOf(sec Section, name string) string {
 	if perItemSections[sec] {
 		return itemKey(sec, name)
@@ -326,8 +310,8 @@ func docKeyOf(sec Section, name string) string {
 	return string(sec)
 }
 
-// setDocKey returns the shared body of sec with one key set or removed, or nil
-// when the whole section is gone.
+// setDocKey returns the shared body of sec with one key set or removed, or nil when
+// the whole section is gone.
 func setDocKey(doc Doc, sec Section, name string, value json.RawMessage) (json.RawMessage, error) {
 	if !perItemSections[sec] {
 		return value, nil
@@ -348,10 +332,8 @@ func setDocKey(doc Doc, sec Section, name string, value json.RawMessage) (json.R
 }
 
 // writeSection stores one shared section body and bumps the config version a
-// reader's reload watches. It is the shared write path: Put, PutDoc and an
-// applied item all store through it and then record through record, so a
-// change that arrived from a peer takes effect exactly as one made here by
-// `relevo config set` does, with no restart.
+// reader's reload watches. It is the shared write path, so a peer's change takes
+// effect as one made here by `relevo config set` does, with no restart.
 func (s *Store) writeSection(t *db.Tx, sec Section, body json.RawMessage) error {
 	return t.ConfigPut(string(sec), body, s.now().UTC())
 }
@@ -361,8 +343,8 @@ func (s *Store) deleteSection(t *db.Tx, sec Section) error {
 	return t.ConfigDelete(string(sec))
 }
 
-// writeRecord stores a section and records the change in one transaction, which
-// is what the callers that change exactly one section use.
+// writeRecord stores a section and records the change in one transaction for callers
+// that change exactly one section.
 func (s *Store) writeRecord(t *db.Tx, before snapshot, sec Section, body json.RawMessage) error {
 	if err := s.writeSection(t, sec, body); err != nil {
 		return err
@@ -378,13 +360,9 @@ func (s *Store) deleteRecord(t *db.Tx, before snapshot, sec Section) error {
 	return s.record(t, before, nil)
 }
 
-// mergedDoc is the shared document with every section's local overrides laid
-// over it, which is the document every reader decodes and every writer
-// validates. It is the only view of the config a caller ever sees.
-//
-// The read runs in one transaction so the shared rows and the overrides read
-// back together are the same snapshot: a write landing between them would
-// otherwise show a merged body no single moment ever held.
+// mergedDoc is the shared document with every section's local overrides laid over
+// it, the only view of the config a caller ever sees. The read runs in one
+// transaction so the shared rows and overrides read back are the same snapshot.
 func (s *Store) mergedDoc() (Doc, error) {
 	var out Doc
 	err := s.db.Tx(func(t *db.Tx) error {
@@ -401,9 +379,9 @@ func (s *Store) mergedDoc() (Doc, error) {
 	return out, nil
 }
 
-// recordSuperseded leaves the config exactly as it is and records why an
-// arriving item did not land. The revision points at the unchanged document, so
-// rolling back to it is a no-op rather than a second change.
+// recordSuperseded leaves the config as it is and records why an arriving item did
+// not land. The revision points at the unchanged document, so rolling back to it
+// is a no-op.
 func (s *Store) recordSuperseded(t *db.Tx, before snapshot, key string, value json.RawMessage, label string, cause error) error {
 	changes, err := json.Marshal([]Change{{Path: key, Op: "add", After: compactCopy(value)}})
 	if err != nil {

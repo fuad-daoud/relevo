@@ -16,44 +16,32 @@ import (
 )
 
 // The hooks section carries the scripts themselves and not only the argv rows
-// that name them, so a machine that receives a hook receives the hook. The
-// bodies are shaped by three rules and nothing else:
-//
-//   - the shared half holds only the scripts a stored argv row names, under
-//     relevo's own config directory, named root-relative, so a peer that stores
-//     them under a different root still applies them to the right directory.
-//     Their bytes travel signed, not encrypted: naming a script in a hook is
-//     the consent to publish it, and an unnamed script is never read;
-//   - an argv row naming anything outside the config root names a file on this
-//     machine, so it never travels: it is split out into the machine field
-//     `local` before the write leaves this machine, and the stored shared body
-//     never carries it;
-//   - the file map and the argv rows are kept apart on purpose. argv says which
-//     script runs; the file map says what it contains. A person editing a
-//     script changes the second without touching the first, which is what lets
-//     the capture export the edit on its own.
+// that name them. Three rules shape the bodies: the shared half holds only the
+// scripts a stored argv row names, root-relative under relevo's config directory,
+// signed not encrypted since naming a script is consent to publish it; an argv
+// row outside the config root is split into the machine field `local` and never
+// travels; the file map and argv rows stay apart so editing a script exports on
+// its own.
 
 // The reserved members of the hooks value. Anything else in the object is an
-// event name, so a body written before this shape existed still reads: it is
-// the argv map itself, with no wrapper.
+// event name, so a bare argv map with no wrapper still reads.
 const (
 	hooksEventsMember = "events"
 	hooksFilesMember  = "files"
 	hooksLocalMember  = "local"
 )
 
-// hooksDirName is the directory under the config root the hook scripts live
-// in. The directory is computed from the event name, never read out of the
-// entry, so an entry cannot steer a write anywhere else.
+// hooksDirName is the directory under the config root the hook scripts live in,
+// computed from the event name, never read out of the entry, so an entry cannot
+// steer a write anywhere else.
 const hooksDirName = "hooks"
 
 // hooksSuffix is the directory suffix readHooksDir treats as one event's
 // script directory.
 const hooksSuffix = ".d"
 
-// Caps. One file over the first is refused on its own, whatever the total; a
-// hooks value over the second is refused whole, because a peer would have to
-// carry it.
+// Caps. One file over the first is refused on its own; a hooks value over the
+// second is refused whole, because a peer would have to carry it.
 const (
 	// MaxHookFileBytes is one embedded script.
 	MaxHookFileBytes = 256 << 10
@@ -65,30 +53,29 @@ const (
 	maxHookComponent = 128
 )
 
-// ErrHookPath marks a refusal of a name or path: what the entry asked to be
-// written is refused, and nothing of the store has failed.
+// ErrHookPath marks a refused name or path: the entry asked to write something
+// refused, and nothing of the store has failed.
 var ErrHookPath = errors.New("hooks: unsafe path")
 
 // errOversize is the cap refusal's own cause, so a caller can tell a value
 // that is too big from a value that is malformed.
 var errOversize = errors.New("over the cap")
 
-// HookFile is one hook script as the document carries it.
+// HookFile is one hook script as the document carries it: contents and executable bit.
 type HookFile struct {
 	Contents []byte
 	Exec     bool
 }
 
-// Hash is the script's content digest: the identity the hash cache keeps and
-// the applier compares against before it overwrites anything.
+// Hash is the script's content digest: the identity the hash cache keeps and the
+// applier compares before overwriting.
 func (f HookFile) Hash() string {
 	sum := sha256.Sum256(f.Contents)
 	return hex.EncodeToString(sum[:])
 }
 
-// hookFileValue is one script on the wire. The contents are base64 because a
-// script is a byte string and JSON text cannot carry one that is not valid
-// UTF-8 without silently changing it.
+// hookFileValue is one script on the wire. Contents are base64 because JSON text
+// cannot carry a non-UTF-8 byte string without silently changing it.
 type hookFileValue struct {
 	Contents string `json:"contents"`
 	Exec     bool   `json:"exec"`
@@ -101,8 +88,8 @@ type hookValue struct {
 	Local  map[string][][]string    `json:"local,omitempty"`
 }
 
-// HookDoc is the parsed hooks section: the shared half (events and files), the
-// machine half (local), and the config root every shared name is relative to.
+// HookDoc is the parsed hooks section: the shared half, the machine half, and the
+// config root every shared name is relative to.
 type HookDoc struct {
 	Events map[string][][]string
 	Files  map[string]HookFile
@@ -118,10 +105,9 @@ func emptyHookDoc() HookDoc {
 	}
 }
 
-// ParseHookDoc reads a hooks section body, accepting the shape this package
-// writes and the bare argv map a database written before it carried. The two
-// are told apart by the reserved members: a body that has one of them is the
-// new shape, and a body with none is every member an event.
+// ParseHookDoc reads a hooks section body, accepting the shape this package writes
+// and the bare argv map. The two are told apart by the reserved members: a body with
+// one of them is the new shape, and a body with none is every member an event.
 func ParseHookDoc(body json.RawMessage) (HookDoc, error) {
 	doc := emptyHookDoc()
 	if len(body) == 0 {
@@ -160,10 +146,8 @@ func ParseHookDoc(body json.RawMessage) (HookDoc, error) {
 	return doc, nil
 }
 
-// reservedHooksShape reports whether body carries the wrapped shape. A member
-// that is not reserved is an event, so the check is for the reserved members
-// alone and a wrapped body with none of them (an empty object) reads the same
-// way either round.
+// reservedHooksShape reports whether body carries the wrapped shape: a body with a
+// reserved member is wrapped, and an empty object reads the same way either round.
 func reservedHooksShape(obj map[string]json.RawMessage) bool {
 	for _, member := range []string{hooksEventsMember, hooksFilesMember, hooksLocalMember} {
 		if _, ok := obj[member]; ok {
@@ -201,9 +185,9 @@ func parseHookEvents(obj map[string]json.RawMessage) (map[string][][]string, err
 	return events, nil
 }
 
-// EncodeHookDoc is the hooks section as the config doc stores it. The machine
-// half is not written: it is the local layer's row, and writing it here would
-// put this machine's directories into the shared body the exporter sends.
+// EncodeHookDoc is the hooks section as the config doc stores it. The machine half
+// is not written: it is the local layer's row, and writing it here would put this
+// machine's directories into the exported body.
 func EncodeHookDoc(doc HookDoc) (json.RawMessage, error) {
 	value := hookValue{Events: doc.Events, Files: map[string]hookFileValue{}}
 	for name, file := range doc.Files {
@@ -223,8 +207,8 @@ func EncodeHookDoc(doc HookDoc) (json.RawMessage, error) {
 	return encoded, nil
 }
 
-// EncodeHookLocal is the machine half as the local layer stores it: one patch
-// under the hooks key whose only member is `local`.
+// EncodeHookLocal is the machine half as the local layer stores it: one patch under
+// the hooks key whose only member is `local`.
 func EncodeHookLocal(doc HookDoc) (json.RawMessage, error) {
 	if len(doc.Local) == 0 {
 		return nil, nil
@@ -236,14 +220,14 @@ func EncodeHookLocal(doc HookDoc) (json.RawMessage, error) {
 	return json.Marshal(map[string]json.RawMessage{hooksLocalMember: patch})
 }
 
-// HookPathOf is the root-relative name one script of one event is carried
-// under: `hooks/<event>.d/<file>`. The directory is computed from the two
-// names, so an entry cannot name a directory of its own choosing.
+// HookPathOf is the root-relative name one script of one event is carried under:
+// `hooks/<event>.d/<file>`, computed from the two names so an entry cannot name a
+// directory of its own choosing.
 func HookPathOf(event, file string) string {
 	return path.Join(hooksDirName, event+hooksSuffix, file)
 }
 
-// HookParts is one script's names read back off its root-relative key.
+// HookParts reads one script's names back off its root-relative key.
 func HookParts(rel string) (event, file string, err error) {
 	if path.IsAbs(rel) {
 		return "", "", fmt.Errorf("hooks: %q is not a root-relative script path: %w", rel, ErrHookPath)
@@ -262,11 +246,10 @@ func HookParts(rel string) (event, file string, err error) {
 	return event, base, nil
 }
 
-// ValidateHookDoc refuses everything decision 7 and the path rules name, one
-// rule per refusal: an event or file name that is not one plain component, a
-// path that is not the one the directory rule computes, a script over the
-// per-file cap, a value over the whole-item cap, and a shared argv row naming
-// something outside the config root.
+// ValidateHookDoc refuses one rule per refusal: a non-plain-component event or
+// file name, a path the directory rule does not compute, a script over the
+// per-file cap, a value over the whole-item cap, and a shared argv row outside
+// the config root.
 func ValidateHookDoc(doc HookDoc) error {
 	if doc.Root == "" {
 		// Nothing on this machine to be relative to: the shared half cannot be
@@ -322,8 +305,8 @@ func ValidateHookDoc(doc HookDoc) error {
 	return nil
 }
 
-// validateHookFilePath checks one embedded script's root-relative key against
-// the directory rule: it has to be the path the event and file names compute.
+// validateHookFilePath checks one embedded script's root-relative key against the
+// directory rule: it is the path the event and file names compute.
 func validateHookFilePath(rel string) error {
 	if path.IsAbs(rel) || strings.Contains(rel, `\`) || strings.ContainsRune(rel, 0) {
 		return fmt.Errorf("hooks: %q is not a root-relative script path: %w", rel, ErrHookPath)
@@ -339,9 +322,8 @@ func validateHookFilePath(rel string) error {
 	return safeComponent(base)
 }
 
-// validateSharedArgv checks one shared argv row: its script has to be a
-// root-relative path under this machine's hooks directory, and it has to be
-// the path its own event name computes.
+// validateSharedArgv checks one shared argv row: its script is the root-relative
+// path its own event name computes under this machine's hooks directory.
 func validateSharedArgv(root, event, script string) error {
 	if filepath.IsAbs(script) {
 		return fmt.Errorf("hooks: %s: argv %q names a file outside the config root and stays machine-local: %w",
@@ -362,9 +344,8 @@ func validateSharedArgv(root, event, script string) error {
 	return nil
 }
 
-// SafeHookComponent refuses a name that is not one plain path component. It is
-// the exported form, so the disk applier and the document agree on the rule
-// instead of each keeping its own.
+// SafeHookComponent refuses a name that is not one plain path component, so the
+// disk applier and the document agree on one rule.
 func SafeHookComponent(name string) error { return safeComponent(name) }
 
 // safeComponent refuses a name that is not one plain path component, saying
@@ -394,9 +375,8 @@ func safeNamedComponent(section, name string, cause error) error {
 	return nil
 }
 
-// RelativizeHookArgv divides one argv row's script into the two halves the
-// shape keeps apart. A script inside the config root becomes a root-relative
-// name; anything else is this machine's and is returned as local.
+// RelativizeHookArgv divides one argv row's script into the two halves the shape keeps
+// apart: inside the config root becomes root-relative, anything else returns as local.
 func RelativizeHookArgv(root, script string) (rel string, local bool) {
 	if !filepath.IsAbs(script) {
 		return filepath.ToSlash(filepath.Clean(script)), false
@@ -412,10 +392,9 @@ func RelativizeHookArgv(root, script string) (rel string, local bool) {
 	return filepath.ToSlash(inside), false
 }
 
-// NormalizeHookDoc is the one idempotent step that moves an argv row naming
-// something outside the config root out of the shared body, and rewrites the
-// shared rows as root-relative. moved is whether anything changed, so a
-// caller can tell a second run from a first.
+// NormalizeHookDoc moves an argv row naming something outside the config root out of
+// the shared body, and rewrites shared rows as root-relative. moved reports whether
+// anything changed.
 func (s *Store) NormalizeHookDoc(doc HookDoc) (HookDoc, bool, error) {
 	if doc.Root == "" {
 		return doc, false, nil
@@ -459,9 +438,8 @@ func (s *Store) NormalizeHookDoc(doc HookDoc) (HookDoc, bool, error) {
 	return out, !sameJSON(before, after), nil
 }
 
-// HooksMapOf is the dispatcher-facing view of a hooks document: the shared
-// argv rows under the root-relative names they are stored with, and the
-// machine rows under the absolute names they always keep. The two are one map,
+// HooksMapOf is the dispatcher-facing view of a hooks document: shared rows under
+// stored root-relative names, machine rows under absolute names. The two are one map
 // because the dispatcher runs both and cannot tell them apart.
 func HooksMapOf(doc HookDoc) HooksMap {
 	out := HooksMap{}
