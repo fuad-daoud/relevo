@@ -1,9 +1,7 @@
 package synclog
 
-// Which stored values leave the log, and the one rule that decides it. Every
-// path that writes an entry -- the exporter's drain and reconcile's walk --
-// asks refColumns what to move and uploads what comes back before the entry is
-// appended, so the rule lives here rather than being written twice.
+// Which stored values leave the log, and the one rule deciding it. Both entry
+// writers ask refColumns and upload before appending, so the rule lives once here.
 
 import (
 	"fmt"
@@ -14,35 +12,25 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// BlobMover is where a body goes when it stops travelling through the log. The
-// daemon's pipe client is the real one; the tests in this package use a mover
-// over a MemBlobStore, so neither the exporter nor reconcile needs a bucket to
-// exist for its own behaviour to be pinned.
-//
-// A mover works through a staging file rather than the bytes themselves, because
-// the pipe carries requests and not bodies: the value is written beside the
-// replica, the worker is told where it is, and nothing over the pipe is large
-// enough to need a second framing.
+// BlobMover is where a body goes when it stops travelling through the log: the
+// daemon's pipe client in production, a MemBlobStore mover in tests, so neither
+// writer needs a bucket to pin its behaviour. A mover works through a staging file
+// since the pipe carries requests, not bodies.
 type BlobMover interface {
 	// PutBlob uploads the body at staging under key. skipped is true when the
-	// store already held it, which is not a failure: another machine stored the
-	// same bytes under the same digest, and the entry that refers to the object
-	// may still be appended.
+	// store already held it under the same digest: not a failure, the entry may
+	// still be appended.
 	PutBlob(key, staging string) (bytes int64, skipped bool, err error)
 	// GetBlob writes the body under key to staging, refusing one longer than
-	// max bytes before it is all downloaded.
+	// max before it is all downloaded.
 	GetBlob(key, staging string, max int64) (int64, error)
 }
 
-// BlobTransport is a LogTransport that can also move bodies: the daemon's
-// supervisor in production, and a fake over a MemBlobStore in a test. The
-// exporter and reconcile take their mover from the transport they were handed
-// rather than being built a second time, so the object that numbers the entries
-// is the object that stores the bodies they point at.
-//
-// The staging folder is part of the contract rather than a separate argument:
-// a mover with nowhere to write a body cannot be used at all, so a transport
-// that names no folder is read as one that moves nothing.
+// BlobTransport is a LogTransport that can also move bodies. Exporter and
+// reconciler take their mover from the handed transport, so the entry numberer is
+// the body storer.
+// The staging folder is part of the contract: a mover with nowhere to write is
+// unusable, so a folderless transport moves nothing.
 type BlobTransport interface {
 	LogTransport
 	BlobMover
@@ -50,10 +38,9 @@ type BlobTransport interface {
 	BlobStagingDir() string
 }
 
-// blobWiring is the mover and staging folder one transport offers, or no mover
-// at all. A transport that is not a BlobTransport -- a plain MemTransport, or a
-// log this package talks to without a bucket -- moves nothing, and every value
-// it writes travels inline exactly as it did before bodies could move.
+// blobWiring is the mover and staging folder one transport offers, or no mover at
+// all. A non-BlobTransport moves nothing, and every value it writes travels
+// inline as before bodies could move.
 func blobWiring(t LogTransport) (BlobMover, string) {
 	bt, ok := t.(BlobTransport)
 	if !ok {
@@ -66,36 +53,27 @@ func blobWiring(t LogTransport) (BlobMover, string) {
 	return bt, dir
 }
 
-// blobColumn is one column that can move, and the codec column beside it that
-// says what the stored bytes are. The two are named together because a ref
-// carries the codec with it: an importer has to know whether the object holds a
-// plain value or a zstd frame before it can put the bytes back where the row
-// expects them, and that answer travels with the ref rather than being looked up
-// in a schema the importer may not have.
+// blobColumn is one movable column and its codec column. They are named together
+// because a ref carries the codec: the importer must know plain from zstd frame
+// before restoring bytes, without a schema it may not have.
 type blobColumn struct {
 	table  string
 	column string
 	codec  string
 }
 
-// blobColumns is every column whose value moves out of the log when it is large,
-// and it is the whole list. The exporter reads it to decide what a batch
-// uploads, the cleanup that sweeps unreferenced objects reads it to know which
-// values can leave one behind, and a column added to it later has to be added in
-// one place rather than in every path that writes an entry.
-//
-// The list is the columns carrying the bulk of the bytes and nothing else: a
-// column whose values are names or counters is never over the threshold, so
-// putting it here would cost a lookup per row to learn that.
+// blobColumns is every column whose large value moves out of the log, and the whole
+// list: one addition point for every entry writer and the orphan sweeper. It holds
+// only bulk-byte columns: names or counters never exceed the threshold, so listing
+// them would cost a lookup per row to learn that.
 var blobColumns = []blobColumn{
 	{table: "round_file", column: "body", codec: "body_codec"},
 	{table: "transcript", column: "record_json", codec: "record_json_codec"},
 	{table: "transcript", column: "rendered", codec: "rendered_codec"},
 }
 
-// columnsFor returns the moving columns of one table. A table that carries none
-// gets none, so an entry for it is written exactly as it was before this rule
-// existed.
+// columnsFor returns the moving columns of one table; a table with none writes
+// entries as before the rule.
 func columnsFor(table string) []blobColumn {
 	var out []blobColumn
 	for _, c := range blobColumns {
@@ -107,31 +85,22 @@ func columnsFor(table string) []blobColumn {
 }
 
 // pendingBlob is one value that must be in the store before the entry naming it
-// may be appended. The bytes are held rather than the file they will be written
-// to, because the staging file is scratch: it is removed as soon as the mover
-// answers, and the value has to survive a batch that moves several of them.
+// may be appended. Bytes are held, not the scratch staging file that is removed
+// once the mover answers.
 type pendingBlob struct {
 	Key   string
 	Bytes []byte
 	Ref   BlobRef
-	// repair marks a body uploaded for a row the log already carries, rather
-	// than for an entry about to be appended.
+	// repair marks a body for a headed row rather than a pending entry.
 	repair bool
 }
 
 // refColumns rewrites an eligible []byte value over BlobRefThreshold into a
-// RefValue and returns the values that must be uploaded before the entry may be
-// appended.
-//
-// The row is returned rather than edited: the caller holds the drained row it
-// read inside a transaction, and a body built from a row someone else still owns
-// would be a body built from the wrong bytes. The copy is shallow and the
-// columns are replaced whole, which is why the values that move are gone from
-// the returned row rather than nil beside the ref.
-//
-// A row is left exactly as it was when nothing in it moves: a value under the
-// threshold, a value that is not bytes (a transcript column still stored as
-// plain text is text on this machine too), or a table with no moving columns.
+// RefValue and returns the values to upload before appending.
+// The row is returned rather than edited: the caller holds the drained row inside a
+// transaction, and a body from another owner's row would be the wrong bytes. The
+// copy is shallow with columns replaced whole, so moved values are gone, not nil.
+// An unmoved row is left as it was.
 func refColumns(origin, table string, row db.ExchangeRow) (db.ExchangeRow, []pendingBlob) {
 	cols := columnsFor(table)
 	if len(cols) == 0 {
@@ -163,14 +132,9 @@ func refColumns(origin, table string, row db.ExchangeRow) (db.ExchangeRow, []pen
 	return out, pending
 }
 
-// rowCodecs reads every codec column of one row by name. The values are read
-// from the row rather than assumed, because the ref has to describe the bytes as
-// this machine stores them: a value the file holds plain and a value it holds
-// as a frame are the same ref only if the codec travels with them.
-//
-// A codec column the row does not carry reads as plain. That is the value an
-// uncompressed file has for every one of these columns, so a row read from such
-// a file is described correctly rather than refused over a column it never had.
+// rowCodecs reads every codec column of one row by name, from the row rather than
+// assumed: the ref must describe stored bytes, plain or frame. A missing codec
+// column reads as plain, the value of an uncompressed file.
 func rowCodecs(columns []db.ExchangeColumn) map[string]int {
 	codecs := make(map[string]int, len(columns))
 	for _, col := range columns {
@@ -181,7 +145,7 @@ func rowCodecs(columns []db.ExchangeColumn) map[string]int {
 	return codecs
 }
 
-// columnIndex returns where name sits in columns, or -1.
+// columnIndex returns where name sits in columns, -1 when absent.
 func columnIndex(columns []db.ExchangeColumn, name string) int {
 	for i, col := range columns {
 		if col.Name == name {
@@ -192,13 +156,9 @@ func columnIndex(columns []db.ExchangeColumn, name string) int {
 }
 
 // uploadPending writes each value to the staging folder and hands it to the
-// mover, in the order the batch found them.
-//
-// The file is written under the digest the key names, so a staging folder left
-// behind by a killed process holds files this code recognises rather than a
-// second naming scheme. It is removed whether or not the put came back: a
-// failed put means the entry is not appended, so nothing will fetch that file,
-// and leaving it would fill the folder with bodies the bucket never took.
+// mover, in batch order. The file is written under the digest the key names and
+// removed whether the put lands or not: a failed put appends no entry, so the
+// file would only fill the folder with untaken bodies.
 func uploadPending(m BlobMover, stagingDir string, blobs []pendingBlob) error {
 	for _, b := range blobs {
 		if err := uploadOne(m, stagingDir, b); err != nil {
@@ -208,15 +168,12 @@ func uploadPending(m BlobMover, stagingDir string, blobs []pendingBlob) error {
 	return nil
 }
 
-// uploadOne stages one value and puts it. The write and the removal are both
-// reported only as far as the caller can act: a removal that fails after a
-// successful put is not a failed export, so it is not turned into one.
+// uploadOne stages one value and puts it. A removal failing after a successful put
+// is not a failed export.
 func uploadOne(m BlobMover, stagingDir string, b pendingBlob) error {
 	path := filepath.Join(stagingDir, b.Ref.SHA256)
-	// The folder holds bodies that exist nowhere else until the put lands, so
-	// the file is owner-only even inside a folder the daemon already made 0700:
-	// the file outlives this call, and the mode is what a reader of the folder
-	// listing sees.
+	// The folder holds bodies existing nowhere else until the put lands, so the
+	// file is owner-only: it outlives this call inside a 0700 folder.
 	if err := os.WriteFile(path, b.Bytes, 0o600); err != nil {
 		return fmt.Errorf("synclog: stage %s: %w", path, err)
 	}
@@ -228,9 +185,8 @@ func uploadOne(m BlobMover, stagingDir string, b pendingBlob) error {
 	return nil
 }
 
-// checkBlobSizes refuses a row holding a value past MaxBlobBytes. Every
-// importer refuses a ref that large, so exporting it would drop the row on every
-// other machine; the export stops on it instead, naming the row.
+// checkBlobSizes refuses a row holding a value past MaxBlobBytes. Every importer
+// refuses that large a ref, so the export stops on it, naming the row.
 func checkBlobSizes(table, pk string, blobs []pendingBlob) error {
 	for _, b := range blobs {
 		if len(b.Bytes) > MaxBlobBytes {
@@ -241,8 +197,8 @@ func checkBlobSizes(table, pk string, blobs []pendingBlob) error {
 	return nil
 }
 
-// pendingBytes is the length of the distinct objects a batch uploads, counted as
-// an importer counts them against MaxBatchBlobBytes.
+// pendingBytes is the distinct-object length a batch uploads, as an importer counts
+// against MaxBatchBlobBytes.
 func pendingBytes(blobs []pendingBlob) int64 {
 	seen := make(map[string]bool, len(blobs))
 	var total int64

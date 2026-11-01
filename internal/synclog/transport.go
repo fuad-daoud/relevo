@@ -6,14 +6,11 @@ import (
 )
 
 // LogTransport is where the per-origin log lives. It is the seam the exporter,
-// importer and reconcile are written against, so every test in this slice runs
-// against MemTransport and a second implementation over another wire needs no
-// change here.
-//
+// importer and reconcile are written against.
 // The one rule a transport owns is sequence assignment: a machine names no
 // sequence numbers of its own. It hands over a batch and the transport numbers
-// it, so a local file restored from a backup never reuses a number and two
-// appends can never hand out the same one.
+// it, so a backup-restored file never reuses a number and two appends never
+// hand out the same one.
 type LogTransport interface {
 	// Append writes one batch of this origin's entries as a single atomic
 	// write, numbering them from one past the highest sequence this origin
@@ -21,13 +18,11 @@ type LogTransport interface {
 	// refused: an installation appends only for the rows it owns, and the
 	// refusal is what stops two machines writing the same row.
 	//
-	// The rule above is the transport's, and it is not the only one. A transport
-	// only knows what origin an entry claims; which rows that origin owns is a
-	// question about the reader's own file, and so the importer answers it again
-	// for itself before it writes anything. An entry that names a row the reader
-	// resolves to another installation is refused there even when it arrived
-	// through an honest transport, so the ownership rule does not rest on the
-	// appender being honest.
+	// A transport only knows what origin an entry claims; which rows that origin owns is
+	// a question about the reader's own file, so the importer answers it again
+	// before it writes anything. An entry naming a row the reader resolves to
+	// another installation is refused there even when it arrived through an
+	// honest transport.
 	//
 	// A batch is one unit for a reader: the entries it wrote share a Batch, the
 	// sequence number of the first of them, and a reader applies whole batches.
@@ -42,17 +37,14 @@ type LogTransport interface {
 	// The sequence numbers and the origin an entry carries are the transport's
 	// to hand out, and the reader does not take them on trust: an entry at or
 	// below the mark it already holds is not applied again, and a mark is only
-	// ever written forward from the entries that were actually applied. A
-	// transport that answers with a sequence behind the mark, or one far ahead
-	// of it, therefore cannot rewind this machine's rows or skip the entries
-	// behind it.
+	// ever written forward from the entries actually applied, so a transport
+	// behind or ahead of the mark can neither rewind rows nor skip entries.
 	Pull(marks map[string]int) ([]Entry, error)
 
 	// Head returns the latest entry per row of one origin: the row, the
 	// sequence number of the entry that last wrote it and that entry's body
-	// hash. This is the state reconcile compares against, so a row missing here
-	// is a row the origin has not written yet and a row present here with a
-	// different hash is one whose contents changed.
+	// hash. This is the state reconcile compares against: a missing row was
+	// never written and a different hash means changed contents.
 	Head(origin string) ([]HeadRow, error)
 
 	// Stats reports what the log holds, so a caller can tell an empty log from a
@@ -60,80 +52,71 @@ type LogTransport interface {
 	Stats() (Stats, error)
 
 	// PublishMarks records how far this reader has applied of each origin given,
-	// as of at. The reader is the transport's own installation rather than a
-	// field of the call: a mark is what a compaction floor is computed from, so
-	// naming another reader's would be choosing what the log may drop on a
-	// machine that does not hold the entries it speaks for.
+	// as of at. The reader is the transport's own installation: a mark is what a
+	// compaction floor is computed from, so naming another reader's would choose
+	// what the log may drop on a machine that does not hold those entries.
 	//
-	// An origin's own mark is not published. A reader never needs one, and
-	// writing it would only give the floor a row it must then be taught to
-	// ignore.
+	// An origin's own mark is not published: a reader never needs one, and it
+	// would only give the floor a row to be taught to ignore.
 	PublishMarks(marks map[string]int, at time.Time) error
 
 	// ReadMarks answers with every published mark, the floors the log has
-	// recorded, and each origin's head and entry count -- the three inputs a
-	// compaction decides from. A transport that has no floors yet answers with
-	// an empty set rather than an error, because nothing has compacted.
+	// recorded, and each origin's head and entry count: the three inputs a
+	// compaction decides from. With no floors yet it answers an empty set
+	// rather than an error, because nothing has compacted.
 	ReadMarks() (MarkState, error)
 
 	// PullRange returns entries of one origin with after < seq <= upto, in
 	// sequence order. Unlike Pull it does not hand back whole batches: the
-	// snapshot path reads a region that ends on a batch tail and keeps the
-	// latest entry per key, so a batch cut by a page changes nothing.
-	//
-	// A transport may answer with fewer entries than the range holds. The caller
-	// asks again from the last sequence it was given until an answer is empty.
+	// snapshot path reduces a tail-ending region to one entry per key, so a
+	// batch cut by a page changes nothing.
+	// A transport may answer short; the caller asks again from the last
+	// sequence it was given until an answer is empty.
 	PullRange(origin string, after, upto int) ([]Entry, error)
 
 	// CompactOwn drops this installation's own superseded entries up to floor and
-	// records the floor, as one write. The origin is the transport's own for the
-	// reason PublishMarks has: only the machine that wrote a log may drop from it.
+	// records the floor, as one write. The origin is the transport's own, as in
+	// PublishMarks: only the machine that wrote a log may drop from it.
 	CompactOwn(floor int) (CompactResult, error)
 
 	// KeyMeta reads the passphrase material the remote holds, answering Present
-	// false on a transport whose log has none. It exists before any signing
-	// does, because a machine that is about to sign has to learn what the log
-	// was set up with before it can produce anything a reader would accept.
+	// false where the log holds none. It precedes any signing: a machine about
+	// to sign must first learn what the log was set up with.
 	KeyMeta(ctx context.Context) (KeyMeta, error)
 
 	// KeyInit writes that material where the log holds none and answers with
 	// what it holds afterwards. The answer rather than the request is what a
 	// caller acts on: two machines racing the first one both learn the winner's
-	// salt this way, and each compares its own check against it, rather than one
-	// machine silently replacing the other's key.
+	// salt and each compares its own check against it.
 	KeyInit(ctx context.Context, key KeyMeta) (KeyMeta, error)
 
 	// KeyRekey rotates the log's key to the epoch the spec names: the new
-	// material, the key it replaced sealed for the machines still holding it,
-	// and every origin's cut, all written in one transaction that also refuses
-	// a remote whose epoch or whose heads moved under the caller. It answers
-	// with what the remote holds afterwards, which is another machine's when
-	// this one lost the race.
+	// material, the replaced key sealed for the machines still holding it,
+	// and every origin's cut, all in one transaction refusing a remote whose
+	// epoch or heads moved under the caller. It answers with what the remote
+	// holds afterwards, another machine's when this one lost the race.
 	KeyRekey(ctx context.Context, spec KeyRekeySpec) (KeyMeta, error)
 
 	// PublishEpochCut extends this installation's own cut to the cut given,
 	// which must not name a sequence the log does not hold and must not move
-	// the stored one backwards. The origin is the transport's own, the reason
-	// CompactOwn has: only the machine that wrote a log may extend what its
-	// history is fenced at, and a cut extension is exactly how a machine
-	// vouches for the tail it appended before it learned of the rekey.
+	// the stored one backwards. Only the machine that wrote a log may extend what its
+	// history is fenced at, and a cut extension is how a machine vouches for
+	// the tail it appended before learning of the rekey.
 	//
 	// The tag travels with the cut; the worker side checks only that the
 	// sequence is forward and within the log, because which key the tag
-	// verifies under is a question about the reader, not the writer.
+	// verifies under is about the reader, not the writer.
 	PublishEpochCut(ctx context.Context, cut EpochCut) error
 
 	// ClaimIdentity records that a machine is adopting origin's identity under
 	// token, where nobody holds a live claim: the row is written when absent,
 	// when it is the caller's own token, or when it is older than ClaimTTL at
-	// the time given. It answers with the claim the log holds afterwards, read
-	// back after the write, and the caller compares the token rather than
-	// trusting that its own write was the one that stuck: two machines racing
-	// one claim can each read their own token back before the later write
-	// lands, so the claim is read again later and a mismatch is the loss.
+	// the time given. It answers with the claim the log holds afterwards and the
+	// caller compares the token: two machines racing one claim can each read
+	// their own token back before the later write lands, so a mismatch is the loss.
 	//
 	// An empty token writes nothing and only reads the claim, which is how a
-	// steady attempt checks that the identity is still its own. An origin with
+	// steady attempt checks the identity is still its own. An origin with
 	// no claim answers with an empty winner.
 	ClaimIdentity(ctx context.Context, origin, token string, at time.Time) (winner string, claimedAt time.Time, err error)
 }
@@ -150,10 +133,8 @@ const ClaimTTL = 24 * time.Hour
 // from a machine this one does not control, so a caller treats all of it as a
 // claim to check rather than as a fact.
 type KeyMeta struct {
-	// Salt is the KDF salt.
 	Salt []byte
-	// KDF names the derivation the key was stretched with.
-	KDF string
+	KDF  string
 	// Check is the value a wrong passphrase does not reproduce.
 	Check []byte
 	// Present says whether a key has been set up at all. It is not read from
@@ -174,7 +155,6 @@ type KeyMeta struct {
 // under, the sequence the cut sits at, and the tag binding origin, epoch and
 // sequence to the epoch's key.
 type EpochCut struct {
-	// Epoch is the epoch the cut fences for.
 	Epoch int
 	// Seq is the highest sequence the cut vouches for as history.
 	Seq int
@@ -200,7 +180,7 @@ type KeyRekeySpec struct {
 }
 
 // CompactResult is what one compaction did: how many entries it dropped and the
-// floor the log now records, which is never below what it recorded before.
+// floor it now records, never below the previous one.
 type CompactResult struct {
 	Dropped int
 	Floor   int
@@ -239,13 +219,12 @@ type MarkState struct {
 }
 
 // Boundary is the first signed sequence an exporter predicts for its origin and
-// the tag that binds it to the key. The zero value carries none.
+// the tag binding it to the key. The zero value carries none.
 type Boundary struct {
 	Seq int
 	Tag []byte
 }
 
-// BoundaryAppender is a transport that takes the boundary with a signed batch.
 type BoundaryAppender interface {
 	AppendSigned(entries []Entry, boundary Boundary) ([]Entry, error)
 }
@@ -263,16 +242,13 @@ type TrafficRow struct {
 	At time.Time
 }
 
-// TrafficPublisher is a transport that carries this installation's traffic row
-// to the log and answers with every origin's row the log holds. It is an
-// optional interface rather than a LogTransport method because the transport
-// is implemented by fakes across the sync packages, and a method added to the
-// interface would churn every one of them; a caller asks for it with a type
-// assertion and skips the publish where a transport does not carry it.
+// TrafficPublisher carries this installation's traffic row to the log and answers
+// with every origin's row the log holds. It stays optional rather than a
+// LogTransport method so one addition does not churn every fake; a caller asks
+// for it with a type assertion and skips the publish elsewhere.
 type TrafficPublisher interface {
-	// PublishTraffic writes this installation's own row -- the origin is the
-	// transport's own, the rule PublishMarks states -- and answers with every
-	// origin's row as the log holds it after the write.
+	// PublishTraffic writes this installation's own row, as PublishMarks requires,
+	// and answers with every origin's row as the log holds it after the write.
 	PublishTraffic(row TrafficRow) (map[string]TrafficRow, error)
 }
 
@@ -283,14 +259,12 @@ const LogRowOverhead = 96
 // HeadRow is one row of an origin's `head`: the materialized latest state of a
 // single shared row, as the log holds it.
 type HeadRow struct {
-	// Table is the shared table the row is in.
 	Table string
 	// PK is the row's primary key as the json_array text the outbox records.
 	PK string
 	// Seq is the sequence number of the entry that last wrote the row.
 	Seq int
-	// Hash is that entry's body hash, which is what a row read locally is
-	// compared against.
+	// Hash is that entry's body hash, what a locally read row is compared against.
 	Hash string
 }
 
@@ -300,15 +274,13 @@ type Stats struct {
 	Entries int
 	// Origins is how many distinct origins have appended to it.
 	Origins int
-	// Seq is the highest sequence number the log holds, across origins. A
-	// sequence number belongs to one origin, so this is the largest rather than
-	// a count.
+	// Seq is the highest sequence number the log holds, across origins: one
+	// origin owns each number, so this is the largest rather than a count.
 	Seq int
-	// TursoSent and TursoReceived are the network bytes the transport has pushed
-	// and pulled over its life, and R2Put and R2Get the body bytes it has sent to
-	// and taken from the bucket. All four are cumulative for one transport's life
-	// and are what a month of sync costs; a zero means the transport has moved
-	// nothing, which is how a fresh one is told from one that is not reporting.
+	// TursoSent and TursoReceived are the network bytes pushed and pulled over one
+	// transport's life, and R2Put and R2Get the body bytes sent to and taken from
+	// the bucket. All four are cumulative and are what a month of sync costs; zero
+	// means the transport moved nothing, which tells a fresh one from one not reporting.
 	TursoSent     int64
 	TursoReceived int64
 	R2Put         int64

@@ -12,36 +12,27 @@ import (
 	"github.com/fuad-daoud/relevo/internal/blobstore"
 )
 
-// MemTransport is the in-memory LogTransport every test in this slice runs
-// against. It is one installation's handle on the log: it appends as its own
-// origin, reads what other origins wrote, and numbers what it appends from the
-// log's own high-water mark rather than from a counter it kept, so a machine
-// whose local file was restored from a backup cannot hand out a number the log
-// already holds.
-//
-// It holds the three things the log is defined as -- the entries themselves, the
-// per-row latest state, and the sequence each origin reached -- and writes each
-// append as one unit, so a reader can see where a batch ended. It is the
-// specification the exporter and importer are written against, so where the two
-// could disagree about seq assignment, mark filtering or head maintenance, the
-// disagreement shows up here first.
+// MemTransport is the in-memory LogTransport tests run against. It is one
+// installation's handle: it appends as its own origin, reads what other origins
+// wrote, and numbers from the log's high-water mark rather than a kept counter,
+// so a backup-restored file cannot reissue a held number.
+// It holds entries, per-row latest state, and each origin's sequence, writing each
+// append as one unit so a reader sees batch ends. It is the spec exporter and
+// importer are written against, so seq, mark or head disagreements show up here first.
 type MemTransport struct {
 	origin string
 	log    *memLog
 }
 
-// memLog is the log itself: the entries in append order, each origin's latest
-// state per row, the sequence each origin reached, and the marks readers
-// published. It is separate from the transport so two installations can hold
-// the same log, which is the arrangement the exchange actually runs in.
+// memLog is the log itself: entries in append order, per-row latest state, each
+// origin's sequence, and published marks. It is separate from the transport so
+// two installations can hold the same log, the arrangement the exchange runs in.
 type memLog struct {
 	mu      sync.Mutex
 	entries []Entry
 	head    map[string][]HeadRow
-	// marks is keyed by reader and then origin, so a memLog built for one
-	// reader records only that reader's rows and a second handle on the same
-	// log sees them -- which is the rule the remote enforces by key, reproduced
-	// here rather than by a transport that checks who asked.
+	// marks is keyed by reader then origin, so one reader's rows are visible to a
+	// second handle on the same log: the rule the remote enforces by key.
 	marks map[string]map[string]Mark
 	// floors is what each origin has compacted to.
 	floors map[string]int
@@ -51,20 +42,19 @@ type memLog struct {
 	signedTag map[string][]byte
 	// key is the passphrase material the log holds.
 	key KeyMeta
-	// epochCut is the cut each origin's history is fenced at, as a rekey
-	// wrote it. A row is one origin's, and the newest rekey's row is the one
-	// that stands.
+	// epochCut is the cut each origin's history is fenced at, as a rekey wrote
+	// it: one row per origin, the newest rekey's standing.
 	epochCut map[string]EpochCut
 	// claims is the adoption claim each identity holds.
 	claims map[string]claimRow
-	// traffic is each origin's published month of sync traffic, keyed by
-	// origin: one row per machine, overwritten by its own publishes.
+	// traffic is each origin's published month of sync traffic: one row per
+	// machine, overwritten by its own publishes.
 	traffic map[string]TrafficRow
 }
 
 // NewMemTransport returns a handle on an empty log for the installation named
-// origin. Every other origin it is handed entries for is a machine elsewhere:
-// it will read their entries and refuse to append as them.
+// origin. Every other origin handed entries is a machine elsewhere: their entries
+// are read, never appended as.
 func NewMemTransport(origin string) *MemTransport {
 	return &MemTransport{origin: origin, log: newMemLog()}
 }
@@ -74,16 +64,15 @@ func newMemLog() *memLog {
 	return &memLog{head: make(map[string][]HeadRow), marks: make(map[string]map[string]Mark)}
 }
 
-// OnLog returns a second installation's handle on the same log, which is how two
-// machines reach one remote: each has its own origin and its own sequence, and
-// each reads the other's entries.
+// OnLog returns a second installation's handle on the same log: each keeps its own
+// origin and sequence and reads the other's entries.
 func (m *MemTransport) OnLog(origin string) *MemTransport {
 	return &MemTransport{origin: origin, log: m.log}
 }
 
-// append records a batch as one write, numbering the entries from one past the
-// highest sequence this origin already holds. Everything that can fail is checked
-// before anything is written, so a refused batch leaves the log as it was.
+// append records a batch as one write, numbering from one past this origin's
+// highest sequence. Everything failable is checked before writing, so a refused
+// batch leaves the log as it was.
 func (m *memLog) append(origin string, entries []Entry, boundary Boundary) ([]Entry, error) {
 	if len(entries) == 0 {
 		return nil, nil
@@ -109,10 +98,8 @@ func (m *memLog) append(origin string, entries []Entry, boundary Boundary) ([]En
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// max+1 rather than a counter: a machine restored from a backup arrives with
-	// entries it never wrote and its own numbering would start at zero again.
-	// Reading the log's highest number is what keeps the two from handing out
-	// the same one.
+	// max+1 rather than a counter: a backup-restored machine would otherwise
+	// renumber from zero and collide with the log's held numbers.
 	next := m.latestSeq(origin) + 1
 	if err := m.checkBoundary(origin, entries, next, boundary); err != nil {
 		return nil, err
@@ -121,8 +108,8 @@ func (m *memLog) append(origin string, entries []Entry, boundary Boundary) ([]En
 	for i, e := range entries {
 		e.Origin = origin
 		e.Seq = next + i
-		// Every entry of one append carries the sequence number of its first,
-		// so a reader can find where the batch ended and apply it whole.
+		// Every entry of one append carries its first's sequence, so a reader finds
+		// batch ends and applies them whole.
 		e.Batch = next
 		m.entries = append(m.entries, e)
 		m.writeHead(e, hashes[i])
@@ -132,10 +119,9 @@ func (m *memLog) append(origin string, entries []Entry, boundary Boundary) ([]En
 	return written, nil
 }
 
-// pull returns every origin's entries past its mark, in sequence order within
-// each origin and in whole batches. A batch that starts at or before the mark is
-// skipped whole rather than trimmed: the importer applies whole batches, and
-// handing it half of one would apply an order the exporter never wrote.
+// pull returns every origin's entries past its mark, in sequence order and whole
+// batches. A batch at or before the mark is skipped whole: handing half over
+// would apply an order the exporter never wrote.
 func (m *memLog) pull(origin string, marks map[string]int) []Entry {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -153,8 +139,8 @@ func (m *memLog) pull(origin string, marks map[string]int) []Entry {
 	return out
 }
 
-// head returns one origin's latest state per row, in table order then key order
-// so a reader walking the pages sees the same sequence every time.
+// head returns one origin's latest state per row, table then key order, so a
+// page walk sees the same sequence every time.
 func (m *memLog) headOf(origin string) []HeadRow {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -169,8 +155,7 @@ func (m *memLog) headOf(origin string) []HeadRow {
 	return rows
 }
 
-// stats reports the log's size: how many entries it holds, how many machines
-// have written to it, and the highest sequence number in it.
+// stats reports the log's size: entries held, machines written, highest sequence.
 func (m *memLog) stats() Stats {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -184,8 +169,7 @@ func (m *memLog) stats() Stats {
 	return stats
 }
 
-// latestSeq is the highest sequence the log holds for origin, and zero when it
-// holds none.
+// latestSeq is the highest sequence the log holds for origin, zero when none.
 func (m *memLog) latestSeq(origin string) int {
 	high := 0
 	for _, e := range m.entries {
@@ -196,10 +180,8 @@ func (m *memLog) latestSeq(origin string) int {
 	return high
 }
 
-// writeHead moves one origin's latest state for the row the entry names. An
-// upsert replaces the row's entry, so `head` holds the last state the log
-// recorded for it; a delete drops it, because a row the origin has deleted is
-// not a row reconcile should keep proposing.
+// writeHead moves one origin's latest state for the row the entry names: an
+// upsert replaces it, a delete drops it as no longer proposable.
 func (m *memLog) writeHead(e Entry, hash string) {
 	if e.Op == OpDelete {
 		m.head[e.Origin] = removeHead(m.head[e.Origin], e.Table, e.PK)
@@ -208,8 +190,7 @@ func (m *memLog) writeHead(e Entry, hash string) {
 	m.head[e.Origin] = replaceHead(m.head[e.Origin], e, hash)
 }
 
-// replaceHead records e as the latest state of its row, keeping the list's
-// length and order so the caller does not have to sort to update it.
+// replaceHead records e as the latest state of its row, keeping length and order.
 func replaceHead(rows []HeadRow, e Entry, hash string) []HeadRow {
 	updated := HeadRow{Table: e.Table, PK: e.PK, Seq: e.Seq, Hash: hash}
 	for i := range rows {
@@ -221,8 +202,7 @@ func replaceHead(rows []HeadRow, e Entry, hash string) []HeadRow {
 	return append(rows, updated)
 }
 
-// removeHead drops the row from an origin's latest state, which is what a delete
-// means for a row that origin still listed.
+// removeHead drops the row from an origin's latest state.
 func removeHead(rows []HeadRow, table, pk string) []HeadRow {
 	out := rows[:0]
 	for _, row := range rows {
@@ -234,8 +214,7 @@ func removeHead(rows []HeadRow, table, pk string) []HeadRow {
 	return out
 }
 
-// origins is every origin the log holds entries for, in the order the first of
-// each appears.
+// origins is every origin the log holds entries for, in first-appearance order.
 func (m *memLog) origins() []string {
 	seen := make(map[string]bool)
 	var out []string
@@ -249,9 +228,8 @@ func (m *memLog) origins() []string {
 	return out
 }
 
-// originsOtherThan is the origins a pull has entries to return: everyone but the
-// caller, because a machine's own writes are already in its file and reading them
-// back would apply them twice.
+// originsOtherThan is the origins a pull returns: everyone but the caller, whose
+// own writes are already in its file.
 func (m *memLog) originsOtherThan(self string) []string {
 	var out []string
 	for _, origin := range m.origins() {
@@ -263,13 +241,12 @@ func (m *memLog) originsOtherThan(self string) []string {
 	return out
 }
 
-// Append numbers the batch and records it as one write.
+// Append numbers the batch and records it as one write, without a boundary.
 func (m *MemTransport) Append(entries []Entry) ([]Entry, error) {
 	return m.AppendSigned(entries, Boundary{})
 }
 
-// AppendSigned is Append with the boundary the exporter predicted for its first
-// signed entry.
+// AppendSigned is Append with the boundary predicted for its first signed entry.
 func (m *MemTransport) AppendSigned(entries []Entry, boundary Boundary) ([]Entry, error) {
 	written, err := m.log.append(m.origin, entries, boundary)
 	if err != nil {
@@ -281,52 +258,42 @@ func (m *MemTransport) AppendSigned(entries []Entry, boundary Boundary) ([]Entry
 	return written, nil
 }
 
-// Pull returns the entries of every origin but this one that follow the mark
-// given for it, in sequence order and in whole batches. An origin with no mark
-// is read from the start of its log.
+// Pull returns every other origin's entries past its mark, in order and whole
+// batches; an unmarked origin is read from its start.
 func (m *MemTransport) Pull(marks map[string]int) ([]Entry, error) {
 	return m.log.pull(m.origin, marks), nil
 }
 
-// Head returns the latest entry per row of one origin: the row, the sequence
-// number of the entry that last wrote it, and that entry's body hash.
+// Head returns one origin's latest entry per row.
 func (m *MemTransport) Head(origin string) ([]HeadRow, error) {
 	return m.log.headOf(origin), nil
 }
 
-// Stats reports what the log holds, so a caller can tell an empty log from a
-// transport that is refusing to answer.
+// Stats reports what the log holds, telling an empty log from a refusing transport.
 func (m *MemTransport) Stats() (Stats, error) {
 	return m.log.stats(), nil
 }
 
 // PublishMarks records this reader's position in each origin given. The reader
-// is the transport's own, so a handle built for one installation cannot write
-// another's rows -- the rule the remote enforces by key, which a test cannot
-// exercise without two machines.
+// is the transport's own, so one installation's handle cannot write another's rows.
 func (m *MemTransport) PublishMarks(marks map[string]int, at time.Time) error {
 	m.log.publishMarks(m.origin, marks, at)
 	return nil
 }
 
-// ReadMarks answers with every published mark, the floors compaction recorded
-// and each origin's size.
+// ReadMarks answers with every published mark, compaction floors and sizes.
 func (m *MemTransport) ReadMarks() (MarkState, error) {
 	return m.log.markState(), nil
 }
 
 // PublishTraffic records this installation's traffic row and answers with
-// every origin's row. The origin is the transport's own -- the rule
-// PublishMarks has: a handle built for one installation cannot move another's
-// row, only its own.
+// every origin's row. The origin is the transport's own, as PublishMarks requires.
 func (m *MemTransport) PublishTraffic(row TrafficRow) (map[string]TrafficRow, error) {
 	return m.log.publishTraffic(m.origin, row), nil
 }
 
-// publishMarks writes one reader's rows. A mark only grows, so a repeat that
-// named a lower sequence is ignored rather than moving the row back: a mark is
-// read as the furthest a reader has got, and a stale publish must not make it
-// look as though the reader went backwards.
+// publishMarks writes one reader's rows. A mark only grows, so a lower repeat is
+// ignored rather than moving back: a stale publish must not rewind the reader.
 func (m *memLog) publishMarks(reader string, marks map[string]int, at time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -345,7 +312,7 @@ func (m *memLog) publishMarks(reader string, marks map[string]int, at time.Time)
 }
 
 // markState is every mark the log holds and each origin's size, in reader then
-// origin order so a reader walking the answer sees the same row every time.
+// origin order for a stable walk.
 func (m *memLog) markState() MarkState {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -402,8 +369,7 @@ func (m *memLog) markState() MarkState {
 	return out
 }
 
-// publishTraffic overwrites one origin's row and reads every row back, so a
-// publish answers with the account as the log holds it after this write.
+// publishTraffic overwrites one origin's row and reads every row back.
 func (m *memLog) publishTraffic(origin string, row TrafficRow) map[string]TrafficRow {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -419,26 +385,22 @@ func (m *memLog) publishTraffic(origin string, row TrafficRow) map[string]Traffi
 	return out
 }
 
-// MemBlobMover is the BlobMover every test in this slice runs bodies through,
-// over the same MemBlobStore the store's own tests use. It stands where the
-// supervisor's pipe client stands, so a test exercises the real staging round
-// trip -- write the file, read it back, remove it -- without a worker, a pipe
-// or a bucket.
-//
-// The failure it can be told to return is the point of it: the rule being pinned
-// is that a body is in the store before the entry naming it is appended, and
-// that can only be shown by a mover which refuses.
+// MemBlobMover is the BlobMover tests run bodies through, over the same
+// MemBlobStore the store's tests use. It stands where the supervisor's pipe
+// client stands, so a test exercises the staging round trip without a worker,
+// pipe or bucket.
+// Its injectable failure pins that a body is in the store before the entry naming
+// it is appended, which only a refusing mover can show.
 type MemBlobMover struct {
 	store *blobstore.MemBlobStore
-	// mu guards the counters, because a batch's fetches run side by side.
+	// mu guards the counters: a batch's fetches run side by side.
 	mu sync.Mutex
 	// Err is what PutBlob returns instead of storing. Nil puts.
 	Err error
 	// GetErr is what GetBlob returns instead of fetching. Nil fetches.
 	GetErr error
-	// Puts counts the bodies it was asked to store and Gets the ones it
-	// fetched, so a test can say a batch uploaded nothing rather than reading
-	// the store to find out.
+	// Puts counts stored bodies and Gets fetched ones, so a test can tell an
+	// upload-free batch without reading the store.
 	Puts int
 	Gets int
 }
@@ -448,13 +410,11 @@ func NewMemBlobMover() *MemBlobMover {
 	return &MemBlobMover{store: blobstore.NewMemBlobStore(nil)}
 }
 
-// Store is the store underneath, so a test reads the objects a run left behind.
+// Store is the store underneath, for reading what a run left behind.
 func (m *MemBlobMover) Store() *blobstore.MemBlobStore { return m.store }
 
 // PutBlob stores the body staged at stagingPath under key. It works through the
-// staging file rather than through the caller's bytes, which is what the real
-// mover does and what makes a staging file that was never written visible here
-// as the failure it is.
+// staging file like the real mover, so a never-written file surfaces as failure.
 func (m *MemBlobMover) PutBlob(key, stagingPath string) (int64, bool, error) {
 	if m.Err != nil {
 		return 0, false, m.Err
@@ -474,7 +434,7 @@ func (m *MemBlobMover) PutBlob(key, stagingPath string) (int64, bool, error) {
 }
 
 // GetBlob writes the body under key to stagingPath, or reports the store's
-// ErrNotFound, which the importer latches on rather than retrying.
+// ErrNotFound, which the importer latches rather than retries.
 func (m *MemBlobMover) GetBlob(key, stagingPath string, max int64) (int64, error) {
 	m.mu.Lock()
 	m.Gets++
@@ -498,10 +458,9 @@ func (m *MemBlobMover) GetBlob(key, stagingPath string, max int64) (int64, error
 	return int64(n), err
 }
 
-// tableIndex is a table's position in SharedTables, so head rows come back in
-// the same parents-first order a local walk uses. A name no shared table carries
-// sorts last: it cannot be a row this machine reads, and putting it first would
-// let an unknown name displace a parent.
+// tableIndex is a table's position in SharedTables, so head rows come back
+// parents-first like a local walk. An unknown name sorts last, never displacing
+// a parent.
 func tableIndex(tbl string) int {
 	order := SharedTablesInOrder()
 	for i, name := range order {

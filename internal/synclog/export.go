@@ -9,18 +9,14 @@ import (
 )
 
 // DefaultBatchSize is how many outbox entries one drain reads. The batch is one
-// transport append, so the size is the granularity a remote sees and the amount
-// of work a refused append repeats; it is small enough that a failure loses
-// little and large enough that a full outbox is not appended one row at a time.
+// transport append, so the size is the granularity a remote sees and the work a
+// refused append repeats: small enough to lose little, large enough to avoid
+// one-row appends.
 const DefaultBatchSize = 256
 
 // Exporter turns this installation's own outbox into appends on the log.
-//
-// Every drain is one consistent snapshot: the entries and the state of the rows
-// they name are read in one transaction, so a batch never reports a row as it
-// was before a write that had already committed when the drain began. The
-// entries the log holds afterwards are therefore an order an importer can apply
-// with foreign keys on.
+// Every drain is one consistent snapshot in one transaction, so the handed entries
+// are an order an importer can apply with foreign keys on.
 type Exporter struct {
 	keyed
 	db        *db.DB
@@ -30,9 +26,9 @@ type Exporter struct {
 	batch     int
 	now       func() time.Time
 
-	// mover and staging are where the values too large to travel inline go.
-	// Both are nil or empty on a transport that moves no bodies, which is what
-	// keeps every value inline for a log with no bucket behind it.
+	// mover and staging are where the values too large to travel inline go. Both
+	// are nil or empty on a transport that moves no bodies, keeping every value
+	// inline for a log with no bucket behind it.
 	mover   BlobMover
 	staging string
 	// blobCap is the most body bytes one appended batch may name.
@@ -40,10 +36,9 @@ type Exporter struct {
 }
 
 // NewExporter returns the exporter for one installation's file and the log it
-// appends to. The installation and the schema version are read from the file
-// rather than passed in: the origin decides which rows are this machine's to
-// export, and the version is what tells a reader which of its entries a newer
-// binary wrote.
+// appends to. Origin and schema version are read from the file: the origin decides
+// which rows are this machine's to export, and the version tells a reader which
+// entries a newer binary wrote.
 func NewExporter(d *db.DB, t LogTransport) *Exporter {
 	have, _ := d.SchemaVersions()
 	mover, staging := blobWiring(t)
@@ -63,17 +58,13 @@ func NewExporter(d *db.DB, t LogTransport) *Exporter {
 // ExportResult is what one export moved: the outbox rows it cleared and the
 // entries it handed the transport.
 type ExportResult struct {
-	// Drained is how many outbox entries the export removed.
-	Drained int
-	// Appended is how many entries the export handed to the transport.
+	Drained  int
 	Appended int
 }
 
 // Export drains and appends until the outbox holds nothing.
-//
-// Each batch is appended before its entries are deleted, so a machine that stops
-// part way leaves the rest of the outbox for the next run rather than dropping
-// changes it never handed over.
+// Each batch is appended before its entries are deleted, so a stopped machine
+// leaves the rest for the next run rather than dropping unhanded changes.
 func (e *Exporter) Export() (ExportResult, error) {
 	var total ExportResult
 	ctl, err := e.exportCtl()
@@ -97,12 +88,10 @@ func (e *Exporter) Export() (ExportResult, error) {
 }
 
 // ExportBatch drains one batch, appends it as a single transport call, and
-// clears the outbox entries it drained once the transport has taken them.
-//
-// The delete comes last and is unconditional on what the batch held: entries
-// this installation does not own were read and dropped, and keeping them would
-// have them read again on every pass. What is never cleared is a batch the
-// transport refused -- those entries are re-exported next pass, which is safe
+// clears the drained outbox entries once taken.
+// The delete comes last and is unconditional on what the batch held: unowned
+// entries were read and dropped, and keeping them would re-read them every pass.
+// A refused batch is never cleared -- its entries re-export next pass, safe
 // because import is an idempotent upsert.
 func (e *Exporter) ExportBatch() (ExportResult, error) {
 	drained, entries, pending, err := e.build()
@@ -113,11 +102,9 @@ func (e *Exporter) ExportBatch() (ExportResult, error) {
 		if err := e.guard(e.transport, e.origin); err != nil {
 			return ExportResult{}, err
 		}
-		// The bodies go first because an entry naming an object the store does
-		// not hold is worse than no entry at all: an importer would latch the
-		// origin over a body that a later attempt could have stored. A failed
-		// upload returns here, exactly as a failed append does, so the outbox
-		// entries stay and the whole batch is offered again next pass.
+		// The bodies go first: an entry naming a missing object would latch the
+		// importer over a body a later attempt could still have stored. A failed
+		// upload returns like a failed append, so the batch is offered again next pass.
 		if err := uploadPending(e.mover, e.staging, pending); err != nil {
 			return ExportResult{}, fmt.Errorf("synclog: export: upload: %w", err)
 		}
@@ -129,9 +116,8 @@ func (e *Exporter) ExportBatch() (ExportResult, error) {
 		noteOwnHead(e.db.LocalOrSelf(), written)
 	}
 
-	// The cut is by sequence rather than by count, so a batch that held fewer
-	// entries than it drained -- every one of them skipped -- still clears
-	// exactly what it read and nothing that arrived while it was building.
+	// The cut is by sequence rather than by count, so a batch that skipped entries
+	// still clears exactly what it read and nothing that arrived while building.
 	cut := drained[len(drained)-1].Seq
 	if err := e.db.DeleteDrainedOutbox(cut); err != nil {
 		return ExportResult{}, fmt.Errorf("synclog: export: clear: %w", err)
@@ -139,9 +125,8 @@ func (e *Exporter) ExportBatch() (ExportResult, error) {
 	return ExportResult{Drained: len(drained), Appended: len(entries)}, nil
 }
 
-// build drains the outbox and turns what it read into the batch the log is
-// given. A batch whose bodies would pass MaxBatchBlobBytes is drained again at
-// half the size, so no batch this machine appends is one an importer refuses.
+// build drains the outbox into the batch the log is given. An over-budget batch
+// drains again at half the size, so no appended batch is one an importer refuses.
 func (e *Exporter) build() ([]db.DrainedEntry, []Entry, []pendingBlob, error) {
 	for n := e.batch; ; n /= 2 {
 		drained, err := e.db.DrainOutbox(n)
@@ -163,13 +148,9 @@ func (e *Exporter) build() ([]db.DrainedEntry, []Entry, []pendingBlob, error) {
 
 // entries is the batch the log is given: the drained rows this installation
 // owns, one per row, ordered so an importer can apply it with foreign keys on.
-// Deletes are emitted before upserts (children-first for deletes, parents-first
-// for upserts) so any re-used key is freed before the new row is written.
-// The values too large to travel inline come back beside the batch, to be
-// uploaded before it is appended.
-//
-// A delete carries no body, so it never moves a value: there is nothing in it
-// to be too large.
+// Deletes precede upserts, children-first and parents-first respectively, so a
+// re-used key is freed before the new row is written. Oversized values come back
+// beside the batch, to be uploaded before it is appended. A delete carries no body.
 func (e *Exporter) entries(drained []db.DrainedEntry) ([]Entry, []pendingBlob, error) {
 	ownedRows, err := e.owned(drained)
 	if err != nil {
@@ -206,9 +187,8 @@ func (e *Exporter) entries(drained []db.DrainedEntry) ([]Entry, []pendingBlob, e
 	out = append(out, delEntries...)
 	var pending []pendingBlob
 	for _, d := range upserts {
-		// A row is only rewritten when there is somewhere to write it. A
-		// transport with no mover cannot upload, and an entry pointing at an
-		// object nobody put is a latch on the importer rather than a saving.
+		// A row is only rewritten when there is somewhere to write it: without a
+		// mover the ref would name an object nobody put.
 		row, blobs := *d.Row, []pendingBlob(nil)
 		if e.mover != nil {
 			row, blobs = refColumns(e.origin, d.Table, *d.Row)
@@ -286,14 +266,10 @@ func isHandoverRoot(d db.DrainedEntry, origin string) bool {
 	return writer != "" && writer != origin
 }
 
-// split divides the drained rows into the two kinds of entry the log carries: a
-// row the file holds becomes an upsert with its body, and a row the file does
-// not hold becomes a delete naming only its key.
-//
-// The outbox's own operation is not consulted. Whether a row is present is the
-// question that decides the entry, because every entry of one drain read the
-// same snapshot: an insert and the updates that follow it are one row, and an
-// insert whose row is gone by the time the drain runs is a delete.
+// split divides the drained rows into the log's two entry kinds: a held row
+// becomes an upsert with its body, a missing one a delete naming only its key.
+// The outbox's own operation is not consulted: every entry of one drain read the
+// same snapshot, so presence decides.
 func split(rows []db.DrainedEntry) (upserts, deletes []db.DrainedEntry) {
 	for _, d := range rows {
 		if d.Row == nil {
@@ -305,18 +281,13 @@ func split(rows []db.DrainedEntry) (upserts, deletes []db.DrainedEntry) {
 	return upserts, deletes
 }
 
-// owned keeps the drained rows this installation is the owner of. A row whose
-// owner is absent is one a cascade removed after its parent's entry was
-// recorded: the parent's own delete carries the removal to every importer, so
-// the orphan names nothing an importer could act on.
-//
-// A row another installation owns is here for the same reason it must not be
-// appended: an entry for it would travel back to the machine that wrote it, and
-// would be applied here a second time. Skipping it is what stops an imported row
-// from echoing across the log.
-//
-// Additionally, for rows whose root carries a takeover fence against this
-// installation, the change is moved to sync_fenced_change and dropped (C1).
+// owned keeps the drained rows this installation owns. An ownerless row is one a
+// cascade removed after its parent's entry was recorded: the parent's delete
+// carries the removal, so the orphan names nothing actionable.
+// A foreign-owned row must not be appended: its entry would travel back to its
+// writer and apply here twice; skipping stops an imported row echoing.
+// A row whose root carries a takeover fence against this installation moves to
+// sync_fenced_change and drops (C1).
 func (e *Exporter) owned(drained []db.DrainedEntry) ([]db.DrainedEntry, error) {
 	var out []db.DrainedEntry
 	fencedCache := make(map[string]bool)
@@ -350,22 +321,16 @@ func (e *Exporter) owned(drained []db.DrainedEntry) ([]db.DrainedEntry, error) {
 	return out, nil
 }
 
-// rowKey names the row one drained entry is about, so repeats of the same row
-// in one drain collapse to one.
+// rowKey names the row one drained entry is about, so repeats in one drain
+// collapse to one.
 type rowKey struct {
 	table string
 	pk    string
 }
 
-// coalesce folds the drained entries of one batch to one per row, keeping the
-// position the row first appeared at.
-//
-// The position is the drain order the entries arrived in, and it is kept only so
-// that rows of the same table keep their commit order; what decides the batch's
-// order is the table sort below. The state is taken from the last entry for the
-// row, which is the snapshot the drain read: every entry of one drain saw the
-// same state, and taking the last makes the rule hold without depending on
-// which of them a caller looks at.
+// coalesce folds one batch's drained entries to one per row, keeping the first
+// position so same-table rows keep commit order; the table sort below decides the
+// batch order. The state is the last entry for the row, the drain's snapshot.
 func coalesce(drained []db.DrainedEntry) []db.DrainedEntry {
 	var out []db.DrainedEntry
 	at := make(map[rowKey]int, len(drained))
@@ -381,25 +346,18 @@ func coalesce(drained []db.DrainedEntry) []db.DrainedEntry {
 	return out
 }
 
-// sortParentsFirst orders a batch's upserts so a row meets its parent before the
-// children that reference it. SharedTables lists parents first, so the table's
-// position in it is the order to write in; a row whose parent is not in the
-// batch was exported by an earlier one.
-//
-// The sort is stable, so rows of one table keep the commit order the drain read
-// them in rather than an arbitrary one.
+// sortParentsFirst orders a batch's upserts parents-first: SharedTables lists
+// parents first, so table position is write order; a parent absent from the batch
+// came in an earlier one. The sort is stable, keeping the drain's commit order.
 func sortParentsFirst(rows []db.DrainedEntry) {
 	sort.SliceStable(rows, func(i, j int) bool {
 		return tableIndex(rows[i].Table) < tableIndex(rows[j].Table)
 	})
 }
 
-// sortChildrenFirst orders a batch's deletes children-first, so every row is
-// removed before its parent. Deletes are emitted before upserts, and within
-// deletes this ensures a child is removed before its parent. The parent rows of
-// the 001 tables carry no cascade, so an importer that deleted a parent first
-// would have the child's delete refused by the very foreign key the importer
-// needs satisfied.
+// sortChildrenFirst orders a batch's deletes children-first. The 001 parents carry
+// no cascade, so deleting a parent first would have the child's delete refused
+// by the very foreign key the importer needs satisfied.
 func sortChildrenFirst(rows []db.DrainedEntry) {
 	sort.SliceStable(rows, func(i, j int) bool {
 		return tableIndex(rows[i].Table) > tableIndex(rows[j].Table)
