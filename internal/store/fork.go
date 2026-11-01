@@ -41,7 +41,10 @@ func (s *Store) ForkState(src string, dst Binding, throughRound int) error {
 	})
 }
 
-// ForkState copies src's history into a NEW binding for dst.
+// ForkState copies src's history into a NEW binding for dst: every log entry
+// and round file of a round <= throughRound. Copied entries are all Confirmed,
+// so a fork begins with nothing pending, and a Path into src's directory is
+// rewritten into dst's. dst's record is not written here: the caller owns it.
 //
 // The history goes straight into the database: the record Save writes, the
 // copied entries as that record's events, and one round_file row per copied

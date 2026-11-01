@@ -19,9 +19,10 @@ const (
 // plus the grace.
 //
 // HaltKindBroken names the episode that put a remote binding on NEEDS YOU
-// because the server reported a round whose builder is gone. The kind is what
-// says the halt came from a broken view either way, and an answering view
-// clears it by that and never by the text.
+// because the server reported a round whose builder is gone. The halt text is
+// the server's own reason when it shipped one, else the fallback this file
+// writes; the kind says the halt came from a broken view either way, and an
+// answering view clears it by that and never by the text.
 //
 // The kind is the episode's identity and the halt text is only the reason a
 // human reads, and the two are kept apart on purpose: a halt written by the

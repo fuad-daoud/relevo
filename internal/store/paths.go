@@ -256,7 +256,8 @@ func (s *Store) ServedCheckLogPath(name string, round int) string {
 }
 
 // CheckLogTarget resolves a check log path built by CheckLogPath back to the
-// member and round it was keyed with, through RoundFileTarget.
+// member and round it was keyed with, through RoundFileTarget; ok is false for
+// a path outside the state root or a name that carries no round.
 func (s *Store) CheckLogTarget(path string) (member string, round int, ok bool) {
 	return s.RoundFileTarget(path)
 }

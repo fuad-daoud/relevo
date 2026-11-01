@@ -22,6 +22,9 @@ type diskRoundFile struct {
 	round int
 }
 
+// roundFilesOfDir returns the binding's round files of round: the flat files
+// and those under its NNN-*/ artifact directories, in the binding directory and
+// its out/ child, sorted by round_file name.
 func (s *Store) roundFilesOfDir(name string, round int) ([]diskRoundFile, error) {
 	files, err := s.diskFiles(name)
 	if err != nil {
@@ -165,7 +168,8 @@ func walkOutEntries(root *os.Root, dir string, entries []fs.DirEntry, fn func(di
 // walkOutArtifact walks one NNN-<actor>/ directory and everything below it
 // through the out/ root, naming each file NNN-<actor>/<rel> with forward
 // slashes. Dot entries are skipped and a relative path containing ".." is
-// refused.
+// refused. A planted symlink is reported, not followed: the read paths refuse
+// it.
 func walkOutArtifact(root *os.Root, dir, prefix string, round int, entries []fs.DirEntry, fn func(diskRoundFile)) error {
 	for _, e := range entries {
 		base := e.Name()

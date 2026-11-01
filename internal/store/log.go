@@ -120,7 +120,9 @@ func HasKind(entries []LogEntry, round int, dir Direction, kind Kind) bool {
 // It lives here because three readers need it and none of them can import each
 // other: the daemon and the served view decide whether a round is in flight,
 // `stop` decides whether there is something to stop, and the history ingest
-// decides what a round's outcome was.
+// decides what a round's outcome was. Two spellings of the condition would
+// disagree, showing a closed round as open (so `stop` refuses to end it) or an
+// open one as closed.
 //
 // The log is the whole answer, not the binding's state word: a round that has a
 // prompt and no report is open whatever the state says, so a halt, a pause or a
