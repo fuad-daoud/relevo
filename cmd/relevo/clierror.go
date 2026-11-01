@@ -43,7 +43,8 @@ const (
 )
 
 // catalogEntry is what the frame needs to render one code: the process exit a
-// failure of that class earns, and the command that usually comes next.
+// failure of that class earns, and the command that usually comes next. next
+// is empty where no single command exists.
 type catalogEntry struct {
 	exit int
 	next string
@@ -92,8 +93,8 @@ type cliError struct {
 	cause   error
 }
 
-// Error renders the code with its message, so the code is always the first thing
-// on the line.
+// Error renders the code with its message, without the "relevo: " prefix the
+// renderer adds, so the code is always the first thing on the line.
 func (e *cliError) Error() string {
 	return fmt.Sprintf("%s: %s", e.code, e.message)
 }
@@ -103,7 +104,9 @@ func (e *cliError) Unwrap() error {
 	return e.cause
 }
 
-// As fills a *exitCodeErr with the catalog's exit for this code.
+// As fills a *exitCodeErr with the catalog's exit for this code, so every
+// errors.As(err, &exitCodeErr) assertion in the package -- and the 0/2/3/4/5/
+// 124 protocol codes wait documents -- keeps working unchanged.
 func (e *cliError) As(target any) bool {
 	ec, ok := target.(*exitCodeErr)
 	if !ok {
@@ -192,6 +195,8 @@ func newCLIError(code errorCode, next, message string) error {
 	return &cliError{code: code, message: message, next: next}
 }
 
+// errorEnvelope is the JSON shape of a failure on stderr: one object, one
+// line, carrying the same three fields as the human form.
 type errorEnvelope struct {
 	Error errorDocument `json:"error"`
 }

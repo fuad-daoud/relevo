@@ -16,6 +16,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
+// configGetFlagValues holds the pointer `config get` parses into. The command
+// prints the value itself, so --json is an accepted no-op.
 type configGetFlagValues struct {
 	asJSON *bool
 }
@@ -82,6 +84,8 @@ func configSetFlagSet(fs *flag.FlagSet) *configSetFlagValues {
 	return v
 }
 
+// configSet sets a JSON value at <section>[.<key>...]; with no key the whole
+// section is replaced, and a path through a non-object is config_invalid.
 func configSet(args []string) error {
 	return outcomeError(configSetRun(args))
 }
@@ -153,8 +157,6 @@ func configSetRun(args []string) error {
 	return nil
 }
 
-// configUnset removes a key, or the whole section with no key; a missing key
-// is config_invalid.
 type configUnsetFlagValues struct {
 	asJSON *bool
 	force  *bool
@@ -169,6 +171,8 @@ func configUnsetFlagSet(fs *flag.FlagSet) *configUnsetFlagValues {
 	return v
 }
 
+// configUnset removes a key, or the whole section with no key; a missing key
+// is config_invalid.
 func configUnset(args []string) error {
 	return outcomeError(configUnsetRun(args))
 }
@@ -197,9 +201,10 @@ func configUnsetRun(args []string) error {
 		return err
 	}
 	if len(keys) == 0 {
-		// Dropping the whole section drops every actor reference, so it takes
-		// the same guard as a replace; a key-level unset runs through the
-		// array, which is not an object.
+		// Dropping the whole candidates section drops everything an actor
+		// names, so it takes the same guard as a replace. A key-level unset
+		// on it is already refused below, since its keys run through the
+		// array.
 		if err := guardCandidatesDrop(rt, sec, nil, *force); err != nil {
 			return err
 		}
@@ -240,8 +245,6 @@ func configUnsetRun(args []string) error {
 	return nil
 }
 
-// configEdit opens the whole-config document in $VISUAL, else $EDITOR, else
-// vi. An invalid document reopens the editor so the user can fix it.
 type configEditFlagValues struct {
 	local *bool
 }
@@ -252,6 +255,9 @@ func configEditFlagSet(fs *flag.FlagSet) *configEditFlagValues {
 	return v
 }
 
+// configEdit opens the whole-config document in $VISUAL, else $EDITOR, else
+// vi. A file left empty aborts and an unchanged one is a no-op; an invalid
+// document reopens the editor so the user can fix it.
 func configEdit(args []string) error {
 	fs := flag.NewFlagSet("relevo config edit", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -347,7 +353,8 @@ func configEdit(args []string) error {
 }
 
 // configWriter is the part of a config store a verb writes through, so the
-// flag routing is testable without a database.
+// flag routing is testable without a database, which a test in this package
+// may not open.
 type configWriter interface {
 	Put(config.Section, []byte) ([]string, error)
 	PutDoc(config.Doc) ([]string, error)
@@ -374,7 +381,7 @@ func putEditedDoc(w configWriter, parsed map[config.Section]json.RawMessage, loc
 }
 
 // runEditor runs $VISUAL, else $EDITOR, else vi (split on spaces) with path
-// appended.
+// appended. It returns the editor's exit code.
 func runEditor(path string) (int, error) {
 	editor := os.Getenv("VISUAL")
 	if editor == "" {
@@ -423,8 +430,10 @@ func configSectionKnown(sec config.Section) bool {
 }
 
 // guardCandidatesDrop refuses a write that newly breaks an actor's candidate
-// reference. The refusal names the first drop only, so the message stays one
-// line; --force overrules it for scripts.
+// reference. body is the section's new content, or nil when the write removes
+// the section outright; any other section passes through untouched. The
+// refusal names the first drop only, so the message stays one line; --force
+// overrules it for scripts.
 func guardCandidatesDrop(rt relevo.Runtime, sec config.Section, body []byte, force bool) error {
 	if sec != config.Candidates || force {
 		return nil

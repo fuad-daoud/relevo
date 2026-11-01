@@ -71,8 +71,9 @@ func (u unitSpec) doc() string {
 var lookPath = exec.LookPath
 
 // servicePath assembles the daemon's PATH: the fixed prefix in %h form,
-// since systemd expands the specifiers at exec, plus each harness binary's
-// directory, deduplicated, in harness.All() order.
+// since systemd expands the specifiers at exec and the rendered unit keeps
+// naming %h/go/bin, where go installs the CLIs the daemon runs lint with,
+// plus each harness binary's directory, deduplicated, in harness.All() order.
 func servicePath(home string) string {
 	prefix := "%h/.local/bin:%h/go/bin:/usr/local/bin:/usr/bin:/bin"
 	// The %h entries expand to the same homes the harness LookPath can find,

@@ -369,7 +369,7 @@ func boardInvalidText(err error) string {
 // sets. It never writes: a board verb keeps creating nothing. A held database
 // is read through the owner an ad-hoc dial reaches; the owner is never
 // started, and when it does not answer the read refuses rather than resolving
-// against the seed.
+// against the seed, which would paint a section that exists wrong.
 func boardThemeSets(cwd string) (relevo.RepoSettings, map[string]board.Theme, error) {
 	repo := relevo.RepoSettings{}
 	root, err := tmpdir.DefaultRoot()
@@ -387,7 +387,8 @@ func boardThemeSets(cwd string) (relevo.RepoSettings, map[string]board.Theme, er
 	if errors.Is(err, db.ErrLocked) {
 		// The daemon holds the file, so the section lives behind the owner: read
 		// through an ad-hoc dial, which never starts the owner. A dial that gets
-		// no answer refuses rather than substituting the seed.
+		// no answer refuses rather than substituting the seed, which would
+		// paint a section that exists wrong.
 		d, err = dialOwnerAdHoc(context.Background(), root, verbDialBudget)
 		if err != nil {
 			return repo, nil, boardHeldRefusal(root, err)

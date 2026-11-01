@@ -9,7 +9,8 @@ import (
 
 // chainDryRun is `relevo chain --dry-run`: it resolves and validates the
 // workflow and prints the graph. It starts nothing. A workflow that does not
-// validate prints every problem and then refuses.
+// validate prints every problem and then refuses, so the exit code tells a
+// script the chain is not runnable.
 func chainDryRun(ctx context.Context, rt relevo.Runtime, opts relevo.ChainOptions) error {
 	doc, err := relevo.ChainDryRun(ctx, rt, opts)
 	if err != nil {

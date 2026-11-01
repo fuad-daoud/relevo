@@ -324,8 +324,8 @@ type logRound struct {
 }
 
 // logsSource adds the bodies the default bundle leaves out: one round's report,
-// diff and transcript tail per selected binding. Everything it adds is
-// control-char safe and truncation is marked.
+// diff and transcript tail per selected binding, and the newest hook runs'
+// output. Everything it adds is control-char safe and truncation is marked.
 func logsSource(rt relevo.Runtime, opts bugreportOptions) bugreport.Source {
 	return bugreport.Source{Name: bugreport.SectionLogs, Build: func() (bugreport.Section, error) {
 		rounds, err := selectedRounds(rt, opts)

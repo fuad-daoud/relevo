@@ -53,7 +53,10 @@ func idleExit(a daemonActivity, idleFor, after time.Duration) bool {
 }
 
 // daemonActivityNow samples the daemon's activity, stat'ing the root first: a
-// missing root or a displaced lock must exit at once, and an unreadable root
+// missing root must exit at once, and so must a displaced lock -- touching a
+// deleted root re-creates it with an empty database whose every read fails,
+// and those failures would keep the daemon busy forever. A nil owner server
+// counts as no connections and is never dereferenced, and an unreadable root
 // must never read as idle, so a failed read counts as busy.
 func daemonActivityNow(root string, lock *store.DaemonLock, srv *owner.Server, st *store.Store) daemonActivity {
 	var a daemonActivity

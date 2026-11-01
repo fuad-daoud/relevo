@@ -12,6 +12,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
+// configExportFlagValues holds the pointer `config export` parses into. The
+// command prints the document itself, so --json is an accepted no-op.
 type configExportFlagValues struct {
 	asJSON *bool
 }

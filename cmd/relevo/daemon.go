@@ -70,8 +70,9 @@ func cmdDaemon(args []string) error {
 		return fail(codeUsage, "usage: relevo daemon [--interval D] [--check] [--pprof <path>]; relevo daemon stop")
 	}
 
-	// --preflight and --check are the read-only peek: neither writes, so
-	// they return here, before the lock or the database.
+	// --preflight and --check are the read-only peek: neither writes and
+	// neither opens a database, which would migrate it, so they return here,
+	// before the lock or the database.
 	if *preflight || *check {
 		rt, err := newRuntimePeek()
 		if err != nil {
@@ -83,8 +84,9 @@ func cmdDaemon(args []string) error {
 			return err
 		}
 		if *preflight {
-			// newRuntimePeek took no lock and opened no DB, so this returns
-			// before the DB open below.
+			// newRuntimePeek took no lock and opened no DB: a candidate
+			// binary's --preflight runs against the live database, so this
+			// returns before the DB open below.
 			fmt.Printf("ok %s %s\n", buildVersion(), upgrade.SplitCapability)
 			return nil
 		}
@@ -239,8 +241,9 @@ func cmdDaemon(args []string) error {
 	daemonRuntimeHandle(&rt, d)
 
 	// An abandoned statement the owner cannot interrupt is ended by re-execing:
-	// the hook asks the upgrade hook below to return true on its next tick,
-	// and is not wired when re-exec is unavailable.
+	// the hook asks the upgrade hook below to return true on its next tick.
+	// Without it the owner keeps refusing ad-hoc reads with no way to end the
+	// statement, which is a safe degradation.
 	var reapRequested atomic.Bool
 	var onAbandoned func()
 	if reexecOK {
@@ -302,7 +305,9 @@ func cmdDaemon(args []string) error {
 	// The watcher and its hook are the daemon's whole upgrade decision:
 	// debounce the new identity over two ticks, preflight it, then re-exec or
 	// refuse. The split guard refuses a candidate that cannot read the local
-	// split, which would flap the visible config across re-execs.
+	// split, which would flap the visible config across re-execs. The split
+	// marker cannot appear later in this process's life, so reading it once
+	// here is current for every later tick.
 	up := &upgrade.Watcher{
 		Path:      exe,
 		Started:   exeID,
@@ -378,7 +383,8 @@ func cmdDaemon(args []string) error {
 	if errors.Is(err, relevo.ErrReexec) {
 		// Drain the owner first: an open transaction must commit before closeDB
 		// takes the handle away. Then close what must not survive the exec and
-		// pass the listener's descriptor with close-on-exec cleared.
+		// pass the listener's descriptor with close-on-exec cleared, so the
+		// next image adopts it instead of rebinding.
 		fd, herr := drainAndHandoff(srv, ln)
 		if herr != nil {
 			slog.Warn("relevo daemon: listener handoff failed", "err", herr)
@@ -405,7 +411,8 @@ func cmdDaemon(args []string) error {
 
 // daemonRuntimeHandle decides whether the daemon's own ingest may write d: a
 // schema a newer relevo wrote is never migrated or written here, so rt.DB
-// stays nil. The owner still serves the handle, so a dialled client gets its
+// stays nil and every ingest call site treats it as a machine with no
+// database. The owner still serves the handle, so a dialled client gets its
 // schema answer. rt is a pointer because Runtime is copied by value elsewhere.
 func daemonRuntimeHandle(rt *relevo.Runtime, d *db.DB) {
 	if d.Newer() {

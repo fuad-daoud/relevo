@@ -19,7 +19,8 @@ import (
 // otherwise leave unbounded. The passes skip their in-place compaction, which
 // would close the pool the owner's clients read through. The verb comes last
 // because the split and the origin backfill must finish before any row may
-// leave it.
+// leave this machine; a database whose split failed keeps refusing it instead
+// of exporting the secrets the split exists to move.
 func daemonStartup(rt *relevo.Runtime, d *db.DB, ln net.Listener, onAbandoned func()) *owner.Server {
 	reclaimBeforeServing(d)
 	srv := daemonServeOwner(d, ln, onAbandoned)

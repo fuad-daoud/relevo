@@ -131,10 +131,14 @@ type dbSyncVerbOptions struct {
 	// rekey's tail carries.
 	NewPassphraseLen int
 	Join             bool
-	Yes              bool
-	AdoptAs          string
-	DryRun           bool
-	New              bool
+	// Yes is enable's --yes.
+	Yes bool
+	// AdoptAs is enable's --as.
+	AdoptAs string
+	// DryRun is reconcile's --dry-run.
+	DryRun bool
+	// New is unlock's --new.
+	New bool
 	// Rebuild is retry's --rebuild: it asks the retry to move the replica
 	// aside before the next attempt, ignoring the window an automatic
 	// rebuild waits out.
@@ -195,7 +199,7 @@ func dbSyncVerbRefusal(verb string, err error) error {
 
 // remoteConflictNext is the command that points this machine at the remote
 // --url named, the way out of a remote conflict: enable has no flag that
-// re-points, so no --local.
+// re-points, and the sync section is machine-local, so no --local.
 func remoteConflictNext(conflict *relevosync.RemoteConflictError) string {
 	url := "<url>"
 	if conflict != nil && conflict.URL != "" {
@@ -272,7 +276,8 @@ func dbSyncVerbTransport(err error) error {
 //
 // The local handle is not optional. An owner that serves none is refused rather
 // than answered from the shared file, which holds no sync section and no token,
-// so a silent downgrade would report a configured machine as unconfigured.
+// so a silent downgrade would report a configured machine as unconfigured. It
+// is the same rule RefuseNoLocal enforces on the wire.
 func openDBSyncStatus() (shared *db.DB, local *db.DB, err error) {
 	path := machineDBPath()
 	if path == "" {

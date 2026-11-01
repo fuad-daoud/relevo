@@ -77,9 +77,11 @@ func installR2Flags(fs *flag.FlagSet, v *dbSyncR2Flags) {
 }
 
 // dbSyncEnableIntake refuses the one thing that cannot be resolved here: two
-// secrets asked for on the same standard input. --token-stdin is not counted
-// beside --join-stdin: the code carries the token, so that flag reads nothing.
-// The refusal is raised before anything is dialed, naming the flags that collided.
+// secrets asked for on the same standard input, where a pipe carrying two
+// would hand one program whichever value it read first. --token-stdin is not
+// counted beside --join-stdin: the code carries the token, so that flag reads
+// nothing. The refusal is raised before anything is dialed, naming the flags
+// that collided.
 func dbSyncEnableIntake(tokenStdin, passphraseStdin, joinStdin bool, r2 dbSyncR2Flags) error {
 	var asked []string
 	if tokenStdin && !joinStdin {

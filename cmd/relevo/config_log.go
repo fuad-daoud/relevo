@@ -62,7 +62,8 @@ func revisionJSONOf(r db.RevisionRow, withSnapshot bool) revisionJSON {
 }
 
 // inertText makes a stored source or message safe to print: a synced
-// revision's label and message are chosen by a peer, so newlines go too.
+// revision's label and message are chosen by a peer. sanitize keeps newlines,
+// which would let a peer forge a line, so they go too.
 func inertText(s string) string {
 	return strings.ReplaceAll(sanitize.Text(s), "\n", "\uFFFD")
 }
@@ -83,7 +84,6 @@ func printRevisionText(r db.RevisionRow) error {
 	return nil
 }
 
-// cmdConfigLog lists revisions newest first, or shows one with --rev.
 type configLogFlagValues struct {
 	n      *int
 	rev    *int64
@@ -98,6 +98,7 @@ func configLogFlagSet(fs *flag.FlagSet) *configLogFlagValues {
 	return v
 }
 
+// cmdConfigLog lists revisions newest first, or shows one with --rev.
 func cmdConfigLog(args []string) error {
 	fs := flag.NewFlagSet("relevo config log", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -170,8 +171,6 @@ func sourceWidth(rows []db.RevisionRow) int {
 	return width
 }
 
-// cmdConfigRollback previews the rollback, confirms unless --yes, then writes
-// it as one new revision.
 type configRollbackFlagValues struct {
 	yes *bool
 	msg *string
@@ -184,6 +183,8 @@ func configRollbackFlagSet(fs *flag.FlagSet) *configRollbackFlagValues {
 	return v
 }
 
+// cmdConfigRollback previews the rollback, confirms unless --yes, then writes
+// it as one new revision.
 func cmdConfigRollback(args []string) error {
 	fs := flag.NewFlagSet("relevo config rollback", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)

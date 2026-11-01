@@ -500,7 +500,9 @@ func dbSyncClassify(err error) error {
 		return fail(codeRemoteAuth, "%v", err)
 	case errors.Is(err, db.ErrPreflightRefused):
 		// The preflight's refusals are the answer, not a failure: every message
-		// names the command or the flag that clears it.
+		// names the command or the flag that clears it. A bug report has no
+		// fix in it, so this code must never be the one the catalog points
+		// at `relevo bugreport` from.
 		return failWrap(codeRefused, err, "relevo db sync enable")
 	case errors.Is(err, db.ErrContended):
 		// A busy database is a refusal the reader can act on: nothing was

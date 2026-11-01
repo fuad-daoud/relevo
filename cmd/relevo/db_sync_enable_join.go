@@ -61,8 +61,9 @@ type dbSyncJoin struct {
 
 // dbSyncEnablePassphrase resolves the passphrase in unlock's order. isNew is
 // always false: an enable never creates key material on a remote. Whether a
-// missing passphrase is a refusal is what required decides: a --join needs one,
-// while a plain enable without a terminal gets an empty answer rather than a
+// missing passphrase is a refusal is what required decides: a --join needs
+// one, because a joiner that cannot unlock would join holding nothing, while
+// a plain enable without a terminal gets an empty answer rather than a
 // failure.
 func dbSyncEnablePassphrase(fromStdin, required bool) ([]byte, error) {
 	pass, err := dbSyncPassphrase(fromStdin, false)

@@ -173,7 +173,8 @@ func configRepoShow(args []string) error {
 }
 
 // configRepoSet stores one field of the working directory's, or --repo's, own
-// entry. A field set to "" is stored as absent.
+// entry. A field set to "" is stored as absent, and an entry left with no
+// field at all is not stored, which is the section's own encoding.
 func configRepoSet(args []string) error {
 	fs := flag.NewFlagSet("relevo config repo set", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -245,8 +246,8 @@ func configRepoSet(args []string) error {
 }
 
 // configRepoUnset clears one field of the working directory's, or --repo's,
-// own entry. An unset field is a refusal; an entry the clear leaves empty is
-// dropped.
+// own entry. An unset field is a refusal, the same answer `config unset`
+// gives; an entry the clear leaves empty is dropped.
 func configRepoUnset(args []string) error {
 	fs := flag.NewFlagSet("relevo config repo unset", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)

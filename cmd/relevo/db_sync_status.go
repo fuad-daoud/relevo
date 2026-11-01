@@ -65,7 +65,8 @@ type dbSyncStatusDoc struct {
 	// one.
 	LastAttempt *dbSyncAttemptDoc `json:"last_attempt,omitempty"`
 	// Bytes is this month's traffic, absent until something moved, and
-	// QuotaTursoSync the allowance the Turso total is read against.
+	// QuotaTursoSync the allowance the Turso total is read against. Both stay
+	// beside Account because JSON consumers read them.
 	Bytes          *relevosync.ByteCounters `json:"bytes,omitempty"`
 	QuotaTursoSync int64                    `json:"quota_turso_sync,omitempty"`
 	// Storage is the last daily measurement of the replica and the bucket,
@@ -108,7 +109,8 @@ type dbSyncIdleDoc struct {
 
 // dbSyncAccount is the meter reading the quotas clause renders, rebuilt from
 // the document the reader filled. A projected figure is positive exactly when
-// the month was projectable, so the document needs no flag beside it.
+// the month was projectable and moved bytes, so the document needs no flag
+// beside it; read_at round-trips the instant statusStamp wrote.
 func dbSyncAccount(doc dbSyncStatusDoc) relevosync.QuotaReading {
 	if doc.Account == nil {
 		return relevosync.QuotaReading{}

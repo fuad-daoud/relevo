@@ -132,9 +132,6 @@ func cmdDone(args []string) error {
 	return nil
 }
 
-// cmdStop ends a binding's open round: a headless builder is killed now and
-// the round closes without a report. It never takes the binding from the
-// current directory -- a stop must not guess.
 type stopFlagValues struct {
 	name   *string
 	asJSON *bool
@@ -147,6 +144,10 @@ func stopFlagSet(fs *flag.FlagSet) *stopFlagValues {
 	return v
 }
 
+// cmdStop ends a binding's open round on purpose: a headless builder is
+// killed now and the round closes without a report unless one is already
+// on disk. It never takes the binding from the current directory -- a stop
+// must not guess.
 func cmdStop(args []string) error {
 	fs := flag.NewFlagSet("stop", flag.ContinueOnError)
 	v := stopFlagSet(fs)

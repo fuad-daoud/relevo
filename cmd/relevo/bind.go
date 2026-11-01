@@ -77,8 +77,6 @@ func bindRouteFor(f bindFlags) (bindRoute, error) {
 	}
 }
 
-// cmdBind binds a mastermind to a builder: the flags choose which of the two
-// bodies runs.
 type bindFlagValues struct {
 	name           *string
 	candidate      *string
@@ -134,6 +132,9 @@ func bindFlagSet(fs *flag.FlagSet) *bindFlagValues {
 	return v
 }
 
+// cmdBind binds a mastermind to a builder: the flags choose which of the two
+// bodies runs, and each body stays an unexported helper so none of its logic
+// is duplicated.
 func cmdBind(args []string) error {
 	fs := flag.NewFlagSet("bind", flag.ContinueOnError)
 	v := bindFlagSet(fs)
@@ -186,7 +187,9 @@ func cmdBind(args []string) error {
 	}
 }
 
-// refuseFlag is the one-line refusal the label rules and the route check share.
+// refuseFlag is the one-line refusal the label rules and the route check
+// share. The message is part of the error, so --json stderr carries it once
+// instead of a stray human line plus an envelope.
 func refuseFlag(err error) error {
 	return fail(codeRefused, "%v", err)
 }

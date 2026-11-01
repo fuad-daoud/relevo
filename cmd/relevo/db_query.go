@@ -170,7 +170,8 @@ func cmdDBQuery(args []string) error {
 	}
 
 	// The read runs on its own goroutine so the deadline ends the command even
-	// when the engine ignores ctx inside a step.
+	// when the engine ignores ctx inside a step. main's os.Exit then ends the
+	// process, and with it the direct flock the abandoned read still holds.
 	readErr := make(chan error, 1)
 	go func() { readErr <- dbQueryRead(ctx, d, positional[0], onRow) }()
 
@@ -263,7 +264,8 @@ func classifyDBQuery(err error) error {
 
 // openDBQuery reaches relevo.db read-only: the owner when its socket answers,
 // the file itself when it does not, and one re-dial when the direct open finds
-// the daemon holding the file. It never starts the owner.
+// the daemon holding the file. It never starts the owner. ctx bounds the dial,
+// and an expired ctx refuses rather than falling back to a direct open.
 func openDBQuery(ctx context.Context) (*db.DB, error) {
 	root, err := tmpdir.DefaultRoot()
 	if err != nil {
@@ -322,7 +324,8 @@ func writeDBQueryJSON(w io.Writer, columns []string, rows [][]any) error {
 
 // writeDBQueryTable prints one tabwriter row per record, the header first. Every
 // cell is sanitised: a value or a column name in relevo.db is untrusted text,
-// and a raw ESC would let it manipulate the terminal.
+// and a raw ESC would let it manipulate the terminal. --json stays the machine
+// form and is not sanitised.
 func writeDBQueryTable(w io.Writer, columns []string, rows [][]any) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	if len(columns) > 0 {

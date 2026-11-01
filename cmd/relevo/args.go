@@ -176,8 +176,9 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 }
 
 // regateFlag turns --regate into the *int the relevo package takes: the -1
-// default means not given and becomes nil, a typed value must be >= 0, and a
-// bad one exits 2 before any runtime is built.
+// default means not given and becomes nil, so the policy default or the
+// existing binding value stands; a typed value must be >= 0, and a bad one
+// exits 2 before any runtime is built.
 func regateFlag(fs *flag.FlagSet, regate *int) (*int, error) {
 	given := false
 	fs.Visit(func(f *flag.Flag) {

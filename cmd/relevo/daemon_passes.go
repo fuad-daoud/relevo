@@ -9,12 +9,14 @@ import (
 
 // daemonEnablePath runs the two run-once passes a database must finish before
 // its rows may leave, which the enable preflight names when it refuses. The
-// split moves every machine-local row into the machine-local file, backing
-// the file up first; the backfill stamps every unstamped row and records
-// itself last, so a halted start resumes where it left off. A colliding pair
-// is settled per table rather than rolling back the rest. Neither failure
-// stops the daemon, and both record themselves only once finished, so an
-// error keeps the sync verb uninstalled.
+// split runs first, so its backup is of the unstamped database, and moves
+// every machine-local row into the machine-local file -- the secret table
+// among them -- which sit in the shared file until it runs. The backfill
+// stamps every unstamped row and records itself last, so a halted start
+// resumes where it left off. A colliding pair is settled per table rather
+// than rolling back the rest. Neither failure stops the daemon, and both
+// record themselves only once finished, so an error keeps the sync verb
+// uninstalled.
 func daemonEnablePath(d *db.DB, backupDir, origin string, now time.Time) (rowsMayLeave bool) {
 	sstats, sran, serr := db.SplitOnce(d, backupDir, now)
 	if serr != nil {

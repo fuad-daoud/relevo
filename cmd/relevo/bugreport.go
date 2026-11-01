@@ -46,8 +46,8 @@ func bugreportFlagSet(fs *flag.FlagSet) *bugreportFlagValues {
 	return v
 }
 
-// bugreportExec runs one external command for the verb. It is a seam every
-// test replaces, so no test spawns either binary.
+// bugreportExec runs one external command for the verb -- gh and journalctl.
+// It is a seam every test replaces, so no test spawns either binary.
 var bugreportExec = func(ctx context.Context, argv []string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	return cmd.CombinedOutput()
@@ -209,7 +209,8 @@ func fileBundle(b bugreport.Bundle, opts bugreportOptions, root string) error {
 }
 
 // writeBundleFile writes the markdown to path, creating the parent directory
-// when missing. The file is owner-only.
+// when missing. The file is owner-only: a bundle carries paths, names and
+// whatever the redaction pass could not know.
 func writeBundleFile(path string, text string) error {
 	dir := filepath.Dir(path)
 	if dir != "" && dir != "." {

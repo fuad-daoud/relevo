@@ -16,9 +16,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/uplink"
 )
 
-// cmdClientAddServer records a server entry, checking enrollment once when
-// --fingerprint pins it. A 401 is not an error, and a missing client key is
-// generated first, since the check cannot succeed without it.
 type clientAddServerFlagValues struct {
 	fingerprint *string
 	ca          *string
@@ -38,6 +35,9 @@ func clientAddServerFlagSet(fs *flag.FlagSet) *clientAddServerFlagValues {
 	return v
 }
 
+// cmdClientAddServer records a server entry, checking enrollment once when
+// --fingerprint pins it. A 401 is not an error, and a missing client key is
+// generated first, since the check cannot succeed without it.
 func cmdClientAddServer(args []string) error {
 	return outcomeError(cmdClientAddServerRun(args))
 }
@@ -146,9 +146,6 @@ func addServerDoc(asJSON bool, name, url string) error {
 	return printDoc(configServerAddDocOf(name, url))
 }
 
-// cmdClientRmServer refuses while any binding still names the server;
-// uplink.ServerInUse is the pure rule this checks, so this wrapper needs no
-// harness or network to test the refusal shape.
 type clientRmServerFlagValues struct {
 	asJSON *bool
 }
@@ -161,6 +158,9 @@ func clientRmServerFlagSet(fs *flag.FlagSet) *clientRmServerFlagValues {
 	return v
 }
 
+// cmdClientRmServer refuses while any binding still names the server;
+// uplink.ServerInUse is the pure rule this checks, so this wrapper needs no
+// harness or network to test the refusal shape.
 func cmdClientRmServer(args []string) error {
 	return outcomeError(cmdClientRmServerRun(args))
 }

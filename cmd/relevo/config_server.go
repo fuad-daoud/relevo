@@ -300,9 +300,11 @@ func ensureClientKey(rt relevo.Runtime) (pem []byte, generated bool, err error) 
 	return pem, true, nil
 }
 
-// printClientKey prints the client id and the enrolment line to w. With
-// enrollOnly it prints the enrolment line alone; w is stdout for the read verb
-// and the notice stream for `config server add`.
+// printClientKey prints the client id and the enrolment line to w. The
+// enrolment line is what a server admin passes to `relevo serve enroll --key`.
+// With enrollOnly it prints the enrolment line alone; w is stdout for the
+// read verb and the notice stream for `config server add`, whose document
+// owns stdout.
 func printClientKey(w io.Writer, pem []byte, enrollOnly bool) error {
 	kp, err := remote.ParsePrivate(pem)
 	if err != nil {

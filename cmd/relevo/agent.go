@@ -99,8 +99,9 @@ func cmdAgentInstallRun(args []string) error {
 		return err
 	}
 
-	// The custom agents live in the machine config, which may be unreadable; a
-	// config failure is one warning on stderr and nothing more.
+	// The custom agents live in the machine config, which may be unreadable;
+	// that must not stop the shipped install, so a config failure is only a
+	// warning on stderr and nothing more.
 	cfg, cfgErr := relevo.MachineConfig()
 	var loaded config.Loaded
 	sourceRole := false
@@ -116,8 +117,8 @@ func cmdAgentInstallRun(args []string) error {
 
 	var results []harness.InstallResult
 	if sourceRole {
-		// Harness.Install refuses a name it does not ship, so a source agent goes
-		// by the custom path alone.
+		// A source agent goes by the custom path alone: harness.Install refuses
+		// a name it does not ship.
 		custom, cerr := relevo.InstallCustomAgents(cfg, env, opts)
 		if cerr != nil {
 			fmt.Fprintf(os.Stderr, "relevo: custom agents not installed: %v\n", cerr)

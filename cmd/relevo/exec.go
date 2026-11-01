@@ -12,8 +12,9 @@ import (
 )
 
 // binExec is usage.Exec over the real PATH, with stderr folded into the
-// error. It optionally runs the child as a tenant, which is how a user-mode
-// server's session reaper deletes a session as the tenant.
+// error. deny and extra come from isolate.UserSpec's rule. It optionally runs
+// the child as a tenant, which is how a user-mode server's session reaper
+// deletes a session as the tenant.
 type binExec struct {
 	credential *spawn.Credential
 	deny       []string
