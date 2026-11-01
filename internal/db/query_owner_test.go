@@ -67,9 +67,8 @@ func TestQueryReadOnlyThroughTheOwnerRefusesAWrite(t *testing.T) {
 // TestZeroColumnResultThroughTheOwnerReturnsPromptly pins the containment of a
 // statement whose result carries no columns. Turso executes
 // `PRAGMA writable_schema=1` even behind query_only and answers with no columns
-// at all; the wire client used to report an endless zero-width row, so the
-// caller grew the heap until the process was killed. The statement must now come
-// back at once, without moving the heap, and the read-only verb must refuse it
+// at all; with no columns to bound the read, the statement must come back at
+// once, without moving the heap, and the read-only verb must refuse it
 // before it reaches the owner in the first place.
 func TestZeroColumnResultThroughTheOwnerReturnsPromptly(t *testing.T) {
 	d := directOpenTestDB(t)
