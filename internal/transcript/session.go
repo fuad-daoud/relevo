@@ -5,13 +5,12 @@ import (
 	"encoding/json"
 )
 
-// SessionID is the harness's own session id as one line of its stream announces
-// it, "" when the line announces none. Each harness names it differently and not
-// always on the first line, so the caller feeds the lines in order and takes the
-// first that answers: claude's session_id, opencode's sessionID, agy's
-// conversation_id (top-level or nested in the event's own object), and codex's
-// thread_id on thread.started only, and muse's stream id on any line of the
-// session stream.
+// SessionID is the harness's own session id as one stream line announces it, ""
+// when the line announces none. Each harness names it differently and not always
+// on the first line, so the caller feeds lines in order and takes the first that
+// answers: claude's session_id, opencode's sessionID, agy's conversation_id
+// (top-level or in the event's own object), codex's thread_id on thread.started
+// only, muse's stream id on any line of the session stream.
 func SessionID(kind string, line []byte) string {
 	trimmed := bytes.TrimSpace(line)
 	if len(trimmed) == 0 || trimmed[0] != '{' {

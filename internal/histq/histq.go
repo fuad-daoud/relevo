@@ -1,6 +1,6 @@
-// Package histq parses relevo's round-history query language, shared by
-// `relevo history -q` and the dashboard filter line, into a db.Filter plus the
-// conditions only Go can apply and the regroup axis. It depends on db alone.
+// Package histq parses relevo's round-history query language, shared by `relevo
+// history -q` and the dashboard filter line, into a db.Filter plus the conditions
+// only Go can apply and the regroup axis. It depends on db alone.
 package histq
 
 import (
@@ -16,12 +16,12 @@ import (
 )
 
 // ErrBadSince is the same value relevo.ErrBadSince names, so a caller matching
-// that sentinel still does.
+// that sentinel still matches this one.
 var ErrBadSince = errors.New("--since wants 24h, 7d or YYYY-MM-DD")
 
-// ParseSince turns "24h", "7d" or a YYYY-MM-DD date into the instant before
-// which rounds are ignored; "" means no cut. Only h and d suffixes are
-// accepted, w deliberately not.
+// ParseSince turns "24h", "7d" or a YYYY-MM-DD date into the instant before which
+// rounds are ignored; "" means no cut. Only h and d suffixes are accepted, w
+// deliberately not.
 func ParseSince(s string, now time.Time) (time.Time, error) {
 	if s == "" {
 		return time.Time{}, nil
@@ -43,7 +43,7 @@ func ParseSince(s string, now time.Time) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("%q: %w", s, ErrBadSince)
 }
 
-// Axis names the column Group collapses rows by; AxisNone means "do not group".
+// Axis names the column Group collapses rows by; AxisNone means do not group.
 type Axis string
 
 const (
@@ -79,8 +79,8 @@ func ParseAxis(s string) (Axis, bool) {
 	return AxisNone, false
 }
 
-// NumCond is one numeric comparison. Key is cost|tokens|commits|duration|round,
-// Op is > < >= <= =, and duration is in minutes, tokens in+cache+write+out, cost USD.
+// NumCond is one numeric comparison: cost|tokens|commits|duration|round with Op
+// > < >= <= =. Duration is in minutes, tokens in+cache+write+out, cost in USD.
 type NumCond struct {
 	Key   string
 	Op    string
@@ -90,22 +90,22 @@ type NumCond struct {
 // Query is one parsed query line.
 type Query struct {
 	Filter db.Filter
-	// Words are bare tokens, matched case-insensitively as substrings of a
-	// row's binding name, repo or feature.
+	// Words are bare tokens, matched case-insensitively as substrings of a row's
+	// binding name, repo or feature.
 	Words []string
 	Nums  []NumCond
-	// Report, Gate, Basis, Server and Mode have no db.Filter column; Apply
-	// enforces them.
+	// Report, Gate, Basis, Server and Mode have no db.Filter column; Apply enforces
+	// them.
 	Report, Gate, Basis, Server, Mode string
 	// By is the regroup axis; AxisNone when `by:` was absent.
 	By  Axis
 	Raw string
-	// Since and Until hold the raw text as typed, so String prints "7d".
+	// Since and Until hold the raw text as typed, so String prints "7d" back.
 	Since, Until string
 	Now          time.Time
 }
 
-// ErrQuery is a parse error: its message is `query: <token> at <pos>: <reason>`.
+// ErrQuery is a parse error rendering as `query: <token> at <pos>: <reason>`.
 type ErrQuery struct {
 	Token  string
 	Pos    int
@@ -128,7 +128,7 @@ var (
 	modeValues   = []string{"pane", "headless", "remote"}
 )
 
-// ParseAt parses s with now as the clock since/until are resolved against.
+// ParseAt parses s with now as the clock since/until resolve against.
 // Filter.Newest is always true: a query reads newest first.
 func ParseAt(s string, now time.Time) (Query, error) {
 	q := Query{Raw: strings.TrimSpace(s), Now: now, By: AxisNone}
@@ -381,7 +381,7 @@ func (q *Query) applyNumCond(key, op, value string, t token) error {
 
 // String renders q canonically: filter keys in a fixed order, then the numeric
 // conditions in input order, then the words, then by. A value with a space is
-// double-quoted; since/until print as typed.
+// double-quoted; since/until print as typed, never re-resolved.
 func (q Query) String() string {
 	var parts []string
 	add := func(key, value string) {
@@ -425,7 +425,7 @@ func (q Query) String() string {
 	return strings.Join(parts, " ")
 }
 
-// quoteValue double-quotes s when it holds a space, escaping any quote.
+// quoteValue double-quotes s when it holds a space, escaping any quote within.
 func quoteValue(s string) string {
 	if !strings.Contains(s, " ") {
 		return s
@@ -433,7 +433,7 @@ func quoteValue(s string) string {
 	return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
 }
 
-// formatNum prints v so Parse reads it back: a whole number with no decimal point.
+// formatNum prints v so Parse reads it back, a whole number with no decimal point.
 func formatNum(v float64) string {
 	if v == math.Trunc(v) && math.Abs(v) < 1e15 {
 		return strconv.FormatInt(int64(v), 10)

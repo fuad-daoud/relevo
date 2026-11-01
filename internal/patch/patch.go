@@ -36,7 +36,6 @@ type Line struct {
 	New  int    // post-image line number; 0 for a '-' line
 }
 
-// HasLine reports whether path has a ' ' or '+' line at post-image line number line.
 func (p Patch) HasLine(path string, line int) (Hunk, Line, bool) {
 	for _, f := range p.Files {
 		if f.Path != path {

@@ -21,22 +21,14 @@ type DriftResult struct {
 	Reason    string   // why Available is false; "" when it is true
 }
 
-// Drift compares the tree a round ended at against the tree the next round
-// is opening at, writing the patch to d.Store.DriftPath(b.Name, b.Round) when
-// there is a body worth keeping.
-//
-// When baseline == b.RoundClosedTree, Drift short-circuits before any git
-// call. It NEVER returns an error: every failure lands in DriftResult.Reason.
-//
-// Preconditions: none.
-// Postconditions:
-//   - Available is false with empty Reason when d.Git is nil, b.RoundClosedTree
-//     is empty, baseline is empty, or DiffTrees returned git.ErrNotRepo.
-//   - Available is true with zero Stat when baseline == b.RoundClosedTree.
-//   - Available is false with Reason set when DiffTrees or writing the patch failed.
-//   - When Available is true and Stat is non-empty, Path resolves through
-//     Store.ReadFile (a round_file row, no file on disk) unless Truncated is
-//     true.
+// Drift compares the tree a round ended at against the tree the next round opens
+// at, writing the patch when there is a body worth keeping. When
+// baseline == b.RoundClosedTree it short-circuits before any git call. It NEVER
+// returns an error: every failure lands in DriftResult.Reason. Available is
+// false with empty Reason when d.Git is nil, either tree is empty, or DiffTrees
+// returned git.ErrNotRepo; true with zero Stat when the trees match; false with
+// Reason when DiffTrees or the patch write failed. A non-empty Stat resolves
+// through Store.ReadFile unless Truncated is true.
 func Drift(ctx context.Context, d Deps, tx *store.Tx, b store.Binding, baseline string) DriftResult {
 	if d.Git == nil || b.RoundClosedTree == "" || baseline == "" {
 		return DriftResult{Available: false}
@@ -69,7 +61,6 @@ func Drift(ctx context.Context, d Deps, tx *store.Tx, b store.Binding, baseline 
 	return DriftResult{Available: true, Path: patchPath, Stat: diff.Stat}
 }
 
-// DriftSummary returns the human summary for the drift log entry.
 func DriftSummary(res DriftResult) string {
 	if !res.Available {
 		if res.Reason != "" {
@@ -87,12 +78,9 @@ func DriftSummary(res DriftResult) string {
 }
 
 // DriftLine renders the stdout line for drift detected between rounds, or ""
-// when there is nothing worth telling the mastermind (no git, not a repository,
-// or an empty Stat).
-//
-// round is the opening round; the prose names round-1, the round that closed,
-// and points the mastermind at `relevo show <name> --round <round> --drift`
-// instead of the patch's path.
+// when there is nothing worth telling the mastermind. round is the opening
+// round; the prose names round-1 and points at
+// `relevo show <name> --round <round> --drift` instead of the patch's path.
 func DriftLine(res DriftResult, name string, round int) string {
 	if !res.Available {
 		if res.Reason == "" {

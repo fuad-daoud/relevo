@@ -36,15 +36,13 @@ type Report struct {
 	Since, Until time.Time
 	Totals       Totals
 	Scorecard    []ScoreRow
-	// Accounts is the same scorecard grouped by the login a round drew from
-	// instead of its candidate. Empty on every host with no accounts, so the
-	// report a host without them builds keeps the shape it always had.
+	// Accounts is the same scorecard grouped by login rather than candidate. Empty
+	// on every host with no accounts, so such a host's report keeps its shape.
 	Accounts    []ScoreRow
 	Spend       Spend
 	Reliability Reliability
 	// Repos is keyed by RoundRow.Repo, "(none)" when nil, each with its features
-	// and their tickets. Every scratch repo folds into the one "(scratch)" row,
-	// which carries the aggregate and its repos in Scratch.
+	// and their tickets. Every scratch repo folds into the one "(scratch)" row.
 	Repos    []RepoRow
 	Outcomes Outcomes
 }
@@ -56,7 +54,7 @@ type TokenCounts struct {
 
 func (c TokenCounts) Total() int64 { return c.In + c.Cache + c.Write + c.Out }
 
-// CachePct is cache over input; ok is false when no input was recorded.
+// CachePct is cache over input, ok false when no input was recorded.
 func (c TokenCounts) CachePct() (float64, bool) {
 	input := c.In + c.Cache
 	if input == 0 {
@@ -65,7 +63,7 @@ func (c TokenCounts) CachePct() (float64, bool) {
 	return 100 * float64(c.Cache) / float64(input), true
 }
 
-// PerRound is n over the measured rounds; ok is false when none measured.
+// PerRound is n over the measured rounds, ok false when none measured.
 func (c TokenCounts) PerRound(n int64) (int64, bool) {
 	if c.Measured == 0 {
 		return 0, false
@@ -77,7 +75,7 @@ type Totals struct {
 	Rounds, Bindings int
 	// Candidates is the number of distinct non-nil Candidate tokens.
 	Candidates int
-	// The Unrecorded bucket never gets a scorecard row.
+	// Unrecorded never gets a scorecard row.
 	Unrecorded  int
 	CostUSD     float64 // known basis, non-plan
 	PlanRounds  int
@@ -89,7 +87,8 @@ type Totals struct {
 	MedianMS   int64 // closed rounds with DurationMS
 }
 
-// closedOutcomes are what the scorecard's DonePct and HaltPct count over.
+// closedOutcomes are what the scorecard's DonePct and HaltPct count over: DonePct
+// counts reported, HaltPct halted.
 var closedOutcomes = map[string]bool{
 	db.OutcomeReported:     true,
 	db.OutcomeHalted:       true,
@@ -164,12 +163,12 @@ func buildTotals(in Inputs, rows []db.RoundRow) Totals {
 	return t
 }
 
-// isPlan is false for a nil candidate.
+// isPlan reports whether r's candidate is a plan lane, false for a nil candidate.
 func isPlan(in Inputs, r db.RoundRow) bool {
 	return r.Candidate != nil && in.IsPlan != nil && in.IsPlan(*r.Candidate)
 }
 
-// costKnown is histq's rule plus the plan exclusion, so the totals agree.
+// costKnown is histq's rule plus the plan exclusion, so the two totals agree.
 func costKnown(in Inputs, r db.RoundRow) bool {
 	return r.CostUSD != nil && (r.CostBasis == nil || *r.CostBasis != "unknown") && !isPlan(in, r)
 }
@@ -204,8 +203,8 @@ func tokensOf(r db.RoundRow) TokenCounts {
 	return c
 }
 
-// oldest skips an undated row: counting it would pull Since back to year 1 and
-// make buildSpend allocate one day per day since then.
+// oldest skips an undated row: counting one would pull Since back to year 1,
+// making buildSpend allocate a day per day since then.
 func oldest(rows []db.RoundRow) time.Time {
 	var t time.Time
 	for _, r := range rows {
@@ -220,8 +219,8 @@ func dayStart(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
 }
 
-// Median is the median of xs, 0 when empty; an even count takes the mean of
-// the two middles.
+// Median is the median of xs, 0 when empty, the mean of the two middles on an
+// even count.
 func Median(xs []int64) int64 {
 	if len(xs) == 0 {
 		return 0

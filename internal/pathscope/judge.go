@@ -16,7 +16,6 @@ type Change struct {
 	Path    string
 }
 
-// Violation names one changed path a scope refuses and the reason it does.
 type Violation struct {
 	Path   string
 	Reason string
@@ -33,11 +32,9 @@ const (
 	ReasonOutsideScope       = "outside scope; cannot judge"
 )
 
-// Judge walks changes in the order git reported them and returns one
-// Violation per path the scope refuses. readBlob reads one blob's contents by
-// its object id; it is not called for paths a later case already settled.
-//
-// It is pure: git access goes through readBlob.
+// Judge walks changes in git's order and returns one Violation per refused path.
+// readBlob reads one blob by id; it is not called for settled paths. It is
+// pure: git access goes through readBlob.
 func Judge(scope Scope, changes []Change, readBlob func(oid string) ([]byte, error)) []Violation {
 	var out []Violation
 	for _, c := range changes {
@@ -48,7 +45,6 @@ func Judge(scope Scope, changes []Change, readBlob func(oid string) ([]byte, err
 	return out
 }
 
-// judgeOne applies the cases, in order, to one change.
 func judgeOne(scope Scope, c Change, readBlob func(oid string) ([]byte, error)) (Violation, bool) {
 	// 1. A symlink or gitlink on either side, or a mode change between two
 	// present sides.

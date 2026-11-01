@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// StepStats is what one round's builder stream says about its model steps. Zero
-// means the harness's stream does not show the figure.
+// StepStats is what one round's builder stream says about its model steps; zero
+// means the stream does not show the figure.
 type StepStats struct {
 	Steps            int
 	ToolCalls        int
@@ -17,10 +17,10 @@ type StepStats struct {
 	FirstOutputP50MS int64
 }
 
-// StreamSteps counts the model steps and tool calls in a round's builder stream and
-// takes the median step duration and time to first output from it. It is pure and
-// never fails. Its rules key on event names unique to each harness, so a stream
-// holding a second run after a mid-round switch is read as one.
+// StreamSteps counts the model steps and tool calls in a round's builder stream,
+// with the median step duration and time to first output. Pure, never failing; its
+// rules key on event names unique to each harness, so a stream holding a second run
+// after a mid-round switch reads as one.
 func StreamSteps(harness string, stream []byte) StepStats {
 	var st StepStats
 	var stepSamples, firstSamples []int64
@@ -43,7 +43,6 @@ func StreamSteps(harness string, stream []byte) StepStats {
 	return st
 }
 
-// eachLine calls fn for every line whose first non-space byte is "{".
 func eachLine(stream []byte, fn func(line []byte)) {
 	for _, line := range bytes.Split(stream, []byte("\n")) {
 		line = bytes.TrimSpace(line)
@@ -54,8 +53,8 @@ func eachLine(stream []byte, fn func(line []byte)) {
 	}
 }
 
-// lowerMedian returns the element at (n-1)/2: with an even count, the earlier of
-// the two middles. No samples is 0.
+// lowerMedian is the element at (n-1)/2 -- the earlier middle on an even count;
+// no samples is 0.
 func lowerMedian(samples []int64) int64 {
 	if len(samples) == 0 {
 		return 0
@@ -64,7 +63,6 @@ func lowerMedian(samples []int64) int64 {
 	return samples[(len(samples)-1)/2]
 }
 
-// opencodeStepEvent covers the fields StreamSteps reads from an opencode line.
 type opencodeStepEvent struct {
 	Type      string `json:"type"`
 	Timestamp int64  `json:"timestamp"`
@@ -80,8 +78,8 @@ type opencodeStepEvent struct {
 	} `json:"part"`
 }
 
-// opencodeSteps: a step is a step_start, its duration the step_finish that closes
-// it, its first output the first text, reasoning or tool_use part it produced.
+// opencodeSteps counts a step per step_start, its duration to the closing
+// step_finish, its first output the first text, reasoning or tool_use part.
 func opencodeSteps(stream []byte, st *StepStats, stepSamples, firstSamples *[]int64) {
 	var stepStart int64
 	var open, firstSeen bool
@@ -116,8 +114,8 @@ func opencodeSteps(stream []byte, st *StepStats, stepSamples, firstSamples *[]in
 	})
 }
 
-// opencodeOutputTime: the part's own start, else a tool part's state start, else the
-// line's timestamp.
+// opencodeOutputTime is the part's own start, else a tool part's state start, else
+// the line's timestamp.
 func opencodeOutputTime(ev opencodeStepEvent) int64 {
 	switch {
 	case ev.Part != nil && ev.Part.Time != nil && ev.Part.Time.Start > 0:
@@ -128,7 +126,6 @@ func opencodeOutputTime(ev opencodeStepEvent) int64 {
 	return ev.Timestamp
 }
 
-// claudeStepEvent covers the fields StreamSteps reads from a claude line.
 type claudeStepEvent struct {
 	Type            string  `json:"type"`
 	Subtype         string  `json:"subtype"`
@@ -150,9 +147,9 @@ type claudeStep struct {
 	hasLastSeen bool
 }
 
-// claudeSteps: a step is a distinct message.id on the main thread, a tool call a
-// distinct tool_use block id, and a step's duration its last assistant event minus
-// the user event preceding it. Sub-agent traffic is excluded.
+// claudeSteps counts a step per distinct main-thread message.id, a tool call per
+// distinct tool_use block id, a step's duration from the preceding user event to
+// its last assistant event. Sub-agent traffic is excluded.
 func claudeSteps(stream []byte, st *StepStats, stepSamples, firstSamples *[]int64) {
 	s := &claudeStepState{
 		st: st, stepSamples: stepSamples, firstSamples: firstSamples,
@@ -181,8 +178,7 @@ func (s *claudeStepState) feed(line []byte) {
 		return
 	}
 	switch ev.Type {
-	case "system":
-		// The init event stands in for a user event until one arrives.
+	case "system": // the init event stands in for a user event until one arrives
 		if ev.Subtype == "init" && !s.hasUser {
 			s.lastUser, s.hasUser = claudeTS(ev.Timestamp)
 		}
@@ -241,7 +237,8 @@ func (s *claudeStepState) close(step *claudeStep) {
 	}
 }
 
-// claudeTS parses an RFC3339 timestamp to epoch milliseconds.
+// claudeTS parses an RFC3339 timestamp to epoch milliseconds, false when absent
+// or unparsable.
 func claudeTS(s string) (int64, bool) {
 	if s == "" {
 		return 0, false
@@ -253,7 +250,6 @@ func claudeTS(s string) (int64, bool) {
 	return t.UnixMilli(), true
 }
 
-// agyStepEvent covers the fields StreamSteps reads from an agy line.
 type agyStepEvent struct {
 	Event      string `json:"event"`
 	StepUpdate *struct {
@@ -264,9 +260,9 @@ type agyStepEvent struct {
 	} `json:"step_update"`
 }
 
-// agySteps: a step is a distinct agent_response step_index that reached DONE, its
-// duration the harness's own duration_seconds; a tool call is a distinct tool
-// step_index that reached ACTIVE. agy carries no wall-clock timestamps.
+// agySteps counts a step per distinct DONE agent_response step_index, its duration
+// the harness's own duration_seconds; a tool call per distinct ACTIVE tool
+// step_index. agy carries no wall-clock timestamps.
 func agySteps(stream []byte, st *StepStats, stepSamples *[]int64) {
 	seenSteps := map[int]bool{}
 	seenTools := map[int]bool{}
@@ -295,7 +291,6 @@ func agySteps(stream []byte, st *StepStats, stepSamples *[]int64) {
 	})
 }
 
-// codexStepEvent covers the fields StreamSteps reads from a codex line.
 type codexStepEvent struct {
 	Type string `json:"type"`
 	Item *struct {
@@ -303,8 +298,9 @@ type codexStepEvent struct {
 	} `json:"item"`
 }
 
-// codexSteps: codex exposes no model steps, so Steps stays 0; an item.completed that
-// is a command, a file change or a sub-agent or mcp tool call is one tool call.
+// codexSteps counts one tool call per item.completed that is a command, a file
+// change or a sub-agent or mcp tool call; codex exposes no model steps, so Steps
+// stays 0.
 func codexSteps(stream []byte, st *StepStats) {
 	eachLine(stream, func(line []byte) {
 		var ev codexStepEvent
@@ -318,7 +314,7 @@ func codexSteps(stream []byte, st *StepStats) {
 	})
 }
 
-// museSteps: a step is a model call as run.usage counts them, a tool call a
+// museSteps counts a step per model call as run.usage counts them, a tool call per
 // tool.result.
 func museSteps(stream []byte, st *StepStats) {
 	eachLine(stream, func(line []byte) {

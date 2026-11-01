@@ -5,12 +5,11 @@ import (
 	"strings"
 )
 
-// ErrorText reports whether one raw line of a harness's stream is a fatal error
-// event, and returns the harness's own message, trimmed of surrounding
-// whitespace. It is the probe's view of failure: a probe reports the harness's
-// own reason instead of the stderr tail, because the real reason (a usage
-// limit, say) arrives as a JSON event on stdout. A non-JSON line, an unknown
-// kind, an empty message, and a non-fatal mid-run warning are all ("", false).
+// ErrorText reports whether one raw stream line is a fatal error event, returning
+// the harness's own trimmed message. It is the probe's view of failure: a probe
+// reports the harness's own reason, not the stderr tail, since the real reason
+// arrives as a JSON event on stdout. A non-JSON line, an unknown kind, an empty
+// message and a non-fatal mid-run warning are all ("", false).
 func ErrorText(kind string, line []byte) (string, bool) {
 	var obj map[string]any
 	if json.Unmarshal(line, &obj) != nil || obj == nil {
@@ -27,8 +26,8 @@ func ErrorText(kind string, line []byte) (string, bool) {
 func errorText(kind string, obj map[string]any) string {
 	switch kind {
 	case "codex":
-		// item.completed of an item type "error" is a warning the model
-		// sees (e.g. "Exceeded skills context budget"), not a fatal error.
+		// An item.completed of type "error" is a warning the model sees, not a
+		// fatal error.
 		switch str(obj["type"]) {
 		case "error":
 			return str(obj["message"])
@@ -37,8 +36,8 @@ func errorText(kind string, obj map[string]any) string {
 		}
 
 	case "opencode":
-		// A tool_use part in an error state is a tool failure the model
-		// sees, not a run failure.
+		// A tool_use part in an error state is a tool failure the model sees,
+		// not a run failure.
 		if str(obj["type"]) == "error" {
 			return str(asMap(obj["error"])["message"])
 		}
@@ -68,8 +67,8 @@ func errorText(kind string, obj map[string]any) string {
 	return ""
 }
 
-// agyErrorText reads agy's result event: a status other than SUCCESS is fatal,
-// and its error is a string or an object.
+// agyErrorText reads agy's result event: a non-SUCCESS status is fatal, its error
+// a string or an object.
 func agyErrorText(obj map[string]any) string {
 	if str(obj["event"]) != "result" {
 		return ""

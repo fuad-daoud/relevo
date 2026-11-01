@@ -37,7 +37,6 @@ func (x *lexer) rawQuoteHash(i, n int, interp bool) bool {
 	return true
 }
 
-// hashRun returns the number of '#'s at i.
 func (x *lexer) hashRun(i int) int {
 	n := 0
 	for i+n < len(x.src) && x.src[i+n] == '#' {
@@ -119,8 +118,7 @@ func (x *lexer) dartString(i int) bool {
 	return false
 }
 
-// dollarTagString scans a SQL $tag$...$tag$ string: the tag is identifier
-// characters, and the same tag closes the string.
+// dollarTagString scans a SQL $tag$...$tag$ string, closed by the same tag.
 func (x *lexer) dollarTagString(i int) bool {
 	j := i + 1
 	for j < len(x.src) && isTagByte(x.src[j]) {
@@ -132,11 +130,8 @@ func (x *lexer) dollarTagString(i int) bool {
 	return x.scanLiteral(j+1, string(x.src[i:j+1]), false, false)
 }
 
-// rRawString scans an R raw string literal opening at i, at r or R: a
-// quote, any number of dashes, an opener bracket ( [ {, the content, the
-// matching closer, the same dashes, and the quote. A shape the raw string
-// grammar does not match is left as plain code; one it does but that never
-// closes is refused.
+// rRawString scans an R raw string opening at i, at r or R. A shape the grammar
+// does not match stays plain code; one it does but that never closes is refused.
 func (x *lexer) rRawString(i int) bool {
 	if i+1 >= len(x.src) {
 		return false
@@ -182,10 +177,8 @@ func (x *lexer) rRawString(i int) bool {
 	return true
 }
 
-// csInterpString scans a C# interpolated string opening at the '$' at i:
-// $"...", $@"...", @$"..." and their """ raw forms, where the { ... }
-// holes may hold nested quotes. A form it does not open is left as plain
-// code.
+// csInterpString scans a C# interpolated string opening at the '$' at i, whose
+// { ... } holes may hold nested quotes. A form it does not open stays code.
 func (x *lexer) csInterpString(i int) bool {
 	j := i + 1
 	verbatim := i > 0 && x.src[i-1] == '@'
@@ -226,10 +219,9 @@ func (x *lexer) interpOpenAt(j int) int {
 	return 0
 }
 
-// skipInterp skips an interpolation opening at j, e bytes long -- ${ or
-// \( or { -- to just past its closing bracket, tracking bracket nesting and
-// skipping nested string literals whole: a quote inside an interpolation
-// does not close the string around it. -1 when the bracket or a nested
+// skipInterp skips an interpolation opening at j, e bytes long, to just past its
+// closing bracket, tracking nesting and skipping nested strings whole: a quote
+// inside does not close the string around it. -1 when the bracket or a nested
 // string never closes, which refuses the string around it too.
 func (x *lexer) skipInterp(j, e int) int {
 	open, close := byte('{'), byte('}')
@@ -263,9 +255,8 @@ func (x *lexer) skipInterp(j, e int) int {
 	return -1
 }
 
-// skipNestedString skips a nested string literal opening at j with the
-// quote byte q, to just past its closer, honoring the language's escapes
-// and doubling and its own interpolations. -1 when it never closes.
+// skipNestedString skips a nested string opening at j with quote byte q, honoring
+// the language's escapes, doubling and interpolations. -1 when it never closes.
 func (x *lexer) skipNestedString(j int, q byte) int {
 	if q == '`' {
 		return x.skipTemplate(j)
@@ -302,9 +293,8 @@ func (x *lexer) skipNestedString(j int, q byte) int {
 	return -1
 }
 
-// skipTemplate skips a template literal opening at the backtick at j, to
-// just past its closer, with its own interpolations. -1 when it never
-// closes.
+// skipTemplate skips a template literal opening at the backtick at j, with its
+// own interpolations. -1 when it never closes.
 func (x *lexer) skipTemplate(j int) int {
 	k := j + 1
 	for k < len(x.src) {
@@ -328,7 +318,6 @@ func (x *lexer) skipTemplate(j int) int {
 	return -1
 }
 
-// isTagByte reports whether c can be part of a SQL dollar-quote tag.
 func isTagByte(c byte) bool {
 	return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 }
@@ -346,11 +335,10 @@ func (x *lexer) bracketIdent(i int) bool {
 	return true
 }
 
-// cRawString scans a C++ raw string literal opening at i, at one of the
-// R, u8R, uR, UR, LR prefixes: "delim( ... )delim" with a delimiter of at
-// most 16 characters. A malformed or unterminated raw string is refused:
-// the lexer cannot be sure where the literal ends. A prefix the quote does
-// not follow -- u8"...", L'a' -- is left as plain code.
+// cRawString scans a C++ raw string opening at i, at an R-family prefix, with a
+// delimiter of at most 16 characters. A malformed or unterminated raw string is
+// refused: the lexer cannot be sure where it ends. A prefix the quote does not
+// follow stays plain code.
 func (x *lexer) cRawString(i int) bool {
 	p := cRawPrefixLen(x.src, i)
 	if p == 0 {
@@ -391,12 +379,10 @@ func cRawPrefixLen(src []byte, i int) int {
 	return 0
 }
 
-// hasPrefixBytes reports whether src has s at i.
 func hasPrefixBytes(src []byte, i int, s string) bool {
 	return i+len(s) <= len(src) && string(src[i:i+len(s)]) == s
 }
 
-// isCRawPrefixByte reports whether c can start a C++ raw string prefix.
 func isCRawPrefixByte(c byte) bool {
 	return c == 'R' || c == 'u' || c == 'U' || c == 'L'
 }

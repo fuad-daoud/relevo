@@ -65,12 +65,11 @@ func (c *Client) SnapshotTree(ctx context.Context, dir string) (string, error) {
 	return strings.TrimSpace(string(treeOut)), nil
 }
 
-// prepareTempIndex copies the repository index to tempIndex. It keeps the
-// repository index's mtime: git calls an entry whose mtime is not older than the
-// index file's own racy-clean and re-reads its content, and io.Copy's fresh
-// mtime would otherwise let a same-size edit written in the index's timestamp
-// tick be taken from the cached stat. A repository with no index yet needs no
-// copy: git creates one.
+// prepareTempIndex copies the repository index to tempIndex, keeping the index's
+// mtime: git re-reads an entry whose mtime is not older than the index file's own
+// (racy-clean), and io.Copy's fresh mtime would let a same-size edit written in
+// the index's timestamp tick be taken from the cached stat. A repository with no
+// index yet needs no copy.
 func (c *Client) prepareTempIndex(gitDir, tempIndex string) error {
 	repoIndex := filepath.Join(gitDir, "index")
 	src, err := os.Open(repoIndex)
@@ -146,8 +145,8 @@ func (c *Client) diffPatch(ctx context.Context, dir, from, to string) ([]byte, b
 		return nil, false, fmt.Errorf("git diff stdout pipe: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
-		// A diff that ran out of time names the rev range it was reading, for
-		// the same reason run does: an argv-less deadline is undiagnosable.
+		// A diff that ran out of time names the rev range it was reading: an
+		// argv-less deadline is undiagnosable.
 		if errors.Is(ctxTimeout.Err(), context.DeadlineExceeded) {
 			return nil, false, fmt.Errorf("git diff %s %s: %w", from, to, ctxTimeout.Err())
 		}
@@ -185,15 +184,12 @@ func (c *Client) diffPatch(ctx context.Context, dir, from, to string) ([]byte, b
 }
 
 // DiffWorktreeStat compares a tree object against dir's current working tree
-// (staged changes included) and returns just the stat, with no patch body.
-//
-// One command, not two. A `rev-parse --git-dir` probe ahead of the numstat
-// forked a git child whose output was thrown away: only its error was read,
-// and `diff --numstat` fails the same way on the same directory, so the probe
-// bought nothing and doubled the fork count of every live-diff read. The
-// numstat path still reports a directory that is not a repository as
-// ErrNotRepo -- run classifies the child's stderr -- so a caller that
-// distinguishes the two reads the same answer off one command.
+// (staged changes included) and returns just the stat, with no patch body. One
+// command, not two: a `rev-parse --git-dir` probe forked a child whose output
+// was thrown away, and `diff --numstat` fails the same way, so the probe doubled
+// the fork count of every live-diff read. The numstat path still reports a
+// non-repository as ErrNotRepo, so a caller distinguishing the two reads the
+// same answer off one command.
 func (c *Client) DiffWorktreeStat(ctx context.Context, dir, tree string) (Stat, error) {
 	return c.numstat(ctx, dir, "diff", "--numstat", tree)
 }

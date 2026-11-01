@@ -20,7 +20,7 @@ type Mount struct {
 // ContainerSpec is what a container-mode boundary needs beyond a round's
 // ProcSpec: the image to run, the owner's bare repo bound read-write so a
 // linked worktree can reach its common git dir and commit, any per-owner
-// harness homes to bind, and the owner's git shim directory.
+// harness homes, and the git shim directory.
 type ContainerSpec struct {
 	Image      string
 	RepoRoot   string
@@ -29,12 +29,11 @@ type ContainerSpec struct {
 }
 
 // ContainerArgv renders spec into the ProcSpec a container round runs: the
-// podman command that starts the builder under the container supervisor. The
-// returned spec keeps Dir, Env, LogPath, StreamPath and DenyEnv unchanged,
-// clears Scope (container rounds run under no systemd scope) and Credential
-// (the container runs as the invoking user via keep-id), and replaces Argv with
-// the podman command. A spec's TmpDir is inert on this path: the container's
-// own environment is only what the Env entries name. Pure.
+// podman command that starts the builder under the container supervisor. Scope
+// is cleared because container rounds run under no systemd scope, Credential
+// because the container runs as the invoking user via keep-id, and Argv is
+// replaced; a spec's TmpDir is inert on this path because the container's
+// environment is only what the Env entries name.
 func ContainerArgv(spec spawn.ProcSpec, c ContainerSpec) spawn.ProcSpec {
 	out := spec
 	out.Scope = nil
@@ -63,11 +62,11 @@ func containerCommand(spec spawn.ProcSpec, c ContainerSpec) []string {
 	return append(argv, spec.Argv...)
 }
 
-// containerMounts renders every bind in the fixed order the contract names:
-// the round tree, the binding's out/ directory, the owner's bare repo, the
-// owner's harness homes, then the round's Env-derived harness homes, then the
-// git shim directory, then a private /tmp. Each mount uses the identical host and container path, which
-// is what keeps the round tree's absolute paths valid inside the container.
+// containerMounts renders every bind in the fixed order the contract names: the
+// round tree, the binding's out/ directory, the owner's bare repo, the owner's
+// harness homes, then the round's Env-derived harness homes, then the git shim
+// directory, then a private /tmp. Host and container paths are identical, so
+// the round tree's absolute paths stay valid inside the container.
 func containerMounts(spec spawn.ProcSpec, c ContainerSpec) []string {
 	var argv []string
 	add := func(m Mount) {
@@ -105,9 +104,9 @@ func containerMounts(spec spawn.ProcSpec, c ContainerSpec) []string {
 }
 
 // shimOnPath reports whether env's PATH starts with the git shim directory.
-// Only a writer round's PATH carries it, and only then is the directory known
-// to exist on the host: podman refuses to bind a missing path, so a reader
-// round on a server whose shim was never written must not mount it.
+// Only a writer round's PATH carries it, and only then is the directory known to
+// exist: podman refuses to bind a missing path, so a reader round on a server
+// that never wrote the shim must not mount it.
 func shimOnPath(env []string, dir string) bool {
 	if dir == "" {
 		return false
@@ -123,8 +122,7 @@ func shimOnPath(env []string, dir string) bool {
 }
 
 // containerName is the podman container name: the scope unit when Start had
-// one, else the sanitized stream base. Either way it is sanitized to the
-// runtime's name alphabet so a round names a legal, operator-visible container.
+// one, else the sanitized stream base.
 func containerName(spec spawn.ProcSpec) string {
 	if spec.Scope != nil && spec.Scope.Unit != "" {
 		return sanitizeContainerName(spec.Scope.Unit)
@@ -133,9 +131,8 @@ func containerName(spec spawn.ProcSpec) string {
 }
 
 // sanitizeContainerName replaces every character outside the runtime's name
-// alphabet with "-" and strips leading characters a container name may not
-// begin with. An empty result (an empty or all-invalid input) becomes a fixed
-// fallback so a Start never renders an empty --name.
+// alphabet with "-" and strips leading characters a name may not begin with.
+// An empty result becomes a fixed fallback, so a Start never renders --name "".
 func sanitizeContainerName(s string) string {
 	var b strings.Builder
 	for _, r := range s {
@@ -155,7 +152,7 @@ func sanitizeContainerName(s string) string {
 
 // Bounds renders a scope's resource limits as podman run flags: --memory from
 // MemoryMax, --cpus from CPUQuota (a percentage rendered as a decimal), and
-// --pids-limit from TasksMax. An empty field is omitted. Slice, CPUWeight and
+// --pids-limit from TasksMax. An empty field is omitted; Slice, CPUWeight and
 // AllowedCPUs have no podman equivalent and are dropped.
 func Bounds(scope *spawn.ScopeSpec) []string {
 	if scope == nil {

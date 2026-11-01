@@ -1,6 +1,6 @@
 // Package usage reads what a round consumed from each harness's own record and
-// folds it into one figure with its provenance. It knows harness record shapes and
-// nothing else: no rounds, no bindings, no store.
+// folds it into one figure with its provenance. It knows harness record shapes
+// and nothing else: no rounds, no bindings, no store.
 package usage
 
 import (
@@ -18,8 +18,8 @@ const (
 	Unknown   Basis = "unknown"   // no record, no tokens, no price row, or no way to read
 )
 
-// Tokens are counts as the provider bills them. Out includes thinking and
-// reasoning tokens; every provider bills those as output.
+// Tokens are counts as the provider bills them: Out includes thinking and
+// reasoning tokens, which every provider bills as output.
 type Tokens struct {
 	In         int64 `json:"in"`
 	CacheRead  int64 `json:"cache_read"`
@@ -43,8 +43,8 @@ func (t Tokens) CacheRatio() float64 {
 	return float64(t.CacheRead) / float64(prompt)
 }
 
-// Cost is dollars with provenance. Plan marks a subscription lane: the printer
-// says "plan", never "$0".
+// Cost is dollars with provenance. Plan marks a subscription lane, which the
+// printer says as "plan", never "$0".
 type Cost struct {
 	USD   float64 `json:"usd"`
 	Basis Basis   `json:"basis"`
@@ -56,11 +56,11 @@ type Usage struct {
 	Harness    string `json:"harness"`
 	Provider   string `json:"provider"`
 	Model      string `json:"model"`       // the model most Out tokens went to
-	DurationMS int64  `json:"duration_ms"` // the round's wall time, 0 when its start is unknown
+	DurationMS int64  `json:"duration_ms"` // wall time, 0 when its start is unknown
 	Tokens     Tokens `json:"tokens"`
 	Cost       Cost   `json:"cost"`
 	Samples    int    `json:"samples"` // how many records were folded
-	// Step figures from the builder stream; zero when its stream does not show them.
+	// Step figures from the builder stream; zero when the stream shows none.
 	Steps            int   `json:"steps,omitempty"`
 	ToolCalls        int   `json:"tool_calls,omitempty"`
 	StepP50MS        int64 `json:"step_p50_ms,omitempty"`
@@ -69,8 +69,8 @@ type Usage struct {
 	Note string `json:"note,omitempty"`
 }
 
-// Sample is one billed message as a reader found it. HasCost says USD came from the
-// record; false means it carried tokens only.
+// Sample is one billed message as a reader found it. HasCost says its USD came from
+// the record; false means tokens only.
 type Sample struct {
 	Provider string
 	Model    string
@@ -80,9 +80,9 @@ type Sample struct {
 }
 
 // Fold sums samples into a Usage. Tokens always sum. Cost, in order: no samples is
-// Unknown with the given Note; every sample HasCost is Measured with the records'
-// sum; otherwise each sample without HasCost is estimated from prices, and if any
-// does not resolve the whole figure is Unknown, USD 0. plan is copied through.
+// Unknown with the given Note; all HasCost is Measured with the records' sum;
+// otherwise each tokens-only sample is estimated from prices, and one without a
+// row makes the whole figure Unknown, USD 0. plan is copied through.
 func Fold(samples []Sample, prices Prices, plan bool, note string) Usage {
 	u := Usage{Cost: Cost{Basis: Unknown, Plan: plan}, Note: note}
 	if len(samples) == 0 {
@@ -108,7 +108,7 @@ func Fold(samples []Sample, prices Prices, plan bool, note string) Usage {
 		case s.HasCost:
 			usd += s.USD
 		case basis == Unknown:
-			// already failed; keep summing tokens only
+			// already failed; tokens only from here
 		default:
 			est, ok := prices.Estimate(s.Provider, s.Model, tok)
 			if !ok {
@@ -147,15 +147,12 @@ func Fold(samples []Sample, prices Prices, plan bool, note string) Usage {
 }
 
 // Add folds o into u: one round's segments becoming one figure. Tokens always
-// sum. The cost combines by the rule Fold states for its samples, applied to
-// whole segments: a side that moved tokens must carry a bill -- measured or
-// estimated, never a plan lane -- and two billed sides sum their dollars
-// under the more cautious basis, estimated if either side is. A side that
-// moved tokens without a bill -- an unreadable read, a tokens-only
-// PriorTokens, a plan lane -- leaves the sum Unknown with USD 0, never the
-// priced remainder. A side that moved no tokens adds nothing and poisons
-// nothing; when o moved none, u's cost stands as it is, so folding a zero
-// prior leaves the figures that stand. Every other field is u's.
+// sum. Cost combines by Fold's rule applied to whole segments: a side moving tokens
+// must carry a bill, never a plan lane, and two billed sides sum under the more
+// cautious basis, estimated if either side is. A side moving tokens without a bill
+// leaves the sum Unknown with USD 0, never the priced remainder; a side moving
+// none adds nothing and poisons nothing, so folding a zero prior leaves u's cost
+// standing. Every other field is u's.
 func Add(u, o Usage) Usage {
 	total := u
 	total.Tokens = u.Tokens.Add(o.Tokens)
@@ -170,8 +167,7 @@ func Add(u, o Usage) Usage {
 		return s.Cost
 	}
 	switch {
-	case !moved(o):
-		// u's cost stands untouched.
+	case !moved(o): // u's cost stands untouched
 	case !moved(u):
 		total.Cost = bill(o)
 	default:

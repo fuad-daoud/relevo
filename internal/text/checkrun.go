@@ -6,15 +6,14 @@ import (
 	"strings"
 )
 
-// ChainCheckRunLabel is the line put above a check log the gate section
-// shows, so a reader can tell it from the round's own gate log.
+// ChainCheckRunLabel is the line above a check log the gate section shows, so a
+// reader can tell it from the round's own gate log.
 func ChainCheckRunLabel(run int) string {
 	return fmt.Sprintf("chain check run %d", run)
 }
 
-// NewestCheckRun is the highest run number among names that are round's
-// chain check logs, or 0 when the round holds none. The highest run is the
-// attempt the round was left at.
+// NewestCheckRun is the highest run number among round's chain check logs, or 0
+// when the round holds none. The highest run is the attempt the round was left at.
 func NewestCheckRun(names []string, round int) int {
 	newest := 0
 	for _, n := range names {
@@ -27,8 +26,8 @@ func NewestCheckRun(names []string, round int) int {
 
 // CheckLogRun parses a round-file name shaped NNN-check-RRR.log into its run
 // number; ok is false for every other name. The store writes that shape for
-// nothing else: a served check log is NNN-served-check.log, and a consult's
-// files do not end .log.
+// nothing else: a served check log is NNN-served-check.log, and a consult's files
+// do not end .log.
 func CheckLogRun(n string, round int) (int, bool) {
 	base, ok := strings.CutSuffix(n, ".log")
 	if !ok {

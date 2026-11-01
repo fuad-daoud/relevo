@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// FitKey fits s into width runes, clipping with a leading "…" when clipLeft so
-// a repo key's tail stays visible.
+// FitKey fits s into width runes, clipping with a leading "…" when clipLeft, so a
+// repo key's tail stays visible.
 func FitKey(s string, width int, clipLeft bool) string {
 	r := []rune(s)
 	if len(r) <= width {
@@ -20,7 +20,7 @@ func FitKey(s string, width int, clipLeft bool) string {
 	return string(r[:width-1]) + "…"
 }
 
-// PctText is a percentage of the closed rounds, or "-" when none is closed.
+// PctText is a percentage of the closed rounds, "-" when none is closed.
 func PctText(pct float64, closed int) string {
 	if closed == 0 {
 		return "-"
@@ -28,7 +28,7 @@ func PctText(pct float64, closed int) string {
 	return fmt.Sprintf("%.0f%%", pct)
 }
 
-// TTFTText is the time to first token, or "-" when there is none.
+// TTFTText is the time to first token, "-" when there is none.
 func TTFTText(s ScoreRow) string {
 	if !s.HasTTFT {
 		return "-"
@@ -37,7 +37,7 @@ func TTFTText(s ScoreRow) string {
 }
 
 // ShortTokens is the report's token total: plain under 1,000, else k/M/B with a
-// trailing ".0" stripped. It stays local because usage.ShortTokens stops at M.
+// trailing ".0" stripped. It stays local since usage.ShortTokens stops at M.
 func ShortTokens(n int64) string {
 	if n < 1_000 {
 		return strconv.FormatInt(n, 10)

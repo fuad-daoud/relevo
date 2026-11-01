@@ -177,7 +177,6 @@ func parseList(v string) ([]string, error) {
 	return out, nil
 }
 
-// Validate checks every field rule of the source format.
 func (s Source) Validate() error {
 	if !nameRe.MatchString(s.Name) {
 		return fieldErr(s.Name, "name", "must match "+nameRe.String())
@@ -264,7 +263,6 @@ func Format(s Source) []byte {
 	return []byte(b.String())
 }
 
-// formatList writes a flow list: "[]" or "[a, b]".
 func formatList(items []string) string {
 	if len(items) == 0 {
 		return "[]"

@@ -5,9 +5,8 @@ import (
 	"strings"
 )
 
-// ShowCommand renders the `relevo show` command that prints one round's
-// artifact, the durable way to name a closed round whose files may be sealed
-// into the database.
+// ShowCommand renders the `relevo show` command printing one round's artifact, the
+// durable way to name a closed round whose files may be sealed into the database.
 func ShowCommand(name string, round int, section string) string {
 	return fmt.Sprintf("relevo show %s --round %d --%s", name, round, section)
 }
@@ -25,8 +24,8 @@ func Brief(err error) string {
 	return s
 }
 
-// TitleFirst upper-cases the first byte of s. The empty string stays empty.
-// Actor names from agentsrc match [a-z][a-z0-9-]{0,23}, so ASCII is enough.
+// TitleFirst upper-cases the first byte of s; the empty string stays empty. Actor
+// names from agentsrc match [a-z][a-z0-9-]{0,23}, so ASCII is enough.
 func TitleFirst(s string) string {
 	if s == "" {
 		return ""
@@ -50,9 +49,8 @@ func OutputWord(isReader bool) string {
 }
 
 // WithoutArtifact is the clause a sentence uses for the artifact that was not
-// written: "without an output" for a reader, "without a report" for a writer.
-// The reader's word is neutral because its output label ("findings") does not
-// agree with the clause.
+// written: "without an output" for a reader, "without a report" for a writer. The
+// reader's word stays neutral since its output label does not agree with the clause.
 func WithoutArtifact(isReader bool) string {
 	if isReader {
 		return "without an output"
@@ -60,12 +58,11 @@ func WithoutArtifact(isReader bool) string {
 	return "without a report"
 }
 
-// ArtifactClause returns the artifact line of a round's close payload.
-// For a reader it is "<Label>: relevo show <name> --round <n> --output".
-// For a writer it is "Report: relevo show <name> --round <n> --report".
-// The literal word "Report" is used for the writer, not the writer agent's
-// output label, so the bytes cannot drift if a custom writer names it
-// differently.
+// ArtifactClause returns the artifact line of a round's close payload: "<Label>:
+// relevo show <name> --round <n> --output" for a reader, "Report: relevo show
+// <name> --round <n> --report" for a writer. The writer's word stays the literal
+// "Report", never its output label, so the bytes cannot drift under a custom
+// writer's name.
 func ArtifactClause(isReader bool, output, name string, round int) string {
 	if isReader {
 		label := output

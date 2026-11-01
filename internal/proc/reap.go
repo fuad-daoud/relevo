@@ -20,8 +20,8 @@ type InheritedReaper struct {
 }
 
 // NewInheritedReaper scans procRoot once for processes whose parent is self; it
-// must be constructed before this image starts any child. An empty or unreadable
-// root falls back to `ps -A -o pid=,ppid=`.
+// must be constructed before this image starts any child. An empty or
+// unreadable root falls back to `ps -A -o pid=,ppid=`.
 func NewInheritedReaper(self int, procRoot string) *InheritedReaper {
 	return &InheritedReaper{pids: scanChildren(self, procRoot)}
 }
@@ -69,10 +69,8 @@ func scanPS(self int) []int {
 		slog.Debug("reaper: ps", "err", err)
 		return nil
 	}
-	// ps runs as a child of this process, so it lists itself with ppid == self
-	// and ParsePSChildren puts its own pid in the set. Exclude it: a future
-	// child that reuses the pid would otherwise be handed to Wait4 instead of
-	// its exec.Cmd.
+	// ps runs as this process's child, so it lists itself; exclude it, or a
+	// future child reusing its pid would be handed to Wait4, not its exec.Cmd.
 	psPID := 0
 	if cmd.Process != nil {
 		psPID = cmd.Process.Pid
@@ -80,7 +78,6 @@ func scanPS(self int) []int {
 	return withoutPID(ParsePSChildren(string(out), self), psPID)
 }
 
-// withoutPID returns pids with every occurrence of pid removed.
 func withoutPID(pids []int, pid int) []int {
 	var kept []int
 	for _, p := range pids {

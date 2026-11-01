@@ -51,11 +51,10 @@ func NewClient(bin string, timeout time.Duration, maxPatchBytes int) *Client {
 	}
 }
 
-// gitEnv is the environment every git child process Client starts. The
-// GIT_OPTIONAL_LOCKS=0 is the point: relevo reads a worktree while its builder
-// commits in it, and without it a read such as `git status` refreshes the index,
-// takes index.lock and makes that commit fail with "Unable to create
-// '.../index.lock'". Commands that must write the index still take their
+// gitEnv is the environment every git child Client starts. GIT_OPTIONAL_LOCKS=0
+// is the point: relevo reads a worktree while its builder commits in it, and
+// without it a read such as `git status` refreshes the index, takes index.lock
+// and fails that commit. Commands that must write the index still take their
 // mandatory lock, so it is safe everywhere. extra comes last, so a caller can
 // override it.
 //
@@ -85,7 +84,6 @@ func gitEnv(parent, deny []string, extra []string) []string {
 	return append(env, extra...)
 }
 
-// envNames returns the variable names an environment slice sets, in order.
 func envNames(env []string) []string {
 	names := make([]string, 0, len(env))
 	for _, e := range env {
@@ -105,11 +103,9 @@ func (c *Client) WithCredential(uid, gid uint32, env []string) *Client {
 	return &cp
 }
 
-// command is the one exec.Cmd assembler for every git child the client starts:
-// the binary, args, working directory, the git environment (with the client's
-// own tenant env appended) and, when set, the tenant credential. It is pure --
-// no child is started -- so the identity and environment a git call carries can
-// be pinned without running git. run and diffPatch both build through it.
+// command is the one exec.Cmd assembler for every git child the client starts.
+// It is pure -- no child is started -- so the identity and environment a git
+// call carries can be pinned without running git.
 func (c *Client) command(ctx context.Context, dir string, env []string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, c.bin, args...)
 	cmd.Dir = dir
@@ -132,13 +128,11 @@ func (c *Client) run(ctx context.Context, dir string, env []string, args ...stri
 
 	err := cmd.Run()
 	if err != nil {
-		// A timeout names the argv it killed. The bare ctx.Err() it returned
-		// before was indistinguishable from any other deadline, so a caller
-		// whose slow subcall blew the per-command budget could not tell a
-		// rev-parse from a bundle create from a merge-base -- the whole call
-		// surfaced as one anonymous "context deadline exceeded". Wrapping
-		// ctx.Err() keeps errors.Is(err, context.DeadlineExceeded) true for
-		// the probing call sites, so the added argv costs them nothing.
+		// A timeout names the argv it killed: the bare ctx.Err() was
+		// indistinguishable from any other deadline, so a caller could not tell
+		// which subcall blew the per-command budget. Wrapping ctx.Err() keeps
+		// errors.Is(err, context.DeadlineExceeded) true for probing call sites,
+		// so the added argv costs them nothing.
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return nil, fmt.Errorf("git %s: %w", strings.Join(args, " "), ctx.Err())
 		}

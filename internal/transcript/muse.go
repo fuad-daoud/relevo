@@ -6,8 +6,8 @@ import (
 	"strings"
 )
 
-// Every muse line is an envelope: payload_type names the event and payload
-// carries it. The session id rides on the envelope's stream, not the payload.
+// Every muse line is an envelope naming the event in payload_type and carrying it
+// in payload. The session id rides on the envelope's stream, not the payload.
 
 func musePayloadType(obj map[string]any) string { return str(obj["payload_type"]) }
 
@@ -25,9 +25,9 @@ func museSessionID(obj map[string]any) string {
 	return str(stream["id"])
 }
 
-// museFailure is the message of a failed run: the error object's message, else
-// a reason (a string or an object), else the terminal text, else the payload
-// itself so a limit pattern still sees the quota fields.
+// museFailure is the message of a failed run: the error object's message, else a
+// reason, else the terminal text, else the payload itself, so a limit pattern
+// still sees the quota fields.
 func museFailure(obj map[string]any) string {
 	if musePayloadType(obj) != "run.terminal.failed" {
 		return ""
@@ -49,8 +49,8 @@ func museFailure(obj map[string]any) string {
 	return string(raw)
 }
 
-// museFirstOutput is true for the first event only the model can have caused:
-// streamed text or a tool result. The lifecycle events before them are the
+// museFirstOutput is true for the first event only the model can have caused --
+// streamed text or a tool result; the lifecycle events before them are the
 // harness's own.
 func museFirstOutput(obj map[string]any) bool {
 	switch musePayloadType(obj) {
@@ -60,7 +60,7 @@ func museFirstOutput(obj map[string]any) bool {
 	return false
 }
 
-// museFinal is the terminal's own answer; the streamed deltas are chunks of it.
+// museFinal is the terminal's own answer, of which the streamed deltas are chunks.
 func museFinal(obj map[string]any) string {
 	if museIsTerminal(obj) {
 		return str(musePayload(obj)["text"])
@@ -69,8 +69,8 @@ func museFinal(obj map[string]any) string {
 }
 
 // muse renders `muse exec --json`. Streamed deltas are fragments of words, so
-// they are buffered and written as one block before the next event that is
-// not a delta; a stream cut before any such event keeps its tail unwritten.
+// they buffer into one block written before the next non-delta event; a stream
+// cut first keeps its tail unwritten.
 func (r *Renderer) muse(obj map[string]any) []string {
 	t := musePayloadType(obj)
 	p := musePayload(obj)
@@ -103,7 +103,7 @@ func (r *Renderer) museFlush() []string {
 	return strings.Split(text, "\n")
 }
 
-// museQuiet marks the bookkeeping events that say nothing a reader needs.
+// museQuiet marks the bookkeeping events no reader needs.
 func museQuiet(t string) bool {
 	switch t {
 	case "runtime.command.accepted", "session.run.linked", "run.model.configured",
@@ -122,7 +122,7 @@ func museToolLines(p map[string]any) []string {
 	text := str(p["text"])
 	ok := str(facts["outcome"]) == "success"
 	head := "● " + name
-	// The bash tool reports a JSON object; its command is what a reader wants.
+	// The bash tool reports a JSON object, whose command is what a reader wants.
 	var bash struct {
 		Command  *string `json:"command"`
 		ExitCode *int    `json:"exit_code"`

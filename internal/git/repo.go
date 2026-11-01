@@ -21,9 +21,9 @@ func (c *Client) RepoFacts(ctx context.Context, dir string) (originURL, commonDi
 	if !filepath.IsAbs(commonDir) {
 		commonDir = filepath.Join(dir, commonDir)
 	}
-	// Canonical: commonDir is a database key, and git resolves symlinks when
-	// answering from a worktree but not from the main tree (macOS /var ->
-	// /private/var), which would give one repo two keys.
+	// commonDir is a database key, and git resolves symlinks from a worktree but
+	// not the main tree (macOS /var -> /private/var), which would give one repo
+	// two keys.
 	if real, rerr := filepath.EvalSymlinks(commonDir); rerr == nil {
 		commonDir = real
 	}
@@ -33,8 +33,6 @@ func (c *Client) RepoFacts(ctx context.Context, dir string) (originURL, commonDi
 		if errors.Is(err, ErrNotRepo) || errors.Is(err, ErrGitUnavailable) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return "", "", err
 		}
-		// No origin remote configured: relevo simply has nothing to say about
-		// origin.
 		return "", commonDir, nil
 	}
 	originURL = strings.TrimSpace(string(out))
@@ -88,8 +86,8 @@ func NormalizeOriginURL(raw string) string {
 		return s
 	}
 
-	// git@host:owner/repo(.git) -- scp-like syntax, matched only when there is
-	// no "://" scheme, which the ssh:// and http(s):// forms below own.
+	// scp-like syntax, matched only with no "://" scheme, which the ssh:// and
+	// http(s):// forms below own.
 	if !strings.Contains(s, "://") {
 		if at := strings.Index(s, "@"); at >= 0 {
 			rest := s[at+1:]

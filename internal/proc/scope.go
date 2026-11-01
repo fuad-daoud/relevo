@@ -100,7 +100,6 @@ func runScopeProbe(ctx context.Context, spec spawn.ScopeSpec, prefix string) err
 // scope's command line either, so it needs none.
 const expandSwitchFrom = 254
 
-// SystemdRunVersion is the systemd release systemd-run reports.
 func SystemdRunVersion(ctx context.Context) (int, error) {
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -115,9 +114,8 @@ func SystemdRunVersion(ctx context.Context) (int, error) {
 	return v, nil
 }
 
-// parseSystemdVersion reads the release from --version's first line, such as
-// "systemd 262 (262-1-arch)". Only the leading digits count, so a pre-release
-// like "257~rc2" is 257.
+// parseSystemdVersion reads the release from --version's first line; only the
+// leading digits count, so a pre-release like "257~rc2" is 257.
 func parseSystemdVersion(out string) (int, bool) {
 	f := strings.Fields(firstNonEmptyLine(out))
 	if len(f) < 2 || f[0] != "systemd" {
@@ -196,8 +194,7 @@ var (
 
 // journalArgv is the one journalctl invocation a scope probe makes: the user
 // journal for the unit's scope, rendered as JSON. A non-zero since adds
-// --since=@<unix>, so the journal itself drops the older attempts a reused
-// unit name carries; the parse also dates each entry. Pure.
+// --since=@<unix>, so the journal itself drops older attempts under a reused name.
 func journalArgv(unit string, since time.Time) []string {
 	argv := []string{"journalctl", "--user", "USER_UNIT=" + ScopeUnitFileName(unit)}
 	if !since.IsZero() {
@@ -207,9 +204,8 @@ func journalArgv(unit string, since time.Time) []string {
 }
 
 // runJournal reads the user journal for unit's scope as JSON lines. A missing
-// journalctl is (nil, nil): there is no journal to read, which the caller
-// treats exactly like an empty journal. Any other failure is returned with
-// journalctl's own first stderr line.
+// journalctl is (nil, nil), treated like an empty journal; any other failure
+// is returned with journalctl's own first stderr line.
 func runJournal(ctx context.Context, unit string, since time.Time) ([]byte, error) {
 	argv := journalArgv(unit, since)
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
@@ -229,12 +225,10 @@ func runJournal(ctx context.Context, unit string, since time.Time) ([]byte, erro
 	return out, nil
 }
 
-// ScopeResult reads unit's scope result from the user journal, retrying
-// scopeResultAttempts times scopeResultRetryPause apart inside one
-// scopeResultTimeout context. It stops early as soon as an entry carries a
-// UNIT_RESULT. A journal that holds no such entry is (zero, nil); only a read
-// that never succeeded at all is an error, which callers treat as not
-// oom-killed. unit is the base name ScopeUnitFileName takes.
+// ScopeResult reads unit's scope result from the user journal, retrying inside
+// one scopeResultTimeout context and stopping early on a UNIT_RESULT entry. A
+// journal with no such entry is (zero, nil); only a read that never succeeded
+// is an error.
 func (r *Runner) ScopeResult(ctx context.Context, unit string, since time.Time) (spawn.ScopeResult, error) {
 	cctx, cancel := context.WithTimeout(ctx, scopeResultTimeout)
 	defer cancel()
@@ -282,7 +276,7 @@ type scopeJournalEntry struct {
 // lines carry, ignoring every entry older than since. An entry with no
 // timestamp is kept: nothing places it before since, and the journal, not the
 // parse, is the witness. A line that is not JSON is skipped, a value that does
-// not parse leaves its field at its zero, and a later entry wins. Pure.
+// not parse leaves its field at its zero, and a later entry wins.
 func ParseScopeResult(lines []byte, since time.Time) spawn.ScopeResult {
 	var res spawn.ScopeResult
 	for _, line := range bytes.Split(lines, []byte("\n")) {

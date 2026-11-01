@@ -14,18 +14,17 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 )
 
-// webhookTimeout bounds one webhook POST so a dead endpoint never holds a
+// webhookTimeout bounds one webhook POST, so a dead endpoint never holds a
 // goroutine open.
 const webhookTimeout = 5 * time.Second
 
-// WebhookSink posts matching lifecycle events to policy.json's configured
-// webhooks. Dispatch fires a detached goroutine per match and returns
-// immediately, like a hook script.
+// WebhookSink posts matching lifecycle events to policy.json's configured webhooks.
+// Dispatch fires a detached goroutine per match and returns immediately.
 type WebhookSink struct {
 	Client *http.Client // nil -> a client with a 5s timeout
 	Hooks  []policy.Webhook
 
-	// Log is where a delivery failure is written when Runs is nil; nil ->
+	// Log is where a delivery failure is written when Runs is nil; nil means
 	// discard.
 	Log io.Writer
 	// Runs is the run log a failure is appended to; nil falls back to Log.
@@ -34,8 +33,8 @@ type WebhookSink struct {
 
 var _ Dispatcher = (*WebhookSink)(nil)
 
-// Dispatch posts to every webhook whose Events filter matches ev, each in
-// its own detached goroutine.
+// Dispatch posts to every webhook whose Events filter matches ev, each in its
+// own detached goroutine.
 func (s *WebhookSink) Dispatch(_ context.Context, ev Event) {
 	if s == nil {
 		return
@@ -47,9 +46,8 @@ func (s *WebhookSink) Dispatch(_ context.Context, ev Event) {
 	}
 }
 
-// matches reports whether ev passes h's Events filter: empty matches
-// everything; "state_changed:<state>" matches only that State; anything
-// else matches on event type alone.
+// matches reports whether ev passes h's Events filter: empty matches everything,
+// "state_changed:<state>" only that State, anything else on event type alone.
 func matches(h policy.Webhook, ev Event) bool {
 	if len(h.Events) == 0 {
 		return true
@@ -72,7 +70,7 @@ type jsonPayload struct {
 	Text      string    `json:"text"`
 }
 
-// humanEvent renders ev as its notification word(s), e.g. "NEEDS YOU".
+// humanEvent renders ev as its notification words, e.g. "NEEDS YOU".
 func humanEvent(ev Event) string {
 	if ev.Type == EventStateChanged {
 		return strings.ToUpper(strings.ReplaceAll(ev.State, "_", " "))
@@ -80,7 +78,7 @@ func humanEvent(ev Event) string {
 	return strings.ReplaceAll(string(ev.Type), "_", " ")
 }
 
-// text renders ev as the one-line notification shared by every format.
+// text renders ev as the one-line notification every format shares.
 func text(ev Event) string {
 	stateSuffix := ""
 	if ev.Type == EventStateChanged && ev.OldState != "" {
@@ -89,7 +87,7 @@ func text(ev Event) string {
 	return fmt.Sprintf("relevo: %s %s round %d%s", ev.BindingID, humanEvent(ev), ev.Round, stateSuffix)
 }
 
-// payload renders ev as h.Format's POST body and its content type.
+// payload renders ev as h.Format's POST body with its content type.
 func payload(h policy.Webhook, ev Event) ([]byte, string) {
 	msg := text(ev)
 
@@ -113,8 +111,8 @@ func payload(h policy.Webhook, ev Event) ([]byte, string) {
 	}
 }
 
-// post sends one webhook POST. A failure -- a non-2xx status or a transport
-// error -- is logged, never returned, since Dispatch has already moved on.
+// post sends one webhook POST. A failure -- a non-2xx status or a transport error
+// -- is logged, never returned, since Dispatch has already moved on.
 func (s *WebhookSink) post(h policy.Webhook, ev Event) {
 	client := s.Client
 	if client == nil {
@@ -145,7 +143,7 @@ func (s *WebhookSink) post(h policy.Webhook, ev Event) {
 	}
 }
 
-// logFailure records one failed delivery keyed by the URL's host only: the
+// logFailure records one failed delivery keyed by the URL's host only, since the
 // full URL is often a bearer secret, e.g. a Slack incoming-webhook path.
 func (s *WebhookSink) logFailure(h policy.Webhook, ev Event, detail string) {
 	host := h.URL

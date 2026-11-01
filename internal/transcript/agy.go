@@ -1,9 +1,9 @@
 package transcript
 
-// agy is the table for `agy -p --output-format stream-json`: agy streams tool
-// steps but not assistant text, so only result.response carries the text. The
-// stream has no wall clock; a step_update DONE or ERROR carries its own
-// measured span, and that is the only duration agy renders.
+// agy is the table for `agy -p --output-format stream-json`: tool steps stream,
+// assistant text does not, so only result.response carries the text. The stream
+// has no wall clock; a DONE or ERROR step_update carries its own measured span,
+// the only duration agy renders.
 func (r *Renderer) agy(obj map[string]any) []string {
 	switch str(obj["event"]) {
 	case "step_update":

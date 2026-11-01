@@ -17,12 +17,9 @@ const (
 	EscapeHalt                      // halt NEEDS YOU instead of switching
 )
 
-// EscapedNote is the report-entry annotation an EscapeNote outcome adds.
 const EscapedNote = "escaped"
 
-// DecideEscape is the pure decision behind escapeCheck: given what the
-// round's worktree and source repo look like at close, and whether a report
-// was produced, what should relevo say about it.
+// DecideEscape is the pure decision behind escapeCheck.
 //
 //   - !treeUnchanged || !repoMoved: nothing suspicious -- EscapeNone.
 //   - treeUnchanged && repoMoved && hasReport: the builder still produced a
@@ -47,9 +44,8 @@ func DecideEscape(treeUnchanged, repoMoved, hasReport bool) EscapeOutcome {
 //   - b.Repo == ""               -> false
 //   - b.RoundBaselineTree == ""  -> false
 //   - b.Serve != nil             -> false (served binding: b.Repo is the bare
-//     mirror, there is no source checkout to
-//     escape into and `git status` cannot run
-//     in a bare repo)
+//     mirror, with no source checkout to escape into and no `git status` in a
+//     bare repo)
 //   - otherwise                  -> true
 func EscapeApplies(b store.Binding) bool {
 	if b.Shape == store.ShapeReader {

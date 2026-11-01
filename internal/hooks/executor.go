@@ -11,11 +11,10 @@ import (
 	"time"
 )
 
-// hookOutputCap bounds a run's combined output to its first 64 KiB.
+// hookOutputCap bounds a run's combined output at its first 64 KiB.
 const hookOutputCap = 64 << 10
 
-// Executor runs one configured argv with the event injected as environment
-// variables.
+// Executor runs one configured argv with the event injected as environment variables.
 type Executor interface {
 	Execute(ctx context.Context, argv []string, event Event) error
 }
@@ -27,8 +26,8 @@ type OSExecutor struct {
 
 func NewOSExecutor(log RunLog) *OSExecutor { return &OSExecutor{Log: log} }
 
-// Execute runs argv[0] with argv[1:] and the event as RELEVO_* environment
-// variables, then records one HookRun. An empty argv is recorded and skipped.
+// Execute runs argv[0] with argv[1:] and the event as RELEVO_* environment variables,
+// then records one HookRun. An empty argv is recorded and skipped.
 func (e *OSExecutor) Execute(ctx context.Context, argv []string, event Event) error {
 	if len(argv) == 0 {
 		e.appendRun(HookRun{
@@ -71,8 +70,8 @@ func (e *OSExecutor) Execute(ctx context.Context, argv []string, event Event) er
 	return err
 }
 
-// appendRun drops any Append error: the run log is best-effort and must
-// never change a hook's outcome.
+// appendRun drops any Append error: the run log is best-effort and must never
+// change a hook's outcome.
 func (e *OSExecutor) appendRun(run HookRun) {
 	if e.Log == nil {
 		return
@@ -80,7 +79,7 @@ func (e *OSExecutor) appendRun(run HookRun) {
 	_ = e.Log.Append(run)
 }
 
-// exitCodeOf is cmd's exit status, or -1 when no process ran to completion.
+// exitCodeOf is cmd's exit status, -1 when no process ran to completion.
 func exitCodeOf(cmd *exec.Cmd) int {
 	if cmd.ProcessState == nil {
 		return -1
@@ -97,8 +96,8 @@ type cappedBuffer struct {
 
 func newCappedBuffer(limit int) *cappedBuffer { return &cappedBuffer{limit: limit} }
 
-// Write always reports the full slice written, even past the limit, so
-// os/exec never sees a short-write error the child did not cause.
+// Write always reports the full slice written, even past the limit, so os/exec
+// never sees a short-write error the child did not cause.
 func (b *cappedBuffer) Write(p []byte) (int, error) {
 	n := len(p)
 	b.mu.Lock()

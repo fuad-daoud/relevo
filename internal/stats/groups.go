@@ -13,7 +13,7 @@ type GroupRow struct {
 	Bindings               int // distinct BindingID among the group's rows
 	Done                   int // rows whose ReportOutcome is "done"
 	ReportHalted           int // rows whose ReportOutcome is "halted"
-	Commits                int // sum of the non-nil RoundRow.Commits
+	Commits                int // sum of non-nil RoundRow.Commits
 	CostUSD                float64
 	Tokens                 int64 // in+cache+write+out over the group's rows
 	RoundsPerLand          float64
@@ -22,8 +22,7 @@ type GroupRow struct {
 
 // RepoRow is one repo bucket and its children: the repo's own GroupRow, its
 // labelled features, and its feature-less bucket. Each feature carries its own
-// tickets, so a label two repos use appears under each with only that repo's
-// rows counted.
+// tickets, so a label two repos use counts only its own repo's rows under each.
 type RepoRow struct {
 	GroupRow
 	Features  []FeatureRow // only this repo's rows with a Feature
@@ -31,22 +30,21 @@ type RepoRow struct {
 	Scratch   []RepoRow    // the fold row's own repos; nil on every other row
 }
 
-// ScratchKey is the reserved key the scratch repos fold into: one RepoRow
-// carrying the aggregate and its repos in Scratch.
+// ScratchKey is the reserved key the scratch repos fold into: one RepoRow with
+// the aggregate and its repos in Scratch.
 const ScratchKey = "(scratch)"
 
-// isScratchRepoKey reports whether a repo key is a scratch repo's common dir.
-// A scratch repo has no origin_url, so db.RoundRow.Repo carries git.RepoFacts'
-// absolute, symlink-resolved common_dir, which starts with a separator; a
-// remote origin normalises to an https URL (or stays http) instead, so it
-// never does. An origin that is itself a local path counts as scratch: it has
-// no remote host.
+// isScratchRepoKey reports whether a repo key is a scratch repo's common dir. A
+// scratch repo has no origin_url, so db.RoundRow.Repo carries git.RepoFacts'
+// absolute, symlink-resolved common_dir, starting with a separator; a remote
+// origin normalises to a URL instead, so it never does. A local-path origin
+// counts as scratch: it has no remote host.
 func isScratchRepoKey(key string) bool {
 	return strings.HasPrefix(key, "/")
 }
 
-// foldRepoKey is the key a row's repo aggregates under: a scratch repo folds
-// into ScratchKey, every other repo into its own key.
+// foldRepoKey is the key a row's repo aggregates under: a scratch repo into
+// ScratchKey, every other repo into its own key.
 func foldRepoKey(r db.RoundRow) (string, bool) {
 	k, ok := repoKey(r)
 	if !ok {
@@ -58,9 +56,9 @@ func foldRepoKey(r db.RoundRow) (string, bool) {
 	return k, true
 }
 
-// FeatureRow is one feature's bucket and the labelled tickets nested under it.
-// Its own numbers include the feature's ticketless rounds; Tickets holds only
-// the rounds that also carry a ticket.
+// FeatureRow is one feature's bucket and its labelled tickets. Its own numbers
+// include the feature's ticketless rounds; Tickets holds only rounds also
+// carrying a ticket.
 type FeatureRow struct {
 	GroupRow
 	Tickets []GroupRow // only this feature's rows with a Ticket
@@ -138,7 +136,8 @@ func (a *groupAcc) row(k string) GroupRow {
 	return g
 }
 
-// groupRows skips a row whose key returns false: that section does not cover it.
+// groupRows skips a row whose key returns false: that section does not cover
+// it.
 func groupRows(in Inputs, rows []db.RoundRow, key func(db.RoundRow) (string, bool)) []GroupRow {
 	accs := map[string]*groupAcc{}
 	var order []string
@@ -169,13 +168,11 @@ func groupRows(in Inputs, rows []db.RoundRow, key func(db.RoundRow) (string, boo
 	return out
 }
 
-// buildRepos groups the rows by repo and, inside each repo, nests each
-// feature's tickets under it. A repo's children count only its own rows, so a
-// label two repos use appears under each with that repo's numbers. A round with
-// neither label counts only in its repo's (no feature) bucket. Every scratch
-// repo folds into the one ScratchKey row, which carries the aggregate and the
-// individual repos in Scratch. The repos come back in groupRows order: rounds
-// desc, key asc.
+// buildRepos groups the rows by repo, nesting each feature's tickets under it. A
+// repo's children count only its own rows; a round with neither label counts only
+// in its repo's (no feature) bucket. Every scratch repo folds into the one
+// ScratchKey row, carrying the aggregate and the individual repos in Scratch. The
+// repos come back in groupRows order: rounds desc, key asc.
 func buildRepos(in Inputs, rows []db.RoundRow) []RepoRow {
 	byRepo := map[string][]db.RoundRow{}
 	for _, r := range rows {
@@ -197,10 +194,9 @@ func buildRepos(in Inputs, rows []db.RoundRow) []RepoRow {
 	return out
 }
 
-// scratchRepoRow is the fold row over every scratch repo: g is the aggregate,
-// byRepo supplies each path's own rows for its Scratch child, and the fold's
-// own feature buckets stay zero because a feature across repos is nothing
-// renderable.
+// scratchRepoRow is the fold row over every scratch repo: g is the aggregate and
+// byRepo supplies each path's own rows for its Scratch child. The fold's own
+// feature buckets stay zero: a feature across repos is nothing renderable.
 func scratchRepoRow(in Inputs, g GroupRow, byRepo map[string][]db.RoundRow) RepoRow {
 	scratch := make([]RepoRow, 0, len(byRepo))
 	for _, sg := range groupRows(in, foldRows(byRepo), repoKey) {
@@ -209,8 +205,8 @@ func scratchRepoRow(in Inputs, g GroupRow, byRepo map[string][]db.RoundRow) Repo
 	return RepoRow{GroupRow: g, Scratch: scratch}
 }
 
-// foldRows flattens the rows of every scratch repo, which is what the fold's
-// own children are grouped over.
+// foldRows flattens the rows of every scratch repo, which the fold's own
+// children group over.
 func foldRows(byRepo map[string][]db.RoundRow) []db.RoundRow {
 	var out []db.RoundRow
 	for k, rows := range byRepo {
@@ -222,8 +218,8 @@ func foldRows(byRepo map[string][]db.RoundRow) []db.RoundRow {
 	return out
 }
 
-// repoRow is one repo's row over its own rows: g is its aggregate and own the
-// rows that belong to it, which the feature and ticket buckets each scope to.
+// repoRow is one repo's row over its own rows: g is its aggregate, and the
+// feature and ticket buckets each scope to those rows.
 func repoRow(in Inputs, g GroupRow, own []db.RoundRow) RepoRow {
 	byFeature := map[string][]db.RoundRow{}
 	var featureless []db.RoundRow
@@ -251,8 +247,8 @@ func repoRow(in Inputs, g GroupRow, own []db.RoundRow) RepoRow {
 	}
 }
 
-// noneRow is the single "(none)" bucket over rows, or the zero GroupRow when
-// no row lacks the label.
+// noneRow is the single "(none)" bucket over rows, or the zero GroupRow when no
+// row lacks the label.
 func noneRow(in Inputs, rows []db.RoundRow, key func(db.RoundRow) (string, bool)) GroupRow {
 	if g := groupRows(in, rows, key); len(g) > 0 {
 		return g[0]

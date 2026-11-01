@@ -2,24 +2,22 @@ package transcript
 
 import "strings"
 
-// ThinkingMarker is the first character of every rendered thinking line. The
-// transcript is shown to people, but the limit and denial scans also match on
-// it, and they must be able to skip the model's own musings.
+// ThinkingMarker is the first character of every rendered thinking line, so the
+// limit and denial scans can skip the model's own musings.
 const ThinkingMarker = "∴"
 
-// IsThinking reports whether line is one of the transcript's rendered thinking
-// lines, so a scan can ignore the model reasoning about a limit rather than
-// hitting one. The marker is tested on the body after the stamp.
+// IsThinking reports whether line is a rendered thinking line, so a scan ignores
+// the model reasoning about a limit rather than hitting one. The marker is tested
+// on the body after the stamp.
 func IsThinking(line string) bool {
 	_, body := SplitStamp(line)
 	return strings.HasPrefix(body, ThinkingMarker)
 }
 
-// thinkingLines renders text as thinking lines: each carries ThinkingMarker, a
-// blank line inside the prose is exactly the marker (so no rendered line has
-// trailing whitespace), and leading and trailing blank lines are dropped.
-// Nothing left returns nil. Lines are not capped -- thinking is prose and is
-// shown in full, like assistant text.
+// thinkingLines renders text as thinking lines, each carrying ThinkingMarker; a
+// blank prose line is exactly the marker, so no rendered line has trailing
+// whitespace, and leading and trailing blank lines are dropped, nil when nothing
+// is left. Lines are not capped: thinking shows in full, like assistant text.
 func thinkingLines(text string) []string {
 	lines := strings.Split(text, "\n")
 	for i, l := range lines {

@@ -7,7 +7,7 @@ import (
 )
 
 type Spend struct {
-	Days     []DayCost // one per local day Since..Until inclusive, oldest first; zero days included
+	Days     []DayCost // one per local day Since..Until inclusive, oldest first, zero days included
 	ThisWeek float64   // [Until-7d, Until)
 	LastWeek float64   // [Until-14d, Until-7d)
 }
@@ -18,7 +18,7 @@ type DayCost struct {
 	Tokens     int64              // summed over every row of the day, like Tokens
 	Kinds      TokenCounts        // the day's tokens by kind; Tokens = Kinds.Total()
 	ByProvider map[string]float64 // Provider, "(none)" when nil
-	// ByCandidate keys "(none)" for a nil candidate, and only rows with a
+	// ByCandidate keys "(none)" for a nil candidate, counting only rows with a
 	// non-zero total.
 	ByCandidate      map[string]int64
 	TokensByProvider map[string]int64

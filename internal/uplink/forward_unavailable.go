@@ -18,9 +18,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// accountGateKey reports whether subject is a group@account gate key rather
-// than a bare group, a candidate name or a candidate token. A candidate name
-// and a provider never contain "@", so the separator is unambiguous.
+// accountGateKey reports whether subject is a group@account gate key: "@" never
+// appears in a candidate name or provider, so the separator is unambiguous.
 func accountGateKey(subject string) bool {
 	_, name, ok := account.ParseGateKey(subject)
 	return ok && name != ""
@@ -46,13 +45,9 @@ func accountRefusal(server string) string {
 	return fmt.Sprintf("%s: account gates unsupported; upgrade the server", server)
 }
 
-// staleBinding reports whether err is the server saying it no longer holds the
-// binding the client still has: the binding was unbound there, or was never
-// mirrored, while this client's copy still names that server. Forwarding a
-// gate to it changes nothing, so a stale binding is skipped rather than
-// reported one line at a time -- `relevo gate <token>` against a set of
-// bindings the servers have since dropped would otherwise print one "not
-// found" line per binding for a command whose result is identical either way.
+// staleBinding reports whether err is the server saying it no longer holds
+// the binding: forwarding a gate there changes nothing, so stale bindings are
+// skipped rather than reported one at a time.
 func staleBinding(err error) bool {
 	var httpErr *client.HTTPError
 	return errors.As(err, &httpErr) && httpErr.Body.Code == remote.CodeNotFound

@@ -124,9 +124,8 @@ func (c *Client) RemoveWorktree(ctx context.Context, dir, path string, force boo
 		absPath = filepath.Join(dir, absPath)
 	}
 
-	// Already gone -- removed by hand, or by an earlier relevo done -- is
-	// success: prune the stale entry so the branch is no longer "checked out"
-	// there and can be deleted.
+	// Already gone is success: prune the stale entry so the branch is no longer
+	// "checked out" there and can be deleted.
 	if _, statErr := os.Stat(absPath); errors.Is(statErr, os.ErrNotExist) {
 		if _, err := c.run(ctx, dir, nil, "worktree", "prune"); errors.Is(err, ErrNotRepo) || errors.Is(err, ErrGitUnavailable) {
 			return err
@@ -161,9 +160,8 @@ func (c *Client) RemoveWorktree(ctx context.Context, dir, path string, force boo
 	return nil
 }
 
-// WorktreeRepair repairs the administrative link between repo and a worktree
-// whose directory was moved, so a plain rename of a state root leaves a working
-// tree git still recognises.
+// WorktreeRepair repairs the link between repo and a moved worktree, so a plain
+// rename of a state root leaves a tree git still recognises.
 func (c *Client) WorktreeRepair(ctx context.Context, repo, worktree string) error {
 	_, err := c.run(ctx, repo, nil, "worktree", "repair", worktree)
 	return err

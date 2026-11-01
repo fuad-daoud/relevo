@@ -28,22 +28,22 @@ type Source struct {
 	Model      string // the candidate's; "" for an adopted builder
 	Plan       bool   // the candidate's subscription flag
 	Account    string // the login of the candidate's pool the round drew from; "" on a host with no accounts
-	StreamPath string // headless: the round's stream, NNN-runner.jsonl, or NNN-builder.jsonl for a round from before the rename
+	StreamPath string // headless: the round's stream, NNN-runner.jsonl or NNN-builder.jsonl for a round sealed under the earlier name
 	StreamFrom int64  // parse only bytes at or after this offset; 0 means whole stream
 	// ReadFile, when set, reads a sealed round's stream from the store's database.
 	ReadFile   func(string) ([]byte, error)
-	Worktree   string // pane: the binding's worktree; "" for a --cwd binding
+	Worktree   string // pane: the binding's worktree, "" for a --cwd binding
 	Start, End time.Time
 }
 
-// Reader turns a Source into samples; it never errors.
+// Reader turns a Source into samples and never errors.
 type Reader interface {
 	Read(ctx context.Context, src Source) (samples []Sample, note string)
 	// Peek is Read without waiting for the record to close.
 	Peek(ctx context.Context, src Source) (samples []Sample, note string)
 }
 
-// reader's mu and cache are pointers, so every copy shares them.
+// reader's mu and cache are pointers, so every copy shares one cache.
 type reader struct {
 	mu    *sync.Mutex
 	cache map[string]*streamCache
@@ -73,8 +73,8 @@ const trailerPoll = 200 * time.Millisecond // how often a still-open stream is r
 
 const tailProbe = 256 // bytes of the file's end read to find the last line
 
-// streamClosed reports whether path's last non-empty line is the exit trailer: the
-// harness has exited.
+// streamClosed reports whether path's last non-empty line is the exit trailer,
+// which the supervisor appends once the harness has exited.
 func streamClosed(path string) bool {
 	f, err := os.Open(path)
 	if err != nil {
@@ -99,7 +99,6 @@ func streamClosed(path string) bool {
 	return strings.HasPrefix(last, trail.ExitTrailer)
 }
 
-// waitClosed blocks until the stream is closed or ctx is done.
 func waitClosed(ctx context.Context, path string) bool {
 	for {
 		if streamClosed(path) {
@@ -154,7 +153,7 @@ func readSealed(src Source) ([]Sample, string) {
 	} else {
 		data = nil
 	}
-	// Only whole lines are fed, as parseCached does.
+	// Only whole lines are fed, as parseCached feeds them.
 	if i := bytes.LastIndexByte(data, '\n'); i >= 0 {
 		data = data[:i+1]
 	} else {
@@ -183,9 +182,9 @@ func newSourceCarry(src Source) (streamCarry, bool) {
 	return newCarry(src.Harness, src.Provider, model)
 }
 
-// parseCached reads src's stream through the per-stream cache: an unchanged (size,
-// mtime) is answered from the carry, an appended file from where the last read
-// stopped, and a shrunken file resets.
+// parseCached reads src's stream through the per-stream cache: an unchanged file is
+// answered from the carry, an appended file from where the last read stopped, and
+// a shrunken file resets.
 func (r reader) parseCached(src Source) ([]Sample, string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -193,8 +192,8 @@ func (r reader) parseCached(src Source) ([]Sample, string) {
 	if err != nil {
 		return nil, "no stream"
 	}
-	// Keyed by path, harness and stream offset: a different harness on the same path
-	// must not reuse the previous carry.
+	// Keyed by path, harness and stream offset, so a different harness on the same
+	// path never reuses the previous carry.
 	key := src.StreamPath + "\x00" + src.Harness + "\x00" + strconv.FormatInt(src.StreamFrom, 10)
 	e := r.cache[key]
 	if e == nil || info.Size() < e.offset || info.Size() < src.StreamFrom {
@@ -236,8 +235,8 @@ func (r reader) parseCached(src Source) ([]Sample, string) {
 	if len(e.tail) > maxLine {
 		e.tail = nil // a pathological line, dropped as scanLines drops one
 	}
-	// offset is the bytes already read from disk, tail included, so the held tail is
-	// never re-read.
+	// offset counts the bytes already read, tail included, so the held tail is never
+	// re-read.
 	e.offset = info.Size()
 	e.size, e.mtime = info.Size(), info.ModTime()
 	return e.carry.samples(), ""

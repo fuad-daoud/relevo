@@ -19,9 +19,8 @@ type logRead struct {
 	lines    [][]byte
 	startSeq int
 	cursor   db.Cursor
-	// resumed reports that this read continued from a saved cursor instead of
-	// reading the member from the top, so the database's own earlier rows are
-	// the only copy of what came before.
+	// resumed reports that this read continued from a saved cursor, so the
+	// database's own earlier rows are the only copy of what came before.
 	resumed bool
 }
 
@@ -55,11 +54,10 @@ func (r *ingestRun) upsertMasterMind(tx *db.Tx) (*string, error) {
 	}
 	id, err := tx.UpsertMasterMind(record)
 	if err != nil {
-		// A binding can name a mastermind id its session no longer answers to:
-		// the record was forgotten and the session registered anew, and the
-		// binding kept the old id. In this origin the session is the identity,
-		// so the mirror follows the id that already holds it instead of
-		// failing the binding's whole mirror run every tick.
+		// A binding can name a mastermind id its session no longer answers to, the
+		// record forgotten and the session registered anew. The session is the
+		// identity here, so the mirror follows the id already holding it instead
+		// of failing the whole mirror run every tick.
 		if !errors.Is(err, db.ErrInvalid) {
 			return nil, fmt.Errorf("upsert mastermind: %w", err)
 		}
@@ -110,8 +108,8 @@ func (r *ingestRun) readLog() (logRead, error) {
 	return lr, nil
 }
 
-// builderModeOf defaults to "pane": archives from before headless mode record a
-// pane builder.
+// builderModeOf defaults a missing mode to "pane": a modeless archive is a pane
+// builder.
 func builderModeOf(b store.Binding) string {
 	if b.Builder.Mode != "" {
 		return string(b.Builder.Mode)
@@ -185,9 +183,9 @@ func (r *ingestRun) upsertBinding(tx *db.Tx, repoID, mastermindID *string, log l
 	return bindingID, nil
 }
 
-// appendEvents appends log.jsonl's new lines and returns "all": every entry this
-// binding has ever logged. A fresh cursor already holds the whole file, so the
-// db's own earlier rows are folded in only when the cursor resumed.
+// appendEvents appends log.jsonl's new lines and returns "all", every entry the
+// binding ever logged: the db's own earlier rows fold in only when the cursor
+// resumed, since a fresh cursor already holds the whole file.
 func (r *ingestRun) appendEvents(tx *db.Tx, bindingID string, log logRead) ([]store.LogEntry, error) {
 	all := log.entries
 	if !log.present {
@@ -197,10 +195,10 @@ func (r *ingestRun) appendEvents(tx *db.Tx, bindingID string, log logRead) ([]st
 	if had, err := tx.Events(bindingID, 0); err == nil && len(had) > 0 && log.resumed {
 		merged := make([]store.LogEntry, 0, len(had)+len(log.entries))
 		for _, ev := range had {
-			// A cursor older than the rows -- one restored, or kept over a newer
+			// A cursor older than the rows -- restored, or kept over a newer
 			// copy -- re-reads lines already in; they come from the read below.
-			// startSeq numbers only returned lines and is zero when none came
-			// back, so with nothing read every stored event is kept.
+			// startSeq numbers only returned lines, zero when none came back, so
+			// with nothing read every stored event is kept.
 			if len(log.lines) > 0 && ev.Seq >= log.startSeq {
 				continue
 			}
@@ -232,8 +230,8 @@ func (r *ingestRun) appendEvents(tx *db.Tx, bindingID string, log logRead) ([]st
 	return all, nil
 }
 
-// upsertRounds writes every round the binding's events and member files name, and
-// returns each round number's id.
+// upsertRounds writes every round the events and member files name, returning
+// each number's id.
 func (r *ingestRun) upsertRounds(tx *db.Tx, bindingID string, all []store.LogEntry) (map[int]string, error) {
 	roundSet := map[int]bool{}
 	for _, e := range all {
@@ -321,7 +319,7 @@ func (r *ingestRun) upsertRound(tx *db.Tx, bindingID string, n int, all []store.
 	return roundID, nil
 }
 
-// logEntryToEvent keeps entryJSON as the exact line read from the source.
+// logEntryToEvent keeps entryJSON as the exact line the source held.
 func logEntryToEvent(bindingID string, seq int, entryJSON string, e store.LogEntry) db.Event {
 	ev := db.Event{
 		BindingID: bindingID,
@@ -351,8 +349,8 @@ func logEntryToEvent(bindingID string, seq int, entryJSON string, e store.LogEnt
 }
 
 // linkEventsToRounds sets round_id on every still-unlinked event whose decoded
-// LogEntry.Round matches a round seen this tick, including events left unlinked by
-// an earlier ingest.
+// round matches one seen this tick, including events an earlier ingest left
+// unlinked.
 func linkEventsToRounds(tx *db.Tx, bindingID string, roundIDs map[int]string) error {
 	if len(roundIDs) == 0 {
 		return nil

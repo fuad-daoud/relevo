@@ -19,9 +19,8 @@ func killRecordPath(streamPath string) string {
 }
 
 // recordKill writes the handle Kill is about to signal. An empty streamPath
-// records nothing. The open refuses any path that is not a regular file,
-// because nothing may be written through a path a runner can replace with a
-// link; the caller signals anyway.
+// records nothing. The open refuses any path that is not a regular file, since
+// a runner can replace it with a link; the caller signals anyway.
 func recordKill(h spawn.ProcHandle, streamPath string) error {
 	if streamPath == "" {
 		return nil

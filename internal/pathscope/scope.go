@@ -1,10 +1,5 @@
 // Package pathscope judges the paths a writer actor's round changed against
 // the actor's declared scope.
-//
-// A scope is a list of globs over repo-relative paths plus, for the source
-// files a comment lexer can judge, whether a comment-only edit is allowed.
-// Scope itself is pure; Judge walks a git-reported change list and returns
-// the paths it refuses.
 package pathscope
 
 import (
@@ -98,8 +93,6 @@ func (s Scope) Match(path string) bool {
 	return matched
 }
 
-// compilePattern compiles one entry to an anchored regexp, reporting whether
-// it is a "!" exclusion.
 func compilePattern(entry string) (*regexp.Regexp, bool, error) {
 	neg := false
 	pat := entry

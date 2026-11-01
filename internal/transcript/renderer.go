@@ -8,34 +8,28 @@ import (
 	"time"
 )
 
-// clockLayout is the clock's shape: 8 cells, always the same width, so a
-// stamped column never moves between lines.
+// clockLayout is the clock's shape: 8 cells, always the same width, so a stamped
+// column never moves between lines.
 const clockLayout = "15:04:05"
 
-// Renderer renders one pass over a harness's stream. It carries no state
-// between passes, but it does across the lines of one pass: claude's tool
-// results carry the span from the call that asked for them, so the renderer
-// remembers the calls it has seen and not yet answered. A pass is one
-// renderStreamFrom call, one drainStream pass, or one streamTranscriptRecords
-// batch.
+// Renderer renders one pass over a harness's stream, carrying no state between
+// passes but keeping each pass's unanswered calls: a claude tool result carries
+// the span from the call that asked for it.
 type Renderer struct {
 	pending  map[string]time.Time // claude tool_use id -> the event time that made the call
 	museText strings.Builder      // muse output deltas not yet written
 }
 
-// NewRenderer returns a renderer for one pass over a stream.
 func NewRenderer() *Renderer {
 	return &Renderer{pending: make(map[string]time.Time)}
 }
 
-// Render turns one raw line of the stream (without its trailing newline) into
-// the lines to append to the log, sanitised so a control byte in a harness's
-// own text never reaches a log, a stream tail or `show`. An empty line and a
-// supervisor trailer are nothing; a line that is not a JSON object is itself,
-// verbatim (that is how a plain-text error reaches the log); an unknown event
-// of a known kind renders as "[<type>]" carrying the event's clock; a kind the
-// tables do not know renders as "[<type>]" with no stamp at all. Never errors,
-// never panics.
+// Render turns one raw stream line without its trailing newline into the log's
+// lines, sanitised so a control byte in a harness's own text never reaches a log,
+// a tail or `show`. Empty lines and supervisor trailers are nothing; a non-JSON
+// line is itself, verbatim, which is how a plain-text error reaches the log. An
+// unknown event of a known kind renders as "[<type>]" with the event's clock, of
+// an unknown kind with no stamp. Never errors, never panics.
 func (r *Renderer) Render(kind string, line []byte) []string {
 	return sanitizeLines(r.render(kind, line))
 }
@@ -67,16 +61,15 @@ func (r *Renderer) render(kind string, line []byte) []string {
 	return []string{unknown(obj)}
 }
 
-// stamp is what precedes a rendered element: the event's clock in the
-// rendering machine's local zone and/or the span the element measured, in that
-// order, each followed by one space. An empty stamp is nothing at all.
+// stamp precedes a rendered element: the event's clock in the local zone and/or
+// the span it measured, in that order, each followed by one space. An empty stamp
+// is nothing at all.
 type stamp struct {
 	clock string // "15:04:05", or ""
 	dur   string // "+4.2s", or ""
 }
 
-// at builds the stamp carrying the event's own clock. The zero time carries
-// none.
+// at builds the stamp carrying the event's own clock; the zero time carries none.
 func (r *Renderer) at(t time.Time) stamp {
 	if t.IsZero() {
 		return stamp{}
@@ -84,8 +77,8 @@ func (r *Renderer) at(t time.Time) stamp {
 	return stamp{clock: t.Local().Format(clockLayout)}
 }
 
-// span builds the stamp part for a duration_seconds-style field: absent when
-// the field is missing, not a number, or negative.
+// span builds the stamp part for a duration_seconds-style field, absent when the
+// field is missing, not a number, or negative.
 func (r *Renderer) span(v any) stamp {
 	secs, ok := v.(float64)
 	if !ok {
@@ -94,8 +87,8 @@ func (r *Renderer) span(v any) stamp {
 	return stamp{dur: durSecs(secs)}
 }
 
-// durSecs formats a span in seconds to one decimal. A negative span means the
-// end preceded the start: no measurement, so no duration.
+// durSecs formats a span in seconds to one decimal; a negative span holds no
+// measurement, so no duration.
 func durSecs(secs float64) string {
 	if secs < 0 {
 		return ""
@@ -103,8 +96,8 @@ func durSecs(secs float64) string {
 	return fmt.Sprintf("+%.1fs", secs)
 }
 
-// line prefixes text with the stamp; on a multi-line element that is its first
-// physical line only.
+// line prefixes text with the stamp, on a multi-line element its first physical
+// line only.
 func (s stamp) line(text string) string {
 	if s.clock == "" && s.dur == "" {
 		return text
@@ -122,7 +115,7 @@ func (s stamp) line(text string) string {
 	return b.String()
 }
 
-// thinking stamps a thinking block's first physical line only: the block is
+// thinking stamps a thinking block's first physical line only, the block being
 // one rendered element however many lines it spans.
 func (s stamp) thinking(text string) []string {
 	lines := thinkingLines(text)
@@ -133,8 +126,8 @@ func (s stamp) thinking(text string) []string {
 }
 
 // SplitStamp splits a rendered line into the plain-text stamp the renderer
-// prefixed and the entry's own bytes, so a reader that matches on markers can
-// match on the body. A line with no stamp returns ("", line).
+// prefixed and the entry's own bytes, so a marker-matching reader matches on the
+// body. A line with no stamp returns ("", line).
 func SplitStamp(line string) (stamp, body string) {
 	i := 0
 	if isClockPrefix(line) {
@@ -149,8 +142,8 @@ func SplitStamp(line string) (stamp, body string) {
 	return line[:i], line[i:]
 }
 
-// isClockPrefix reports whether line opens with a "15:04:05" clock followed by
-// the single space the stamp puts before the next part.
+// isClockPrefix reports whether line opens with a "15:04:05" clock and the single
+// space the stamp puts before the next part.
 func isClockPrefix(line string) bool {
 	if len(line) < len(clockLayout)+1 || line[len(clockLayout)] != ' ' {
 		return false
@@ -169,8 +162,8 @@ func isClockPrefix(line string) bool {
 	return true
 }
 
-// durationPrefix returns the length of the "+X.Ys" duration and the single
-// space after it at the start of s; ok is false when s does not open with one.
+// durationPrefix returns the length of the "+X.Ys" duration and its trailing
+// space at the start of s; ok is false when s does not open with one.
 func durationPrefix(s string) (int, bool) {
 	if len(s) < 6 || s[0] != '+' {
 		return 0, false
@@ -188,8 +181,8 @@ func durationPrefix(s string) (int, bool) {
 	return i + 4, true
 }
 
-// claudeAt is a claude event's own clock: an RFC3339Nano string, zero when the
-// event carries none or it does not parse.
+// claudeAt is a claude event's own clock, zero when the event carries none or it
+// does not parse.
 func claudeAt(obj map[string]any) time.Time {
 	s := str(obj["timestamp"])
 	if s == "" {
@@ -202,7 +195,7 @@ func claudeAt(obj map[string]any) time.Time {
 	return t
 }
 
-// opencodeAt is an opencode event's own clock: epoch milliseconds, zero when
+// opencodeAt is an opencode event's own clock in epoch milliseconds, zero when
 // the event carries none.
 func opencodeAt(obj map[string]any) time.Time {
 	ms, ok := obj["timestamp"].(float64)
@@ -212,9 +205,8 @@ func opencodeAt(obj map[string]any) time.Time {
 	return time.UnixMilli(int64(ms))
 }
 
-// timeSpan is an opencode part's own measured span: time.end - time.start in
-// milliseconds, absent when either end is missing or the end precedes the
-// start.
+// timeSpan is an opencode part's measured span in milliseconds, absent when
+// either end is missing or the end precedes the start.
 func (r *Renderer) timeSpan(v any) string {
 	m := asMap(v)
 	start, sok := m["start"].(float64)

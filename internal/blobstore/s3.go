@@ -16,24 +16,24 @@ import (
 	"time"
 )
 
-// R2 and every S3-compatible endpoint read region "auto"; it is part of the
-// signature's credential scope but never sent as a header.
+// R2 and every S3-compatible endpoint read region "auto": part of the signature's
+// credential scope, never sent as a header.
 const (
 	s3Region  = "auto"
 	s3Service = "s3"
 )
 
-// emptyPayloadHash is the hex sha256 of no bytes. A request with no body still
-// carries it, because the value is what the signature covers and a header left
-// out would change the signature rather than the payload.
+// emptyPayloadHash is the hex sha256 of no bytes. A bodiless request still carries
+// it, since the signature covers that value, and a missing header would change the
+// signature rather than the payload.
 const emptyPayloadHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
-// s3TimeFormat is the ISO8601 basic format SigV4 puts in x-amz-date, and the
-// date part of the credential scope is its first eight characters.
+// s3TimeFormat is the ISO8601 basic format SigV4 puts in x-amz-date; the
+// credential scope's date part is its first eight characters.
 const s3TimeFormat = "20060102T150405Z"
 
 // S3Config is what NewS3Store needs to reach a bucket. The endpoint carries no
-// bucket of its own: R2 hands out one account-scoped URL and names the bucket
+// bucket of its own: R2 hands out one account-scoped URL, naming the bucket
 // separately.
 type S3Config struct {
 	Endpoint string
@@ -44,8 +44,8 @@ type S3Config struct {
 }
 
 // S3Store is a BlobStore over an S3-compatible endpoint, signing every request
-// with SigV4 by hand: the five operations here are few enough that a signing
-// library and its dependency tree would cost more than the code it saved.
+// with SigV4 by hand: five operations are few enough that a signing library and
+// its dependency tree would cost more than the code it saved.
 type S3Store struct {
 	Endpoint string
 	Bucket   string
@@ -56,8 +56,7 @@ type S3Store struct {
 }
 
 // NewS3Store returns a store for cfg, clocked by the wall clock. A nil Client
-// takes http.DefaultClient, so the caller supplies a transport only when it
-// needs one.
+// takes http.DefaultClient, so the caller supplies a transport only when needed.
 func NewS3Store(cfg S3Config) *S3Store {
 	client := cfg.Client
 	if client == nil {
@@ -73,9 +72,9 @@ func NewS3Store(cfg S3Config) *S3Store {
 	}
 }
 
-// Put stores body under key. The body is buffered whole before it is sent,
-// because SigV4 covers a hash of the exact bytes on the wire and a streamed
-// body would have to be hashed twice; a body is a few megabytes at most.
+// Put stores body under key. The body buffers whole before sending, since SigV4
+// covers a hash of the exact wire bytes and a streamed body would hash twice; a
+// body is a few megabytes at most.
 func (s *S3Store) Put(ctx context.Context, key string, body io.Reader, size int64) error {
 	buf, err := readSized(body, size)
 	if err != nil {
@@ -94,7 +93,7 @@ func (s *S3Store) Put(ctx context.Context, key string, body io.Reader, size int6
 	return err
 }
 
-// Get writes the body under key to w and reports how many bytes it wrote, or
+// Get writes the body under key to w, reporting how many bytes it wrote, or
 // ErrNotFound when the endpoint says the object is not there.
 func (s *S3Store) Get(ctx context.Context, key string, w io.Writer) (int64, error) {
 	req, err := s.newRequest(ctx, http.MethodGet, key, nil)
@@ -114,8 +113,8 @@ func (s *S3Store) Get(ctx context.Context, key string, w io.Writer) (int64, erro
 }
 
 // Has reports whether key is in the bucket. It is a HEAD rather than a ranged
-// GET because the answer is all that is wanted: a body would cross the wire to
-// be discarded, and bodies are the largest thing this store moves.
+// GET: a body would cross the wire to be discarded, and bodies are the largest
+// thing this store moves.
 func (s *S3Store) Has(ctx context.Context, key string) (bool, error) {
 	req, err := s.newRequest(ctx, http.MethodHead, key, nil)
 	if err != nil {
@@ -148,7 +147,7 @@ func (s *S3Store) Delete(ctx context.Context, key string) error {
 
 // listResult is the part of a ListObjectsV2 answer this store reads. A bucket
 // holding a million objects under one prefix answers in pages, so the token and
-// the truncation flag are what make the listing complete.
+// the truncation flag make the listing complete.
 type listResult struct {
 	IsTruncated           bool     `xml:"IsTruncated"`
 	NextContinuationToken string   `xml:"NextContinuationToken"`
@@ -161,14 +160,14 @@ type object struct {
 	LastModified time.Time `xml:"LastModified"`
 }
 
-// listPageCap bounds how many pages one List walks. A server that keeps
-// reporting truncation would otherwise loop forever holding the caller; the
-// listing it has by then is still the whole of what the bucket answered so far,
-// and the next call starts over rather than hanging here.
+// listPageCap bounds how many pages one List walks. A server that keeps reporting
+// truncation would otherwise loop forever holding the caller; the listing so far
+// is still the whole of what the bucket answered, and the next call starts over
+// rather than hanging here.
 const listPageCap = 1000
 
-// List returns every object under prefix, in key order, following the
-// continuation tokens until the endpoint reports the listing complete.
+// List returns every object under prefix, in key order, following continuation
+// tokens until the endpoint reports the listing complete.
 func (s *S3Store) List(ctx context.Context, prefix string) ([]Object, error) {
 	var out []Object
 	token := ""
@@ -199,16 +198,15 @@ func (s *S3Store) List(ctx context.Context, prefix string) ([]Object, error) {
 		}
 		token = page1.NextContinuationToken
 	}
-	// S3 answers a listing in key order already, but a listing assembled over
-	// several pages carries no such guarantee and the in-memory fake has none,
-	// and the weekly cleanup walks a prefix expecting the same order from either
-	// implementation.
+	// S3 answers in key order already, but a multi-page listing carries no such
+	// guarantee and the in-memory fake has none; the weekly cleanup walks a prefix
+	// expecting the same order from either implementation.
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 	return out, nil
 }
 
-// newRequest builds a signed-ready request for one object key, or for the
-// bucket itself when key is empty (which is how a listing is addressed).
+// newRequest builds a signed-ready request for one object key, or for the bucket
+// itself when key is empty, which is how a listing is addressed.
 func (s *S3Store) newRequest(ctx context.Context, method, key string, query url.Values) (*http.Request, error) {
 	raw := s.Endpoint + "/" + s.Bucket
 	if key != "" {
@@ -228,10 +226,9 @@ func (s *S3Store) newRequest(ctx context.Context, method, key string, query url.
 	return req, nil
 }
 
-// s3Error is a failed S3 answer. The endpoint's own <Code> is kept because it
-// says which failure it was -- NoSuchKey, AccessDenied, SignatureDoesNotMatch --
-// and the status alone does not. The secret is never among the fields, so it
-// cannot reach a log through this error.
+// s3Error is a failed S3 answer. The endpoint's own <Code> is kept, since it says
+// which failure it was and the status alone does not. The secret is never among
+// the fields, so it cannot reach a log through this error.
 type s3Error struct {
 	Status int
 	Code   string
@@ -245,14 +242,14 @@ func (e *s3Error) Error() string {
 	return fmt.Sprintf("blobstore: s3: %d %s: %s", e.Status, e.Code, e.Msg)
 }
 
-// Is makes a 404 report as ErrNotFound, the one condition the caller handles by
-// latching rather than retrying.
+// Is reports a 404 as ErrNotFound, the one condition the caller latches rather
+// than retries.
 func (e *s3Error) Is(target error) bool {
 	return target == ErrNotFound && e.Status == http.StatusNotFound
 }
 
-// isNotFound reports whether err is the missing-object refusal, whether it came
-// from an endpoint's status or from the in-memory fake.
+// isNotFound reports whether err is the missing-object refusal, from an
+// endpoint's status or the in-memory fake alike.
 func isNotFound(err error) bool {
 	if err == nil {
 		return false
@@ -264,22 +261,21 @@ func isNotFound(err error) bool {
 	return errors.As(err, &se) && se.Status == http.StatusNotFound
 }
 
-// errorBody is the <Error> document every S3-compatible endpoint answers a
-// failure with.
+// errorBody is the <Error> document every S3-compatible endpoint answers failure
+// with.
 type errorBody struct {
 	Code    string `xml:"Code"`
 	Message string `xml:"Message"`
 }
 
-// An error from this client is written to the daemon's log and shown by
-// `db sync status`, so it must not carry the bucket's secret. The endpoint's own
-// message is echoed because it says which failure it was, and a message that
-// quotes the secret -- a misconfigured endpoint echoing the request back, a
-// proxy printing its headers -- is redacted rather than passed through.
+// An error from this client reaches the daemon's log and `db sync status`, so it
+// must not carry the bucket's secret. The endpoint's own message is echoed, since
+// it says which failure it was; a message quoting the secret is redacted rather
+// than passed through.
 
 // do signs and sends one request, returning a 2xx response for the caller to
-// close. Every non-2xx becomes an *s3Error carrying the status and the body's
-// own code; a 404 also matches ErrNotFound.
+// close. Every non-2xx becomes an *s3Error of the status and the body's own code;
+// a 404 also matches ErrNotFound.
 func (s *S3Store) do(req *http.Request, payloadHash string) (*http.Response, error) {
 	req.Header.Set("x-amz-content-sha256", payloadHash)
 	signRequest(req, s.KeyID, s.Secret, s3Region, s3Service, payloadHash, s.now().UTC())
@@ -298,8 +294,8 @@ func (s *S3Store) do(req *http.Request, payloadHash string) (*http.Response, err
 	if msg == "" {
 		msg = http.StatusText(resp.StatusCode)
 	}
-	// An empty secret would make ReplaceAll match at every position and shred
-	// the message, so a store configured without one redacts nothing.
+	// An empty secret would make ReplaceAll match at every position and shred the
+	// message, so a store configured without one redacts nothing.
 	if s.Secret != "" {
 		msg = strings.ReplaceAll(msg, s.Secret, "[redacted]")
 	}

@@ -11,14 +11,14 @@ type ScoreRow struct {
 	Rounds, Closed   int
 	Reported, Halted int
 	DonePct, HaltPct float64 // of Closed; 0 when Closed == 0
-	MedianMS         int64   // closed rounds with DurationMS; 0 when none
+	MedianMS         int64   // closed rounds with DurationMS, 0 when none
 	HasMedian        bool    // a closed row carried a duration
 	TTFTMS           int64
 	HasTTFT          bool
 	Plan             bool
-	CostPerRound     float64 // mean over rows with known cost; valid when HasCost
+	CostPerRound     float64 // mean over rows with known cost, valid when HasCost
 	HasCost          bool
-	CommitsPerRound  float64 // mean over rows with Commits != nil; valid when HasCommits
+	CommitsPerRound  float64 // mean over rows with Commits != nil, valid when HasCommits
 	HasCommits       bool
 	Few              bool // Rounds < 5
 	// Bindings is the distinct BindingID count among this candidate's rows.
@@ -145,11 +145,11 @@ func buildScorecard(in Inputs, rows []db.RoundRow) []ScoreRow {
 	return out
 }
 
-// buildAccountScorecard is buildScorecard grouped by the login a round drew
-// from rather than its candidate. Rounds with no account -- every host with
-// none -- produce no rows, so the two report shapes never disagree on whether
-// an account was recorded. The per-account TTFT and plan flags are not known,
-// so a row's Token is the account name and those fields stay zero.
+// buildAccountScorecard is buildScorecard grouped by the login a round drew from
+// rather than its candidate. Rounds with no account produce no rows, so the two
+// shapes never disagree on whether an account was recorded; per-account TTFT and
+// plan flags are unknown, so a row's Token is the account name and those fields
+// stay zero.
 func buildAccountScorecard(in Inputs, rows []db.RoundRow) []ScoreRow {
 	accs := map[string]*scoreAcc{}
 	var order []string

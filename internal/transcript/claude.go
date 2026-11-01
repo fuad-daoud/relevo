@@ -6,9 +6,9 @@ import (
 )
 
 // claude is the table for claude -p --output-format stream-json --verbose: an
-// assistant message's blocks render in order; tool results are user events.
+// assistant message's blocks render in order, tool results arrive as user events.
 // Every element carries its event's clock; a tool result also carries the span
-// from the tool_use event that made the call, when this pass saw that call.
+// from its tool_use event, when this pass saw that call.
 func (r *Renderer) claude(obj map[string]any) []string {
 	at := claudeAt(obj)
 	s := r.at(at)
@@ -27,9 +27,8 @@ func (r *Renderer) claude(obj map[string]any) []string {
 	return []string{s.line(unknown(obj))}
 }
 
-// claudeAssistant renders an assistant message's blocks in order: each tool_use
-// block registers its id for the result that answers it; text and thinking
-// blocks render as the stream renders them.
+// claudeAssistant renders an assistant message's blocks in order, each tool_use
+// block registering its id for the answering result.
 func (r *Renderer) claudeAssistant(obj map[string]any, at time.Time, s stamp) []string {
 	var out []string
 	for _, blk := range contentBlocks(obj) {
@@ -67,7 +66,7 @@ func (r *Renderer) claudeUser(obj map[string]any, at time.Time) []string {
 	return out
 }
 
-// claudeResult renders the final result event: denied permissions, a failure
+// claudeResult renders the final result event: denied permissions, then a failure
 // subtype, then the result text.
 func claudeResult(obj map[string]any, s stamp) []string {
 	var out []string

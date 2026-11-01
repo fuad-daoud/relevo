@@ -5,9 +5,9 @@ import (
 	"sort"
 )
 
-// codex is the table for `codex exec --json`: a spawned [agents.*] role
-// is a thread inside the same process, reported as collab_tool_call items.
-// The stream carries no time field, so nothing here is ever stamped.
+// codex is the table for `codex exec --json`: a spawned [agents.*] role is a
+// thread in the same process, reported as collab_tool_call items. The stream
+// carries no time field, so nothing here is ever stamped.
 func (r *Renderer) codex(obj map[string]any) []string {
 	switch str(obj["type"]) {
 	case "thread.started", "turn.started", "turn.completed", "item.started":
@@ -53,8 +53,8 @@ func renderCodexCommand(item map[string]any) []string {
 	return []string{call, errLine(fmt.Sprintf("exit %d: %s", int(code), out))}
 }
 
-// renderCodexFileChange names one edit line per changed file; a change with no
-// path list degrades to its type rather than vanishing.
+// renderCodexFileChange names one edit line per changed file, degrading to its
+// type when a change lists no paths rather than vanishing.
 func renderCodexFileChange(item map[string]any) []string {
 	changes := asList(item["changes"])
 	if len(changes) == 0 {

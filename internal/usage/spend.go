@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// Spend is a binding's, or a group's, total. Measured and Estimated are separate
+// Spend is a binding's, or a group's, total. Measured and Estimated stay separate
 // sums so an estimate never hides inside a measurement; Plan and Unknown are round
 // counts, never dollars.
 type Spend struct {
@@ -89,8 +89,8 @@ func moneyParts(s Spend) []string {
 	return p
 }
 
-// SpendLine: "4 rounds +2c · $1.23 · ~$0.40 · 1 plan · 2 unknown", with a trailing
-// tok cell when the sum moved tokens.
+// SpendLine reads "4 rounds +2c · $1.23 · ~$0.40 · 1 plan · 2 unknown", with a
+// trailing tok cell when the sum moved tokens.
 func SpendLine(s Spend) string {
 	if s.Rounds == 0 && s.Consults == 0 {
 		return "no rounds"
@@ -110,7 +110,7 @@ func SpendLine(s Spend) string {
 }
 
 // MoneyShort is SpendLine without the rounds part, for the rail card and the
-// statusline: "$1.51 · 2.1M tok".
+// statusline.
 func MoneyShort(s Spend) string {
 	parts := moneyParts(s)
 	if total := s.Tokens.Total(); total > 0 {

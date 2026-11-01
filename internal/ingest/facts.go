@@ -8,14 +8,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
-// roundFacts derives round n's plain facts from its events. The caller sets ID,
+// roundFacts derives round n's plain facts from its events; the caller sets ID,
 // BindingID, Number, Outcome, the builder fields and Switches.
 func roundFacts(events []store.LogEntry, n int) db.Round {
 	var r db.Round
 	var earliest, planTS time.Time
 	var haveEarliest, havePlanTS bool
-	// The round's earlier segments, computed once: what the report entry's
-	// own usage must be folded with.
+	// The round's earlier segments, computed once, which the report entry's own
+	// usage folds with.
 	prior := store.PriorUsageOf(events, n)
 
 	for _, e := range events {
@@ -82,10 +82,9 @@ func applyReport(r *db.Round, e store.LogEntry, prior usage.Usage) {
 	r.ReportOutcome = &outcome
 }
 
-// totalUsage folds a round's earlier segments into the report entry's own
-// usage, so the row counts every session the round ran. A report
-// entry with no usage keeps the row figureless: a round is never given a
-// partial total in place of an absent report segment.
+// totalUsage folds a round's earlier segments into the report entry's own usage,
+// so the row counts every session the round ran. A report entry with no usage
+// keeps the row figureless, never a partial total in place of an absent segment.
 func totalUsage(prior usage.Usage, u *usage.Usage) *usage.Usage {
 	if u == nil {
 		return nil

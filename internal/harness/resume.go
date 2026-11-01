@@ -74,11 +74,10 @@ func (h Harness) Resume(sessionID, prompt string, tier Tier, contributorMode str
 }
 
 // ResumeBuild renders the argv that continues a lost headless builder's own
-// session: the builder-grade print form l with the prompt, budget, directory,
-// writable root, prompt file, chain dir and definition filled in, followed by this kind's resume selector. l must
-// be the Launch the round was started with, so a resumed round keeps its model,
-// agent definition and permission flags. A kind with no verified resume
-// selector returns ErrResumeUnsupported, which the caller reads as "relaunch".
+// session: l with its prompt fields filled in, followed by this kind's resume
+// selector. l must be the Launch the round was started with, so a resumed round
+// keeps its model, agent definition and permission flags. A kind with no
+// verified resume selector returns ErrResumeUnsupported, read as "relaunch".
 func (h Harness) ResumeBuild(sessionID string, l Launch, prompt string, budget time.Duration, dir, writableRoot, promptFile, chainDir, definition string) ([]string, error) {
 	if err := checkResumeSessionID(sessionID); err != nil {
 		return nil, err
@@ -103,9 +102,9 @@ func (h Harness) ResumeBuild(sessionID string, l Launch, prompt string, budget t
 
 // DeleteSession renders the argv that deletes an existing harness session. The
 // returned slice is the argv after the binary, as for Resume. opencode's
-// --standalone matters: going through the background service could start that
-// service, and on startup it resumes every session marked running. A kind
-// whose sessions end with their process has nothing to delete.
+// --standalone matters: the background service could start and resume every
+// session marked running. A kind whose sessions end with their process has
+// nothing to delete.
 func (h Harness) DeleteSession(sessionID string) ([]string, error) {
 	if err := checkResumeSessionID(sessionID); err != nil {
 		return nil, err

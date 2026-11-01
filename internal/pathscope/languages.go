@@ -63,7 +63,6 @@ type lang struct {
 	directives []string
 }
 
-// hasCommentMarker reports whether the language lexes any comment form.
 func (l *lang) hasCommentMarker() bool {
 	return l.hashAny || l.hashWord || l.slashLine || l.dashLine ||
 		l.dashSymbol || l.blockSlash || l.blockBrace || l.dashBracket
