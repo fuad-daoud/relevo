@@ -16,11 +16,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
-type promptCall struct {
-	Target string
-	Text   string
-}
-
 type scriptRunner struct {
 	mu    sync.Mutex
 	specs []spawn.ProcSpec

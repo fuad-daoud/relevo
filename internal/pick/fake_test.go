@@ -9,8 +9,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-type sentKeys struct{ Target, Keys string }
-
 // testBinding is a bound, active binding with a named builder.
 func testBinding(name string) store.Binding {
 	return store.Binding{

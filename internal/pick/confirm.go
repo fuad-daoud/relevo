@@ -23,7 +23,7 @@ func (m Model) confirmView() string {
 		question = fmt.Sprintf("mark %s done?", m.confirm.Name)
 	}
 	sb.WriteString(titleStyle.Render(question))
-	sb.WriteString(fmt.Sprintf("  it is %s in round %d", strings.TrimRight(styleDisplay(m.confirm.Display), " "), m.confirm.Round))
+	fmt.Fprintf(&sb, "  it is %s in round %d", strings.TrimRight(styleDisplay(m.confirm.Display), " "), m.confirm.Round)
 	sb.WriteString("\n\n")
 	sb.WriteString(hintStyle.Render("y confirm  any other key cancels"))
 	return sb.String()
