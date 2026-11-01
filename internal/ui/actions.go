@@ -309,9 +309,9 @@ func (a *mastermindActions) Retry(ctx context.Context, key, candidate string) wi
 	}
 
 	res, err := relevo.Send(ctx, rt, name, tmpPath, relevo.SendOptions{Builder: candidate})
-	if rerr := os.Remove(tmpPath); rerr != nil && err == nil {
-		return widget.Result{Err: rerr, Refresh: true}
-	}
+	// The send has happened or failed by now; a temp file left behind is the
+	// tmp sweep's to collect, not a reason to report a sent round as failed.
+	_ = os.Remove(tmpPath)
 	if err != nil {
 		return widget.Result{Err: err, Refresh: true}
 	}
