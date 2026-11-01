@@ -8,7 +8,6 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 )
 
@@ -62,9 +61,6 @@ func testSecretDB(t *testing.T) *db.DB {
 	return d
 }
 
-// testSecrets returns the machine database's secret store.
-func testSecrets(t *testing.T) delivery.SecretStore { return db.SecretStore{DB: testSecretDB(t)} }
-
 // testMasterMinds returns a mastermind registry over a fresh temp database.
 func testMasterMinds(t *testing.T) *mastermind.DBRegistry {
 	t.Helper()
@@ -73,14 +69,6 @@ func testMasterMinds(t *testing.T) *mastermind.DBRegistry {
 		Now: time.Now,
 	}
 }
-
-// badJSONKV returns invalid bytes for every key, so a reader hits the decode
-// failure corrupt stored bytes can cause.
-type badJSONKV struct{}
-
-func (badJSONKV) KVGet(string) ([]byte, bool, error) { return []byte("not json"), true, nil }
-func (badJSONKV) KVPut(string, []byte) error         { return nil }
-func (badJSONKV) KVDelete(string) error              { return nil }
 
 // failPutKV delegates to an inner KV but fails KVPut for one key, so one
 // record's write can be made to fail while another's succeeds.

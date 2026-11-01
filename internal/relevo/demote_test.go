@@ -72,7 +72,7 @@ func TestDemoteRowShowsAtTheDemotedPosition(t *testing.T) {
 	b := strings.Index(got, "  1  b")
 	c := strings.Index(got, "  2  c")
 	a := strings.Index(got, "  a  ")
-	if b < 0 || c < 0 || a < 0 || !(b < c) {
+	if b < 0 || c < 0 || a < 0 || b >= c {
 		t.Fatalf("rows not reordered:\n%s", got)
 	}
 	if !strings.Contains(got, "<- would pick") || !strings.Contains(got, "demoted until 14:00Z") {
