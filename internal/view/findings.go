@@ -12,11 +12,8 @@ import (
 var ErrNoFindings = errors.New("no findings for that consult")
 
 // FindingsRound resolves which round holds a consult's findings for
-// `show --findings <id>`. requested is --round; 0 scans for the newest round
-// holding the findings. upper is the highest round a consult can be recorded
-// on: the binding's current round counter, or the plan-round count when that
-// is larger. exists reports whether a round holds the consult's findings, and
-// an error from it propagates. With none found it returns ErrNoFindings.
+// `show --findings <id>`: requested names it, 0 scans for the newest round
+// holding the findings. With none found it returns ErrNoFindings.
 func FindingsRound(requested, upper int, exists func(round int) (bool, error)) (int, error) {
 	if requested > 0 {
 		if requested > upper {

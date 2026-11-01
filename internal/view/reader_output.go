@@ -11,11 +11,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/transcript"
 )
 
-// ReaderOutputEmpty reports whether the runner's output file is empty for the
-// close's purposes: zero bytes, or content that is only whitespace once
+// ReaderOutputEmpty reports whether the runner's output file is empty for
+// the close's purposes: zero bytes, or content that is only whitespace once
 // trimmed. A file a runner created and then wrote nothing into is not an
-// artifact, and treating it as one leaves the round with a blank output and no
-// say so. The read error is reported rather than guessed at, so a file that
+// artifact. The read error is reported rather than guessed at, so a file that
 // cannot be read is never silently overwritten by the fallback.
 func ReaderOutputEmpty(path string) (bool, error) {
 	data, err := os.ReadFile(path)
@@ -26,8 +25,7 @@ func ReaderOutputEmpty(path string) (bool, error) {
 }
 
 // ReaderFallbackNote is the log-note token a close records when it saved the
-// stream because the runner's output file was missing or empty, and the token
-// ReaderFallbackHeader looks for when it marks the same output. Both surfaces
+// stream because the runner's output file was missing or empty. Both surfaces
 // read this one constant, so the note and the header cannot disagree about
 // which output was salvaged.
 const ReaderFallbackNote = "output-fallback"
@@ -45,9 +43,9 @@ func WithFallbackHeader(entries []store.LogEntry, round int, text string) string
 	return text
 }
 
-// ReaderFallbackHeader returns ReaderFallbackHeaderLine when name's round closed
-// with the fallback marked, else "". entries is the binding's whole log; the
-// search is from the newest entry back, so the newest marking of the round wins.
+// ReaderFallbackHeader returns ReaderFallbackHeaderLine when name's round
+// closed with the fallback marked, else "". The search runs from the newest
+// entry back, so the newest marking of the round wins.
 func ReaderFallbackHeader(entries []store.LogEntry, round int) string {
 	for i := len(entries) - 1; i >= 0; i-- {
 		if e := entries[i]; e.Round == round && strings.Contains(e.Note, ReaderFallbackNote) {
@@ -77,10 +75,10 @@ func ReaderOutputText(kind string, stream []byte, chainReader bool) string {
 	return transcript.FinalText(kind, stream)
 }
 
-// ReaderOutputPresent reports whether path is a regular file the runner wrote
-// with content in it, and whether that file is empty. A missing path, a symlink,
-// a directory or a fifo is not present and not empty: whether it is a refusal
-// is the close's decision, not this one's, so nothing here follows it.
+// ReaderOutputPresent reports whether path is a regular file the runner
+// wrote with content in it, and whether that file is empty. A missing path,
+// a symlink, a directory or a fifo is not present and not empty: whether it
+// is a refusal is the close's decision, not this one's.
 func ReaderOutputPresent(path string) (present, empty bool) {
 	fi, err := os.Lstat(path)
 	if err != nil || !fi.Mode().IsRegular() {
@@ -92,8 +90,7 @@ func ReaderOutputPresent(path string) (present, empty bool) {
 	return true, empty
 }
 
-// LastStreamKind is the harness kind of the round's last stream segment: the
-// kind of the process that last wrote, which a mid-round switch changes. The
+// LastStreamKind is the harness kind of the round's last stream segment. The
 // endpoint's own Kind is the fallback for a round that recorded no segment.
 func LastStreamKind(b store.Binding) string {
 	kinds := make([]string, 0, len(b.Builder.StreamSegments))

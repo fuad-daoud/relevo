@@ -47,9 +47,7 @@ func RoundArtifacts(st *store.Store, name string, round int, actor, output strin
 }
 
 // ArtifactRels lists the Rel names of round's artifact files for actor in
-// binding name: the nested "NNN-<actor>/<rel>" names Store.RoundFiles reports
-// for a live binding, or the newest archived record's sealed names for one
-// that is not live. A binding that is neither is ErrNotFound.
+// binding name, from the live binding or the newest archived record.
 func ArtifactRels(st *store.Store, name string, round int, actor string) ([]string, error) {
 	prefix := fmt.Sprintf("%03d-%s/", round, actor)
 
@@ -94,9 +92,9 @@ func ArtifactRels(st *store.Store, name string, round int, actor string) ([]stri
 	return out, nil
 }
 
-// SortArtifacts sorts files with output first, then summary.md, then by Rel.
-// output == "" puts summary.md first as before, because a caller that passes
-// none only wants a total.
+// SortArtifacts sorts files with output first, then summary.md, then by Rel:
+// output == "" puts summary.md first, because a caller that passes none only
+// wants a total.
 func SortArtifacts(files []ArtifactFile, output string) {
 	rank := func(rel string) int {
 		switch {
@@ -131,10 +129,9 @@ func ArtifactDirSize(st *store.Store, b store.Binding, round int) (int64, error)
 	return total, nil
 }
 
-// ArtifactCapExceeded reports whether round's artifact directory of b is over
-// artifactMaxBytes, and the directory's total size. A size that cannot be read
-// is logged and treated as under the cap: a read failure must never block a
-// seal or a close.
+// ArtifactCapExceeded reports whether round's artifact directory is over
+// artifactMaxBytes. A size that cannot be read is logged and treated as under
+// the cap: a read failure must never block a seal or a close.
 func ArtifactCapExceeded(st *store.Store, b store.Binding, round int, artifactMaxBytes int64) (bool, int64) {
 	total, err := ArtifactDirSize(st, b, round)
 	if err != nil {
@@ -144,27 +141,24 @@ func ArtifactCapExceeded(st *store.Store, b store.Binding, round int, artifactMa
 	return total > artifactMaxBytes, total
 }
 
-// ArtifactCapReason is the NEEDS YOU reason for an artifact directory of total
-// bytes over cap: the sizes in MB, and how to raise the cap.
+// ArtifactCapReason is the NEEDS YOU reason for an artifact directory over cap.
 func ArtifactCapReason(total, cap int64) string {
 	return fmt.Sprintf("artifacts over the cap: %s > %d MB; raise policy.artifact_max_mb to seal them",
 		FormatMB(total), cap/(1<<20))
 }
 
 // FormatMB renders n bytes as megabytes, one decimal place at most with a
-// trailing zero removed: 2097152 -> "2", 2621440 -> "2.5".
+// trailing zero removed.
 func FormatMB(n int64) string {
 	return TrimZeroDecimal(float64(n) / float64(1<<20))
 }
 
-// ArtifactLine renders one artifact as the `show --artifacts` line: its size,
-// the time it was written as HH:MM, and its rel.
+// ArtifactLine renders one artifact as the `show --artifacts` line.
 func ArtifactLine(f ArtifactFile) string {
 	return fmt.Sprintf("%6s  %s  %s", ArtifactSizeText(f.Size), f.MTime.Format("15:04"), f.Rel)
 }
 
-// ArtifactSizeText renders n bytes human-readably: under 1000 as-is, under a
-// million as decimal k, otherwise decimal M, one decimal place at most.
+// ArtifactSizeText renders n bytes human-readably, one decimal place at most.
 func ArtifactSizeText(n int64) string {
 	switch {
 	case n < 1000:
@@ -176,7 +170,7 @@ func ArtifactSizeText(n int64) string {
 	}
 }
 
-// TrimZeroDecimal formats v with one decimal place and drops a trailing ".0".
+// TrimZeroDecimal formats v with one decimal place.
 func TrimZeroDecimal(v float64) string {
 	return strings.TrimSuffix(strconv.FormatFloat(v, 'f', 1, 64), ".0")
 }

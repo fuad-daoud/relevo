@@ -8,8 +8,8 @@ import "fmt"
 // at the project's size cap.
 
 // chainSplitText is a fork parent's collapsed middle: "split 1/2", how many of
-// its children are done. A chain with no children returns "", so its middle is
-// exactly the text it had before forks existed.
+// its children are done. A chain with no children returns "", so a row
+// without a fork keeps the text it had.
 func chainSplitText(f ChainFacts) string {
 	if len(f.Children) == 0 {
 		return ""
@@ -19,8 +19,7 @@ func chainSplitText(f ChainFacts) string {
 
 // ChainChildRow is the statusline row a fork's child adds under its parent: a
 // row is emitted only for a child that halted or that reads NEEDS YOU, so the
-// collapsed parent never hides the one child a human must act on. A running or
-// done child returns false and stays inside the parent's "split 1/2".
+// collapsed parent never hides the one child a human must act on.
 //
 // This is the same projection the Go statusline and the status --line --json
 // document read, so neither consumer can expand a child the other hides.

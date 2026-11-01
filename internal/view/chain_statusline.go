@@ -6,11 +6,9 @@ package view
 // at the project's size cap.
 
 // statusLineRowOfChain builds the statusline row that stands in for a
-// chain: one entry per chain in place of its members' rows. The middle is the
-// chain's plan segment, and the status column follows the chain -- NEEDS YOU
-// while it waits on a human, DONE once it finished, ACTIVE while it works.
-// The chain has no round and no candidate, so those cells stay empty and the
-// clock keeps the "--" every row without a round shows.
+// chain: one entry per chain in place of its members' rows. The chain has no
+// round and no candidate, so those cells stay empty and the clock keeps the
+// "--" every row without a round shows.
 //
 // A fork's parent carries its split in the middle ("split 1/2") and, instead of
 // a row per child, one extra row for the child that needs a human: a halted or

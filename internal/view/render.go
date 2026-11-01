@@ -11,8 +11,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
-// mastermindNameOrID is the mastermind a status row names: the record name when it
-// has one, else the id, else "".
 func mastermindNameOrID(b BindingStatus) string {
 	if b.MasterMindName != "" {
 		return b.MasterMindName
@@ -25,7 +23,6 @@ func RenderStatus(r Report) string {
 	return renderStatusBody(r) + handedOverBlock(r.HandedOver)
 }
 
-// handedOverBlock is one line per binding another machine writes.
 func handedOverBlock(rows []HandedOverRow) string {
 	var sb strings.Builder
 	for _, row := range rows {
@@ -78,16 +75,12 @@ func renderStatusBody(r Report) string {
 	}
 
 	if r.DoneHidden > 0 {
-		// The footer says "clear" and not "free": gc frees disk only for
-		// relevo-created worktrees, and the footer must not overpromise.
 		fmt.Fprintf(&sb, "%d done · relevo unbind --done to clear\n", r.DoneHidden)
 	}
 
 	return sb.String()
 }
 
-// writeBindingRow renders one binding's block: the round line, the mastermind
-// line, the runner line and the trailer lines.
 func writeBindingRow(sb *strings.Builder, b BindingStatus) {
 	writeRoundLine(sb, b)
 	writeMasterMindLine(sb, b)
@@ -95,10 +88,9 @@ func writeBindingRow(sb *strings.Builder, b BindingStatus) {
 	writeRowTrailer(sb, b)
 }
 
-// writeChainRow renders one chain's block in place of its members' rows: the
-// chain's name, the tree it works in, the chain's status and its plan segment,
-// then the halt reason when it has one. A member's own block still renders
-// through writeBindingRow, underneath, in the status <chain> view.
+// writeChainRow renders one chain's block in place of its members' rows. A
+// member's own block still renders through writeBindingRow, underneath, in
+// the status <chain> view.
 //
 // A fork's child prints indented under the parent that forked it, and keeps its
 // own step and status: a child is a chain like any other, so it reads like one.
@@ -117,10 +109,9 @@ func writeChainRow(sb *strings.Builder, b BindingStatus) {
 	fmt.Fprint(sb, "\n")
 }
 
-// indentName is a row's name prefixed with two spaces per level. A fork child
-// takes its level from the parent its facts name, so the nesting has one source
-// and a surface cannot disagree with the statusline about it. An ordinary row
-// has no parent and starts at the margin, exactly as before.
+// indentName is a row's name prefixed with two spaces per level. A fork
+// child takes its level from the parent its facts name, so the nesting has
+// one source and a surface cannot disagree with the statusline about it.
 func indentName(b BindingStatus) string {
 	if b.Chain != nil && b.Chain.Parent != "" {
 		return "  " + b.Name
@@ -128,9 +119,6 @@ func indentName(b BindingStatus) string {
 	return b.Name
 }
 
-// writeRoundLine renders the binding's name, cwd, round and state, plus the
-// land state, the stale age, the dirty marker, the consult count, the
-// verdict, the live diff, the quiet age and the unread marker.
 func writeRoundLine(sb *strings.Builder, b BindingStatus) {
 	fmt.Fprintf(sb, "%-8s %-40s round %-3d %s", b.Name, b.CWD, b.Round, b.Display)
 	// The land state sits on the round line, where the human reads what
@@ -156,8 +144,6 @@ func writeRoundLine(sb *strings.Builder, b BindingStatus) {
 	if b.Verdict != "" {
 		fmt.Fprintf(sb, " %s", b.Verdict)
 	}
-	// The round's live diff against its baseline, how long an ACTIVE row has
-	// been quiet, and whether its newest report is unread.
 	if b.Live != nil {
 		fmt.Fprintf(sb, "  +%d/-%d in %d", b.Live.Added, b.Live.Removed, b.Live.Files)
 		if b.Live.Shared {
@@ -173,9 +159,8 @@ func writeRoundLine(sb *strings.Builder, b BindingStatus) {
 	fmt.Fprint(sb, "\n")
 }
 
-// writeMasterMindLine renders the mastermind line, including the mastermind's chat
-// label when cmd/relevo filled it. An empty label leaves the line
-// byte-identical to the line that existed before these fields.
+// writeMasterMindLine renders the mastermind line. An empty label leaves the
+// line byte-identical to the line that existed before these fields.
 func writeMasterMindLine(sb *strings.Builder, b BindingStatus) {
 	fmt.Fprintf(sb, "  MasterMind  %-14s %-8s route %s",
 		mastermindNameOrID(b), b.MasterMindKind, b.MasterMindRoute)
@@ -189,8 +174,7 @@ func writeMasterMindLine(sb *strings.Builder, b BindingStatus) {
 	fmt.Fprint(sb, "\n")
 }
 
-// writeBuilderLine renders the runner line: the process word, the kind and
-// status, and the runner's short name when it has one, its token otherwise.
+// writeBuilderLine renders the runner line.
 func writeBuilderLine(sb *strings.Builder, b BindingStatus) {
 	builderLabel := b.BuilderName
 	if builderLabel == "" {
@@ -209,12 +193,11 @@ func writeBuilderLine(sb *strings.Builder, b BindingStatus) {
 			"remote", b.BuilderKind, b.BuilderStatus, builderLabel)
 	}
 	// The account a pool drawn round used sits beside the builder name, where a
-	// human looks for which login was burned. Empty on a host with no accounts,
-	// so those rows keep the line they always had.
+	// human looks for which login was burned. Empty on a host with no accounts.
 	if b.BuilderAccount != "" {
 		fmt.Fprintf(sb, "   account %s", b.BuilderAccount)
 	}
-	// A builder row is the common case: the actor is always set now, so
+	// A builder row is the common case: the actor is always set, so
 	// printing it would end every row in "actor builder". Only a row whose
 	// runner plays some other actor names it here.
 	if b.Role != "builder" {
@@ -226,9 +209,7 @@ func writeBuilderLine(sb *strings.Builder, b BindingStatus) {
 	fmt.Fprint(sb, "\n")
 }
 
-// writeRowTrailer renders the lines below the runner line: the headless log
-// tail, the detail, the last event, the usage and spend, and the pending
-// payload.
+// writeRowTrailer renders the lines below the runner line.
 func writeRowTrailer(sb *strings.Builder, b BindingStatus) {
 	if b.Headless != nil {
 		for _, line := range b.Headless.Tail {
@@ -272,8 +253,6 @@ func writeRowTrailer(sb *strings.Builder, b BindingStatus) {
 func writeGatedBlock(sb *strings.Builder, gates []availability.Gate, trailingBlank bool) {
 	sb.WriteString("candidates\n")
 
-	// A gate prints the candidate's short name when it has one, its token
-	// otherwise; the column fits whatever is printed.
 	width := 0
 	for _, g := range gates {
 		if len(gateLabel(g)) > width {
