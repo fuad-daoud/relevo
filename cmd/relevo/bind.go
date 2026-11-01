@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -205,6 +206,98 @@ func boundLine(b store.Binding, mastermind, candidate string, placement resolve.
 		b.Name, mastermind, builderWhere(b.Builder), candidate, b.Round)
 }
 
+// bindResolvedKind picks the candidate kind and spec role the preflight and
+// the bind use: a rebind reads the stored binding's actor, a resume reads its
+// stored kind, and a fresh bind resolves the requested candidate.
+func bindResolvedKind(rt relevo.Runtime, f bindFlags, adopted bool, roleName string) (kind, specRole string) {
+	specRole = roleName
+	switch {
+	case f.rebind:
+		// A rebind replaces the builder of an existing binding, so the
+		// definitions come from the stored binding's actor. If the load fails,
+		// roleName stands as the fallback.
+		if f.name != "" {
+			if existing, err := rt.Store.Load(f.name); err == nil {
+				specRole = existing.WriterRole()
+			}
+		}
+		kind = resolve.CandidateKindFor(relevo.ResolveDeps(rt), f.candidate, specRole)
+	case adopted:
+		if f.name != "" {
+			if existing, err := rt.Store.Load(f.name); err == nil {
+				kind = existing.Builder.Kind
+				specRole = existing.WriterRole()
+			}
+		}
+	default:
+		kind = resolve.CandidateKindFor(relevo.ResolveDeps(rt), f.candidate, roleName)
+	}
+	return kind, specRole
+}
+
+// bindPreflightNotices runs the advisory preflight: it never blocks the bind.
+func bindPreflightNotices(rt relevo.Runtime, kind string, adopted bool, specRole string) {
+	if kind == "" {
+		return
+	}
+	env := doctor.NewEnv(rt.Store)
+	// A Spec error is data: defs stays nil and the preflight falls back to
+	// the shipped builder definitions.
+	var defs []string
+	if spec, err := rt.RoleRegistry().Spec(specRole, kind); err == nil {
+		defs = spec.Definitions
+	}
+	for _, line := range doctor.BindPreflightDefs(context.Background(), env, kind, adopted, defs) {
+		fmt.Fprintln(os.Stderr, line)
+	}
+}
+
+// reportBindResumed prints the resume/rebind report: the rebound line, the
+// stored gate line, and the document when asked.
+func reportBindResumed(rt relevo.Runtime, f bindFlags, b store.Binding, cwd string, res resolve.Resolution, roleName, gateText string, notices io.Writer) error {
+	builderDesc := builderWhere(b.Builder)
+	if b.BuilderCandidate != "" {
+		builderDesc = fmt.Sprintf("%s (%s)", builderWhere(b.Builder), rt.Candidates.NameOf(b.BuilderCandidate))
+	}
+	if !f.asJSON {
+		fmt.Printf("rebound %s: builder %s, still on round %d\n"+
+			"hand it the round with:\n"+
+			"  relevo send --name %s --file %s\n",
+			b.Name, builderDesc, b.Round, b.Name, rt.Store.PromptPath(b.Name, b.Round))
+	}
+	if _, err := fmt.Fprintln(notices, gateText); err != nil {
+		return fmt.Errorf("write bind report: %w", err)
+	}
+	noteRegateNoGate(notices, b)
+	notePick(rt, roleName, res)
+	warnWaitingOnYou(rt, b.Name)
+	if f.asJSON {
+		return printDoc(bindDocOf(b, cwd, roleName, candidateLabel(rt, b.BuilderCandidate), true))
+	}
+	return nil
+}
+
+// reportBindCreated prints the fresh bind report: the bound line, the gate
+// line, and the document when asked.
+func reportBindCreated(rt relevo.Runtime, f bindFlags, b store.Binding, cwd string, res resolve.Resolution, roleName, gateText string, notices io.Writer) error {
+	if !f.asJSON {
+		fmt.Println(boundLine(b, mastermindLabel(rt, b.MasterMindID), rt.Candidates.NameOf(b.BuilderCandidate), res.Placement))
+	}
+	if _, err := fmt.Fprintln(notices, gateText); err != nil {
+		return fmt.Errorf("write bind report: %w", err)
+	}
+	noteRegateNoGate(notices, b)
+	if n := availability.GatedNote(relevo.AvailabilityDeps(rt), b.BuilderCandidate); n != "" {
+		fmt.Fprintln(os.Stderr, n)
+	}
+	notePick(rt, roleName, res)
+	warnWaitingOnYou(rt, b.Name)
+	if f.asJSON {
+		return printDoc(bindDocOf(b, cwd, roleName, candidateLabel(rt, b.BuilderCandidate), f.resume))
+	}
+	return nil
+}
+
 // runBind is bind's own body after parsing: bind the current tree, or resume
 // or rebind an existing binding.
 func runBind(f bindFlags) error {
@@ -231,6 +324,7 @@ func runBind(f bindFlags) error {
 
 	opts := relevo.BindOptions{
 		Name:         f.name,
+		Candidate:    f.candidate,
 		MasterMindID: f.mastermind,
 		CWD:          cwd,
 		Resume:       f.resume,
@@ -247,47 +341,10 @@ func runBind(f bindFlags) error {
 		Role:         f.role,
 		Local:        f.local,
 	}
-	opts.Candidate = f.candidate
-
 	adopted := f.resume
 	roleName := roleOrBuilder(f.role)
-	specRole := roleName
-	kind := ""
-	switch {
-	case f.rebind:
-		// A rebind replaces the builder of an existing binding, so the
-		// definitions come from the stored binding's actor. If the load fails,
-		// roleName stands as the fallback.
-		if f.name != "" {
-			if existing, err := rt.Store.Load(f.name); err == nil {
-				specRole = existing.WriterRole()
-			}
-		}
-		kind = resolve.CandidateKindFor(relevo.ResolveDeps(rt), opts.Candidate, specRole)
-	case adopted:
-		if f.name != "" {
-			if existing, err := rt.Store.Load(f.name); err == nil {
-				kind = existing.Builder.Kind
-				specRole = existing.WriterRole()
-			}
-		}
-	default:
-		kind = resolve.CandidateKindFor(relevo.ResolveDeps(rt), opts.Candidate, roleName)
-	}
-
-	// Preflight is advisory only: it never blocks the bind.
-	if kind != "" {
-		env := doctor.NewEnv(rt.Store)
-		// A Spec error is data: defs stays nil and the preflight falls back to
-		// the shipped builder definitions.
-		var defs []string
-		if spec, err := rt.RoleRegistry().Spec(specRole, kind); err == nil {
-			defs = spec.Definitions
-		}
-		for _, line := range doctor.BindPreflightDefs(context.Background(), env, kind, adopted, defs) {
-			fmt.Fprintln(os.Stderr, line)
-		}
-	}
+	kind, specRole := bindResolvedKind(rt, f, adopted, roleName)
+	bindPreflightNotices(rt, kind, adopted, specRole)
 
 	b, res, err := relevo.BindResolved(context.Background(), rt, opts)
 	if err != nil {
@@ -304,67 +361,47 @@ func runBind(f bindFlags) error {
 	}
 	gateText := relevo.GateLine(gateCmd, gateSource)
 	if t := relevo.RestoreText(res); t != "" {
-		fmt.Fprintln(notices, t)
+		if _, err := fmt.Fprintln(notices, t); err != nil {
+			return fmt.Errorf("write bind report: %w", err)
+		}
 	}
 	if res.WasPaused {
-		fmt.Fprintf(notices, "resumed %s after pause\n", b.Name)
+		if _, err := fmt.Fprintf(notices, "resumed %s after pause\n", b.Name); err != nil {
+			return fmt.Errorf("write bind report: %w", err)
+		}
 	}
 
 	if f.resume && (f.candidate != "" || f.rebind) {
-		builderDesc := builderWhere(b.Builder)
-		if b.BuilderCandidate != "" {
-			builderDesc = fmt.Sprintf("%s (%s)", builderWhere(b.Builder), rt.Candidates.NameOf(b.BuilderCandidate))
-		}
-		if !f.asJSON {
-			fmt.Printf("rebound %s: builder %s, still on round %d\n"+
-				"hand it the round with:\n"+
-				"  relevo send --name %s --file %s\n",
-				b.Name, builderDesc, b.Round, b.Name, rt.Store.PromptPath(b.Name, b.Round))
-		}
-		fmt.Fprintln(notices, gateText)
-		noteRegateNoGate(notices, b)
-		notePick(rt, roleName, res)
-		warnWaitingOnYou(rt, b.Name)
-		if f.asJSON {
-			return printDoc(bindDocOf(b, cwd, roleName, candidateLabel(rt, b.BuilderCandidate), true))
-		}
-		return nil
+		return reportBindResumed(rt, f, b, cwd, res, roleName, gateText, notices)
 	}
+	return reportBindCreated(rt, f, b, cwd, res, roleName, gateText, notices)
+}
 
-	if !f.asJSON {
-		fmt.Println(boundLine(b, mastermindLabel(rt, b.MasterMindID), rt.Candidates.NameOf(b.BuilderCandidate), res.Placement))
+// resolveAddName validates the add target flags into the binding name: a
+// branch alone derives one, and --branch and --cwd name two different trees.
+func resolveAddName(f bindFlags) (string, error) {
+	if f.branch != "" && f.cwd != "" {
+		return "", fail(codeRefused, "relevo bind --branch and --cwd are exclusive")
 	}
-	fmt.Fprintln(notices, gateText)
-	noteRegateNoGate(notices, b)
-	if n := availability.GatedNote(relevo.AvailabilityDeps(rt), b.BuilderCandidate); n != "" {
-		fmt.Fprintln(os.Stderr, n)
+	if f.name != "" {
+		return f.name, nil
 	}
-	notePick(rt, roleName, res)
-	warnWaitingOnYou(rt, b.Name)
-	if f.asJSON {
-		return printDoc(bindDocOf(b, cwd, roleName, candidateLabel(rt, b.BuilderCandidate), f.resume))
+	if f.branch == "" {
+		return "", fail(codeUsage, "relevo bind requires --name NAME")
 	}
-	return nil
+	derived, err := relevo.DefaultBindingName(f.branch)
+	if err != nil {
+		return "", fail(codeUsage, "relevo bind --branch %s: cannot derive a binding name (%v); pass --name", f.branch, err)
+	}
+	return derived, nil
 }
 
 // runAdd is add's body after parsing, reached through `bind --worktree`
 // or one of the placement flags.
 func runAdd(f bindFlags) error {
-	name := f.name
-	branch := f.branch
-	cwd := f.cwd
-	if branch != "" && cwd != "" {
-		return fail(codeRefused, "relevo bind --branch and --cwd are exclusive")
-	}
-	if name == "" {
-		if branch == "" {
-			return fail(codeUsage, "relevo bind requires --name NAME")
-		}
-		derived, err := relevo.DefaultBindingName(branch)
-		if err != nil {
-			return fail(codeUsage, "relevo bind --branch %s: cannot derive a binding name (%v); pass --name", branch, err)
-		}
-		name = derived
+	name, err := resolveAddName(f)
+	if err != nil {
+		return err
 	}
 
 	rt, err := newRuntime()
@@ -382,8 +419,8 @@ func runAdd(f bindFlags) error {
 		Candidate:    f.candidate,
 		MasterMindID: f.mastermind,
 		Repo:         repo,
-		CWD:          cwd,
-		Branch:       branch,
+		CWD:          f.cwd,
+		Branch:       f.branch,
 		Server:       f.server,
 		Base:         f.base,
 		Local:        f.local,
@@ -399,7 +436,12 @@ func runAdd(f bindFlags) error {
 	if err != nil {
 		return writeError(err)
 	}
+	return reportAdd(rt, f, res)
+}
 
+// reportAdd prints the add report: the added line, the gate line, the tree
+// lines, and the document when asked.
+func reportAdd(rt relevo.Runtime, f bindFlags, res relevo.AddResult) error {
 	notices := noticeWriter(f.asJSON)
 	if !f.asJSON {
 		switch {
@@ -417,7 +459,9 @@ func runAdd(f bindFlags) error {
 				res.Binding.Name, rt.Candidates.NameOf(res.Binding.BuilderCandidate), builderWhere(res.Binding.Builder))
 		}
 	}
-	fmt.Fprintln(notices, relevo.GateLine(res.Resolution.Gate.Command, res.Resolution.Gate.Source))
+	if _, err := fmt.Fprintln(notices, relevo.GateLine(res.Resolution.Gate.Command, res.Resolution.Gate.Source)); err != nil {
+		return fmt.Errorf("write add report: %w", err)
+	}
 	noteRegateNoGate(notices, res.Binding)
 	if n := availability.GatedNote(relevo.AvailabilityDeps(rt), res.Binding.BuilderCandidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)

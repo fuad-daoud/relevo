@@ -32,8 +32,12 @@ func captureOutput(t *testing.T, fn func() error) (stdout []byte, stderr []byte,
 
 	runErr := fn()
 
-	wOut.Close()
-	wErr.Close()
+	if err := wOut.Close(); err != nil {
+		t.Fatalf("close stdout pipe: %v", err)
+	}
+	if err := wErr.Close(); err != nil {
+		t.Fatalf("close stderr pipe: %v", err)
+	}
 
 	os.Stdout = origStdout
 	os.Stderr = origStderr
@@ -222,7 +226,9 @@ func TestAgentInstallWriteFailureExits1(t *testing.T) {
 		t.Fatalf("Chmod: %v", err)
 	}
 	t.Cleanup(func() {
-		os.Chmod(agentsDir, 0o755)
+		if err := os.Chmod(agentsDir, 0o755); err != nil {
+			t.Errorf("restore Chmod: %v", err)
+		}
 	})
 
 	stdout, _, runErr := captureOutput(t, func() error {
