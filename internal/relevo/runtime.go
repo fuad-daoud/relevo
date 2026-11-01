@@ -218,9 +218,10 @@ type Runtime struct {
 	DB *db.DB
 
 	// History is the shared file the availability_event and latency_sample rows
-	// are read from and written into, when one is open: a history row travels
-	// through the outbox like every other shared row, while a kv document
-	// travels as a document.
+	// are read from and written into, when one is open. It is the shared file,
+	// not the machine-local one Gates and Latency bind, because a history row
+	// travels through the outbox like every other shared row, while a kv
+	// document travels as a document.
 	//
 	// It is separate from DB because the two answer different questions: History
 	// is needed by every surface that renders a gate or a latency figure, so a

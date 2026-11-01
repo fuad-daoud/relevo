@@ -156,13 +156,14 @@ func switchLines(entries []store.LogEntry, round int, serverSwitch bool) []strin
 	return out
 }
 
-// switchEntry is the log record of one builder switch: why the switch
-// happened, and what ExplainResolution says about the replacement pick.
-// Always Confirmed and DirToMasterMind, the same reasoning as pickEntry: a
-// switch is never a pending payload, so it needs no action -- the round
-// already moved on and the next tick continues from there. Its trace to the
-// mastermind is the switch line in the closing round's report: no new stored
-// fact is added for it, since the note written here is what that line renders.
+// switchEntry is the log record of one builder switch: why the switch happened,
+// and what ExplainResolution says about the replacement pick. Always Confirmed
+// and DirToMasterMind, the same reasoning as pickEntry: a switch is never a
+// pending payload, so it needs no action -- the round already moved on and the
+// next tick continues from there. Queuing one would cost a mid-round runner
+// turn and a duplicate payload beside the report. Its trace to the mastermind
+// is the switch line in the closing round's report: no new stored fact is added
+// for it, since the note written here is what that line renders.
 func switchEntry(now time.Time, round int, reason string, res resolve.Resolution, u *usage.Usage) store.LogEntry {
 	return store.LogEntry{
 		TS: now.UTC(), Round: round, Direction: store.DirToMasterMind,
@@ -420,20 +421,21 @@ func limitText(ctx context.Context, rt Runtime, b store.Binding) string {
 	return text
 }
 
-// gateOnLimit is the one helper every decision point calls. Preconditions:
-// the round is open and the caller holds the store lock. It applies the
-// switchable guard itself and returns handled=false without reading the ledger
-// when it fails: an adopted builder is never gated by relevo, and no call
-// site repeats the check. It checks the credit class before MatchLimit,
-// because the two differ in kind and not only in duration: a credit exhaustion
-// gates until a human tops the account up and clears it, while every other
-// limit gates until a reset the provider named -- so a credit tail that also
-// carries a reset, a clock or a date takes the credit gate and never the timed
-// one. On a match it records one rate_limited ledger entry (source relevo),
-// warns, marks a headless builder's log, then checks whether this round
-// already has a report on disk: if so the gate is recorded but the round is
-// left for the caller to close as it would have (handled=false, m.Line set);
-// otherwise it switches the builder uncounted (handled=true).
+// gateOnLimit is the one helper every decision point calls. Preconditions: the
+// round is open and the caller holds the store lock. It applies the switchable
+// guard itself, the same one gateOnOutage and the gatedBuilder trigger in
+// headless_reconcile use, and returns handled=false without reading the ledger
+// when it fails: an adopted builder is never gated by relevo, and no call site
+// repeats the check. It checks the credit class before MatchLimit, because the
+// two differ in kind and not only in duration: a credit exhaustion gates until
+// a human tops the account up and clears it, while every other limit gates
+// until a reset the provider named -- so a credit tail that also carries a
+// reset, a clock or a date takes the credit gate and never the timed one. On a
+// match it records one rate_limited ledger entry (source relevo), warns, marks
+// a headless builder's log, then checks whether this round already has a report
+// on disk: if so the gate is recorded but the round is left for the caller to
+// close as it would have (handled=false, m.Line set); otherwise it switches the
+// builder uncounted (handled=true).
 func gateOnLimit(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, text string, resetMS int64, closeOld bool) (next store.Binding, m availability.LimitMatch, handled bool, err error) {
 	switchable := b.BuilderCandidate != "" && !b.RoundStartedAt.IsZero()
 	if !switchable {

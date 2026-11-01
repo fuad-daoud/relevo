@@ -240,9 +240,10 @@ func WorkflowEdit(rt Runtime, name string, source []byte, def workflow.Definitio
 
 // WorkflowDefinition returns the parsed definition of a saved workflow: the
 // source with its file: seeds already replaced by the contents they named when
-// the workflow was saved. A shipped workflow is refused: a caller asking for a
-// saved one wants the saved one and nothing else, and a caller that wants the
-// shipped definition asks for it by WorkflowList or by workflow.Default.
+// the workflow was saved. A shipped workflow is refused with
+// ErrWorkflowNotSaved: a caller asking for a saved one wants the saved one and
+// nothing else, and a caller that wants the shipped definition asks for it by
+// WorkflowList or by workflow.Default.
 func WorkflowDefinition(rt Runtime, name string) (workflow.Definition, error) {
 	saved, err := loadWorkflows(rt)
 	if err != nil {

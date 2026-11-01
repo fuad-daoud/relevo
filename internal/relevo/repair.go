@@ -119,12 +119,14 @@ func repairDecision(b store.Binding, sig string) (ok bool, why string) {
 }
 
 // startRepairRound stages and hands over round failedRound+1 after a failing
-// gate. It is called on the tick that closed round failedRound, with the
-// binding already advanced (`b.Round == failedRound+1`, RoundStartedAt zero).
+// gate. It is called on the tick that closed round failedRound, after the
+// report has been queued, with the binding already advanced (`b.Round ==
+// failedRound+1`, RoundStartedAt zero).
 //
 // repairDecision holds the two bounds that end the loop with NEEDS YOU instead
 // of another repair, so a caller that must decide without opening the round
-// reaches the same answer.
+// reaches the same answer. Otherwise it opens round N+1 with the same fields
+// Send sets, and the two must stay in step.
 //
 // Preconditions: the round just closed; rec.Result == "fail"; b.Regate > 0.
 func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, rec store.GateRecord, failedRound int) (store.Binding, error) {

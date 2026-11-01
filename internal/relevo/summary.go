@@ -30,15 +30,15 @@ func reportPathFor(rt Runtime, b store.Binding) string {
 
 // writeReaderSummary records a reader round's report. The runner's own output
 // file (<label>.md) is what the close keeps when it is a regular file with
-// content in it, left verbatim without reading the stream; only a missing or
-// empty file falls back to the stream -- the last message that carried a
-// relevo block, kept whole so the close can parse its tail and strip it
-// afterwards, else the stream's last assistant text -- and the fallback is
-// reported so the caller can mark the round. Either is rendered with the
-// harness kind of the last segment that ran, which a mid-round switch can
-// change. A runner that wrote only summary.md does not keep it as the report:
-// the old file stays an extra artifact. A writer is untouched: it writes its
-// own report.
+// content in it, left verbatim, and for a non-chain reader the stream is not
+// read; only a missing or empty file falls back to the stream -- the last
+// message that carried a relevo block, kept whole so the close can parse its
+// tail and strip it afterwards, else the stream's last assistant text -- and
+// the fallback is reported so the caller can mark the round. Either is rendered
+// with the harness kind of the last segment that ran, which a mid-round switch
+// can change. A runner that wrote only summary.md does not keep it as the
+// report: the old file stays an extra artifact. A writer is untouched: it
+// writes its own report.
 //
 // A chain's reviewer and security members keep a file that has content in it
 // too: their verdict comes from the final message's block, and a block inside

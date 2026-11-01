@@ -46,10 +46,10 @@ func joinNotes(a, b string) string {
 // while the gate runs and the round is left alone; closed is true when the
 // round was closed this tick; the two are never both true.
 //
-// extraNote is appended (via joinNotes) to whichever note this close would
-// otherwise write, computed before this call since queueReport clears
-// RoundBaselineTree and the comparison must happen while it is still on the
-// binding.
+// extraNote is the headless path's escape annotation from escapeCheck ("" for
+// the pane path), appended (via joinNotes) to whichever note this close would
+// otherwise write. It is computed before this call because queueReport clears
+// RoundBaselineTree and the comparison needs it.
 //
 // Preconditions: the round is open -- a plan was sent for b.Round and no
 // report has been queued for it.

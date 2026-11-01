@@ -183,9 +183,9 @@ func unreachableHaltDisproven(state remote.RoundState) bool {
 // reason of its own. It is a constant rather than a builder of arbitrary text, so
 // a reader of the halt sees the same sentence every time; the kind, not this
 // text, is what says the halt came from a broken view, and only the load
-// migration reads it back, to name the kind a record without the field.
+// migration reads it back, to name the kind for a record that lacks the field.
 //
 // It is store's constant because that migration is the other half of it: the
 // sentence written and the sentence recovered have to be one, or a break
-// without the field is not recognised on the next load.
+// recorded without the field is not recognised on the next load.
 const brokenHaltText = store.BrokenHaltText

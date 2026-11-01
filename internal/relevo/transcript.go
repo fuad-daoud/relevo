@@ -21,6 +21,12 @@ import (
 // lines, so one fixed 64 KiB window is not enough.
 const streamTailWindow = 64 * 1024
 
+// lineRenderer turns one raw line of a stream -- with the harness kind of the
+// segment that holds it -- into the lines a reader or a scan sees: a reader
+// renders through streamRenderer, a limit scan through transcript.LimitLines,
+// which keeps only the lines the harness itself wrote.
+type lineRenderer func(kind string, line []byte) []string
+
 // renderStream renders every complete line of a round's stream -- up to the
 // last '\n'; a trailing partial line is ignored -- into the bytes
 // drainFile+appendLines would have appended to an empty log for the same
@@ -28,13 +34,6 @@ const streamTailWindow = 64 * 1024
 // segment holding each line's absolute offset; a later line can never change
 // an earlier one, so the rendering's prefix is stable as the stream grows,
 // which serve's files/log?from= offsets and the client mirror depend on.
-//
-// lineRenderer turns one raw line of a stream -- with the harness kind of the
-// segment that holds it -- into the lines a reader or a scan sees: a reader
-// renders through streamRenderer, a limit scan through transcript.LimitLines,
-// which keeps only the lines the harness itself wrote.
-type lineRenderer func(kind string, line []byte) []string
-
 func renderStream(stream []byte, segs []store.StreamSegment, fallback string) []byte {
 	return renderStreamFrom(stream, 0, segs, fallback, streamRenderer())
 }

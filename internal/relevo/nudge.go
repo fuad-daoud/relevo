@@ -54,11 +54,14 @@ const readerFenceNote = "Your block's opening and closing ``` fences are missing
 // plan instead of writing it, and the plan must be the final message itself.
 const planNudgeNote = "Your final message must be the plan itself, as numbered steps; do not write it to a file and do not point to one."
 
-// planNudgeLimit caps continuations for a plan-less output: after it the round closes.
+// planNudgeLimit caps continuations for a plan-less output: after it the round
+// closes and the chain halts.
 const planNudgeLimit = 1
 
+// readerNudgeLimit is how many continuations a reader gets before it halts.
 const readerNudgeLimit = 2
 
+// writerNudgeLimit is how many nudges a writer gets before it is switched.
 const writerNudgeLimit = 1
 
 func nudgeLimit(shape string) int {

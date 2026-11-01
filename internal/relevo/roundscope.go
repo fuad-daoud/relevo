@@ -109,11 +109,13 @@ const (
 //
 // The replacement is the SAME round on the same binding, so it asks systemd for
 // the same unit name the process it replaces is still using, which systemd
-// refuses as already loaded. The unit is freed here first: probed, ended if
-// loaded, then polled until the host agrees it is gone.
+// refuses as already loaded, and the spawn path would read that Start error as
+// a candidate failure. The unit is freed here first: probed, ended if loaded,
+// then polled until the host agrees it is gone.
 //
 // A unit still loaded after the deadline, and a runner that can see a scope but
-// not end one, are both ErrScopeActive: retryable, with nothing spawned.
+// not end one, are both ErrScopeActive: retryable, with nothing spawned and
+// nothing gated, so the next tick retries the switch.
 func freeRoundScope(ctx context.Context, rt Runtime, b store.Binding) error {
 	unit := scopeUnitName(b)
 	if !scopeRunning(ctx, rt, unit) {

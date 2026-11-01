@@ -335,15 +335,15 @@ func (r waitRegistration) release() {
 	}
 }
 
-// Wait polls the store until one of opts.Names closes its round, needs a
-// human, or is gone, or opts.Timeout elapses. On an exit that delivers (every
-// code but WaitTimeout and WaitGone) it prints the binding's oldest pending
-// payload for the mastermind and marks the entry delivered with route "wait",
-// unless opts.Peek suppresses that; a delivery failure is returned in
-// DeliverErr and never changes Code. Every name is loaded once up front, so a
-// name that does not exist errors before the loop starts; a name that
-// disappears mid-wait is WaitGone instead. The first pass always runs before
-// any sleep, so a round that already closed returns immediately.
+// Wait polls the store until one of opts.Names closes its round, needs a human,
+// or is gone, or opts.Timeout elapses. On an exit that delivers (every code but
+// WaitTimeout and WaitGone) it returns the binding's oldest pending payload in
+// WaitResult.Payload and marks the entry delivered with route "wait", unless
+// opts.Peek suppresses that; a delivery failure is returned in DeliverErr and
+// never changes Code. Every name is loaded once up front, so a name that does
+// not exist errors before the loop starts; a name that disappears mid-wait is
+// WaitGone instead. The first pass always runs before any sleep, so a round
+// that already closed returns immediately.
 func Wait(ctx context.Context, rt Runtime, opts WaitOptions) (name string, res WaitResult, err error) {
 	if len(opts.Names) == 0 {
 		return "", WaitResult{}, fmt.Errorf("wait: at least one name is required")

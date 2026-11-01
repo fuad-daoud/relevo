@@ -71,16 +71,6 @@ func mirrorDriftOnce(ctx context.Context, rt Runtime, tx *store.Tx, server, name
 	applyDrift(rt, tx, name, round, fetchDrift(ctx, rt, server, name, round))
 }
 
-// applyRemote turns a fetched server view into the binding's new state under
-// the caller's lock. It makes no network call: every value it acts on was read
-// by fetchRemote before the lock was taken. deliver reports whether the caller
-// should follow up with deliverAndSettle; it is false for every path that
-// returns on its own (a running mirror, a
-// fresh halt, an unreachable/cert/other error).
-//
-// The split exists for SyncRemote: a read path must observe the server's state
-// without ever calling deliverAndSettle, because a CLI one-shot has no business
-// claiming a pending payload out from under the daemon.
 func liveFactsOf(v *remote.LiveView) *store.LiveFacts {
 	if v == nil {
 		return nil
@@ -118,6 +108,16 @@ func liveFactsOf(v *remote.LiveView) *store.LiveFacts {
 	}
 }
 
+// applyRemote turns a fetched server view into the binding's new state under
+// the caller's lock. It makes no network call: every value it acts on was read
+// by fetchRemote before the lock was taken. deliver reports whether the caller
+// should follow up with deliverAndSettle; it is false for every path that
+// returns on its own (a running mirror, a fresh halt, an unreachable/cert/other
+// error).
+//
+// The split exists for SyncRemote: a read path must observe the server's state
+// without ever calling deliverAndSettle, because a CLI one-shot has no business
+// claiming a pending payload out from under the daemon.
 func applyRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, f *remoteFetch) (store.Binding, bool, error) {
 	if rt.Remote == nil {
 		slog.Warn("remote client not configured", "binding", b.Name)
