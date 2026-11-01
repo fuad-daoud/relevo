@@ -7,13 +7,11 @@ import (
 	"strings"
 )
 
-// The enumerate-a-table seam reconcile walks: one bounded, key-ordered page of
-// the rows of one shared table that one installation owns, each row carrying
-// every column the table declares. It is the read that turns "this origin's rows"
-// into something a walk can step over in pages rather than load whole, and it
-// resolves ownership in SQL through the same expression the outbox triggers
-// write, so the rows a reconcile walks are the rows an export of the same origin
-// would have drained.
+// The enumerate-a-table seam reconcile walks: one bounded page of one
+// installation's rows of one shared table. It resolves ownership in SQL
+// through the same expression the outbox triggers write, so the rows a
+// reconcile walks are the rows an export of the same origin would have
+// drained.
 
 // SharedOwnedRowPage returns up to limit rows of tbl that origin owns, in rowid
 // order, starting just after the rowid after names. The cursor is the rowid the
@@ -101,10 +99,8 @@ func ownedRowPageQuery(shared SharedTable, rule ownerRule, columns []string, ori
 	return query, []any{origin, after, limit}
 }
 
-// scanOwnedRow turns one result row into an exchange row, reading the leading
-// rowid and the json_array beside it as the key, and every remaining column by
-// the name the statement named it under. A key that is not text is refused: it
-// would be a key nothing downstream could compare.
+// scanOwnedRow turns one result row into an exchange row. A key that is not
+// text is refused: it would be a key nothing downstream could compare.
 func scanOwnedRow(rows *sql.Rows, tbl string) (ExchangeRow, error) {
 	names, err := rows.Columns()
 	if err != nil {

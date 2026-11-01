@@ -38,7 +38,7 @@ type tursoCdcStats struct {
 }
 
 // DropTursoCdcOnce removes the change-capture table an earlier engine left in
-// the shared file and in the machine-local file beside it, once, after a full
+// the shared file and the machine-local file beside it, once, after a full
 // backup of each file that holds it. The table is dead weight: nothing reads
 // it, and dropping it only frees pages once a VACUUM rewrites the file.
 //

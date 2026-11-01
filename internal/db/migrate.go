@@ -96,7 +96,6 @@ func migrationNames(fsys fs.FS) ([]string, error) {
 	return names, nil
 }
 
-// migrationNumber parses the leading integer of a migration file name.
 func migrationNumber(name string) (int, error) {
 	i := strings.IndexByte(name, '_')
 	if i < 0 {

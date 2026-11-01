@@ -20,9 +20,9 @@ import (
 // return before it rolls the pinned connection back anyway.
 const discardTimeout = 2 * time.Second
 
-// conn is one client connection. It pins one database connection for its life,
-// runs one request at a time, and tracks that request so a cancel or a next can
-// reach it from the read loop.
+// conn pins one database connection for its life, runs one request at a time,
+// and tracks that request so a cancel or a next can reach it from the read
+// loop.
 type conn struct {
 	s  *Server
 	nc net.Conn

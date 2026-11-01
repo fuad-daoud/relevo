@@ -16,9 +16,9 @@ import (
 var mkdirVacuumTemp = os.MkdirTemp
 
 // BackupTo copies the whole database to path with VACUUM INTO. The copy is
-// built in an owner-only temp directory and linked into place as its last step,
-// so it never exists world-readable even for the instant before a chmod; a path
-// that already exists is refused, because VACUUM INTO would overwrite it.
+// built in an owner-only temp directory and linked into place, so it never
+// exists world-readable; a path that already exists is refused, because VACUUM
+// INTO would overwrite it.
 func (d *DB) BackupTo(path string) error {
 	if err := vacuumInto(d.sqlDB, path); err != nil {
 		return fmt.Errorf("db: backup to %s: %w", path, err)
@@ -27,9 +27,9 @@ func (d *DB) BackupTo(path string) error {
 }
 
 // vacuumInto copies the whole database to target with the engine's VACUUM INTO.
-// The copy lands in an owner-only temp directory beside the target, so a
-// failure never leaves a world-readable file, and is hard-linked to target:
-// the link fails rather than clobbering a target that appeared meanwhile.
+// The copy lands in an owner-only temp directory beside the target and is
+// hard-linked to it: the link fails rather than clobbering a target that
+// appeared meanwhile.
 func vacuumInto(pool *sql.DB, target string) error {
 	if _, err := os.Stat(target); err == nil {
 		return fmt.Errorf("db: vacuum into %s: file already exists: %w", target, ErrInvalid)
@@ -79,12 +79,10 @@ func vacuumInto(pool *sql.DB, target string) error {
 }
 
 // refuseQuotedTarget refuses a target holding a quote character, which the
-// copy's literal form cannot express. It is answered here rather than left to
-// the engine because only one engine's literal can refuse: Turso's takes the
-// target as a literal and rejects a quote, while modernc's takes it as a
-// bound parameter and accepts one. Deciding in Go makes the refusal the same
-// whichever engine compiled the binary, and it still names the destination the
-// caller asked for rather than the private temp copy.
+// copy's literal form cannot express. Deciding in Go makes the refusal the
+// same whichever engine compiled the binary: Turso's takes the target as a
+// literal and rejects a quote, while modernc's takes it as a bound parameter
+// and accepts one.
 func refuseQuotedTarget(target string) error {
 	if strings.Contains(target, "'") {
 		return fmt.Errorf("db: vacuum into %s: the path contains a quote: %w", target, ErrInvalid)
@@ -114,24 +112,17 @@ func (d *DB) Vacuum() error {
 }
 
 // Reclaim is the compaction a one-time pass wants once it has deleted rows or
-// converted columns, on the handles such a pass actually runs on.
+// converted columns. It is Vacuum, with the one answer Vacuum cannot give
+// turned into a skip: a pass runs while the owner is serving, and the in-place
+// swap strands every client the owner is answering, so on a served handle it
+// skips instead of refusing. The deletes and the conversions have already
+// committed, and only the file compaction is left.
 //
-// It is Vacuum, with the one answer Vacuum cannot give turned into a skip. A
-// pass runs while the owner is serving, so the in-place swap -- which closes
-// the pool and reopens it, stranding every client the owner is answering -- is
-// refused on every served handle. That refusal is the right answer to a vacuum
-// a person asked for and the wrong one here: the deletes and the conversions
-// have already committed, and only the file compaction is left. So a pass calls
-// this instead: on a served handle it skips, records nothing in its stats and
-// says so in one line naming the pass and the reason, and on an unserved one it
-// vacuums exactly as before.
-//
-// Skipping loses no space the engine could have used. The pages the deletes and
-// the conversions freed are on the file's free list, and the engine hands a
-// free page to the next insert into that table rather than extending the file,
-// so the database stops growing at the high-water mark the pass left instead of
-// shrinking. Returning them to the filesystem is left to ReclaimFreePages, which
-// the next start runs before it serves the handle.
+// Skipping loses no space the engine could have used: the freed pages sit on
+// the file's free list, and the engine hands a free page to the next insert
+// into that table rather than extending the file. Returning them to the
+// filesystem is left to ReclaimFreePages, which the next start runs before it
+// serves the handle.
 func (d *DB) Reclaim(pass string) error {
 	if d == nil {
 		return nil
@@ -143,7 +134,6 @@ func (d *DB) Reclaim(pass string) error {
 	return d.Vacuum()
 }
 
-// vacuumAllowed refuses the handle kinds a vacuum cannot swap under.
 func (d *DB) vacuumAllowed() error {
 	switch {
 	case d.served:
@@ -194,8 +184,7 @@ func requireDrainedWAL(path string) error {
 }
 
 // walBytes reports how many bytes the write-ahead log beside path still holds.
-// An absent log holds none, which is the same answer an empty one gives: the two
-// callers differ in what they do about it, not in what they measure.
+// An absent log holds none, the same answer an empty one gives.
 func walBytes(path string) (int64, error) {
 	fi, err := os.Stat(path + "-wal")
 	if err != nil {

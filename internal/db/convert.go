@@ -15,9 +15,8 @@ import (
 
 // convertStepHook, when set, runs after each named conversion step and lets a
 // test stop the conversion there, the way a kill would. A non-nil error aborts
-// the conversion and is returned; the file stays in whatever state the step
-// left it, which the next open's conversion must recover from. It is nil in
-// production.
+// and is returned; the file stays as the step left it for the next open to
+// recover. It is nil in production.
 var convertStepHook func(step string) error
 
 // The conversion's named steps, in order, for convertStepHook.
@@ -32,15 +31,14 @@ const (
 
 // relevoApplicationID is the marker a converted file carries: the SQLite
 // header's application_id field. It lives in the file, so it survives VACUUM
-// INTO and a plain copy, and a raw read of the header needs no engine to open
-// the database. SQLite never sets the field on its own and nothing else in
-// relevo uses it, so the value cannot mean anything but "already converted".
-// 0x52454C56 spells "RELV".
+// INTO and a plain copy, and a raw header read needs no engine. SQLite never
+// sets the field and nothing else in relevo uses it, so it means only "already
+// converted". 0x52454C56 spells "RELV".
 const relevoApplicationID = 0x52454C56
 
 // sqliteMagic is the 16 bytes every SQLite database starts with, and
 // applicationIDOffset is where the header's application_id field sits. A file
-// without the magic has no schema yet: it is a fresh database, not a legacy one.
+// without the magic has no schema yet: fresh, not legacy.
 const (
 	sqliteMagic         = "SQLite format 3\x00"
 	sqliteHeaderLen     = 100
@@ -48,28 +46,19 @@ const (
 )
 
 // convertLegacy turns a database an earlier, modernc build of relevo wrote into
-// one Turso can open. It runs once and is safe if the process is killed at any
-// step: every step is idempotent, and each leaves a consistent file on disk.
+// one Turso can open. Every step is idempotent, so killing the process at any
+// step leaves a consistent file the next open recovers.
 //
-// The trigger is the marker the conversion leaves in the file, plus the -shm
-// sidecar. A file without the marker was written by a pre-Turso build and must
-// be converted -- including one a pre-Turso build closed cleanly, which deletes
-// its -shm and would otherwise be skipped. A -shm beside the file means a SQLite
-// process left it, such as an unclean stop after a downgrade, and the marker is
-// then not trusted. A file with no SQLite header at all is not a legacy database
-// -- it is one the Turso build is creating -- so it is left for the engine to
-// mark at creation, and never converted.
+// The trigger is the marker the conversion leaves, plus the -shm sidecar. A file
+// without the marker was written by a pre-Turso build and must be converted,
+// including one closed cleanly, which deletes its -shm and would otherwise be
+// skipped. A -shm beside the file means a SQLite process left it, and the marker
+// is then not trusted. A file with no SQLite header at all is one the Turso
+// build is creating, so it is left for the engine to mark, and never converted.
 //
-// The steps:
-//
-//   - back the file up to path+".pre-turso" through VACUUM INTO, unless a
-//     backup already exists (a killed earlier attempt leaves one to reuse);
-//   - open under modernc and drain the -wal with PRAGMA wal_checkpoint(TRUNCATE),
-//     requiring the checkpoint not to be busy;
-//   - repair every invalid UTF-8 TEXT value, which only modernc can read;
-//   - set the marker, so a later open treats the file as converted;
-//   - close, so SQLite checkpoints and cleans its sidecars;
-//   - refuse if the -wal still holds frames, and remove a leftover -shm.
+// The steps back the file up, drain the -wal under modernc, repair invalid
+// UTF-8, set the marker, close to clean the sidecars, and refuse a -wal that
+// still holds frames.
 func convertLegacy(path string) error {
 	shm, err := pathExists(path + "-shm")
 	if err != nil {
@@ -88,10 +77,9 @@ func convertLegacy(path string) error {
 		return fmt.Errorf("db: convert %s: open modernc: %w: %w", path, ErrOpen, err)
 	}
 	if !shm {
-		// The header holds the marker only once SQLite has checkpointed it. A
-		// write that died before its checkpoint leaves the marker in the -wal,
-		// where the raw read cannot see it and only the engine can, so the
-		// marker is confirmed through the engine before the file is rewritten.
+		// The header holds the marker only once SQLite checkpoints it, so a
+		// marker the raw read cannot see is confirmed through the engine before
+		// the file is rewritten.
 		converted, err := engineMarked(pool)
 		if err != nil {
 			_ = pool.Close()
@@ -106,8 +94,7 @@ func convertLegacy(path string) error {
 
 // runConversion performs the conversion's steps in order on a pool opened under
 // modernc. A hook abort is a kill: it returns the hook's error and leaves the
-// pool open, so SQLite's sidecars survive on disk exactly as a kill would leave
-// them.
+// pool open, so the sidecars survive on disk as a kill would leave them.
 func runConversion(path string, pool *sql.DB) error {
 	fail := func(cause error) error {
 		_ = pool.Close()
@@ -178,9 +165,9 @@ func runConversion(path string, pool *sql.DB) error {
 	return finishSidecars(path)
 }
 
-// finishSidecars refuses a -wal that still holds frames -- opening under Turso
-// would lose them -- and removes the -shm SQLite left behind, which is the last
-// trace of the old mode and would make the next open convert again.
+// finishSidecars refuses a -wal that still holds frames, which opening under
+// Turso would lose, and removes the -shm left behind, which would make the next
+// open convert again.
 func finishSidecars(path string) error {
 	if size, err := walSize(path); err != nil {
 		return fmt.Errorf("db: convert %s: stat -wal: %w", path, err)
@@ -193,7 +180,6 @@ func finishSidecars(path string) error {
 	return stepHook(convertSidecars)
 }
 
-// stepHook runs the test hook when one is installed.
 func stepHook(step string) error {
 	if convertStepHook == nil {
 		return nil
@@ -201,10 +187,9 @@ func stepHook(step string) error {
 	return convertStepHook(step)
 }
 
-// fileMarker reads the marker straight out of the file header. It reports
-// converted for a file carrying the marker, and fresh for a file that is not a
-// SQLite database yet -- absent, empty or truncated -- which is the state a new
-// database is in before the Turso build creates it.
+// fileMarker reads the marker straight out of the file header: converted for a
+// file carrying it, and fresh for a file that is not a SQLite database yet --
+// absent, empty or truncated -- which is how a database reads before creation.
 func fileMarker(path string) (converted, fresh bool, err error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -227,11 +212,11 @@ func fileMarker(path string) (converted, fresh bool, err error) {
 	return id == relevoApplicationID, false, nil
 }
 
-// markConverted writes the marker through the conversion's connection and
-// drains the -wal again, so the marker is in the main file rather than only in a
-// log another handle can keep alive: a kill right after this leaves a file the
-// header alone already reads as converted, and the sidecar check below still
-// sees a drained -wal.
+// markConverted writes the marker through the conversion's connection and drains
+// the -wal again, so the marker is in the main file rather than only in a log
+// another handle keeps alive: a kill right after still leaves a file the header
+// alone reads as converted, and the sidecar check below still sees a drained
+// -wal.
 func markConverted(ctx context.Context, conn *sql.Conn) error {
 	if _, err := conn.ExecContext(ctx, markerStatement()); err != nil {
 		return fmt.Errorf("set application_id: %w", err)
@@ -252,8 +237,8 @@ func markerStatement() string {
 	return fmt.Sprintf("PRAGMA application_id = %d", relevoApplicationID)
 }
 
-// engineMarked reports whether the open pool sees the marker, which covers one
-// a write that never checkpointed left in the -wal.
+// engineMarked reports whether the open pool sees the marker, covering one a
+// write left in the -wal without checkpointing.
 func engineMarked(pool *sql.DB) (bool, error) {
 	ctx := context.Background()
 	conn, err := pool.Conn(ctx)
@@ -271,8 +256,7 @@ func engineMarked(pool *sql.DB) (bool, error) {
 // markFreshDatabase records the marker on a database the engine is creating, so
 // a file this build writes is never taken for a legacy one. The marker is
 // checkpointed into the main file straight away: left in the -wal, the next open
-// of the same file in this process would read the header and not find it. It
-// runs under the live engine, so only Turso's own write path is involved.
+// would read the header and not find it.
 func markFreshDatabase(pool *sql.DB) error {
 	ctx := context.Background()
 	conn, err := pool.Conn(ctx)
@@ -293,8 +277,8 @@ func markFreshDatabase(pool *sql.DB) error {
 }
 
 // requireConverted refuses a file whose header lacks the conversion marker. A
-// read-only open must not convert -- that is a write -- so it refuses and leaves
-// the file for a writable open, the daemon's, to convert and mark.
+// read-only open must not convert -- that is a write -- so it leaves the file
+// for a writable open to convert and mark.
 func requireConverted(path string) error {
 	converted, _, err := fileMarker(path)
 	if err != nil {
@@ -306,7 +290,6 @@ func requireConverted(path string) error {
 	return nil
 }
 
-// pathExists reports whether path names an existing file.
 func pathExists(path string) (bool, error) {
 	_, err := os.Stat(path)
 	switch {
@@ -318,9 +301,9 @@ func pathExists(path string) (bool, error) {
 	return false, err
 }
 
-// openConvertPool opens path under modernc, the only engine that can still read
-// the file the old build wrote. The path is percent-encoded, so a `#`, `?` or
-// `%` in it stays part of the filename.
+// openConvertPool opens path under modernc, the only engine that still reads
+// the old build's file. The path is percent-encoded, so a `#`, `?` or `%` in it
+// stays part of the filename.
 func openConvertPool(path string) (*sql.DB, error) {
 	dsn := (&url.URL{Scheme: "file", Path: path}).String() +
 		"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
@@ -329,9 +312,8 @@ func openConvertPool(path string) (*sql.DB, error) {
 
 // checkpointTruncate runs PRAGMA wal_checkpoint(TRUNCATE) and returns its busy
 // flag: zero when the whole -wal was checkpointed. The columns are read as
-// nullable because the engines report NULL rather than a number when the
-// checkpoint cannot run at all; that is not a drained -wal, so it is reported as
-// busy and a caller that requires one refuses.
+// nullable because the engines report NULL when the checkpoint cannot run at
+// all, which is reported as busy rather than drained.
 func checkpointTruncate(ctx context.Context, conn *sql.Conn) (int, error) {
 	var busy, log, checkpointed sql.NullInt64
 	if err := conn.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &log, &checkpointed); err != nil {

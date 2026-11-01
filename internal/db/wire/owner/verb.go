@@ -8,13 +8,12 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 )
 
-// startVerb launches one sync verb.
-//
-// It deliberately does not pin a SQL connection: a verb runs against the
-// handles the server already holds, so taking a pool slot would hold a
-// connection this request never uses. It does take the connection's single
-// request slot, so a client that sends a second verb before reading the first
-// answer waits for the clear rather than having its connection dropped.
+// startVerb launches one sync verb without pinning a SQL connection: a verb
+// runs against the handles the server already holds, so taking a pool slot
+// would hold a connection this request never uses. It does take the
+// connection's single request slot, so a client that sends a second verb before
+// reading the first answer waits for the clear rather than having its
+// connection dropped.
 //
 // The token arrives in the frame's raw tail. It is handed to the hook and to
 // nothing else: it is never logged, never formatted into an error, and never

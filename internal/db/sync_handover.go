@@ -61,11 +61,10 @@ func (t *Tx) LiveRoots(owner, name string) (Roots, bool, error) {
 }
 
 // HandOver makes target the writer of owner's live binding name: both roots'
-// writer column flips in this transaction, so the outbox attributes the flip to
-// this installation (the update triggers read OLD.writer) and the exporter
-// carries it. Each root is recorded in sync_binding_left, and the keys of the
-// binding's children are kept so this machine's reconcile never emits a delete
-// for rows it no longer writes.
+// writer column flips in this transaction, so the outbox attributes the flip
+// to this installation and the exporter carries it. Each root is recorded in
+// sync_binding_left, and the keys of the binding's children are kept so this
+// machine's reconcile never emits a delete for rows it no longer writes.
 func (t *Tx) HandOver(owner, name, target string, at time.Time) (Roots, error) {
 	roots, found, err := t.LiveRoots(owner, name)
 	if err != nil {
@@ -114,7 +113,6 @@ func (t *Tx) SetRootWriter(table, id, writer string) error {
 	return nil
 }
 
-// RecordBindingLeft upserts one sync_binding_left row.
 func (t *Tx) RecordBindingLeft(l BindingLeft) error {
 	if _, err := t.exec(`INSERT OR REPLACE INTO sync_binding_left (root_id, owner, name, to_writer, kind, at) VALUES (?,?,?,?,?,?)`,
 		l.RootID, l.Owner, l.Name, l.ToWriter, l.Kind, formatTime(l.At)); err != nil {
@@ -140,7 +138,6 @@ func (d *DB) BindingLeftByName(owner, name string) (BindingLeft, bool, error) {
 	return bindingLeft(context.Background(), d.sqlDB, `WHERE owner = ? AND name = ?`, owner, name)
 }
 
-// BindingLeftByRoot returns the left row of one root.
 func (d *DB) BindingLeftByRoot(rootID string) (BindingLeft, bool, error) {
 	return bindingLeft(context.Background(), d.sqlDB, `WHERE root_id = ?`, rootID)
 }
@@ -223,10 +220,10 @@ func (t *Tx) SetRegrant(rootID, writer, origin string, seq int) error {
 	return nil
 }
 
-// TakeOver makes this installation the writer of both roots, which the update
-// triggers attribute to the old writer, so the flip itself is not exported.
-// Each root's old-writer term is raised to upto and this installation's own
-// term is dropped.
+// TakeOver makes this installation the writer of both roots. The update
+// triggers attribute the flip to the old writer, so it is not exported; each
+// root's old-writer term is raised to upto and this installation's own term is
+// dropped.
 func (t *Tx) TakeOver(roots Roots, oldWriter string, upto int) error {
 	for _, r := range []struct{ table, id string }{{"binding_record", roots.RecordID}, {"binding", roots.BindingID}} {
 		if r.id == "" {
@@ -281,8 +278,6 @@ func (t *Tx) RecordLeaveTakeover(table, id, taker, oldWriter string, upto int, a
 
 const leftRowsKey = "sync.left_rows.v1"
 
-// recordLeftRows keeps the keys of every child of a root this installation is
-// about to stop writing.
 func (t *Tx) recordLeftRows(r Roots) error {
 	refs, err := t.childRefs(r)
 	if err != nil {
@@ -306,7 +301,6 @@ func (t *Tx) recordLeftRows(r Roots) error {
 	return t.KVPut(leftRowsKey, raw)
 }
 
-// childRefs lists the keys of the shared rows that hang off the two roots.
 func (t *Tx) childRefs(r Roots) ([]RowRef, error) {
 	queries := []struct{ table, query, id string }{
 		{"binding_event", `SELECT json_array(record_id, seq) FROM binding_event WHERE record_id = ?`, r.RecordID},
@@ -372,8 +366,8 @@ func loadLeftRows(ctx context.Context, q queryer) (map[RowRef]bool, error) {
 }
 
 // ForeignRoots finds the record and mirror ids of owner's live binding name
-// whoever writes them, with the record's creator and writer. found is false when
-// no such record exists in this file.
+// whoever writes them, with the record's creator and writer. found is false
+// when no such record exists in this file.
 func (t *Tx) ForeignRoots(owner, name string) (r Roots, creator, writer string, found bool, err error) {
 	return foreignRoots(t.ctx, t.conn, owner, name)
 }
@@ -400,7 +394,6 @@ func foreignRoots(ctx context.Context, q queryer, owner, name string) (r Roots, 
 	return r, creator, writer, true, nil
 }
 
-// RepointMirror points this installation's live mirror of name at repoID.
 func (t *Tx) RepointMirror(name, repoID string) error {
 	if _, err := t.exec(`UPDATE binding SET repo_id = ? WHERE `+writerScope+` AND name = ? AND archived_at IS NULL`,
 		repoID, t.origin, name); err != nil {
@@ -416,8 +409,8 @@ type Fenced struct {
 	Count int
 }
 
-// FencedSummary counts, per binding, the local changes the exporter moved to
-// sync_fenced_change because another machine took the binding over.
+// FencedSummary counts, per binding, the local changes fenced because another
+// machine took the binding over.
 func (d *DB) FencedSummary() ([]Fenced, error) {
 	rows, err := d.sqlDB.QueryContext(context.Background(),
 		`SELECT l.name, l.to_writer, COUNT(*) FROM sync_fenced_change f

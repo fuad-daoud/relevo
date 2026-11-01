@@ -18,14 +18,12 @@ type Error struct {
 
 func (e *Error) Error() string { return e.Message }
 
-// Code returns the SQLite result code the owner observed.
 func (e *Error) Code() int { return e.ErrCode }
 
 // ExtendedCode returns the extended result code, or the primary one when the
 // owner had no separate extended value.
 func (e *Error) ExtendedCode() int { return e.Extended }
 
-// NewError builds an error response for a request.
 func NewError(id, code, extended int, message string) *Error {
 	return &Error{
 		Header:   Header{Type: TypeError, ID: id},
@@ -52,9 +50,7 @@ const (
 	RefuseNoLocal = "no_local_file"
 	// RefuseNoSyncVerb answers a sync verb on an owner built without a sync
 	// executor: the daemon installs one, and a caller that reached an owner
-	// without it cannot be answered rather than silently no-opped. It is
-	// additive -- an owner that predates the verb never sees one -- so the
-	// client that sent it is new enough to be told what to do about it.
+	// without it cannot be answered rather than silently no-opped.
 	RefuseNoSyncVerb = "no_sync_verb"
 )
 
@@ -62,7 +58,6 @@ const (
 // error and the Error this package rebuilds.
 type coder interface{ Code() int }
 
-// CodeOf returns the SQLite result code an error carries.
 func CodeOf(err error) (int, bool) {
 	if err == nil {
 		return 0, false

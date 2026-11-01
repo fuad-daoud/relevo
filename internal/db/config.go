@@ -12,16 +12,16 @@ import (
 
 // The schema-v2 config and secrets surface. Reads come on both *DB and *Tx;
 // writes are *Tx only, with *DB wrappers that open their own transaction. A
-// database whose schema predates config_doc (schema < 2) reports every config
-// and secret read as absent rather than erroring, so a read-only open
-// (`relevo daemon --check`) sees an empty config, not a failure.
+// database on schema < 2 reports every config and secret read as absent rather
+// than erroring, so a read-only open (`relevo daemon --check`) sees an empty
+// config, not a failure.
 
 // hasConfig reports whether this database carries the config tables; only
 // OpenReadOnly on a schema-1 file lacks them.
 func (d *DB) hasConfig() bool { return d.have >= 2 }
 
 // ConfigGet returns the JSON body stored for name; ok is false when the
-// section is absent or the schema predates config_doc.
+// section is absent or the schema has no config_doc.
 func (d *DB) ConfigGet(name string) ([]byte, bool, error) {
 	if !d.hasConfig() {
 		return nil, false, nil
@@ -96,7 +96,7 @@ func configVersion(ctx context.Context, q queryer) (int64, error) {
 }
 
 // SecretGet returns name's value; ok is false when it is absent or the schema
-// predates the secret table.
+// has no secret table.
 func (d *DB) SecretGet(name string) ([]byte, bool, error) {
 	if !d.hasConfig() {
 		return nil, false, nil
@@ -158,9 +158,8 @@ func (d *DB) SecretNames() ([]string, error) {
 
 // SecretStore adapts a *DB to the secret surface a caller with no transaction
 // handle needs: a put or delete opens its own short transaction. Its methods
-// bind the machine-local file rather than the field's handle, so every literal
-// that names a shared handle still reads this machine's secrets out of the
-// local file after the split.
+// bind the machine-local file rather than the field's handle, so a shared
+// handle still reads this machine's secrets out of the local file.
 type SecretStore struct{ DB *DB }
 
 // store is the file this store's rows live in: the machine-local one beside DB
@@ -193,8 +192,7 @@ func (t *Tx) ConfigImportRecord(name, sourcePath string, body []byte, now time.T
 // before it must answer: `db query`'s --timeout default and its cap. The
 // writable open's lock wait is derived from it, so the wait outlasts any
 // read-only deadline by a margin and a slow reader never makes a daemon start
-// fail its open. It is defined beside the read-only open so the two are one
-// expression.
+// fail its open.
 const ReadOnlyHoldBudget = 12 * time.Second
 
 // OpenReadOnly opens path without ever migrating or writing it, for readers
@@ -235,12 +233,9 @@ func OpenReadOnlySplit(path string, o Options) (*DB, error) {
 
 // OpenReadOnlyWith opens path read-only like OpenReadOnly, with o.Origin set
 // on the returned handle. The origin matters because a scoped read matches the
-// rows this installation wrote -- every row relevo writes carries its
-// installation id as origin, and record reads are scoped by `origin IN (?,
-// ”)` against the handle's own origin. A read verb that serves those rows
-// must carry the id, or its scoped reads see none of the machine's bindings.
-// Like OpenReadOnly it never mints, migrates or writes: the file must exist
-// and it is opened mode=ro.
+// rows this installation wrote: a read verb that serves those rows must carry
+// the id, or its scoped reads see none of the machine's bindings. Like
+// OpenReadOnly it never mints, migrates or writes.
 func OpenReadOnlyWith(path string, o Options) (*DB, error) {
 	return openReadOnly(path, o)
 }
@@ -252,8 +247,8 @@ func openReadOnly(path string, o Options) (_ *DB, err error) {
 
 	busy := time.Duration(busyTimeoutMS) * time.Millisecond
 
-	// A read-only open takes the same path lock but never waits for it: a
-	// caller that must not write needs an answer now, and ErrLocked lets it
+	// A read-only open takes the same path lock but never waits for it, so a
+	// caller that must not write gets an answer now, and ErrLocked lets it
 	// fall back to the owner.
 	first, err := acquireHandle(path, false)
 	if err != nil {
@@ -265,15 +260,13 @@ func openReadOnly(path string, o Options) (_ *DB, err error) {
 		}
 	}()
 	// A read-only open never creates, but it may still be the first handle on
-	// the path: it signals so a writable handle that is waiting for the first
-	// open does not wait forever. It never waits itself, because it needs an
-	// answer now to fall back to the owner.
+	// the path: it signals so a waiting writable handle does not wait forever.
 	if first {
 		defer signalCreated(path)
 	}
 
-	// The marker check runs after the lock and before the pool: a held file
-	// still reports ErrLocked, and a refused file never opens the engine, so no
+	// The marker check runs after the lock and before the pool, so a held file
+	// still reports ErrLocked and a refused file never opens the engine, so no
 	// -wal is created beside an unconverted database.
 	if err = requireConverted(path); err != nil {
 		return nil, err
@@ -308,7 +301,7 @@ func openReadOnly(path string, o Options) (_ *DB, err error) {
 }
 
 // isMissingTable reports whether err is sqlite's "no such table" for a schema
-// that predates the table, where the caller wants an absent answer.
+// without the table, where the caller wants an absent answer.
 func isMissingTable(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "no such table")
 }

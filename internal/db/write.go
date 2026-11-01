@@ -154,8 +154,8 @@ const sqliteConstraint = 19
 // sqliteConstraintUnique is SQLITE_CONSTRAINT_UNIQUE, the extended code a UNIQUE
 // index violation reports. It is separate from sqliteConstraint because the two
 // refusals are decided differently: a UNIQUE failure on a repoint means the live
-// row already holds what the pointer would bring, which is a row for a person,
-// while the base code alone says only that some constraint was hit.
+// row already holds what the pointer would bring, while the base code alone
+// says only that some constraint was hit.
 const sqliteConstraintUnique = 2062
 
 // mapMasterMindKey turns a sqlite constraint violation into ErrInvalid. It
@@ -174,10 +174,10 @@ func mapMasterMindKey(err error) error {
 	return mapBusy(err)
 }
 
-// updateIfChanged sets cols to vals on table's row id, and writes nothing when
-// every column already holds its value: an UPDATE fires the table's sync
-// trigger even when it changes nothing, and a re-ingest of an unchanged
-// binding would otherwise queue its rows for export again.
+// updateIfChanged sets cols to vals, writing nothing when every column already
+// holds its value: an UPDATE fires the table's sync trigger even when it
+// changes nothing, and a re-ingest of an unchanged binding would otherwise
+// queue its rows for export again.
 func (t *Tx) updateIfChanged(table, id string, cols []string, vals ...any) error {
 	set := make([]string, len(cols))
 	same := make([]string, len(cols))
@@ -457,9 +457,9 @@ func (t *Tx) AppendTranscript(ownerKind, ownerID string, recs []TranscriptRecord
 	return added, nil
 }
 
-// LinkEvents sets round_id = roundID on every event of bindingID whose
-// round_id is still null and whose seq is in seqs. The WHERE round_id IS NULL
-// clause makes a second call a no-op rather than overwriting the link.
+// LinkEvents sets round_id on bindingID's events in seqs whose round_id is
+// still null. The WHERE round_id IS NULL clause makes a second call a no-op
+// rather than overwriting the link.
 func (t *Tx) LinkEvents(bindingID, roundID string, seqs []int) error {
 	if err := t.guardRoot(bindingID); err != nil {
 		return err

@@ -58,7 +58,6 @@ type Conn struct {
 
 func NewConn(rw io.ReadWriter) *Conn { return &Conn{rw: rw} }
 
-// Read returns the next frame payload.
 func (c *Conn) Read() ([]byte, error) {
 	var hdr [4]byte
 	if _, err := io.ReadFull(c.rw, hdr[:]); err != nil {
@@ -77,7 +76,7 @@ func (c *Conn) Read() ([]byte, error) {
 	}
 	// Above one chunk the payload is read in bounded pieces that grow the
 	// result only with bytes that arrived, so the declared length is never
-	// allocated up front. Each request handed to the stream stays chunk-sized.
+	// allocated up front.
 	payload := make([]byte, 0, readChunk)
 	for left := int(n); left > 0; {
 		step := left
@@ -94,7 +93,6 @@ func (c *Conn) Read() ([]byte, error) {
 	return payload, nil
 }
 
-// Write sends one frame.
 func (c *Conn) Write(payload []byte) error {
 	if len(payload) == 0 || len(payload) > maxFrameLen {
 		return fmt.Errorf("wire: frame length %d out of range", len(payload))
@@ -126,22 +124,17 @@ const (
 	KindError   byte = 11
 	// KindSyncVerb asks the owner to run one sync verb -- enable, push, pull or
 	// disable -- against the handles the owner already holds, so the daemon does
-	// the work instead of a client that had to open the file itself. It is
-	// additive: an owner that predates it has never heard of the byte, and a
-	// client that predates it never sends one.
+	// the work instead of a client that had to open the file itself.
 	KindSyncVerb byte = 12
 	// KindSyncResult answers KindSyncVerb. It is a kind of its own rather than a
 	// Done, because a verb reports what the run did rather than rows affected.
 	KindSyncResult byte = 13
 	// KindSyncFreshen is a hint that a reader wants current data. It has no
-	// answer and takes no request slot, so it is never queued behind a verb: an
-	// owner that predates it drops the connection, which a sender that does not
-	// wait for a reply does not notice.
+	// answer and takes no request slot, so it is never queued behind a verb.
 	KindSyncFreshen byte = 14
 )
 
-// Encode builds a frame: the kind byte, a little-endian 4-byte header length,
-// the JSON header, then any raw value bytes. Control frames carry no raw bytes.
+// Encode builds a frame; control frames carry no raw bytes.
 func Encode(kind byte, v any, raw []byte) ([]byte, error) {
 	header, err := json.Marshal(v)
 	if err != nil {
@@ -158,7 +151,6 @@ func Encode(kind byte, v any, raw []byte) ([]byte, error) {
 	return out, nil
 }
 
-// Kind reports a payload's kind byte.
 func Kind(payload []byte) (byte, error) {
 	if len(payload) == 0 {
 		return 0, fmt.Errorf("wire: empty frame")

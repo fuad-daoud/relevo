@@ -18,9 +18,9 @@ import (
 const dialTimeout = 2 * time.Second
 
 // Dial connects to an owner over sock and returns the same *DB a direct Open
-// would: the schema answer comes from the handshake, the origin from the
-// owner, and a nil error means the handshake completed. Dial plus the handshake
-// share dialTimeout.
+// would. The schema and origin come from the owner's handshake, and a nil
+// error means the handshake completed. Dial plus the handshake share
+// dialTimeout.
 func Dial(sock string) (*DB, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 	defer cancel()
@@ -87,15 +87,10 @@ func dialContext(ctx context.Context, sock string, o Options, adoptOrigin bool) 
 		sock:       sock,
 	}
 	// The owner serves the machine-local file beside the shared one, so the
-	// dial path attaches it exactly as a direct open does. That is the whole of
-	// the split as an owner-routed reader sees it: the handle names both files,
-	// the sync rows and the token are reachable, and nothing about the routing
-	// table changes -- handles move, rows stay where the classification put them.
-	//
-	// The attachment is the owner's own answer rather than a path computed here:
-	// the socket already belongs to one state root, so the local file it names is
-	// that root's companion and never another root's. A caller that wanted a
-	// different root's file has no way to name it here.
+	// dial path attaches it exactly as a direct open does. The attachment is
+	// the owner's own answer rather than a path computed here: the socket
+	// already belongs to one state root, so the local file it names is that
+	// root's companion and never another root's.
 	if info.HasLocal {
 		handle.local = dialLocal(sock, o, info.Have, know, retry, origin)
 	}
@@ -104,13 +99,10 @@ func dialContext(ctx context.Context, sock string, o Options, adoptOrigin bool) 
 
 // dialLocal opens the machine-local file beside the shared one, over the same
 // socket and under the same options, as a handle of its own. It carries no path:
-// the owner knows which file its socket belongs to, and a name this process
-// rebuilt could disagree with the one actually open -- which is the mistake that
-// would point one root's reader at another's file.
-//
-// have is the shared file's version, which is the local file's too: both run the
-// same migration series on every open, so one handshake answers for both and
-// there is nothing to ask the owner twice.
+// a name this process rebuilt could disagree with the one actually open, which
+// would point one root's reader at another's file. have is the shared file's
+// version, which is the local file's too: both run the same migration series
+// on every open, so one handshake answers for both.
 func dialLocal(sock string, o Options, have, know int, retry time.Duration, origin string) *DB {
 	return &DB{
 		sqlDB:      sql.OpenDB(client.ScopedConnector(sock, o.AdHoc, wire.ScopeLocal)),
@@ -123,9 +115,8 @@ func dialLocal(sock string, o Options, have, know int, retry time.Duration, orig
 	}
 }
 
-// Sock is the owner socket this handle dialled, empty on a direct open. It is
-// what a request that needs the owner itself rather than a statement -- a sync
-// verb -- dials: the verb runs against the owner's own handles, so it needs
+// Sock is the owner socket this handle dialled, empty on a direct open. A sync
+// verb dials it: the verb runs against the owner's own handles, so it needs
 // the stream, not this handle's pool.
 func (d *DB) Sock() string { return d.sock }
 

@@ -1,9 +1,9 @@
 package db
 
-// The repair for a renamed remote: it folds the repo row of the old URL into
-// the row of the new one, or renames it, and rewrites the tickets and records
-// that still name the old owner/repo. Reading and writing are separate phases
-// so a dry run is the plan alone and cannot reach a write.
+// The repair for a renamed remote: it folds the old URL's repo row into the
+// new one, or renames it, and rewrites the tickets and records that still
+// name the old owner/repo. Reading and writing are separate phases so a dry
+// run is the plan alone and cannot reach a write.
 
 import (
 	"database/sql"
@@ -18,9 +18,9 @@ import (
 // handle's scope, which is a typo far more often than a repaired state.
 var ErrNothingToRename = errors.New("no repo row holds either URL")
 
-// RenameRepoParams names the repair. The URLs are normalised by the caller, and
-// so are the owner/repo paths derived from them; an empty path turns the ticket
-// pass off.
+// RenameRepoParams names the repair. The URLs and the owner/repo paths derived
+// from them are normalised by the caller; an empty path turns the ticket pass
+// off.
 type RenameRepoParams struct {
 	FromURL, ToURL             string
 	FromOwnerRepo, ToOwnerRepo string
@@ -289,7 +289,7 @@ func (t *Tx) applyRepoSide(p RenameRepoParams, pl renamePlan) error {
 			t.origin, p.ToURL, pl.fromID)
 	case pl.fromID != "":
 		// Stamped before the delete, so the delete's log entry carries this
-		// installation rather than a legacy empty origin.
+		// installation rather than an empty origin.
 		if err := t.execRename("stamp the old repo row", `UPDATE repo SET origin = ? WHERE id = ?`, t.origin, pl.fromID); err != nil {
 			return err
 		}

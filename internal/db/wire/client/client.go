@@ -15,7 +15,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 )
 
-// DriverName is the name the wire driver registers under.
 const DriverName = "relevo-owner"
 
 // handshakeTimeout bounds dial plus handshake: a caller that must answer in two
@@ -61,7 +60,6 @@ func ScopedConnector(sock string, adHoc bool, scope string) driver.Connector {
 	return &connector{sock: sock, adHoc: adHoc, scope: scope}
 }
 
-// connector is the driver.Connector sql.OpenDB pools from.
 type connector struct {
 	sock  string
 	adHoc bool

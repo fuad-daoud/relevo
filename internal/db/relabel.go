@@ -151,8 +151,8 @@ func (t *Tx) classifyRelabel(plan *relabelPlan, p RelabelParams, e RelabelEntry,
 	return nil
 }
 
-// relabelRecords finds the record rows of one binding and returns those whose
-// JSON changes. Binding and record share no id, so a record is the binding's
+// relabelRecords finds the record rows of one binding whose JSON changes.
+// Binding and record share no id, so a record is the binding's
 // when it carries the binding's name and a created_at that formats to the
 // binding's created_at; names are reused across time, so the name alone never
 // decides. A record with no usable created_at matches nothing.

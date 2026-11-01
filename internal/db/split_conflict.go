@@ -97,7 +97,6 @@ func splitCellNorm(v any) (any, bool) {
 	return nil, false
 }
 
-// splitCellText renders a natural-key cell for a conflict name.
 func splitCellText(v any) (string, bool) {
 	switch c := v.(type) {
 	case nil:

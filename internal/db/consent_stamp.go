@@ -3,18 +3,12 @@ package db
 // The sync half of a consent write: what one person's answer leaves behind
 // besides the answer itself.
 //
-// The two answers sync as two documents, not one, because their backing stores
-// differ -- a repository answer is a column on a row in the shared file, a
-// session answer is a row in the machine-local file -- and their validity rules
-// differ with them. Keeping them apart is also what lets each carry its own
-// per-key export and applied state, so no reader has to know which kind of key
-// it holds before it can read a stamp.
-//
-// A stamp says this machine last wrote the key, which is what lets a local
-// write outrank an entry that arrived from a peer stamped before it. Only a
-// person's edit of the answer is such a write: the housekeeping around it -- a
-// told baseline, a repo row recorded or renamed, an answer arriving from a peer
-// -- records nothing, because none of those is an edit of the answer.
+// The two answers sync as two documents because their backing stores differ --
+// a repository answer is a column in the shared file, a session answer a row
+// in the machine-local file -- so each carries its own per-key export and
+// applied state. A stamp says this machine last wrote the key, so a local
+// write outranks a peer's earlier entry. Only a person's edit of the answer
+// stamps: the housekeeping around it records nothing.
 
 import (
 	"context"
@@ -24,13 +18,11 @@ import (
 )
 
 // The names the two consent documents travel under, as `doc:consent` and
-// `doc:session_consent` on the log.
-//
-// They are declared here rather than in the package that implements the
-// documents because this is where a write records the stamp and the signal
-// naming them, and because the stamp key of one document must never be
-// readable as another's. No config section is named after either, which is what
-// keeps a config key and a consent key from meeting in the one stamp table.
+// `doc:session_consent` on the log. They are declared here because this is
+// where a write records the stamp and the signal naming them, and the stamp
+// key of one document must never be readable as another's: no config section
+// is named after either, so a config key and a consent key never meet in the
+// one stamp table.
 const (
 	// ConsentDoc is the document carrying one repository's answer, keyed by its
 	// remote URL.
@@ -41,13 +33,10 @@ const (
 )
 
 // StampIssuer issues the write stamp for one document key, inside the
-// transaction of the write it belongs to.
-//
-// It is a seam rather than a direct call because this package cannot import
-// internal/synclog -- the log imports this one -- and the stamp is the log's
-// hybrid clock. The package that owns the documents installs the issuer, the
-// same way internal/sync takes its documents from internal/relevo, so the
-// ordering rule is written once and both documents and both tables obey it.
+// transaction of the write it belongs to. It is a seam rather than a direct
+// call because this package cannot import internal/synclog -- the log imports
+// this one -- and the package that owns the documents installs the issuer, so
+// the ordering rule is written once and both documents and both tables obey it.
 type StampIssuer func(tx *Tx) (string, error)
 
 var stampIssuer StampIssuer
@@ -58,9 +47,9 @@ var stampIssuer StampIssuer
 // place in the ordering rather than its value.
 func SetStampIssuer(f StampIssuer) { stampIssuer = f }
 
-// consentStampKey is the write-stamp key of one repository answer. The prefix is
-// what keeps a consent stamp from being read as a config section's: both live
-// in the one table, and no config section is named after a document.
+// consentStampKey is the write-stamp key of one repository answer. The prefix
+// keeps a consent stamp from being read as a config section's: both live in
+// the one table, and no config section is named after a document.
 func consentStampKey(url string) string { return ConsentDoc + "/" + url }
 
 // sessionConsentStampKey is the write-stamp key of one session's answer.
@@ -70,13 +59,10 @@ func sessionConsentStampKey(kind, sessionID string) string {
 
 // stampConsentKey records the write stamp and the export signal for one consent
 // key in the caller's transaction, so a stamp is never spent on an answer the
-// machine did not keep. An empty key stamps nothing: there is no document key to
-// stamp, and the write that made it is not one any document carries.
-//
-// stampKey is the full `<doc>/<key>` the stamp table holds, built by the
-// helper above rather than assembled here, so the key a write stamps is the same
-// key the document reads: a second place that prefixed the document name would
-// put the two a level apart and every stamp would read as absent.
+// machine did not keep. An empty key stamps nothing: there is no document key
+// to stamp. stampKey is the full `<doc>/<key>` built by the helper above
+// rather than assembled here, so a write stamps the same key the document
+// reads.
 func stampConsentKey(t *Tx, doc, stampKey string) error {
 	if stampKey == "" {
 		return nil
@@ -106,19 +92,12 @@ type RepoConsentRow struct {
 }
 
 // RepoConsents lists the repository answers this machine wrote, one row per
-// remote URL, for the consent document to export.
-//
-// The scope is this origin's, exactly as RepoConsent's is: repo rows reach
-// every machine through the row log, so a machine holding several origins' rows
-// for one URL holds several answers to the same question, and only its own row
-// answers for it. A row with no remote URL is left out -- there is no key to
-// carry it under, and a checkout with no remote is not a repository another
-// machine can be asked about.
-//
-// An answer stored without a readable time, or an answer this build cannot
-// read, is an error rather than a skipped row. Exporting the rest of the
-// document here would read as this machine having no answer for that key and
-// clear it on every machine, which is what a refused read must never cause.
+// remote URL, for the consent document to export. The scope is this origin's,
+// exactly as RepoConsent's is: only its own row answers for it. A row with no
+// remote URL is left out -- there is no key to carry it under. An answer
+// stored without a readable time, or one this build cannot read, is an error
+// rather than a skipped row: exporting the rest here would read as this
+// machine having no answer for that key and clear it on every machine.
 func (d *DB) RepoConsents() ([]RepoConsentRow, error) {
 	rows, err := d.sqlDB.QueryContext(context.Background(),
 		`SELECT origin_url, mastermind_consent, consent_at FROM repo
@@ -163,15 +142,11 @@ type SessionConsentRow struct {
 }
 
 // SessionConsents lists the session answers this machine wrote, one row per
-// (kind, session id), for the session consent document to export.
-//
-// Only the answer and the time it was written are read. The told baseline sits
-// in the same row and stays out: it says what this machine has already shown
-// this session here, which is true of this session on this host and of nothing
-// else, so carrying it would tell a peer about a delivery it never made. A row
-// with no answer is left out too, because unset is not an answer: it is the
-// absence of one, and the document carries that as a key it no longer holds
-// rather than as a value.
+// (kind, session id), for the session consent document to export. The told
+// baseline in the same row stays out: it reports a delivery to this session
+// on this host, which a peer never made. A row with no answer is left out:
+// unset is the absence of an answer, carried as a key the document no longer
+// holds rather than as a value.
 func (d *DB) SessionConsents() ([]SessionConsentRow, error) {
 	rows, err := d.LocalOrSelf().sqlDB.QueryContext(context.Background(),
 		`SELECT harness_kind, session_id, answer, answer_at FROM session_consent
@@ -206,7 +181,7 @@ func (d *DB) SessionConsents() ([]SessionConsentRow, error) {
 
 // consentAt is the time a stored answer carries. An answer with no time is
 // refused rather than read as the zero time: the documents order keys by when
-// they were written, and a zero time is the one stamp no write can precede.
+// they were written, and no write precedes the zero time.
 func consentAt(key string, text sql.NullString) (time.Time, error) {
 	if !text.Valid {
 		return time.Time{}, fmt.Errorf("db: consent %s: an answer with no time: %w", key, ErrInvalid)

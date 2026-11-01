@@ -3,7 +3,6 @@ package db
 // SharedTable names one table whose rows another installation may read, and
 // the columns that identify a row in it.
 type SharedTable struct {
-	// Name is the table name.
 	Name string
 	// PrimaryKey lists the table's primary-key columns in key order. It is the
 	// key the outbox records, so a reader parses one shape for a one-column key

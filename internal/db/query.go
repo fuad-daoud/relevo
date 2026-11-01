@@ -9,32 +9,28 @@ import (
 )
 
 // ErrNotOneStatement reports a query string that is not exactly one statement:
-// it is empty, or a top-level semicolon separates two. singleStatement wraps it
-// together with ErrInvalid, so a caller that knows only ErrInvalid still sees
-// the rejection, while a caller that must tell a malformed argument (usage)
-// from a statement the read-only seam refused can tell the two apart.
+// empty, or a top-level semicolon separating two. singleStatement wraps it with
+// ErrInvalid, so a caller mapping malformed arguments to usage still sees it,
+// while one that must tell usage from a refused statement can tell them apart.
 var ErrNotOneStatement = errors.New("not exactly one statement")
 
 // ErrPragmaNotReadOnly reports a PRAGMA the read-only seam will not run. The
 // engine's query_only does not cover `PRAGMA x = ...`, so an assignment would
 // reach the database; only the read form is allowed, and only for the names on
-// readOnlyPragmas. It is wrapped with ErrInvalid, and a caller that must tell a
-// malformed argument from a refused statement maps it to usage.
+// readOnlyPragmas. It is wrapped with ErrInvalid for callers mapping usage.
 var ErrPragmaNotReadOnly = errors.New("pragma is not one of the read-only forms")
 
 // ErrRecursive reports a statement that names RECURSIVE. The owner protocol has
 // no way to interrupt a statement, so RECURSIVE is refused as a cheap first
-// line -- not as the guarantee: SQLite decides recursion structurally, so the
-// same runaway statement is one keyword away. What actually ends one is the
-// owner, which refuses ad-hoc reads while it reaps the daemon. It is wrapped
-// with ErrInvalid, so a caller that maps malformed arguments to usage still
-// sees a usage error.
+// line; what actually ends a runaway is the owner, which refuses ad-hoc reads
+// while it reaps the daemon. It is wrapped with ErrInvalid for callers mapping
+// usage.
 var ErrRecursive = errors.New("recursive is not allowed in a read-only statement")
 
 // readOnlyPragmas are the PRAGMA names the read-only seam accepts in the bare
 // form `PRAGMA name`, in the order the refusal names them. A pragma outside this
-// list can change the connection or the file -- writable_schema being the one
-// that did -- and belongs on the writable handle, not behind a read-only verb.
+// list can change the connection or the file, and belongs on the writable
+// handle, not behind a read-only verb.
 var readOnlyPragmas = []string{
 	"table_info",
 	"table_list",
@@ -52,9 +48,8 @@ var readOnlyPragmas = []string{
 
 // readOnlyPragmaArgs are the names that also take the argument form
 // `PRAGMA name(argument)`. SQLite reads the paren form of any other name as an
-// assignment, so journal_mode, page_count, page_size, user_version and
-// schema_version are bare-only: accepting `PRAGMA user_version(7)` would let a
-// write through a read-only verb.
+// assignment, so the rest are bare-only: accepting one would let a write through
+// a read-only verb.
 var readOnlyPragmaArgs = []string{
 	"table_info",
 	"table_list",
@@ -76,9 +71,7 @@ const (
 )
 
 // checkReadOnlyPragma refuses a PRAGMA that is not one of the read forms the
-// seam allows: `PRAGMA name` for a name on readOnlyPragmas, or
-// `PRAGMA name(argument)` for a name that really takes an argument. The writing
-// form `PRAGMA name = value`, a schema-qualified name and anything the lexer
+// seam allows. The writing form, a schema-qualified name and anything the lexer
 // does not recognise are all refused, because none of them can be checked
 // against the lists.
 func checkReadOnlyPragma(stmt string) error {
@@ -133,8 +126,6 @@ func pragmaName(stmt string) (string, pragmaForm) {
 	return "", pragmaNone
 }
 
-// word returns the identifier that starts at i and the index just past it, or
-// an empty word when none starts there.
 func word(stmt string, i int) (string, int) {
 	j := i
 	for j < len(stmt) && isKeywordByte(stmt[j]) {
@@ -175,16 +166,14 @@ var readOnlyKeywords = map[string]bool{
 }
 
 // QueryReadOnly runs exactly one read-only statement on a connection of its own
-// and streams the result to onRow, which receives the statement's column names
-// and one row's values. A statement that is not one statement, or that starts
-// with a word the read-only allowlist does not carry, is refused with
-// ErrInvalid before the database is touched. Everything else is refused by the
-// engine or by the read-only transaction.
+// and streams the result to onRow. A statement that is not one statement, or
+// that starts with a word the allowlist does not carry, is refused with
+// ErrInvalid before the database is touched.
 //
 // The connection is never returned to the pool: query_only is a per-connection
-// setting, so handing it back would make a later writer that happens to get it
-// fail. On a dialled handle the discard also ends the owner's pinned
-// connection, which holds the same setting.
+// setting, so handing it back would fail a later writer that happens to get it.
+// On a dialled handle the discard also ends the owner's pinned connection,
+// which holds the same setting.
 func (d *DB) QueryReadOnly(ctx context.Context, stmt string, onRow func(columns []string, values []any) error) error {
 	one, err := singleStatement(stmt)
 	if err != nil {
@@ -215,9 +204,8 @@ func (d *DB) QueryReadOnly(ctx context.Context, stmt string, onRow func(columns 
 	if err != nil {
 		return fmt.Errorf("db: query read-only: %w", err)
 	}
-	// The order matters: the transaction is rolled back, then the connection is
-	// discarded with driver.ErrBadConn -- the same discard the owner makes of a
-	// client's pinned connection -- so database/sql closes it instead of
+	// The order matters: the transaction rolls back first, then the connection
+	// is discarded with driver.ErrBadConn, so database/sql closes it instead of
 	// pooling it.
 	defer func() {
 		_, _ = conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
@@ -233,9 +221,7 @@ func (d *DB) QueryReadOnly(ctx context.Context, stmt string, onRow func(columns 
 		return fmt.Errorf("db: query read-only: %w", err)
 	}
 	// BEGIN is defence in depth: query_only does not block `PRAGMA x = ...`, so
-	// a writing assignment that slipped past the read-form check would still be
-	// rolled back here. Turso's own query_only refuses the writing pragmas that
-	// matter, so the transaction is the second line, not the first.
+	// a writing assignment past the read-form check still rolls back here.
 	if _, err := conn.ExecContext(ctx, "BEGIN"); err != nil {
 		return fmt.Errorf("db: query read-only: %w", err)
 	}
@@ -272,9 +258,9 @@ func (d *DB) QueryReadOnly(ctx context.Context, stmt string, onRow func(columns 
 	return nil
 }
 
-// singleStatement returns the one statement stmt holds. A semicolon inside a
-// quoted region or a comment does not separate statements, and one trailing
-// semicolon is allowed; anything else is ErrNotOneStatement.
+// singleStatement returns the one statement stmt holds: a semicolon inside a
+// quoted region or a comment is no separator, one trailing semicolon is allowed,
+// and anything else is ErrNotOneStatement.
 func singleStatement(stmt string) (string, error) {
 	parts := splitStatements(stmt)
 	if n := len(parts); n > 0 && strings.TrimSpace(parts[n-1]) == "" {
@@ -287,9 +273,8 @@ func singleStatement(stmt string) (string, error) {
 }
 
 // splitStatements splits stmt at its top-level semicolons. A semicolon inside a
-// quoted region -- '...', "...", [...] or `...` -- or inside a line or block
-// comment is part of the statement it appears in, not a separator, so a string
-// like ';' does not look like two statements.
+// quoted region or a comment is part of the statement, not a separator, so a
+// string like ';' is not two statements.
 func splitStatements(stmt string) []string {
 	var parts []string
 	start := 0
@@ -322,9 +307,8 @@ func splitStatements(stmt string) []string {
 	return append(parts, stmt[start:])
 }
 
-// skipQuoted returns the index just past the quoted region that opens at i and
-// closes at close. A doubled closing byte is an escaped one, so a quote inside
-// a string or an identifier does not end it.
+// skipQuoted returns the index just past the quoted region opening at i. A
+// doubled closing byte is an escaped one, so a quote inside does not end it.
 func skipQuoted(s string, i int, close byte) int {
 	for i++; i < len(s); {
 		if s[i] != close {
@@ -390,9 +374,8 @@ func isKeywordByte(c byte) bool {
 }
 
 // explainPragma returns the PRAGMA statement an `EXPLAIN` or `EXPLAIN QUERY
-// PLAN` prefixes, so the same read-only check runs on the statement that
-// follows. It returns "" when the statement is not an EXPLAIN of a PRAGMA,
-// which is left to the engine.
+// PLAN` prefixes, so the same read-only check runs on it. It returns "" when
+// the statement is not an EXPLAIN of a PRAGMA, and leaves it to the engine.
 func explainPragma(stmt string) string {
 	i := skipSpace(stmt, 0)
 	keyword, after := word(stmt, i)
@@ -417,10 +400,9 @@ func explainPragma(stmt string) string {
 }
 
 // mentionsRecursive reports whether stmt names RECURSIVE outside a string, a
-// quoted identifier or a comment. The word-boundary, case-insensitive scan is
-// what refuses a recursive CTE at the verb, where a substring match would also
-// refuse `SELECT 'recursive'` and a comment. It reuses the same quoted-region
-// and comment skips as the statement splitter, so the two agree on what is code.
+// quoted identifier or a comment, where a substring match would also refuse
+// `SELECT 'recursive'`. It reuses the statement splitter's skips, so the two
+// agree on what is code.
 func mentionsRecursive(stmt string) bool {
 	for i := 0; i < len(stmt); {
 		switch c := stmt[i]; {

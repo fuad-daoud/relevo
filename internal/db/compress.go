@@ -68,11 +68,10 @@ func compressTables() []compressTable {
 // CompressHistoryOnce converts the columns the pass scope names, once per
 // database and only after a full backup. An existing kv row means an earlier
 // pass finished, so ran is false. An empty candidate set writes the stats and
-// returns with no backup. Otherwise the database is backed up first (a failure
-// returns the error with nothing converted and no kv row), the rows are
-// converted in bounded batches, and the finish step checkpoints, vacuums and
-// writes the stats; a checkpoint or vacuum failure is recorded in the stats
-// rather than returned, since the rows are converted either way.
+// returns with no backup. Otherwise the database is backed up first, the rows
+// are converted in bounded batches, and the finish step checkpoints, vacuums
+// and writes the stats; a checkpoint or vacuum failure is recorded in the
+// stats rather than returned, since the rows are converted either way.
 func CompressHistoryOnce(d *DB, backupDir string, now time.Time) (stats CompressStats, ran bool, err error) {
 	local := d.LocalOrSelf()
 	if _, ok, kerr := local.KVGet(compressKVKey); kerr != nil {
@@ -212,9 +211,9 @@ func compressRows(t *Tx, tbl compressTable, rowids []int64, ts *CompressTableSta
 	return nil
 }
 
-// compressRow reads one row, encodes its still-plain converted columns and
-// updates the row when at least one column got smaller. A column already under
-// codec 1 is left alone; an unknown codec is refused rather than skipped.
+// compressRow encodes one row's still-plain converted columns, updating the
+// row when at least one got smaller. A column already under codec 1 is left
+// alone; an unknown codec is refused rather than skipped.
 func compressRow(t *Tx, tbl compressTable, rowid int64, ts *CompressTableStats) (bool, error) {
 	values, codecs, err := readCompressRow(t, tbl, rowid)
 	if errors.Is(err, sql.ErrNoRows) {

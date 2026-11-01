@@ -80,10 +80,8 @@ func (d *DB) DocExportState(doc string) (map[string]DocExportRow, error) {
 	return out, rows.Err()
 }
 
-// RecordDocExport records an export of doc in one transaction: the state of
-// every key written, the applied state they stand for, and the clearing of the
-// signal the export answered. The signal is cleared only if it is still the one
-// the export read.
+// RecordDocExport records an export of doc in one transaction. The signal is
+// cleared only if it is still the one the export read.
 func (d *DB) RecordDocExport(sig DocSignal, writes []DocExportWrite) error {
 	return d.LocalOrSelf().Tx(func(t *Tx) error {
 		for _, w := range writes {
@@ -95,11 +93,12 @@ func (d *DB) RecordDocExport(sig DocSignal, writes []DocExportWrite) error {
 	})
 }
 
-// SignalDoc records that doc's items may have changed since the last export,
-// which is the row a config_doc trigger writes for the config document. It
-// exists in Go for the documents whose changes do not go through a table of
-// their own: their write path knows it changed something, and no trigger on a
-// table can see it.
+// SignalDoc records that doc's items may have changed since the last export.
+// It writes the same shared_outbox row the config_doc triggers write for the
+// config document.
+// It exists in Go for the documents whose changes do not go through a table
+// of their own: their write path knows it changed something, and no trigger
+// on a table can see it.
 //
 // The signal's own text carries random bytes after the time, so a write landing
 // while an export is running replaces the row that export read rather than
@@ -148,9 +147,9 @@ func (t *Tx) recordDocWrite(doc string, w DocExportWrite) error {
 }
 
 // ClearDocExportState forgets what was exported and every local write stamp:
-// config that predates a join is the machine's starting point, not an edit
-// made against the shared config. So the next export of each doc
-// that had state re-emits every key. Each such doc is signalled in the same
+// config written before a join is the machine's starting point, not an edit
+// made against the shared config. So the next export of each doc that had
+// state re-emits every key. Each such doc is signalled in the same
 // transaction, because an export only looks at a doc it has been told changed.
 func (d *DB) ClearDocExportState() error {
 	return d.LocalOrSelf().Tx(func(t *Tx) error {

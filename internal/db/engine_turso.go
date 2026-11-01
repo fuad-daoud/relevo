@@ -41,41 +41,36 @@ const cacheEnv = "TURSO_GO_CACHE_DIR"
 // maxOpenConns bounds how many connections one pool may have open at once.
 //
 // Database/sql opens a connection per concurrent caller until this bound, so
-// without it a burst of requests is a burst of connects -- and every connect
-// pays the file's own open cost against a database that has a single write
-// slot behind it, so the unbounded form is what turns a busy write slot into
-// thousands of blocked connects rather than one that surfaces as an error.
+// without it a burst of requests is a burst of connects against a database with
+// a single write slot: a busy write slot becomes thousands of blocked connects
+// rather than one error.
 //
-// The number is the daemon's own measured fan-out, not a guess. Sampling
-// `Stats().OpenConnections` on the shared pool while the served request paths
-// ran concurrently against it gave a peak of 9 open connections at 128
-// concurrent clients; the store's own concurrent readers and writers, which is
-// what an idle tick plus a served request amount to, peaked at 15. Eight times
-// the measured ceiling leaves room for every caller the daemon admits at once
-// while still refusing the pile-up, and the bound is a pool ceiling rather than
-// a queue: past it a caller waits on database/sql's own semaphore instead of
-// opening a connection, so the failure is a bounded wait and then an error.
+// The number is the daemon's own measured fan-out, not a guess: 9 open
+// connections at 128 concurrent clients, 15 for the store's own readers and
+// writers, and eight times that ceiling. Past it a caller waits on
+// database/sql's own semaphore instead of opening a connection, so the failure
+// is a bounded wait and then an error.
 const maxOpenConns = 128
 
 // maxIdleConns and idleConnTime bound what an idle pool keeps. Every pooled
 // connection owns native memory the Go heap profile never shows, so keeping
-// all maxOpenConns alive for the process's life pins a burst's worth of it;
-// the ceiling above stays, only the retention after a burst shrinks.
+// all maxOpenConns alive would pin a burst's worth of it; the ceiling above
+// stays, only the retention after a burst shrinks.
 const (
 	maxIdleConns = 16
 	idleConnTime = 2 * time.Minute
 )
 
 // pageCacheKiB is the per-connection page cache, as the negative KiB form of
-// cache_size. Turso reads the default back as -2000 yet does not apply it: a
-// scan of a 1 GiB file on 64 connections held ~580 MiB resident without the
-// pragma and ~120 MiB with it, so the pragma is set explicitly on every one.
+// cache_size. Turso reads the default back as -2000 yet does not apply it -- a
+// 1 GiB scan on 64 connections held ~580 MiB resident without the pragma and
+// ~120 MiB with it -- so it is set explicitly on every one.
 const pageCacheKiB = 1024
 
-// openPool opens a pool on path with Turso. Turso parses no `file:` URI and
-// ends the path at the first `?`, so a path carrying one would silently open
-// another file: that is refused. Settings that modernc takes in the DSN are
-// applied per connection instead.
+// openPool opens a pool on path with Turso. Turso parses no `file:` URI and ends
+// the path at the first `?`, so a path carrying one would silently open another
+// file: that is refused. Settings modernc takes in the DSN apply per connection
+// instead.
 func openPool(path string, busy time.Duration, readOnly bool) (*sql.DB, error) {
 	if strings.Contains(path, "?") {
 		return nil, fmt.Errorf("db: open %s: the path contains '?': %w", path, ErrOpen)
@@ -92,9 +87,8 @@ func openPool(path string, busy time.Duration, readOnly bool) (*sql.DB, error) {
 		return nil, fmt.Errorf("db: open %s: create -wal: %w: %w", path, ErrOpen, err)
 	}
 	// A database with no SQLite header is one this build is creating, not a
-	// legacy file: it is marked at creation, so the one-time conversion never
-	// touches a file Turso wrote. The read-only open never marks, because the
-	// marker is a write.
+	// legacy file: it is marked at creation, so conversion never touches a file
+	// Turso wrote. The read-only open never marks, because the marker is a write.
 	fresh, err := freshDatabase(path)
 	if err != nil {
 		return nil, fmt.Errorf("db: open %s: read the header: %w: %w", path, ErrOpen, err)
@@ -116,8 +110,7 @@ func openPool(path string, busy time.Duration, readOnly bool) (*sql.DB, error) {
 	return pool, nil
 }
 
-// newTursoConnector is the engine's connector for a path: the DSN the pool
-// opens with, busy timeout included.
+// newTursoConnector is the engine's connector for a path, busy timeout included.
 func newTursoConnector(path string, busyMS int64) (driver.Connector, error) {
 	conn, err := turso.NewConnector(fmt.Sprintf("%s?_busy_timeout=%d", path, busyMS))
 	if err != nil {
@@ -127,8 +120,7 @@ func newTursoConnector(path string, busyMS int64) (driver.Connector, error) {
 }
 
 // freshDatabase reports whether path has no SQLite header yet: absent, empty or
-// too short to hold one. A file SQLite wrote always carries the header, so only
-// a database this build creates is fresh.
+// too short to hold one. Only a database this build creates is fresh.
 func freshDatabase(path string) (bool, error) {
 	_, fresh, err := fileMarker(path)
 	return fresh, err
@@ -145,8 +137,8 @@ func openPragmas(readOnly bool) []string {
 }
 
 // pragmaConnector runs pragmas on every new driver connection before
-// database/sql can use it. Turso's DSN has no _pragma option, and the mode word
-// and per-handle guards must hold on each pooled connection, not just the first.
+// database/sql can use it: Turso's DSN has no _pragma option, and the guards
+// must hold on each pooled connection, not just the first.
 type pragmaConnector struct {
 	base    driver.Connector
 	pragmas []string
@@ -204,10 +196,9 @@ func isTursoIOErr(err error) bool {
 }
 
 // engineStatus reports the Turso library's state under root. No library under
-// root/turso-go means the daemon has not opened a database there yet: that is
-// Missing, not an error. Otherwise the extracted copy is verified through the
-// same loader an open uses, with the cache directory pointed at root, and the
-// load is never retried: a mismatch is reported, not healed.
+// root/turso-go is Missing, not an error: the daemon has not opened a database
+// there yet. Otherwise the extracted copy is verified through the same loader an
+// open uses, and a mismatch is reported, not healed.
 func engineStatus(root string) EngineState {
 	cacheDir := filepath.Join(root, "turso-go")
 	status := EngineState{Name: engineName, CacheDir: cacheDir}
@@ -236,9 +227,10 @@ func engineStatus(root string) EngineState {
 }
 
 // engineLocked reports whether err is the engine's own refusal to open a file
-// another process holds. Turso reports it as ErrTursoGeneric carrying "locked
-// by another process" (core/io/unix.rs); modernc's own lock is a busy error,
-// which mapBusy already handles, so it never reaches here.
+// another process holds: ErrTursoGeneric carrying "locked by another process"
+// (core/io/unix.rs).
+// modernc's own lock is a busy error mapBusy already handles, so it never
+// reaches here.
 func engineLocked(err error) bool {
 	return errors.Is(err, turso.ErrTursoGeneric) && strings.Contains(err.Error(), "locked by another process")
 }
@@ -261,9 +253,8 @@ var (
 )
 
 // prepareEngine extracts and loads the embedded Turso library once per process
-// beneath dir, so the extracted library sits beside the database rather than in
-// a shared user cache. The error of the first call is kept and returned by every
-// later one.
+// beneath dir, beside the database rather than in a shared user cache. The first
+// call's error is kept and returned by every later one.
 func prepareEngine(dir string) error {
 	enginePrepareOnce.Do(func() { enginePrepareErr = extractAndLoad(dir) })
 	return enginePrepareErr
@@ -279,12 +270,13 @@ var (
 var tempDirEnv = []string{"TURSO_TMPDIR", "SQLITE_TMPDIR"}
 
 // prepareTempDir creates dir/tmp owner-only and points TURSO_TMPDIR and
-// SQLITE_TMPDIR at it, so the library's temp files land beside the database
-// instead of in /tmp. A value this process pinned earlier is re-pointed at the
-// database being opened now, because that earlier directory belongs to a
-// different file and may be gone: re-creating it would write into a directory
-// its owner is entitled to have deleted. A value the environment already
-// carried is left exactly as it is, since that is the operator's choice.
+// SQLITE_TMPDIR at it, so temp files land beside the database instead of in
+// /tmp. A value this process pinned earlier is re-pointed at the database being
+// opened now: the earlier directory belongs to a different file and may be
+// gone, and re-creating it would write into a directory its owner is entitled
+// to have deleted.
+// A value the environment already carried is the operator's choice and is left
+// alone.
 func prepareTempDir(dir string) error {
 	tmpDir := filepath.Join(dir, "tmp")
 	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
@@ -318,8 +310,8 @@ func prepareTempDir(dir string) error {
 
 // extractAndLoad creates dir/turso-go owner-only, points the loader's cache at
 // dir for the duration, and loads the library. A cached copy whose hash does not
-// match is removed and the load retried once, so a truncated or corrupted cache
-// heals instead of bricking every later open.
+// match is removed and the load retried once, so a corrupt cache heals instead
+// of bricking every later open.
 func extractAndLoad(dir string) error {
 	if err := prepareTempDir(dir); err != nil {
 		return err
@@ -352,9 +344,8 @@ func extractAndLoad(dir string) error {
 	return initLibrary()
 }
 
-// initLibrary calls turso.InitLibrary, turning the panic it raises when the
-// library cannot load into an error, so the failure stays inside the seam
-// instead of escaping a driver call.
+// initLibrary calls turso.InitLibrary, turning the panic of a library that
+// cannot load into an error instead of escaping a driver call.
 func initLibrary() (err error) {
 	defer func() {
 		if r := recover(); r != nil {
