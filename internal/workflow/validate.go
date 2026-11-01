@@ -47,7 +47,6 @@ var statuses = map[string]bool{
 // Shape says whether an actor writes the chain's one tree or reads a copy.
 type Shape string
 
-// The shapes an actor may have.
 const (
 	ShapeReader Shape = "reader"
 	ShapeWriter Shape = "writer"
@@ -141,7 +140,6 @@ func (v *validator) add(step, rule, format string, args ...any) {
 	v.problems = append(v.problems, Problem{Step: step, Rule: rule, Detail: fmt.Sprintf(format, args...)})
 }
 
-// dominators returns the dominator sets of the definition, computing them once.
 func (v *validator) dominators() map[string]map[string]bool {
 	if !v.domDone {
 		v.dom = dominators(v.def, v.def.Start)
@@ -150,7 +148,6 @@ func (v *validator) dominators() map[string]map[string]bool {
 	return v.dom
 }
 
-// actor returns the actor a run step names, after its params are rendered.
 func (v *validator) actor(step Step) (ActorInfo, bool) {
 	if step.Run == "" {
 		return ActorInfo{}, false
@@ -421,7 +418,6 @@ func (v *validator) checkWhens() {
 	}
 }
 
-// cut splits s at the first instance of sep.
 func cut(s, sep string) (string, string) {
 	i := strings.Index(s, sep)
 	if i < 0 {

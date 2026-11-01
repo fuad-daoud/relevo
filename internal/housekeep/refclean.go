@@ -235,7 +235,6 @@ func joinSweepOutcomes(candidates []sweepCandidate, cleaned []RefOutcome) []RefO
 	return refs
 }
 
-// RefLines renders outcomes as lines for CLI output.
 func RefLines(refs []RefOutcome) []string {
 	var lines []string
 	for _, r := range refs {

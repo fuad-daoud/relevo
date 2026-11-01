@@ -18,11 +18,10 @@ type ResumeOpts struct {
 	SameRound bool
 }
 
-// Resume re-enters a halted or stopped chain. A running or done chain is
-// refused: there is nothing to resume. With no close, it re-enters the named
-// step, or the step the chain halted on, resetting that step's budget count so
-// it runs again. With a close, it treats a newer manual round for the awaited
-// run step as that step's close and routes it.
+// Resume re-enters a halted or stopped chain; a running or done chain is
+// refused, since there is nothing to resume. With no close it re-enters the
+// named step, or the halt step, resetting that step's budget count; with a close
+// it routes a newer manual round for the awaited run step as that step's close.
 func Resume(def Definition, s State, opts ResumeOpts) (State, []Action, error) {
 	if s.Status == StatusRunning || s.Status == StatusDone {
 		return State{}, nil, fmt.Errorf("workflow: cannot resume a %s run", s.Status)
@@ -33,9 +32,8 @@ func Resume(def Definition, s State, opts ResumeOpts) (State, []Action, error) {
 	return resumeAt(def, s, opts.From)
 }
 
-// resumeAt re-enters a chain at a step, resetting that step's own budget count
-// so the entry runs it again. From names the step; empty means the step the
-// chain is on.
+// resumeAt re-enters a chain at a step, resetting its budget count so the entry
+// runs it again; empty From means the step the chain is on.
 func resumeAt(def Definition, s State, from string) (State, []Action, error) {
 	target := from
 	if target == "" {
@@ -94,7 +92,6 @@ func unknownStepError(def Definition, target string) error {
 	return fmt.Errorf("workflow: unknown step %q; the workflow has: %s", target, strings.Join(ResumeTargets(def), ", "))
 }
 
-// ResumeTargets returns every step a resume could name, sorted.
 func ResumeTargets(def Definition) []string {
 	return slices.Sorted(maps.Keys(def.Steps))
 }

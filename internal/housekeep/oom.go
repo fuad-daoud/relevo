@@ -194,13 +194,13 @@ func AdmitOOMQueued(ctx context.Context, deps Deps, bindings []store.Binding) {
 }
 
 // OOMNote is the prompt addition for a round that was interrupted by an oom
-// kill. It tells the builder what happened and to run git status and git diff
-// first.
+// kill.
 func OOMNote(t time.Time) string {
 	return fmt.Sprintf(oomNoteFormat, t.UTC().Format("2006-01-02T15:04:05Z"))
 }
 
-// The cause is the round's own cgroup scope, ended by the kernel's OOM killer:
-// a scope hit its memory limit. It is never a host-wide kill, and naming
-// systemd-oomd sent readers looking at the wrong layer.
+// oomNoteFormat is the cause: the round's own cgroup scope, ended by the
+// kernel's OOM killer -- a scope hit its memory limit. It is never a
+// host-wide kill, and naming systemd-oomd sent readers looking at the wrong
+// layer.
 const oomNoteFormat = `This round was interrupted at %s because the builder's cgroup scope ran out of memory and the kernel's out-of-memory killer ended the builder process. The working tree may already hold partial edits from an earlier attempt at this same plan, and those edits are your own work, not someone else's. Run "git status" and "git diff" first, keep whatever is correct, and finish the plan.`

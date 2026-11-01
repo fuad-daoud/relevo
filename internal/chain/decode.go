@@ -22,7 +22,6 @@ func WorkflowDef(c db.ChainRow) (workflow.Definition, error) {
 	return def, nil
 }
 
-// WorkflowState decodes a chain's stored engine state.
 func WorkflowState(c db.ChainRow) (workflow.State, error) {
 	var st workflow.State
 	if len(c.StateJSON) == 0 {

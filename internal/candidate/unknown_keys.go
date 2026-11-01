@@ -10,7 +10,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/jsonshape"
 )
 
-// KnownFields returns the top-level JSON keys Candidate declares, sorted.
 func KnownFields() []string {
 	seen := map[string]bool{}
 	var out []string

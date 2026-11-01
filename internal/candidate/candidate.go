@@ -386,7 +386,7 @@ func checkRoles(name, base string, i int, c Candidate, h harness.Harness) (strin
 // "--contributor-mode on" pair and a "--contributor-mode=on" element both
 // migrate; the last one wins when several are present. The migration is
 // reported through the warning channel and never fails a load for a value that
-// works today; only an invalid value fails the load. When both the field and
+// works; only an invalid value fails the load. When both the field and
 // extra_args set it, the field wins and the warning says so. Other harnesses
 // keep their extra_args verbatim.
 func migrateContributorMode(name, base string, i int, c *Candidate) (string, error) {

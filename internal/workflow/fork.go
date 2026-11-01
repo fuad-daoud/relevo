@@ -5,8 +5,6 @@ import (
 	"strconv"
 )
 
-// enterFork enters a fork step: it starts fixed children or an each list, or
-// routes joined when an each list is empty.
 func enterFork(def Definition, s State, id string, step Step, walked int) (State, []Action) {
 	if step.Fork == nil {
 		return halt(s, id, id+": not a step kind")
@@ -65,8 +63,6 @@ func enterFork(def Definition, s State, id string, step Step, walked int) (State
 	}}
 }
 
-// forkItems reads the items an each fork walks, from the seeded plans input or
-// an artifact in Results.
 func forkItems(s State, id, source string) []string {
 	if source == "plans" {
 		return s.Iter[id].Items
@@ -81,8 +77,6 @@ func forkItems(s State, id, source string) []string {
 	return nil
 }
 
-// childEnded records one child's end, and once all children have ended, routes
-// to halted or emits a merge action.
 func (s State) childEnded(def Definition, e Event) (State, []Action) {
 	ended := make(map[string]ChildEnd, len(s.Awaiting.Ended)+1)
 	for k, v := range s.Awaiting.Ended {
@@ -135,7 +129,6 @@ func (s State) childEnded(def Definition, e Event) (State, []Action) {
 	return s, []Action{{Kind: ActionMerge, Step: e.Step}}
 }
 
-// mergeClosed records a fork's merge result and routes on the result.
 func (s State) mergeClosed(def Definition, e Event) (State, []Action) {
 	s.Results = ensureResults(s.Results)
 	s.Results[e.Step] = Result{
@@ -164,8 +157,6 @@ func matchFork(on map[string]Target, result string) (Target, bool) {
 	return t, ok
 }
 
-// ReopenFork re-opens an awaited fork at a halted child when the parent is
-// halted at the fork step.
 func ReopenFork(s State, child string) (State, bool) {
 	if s.Status != StatusHalted {
 		return s, false

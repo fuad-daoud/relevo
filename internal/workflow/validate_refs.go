@@ -62,7 +62,6 @@ func (v *validator) checkReferences() {
 	}
 }
 
-// checkRef resolves one reference against the workflow.
 func (v *validator) checkRef(step, field string, ref Ref) {
 	switch ref.Root {
 	case "params":
@@ -138,7 +137,6 @@ func (v *validator) attrFits(id, attr string) bool {
 	return false
 }
 
-// isArtifact reports whether a step's actor declares attr as an artifact.
 func (v *validator) isArtifact(id, attr string) bool {
 	step, ok := v.def.Steps[id]
 	if !ok {

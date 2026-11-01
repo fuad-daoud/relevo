@@ -11,14 +11,10 @@ import (
 
 // NormalizeSubdir puts a subdirectory prefix into the form RoundDir joins: a
 // slash-separated path relative to the tree root, with git's trailing slash
-// dropped. An empty prefix, the room at the tree's root, is its own empty
-// answer.
-//
-// A prefix that could move the round's directory outside the tree -- an
-// absolute path, a `..` segment, a `.` segment -- or that is meaningless as an
-// offset -- bare separators -- is refused here, at the one boundary every
-// surface stores through, so the round's directory always stays inside the
-// tree.
+// dropped. An empty prefix is its own empty answer. An absolute path, a "..",
+// "." or empty segment, or bare separators are refused here, at the one
+// boundary every surface stores through, so the round's directory always stays
+// inside the tree.
 func NormalizeSubdir(raw string) (string, error) {
 	s := strings.TrimSuffix(raw, "/")
 	if strings.HasPrefix(s, "/") {

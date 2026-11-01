@@ -19,7 +19,9 @@ func registryKey(id string) string { return mastermindKeyPrefix + id }
 // seenRefreshInterval is how stale seen_at must be before Touch rewrites it.
 const seenRefreshInterval = time.Minute
 
-// Registry owns the mastermind records.
+// Registry owns the mastermind records. Lookups return ErrNotFound when
+// nothing matches: BySession matches a record's current session, and ByHost a
+// live (pid, startedAt).
 type Registry interface {
 	Get(id string) (Record, error)
 	ByName(name string) (Record, error)
@@ -99,7 +101,6 @@ func decodeRecord(key string, raw []byte) (Record, error) {
 	return rec, nil
 }
 
-// Get returns the record with that id, or ErrNotFound.
 func (r *DBRegistry) Get(id string) (Record, error) {
 	return r.getFrom(r.KV, id)
 }
@@ -118,7 +119,6 @@ func (r *DBRegistry) getFrom(kv db.KVTx, id string) (Record, error) {
 	return decodeRecord(registryKey(id), raw)
 }
 
-// ByName returns the record with that name, or ErrNotFound.
 func (r *DBRegistry) ByName(name string) (Record, error) {
 	return r.byNameFrom(r.KV, name)
 }
@@ -136,7 +136,6 @@ func (r *DBRegistry) byNameFrom(kv db.KVTx, name string) (Record, error) {
 	return Record{}, fmt.Errorf("%s: %w", name, ErrNotFound)
 }
 
-// BySession returns the record whose current session is (kind, sessionID).
 func (r *DBRegistry) BySession(kind, sessionID string) (Record, error) {
 	return r.bySessionFrom(r.KV, kind, sessionID)
 }
@@ -154,7 +153,6 @@ func (r *DBRegistry) bySessionFrom(kv db.KVTx, kind, sessionID string) (Record, 
 	return Record{}, fmt.Errorf("%s/%s: %w", kind, sessionID, ErrNotFound)
 }
 
-// ByHost returns the record holding that live (pid, startedAt).
 func (r *DBRegistry) ByHost(pid int, startedAt int64) (Record, error) {
 	return r.byHostFrom(r.KV, pid, startedAt)
 }

@@ -43,8 +43,6 @@ func ResolveWorkflow(cfg *config.Store, nameOrPath string) (workflow.Definition,
 	return workflow.Definition{}, "", refusal.New("workflow: %q is not a file, a saved workflow or a shipped workflow", nameOrPath)
 }
 
-// loadWorkflowFile reads one workflow file and embeds its file: seeds relative
-// to the file's own directory.
 func loadWorkflowFile(path string) (workflow.Definition, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

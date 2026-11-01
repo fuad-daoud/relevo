@@ -7,7 +7,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
-// RankedEntry is one row of the walk; T4's FormatPolicy renders the same rows.
+// RankedEntry is one row of the walk; FormatPolicy renders the same rows.
 type RankedEntry struct {
 	Candidate candidate.Candidate
 	How       How // HowOrder or HowUnlisted
@@ -77,11 +77,8 @@ func demoteLast(in []RankedEntry, gates []availability.Gate) []RankedEntry {
 
 // RankedList is the order's configured, serving entries first, then every
 // other serving candidate in ref order; an order entry relevo cannot use is
-// skipped here and reported by PolicyWarnings (T4), never an error, because
+// skipped here and reported by PolicyWarnings, never an error, because
 // removing a candidate must not break every subcommand.
-//
-// It is the legacy registry's ranked list: RankedRoleFor over the derivation
-// of set and pol.
 func RankedList(set *candidate.Set, pol policy.Policy, role string, gates ...availability.Gate) []RankedEntry {
 	return RankedRoleFor(LegacyRegistry(set, pol), set, role, gates)
 }

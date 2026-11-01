@@ -9,7 +9,6 @@ import (
 // that arrives afterwards changes nothing.
 type Status string
 
-// The statuses a run holds.
 const (
 	StatusRunning Status = "running"
 	StatusHalted  Status = "halted"
@@ -17,14 +16,12 @@ const (
 	StatusDone    Status = "done"
 )
 
-// terminal reports whether a status ends the run.
 func (st Status) terminal() bool {
 	return st == StatusHalted || st == StatusStopped || st == StatusDone
 }
 
-// StartInputs are the lists and task a chain is started with. Inputs is the
-// workflow's declaration of which of the two it takes; this is the value a
-// caller supplies for a run.
+// StartInputs are the lists and task a chain is started with: the value a caller
+// supplies for the workflow's declared Inputs.
 type StartInputs struct {
 	Plans []string
 	Task  string
@@ -48,7 +45,6 @@ type ChildEnd struct {
 	Reason string
 }
 
-// ChildSpec specifies one child workflow to be started by a fork action.
 type ChildSpec struct {
 	Key      string
 	Workflow string
@@ -56,10 +52,9 @@ type ChildSpec struct {
 	Plans    []string
 }
 
-// Iter is a for-each step's walk: the item index and the items it walks. The
-// index is -1 before the first item and after the last. Done tells an exhausted
-// walk from one that has not started: both hold -1, and only a projection that
-// needs the last item can tell them apart.
+// Iter is a for-each step's walk: the item index and the items it walks, with -1
+// before the first item and after the last. Done tells an exhausted walk from one
+// that has not started, since both hold -1.
 type Iter struct {
 	Index int
 	Items []string
@@ -99,7 +94,6 @@ type State struct {
 // EventKind names the close an event carries.
 type EventKind string
 
-// The closes the engine reads.
 const (
 	EventStepClosed  EventKind = "step_closed"
 	EventCheckClosed EventKind = "check_closed"
@@ -142,7 +136,6 @@ type Event struct {
 // ActionKind is what relevo does with a transition.
 type ActionKind string
 
-// The actions a transition may produce.
 const (
 	ActionSend     ActionKind = "send"
 	ActionRunCheck ActionKind = "run_check"
@@ -192,7 +185,6 @@ func DecodeEvent(s string) (Event, error) {
 	return e, nil
 }
 
-// EncodeAction is Action's counterpart of EncodeEvent.
 func EncodeAction(a Action) string {
 	b, err := json.Marshal(a)
 	if err != nil {
@@ -201,8 +193,6 @@ func EncodeAction(a Action) string {
 	return string(b)
 }
 
-// DecodeAction reads a stored action. An unknown kind or a malformed document
-// is an error.
 func DecodeAction(s string) (Action, error) {
 	var a Action
 	if err := json.Unmarshal([]byte(s), &a); err != nil {
@@ -214,7 +204,6 @@ func DecodeAction(s string) (Action, error) {
 	return a, nil
 }
 
-// known reports whether an event kind is one the engine reads.
 func (k EventKind) known() bool {
 	switch k {
 	case EventStepClosed, EventCheckClosed, EventChildEnded, EventMergeClosed, EventNeedsYou, EventStopped:
@@ -223,7 +212,6 @@ func (k EventKind) known() bool {
 	return false
 }
 
-// known reports whether an action kind is one the engine produces.
 func (k ActionKind) known() bool {
 	switch k {
 	case ActionSend, ActionRunCheck, ActionFork, ActionMerge, ActionFinish, ActionHalt, ActionStop:

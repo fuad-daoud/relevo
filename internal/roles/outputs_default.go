@@ -16,7 +16,6 @@ func EffectiveOutputs(agent string, declared workflow.Outputs) workflow.Outputs 
 	return defaults
 }
 
-// copyOutputs returns a deep copy of outputs.
 func copyOutputs(o workflow.Outputs) workflow.Outputs {
 	if o == nil {
 		return nil

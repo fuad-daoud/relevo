@@ -48,7 +48,6 @@ func rowsFor(verb Verb, rep view.Report) []view.BindingStatus {
 	}
 }
 
-// emptyText is the one line shown when rowsFor is empty.
 func emptyText(verb Verb) string {
 	switch verb {
 	case VerbDone:
@@ -58,12 +57,10 @@ func emptyText(verb Verb) string {
 	}
 }
 
-// needsConfirm stops done and unbind for a `y` before
-// acting on any row that is not DONE. A terminal popup takes focus the instant
-// it opens, so a keystroke already in flight lands on it -- and the most
-// common such key is Enter. The list showed the row's state; nobody had
-// read it yet. DONE rows under unbind are what gc clears anyway and run at
-// once.
+// needsConfirm stops done and unbind for a `y` before acting on any row
+// that is not DONE. A terminal popup takes focus the instant it opens, so a
+// keystroke already in flight -- most commonly Enter -- lands on it. DONE
+// rows under unbind are what gc clears anyway and run at once.
 func needsConfirm(verb Verb, r view.BindingStatus) bool {
 	switch verb {
 	case VerbDone, VerbUnbind:

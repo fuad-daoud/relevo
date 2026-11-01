@@ -2,10 +2,9 @@ package workflow
 
 import "strconv"
 
-// Legacy is a chain as a database row written before workflows carried them
-// wrote it: the fixed phase/step/plan columns, the settings its params resolve
-// from, and the builder it names. It mirrors what the chain package stores
-// without importing it, so this package stays pure.
+// Legacy is a chain as a database row: the fixed phase/step/plan columns, the
+// settings its params resolve from, and the builder it names. It mirrors what the
+// chain package stores without importing it, so this package stays pure.
 type Legacy struct {
 	Status        string
 	Reason        string
@@ -133,7 +132,6 @@ func legacyStepAt(l Legacy) string {
 	return ""
 }
 
-// legacyActorOfStep is the actor a step runs, from the definition's params.
 func legacyActorOfStep(def Definition, at string) string {
 	switch at {
 	case "plans", "build", "build-fix", "check", "repair", "fix-build", "fix-rebuild", "fix-check", "fix-repair":
@@ -160,10 +158,9 @@ type LegacyFields struct {
 	AwaitingRound  int
 }
 
-// LegacyView projects a workflow state back onto the legacy columns. It is
-// FromLegacy's inverse over the columns it can recover: a finished run reads
-// the finished phase, and a state at a rebuilding step reads the phase its step
-// belongs to.
+// LegacyView projects a workflow state back onto the legacy columns:
+// FromLegacy's inverse over the columns it can recover. A finished run reads the
+// finished phase, and a rebuilding step reads its own phase.
 func LegacyView(def Definition, s State) LegacyFields {
 	phase, step := legacyColumnsOf(s.At)
 	if s.Status == StatusDone {
@@ -217,7 +214,6 @@ func legacyColumnsOf(at string) (phase, step string) {
 	return phase, legacyStepWord(at)
 }
 
-// legacyStepWord is the legacy step word a workflow step id reads as.
 func legacyStepWord(at string) string {
 	switch at {
 	case "build", "build-fix", "repair", "check", "plans", "fix-build", "fix-rebuild", "fix-repair", "fix-check":
@@ -234,8 +230,6 @@ func legacyStepWord(at string) string {
 	return legacyStepBuilding
 }
 
-// legacySecurityStep reports whether a workflow step id belongs to the security
-// phase, which the fix-prefixed steps and the scan spell.
 func legacySecurityStep(at string) bool {
 	switch at {
 	case "scan", "scan-gate", "fix-plan", "fix-build", "fix-rebuild", "fix-repair", "fix-check", "fix-review", "fix-correct":

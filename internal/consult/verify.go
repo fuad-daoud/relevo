@@ -31,9 +31,8 @@ const (
 	verdictUnstructured = "unstructured"
 )
 
-// verifyPrompt is the question relevo composes for a verify consult. It names
-// every artefact the reviewer needs -- the plan, the builder's report, the
-// round's diff and the gate log -- and asks for the verdict block it parses.
+// verifyPrompt is the question relevo composes for a verify consult: every
+// artefact the reviewer needs and the verdict block it parses.
 const verifyPrompt = `Verify round %d of binding %q independently. You are in a throwaway worktree at the builder's HEAD; you may run tests and read anything; do not edit files.
 
 Plan:   %s      Report: %s
@@ -161,7 +160,6 @@ type verifyStart struct {
 	round int
 }
 
-// skip records why the reviewer did not run and keeps the round closed.
 func (v verifyStart) skip(reason string) (store.Binding, error) {
 	entry := store.LogEntry{
 		TS: v.d.Now().UTC(), Round: v.round,
@@ -174,26 +172,18 @@ func (v verifyStart) skip(reason string) (store.Binding, error) {
 	return v.b, nil
 }
 
-// fail is skip plus the worktree cleanup every failure after creation owes.
 func (v verifyStart) fail(reason string) (store.Binding, error) {
 	removeVerifyWorktree(v.ctx, v.d, v.b, v.round)
 	return v.skip(reason)
 }
 
-// StartVerify starts this round's read-only reviewer at round close.
-//
-// Preconditions:  the round just closed (b.Round == round+1); the caller holds
-// the state lock and passes its tx; gateLog is the closed round's gate log
-// path, "" when no gate ran.
-//
-// Postconditions: on success one headless consult with Role VerifyRole is
-// reserved and running in a detached worktree at the builder's HEAD, its
-// question recorded at the binding's ask path, and a to_consult/ask entry in
-// the log. On every failure -- no git client, no reviewer candidate, a worktree
-// that could not be created, no runner, a launch that failed -- the worktree is
-// removed when it exists, one to_consult/ask note "verify skipped: <why>" is
-// appended, and (b, nil) is returned: a reviewer relevo could not start is not
-// a round failure. Only a store error can fail the call.
+// StartVerify starts this round's read-only reviewer at round close: the round
+// just closed (b.Round == round+1) and the caller holds the state lock and
+// passes its tx. gateLog is the closed round's gate log path, "" when no gate
+// ran. Every
+// failure path appends one to_consult/ask "verify skipped: <why>" note and
+// returns (b, nil) -- a reviewer relevo could not start is not a round failure;
+// only a store error fails the call.
 func StartVerify(ctx context.Context, d Deps, tx *store.Tx, b store.Binding, round int, diff, gateLog string) (store.Binding, error) {
 	v := verifyStart{ctx: ctx, d: d, tx: tx, b: b, round: round}
 
@@ -217,7 +207,8 @@ func StartVerify(ctx context.Context, d Deps, tx *store.Tx, b store.Binding, rou
 }
 
 // launch resolves the reviewer, stages the question and reserves the record.
-// Every failure past the worktree's creation goes through fail.
+// Every failure past the worktree's creation goes through fail, which removes
+// the worktree.
 func (v verifyStart) launch(wt, diff, gateLog string) (store.Binding, error) {
 	c, role, tier, err := v.d.ResolveReviewer()
 	if err != nil {

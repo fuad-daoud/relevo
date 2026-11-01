@@ -49,7 +49,6 @@ func IsSingleRef(template string) bool {
 	return err == nil && len(refs) == 1
 }
 
-// parseRef splits a reference's inner text at its first dot.
 func parseRef(inner string) Ref {
 	if i := strings.IndexByte(inner, '.'); i >= 0 {
 		return Ref{Root: inner[:i], Attr: inner[i+1:]}
@@ -57,7 +56,6 @@ func parseRef(inner string) Ref {
 	return Ref{Root: inner}
 }
 
-// snippet bounds a fragment for an error message.
 func snippet(s string) string {
 	const limit = 24
 	if len(s) > limit {

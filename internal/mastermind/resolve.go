@@ -148,10 +148,10 @@ func museHostIdent(ident Ident, detected bool, in ResolveInput) Ident {
 	return ident
 }
 
-// resolveFromEnv is Resolve's env step: $RELEVO_MASTERMIND first, then the
-// historical $RELEVO_PLANNER, because the export line already in a live
-// session's $CLAUDE_ENV_FILE is state already written (D5). ok is false when
-// neither variable names anything, in which case the caller keeps looking.
+// resolveFromEnv is Resolve's env step: $RELEVO_MASTERMIND first, then
+// $RELEVO_PLANNER, because a live session's $CLAUDE_ENV_FILE may already export
+// the old name. ok is false when neither variable names anything, in which case
+// the caller keeps looking.
 func resolveFromEnv(reg Registry, env func(string) string, in ResolveInput) (Record, Resolution, bool, error) {
 	for _, name := range []string{"RELEVO_MASTERMIND", "RELEVO_PLANNER"} {
 		ref := env(name)
@@ -171,7 +171,6 @@ func resolveFromEnv(reg Registry, env func(string) string, in ResolveInput) (Rec
 	return Record{}, "", false, nil
 }
 
-// lookupRef resolves ref as an id when it has that shape, else as a name.
 func lookupRef(reg Registry, ref string) (Record, error) {
 	lookup := reg.ByName
 	if ValidID(ref) == nil {

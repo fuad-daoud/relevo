@@ -38,8 +38,7 @@ func kindOf(s Step) string {
 
 // StepKind returns the single kind a step declares, or "" when it does not
 // declare exactly one. It is kindOf over one id, so a caller outside this
-// package reads a step's kind the same way the rules do: a step with two kinds
-// reports rule 2 rather than being read as either.
+// package reads a step's kind the same way the rules do.
 func StepKind(def Definition, id string) string {
 	step, ok := def.Steps[id]
 	if !ok {
@@ -48,17 +47,15 @@ func StepKind(def Definition, id string) string {
 	return kindOf(step)
 }
 
-// StepEdges returns each step's step-targets: its on targets and its budget
-// then, sorted. done and halt targets are sinks and carry no edge, because
-// neither names a step to go to. It is stepEdges over a whole definition, for a
-// caller outside this package that draws the graph.
+// StepEdges is stepEdges over a whole definition, for a caller outside this
+// package that draws the graph.
 func StepEdges(def Definition) map[string][]string {
 	return stepEdges(def)
 }
 
-// StepActors returns the actors one step names: the run actor, the check actor
-// or the fork's workflows, joined, and "" for a step that names none. It is how
-// a step's row says who does the work without the caller re-deriving the kinds.
+// StepActors returns the actors one step names, joined, or "" for a step that
+// names none: how a step's row says who does the work without re-deriving the
+// kinds.
 func StepActors(def Definition, id string) string {
 	step, ok := def.Steps[id]
 	if !ok {
@@ -84,8 +81,6 @@ func StepActors(def Definition, id string) string {
 	return strings.Join(names, ", ")
 }
 
-// reachable returns the steps reachable from start, or nil when start is not a
-// step.
 func reachable(def Definition, start string) map[string]bool {
 	if _, ok := def.Steps[start]; !ok {
 		return nil
@@ -93,7 +88,6 @@ func reachable(def Definition, start string) map[string]bool {
 	return reachableFrom(stepEdges(def), start)
 }
 
-// reachableFrom walks the edges from start and returns every node it reaches.
 func reachableFrom(edges map[string][]string, start string) map[string]bool {
 	seen := map[string]bool{start: true}
 	queue := []string{start}
@@ -110,7 +104,6 @@ func reachableFrom(edges map[string][]string, start string) map[string]bool {
 	return seen
 }
 
-// subEdges keeps only the edges whose target is in keep.
 func subEdges(edges map[string][]string, keep map[string]bool) map[string][]string {
 	out := make(map[string][]string, len(keep))
 	for n := range keep {
@@ -123,10 +116,8 @@ func subEdges(edges map[string][]string, keep map[string]bool) map[string][]stri
 	return out
 }
 
-// dominators returns, for every reachable step, the set of steps that dominate
-// it: every path from start to the step passes through them. The computation is
-// iterative and starts from start alone. It returns nil when start is not a
-// step.
+// dominators returns, for every reachable step, the steps dominating it: every
+// path from start passes through them. It returns nil when start is not a step.
 func dominators(def Definition, start string) map[string]map[string]bool {
 	reach := reachable(def, start)
 	if reach == nil {
@@ -151,8 +142,6 @@ func dominators(def Definition, start string) map[string]map[string]bool {
 	return dom
 }
 
-// predecessors returns, for every reachable node, the reachable nodes with an
-// edge into it.
 func predecessors(edges map[string][]string, reach map[string]bool) map[string][]string {
 	preds := make(map[string][]string, len(reach))
 	for n := range reach {
@@ -165,8 +154,6 @@ func predecessors(edges map[string][]string, reach map[string]bool) map[string][
 	return preds
 }
 
-// seedDominators starts the iteration: start dominates only itself, and every
-// other reachable node starts with every reachable node.
 func seedDominators(reach map[string]bool, start string) map[string]map[string]bool {
 	all := make(map[string]bool, len(reach))
 	for m := range reach {
@@ -183,8 +170,6 @@ func seedDominators(reach map[string]bool, start string) map[string]map[string]b
 	return dom
 }
 
-// intersectPreds intersects the dominator sets of a node's predecessors, the
-// middle step of the dominator equation.
 func intersectPreds(dom map[string]map[string]bool, preds []string) map[string]bool {
 	if len(preds) == 0 {
 		return map[string]bool{}

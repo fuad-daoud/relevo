@@ -41,7 +41,6 @@ func DiskFullPhrase(tail string) (string, bool) {
 	return "", false
 }
 
-// DiskFullIn reports whether tail carries a full-disk phrase.
 func DiskFullIn(tail string) bool {
 	_, ok := DiskFullPhrase(tail)
 	return ok

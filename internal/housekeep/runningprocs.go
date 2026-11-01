@@ -12,13 +12,13 @@ type RunningProcRef struct {
 	PID     int
 }
 
-// RunningProcs collects the processes bs says are running locally:
-// only local bindings (no owner, not remote), and only processes with a pid --
-// a headless builder, the current round's gate, and every running consult with
-// a headless endpoint. Pure: it reads bs and nothing else.
+// RunningProcs collects the processes bs says are running locally: only local
+// bindings with a pid -- a headless builder, the current round's gate, and
+// every running consult with a headless endpoint. Pure: it reads bs and
+// nothing else.
 //
-// A pane builder and an adopted endpoint are deliberately absent: relevo did not
-// start them, so a daemon restart does not affect them.
+// A pane builder and an adopted endpoint are deliberately absent: relevo did
+// not start them, so a daemon restart does not affect them.
 func RunningProcs(bs []store.Binding) []RunningProcRef {
 	var out []RunningProcRef
 	for _, b := range bs {

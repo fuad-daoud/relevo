@@ -12,7 +12,7 @@ import (
 // formatAccountPools renders the configured login pools: one block per quota
 // group, one row per account in config order, and whether a live gate covers
 // it. It returns "" when no accounts are configured, so a host with none
-// prints exactly the view it always did.
+// prints the view unchanged.
 func formatAccountPools(accounts account.Set, gates []availability.Gate, live []availability.Entry) string {
 	if len(accounts) == 0 {
 		return ""

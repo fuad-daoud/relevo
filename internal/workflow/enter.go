@@ -7,8 +7,6 @@ import (
 	"strconv"
 )
 
-// Start begins a run: it seeds every for-each that walks the plans input and
-// enters the start step.
 func Start(def Definition, in StartInputs) (State, []Action) {
 	s := State{
 		Status:  StatusRunning,
@@ -19,8 +17,6 @@ func Start(def Definition, in StartInputs) (State, []Action) {
 	return enter(def, seedPlans(def, s, in), def.Start, 0)
 }
 
-// seedPlans gives every for-each and fork over the plans input its items, with
-// the index before the first one.
 func seedPlans(def Definition, s State, in StartInputs) State {
 	for _, id := range slices.Sorted(maps.Keys(def.Steps)) {
 		step := def.Steps[id]
@@ -34,10 +30,9 @@ func seedPlans(def Definition, s State, in StartInputs) State {
 	return s
 }
 
-// enter runs one step: it resets the budgets a step entry resets, checks its
-// own budget, then acts by kind. Every entry that routes on without emitting
-// an action -- a control step, a budget redirect or an empty check -- consumes
-// one unit of the walk; walked counts those entries this transition has made.
+// enter runs one step. Every entry that routes on without emitting an action --
+// a control step, a budget redirect or an empty check -- consumes one unit of
+// the walk; walked counts those entries this transition has made.
 func enter(def Definition, s State, id string, walked int) (State, []Action) {
 	step, ok := def.Steps[id]
 	if !ok {
@@ -76,7 +71,6 @@ func enter(def Definition, s State, id string, walked int) (State, []Action) {
 	}
 }
 
-// ensureMaps gives a state the maps a transition writes into.
 func ensureMaps(s State) State {
 	if s.Visits == nil {
 		s.Visits = map[string]int{}
@@ -105,27 +99,17 @@ func resetVisits(def Definition, s State, id string) State {
 	return s
 }
 
-// names reports whether a per resets on the named step. per: chain never
-// resets, so only a plain step list can name one.
 func (p Per) names(id string) bool {
 	return !p.Chain && slices.Contains(p.Steps, id)
 }
 
 // applyBudget counts a step's visit and returns its then target once the count
-// passes the rendered max. A repeated-red event counts as over budget, so the
-// same failure the last repair already saw buys no second repair. The target is
-// zero when the step is still under.
-//
-// A budget a red check reaches buys no round at all when its rendered max is
-// zero, so its then target would be reached with the failure it was meant to fix
-// never attempted. In that case the run halts and names the zero budget: a red
-// check reaches a human rather than the next step in the graph.
-//
-// A budget that no check's red edge names is left alone even at zero -- it is
-// not standing in for work a red check left undone -- as is a budget whose
-// target is done or a halt, which says what happens next without claiming the
-// work was done, and a budget with room, which reaches its target only after
-// its own rounds have run and re-checked.
+// passes the rendered max -- the target is zero when the step is still under
+// budget; a repeated-red event counts as over budget, so the same failure the
+// last repair already saw buys no second repair. A zero-max arm of a red check
+// halts instead of routing past it, since the failure it was meant to fix would
+// go unaddressed; an arm no red edge names, or one whose then is done or a
+// halt, is left alone.
 func applyBudget(def Definition, s State, id string, b *Budget) (State, Target) {
 	s.Visits[id]++
 	if renderLimit(def, b.Max) < 1 && redBudgetArm(def, id) && b.Then.Kind == TargetStep {
@@ -137,8 +121,8 @@ func applyBudget(def Definition, s State, id string, b *Budget) (State, Target) 
 	return s, Target{}
 }
 
-// redBudgetArm reports whether any check step's red edge names id, which is what
-// makes id a repair arm: the step a failed check would spend a budget on.
+// redBudgetArm reports whether any check step's red edge names id, which is
+// what makes id a repair arm: the step a failed check would spend a budget on.
 func redBudgetArm(def Definition, id string) bool {
 	return len(RedArmChecks(def, id)) > 0
 }
@@ -225,8 +209,6 @@ func forEachIter(def Definition, s State, id string, step Step) Iter {
 	return it
 }
 
-// artifactSource reads a for-each source that is exactly one artifact
-// reference.
 func artifactSource(source string) (string, string, bool) {
 	if !IsSingleRef(source) {
 		return "", "", false
@@ -238,7 +220,6 @@ func artifactSource(source string) (string, string, bool) {
 	return refs[0].Root, refs[0].Attr, true
 }
 
-// walkWhen routes a when step on its bool param.
 func walkWhen(def Definition, s State, id string, step Step, walked int) (State, []Action) {
 	if walked > len(def.Steps)+1 {
 		return halt(s, id, capReason(def, id))
@@ -260,8 +241,6 @@ func whenTrue(def Definition, when string) bool {
 	return ok && p.Kind == ParamBool && p.Bool
 }
 
-// controlRoute routes a control step's outcome, falling back to else, and
-// halts when neither matches.
 func controlRoute(def Definition, s State, id string, on map[string]Target, key string, walked int) (State, []Action) {
 	t, ok := on[key]
 	if !ok {
@@ -273,7 +252,6 @@ func controlRoute(def Definition, s State, id string, on map[string]Target, key 
 	return route(def, s, id, t, walked)
 }
 
-// capReason names the step a control walk stopped at and the cap it passed.
 func capReason(def Definition, id string) string {
 	return fmt.Sprintf("control walk exceeded %d steps at %s", len(def.Steps)+1, id)
 }
