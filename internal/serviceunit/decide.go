@@ -10,7 +10,6 @@ import (
 type Action string
 
 const (
-	// ActionAbsent: no unit is installed, so nothing is written.
 	ActionAbsent Action = "absent"
 	// ActionCurrent: the installed bytes are the shipped bytes.
 	ActionCurrent Action = "current"
@@ -20,7 +19,6 @@ const (
 	ActionEdited Action = "edited"
 )
 
-// SHA256Hex is the lowercase hex sha256 of b.
 func SHA256Hex(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
@@ -43,28 +41,26 @@ func DecideUnitAction(doc string, installed []byte, present bool, current []byte
 	return ActionEdited
 }
 
-// RenderPlist substitutes the install-time paths into the plist template.
 func RenderPlist(template []byte, bin, home string) []byte {
 	out := bytes.ReplaceAll(template, []byte("@BIN@"), []byte(bin))
 	return bytes.ReplaceAll(out, []byte("@HOME@"), []byte(home))
 }
 
 // RenderService substitutes the install-time paths into the service
-// template. path is the whole Environment=PATH value, already assembled by
-// the caller.
+// template; path is the whole Environment=PATH value, already assembled.
 func RenderService(template []byte, bin, path string) []byte {
 	out := bytes.ReplaceAll(template, []byte("@BIN@"), []byte(bin))
 	return bytes.ReplaceAll(out, []byte("@PATH@"), []byte(path))
 }
 
-// CanonicalService undoes RenderService so an installed service can be hashed
-// against the template index, the way CanonicalPlist does. Substitution is
-// gated on this machine's binary path being present: a unit relevo rendered
-// carries it, an old-format unit (whose ExecStart still says %h) does not,
-// and reverting that unit's fixed PATH line would erase the very staleness
-// the index can still recognise. Within the gate, the exact rendered value
-// reverts when it matches; otherwise the line reverts whole, because the
-// harness homes inside it changed between the write and this read.
+// CanonicalService undoes RenderService so an installed service can be
+// hashed against the template index. Substitution is gated on this machine's
+// binary path being present: an old-format unit (whose ExecStart still says
+// %h) does not carry it, and reverting that unit's fixed PATH line would
+// erase the staleness the index can still recognise. Within the gate, the
+// exact rendered value reverts when it matches; otherwise the line reverts
+// whole, because the harness homes inside it changed between the write and
+// this read.
 func CanonicalService(installed []byte, bin, path string) []byte {
 	if bin == "" || !bytes.Contains(installed, []byte(bin)) {
 		return append([]byte(nil), installed...)
@@ -80,9 +76,9 @@ func CanonicalService(installed []byte, bin, path string) []byte {
 	return out
 }
 
-// rewritePathLines reverts every Environment=PATH= line whole: the line is
-// the one place the assembled PATH lives, and the exact value cannot match
-// once harness lookups have drifted between the write and this read.
+// rewritePathLines reverts every Environment=PATH= line whole: the exact
+// value cannot match once harness lookups have drifted between the write
+// and this read.
 func rewritePathLines(installed []byte) [][]byte {
 	var out [][]byte
 	for _, line := range bytes.Split(installed, []byte("\n")) {
@@ -95,7 +91,7 @@ func rewritePathLines(installed []byte) [][]byte {
 }
 
 // CanonicalPlist undoes RenderPlist so an installed plist can be hashed
-// against the template index. The binary path goes first because it usually
+// against the template index; the binary path goes first because it usually
 // sits under home.
 func CanonicalPlist(installed []byte, bin, home string) []byte {
 	out := installed
