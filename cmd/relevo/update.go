@@ -34,10 +34,9 @@ func updateFlagSet(fs *flag.FlagSet) *updateFlagValues {
 	return v
 }
 
-// cmdUpdate is `relevo update`: it replaces a release binary with a
-// checksum-verified release binary of the target tag, or prints the command a
-// `go install` build needs, or refuses a local build. It never restarts anything:
-// a running daemon follows a replaced binary on its own.
+// cmdUpdate replaces a release binary with a checksum-verified release binary
+// of the target tag. It never restarts anything: a running daemon follows a
+// replaced binary on its own.
 func cmdUpdate(args []string) error {
 	return outcomeError(cmdUpdateRun(args))
 }
@@ -68,10 +67,7 @@ func cmdUpdateRun(args []string) error {
 		return fail(codeInternal, "cannot resolve the running executable: %v", err)
 	}
 
-	// The fetch is skipped whenever the decision cannot need the latest tag:
-	// an explicit --to names the target, a go install only prints, and a
-	// local or unknown build without --release refuses before any target is
-	// read.
+	// The fetch is skipped whenever the decision cannot need the latest tag.
 	needLatest := *to == "" && kind != release.KindGoInstall &&
 		!((kind == release.KindLocalBuild || kind == release.KindUnknown) && !*forceRelease)
 	latest := ""
@@ -121,9 +117,8 @@ func cmdUpdateRun(args []string) error {
 		return nil
 	}
 
-	// UpdateReplace: download, verify, preflight, then swap in place. The
-	// progress line keeps stdout in the default mode and moves to stderr under
-	// --json, where stdout carries the document alone.
+	// The progress line moves to stderr under --json, where stdout carries the
+	// document alone.
 	w := noticeWriter(*asJSON)
 	archive, _ := release.AssetURLs(dec.Target, runtime.GOOS, runtime.GOARCH)
 	fmt.Fprintf(w, "relevo %s -> %s: downloading %s\n", running, dec.Target, path.Base(archive))
@@ -169,8 +164,7 @@ func cmdUpdateRun(args []string) error {
 }
 
 // preflightCandidate runs the downloaded binary's own checks before it is
-// renamed over the running one: `version` must name the target tag and
-// `daemon --preflight` must exit 0. A failure leaves exe unchanged.
+// renamed over the running one; a failure leaves exe unchanged.
 func preflightCandidate(tmp, target, exe string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), upgrade.PreflightTimeout)
 	defer cancel()
@@ -191,7 +185,7 @@ func preflightCandidate(tmp, target, exe string) error {
 }
 
 // runCandidate starts the candidate binary with no stdin and captures its
-// output. It runs only in the UpdateReplace path.
+// output.
 func runCandidate(ctx context.Context, bin string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Stdin = nil

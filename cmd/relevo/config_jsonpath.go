@@ -5,8 +5,8 @@ import (
 	"errors"
 )
 
-// jsonAt walks keys into a JSON body, returning the raw value there. A key
-// missing, or a body that is not an object at some step, is ok false.
+// jsonAt walks keys into a JSON body; a missing key, or a body that is not an
+// object at some step, is ok false.
 func jsonAt(body []byte, keys []string) (json.RawMessage, bool) {
 	cur := json.RawMessage(body)
 	for _, key := range keys {
@@ -23,8 +23,8 @@ func jsonAt(body []byte, keys []string) (json.RawMessage, bool) {
 	return cur, true
 }
 
-// setJSON returns body with value stored at keys, creating intermediate
-// objects. A path that runs through a non-object is an error.
+// setJSON stores value at keys, creating intermediate objects; a path through
+// a non-object is an error.
 func setJSON(body []byte, keys []string, value json.RawMessage) ([]byte, error) {
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(body, &root); err != nil {
@@ -63,8 +63,8 @@ func setAt(obj map[string]json.RawMessage, keys []string, value json.RawMessage)
 	return nil
 }
 
-// unsetJSON returns body with the key at keys removed, and removed false when
-// the path is missing. A path that runs through a non-object is an error.
+// unsetJSON removes the key at keys; removed is false when the path is
+// missing, and a path through a non-object is an error.
 func unsetJSON(body []byte, keys []string) (out []byte, removed bool, err error) {
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(body, &root); err != nil {

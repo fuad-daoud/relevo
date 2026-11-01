@@ -13,13 +13,11 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 )
 
-// configServerFlagSet declares the bare `config server` dispatcher's flags:
-// none today. It exists so the registry's parity test finds exactly one
+// configServerFlagSet exists so the registry's parity test finds exactly one
 // installer per verb.
 func configServerFlagSet(*flag.FlagSet) {}
 
-// configServer is the server half of `relevo config`: this machine's
-// remote-builder identity and its configured servers.
+// configServer is the server half of `relevo config`.
 func configServer(args []string) error {
 	const usage = `usage: relevo config server add <name> <url> (--fingerprint sha256:<hex> | --ca system | --insecure)
        relevo config server rm <name>
@@ -62,7 +60,7 @@ func configServerKeyFlagSet(fs *flag.FlagSet) *configServerKeyFlagValues {
 }
 
 // configServerKey prints the client id and the enrolment line, generating the
-// key when it is absent.
+// key when absent.
 func configServerKey(args []string) error {
 	fs := flag.NewFlagSet("relevo config server key", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -95,8 +93,8 @@ func configServerKey(args []string) error {
 
 func configSecretFlagSet(*flag.FlagSet) {}
 
-// configSecret is the secrets half of `relevo config`. A list prints
-// names only, never values.
+// configSecret is the secrets half of `relevo config`; a list prints names
+// only, never values.
 func configSecret(args []string) error {
 	const usage = `usage: relevo config secret set <typesafe|client.key>
        relevo config secret rm <typesafe|client.key>
@@ -122,9 +120,8 @@ func configSecret(args []string) error {
 	}
 }
 
-// checkSecretName refuses a name other than the two secrets relevo stores. The
-// coded error names both allowed names, so the frame carries the same words a
-// human needs.
+// checkSecretName refuses any name but the two secrets relevo stores; the
+// error names both, so the frame carries the words a human needs.
 func checkSecretName(name string) error {
 	if name != config.SecretTypesafe && name != config.SecretClientKey {
 		return fail(codeUsage, "unknown secret %q (allowed: %s, %s)",
@@ -137,16 +134,16 @@ type configSecretSetFlagValues struct {
 	asJSON *bool
 }
 
-// configSecretSetFlagSet defines that flag on fs and returns what it parses
-// into.
+// configSecretSetFlagSet exists so the registry's parity test finds exactly
+// one installer per verb.
 func configSecretSetFlagSet(fs *flag.FlagSet) *configSecretSetFlagValues {
 	v := &configSecretSetFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the document the write produced")
 	return v
 }
 
-// configSecretSet reads the value from stdin, trimmed, and stores it. The
-// client key is validated by PutSecret.
+// configSecretSet reads the value from stdin and stores it; the client key is
+// validated by PutSecret.
 func configSecretSet(args []string) error {
 	return outcomeError(configSecretSetRun(args))
 }
@@ -192,8 +189,8 @@ type configSecretRmFlagValues struct {
 	asJSON *bool
 }
 
-// configSecretRmFlagSet defines that flag on fs and returns what it parses
-// into.
+// configSecretRmFlagSet exists so the registry's parity test finds exactly one
+// installer per verb.
 func configSecretRmFlagSet(fs *flag.FlagSet) *configSecretRmFlagValues {
 	v := &configSecretRmFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the document the write produced")
@@ -239,8 +236,8 @@ type configSecretListFlagValues struct {
 	asJSON *bool
 }
 
-// configSecretListFlagSet defines that flag on fs and returns what it parses
-// into, so the registry's parity test finds exactly one installer per verb.
+// configSecretListFlagSet exists so the registry's parity test finds exactly
+// one installer per verb.
 func configSecretListFlagSet(fs *flag.FlagSet) *configSecretListFlagValues {
 	v := &configSecretListFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the stored secret names as a JSON array")
@@ -278,7 +275,7 @@ func configSecretList(args []string) error {
 }
 
 // ensureClientKey returns the stored client key, generating and storing one
-// when it is absent. generated reports whether it had to create one.
+// when absent.
 func ensureClientKey(rt relevo.Runtime) (pem []byte, generated bool, err error) {
 	if stored, ok, err := rt.Config.Secret(config.SecretClientKey); err != nil {
 		return nil, false, err
@@ -303,10 +300,9 @@ func ensureClientKey(rt relevo.Runtime) (pem []byte, generated bool, err error) 
 	return pem, true, nil
 }
 
-// printClientKey prints the client id and the enrolment line a server admin
-// runs `relevo serve enroll --key "<line>"` with, to w. With enrollOnly it
-// prints the enrolment line alone. w is stdout for the read verb and the
-// notice stream for `config server add`, whose document owns stdout.
+// printClientKey prints the client id and the enrolment line to w. With
+// enrollOnly it prints the enrolment line alone; w is stdout for the read verb
+// and the notice stream for `config server add`.
 func printClientKey(w io.Writer, pem []byte, enrollOnly bool) error {
 	kp, err := remote.ParsePrivate(pem)
 	if err != nil {

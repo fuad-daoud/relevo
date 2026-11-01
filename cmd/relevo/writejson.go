@@ -10,18 +10,12 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// The write verbs' result documents. Each is built by a pure
-// …DocOf function over the values the verb already computed for its human
-// line, so the line and the document can never disagree, and the shape
-// is golden-tested without a harness, a network or a state directory.
-//
-// A document is only printed on success: --json never leaves a document on
-// stdout before report renders a failure.
+// The write verbs' result documents: each built by a pure …DocOf function over
+// the values the verb already computed, so the human line and the document can
+// never disagree. A document is only printed on success.
 
-// BindDoc is `relevo bind --json` on both routes: the binding it produced, the
-// directory it works in, the actor and candidate it resolved, the tier the
-// round runs under (the empty stored tier is the harness default), and whether
-// the run resumed an existing binding.
+// BindDoc is `relevo bind --json` on both routes: the binding, its directory,
+// the resolved actor and candidate, the tier, and whether the run resumed.
 type BindDoc struct {
 	Name      string `json:"name"`
 	Dir       string `json:"dir"`
@@ -33,9 +27,8 @@ type BindDoc struct {
 	Round     int    `json:"round"`
 }
 
-// bindDocOf is bind's document. dir is the worktree the add route created, or
-// the tree the bind route adopted; actor and candidate are the resolved pair
-// the human line names; resumed is true on the --resume route.
+// bindDocOf is bind's document; dir is the worktree the add route created, or
+// the tree the bind route adopted.
 func bindDocOf(b store.Binding, dir, actor, candidate string, resumed bool) BindDoc {
 	return BindDoc{
 		Name:      b.Name,
@@ -49,9 +42,9 @@ func bindDocOf(b store.Binding, dir, actor, candidate string, resumed bool) Bind
 	}
 }
 
-// SendDoc is `relevo send --json`: the round it opened, the candidate and tier
-// the round runs under, and whether the round was deferred. The CLI never
-// defers -- only the server does -- so deferred is false for this verb.
+// SendDoc is `relevo send --json`: the round opened, the candidate and tier it
+// runs under, and whether it was deferred. The CLI never defers, so deferred
+// is false here.
 type SendDoc struct {
 	Name      string `json:"name"`
 	Round     int    `json:"round"`
@@ -60,8 +53,7 @@ type SendDoc struct {
 	Deferred  bool   `json:"deferred"`
 }
 
-// sendDocOf is send's document: the round the send opened, the candidate and
-// tier it will run under, and whether it was staged without a start.
+// sendDocOf is send's document.
 func sendDocOf(name string, round int, candidate, tier string, deferred bool) SendDoc {
 	return SendDoc{
 		Name:      name,
@@ -72,12 +64,10 @@ func sendDocOf(name string, round int, candidate, tier string, deferred bool) Se
 	}
 }
 
-// StopDoc is `relevo stop --json`: the round that was ended and the action
-// relevo took. action is one of "killed", "reaped", "gone" or "dequeued" for a
-// member's round, "nothing" when there was no open round, and "stopped" when the
-// name was a chain whose awaited member had no open round (the chain was still
-// marked stopped). chain is set when the name resolved to a chain rather than a
-// binding.
+// StopDoc is `relevo stop --json`: the round ended and the action taken --
+// "killed", "reaped", "gone" or "dequeued", "nothing" with no open round,
+// "stopped" for a chain whose awaited member had none. chain is set when the
+// name was a chain.
 type StopDoc struct {
 	Name   string `json:"name"`
 	Round  int    `json:"round"`
@@ -86,8 +76,8 @@ type StopDoc struct {
 	Chain  bool   `json:"chain,omitempty"`
 }
 
-// stopDocOf is stop's document. An empty StopResult.Action is the "no open
-// round" answer, which the document names "nothing".
+// stopDocOf is stop's document; an empty action is the "no open round"
+// answer, named "nothing".
 func stopDocOf(name string, res relevo.StopResult) StopDoc {
 	action := res.Action
 	if action == "" {
@@ -101,8 +91,8 @@ func stopDocOf(name string, res relevo.StopResult) StopDoc {
 	}
 }
 
-// chainStopDocOf is stop's document for a name that is a chain: the same shape,
-// with chain carried so a script can tell the two apart.
+// chainStopDocOf is stop's document for a chain: the same shape, with chain
+// carried.
 func chainStopDocOf(name string, res relevo.StopResult) StopDoc {
 	doc := stopDocOf(name, res)
 	doc.Chain = true
@@ -110,9 +100,8 @@ func chainStopDocOf(name string, res relevo.StopResult) StopDoc {
 }
 
 // DoneDoc is `relevo done --json`: whether the worktree was released, which
-// worktree the run touched, the branch it names, and why it was kept when it
-// was. chain is set when the name resolved to a chain rather than a binding, in
-// which case the worktree and branch are the chain's own tree.
+// worktree the run touched, the branch, and why it was kept. chain is set when
+// the name was a chain.
 type DoneDoc struct {
 	Name       string `json:"name"`
 	Released   bool   `json:"released"`
@@ -123,7 +112,7 @@ type DoneDoc struct {
 }
 
 // doneDocOf is done's document: released is true only when relevo removed the
-// worktree, and worktree names whichever of removed/kept/gone the run produced.
+// worktree.
 func doneDocOf(name string, r relevo.DoneResult) DoneDoc {
 	return DoneDoc{
 		Name:       name,
@@ -134,17 +123,17 @@ func doneDocOf(name string, r relevo.DoneResult) DoneDoc {
 	}
 }
 
-// chainDoneDocOf is done's document for a name that is a chain: the same shape,
-// with chain carried so a script can tell the two apart.
+// chainDoneDocOf is done's document for a chain: the same shape, with chain
+// carried.
 func chainDoneDocOf(name string, r relevo.DoneResult) DoneDoc {
 	doc := doneDocOf(name, r)
 	doc.Chain = true
 	return doc
 }
 
-// UnbindDoc is `relevo unbind --json`: whether the binding was archived rather
-// than deleted, whether its worktree was released, which worktree the run
-// touched, and the builder process it stopped.
+// UnbindDoc is `relevo unbind --json`: whether the binding was archived,
+// whether its worktree was released, which worktree it touched, and the
+// process stopped.
 type UnbindDoc struct {
 	Name           string `json:"name"`
 	Released       bool   `json:"released"`
@@ -166,15 +155,13 @@ func unbindDocOf(name string, res relevo.UnbindResult) UnbindDoc {
 	}
 }
 
-// gcDoc is `relevo unbind --done --json`: what the sweep would clear or did,
-// with one housekeep.GCResult per binding. The slice is never nil, so an empty
+// gcDoc is `relevo unbind --done --json`. Bindings is never nil, so an empty
 // sweep marshals [] rather than null.
 type gcDoc struct {
 	DryRun   bool                 `json:"dry_run"`
 	Bindings []housekeep.GCResult `json:"bindings"`
 }
 
-// gcDocOf is the --done route's document.
 func gcDocOf(dryRun bool, bindings []housekeep.GCResult) gcDoc {
 	if bindings == nil {
 		bindings = []housekeep.GCResult{}
@@ -182,16 +169,14 @@ func gcDocOf(dryRun bool, bindings []housekeep.GCResult) gcDoc {
 	return gcDoc{DryRun: dryRun, Bindings: bindings}
 }
 
-// sweepDoc is `relevo unbind --sweep --json`: the directory swept and one
-// housekeep.RefOutcome per relevo ref. The slice is never nil, so an empty sweep
-// marshals [] rather than null.
+// sweepDoc is `relevo unbind --sweep --json`. Refs is never nil, so an empty
+// sweep marshals [] rather than null.
 type sweepDoc struct {
 	DryRun bool                   `json:"dry_run"`
 	Dir    string                 `json:"dir"`
 	Refs   []housekeep.RefOutcome `json:"refs"`
 }
 
-// sweepDocOf is the --sweep route's document.
 func sweepDocOf(dryRun bool, res housekeep.SweepResult) sweepDoc {
 	refs := res.Refs
 	if refs == nil {
@@ -200,11 +185,9 @@ func sweepDocOf(dryRun bool, res housekeep.SweepResult) sweepDoc {
 	return sweepDoc{DryRun: dryRun, Dir: res.Dir, Refs: refs}
 }
 
-// GateDoc is `relevo gate <token> --json` and `relevo gate --clear --json`, on
-// either ledger: the provider the gate is on, the expiry as RFC3339 ("" when
-// the gate is open-ended), how many configured candidates the provider serves,
-// and the mode. removed is set only by --clear, and is what tells "nothing was
-// gating X" from "cleared X (N)": it is a pointer so a real zero still prints.
+// GateDoc is the gate set/clear document: the subject, the expiry as RFC3339
+// ("" when open-ended), and the mode. removed is set only by --clear, and is a
+// pointer so a real zero still prints.
 type GateDoc struct {
 	Subject    string `json:"subject"`
 	Until      string `json:"until"`
@@ -213,7 +196,6 @@ type GateDoc struct {
 	Removed    *int   `json:"removed,omitempty"`
 }
 
-// gateSetDocOf is the gating document.
 func gateSetDocOf(provider string, until time.Time, candidates int) GateDoc {
 	doc := GateDoc{Subject: provider, Candidates: candidates, Mode: "gated"}
 	if !until.IsZero() {
@@ -222,17 +204,14 @@ func gateSetDocOf(provider string, until time.Time, candidates int) GateDoc {
 	return doc
 }
 
-// gateClearDocOf is the clearing document: gateSetDocOf's shape plus removed,
-// which counts the entries the clear lifted.
+// gateClearDocOf is the clearing document: gateSetDocOf's shape plus removed.
 func gateClearDocOf(provider string, candidates, removed int) GateDoc {
 	return GateDoc{Subject: provider, Candidates: candidates, Mode: "gated", Removed: &removed}
 }
 
-// PushAckDoc is `relevo push --ack --json`: the entry the ack settled, the
-// route it settled it on, and already_confirmed, which is true only on the
-// idempotent retry -- false when this run wrote the confirmation. That one
-// field is what tells a caller its first ack landed from one that found the
-// entry already settled by an earlier ack of the same route.
+// PushAckDoc is `relevo push --ack --json`: the entry settled, the route, and
+// already_confirmed, true only on the idempotent retry -- false when this run
+// wrote the confirmation.
 type PushAckDoc struct {
 	Binding          string `json:"binding"`
 	Seq              int    `json:"seq"`
@@ -240,8 +219,8 @@ type PushAckDoc struct {
 	AlreadyConfirmed bool   `json:"already_confirmed"`
 }
 
-// pushAckDocOf is the ack document. The long form needs none: its stream is
-// already NDJSON, so --json changes nothing but a startup failure.
+// pushAckDocOf is the ack document; the long form needs none, its stream
+// already NDJSON.
 func pushAckDocOf(res delivery.AckResult) PushAckDoc {
 	return PushAckDoc{
 		Binding:          res.Binding,
@@ -252,8 +231,7 @@ func pushAckDocOf(res delivery.AckResult) PushAckDoc {
 }
 
 // candidateLabel is the candidate a result document names: its short name when
-// the configured set has one, else the token itself, the same rule the human
-// lines already follow.
+// the set has one, else the token itself.
 func candidateLabel(rt relevo.Runtime, token string) string {
 	if name := rt.Candidates.NameOf(token); name != "" {
 		return name
@@ -261,8 +239,8 @@ func candidateLabel(rt relevo.Runtime, token string) string {
 	return token
 }
 
-// tierOrHarness is the tier a document prints: the stored tier, or the
-// harness default the CLI's tier chain falls back to.
+// tierOrHarness is the tier a document prints: the stored tier, or "harness"
+// when empty.
 func tierOrHarness(tier string) string {
 	if tier == "" {
 		return "harness"
@@ -271,8 +249,7 @@ func tierOrHarness(tier string) string {
 }
 
 // ServiceDoc is `relevo service install|uninstall --json`: which verb ran, the
-// unit file it acted on, and what happened to it (wrote, unchanged, removed or
-// absent).
+// unit file, and what happened to it.
 type ServiceDoc struct {
 	Action  string `json:"action"`
 	Unit    string `json:"unit"`

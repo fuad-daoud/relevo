@@ -10,9 +10,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
-// guardUnknownFields refuses unknown fields on agents.<n>, actors.<n>,
-// candidates and policy on config set, refusing only keys present in updated
-// and absent from the stored body.
+// guardUnknownFields refuses unknown fields on config set, refusing only keys
+// present in updated and absent from the stored body.
 func guardUnknownFields(rt relevo.Runtime, sec config.Section, oldBody, updated []byte) error {
 	unknown, known := unknownKeyFuncs(sec)
 	if unknown == nil {
@@ -56,13 +55,12 @@ func guardUnknownFields(rt relevo.Runtime, sec config.Section, oldBody, updated 
 }
 
 // agentContractField names the fields people reach for when they try to give
-// an agent a round contract; only those get the pointer to actor outputs, so a
-// plain typo is not told about outcomes. The actor is named generically because
-// one agent can back several actors under other names.
+// an agent a round contract; only those get the pointer to actor outputs. The
+// actor is named generically because one agent can back several actors.
 var agentContractField = map[string]bool{"outcomes": true, "outputs": true, "role": true}
 
-// unknownKeyFuncs returns the unknown-key finder and known-key lister for sec,
-// or nils for a section whose keys are not checked.
+// unknownKeyFuncs returns the unknown-key finder and known-key lister for sec;
+// nils mean the section's keys are not checked.
 func unknownKeyFuncs(sec config.Section) (func([]byte) []string, func() []string) {
 	switch sec {
 	case config.Agents, config.Actors:

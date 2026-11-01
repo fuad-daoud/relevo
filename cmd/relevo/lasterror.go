@@ -8,16 +8,13 @@ import (
 	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
-// recordInternal leaves the error loop's record behind: the fact of one coded
-// `internal` failure, in the state root's own slot, for the bundle command to
-// read. It runs between run and report, so the failure it is about is still the
-// one being rendered.
+// recordInternal leaves the error loop's record behind for the bundle command
+// to read. It runs between run and report, so the failure it is about is still
+// the one being rendered.
 //
-// It records a coded `internal` failure and nothing else -- an uncoded prose
-// error has no code to carry. A run of `bugreport` never records, so a bundle
-// cannot record itself. Every failure of its own is swallowed and any panic
-// recovered: the original error, its rendering and its exit code must not
-// change because the record could not be written.
+// It records a coded `internal` failure and nothing else; a run of `bugreport`
+// never records, so a bundle cannot record itself. Its own failures never
+// change the original error, its rendering or its exit code.
 func recordInternal(args []string, err error) {
 	defer func() { _ = recover() }()
 
@@ -43,8 +40,8 @@ func recordInternal(args []string, err error) {
 	})
 }
 
-// verbOf is the verb a record names: the run's first argument, or the empty
-// string when the run carried none.
+// verbOf is the verb a record names: the run's first argument, or "" when the
+// run carried none.
 func verbOf(args []string) string {
 	if len(args) == 0 {
 		return ""

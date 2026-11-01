@@ -9,11 +9,12 @@ import (
 	"github.com/fuad-daoud/relevo/internal/shipped"
 )
 
-// newServiceRunner is the init-system seam: tests swap it so nothing under go
-// test execs systemctl or launchctl.
+// newServiceRunner is the init-system seam: tests swap it so go test never
+// execs systemctl or launchctl.
 var newServiceRunner = func() serviceunit.Runner { return serviceunit.OSRunner{} }
 
-// serviceFlagSet declares the bare `service` dispatcher's flags: none.
+// serviceFlagSet exists so the registry's parity test finds exactly one
+// installer.
 func serviceFlagSet(*flag.FlagSet) {}
 
 type serviceInstallFlagValues struct {
@@ -61,9 +62,9 @@ func cmdService(args []string) error {
 }
 
 // refuseInEnvSandbox keeps an env sandbox off the host's service: the sandbox
-// moves XDG paths, not systemd's user manager or launchd, so the reload and
-// restart would land on the developer's own relevo.service and put the host
-// daemon on the sandbox's untagged binary.
+// moves XDG paths, not the host's managers, so acting here would land on the
+// developer's own relevo.service and put the host daemon on the sandbox's
+// untagged binary.
 func refuseInEnvSandbox(verb string) error {
 	if !inEnvSandbox() {
 		return nil
@@ -100,8 +101,8 @@ func cmdServiceInstall(args []string) error {
 	return nil
 }
 
-// installServiceUnit writes the unit and starts it. An edited unit is kept
-// unless force: the user's changes are theirs.
+// installServiceUnit writes the unit and starts it; an edited unit is kept
+// unless force.
 func installServiceUnit(u unitSpec, r serviceunit.Runner, force bool) (ServiceDoc, error) {
 	act, err := u.decide(shipped.UnitBefore)
 	if err != nil {
@@ -168,7 +169,7 @@ func cmdServiceUninstall(args []string) error {
 }
 
 // uninstallServiceUnit stops and removes the unit, never the binary. Stopping
-// a unit that is not running is not a failure, so it is only a warning.
+// a unit that is not running is only a warning.
 func uninstallServiceUnit(u unitSpec, r serviceunit.Runner) (ServiceDoc, error) {
 	arg := ""
 	if u.darwin() {

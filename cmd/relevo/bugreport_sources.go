@@ -26,8 +26,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
-// logBindings is how many bindings --logs reads a round from when no --name
-// selects one: the most recently active three.
+// logBindings is how many bindings --logs reads when no --name selects one:
+// the most recently active three.
 const logBindings = 3
 
 // journalArgv is the one journalctl invocation a bundle makes.
@@ -36,12 +36,9 @@ var journalArgv = []string{
 }
 
 // newRuntimeReadOnly builds the runtime the bundle reads through: the config
-// loaded without importing, migrating or writing anything, and the machine
-// database opened read-only, carrying the installation's id as its origin so
-// its scoped reads match the rows this installation wrote. Any write through
-// it fails at the SQLite level, which a bundle reports as an omitted line
-// rather than a failed run. The loaded config comes back with it, so a caller
-// needs no second read.
+// loaded without writing anything, and the machine database opened read-only.
+// Any write through it fails at the SQLite level, which a bundle reports as an
+// omitted line.
 func newRuntimeReadOnly() (relevo.Runtime, config.Loaded, error) {
 	root, err := tmpdir.DefaultRoot()
 	if err != nil {
@@ -55,8 +52,8 @@ func newRuntimeReadOnly() (relevo.Runtime, config.Loaded, error) {
 	L, err := loadConfigReadOnly(root, configDirPath, lockedDial)
 	if err != nil {
 		// The file is held and the owner did not answer: fall back to the
-		// config files and omit the database-backed sections, the way a machine
-		// with no database does today. A bundle must not fail on a held file.
+		// config files and omit the database-backed sections. A bundle must
+		// not fail on a held file.
 		L, err = loadConfigReadOnly(root, configDirPath, lockedSkip)
 		if err != nil {
 			return relevo.Runtime{}, config.Loaded{}, err
@@ -64,8 +61,7 @@ func newRuntimeReadOnly() (relevo.Runtime, config.Loaded, error) {
 	}
 
 	// Read the installation without minting one: a read verb must not write.
-	// An absent file leaves the origin empty, which is the safe no-rows
-	// default, rather than creating an identity to answer a read.
+	// An absent file leaves the origin empty, the safe no-rows default.
 	var d *db.DB
 	if fileExists(filepath.Join(root, "relevo.db")) {
 		inst, ok, err := installation.Read(root)
@@ -79,8 +75,8 @@ func newRuntimeReadOnly() (relevo.Runtime, config.Loaded, error) {
 		d, err = openReadOnlyDB(filepath.Join(root, "relevo.db"), db.Options{Origin: origin})
 		switch {
 		case errors.Is(err, db.ErrLocked):
-			// The daemon holds the file: read through the owner instead. A
-			// failed dial omits the database-backed sections, as today.
+			// The daemon holds the file: read through the owner instead; a
+			// failed dial omits the database-backed sections.
 			d, err = dialOwner(context.Background(), root, verbDialBudget)
 			if err != nil {
 				d = nil
@@ -90,9 +86,8 @@ func newRuntimeReadOnly() (relevo.Runtime, config.Loaded, error) {
 		}
 	}
 	// The shared store hands the read-only handle to every record read, so an
-	// origin-scoped row matches. A machine with no database gets a store that
-	// borrows nothing, and the runtime is returned before a config store is
-	// built over a nil handle.
+	// origin-scoped row matches. With no database the runtime returns before a
+	// config store is built over a nil handle.
 	st := store.NewShared(root, "", d)
 	rt, err := buildRuntime(root, L, st, false)
 	if err != nil {
@@ -104,16 +99,14 @@ func newRuntimeReadOnly() (relevo.Runtime, config.Loaded, error) {
 	rt.Store = st
 	rt.DB = d
 	rt.Gates = d
-	// The config store reads the sections the doctor rows need; every read
-	// goes through the read-only handle, so nothing it loads can be written
-	// back.
+	// The config store reads through the read-only handle, so nothing it loads
+	// can be written back.
 	rt.Config = config.Open(d)
 	return rt, L, nil
 }
 
-// bugreportSources wires one source per section to the read-only runtime. Each
-// source builds on its own, so one that errors or panics is one omitted line
-// and never fails the run.
+// bugreportSources wires one source per section. Each source builds on its own,
+// so one that errors or panics is one omitted line.
 func bugreportSources(rt relevo.Runtime, root string, L config.Loaded, le bugreport.LastError, haveLE bool, opts bugreportOptions) []bugreport.Source {
 	srcs := []bugreport.Source{}
 	if opts.haveBody {
@@ -136,10 +129,9 @@ func bugreportSources(rt relevo.Runtime, root string, L config.Loaded, le bugrep
 	return srcs
 }
 
-// descriptionSource carries the --body file as the bundle's first section: the
-// caller's own description, sanitized like every other body and redacted with
-// the rest of the bundle. It is wired only when the flag was given, so an
-// absent --body leaves today's sections and their order untouched.
+// descriptionSource carries the --body file as the bundle's first section. It
+// is wired only when the flag was given, so an absent --body leaves the
+// sections and their order untouched.
 func descriptionSource(text string) bugreport.Source {
 	return bugreport.Source{Name: bugreport.SectionDescription, Build: func() (bugreport.Section, error) {
 		clean := sanitize.Text(text)
@@ -151,8 +143,7 @@ func descriptionSource(text string) bugreport.Source {
 }
 
 // environmentSource names the binary that produced the bundle and the machine
-// it ran on: its version and detected distribution, the Go toolchain and
-// target, and the state root the report is written under.
+// it ran on.
 func environmentSource(root string) bugreport.Source {
 	return bugreport.Source{Name: bugreport.SectionEnvironment, Build: func() (bugreport.Section, error) {
 		return bugreport.EnvironmentSection(bugreport.EnvFacts{
@@ -167,7 +158,7 @@ func environmentSource(root string) bugreport.Source {
 }
 
 // lastErrorSource carries the failure the state root recorded, when one is
-// there: the same slot an `internal` failure writes.
+// there.
 func lastErrorSource(e bugreport.LastError, ok bool) bugreport.Source {
 	return bugreport.Source{Name: bugreport.SectionLastError, Build: func() (bugreport.Section, error) {
 		return bugreport.LastErrorSection(e, ok), nil
@@ -175,12 +166,11 @@ func lastErrorSource(e bugreport.LastError, ok bool) bugreport.Source {
 }
 
 // doctorSource runs the doctor's own checks and projects them, so the bundle
-// carries the document `relevo doctor --json` prints.
+// carries the doctor document.
 func doctorSource(rt relevo.Runtime, L config.Loaded) bugreport.Source {
 	return bugreport.Source{Name: bugreport.SectionDoctor, Build: func() (bugreport.Section, error) {
-		// The doctor reads the config store for its usage row. A machine with
-		// no database has none this read-only pass may open, so the section
-		// says so rather than failing on a nil store.
+		// The doctor reads the config store for its usage row; a machine with
+		// no database has none to open, so the section says so.
 		if rt.Config == nil {
 			return bugreport.Section{}, errors.New("no machine database")
 		}
@@ -192,8 +182,8 @@ func doctorSource(rt relevo.Runtime, L config.Loaded) bugreport.Source {
 	}}
 }
 
-// doctorMirror converts the doctor document into the bundle's own mirror type,
-// so the projection needs no import of the command that runs a doctor.
+// doctorMirror converts the doctor document into the bundle's mirror type, so
+// the projection needs no import of the doctor command.
 func doctorMirror(d DoctorDoc) bugreport.DoctorDoc {
 	out := bugreport.DoctorDoc{
 		UsableBuilder:  d.UsableBuilder,
@@ -212,8 +202,8 @@ func doctorMirror(d DoctorDoc) bugreport.DoctorDoc {
 	return out
 }
 
-// statusSource projects one row per binding, allow-listed: identity, routing
-// and the pending payload's kind, never a free-text field.
+// statusSource projects one row per binding, allow-listed: never a free-text
+// field.
 func statusSource(rt relevo.Runtime) bugreport.Source {
 	return bugreport.Source{Name: bugreport.SectionStatus, Build: func() (bugreport.Section, error) {
 		rep, err := relevo.Status(context.Background(), rt)
@@ -224,8 +214,8 @@ func statusSource(rt relevo.Runtime) bugreport.Source {
 	}}
 }
 
-// roundsSource projects the newest entries of the bindings' logs: five per
-// binding, one binding under --name, one round under --round.
+// roundsSource projects the newest log entries: five per binding, one binding
+// under --name, one round under --round.
 func roundsSource(rt relevo.Runtime, opts bugreportOptions) bugreport.Source {
 	return bugreport.Source{Name: bugreport.SectionRounds, Build: func() (bugreport.Section, error) {
 		bindings, err := rt.Store.List()
@@ -296,8 +286,8 @@ func journalSource() bugreport.Source {
 }
 
 // journalSection is the journal rule, pure in goos so it is tested without
-// running journalctl: the last hundred lines of the user unit on Linux, and
-// the one line that says the platform has no such journal anywhere else.
+// running journalctl: the last hundred user-unit lines on Linux, and one line
+// saying the platform has no journal elsewhere.
 func journalSection(goos string, run func(argv []string) ([]byte, error)) bugreport.Section {
 	sec := bugreport.Section{Name: bugreport.SectionJournal}
 	if goos != "linux" {
@@ -334,8 +324,8 @@ type logRound struct {
 }
 
 // logsSource adds the bodies the default bundle leaves out: one round's report,
-// diff and transcript tail per selected binding, and the newest hook runs'
-// output. Everything it adds is control-char safe and truncation is marked.
+// diff and transcript tail per selected binding. Everything it adds is
+// control-char safe and truncation is marked.
 func logsSource(rt relevo.Runtime, opts bugreportOptions) bugreport.Source {
 	return bugreport.Source{Name: bugreport.SectionLogs, Build: func() (bugreport.Section, error) {
 		rounds, err := selectedRounds(rt, opts)
@@ -358,8 +348,7 @@ func logsSource(rt relevo.Runtime, opts bugreportOptions) bugreport.Source {
 }
 
 // selectedRounds is the --logs selection: the newest round of the three most
-// recently active bindings, or the one binding --name names, with --round
-// naming exactly one round of it.
+// recently active bindings, or the one binding --name names.
 func selectedRounds(rt relevo.Runtime, opts bugreportOptions) ([]logRound, error) {
 	bindings, err := rt.Store.List()
 	if err != nil {
@@ -398,8 +387,8 @@ func selectedRounds(rt relevo.Runtime, opts bugreportOptions) ([]logRound, error
 	return all, nil
 }
 
-// roundBody is one round's report, diff and transcript as the --logs section
-// carries them, each capped and marked where it was cut.
+// roundBody is one round's report, diff and transcript, each capped and marked
+// where cut.
 func roundBody(rt relevo.Runtime, lr logRound) []string {
 	out := []string{fmt.Sprintf("== %s round %d ==", lr.binding.Name, lr.round)}
 	out = append(out, "-- report --")
@@ -412,10 +401,8 @@ func roundBody(rt relevo.Runtime, lr logRound) []string {
 }
 
 // readSection reads one round section through `relevo.Show` with Peek set, so
-// the read never claims a pending payload and never stamps viewed -- a bundle
-// is not the binding's reader. A section the round does not have is "(no
-// file)", so a round that left none is visible rather than silently absent,
-// and the body is sanitized and capped.
+// the read never claims a pending payload and never stamps viewed. A missing
+// section is "(no file)", and the body is sanitized and capped.
 func readSection(rt relevo.Runtime, name string, round int, section relevo.ShowSection, limit int) string {
 	res, err := relevo.Show(context.Background(), rt, relevo.ShowOptions{
 		Name:    name,
@@ -433,9 +420,8 @@ func readSection(rt relevo.Runtime, name string, round int, section relevo.ShowS
 	return body
 }
 
-// transcriptTail reads the round's transcript through the round's own reader
-// and keeps its tail. A round whose process wrote none is one line, not an
-// empty block.
+// transcriptTail reads the round's transcript and keeps its tail; a round that
+// wrote none is one line, not an empty block.
 func transcriptTail(rt relevo.Runtime, lr logRound) string {
 	read := func(path string) ([]byte, bool, error) {
 		data, err := rt.Store.ReadFile(path)
@@ -454,8 +440,8 @@ func transcriptTail(rt relevo.Runtime, lr logRound) string {
 	return bugreport.Truncate(sanitize.Text(bugreport.TailLines(string(text), bugreport.LogTailLines)), bugreport.LogDiffBytes)
 }
 
-// hookOutputLines is the hook output --logs adds: the newest runs' combined
-// output, one block per run that has any.
+// hookOutputLines is the hook output --logs adds: one block per run that has
+// any.
 func hookOutputLines(runs []hooks.HookRun) []string {
 	if len(runs) > 20 {
 		runs = runs[len(runs)-20:]
@@ -471,8 +457,8 @@ func hookOutputLines(runs []hooks.HookRun) []string {
 	return out
 }
 
-// bodyLines splits a body into the section's own lines, so a multi-line block
-// renders as it reads rather than as one row.
+// bodyLines splits a body into lines, so a multi-line block renders as it
+// reads.
 func bodyLines(body string) []string {
 	if body == "" {
 		return []string{"(none)"}

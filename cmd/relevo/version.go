@@ -10,14 +10,13 @@ import (
 	"github.com/fuad-daoud/relevo/internal/release"
 )
 
-// versionFlagValues holds the pointer `version` parses into.
 type versionFlagValues struct {
 	asJSON *bool
 }
 
-// cmdVersion prints the version line, or with --json the same string as a
-// document. Positionals are refused so `relevo version --json extra` cannot
-// silently ignore its argument.
+// cmdVersion prints the version line, or the same string as a document with
+// --json. Positionals are refused so extra arguments are never silently
+// ignored.
 func cmdVersion(args []string) error {
 	fs := flag.NewFlagSet("relevo version", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -48,10 +47,9 @@ func buildVersion() string {
 	return "(devel)"
 }
 
-// releaseInputs gathers what release.Detect needs about the running binary:
-// the version buildVersion chose, whether the module rather than an ldflags
-// stamp supplied it, and where the executable lives. Disk reads only -- the
-// release check never touches the network to learn who it is.
+// releaseInputs gathers what release.Detect needs: the version buildVersion
+// chose and where the executable lives. Disk reads only -- the check never
+// touches the network.
 func releaseInputs() release.Inputs {
 	in := release.Inputs{Version: buildVersion(), Distribution: distribution}
 
@@ -62,7 +60,7 @@ func releaseInputs() release.Inputs {
 	}
 
 	// FromModule is true only when the ldflags stamp was empty and the module
-	// version was not: exactly buildVersion's own fallback order.
+	// version was not.
 	if version == "" {
 		if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
 			in.FromModule = true
@@ -72,15 +70,9 @@ func releaseInputs() release.Inputs {
 	return in
 }
 
-// statusNotice is the line `relevo status` prints above the rows when the
-// cached check says a newer release exists, and "" whenever it does not.
-// Pure: every input is an argument, so it is table-tested without a
-// store, a daemon or a network (CI launches no harness).
-//
-// It returns "" for every SevOK row of the doctor's release table, so the
-// statusline stays quiet exactly where `relevo doctor` says "not checked",
-// "nothing to update to" or "is current" -- and never claims an update
-// relevo cannot prove.
+// statusNotice is the line `relevo status` prints when a newer release exists,
+// and "" whenever it does not. Pure: every input is an argument, so it is
+// table-tested without a store or a network.
 func statusNotice(running, latest string, ok bool, kind release.Kind) string {
 	if !ok || kind == release.KindUnknown || kind == release.KindLocalBuild {
 		return ""

@@ -12,36 +12,28 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// lockedPolicy is what a read-only config load does when relevo's open lock
-// says another process -- the daemon -- holds the file.
+// lockedPolicy is what a read-only config load does when another process
+// holds the file.
 type lockedPolicy int
 
 const (
-	// lockedSkip leaves the database alone and reads the config files or the
-	// defaults: the daemon's own pre-lock load, which must not dial the daemon
-	// it is about to become.
+	// lockedSkip reads the files or defaults: the daemon's pre-lock load, which
+	// must not dial the daemon it is about to become.
 	lockedSkip lockedPolicy = iota
-	// lockedDial reads the database through the owner, so a peek or a bundle
-	// sees the live config. It never starts the owner.
+	// lockedDial reads through the owner, so a peek or a bundle sees the live
+	// config; it never starts the owner.
 	lockedDial
 )
 
-// openReadOnlyDB is the direct read-only opener the config load uses. It is a
-// var so a test can make a held file's open fail with db.ErrLocked without a
-// real second process.
+// openReadOnlyDB is the direct read-only opener; it is a var so a test can fail
+// a held file's open without a real second process.
 var openReadOnlyDB = func(path string, o db.Options) (*db.DB, error) {
 	return db.OpenReadOnlySplit(path, o)
 }
 
 // loadConfigReadOnly reads config without creating, migrating or writing
-// anything: the config files when any is present, else the database read-only
-// when one exists, else the files again (a load of defaults). It is the one
-// read-only load the `--preflight`/`--check` peek, the bugreport bundle and the
-// daemon's pre-lock phase share.
-//
-// When the file is held -- the daemon has it -- onLocked decides: lockedSkip
-// reads the files or defaults, and lockedDial reads config through the owner,
-// erroring when the owner does not answer.
+// anything. When the file is held, onLocked decides: lockedSkip reads the
+// files or defaults, and lockedDial reads through the owner.
 func loadConfigReadOnly(root, dir string, onLocked lockedPolicy) (config.Loaded, error) {
 	switch {
 	case configFilesPresent(dir):
@@ -51,9 +43,9 @@ func loadConfigReadOnly(root, dir string, onLocked lockedPolicy) (config.Loaded,
 		if err == nil {
 			return L, nil
 		}
-		// A file another process holds, or one this build has not converted
-		// yet, both leave the database alone: the former's reader is the owner
-		// and the latter is converted by a writable open, not by this peek.
+		// A held file, or one this build has not converted yet, leaves the
+		// database alone: the former's reader is the owner, and the latter is
+		// converted by a writable open, not by this peek.
 		if !errors.Is(err, db.ErrLocked) && !errors.Is(err, db.ErrNotConverted) {
 			return config.Loaded{}, err
 		}
@@ -76,9 +68,8 @@ func loadConfigFromFile(path string) (config.Loaded, error) {
 	return config.Open(d).Load()
 }
 
-// loadConfigFromOwner reads the config through the daemon that holds the file.
-// The dial carries the verb budget and never starts the owner; a failure names
-// both the held file and the failed dial.
+// loadConfigFromOwner reads the config through the daemon that holds the file;
+// the dial carries the verb budget and never starts the owner.
 func loadConfigFromOwner(root string, lockErr error) (config.Loaded, error) {
 	d, err := dialOwner(context.Background(), root, verbDialBudget)
 	if err != nil {
@@ -89,8 +80,7 @@ func loadConfigFromOwner(root string, lockErr error) (config.Loaded, error) {
 }
 
 // dialOwner dials the owner on root's socket within budget, without starting
-// it: a missing or unanswering socket is an error. The caller's ctx bounds the
-// whole call, so a command deadline can end the dial sooner than the budget.
+// it; the caller's ctx can end the dial sooner than the budget.
 func dialOwner(ctx context.Context, root string, budget time.Duration) (*db.DB, error) {
 	sock, err := ownerSocket(root)
 	if err != nil {
@@ -101,10 +91,9 @@ func dialOwner(ctx context.Context, root string, budget time.Duration) (*db.DB, 
 	return db.DialContext(ctx, sock)
 }
 
-// dialOwnerAdHoc is dialOwner for the ad-hoc read path: the pool's connections
-// mark themselves in the handshake, so the owner may refuse a request while it
-// is reaping an abandoned statement. The caller refuses on that answer rather
-// than falling back, because its dial succeeded.
+// dialOwnerAdHoc is dialOwner for the ad-hoc read path. The pool's connections
+// mark themselves in the handshake, so the owner may refuse while reaping; the
+// caller refuses on that answer rather than falling back.
 func dialOwnerAdHoc(ctx context.Context, root string, budget time.Duration) (*db.DB, error) {
 	sock, err := ownerSocket(root)
 	if err != nil {
@@ -116,7 +105,7 @@ func dialOwnerAdHoc(ctx context.Context, root string, budget time.Duration) (*db
 }
 
 // configFilesPresent reports whether any file the import consumes, or a hooks
-// directory, is present in dir.
+// directory, is present.
 func configFilesPresent(dir string) bool {
 	for _, name := range config.Files() {
 		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {

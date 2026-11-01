@@ -17,24 +17,22 @@ import (
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// printDoc writes v to stdout as one indented JSON document. Every --json
-// branch this package converted funnels through it, so the machine shape is
-// one object (or array) per run and never a bare value.
+// printDoc writes v to stdout as one indented JSON document, so the machine
+// shape is one object (or array) per run and never a bare value.
 func printDoc(v any) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
 }
 
-// versionDoc is `relevo version --json`: the one version string the human
-// line carries, under a name an agent can read.
+// versionDoc is `relevo version --json`: the version string under a name an
+// agent can read.
 type versionDoc struct {
 	Version string `json:"version"`
 }
 
-// DoctorDoc is `relevo doctor --json`: the run's verdict inputs, its failure
-// and warning counts, and every check in render order. It is the machine twin
-// of renderReport, so a caller can branch on severity instead of on columns.
+// DoctorDoc is `relevo doctor --json`: the verdict inputs, the failure and
+// warning counts, and every check in render order.
 type DoctorDoc struct {
 	UsableBuilder  bool          `json:"usable_builder"`
 	NoCandidates   bool          `json:"no_candidates"`
@@ -44,8 +42,8 @@ type DoctorDoc struct {
 	Checks         []DoctorCheck `json:"checks"`
 }
 
-// DoctorCheck is one row of DoctorDoc: the same four facts renderReport
-// prints, with severity as its word and the probe-failure flag kept.
+// DoctorCheck is one row of DoctorDoc: the facts renderReport prints, with
+// severity as its word.
 type DoctorCheck struct {
 	Group       string `json:"group,omitempty"`
 	Name        string `json:"name"`
@@ -56,7 +54,7 @@ type DoctorCheck struct {
 }
 
 // doctorDocOf maps a doctor.Report to its document. It is pure, so the shape
-// is tested without probing a machine.
+// is tested without a machine.
 func doctorDocOf(rep doctor.Report) DoctorDoc {
 	checks := make([]DoctorCheck, 0, len(rep.Checks))
 	for _, c := range rep.Checks {
@@ -89,15 +87,15 @@ type ConfigView struct {
 }
 
 // ConfigPick is one role's row: the candidate relevo would pick now, and the
-// refusal words when a candidate would be refused.
+// refusal words when it would be refused.
 type ConfigPick struct {
 	Role      string `json:"role"`
 	Candidate string `json:"candidate,omitempty"`
 	Why       string `json:"why,omitempty"`
 }
 
-// ConfigCandidate is one configured candidate: its canonical token, its short
-// name, and the roles that serve it.
+// ConfigCandidate is one configured candidate: its token, short name, and
+// serving roles.
 type ConfigCandidate struct {
 	Ref      string   `json:"ref"`
 	Name     string   `json:"name"`
@@ -107,10 +105,8 @@ type ConfigCandidate struct {
 	Roles    []string `json:"roles"`
 }
 
-// configViewOf builds the config document. Actors come straight from the
-// stored section; the legacy form falls back to the registry's role names.
-// pick is the first on-and-ungated entry per role, and why carries the
-// refusal text when the role would refuse.
+// configViewOf builds the config document. pick is the first on-and-ungated
+// entry per role, and why carries the refusal text when the role would refuse.
 func configViewOf(L config.Loaded, reg *roles.Registry, set *candidate.Set, gates []availability.Gate, refusals []resolve.RoleRefusal) ConfigView {
 	out := ConfigView{}
 
@@ -171,8 +167,8 @@ func configViewOf(L config.Loaded, reg *roles.Registry, set *candidate.Set, gate
 	return out
 }
 
-// pickCandidate is the ui's next-pick rule: the first entry, in order, that
-// is on and whose token carries no gate. "" when none does.
+// pickCandidate is the next-pick rule: the first on entry whose token carries
+// no gate; "" when none does.
 func pickCandidate(a roles.Actor, set *candidate.Set, gates []availability.Gate) string {
 	for _, e := range a.Candidates {
 		if e.Off {
@@ -193,7 +189,6 @@ func pickCandidate(a roles.Actor, set *candidate.Set, gates []availability.Gate)
 	return ""
 }
 
-// gateOnToken reports whether any gate names token.
 func gateOnToken(gates []availability.Gate, token string) bool {
 	for i := range gates {
 		if gates[i].Token == token {
@@ -203,8 +198,8 @@ func gateOnToken(gates []availability.Gate, token string) bool {
 	return false
 }
 
-// ServerRow is one `config server list --json` row. The probe carries more
-// than the human table shows, so the optional columns are dropped when unset.
+// ServerRow is one `config server list --json` row; the optional columns drop
+// when unset.
 type ServerRow struct {
 	Name        string               `json:"name"`
 	URL         string               `json:"url"`
@@ -218,8 +213,8 @@ type ServerRow struct {
 	Builders    *remote.BuildersView `json:"builders,omitempty"`
 }
 
-// serverRowsOf maps the same probes the human table renders. The slice is
-// never nil, so an empty list marshals [] rather than null.
+// serverRowsOf maps the probes the human table renders. The slice is never
+// nil, so an empty list marshals [] rather than null.
 func serverRowsOf(probes []relevo.ServerProbe) []ServerRow {
 	rows := make([]ServerRow, 0, len(probes))
 	for _, p := range probes {

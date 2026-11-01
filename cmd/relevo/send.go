@@ -8,9 +8,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
-// sendFlagValues holds the pointers send's flags parse into. sendFlagSet
-// defines them on fs; cmdSend and TestRemovedFlagsAreUnknown read the same
-// surface (A4-1a).
 type sendFlagValues struct {
 	file      *string
 	name      *string
@@ -25,8 +22,8 @@ type sendFlagValues struct {
 	asJSON    *bool
 }
 
-// sendFlagSet defines send's flags on fs and returns the values they parse
-// into, so a test can inspect the flag surface without running a send.
+// sendFlagSet exists so the registry's parity test finds exactly one installer
+// per verb.
 func sendFlagSet(fs *flag.FlagSet) *sendFlagValues {
 	v := &sendFlagValues{}
 	v.file = fs.String("file", "", "path to the plan file to hand the runner")
@@ -53,8 +50,8 @@ func cmdSend(args []string) error {
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	// Before newRuntime, like add's flag pair: the refusal must not depend on
-	// argv order and must touch neither the state directory nor a harness.
+	// Before newRuntime: the refusal must not depend on argv order and touches
+	// neither the state directory nor a harness.
 	if *verify && *noVerify {
 		return fail(codeRefused, "relevo send --verify and --no-verify are exclusive")
 	}
@@ -119,7 +116,7 @@ func cmdSend(args []string) error {
 	}
 	if *asJSON {
 		// The round's candidate and tier: the flags when given, else the
-		// binding's own values, which the send just stored.
+		// binding's own values.
 		cand, roundTier := *candidate, *tier
 		if b, lerr := rt.Store.Load(target); lerr == nil {
 			cand = b.BuilderCandidate

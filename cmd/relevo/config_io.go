@@ -12,22 +12,20 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
-// configExportFlagValues holds the pointer `config export` parses into. It
-// always prints the document, so --json is an accepted no-op.
 type configExportFlagValues struct {
 	asJSON *bool
 }
 
-// configExportFlagSet defines that flag on fs and returns what it parses into,
-// so the registry's parity test finds exactly one installer per verb.
+// configExportFlagSet exists so the registry's parity test finds exactly one
+// installer per verb.
 func configExportFlagSet(fs *flag.FlagSet) *configExportFlagValues {
 	v := &configExportFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the configuration document")
 	return v
 }
 
-// configExport writes the whole-config document to stdout, indented, with
-// one key per section present in config.Sections order.
+// configExport writes the whole-config document to stdout in config.Sections
+// order.
 func configExport(args []string) error {
 	fs := flag.NewFlagSet("relevo config export", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -51,15 +49,13 @@ func configExport(args []string) error {
 	return err
 }
 
-// configImport reads a document from a file (or stdin for "-"), stores it via
-// PutDoc, and prints any warnings to stderr.
 type configImportFlagValues struct {
 	asJSON *bool
 	force  *bool
 }
 
-// configImportFlagSet defines those flags on fs and returns what they parse
-// into, so the registry's parity test finds exactly one installer per verb.
+// configImportFlagSet exists so the registry's parity test finds exactly one
+// installer per verb.
 func configImportFlagSet(fs *flag.FlagSet) *configImportFlagValues {
 	v := &configImportFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the document the import produced")
@@ -113,8 +109,8 @@ func configImportRun(args []string) error {
 	if err != nil {
 		return fail(codeConfigInvalid, "%v", err)
 	}
-	// Warnings already lived on stderr and stay there; under --json the same
-	// list also rides in the document.
+	// Warnings stay on stderr; under --json the same list also rides in the
+	// document.
 	for _, w := range warnings {
 		fmt.Fprintln(os.Stderr, "relevo: "+w)
 	}
@@ -129,13 +125,9 @@ func configImportRun(args []string) error {
 	return nil
 }
 
-// guardImportCandidatesDrop refuses an import whose candidates section drops a
-// candidate an actor names. The document's own actors section wins over the
-// stored one, because PutDoc stores both in one revision; a document with no
-// actors section leaves the stored actors standing, so an actor naming a
-// dropped candidate is still caught. An actors-only import carries no
-// candidates and never reaches here: provisioning an actor before its
-// candidate is legitimate.
+// guardImportCandidatesDrop refuses an import whose candidates drop a candidate
+// an actor names. The document's own actors section wins over the stored one,
+// because PutDoc stores both in one revision.
 func guardImportCandidatesDrop(rt relevo.Runtime, candidates json.RawMessage, force bool) error {
 	if force {
 		return nil
@@ -156,8 +148,8 @@ func guardImportCandidatesDrop(rt relevo.Runtime, candidates json.RawMessage, fo
 	return fail(codeConflict, "%s; pass --force to drop it", drops[0])
 }
 
-// importSections names the sections a document carries, in config.Sections
-// order, so the sections list reads the same on every run.
+// importSections names the sections a document carries in config.Sections
+// order, so the list reads the same on every run.
 func importSections(doc map[config.Section]json.RawMessage) []string {
 	out := make([]string, 0, len(doc))
 	for _, sec := range config.Sections {
@@ -182,7 +174,7 @@ func exportDoc(rt relevo.Runtime) ([]byte, error) {
 	return config.EncodeDoc(doc)
 }
 
-// decodeDoc parses a whole-config document into sections. The top level must
+// decodeDoc parses a whole-config document into sections; the top level must
 // be a JSON object.
 func decodeDoc(data []byte) (map[config.Section]json.RawMessage, error) {
 	var raw map[string]json.RawMessage
@@ -199,8 +191,7 @@ func decodeDoc(data []byte) (map[config.Section]json.RawMessage, error) {
 	return doc, nil
 }
 
-// validateDoc validates every section in doc, and refuses a section name
-// relevo does not know.
+// validateDoc validates every section in doc, refusing unknown section names.
 func validateDoc(doc map[config.Section]json.RawMessage) error {
 	for sec := range doc {
 		if !configSectionKnown(sec) {
@@ -220,8 +211,7 @@ func validateDoc(doc map[config.Section]json.RawMessage) error {
 }
 
 // stdinStat is the terminal test's only seam: production stats os.Stdin, and a
-// test can replace it. It is the pattern internal/ui/source.go:115-118 and
-// internal/pick/pick.go:27 use, with no new dependency.
+// test can replace it.
 var stdinStat = os.Stdin.Stat
 
 func stdinIsTerminal() bool {

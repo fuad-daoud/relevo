@@ -15,19 +15,15 @@ import (
 )
 
 // cmdInit seeds the candidates, policy and actors sections from the harness
-// binaries on PATH, then installs the agent definitions for those harnesses.
-//
-// initFlagValues holds the pointers init's flags parse into. initFlagSet
-// defines them on fs; cmdInit and TestRemovedFlagsAreUnknown read the same
-// surface (A4-1a).
+// binaries on PATH, then installs the agent definitions.
 type initFlagValues struct {
 	force    *bool
 	noAgents *bool
 	asJSON   *bool
 }
 
-// initFlagSet defines init's flags on fs and returns the values they parse
-// into, so a test can inspect the flag surface without writing any config.
+// initFlagSet exists so the registry's parity test finds exactly one installer
+// per verb.
 func initFlagSet(fs *flag.FlagSet) *initFlagValues {
 	v := &initFlagValues{}
 	v.force = fs.Bool("force", false, "overwrite the existing candidates / policy sections")
@@ -86,7 +82,7 @@ func cmdInitRun(args []string) error {
 		return fail(codeConflict, "candidates, policy or actors already configured; pass --force to overwrite")
 	}
 
-	// One PutDoc writes all three sections as one revision (A2 round 2 R5).
+	// One PutDoc writes all three sections as one revision.
 	doc := map[config.Section]json.RawMessage{
 		config.Candidates: files.Candidates,
 		config.Policy:     files.Policy,
@@ -97,8 +93,8 @@ func cmdInitRun(args []string) error {
 		return err
 	}
 
-	// The human lines keep stdout in the default mode and move to stderr under
-	// --json, where stdout carries the document alone.
+	// Human lines move to stderr under --json, where stdout carries the document
+	// alone.
 	w := noticeWriter(*asJSON)
 
 	fmt.Fprintf(w, "wrote candidates (%d: %s)\n", len(files.CandidateNames), strings.Join(files.CandidateNames, ", "))
@@ -141,8 +137,8 @@ func cmdInitRun(args []string) error {
 }
 
 // initBuildError classifies what Build refused: nothing is logged in is the
-// machine's own state, so it is not_available with the login commands the
-// message already names, and the wizard as the way back in.
+// machine's own state, so it is not_available with the wizard as the way back
+// in.
 func initBuildError(err error) error {
 	var na *setup.NotAvailableError
 	if errors.As(err, &na) {
@@ -151,8 +147,7 @@ func initBuildError(err error) error {
 	return err
 }
 
-// tierLine is init's tier notice: what the tier it seeded lets a builder do,
-// followed by the way to restrict it.
+// tierLine is init's tier notice: what the seeded tier lets a builder do.
 func tierLine(tier string) string {
 	why := "builders run commands without asking"
 	if tier == "edit" {
@@ -162,9 +157,7 @@ func tierLine(tier string) string {
 }
 
 // actorSummary renders every actor in order as the text inside the `wrote
-// actors (...)` line: `builder: a, b; planner: c`. An actor with no candidates
-// renders as `builder: none`. Each actor's names come from parsing the actors
-// section Plan wrote.
+// actors (...)` line. An actor with no candidates renders as `builder: none`.
 func actorSummary(actors []byte, order []string) (string, error) {
 	set, _, err := roles.ParseActors(actors)
 	if err != nil {

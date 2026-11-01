@@ -16,7 +16,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
-// bugreportFlagValues holds the pointers bugreport parses into.
 type bugreportFlagValues struct {
 	body   *string
 	gh     *bool
@@ -30,8 +29,8 @@ type bugreportFlagValues struct {
 	title  *string
 }
 
-// bugreportFlagSet defines that flag on fs and returns what it parses into, so
-// the registry's parity test finds exactly one installer per verb.
+// bugreportFlagSet exists so the registry's parity test finds exactly one
+// installer per verb.
 func bugreportFlagSet(fs *flag.FlagSet) *bugreportFlagValues {
 	v := &bugreportFlagValues{}
 	v.body = fs.String("body", "", "read this file as the bundle's first section")
@@ -47,17 +46,15 @@ func bugreportFlagSet(fs *flag.FlagSet) *bugreportFlagValues {
 	return v
 }
 
-// bugreportExec runs one external command for the verb -- the gh file command
-// and the journal reader. It is a seam every test replaces, so no test spawns
-// either binary.
+// bugreportExec runs one external command for the verb. It is a seam every
+// test replaces, so no test spawns either binary.
 var bugreportExec = func(ctx context.Context, argv []string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	return cmd.CombinedOutput()
 }
 
-// bugreportOptions is what one run of the verb was asked for. body is the
-// --body file's text and haveBody records that the flag was given, so an empty
-// file still leads the bundle with its section while an absent flag adds none.
+// bugreportOptions is what one run of the verb was asked for. haveBody records
+// that --body was given, so an empty file still leads the bundle.
 type bugreportOptions struct {
 	name     string
 	round    int
@@ -73,8 +70,7 @@ type bugreportOptions struct {
 }
 
 // validate refuses the combinations the verb's contract makes exclusive,
-// before any runtime is built: the three output modes pick one sink, a path is
-// not a mode, and a round is a round of one named binding.
+// before any runtime is built.
 func (o bugreportOptions) validate() error {
 	modes := 0
 	for _, on := range []bool{o.stdout, o.asJSON, o.gh} {
@@ -110,7 +106,7 @@ func cmdBugreport(args []string) error {
 	}
 	if *v.body != "" {
 		// The description is read before a runtime is built: an unreadable
-		// file is the caller's usage error, not a line in a bundle.
+		// file is a usage error, not a line in a bundle.
 		text, err := os.ReadFile(*v.body)
 		if err != nil {
 			return fail(codeUsage, "read %s: %v", *v.body, err)
@@ -121,9 +117,7 @@ func cmdBugreport(args []string) error {
 }
 
 // runBugreport assembles, redacts and emits one bundle. It fails only on its
-// own output: a usage error was refused before this, an unwritable path is
-// internal, a bundle too large to cut for a file is usage, and a missing gh is
-// not_available. A failing source is a line in the bundle, never a failed run.
+// own output; a failing source is a line in the bundle, never a failed run.
 func runBugreport(opts bugreportOptions) error {
 	root, err := tmpdir.DefaultRoot()
 	if err != nil {
@@ -174,10 +168,9 @@ func runBugreport(opts bugreportOptions) error {
 	return fileBundle(b, opts, root)
 }
 
-// fileBundle writes the markdown to the run's path, capped to the body limit
-// GitHub accepts, prints the path and the gh line, and runs gh when --gh asked
-// for filing. The cap is applied before anything is written or printed, so a
-// bundle that cannot be cut fails usage with no file and no line.
+// fileBundle writes the markdown to the run's path, prints the path and the gh
+// line, and runs gh when --gh asked. The cap is applied first, so a bundle
+// that cannot be cut fails usage with no file and no line.
 func fileBundle(b bugreport.Bundle, opts bugreportOptions, root string) error {
 	path := opts.out
 	if path == "" {
@@ -216,8 +209,7 @@ func fileBundle(b bugreport.Bundle, opts bugreportOptions, root string) error {
 }
 
 // writeBundleFile writes the markdown to path, creating the parent directory
-// when it is missing. The file is owner-only: a bundle carries paths, names
-// and whatever the redaction pass could not know.
+// when missing. The file is owner-only.
 func writeBundleFile(path string, text string) error {
 	dir := filepath.Dir(path)
 	if dir != "" && dir != "." {

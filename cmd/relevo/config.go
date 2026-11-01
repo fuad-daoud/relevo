@@ -10,8 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// configUsage is the whole `relevo config` surface: what a bare `relevo config`
-// does, and every subcommand that replaced a top-level verb.
+// configUsage is the whole `relevo config` surface.
 const configUsage = `usage: relevo config [--probe [token...]]
        relevo config export
        relevo config import <file|-> [--force]
@@ -39,10 +38,8 @@ const configUsage = `usage: relevo config [--probe [token...]]
        relevo config repo unset <name|gate|board_theme|trimpath> [--repo <path>] [--json]
        relevo config repo list [--json]`
 
-// cmdConfig is the one verb that replaced init, candidates, policy, roles,
-// agent, client and servers. A bare invocation, or one whose first
-// argument is a flag, shows the configuration; every subcommand reuses the
-// body the removed verb had.
+// cmdConfig dispatches the config verbs. A bare invocation, or one whose
+// first argument is a flag, shows the configuration.
 func cmdConfig(args []string) error {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		return configShow(args)
@@ -99,9 +96,8 @@ func configShowFlagSet(fs *flag.FlagSet) *configShowFlagValues {
 	return v
 }
 
-// configShow is the bare `relevo config`: the actors block, the current pick
-// and the candidates block, each under a one-line heading. `--probe` runs
-// exactly cmdCandidates --probe and prints nothing else.
+// configShow is the bare `relevo config`. --probe runs exactly cmdCandidates
+// --probe and prints nothing else.
 func configShow(args []string) error {
 	fs := flag.NewFlagSet("relevo config", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -124,9 +120,8 @@ func configShow(args []string) error {
 		return fail(codeInternal, "%v", err)
 	}
 
-	// The first block is the actors section; a config with no actors (a newer
-	// schema this binary did not migrate) keeps the roles block under its own
-	// heading.
+	// A config with no actors (a newer schema this binary did not migrate)
+	// keeps the roles block under its own heading.
 	L, err := rt.Config.Load()
 	if err != nil {
 		return fail(codeConfigInvalid, "%v", err)

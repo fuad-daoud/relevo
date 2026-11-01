@@ -67,9 +67,7 @@ func cmdUnbind(args []string) error {
 	}
 
 	// The plain and --pick paths honour neither --dry-run nor --delete, and
-	// --done archives by default, so --archive contradicts it. Refuse here,
-	// before newRuntime and any store or network access: each flag is scoped
-	// to a path this command does not take.
+	// --done archives by default. Refuse here, before newRuntime.
 	if *dryRun && !*done {
 		return fail(codeRefused, "--dry-run goes with --done or --sweep")
 	}
@@ -80,8 +78,7 @@ func cmdUnbind(args []string) error {
 		return fail(codeRefused, "--archive goes with a named binding or --pick, not --done")
 	}
 
-	// --done is gc, not unbind: it clears every DONE binding, so naming one or
-	// asking to pick one contradicts it.
+	// --done is gc, not unbind: naming one or picking one contradicts it.
 	if *done {
 		if *name != "" || len(fs.Args()) > 0 || *pickFlag {
 			return fail(codeRefused, "--done clears DONE bindings; do not also name one or pass --pick")
@@ -177,8 +174,8 @@ func runSweep(dryRun, asJSON bool) error {
 	return nil
 }
 
-// runGC is gc's body, reached through `unbind --done`. It clears the calling
-// mastermind's DONE bindings, or, with --all-masterminds, every mastermind's.
+// runGC clears the calling mastermind's DONE bindings, or every mastermind's
+// with --all-masterminds.
 func runGC(delete, dryRun, force bool, mastermindRef string, all, asJSON bool) error {
 	rt, err := newRuntime()
 	if err != nil {
@@ -279,11 +276,9 @@ func printGCWorktree(r housekeep.GCResult) {
 	}
 }
 
-// gcResolver is the production resolver every scope-shaped verb shares: the
-// input mastermind.Resolve reads, closed over rt, with the caller's --mastermind
-// as the flag. It never calls mastermind.Init: resolving a mastermind never
-// registers one. A runtime with no registry is a resolve error, not a miss, so
-// a caller can refuse rather than fall back.
+// gcResolver resolves a mastermind without registering one. A runtime with no
+// registry is a resolve error, not a miss, so a caller can refuse rather than
+// fall back.
 func gcResolver(rt relevo.Runtime) func(ref string) (mastermind.Record, error) {
 	return func(ref string) (mastermind.Record, error) {
 		if rt.MasterMinds == nil {
@@ -309,8 +304,8 @@ func gcResolver(rt relevo.Runtime) func(ref string) (mastermind.Record, error) {
 	}
 }
 
-// mastermindLabel names a mastermind in a result line: "(none)" for "",
-// the record's Name when the registry has it, else the id itself.
+// mastermindLabel names a mastermind in a result line: "(none)" for "", else
+// the record's name or the id itself.
 func mastermindLabel(rt relevo.Runtime, id string) string {
 	if id == "" {
 		return "(none)"
