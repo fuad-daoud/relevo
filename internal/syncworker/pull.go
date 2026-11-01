@@ -6,12 +6,12 @@ import (
 	"strings"
 )
 
-// pullPageSize bounds one pull's read per origin. A backlog larger than a page
-// drains one page per sync tick, and an origin's log far larger than a page is
-// read in bounded statements rather than one result holding every other
-// origin's history. It sits above the size one append writes, so a page normally
-// ends on a batch boundary; when it does not, the read completes that batch
-// rather than hand back half of it.
+// pullPageSize bounds one pull's read per origin. The importer calls Pull once
+// per run, so a backlog larger than a page drains one page per sync tick, and
+// an origin's log far larger than a page is read in bounded statements rather
+// than one result holding every other origin's history. It sits above the size
+// one append writes, so a page normally ends on a batch boundary; when it does
+// not, the read completes that batch rather than hand back half of it.
 const pullPageSize = 1024
 
 // readEntries reads every other origin's log rows past that origin's mark, one

@@ -72,7 +72,8 @@ type Backend interface {
 	// recorded, and each origin's head and entry count.
 	ReadMarks() (MarkState, error)
 	// PullRange reads one page of origin's entries with after < seq <= upto from
-	// the replica as it stands, without pulling first: a newer compaction pulled
+	// the replica as it stands, without pulling first: the floor a caller read
+	// with ReadMarks belongs to this same state, and a newer compaction pulled
 	// in between could drop entries the range needs.
 	PullRange(origin string, after, upto int) ([]Entry, error)
 	// Compact drops this worker's own superseded entries up to floor and records

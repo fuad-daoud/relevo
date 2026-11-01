@@ -4,8 +4,8 @@ package verb
 // machine can point at the same remote.
 //
 // It reads machine-local rows and nothing else -- no worker, no log, no network
-// -- so an invite answers with the network blackholed: a description of this
-// machine is a read of this machine.
+// -- so an invite answers with the network blackholed, the same rule status
+// follows, because a description of this machine is a read of this machine.
 //
 // Two refusals matter most: a machine that is not syncing has no remote to
 // name, and a remote holding no key would hand a joiner a code it can follow

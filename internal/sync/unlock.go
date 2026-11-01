@@ -151,8 +151,9 @@ func checkedKey(meta synclog.KeyMeta, passphrase []byte) ([]byte, error) {
 // is checkedKey, where the passphrase is actually compared, so the answer is
 // written once.
 //
-// A remote holding no key is ErrNoKDF here, not after a join that appeared to
-// work: a joiner handed such a remote could not unlock what it imported.
+// A remote holding no key is ErrNoKDF here, the same refusal unlock gives,
+// not after a join that appeared to work: a joiner handed such a remote could
+// not unlock what it imported.
 func VerifyJoinKey(ctx context.Context, local Local, transport synclog.LogTransport, passphrase []byte) (Keyring, error) {
 	meta, err := transport.KeyMeta(ctx)
 	if err != nil {

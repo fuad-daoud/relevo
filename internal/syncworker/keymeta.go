@@ -28,9 +28,10 @@ const (
 	signedFromPrefix = "signed_from."
 )
 
-// ErrKeyEpoch is a key_epoch row this build refuses to read: not the canonical
-// decimal of an epoch 2 or later, from a remote this build cannot act on. An
-// absent row is epoch 1, the caller's default.
+// ErrKeyEpoch is a key_epoch row this build refuses to read: a row that is not
+// the canonical decimal of an epoch 2 or later, from an untrusted remote, is
+// not a row this build can act on. An absent row is epoch 1, the caller's
+// default.
 var ErrKeyEpoch = errors.New("syncworker: the remote's key_epoch row is not an epoch this build reads")
 
 // KeyRekeySpec is what one rekey writes: the epoch it rotates from, the
@@ -148,7 +149,9 @@ func decodeKeyValue(value string) []byte {
 // KeyInit writes the material where the remote holds none and answers with
 // what it holds afterwards. The write is insert-if-absent and the answer is a
 // read, so two machines racing the first one both end up with the winner's
-// salt rather than each keeping its own.
+// salt rather than each keeping its own; each racer compares its own check
+// against the answer and refuses the log rather than sign under a key no
+// other machine shares.
 func (b *TursoBackend) KeyInit(key KeyMeta) (KeyMeta, error) {
 	if err := b.ready(); err != nil {
 		return KeyMeta{}, err
@@ -350,9 +353,9 @@ func casEpoch(ctx context.Context, tx *sql.Tx, from, to int) error {
 
 // writeSignedFrom records where this origin started signing, once, in the
 // append's own transaction so the row and the entries it describes cannot
-// disagree. A batch with a signed entry for an origin with no row is refused
-// unless it names that sequence: a later sequence would bless the unsigned
-// entries before it.
+// disagree. The row is "<seq> <base64 tag>", both taken from the exporter; a
+// batch with a signed entry for an origin with no row is refused unless the
+// boundary names its first signed entry's sequence.
 func writeSignedFrom(ctx context.Context, tx *sql.Tx, origin string, written []Entry, boundary Boundary) error {
 	first := -1
 	for n, e := range written {
@@ -477,7 +480,8 @@ func parseBoundary(value string) (int, []byte) {
 // readMetaPositions reads the meta rows whose key begins with prefix into a map
 // keyed by the rest of it. The meta table is written by other machines, so a
 // row that is not a non-negative number is skipped: one unreadable row must not
-// stop a reader from reading the rest.
+// stop a reader from reading the rest, the same rule a malformed mark is read
+// under.
 func (b *TursoBackend) readMetaPositions(ctx context.Context, prefix string, into *map[string]int) error {
 	rows, err := b.db.QueryContext(ctx,
 		"SELECT key, value FROM meta WHERE key LIKE ?", prefix+"%")

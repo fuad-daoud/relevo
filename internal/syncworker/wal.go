@@ -10,14 +10,16 @@ import (
 // walCheckpointBytes is how large the replica's WAL may grow before a transfer
 // folds it into the database file. The engine never checkpoints a sync replica
 // by itself: left alone, a laptop's WAL reached 3.9 GB beside a 121 MB database
-// in five days.
+// in five days. At 64 MiB a checkpoint runs once every many transfers, and the
+// file stays a small multiple of one transfer.
 const walCheckpointBytes = 64 << 20
 
 // boundWAL checkpoints the replica once the reading taken after a transfer
 // shows its WAL past walCheckpointBytes. It runs after the transfer, never
-// instead of it, and a failure is reported for the next transfer to retry:
-// refusing the push or pull over a file that is merely large would lose the
-// work it carried.
+// instead of it: the engine serialises push, pull and checkpoint on one lock,
+// and the worker serves one verb at a time, so no transaction is open across
+// it. A failure is reported for the next transfer to retry: refusing the push
+// or pull over a file that is merely large would lose the work it carried.
 func (b *TursoBackend) boundWAL(ctx context.Context, reading turso.TursoSyncDbStats) {
 	if reading.MainWalSize < walCheckpointBytes {
 		return

@@ -151,8 +151,9 @@ func digestFile(path string) (int64, string, error) {
 }
 
 // checkDigest refuses a staged file that is not the body its key names. The
-// digest in the key is its last path segment; a key with no digest names no
-// body, and publishing under it would leave an object no fetch could verify.
+// digest in the key is its last path segment, because that is how blobstore.Key
+// builds one; a key with no digest names no body, and publishing under it
+// would leave an object no fetch could verify.
 func checkDigest(key, sum string) error {
 	want := filepath.Base(key)
 	if want == "" || want == "." || want == string(filepath.Separator) {

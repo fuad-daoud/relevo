@@ -19,8 +19,10 @@ func (v *Runner) unlock(ctx context.Context, verb *wire.SyncVerb, passphrase []b
 	if err != nil {
 		return Refusal(Classify(err), err)
 	}
-	// The cut extension goes out before the parked docs drain, so the believed
-	// fence is on the remote while unblocking.
+	// The key just stored is what lets this machine vouch for the tail it appended
+	// before it learned of the rekey; the extension goes out before the parked
+	// docs drain, so the fence this machine believes in is on the remote while
+	// it unblocks itself.
 	relevosync.PublishOwnCut(ctx, v.Shared, v.Local, transport)
 	if _, err := relevosync.DrainParkedDocs(v.Shared, v.Local, transport); err != nil {
 		return Refusal(Classify(err), err)

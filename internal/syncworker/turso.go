@@ -115,7 +115,8 @@ func (b *TursoBackend) Open(spec Spec) error {
 // high-water mark, never from the request: a file restored from a backup
 // arrives with entries it never wrote, and a request's numbering could reuse a
 // number the log already holds. The push comes before the reply: the daemon
-// clears the outbox only once it has the numbered entries back.
+// clears the outbox only once it has the numbered entries back, and a reply
+// sent before the push would let it drop changes the log never received.
 func (b *TursoBackend) Append(entries []Entry) ([]Entry, error) {
 	return b.AppendSigned(entries, Boundary{})
 }
@@ -231,7 +232,9 @@ func updateHead(ctx context.Context, tx *sql.Tx, e Entry) error {
 	}
 	// An update, then an insert when it moved nothing, rather than one upsert:
 	// on a sync connection the engine can refuse an upsert landing on an
-	// existing head row as a corrupt record.
+	// existing head row as a corrupt record. The worker is the replica's only
+	// writer, so the two statements in one transaction cannot race another
+	// insert of the row.
 	res, err := tx.ExecContext(ctx,
 		"UPDATE head SET seq = ?, hash = ? WHERE origin = ? AND tbl = ? AND pk = ?",
 		e.Seq, hash, e.Origin, e.Tbl, e.PK)
@@ -375,8 +378,8 @@ func (b *TursoBackend) Stats() (Stats, error) {
 }
 
 // Close releases the replica's connections. The driver's own handle is dropped
-// rather than closed, and the worker process ending right after is what
-// releases the file it still holds.
+// rather than closed, because the bindings expose no close, and the worker
+// process ending right after is what releases the file it still holds.
 func (b *TursoBackend) Close() error {
 	if b.db == nil {
 		return nil
@@ -401,8 +404,9 @@ func (b *TursoBackend) ready() error {
 
 // The shape the engine's own refusal takes: the call failed to execute SQL,
 // and -- when this machine's table is the one missing -- which table it was.
-// The worker matches the shape itself because the class is a word this package
-// owns.
+// The worker matches the shape itself rather than sharing internal/sync's
+// classifier (remoterefusal.go), because it may not reach that package's
+// database. The two must agree.
 const (
 	remoteRefusalMarker = "failed to execute sql"
 	remoteMissingTable  = "no such table"

@@ -19,9 +19,10 @@ import (
 const VerbPublishTraffic Verb = "publish_traffic"
 
 // trafficPrefix is what a traffic row's meta key begins with. Older builds
-// reach meta only by exact keys or their own prefixes, so a traffic row is
-// invisible to them and a mixed-version fleet keeps syncing without a
-// log-format bump.
+// reach meta only by exact keys or their own prefixes -- floor.,
+// signed_from., epoch_cut., key_wrapped., claim:, and the format row -- so a
+// traffic row is invisible to them and a mixed-version fleet keeps syncing
+// without a log-format bump.
 const trafficPrefix = "traffic."
 
 // TrafficRow is one installation's published month as the pipe carries it and

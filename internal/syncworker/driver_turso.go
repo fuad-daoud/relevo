@@ -8,10 +8,11 @@ import (
 	turso "turso.tech/database/tursogo"
 )
 
-// The two transfer bounds: a bootstrap download is fetched in threshold-sized
-// pieces, and a push is split on transaction boundaries once it has grown that
-// large, so one driver call never moves an unbounded amount over the wire. A
-// driver bump revisits them deliberately rather than inheriting the new default.
+// The two transfer bounds docs/sync-driver-panic.md measured: a bootstrap
+// download is fetched in threshold-sized pieces, and a push is split on
+// transaction boundaries once it has grown that large, so one driver call never
+// moves an unbounded amount over the wire. A driver bump has to revisit them
+// deliberately rather than inherit whatever the new default is.
 const (
 	pushOperationsThreshold = 4096
 	pullBytesThreshold      = 4 << 20

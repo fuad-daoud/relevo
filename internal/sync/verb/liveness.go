@@ -10,8 +10,9 @@ import (
 // ExportDebounce is the shortest gap between the starts of two attempts that
 // an outbox entry or a freshen hint may cause. Ingest writes the shared file
 // on nearly every two-second tick while a round runs, so a trigger per write
-// would be an attempt per tick; fifteen seconds costs at most four attempts a
-// minute, and a burst of writes inside the gap costs one.
+// would be an attempt per tick; fifteen seconds keeps a write's wait to a
+// quarter minute at the cost of at most four attempts a minute, and a burst
+// of writes inside the gap costs one.
 const ExportDebounce = 15 * time.Second
 
 // HotWindow is the idle pull window while another machine is writing. One

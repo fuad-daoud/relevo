@@ -136,7 +136,8 @@ func (v *Runner) Run(ctx context.Context, verb *wire.SyncVerb, token []byte) *wi
 
 // runGuarded runs fn under the daemon's serialization when one is installed.
 //
-// The guard is the daemon's own: a write and a trigger must not interleave. A
+// The guard is the daemon's own: a write and a trigger must not interleave,
+// because both record the same markers and both hold the same local file. A
 // verb waits its turn rather than dropping like queueSync does a trigger,
 // because a caller asked for it explicitly.
 func (v *Runner) runGuarded(fn func() *wire.SyncResult) *wire.SyncResult {

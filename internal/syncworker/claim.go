@@ -19,9 +19,10 @@ const claimTTL = 24 * time.Hour
 // ClaimIdentity writes the claim token for origin where the remote holds none,
 // holds the caller's own, or holds one older than the TTL, then answers with
 // the claim the remote holds after a push and a pull. The write alone cannot
-// make the claim exclusive: the push is last-writer-wins per row, so the
-// read-back narrows the race to one push, and the caller compares the token it
-// gets back against its own on every attempt.
+// make the claim exclusive: the push is last-writer-wins per row, so two
+// machines that both found the row absent each push, and the later push wins.
+// The read-back narrows that to one push, and the caller's comparison on every
+// later attempt is where a double win shows.
 func (b *TursoBackend) ClaimIdentity(origin, token string, at time.Time) (string, time.Time, error) {
 	if err := b.ready(); err != nil {
 		return "", time.Time{}, err

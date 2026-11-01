@@ -31,8 +31,9 @@ func SyncNow(ctx context.Context, eng Engine) {
 }
 
 // CountOpenRounds counts bindings holding an open round: a prompt out with no
-// report back. Each binding costs one log read; the tick's reconcile hands nothing
-// back, so there is no entry list to reuse.
+// report back. A remote binding counts too, since its prompt and report sit in
+// the local log. Each binding costs one log read; the tick's reconcile hands
+// nothing back, so there is no entry list to reuse.
 func CountOpenRounds(st *store.Store, bindings []store.Binding) int {
 	open := 0
 	for _, b := range bindings {

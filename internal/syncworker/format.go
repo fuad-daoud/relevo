@@ -25,9 +25,9 @@ const logFormatVersion = 4
 // table. A remote at it is upgraded rather than refused.
 const formatOneVersion = 1
 
-// formatTwoVersion is the format before the mac column: every entry unsigned.
-// It is upgraded in place, and its entries keep a NULL mac, which reads as
-// unsigned rather than as a signature that failed.
+// formatTwoVersion is the format before the mac column: this build's tables,
+// with every entry unsigned. It is upgraded in place, and its entries keep a
+// NULL mac, which reads as unsigned rather than as a signature that failed.
 const formatTwoVersion = 2
 
 // formatThreeVersion is the format before the after_origin and after_seq columns.
@@ -95,11 +95,11 @@ var createStatements = []string{
 }
 
 // ensureLog makes sure the remote is this log: an empty remote gets the log's
-// tables, one at an older format is brought forward, and anything else is
-// refused. A remote classified as something other than a relevo log is never
-// written into. The table set and the format row are matched together, so a
-// remote whose tables and format disagree is refused rather than opened as
-// something it is not.
+// tables, one at an older format is brought forward, one whose meta names this
+// format is used, and anything else is refused. A remote classified as
+// something other than a relevo log is never written into. The table set and
+// the format row are matched together, so a remote whose tables and format
+// disagree is refused rather than opened as something it is not.
 func (b *TursoBackend) ensureLog(ctx context.Context, url string) error {
 	tables, err := userTables(ctx, b.db)
 	if err != nil {
@@ -203,7 +203,8 @@ func (b *TursoBackend) upgradeLog(ctx context.Context, statements []string) erro
 }
 
 // isDuplicateColumnError reports whether err was caused by an ALTER TABLE ADD
-// COLUMN for a column that already exists.
+// COLUMN for a column that already exists, as when another worker's upgrade
+// added it first.
 func isDuplicateColumnError(err error) bool {
 	if err == nil {
 		return false

@@ -1,6 +1,7 @@
 // Package syncworker is the worker half of the sync pipe: the protocol the
-// daemon and its `relevo sync-worker` child share, and the loop that serves
-// it. It reaches no database of this installation's own.
+// daemon and its `relevo sync-worker` child share, and the loop that serves it.
+// The package reaches no database of this installation's own, which is what
+// keeps a driver abort inside the worker from ever touching the record.
 package syncworker
 
 import (
@@ -99,10 +100,11 @@ const (
 
 // KeyMeta is the passphrase material a remote holds, as the pipe carries it.
 //
-// Salt and check travel as base64, because the remote stores them in text meta
-// rows. They are not secret -- the remote holds them so a second machine can
-// derive and compare the same key -- but every value here is untrusted: it
-// came from a remote this machine does not control.
+// Salt and check travel as base64: encoding/json encodes a byte slice that way,
+// and the remote also stores them base64 in text meta rows. They are not secret
+// -- the remote holds them so a second machine can derive and compare the same
+// key -- but every value here is untrusted: it came from a remote this machine
+// does not control.
 type KeyMeta struct {
 	// Salt is the KDF salt, empty on a remote that has never been given one.
 	Salt []byte `json:"salt,omitempty"`
@@ -155,7 +157,8 @@ type R2Config struct {
 
 // Request is one line of the pipe, from the daemon to the worker. Every field
 // is optional because a verb reads only what it needs, and omitempty keeps the
-// line short: a token over a pipe is read out of the first line.
+// line short: a token over a pipe is read out of the first line, and a longer
+// one only widens what another process on this machine could read.
 type Request struct {
 	// ID matches the reply, and is how one reply is told from another's.
 	ID string `json:"id"`
@@ -250,7 +253,7 @@ type Response struct {
 	// still get past. The daemon reads the class, so a remote's own text never
 	// decides how a refusal is classified.
 	Code RefusalCode `json:"code,omitempty"`
-	// Entries is what an export numbered, a pull read, or a head read.
+	// Entries is what an export numbered, a pull read, or a pull_range read.
 	Entries []Entry `json:"entries,omitempty"`
 	// Head is a page of an origin's latest state per row.
 	Head []HeadRow `json:"head,omitempty"`
@@ -385,7 +388,8 @@ type Entry struct {
 	// At is when the entry was written.
 	At time.Time `json:"at"`
 	// MAC is the HMAC-SHA256 over the entry's canonical encoding, absent on an
-	// entry written before this machine had a key.
+	// entry written before this machine had a key. It travels as base64, which
+	// is what encoding/json does with a byte slice.
 	MAC []byte `json:"mac,omitempty"`
 	// AfterOrigin and AfterSeq point at the entry in another origin's log that
 	// this entry depends on. They are empty/zero for an entry with no dependency.

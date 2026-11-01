@@ -189,8 +189,9 @@ func (v *Runner) unstageJoin(snapshot relevosync.JoinSnapshot) {
 // credentials arrive in the fleet's secrets document, which only the worker is
 // opened to read -- so the wiring can install an opener that starts the worker
 // with none instead of refusing. Every other enable opens through Open.
-// bucketless is the opener's answer about the worker it built, which the rest
-// of the enable must answer for.
+// The first bool says an opener was installed; bucketless, the second, says the
+// opener started the worker with no bucket stored, which the rest of the
+// enable must answer for.
 func (v *Runner) openJoinTransport(ctx context.Context, joining bool) (synclog.LogTransport, bool, bool, error) {
 	var transport synclog.LogTransport
 	var err error
@@ -314,12 +315,14 @@ func (v *Runner) enablePipeline(ctx context.Context, verb *wire.SyncVerb, token 
 //
 // A verify worker opened with no bucket cannot carry the import, which fetches
 // `$ref` bodies: the stored set after the secrets pre-pass is merged with the
-// flags the joiner passed -- a flag beats the stored value it would fill -- and
-// neither side completing it is the fleet granting none, refused before the
-// enable opens a worker no bucket could carry. A merged set that is complete
-// ends the question: a verify worker started with none is closed and the enable
-// builds a fresh one through Open, now that the rows name a bucket. One opened
-// with a bucket keeps driving.
+// flags the joiner passed -- the same lenient resolve the join preflight runs,
+// where a flag beats the stored value it would fill -- and neither side
+// completing it is the fleet granting none, refused before the enable opens a
+// worker no bucket could carry. A merged set that is complete ends the
+// question: a verify worker started with none is closed and the enable builds
+// a fresh one through Open, now that the rows name a bucket (the Enabler stores
+// flags before it opens its transport, and the pre-pass stored what the document
+// applied). One opened with a bucket keeps driving.
 //
 // The refusal error is returned; the caller puts the staged rows back.
 //

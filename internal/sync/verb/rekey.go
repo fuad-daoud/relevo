@@ -9,9 +9,10 @@ import (
 )
 
 // rekey rotates the log's key to the next epoch. Passphrases arrive in the raw
-// tail behind their own lengths and split once here; neither is ever formatted
-// into a result. The tail is the one frame part a captured stream never shows, so
-// two secrets on it are two secrets no log leaks.
+// tail behind their own lengths and split once here, the same rule EnableIntake
+// follows; neither is ever formatted into a result. The tail is the one frame
+// part a captured stream never shows, so two secrets on it are two secrets no
+// log leaks.
 func (v *Runner) rekey(ctx context.Context, verb *wire.SyncVerb, tail []byte) *wire.SyncResult {
 	current, newPass, err := RekeyIntake(verb, tail)
 	if err != nil {
