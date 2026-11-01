@@ -17,9 +17,8 @@ import (
 
 // segmentKind is the harness kind that wrote the stream byte at off: the Kind
 // of the last segment whose Start is at or before off, or fallback when no
-// segment covers off (segs empty, or off before the first Start). The drain
-// asks it per line, so a mid-round switch renders the old process's lines with
-// the kind that wrote them. Pure.
+// segment covers off. The drain asks it per line, so a mid-round switch
+// renders the old process's lines with the kind that wrote them.
 func segmentKind(segs []store.StreamSegment, off int64, fallback string) string {
 	kind := fallback
 	for _, s := range segs {
@@ -33,9 +32,8 @@ func segmentKind(segs []store.StreamSegment, off int64, fallback string) string 
 // carryStream moves the round's stream cursor and its segment list from the
 // outgoing endpoint onto its replacement (from -> to) and returns to, so a
 // mid-round switch keeps rendering the same round's file from where it left
-// off instead of re-rendering it from byte 0 with the new harness's kind. The
-// fields it does not name -- Kind, AgentName, Mode, PID -- come from to. Pure:
-// from is not changed.
+// off instead of re-rendering it from byte 0. The fields it does not name --
+// Kind, AgentName, Mode, PID -- come from to.
 func carryStream(from, to store.Endpoint) store.Endpoint {
 	to.StreamRound = from.StreamRound
 	to.StreamOffset = from.StreamOffset
@@ -45,27 +43,19 @@ func carryStream(from, to store.Endpoint) store.Endpoint {
 }
 
 // drainStream brings a legacy round's builder log up to date with its stream
-// and, for a round with no log, only advances the
-// cursor and captures the session id: every complete line of the stream file
-// past the endpoint's cursor is rendered with one transcript renderer for the
-// pass and, when the round has a log on disk (legacyLog), appended to it in one
-// write. The cursor moves past the last newline consumed either way.
-// A trailing partial line waits for the next tick. The cursor is keyed on
-// StreamRound, not b.Round, so a round that closed on its marker while the
-// builder was still flushing keeps draining until the next round starts.
-//
-// The pass owns one renderer, so a claude call and its result drained in the
-// same range keep their duration; the two events falling either side of a tick
-// boundary lose that one duration, and nothing else.
-//
-// The first drained line that names the harness's own session records it on
-// the endpoint; later lines cannot change it, so a sub-agent's session
-// appearing mid-round is ignored. A line that names none is not an error.
-//
-// It never fails the tick: every problem is a slog.Warn and an unchanged
-// binding, and the cursor advances only after the append succeeded, so a
-// failed write renders the same lines again next tick rather than dropping
-// them. Nothing here is read for meaning.
+// and, for a round with no log, only advances the cursor and captures the
+// session id: every complete line past the endpoint's cursor is rendered with
+// one transcript renderer for the pass and, when the round has a log on disk,
+// appended to it in one write. A trailing partial line waits for the next
+// tick. The cursor is keyed on StreamRound, not b.Round, so a round that
+// closed on its marker while the builder was still flushing keeps draining
+// until the next round starts. The pass owns one renderer, so a call and its
+// result drained in the same range keep their duration. The first drained
+// line naming the harness's own session records it on the endpoint; later
+// lines cannot change it. It never fails the tick: every problem is a
+// slog.Warn and an unchanged binding, and the cursor advances only after the
+// append succeeded, so a failed write renders the same lines again next tick
+// rather than dropping them.
 func drainStream(rt Runtime, b store.Binding) store.Binding {
 	round := b.Builder.StreamRound
 	if round == 0 {
@@ -95,14 +85,11 @@ func drainStream(rt Runtime, b store.Binding) store.Binding {
 }
 
 // drainFile appends render(off, line) for every complete line of src past off
-// to logPath -- nothing when logPath is "", which still advances the offset --
-// and returns the new offset. off is the line's own absolute byte
-// offset in src, so a caller rendering per byte range knows where each line
-// came from. It is the shared body of drainStream and drainSession: it never
-// fails the tick -- every
-// problem is a slog.Warn (with what) and the offset unchanged, except an
-// offset past EOF, which resets to 0. what names the source in warnings
-// ("stream", "session").
+// to logPath -- nothing when logPath is "", which still advances the offset.
+// off is the line's own absolute byte offset in src, so a caller rendering per
+// byte range knows where each line came from. It never fails the tick -- every
+// problem is a slog.Warn and the offset unchanged, except an offset past EOF,
+// which resets to 0. what names the source in warnings ("stream", "session").
 func drainFile(logPath, src string, off int64, render func(off int64, line []byte) []string, what string, fields ...any) int64 {
 	info, err := os.Stat(src)
 	if err != nil {
@@ -152,9 +139,9 @@ func readFrom(path string, off int64) ([]byte, error) {
 	return io.ReadAll(f)
 }
 
-// appendLines appends lines, each newline-terminated, to the file at path
-// in one write: O_APPEND writes of one buffer interleave with the
-// supervisor's stderr at line boundaries.
+// appendLines appends lines, each newline-terminated, to the file at path in
+// one write: one buffer interleave with the supervisor's stderr at line
+// boundaries.
 func appendLines(path string, lines []string) error {
 	f, err := openAppend(path)
 	if err != nil {
@@ -165,19 +152,16 @@ func appendLines(path string, lines []string) error {
 	return err
 }
 
-// logTailLines is how much of a builder log the exit entry carries: enough
-// to see why it died, not enough to flood the round log.
+// logTailLines is how much of a builder log the exit entry carries: enough to
+// see why it died, not enough to flood the round log.
 const logTailLines = 20
 
-// logTail is the last n lines of the file at path, without a trailing
-// newline, or "" when the file is absent or empty. It is text for humans --
-// the exit entry's payload, the status snippet -- and is never parsed.
-//
-// It reads the tail, not the file: a legacy builder log grows for the whole
-// round and only its last few lines are ever shown, so reading it whole meant
-// reading a process's entire stderr to keep three lines of it. The window is
-// grown until it holds n lines, so the answer is the one a whole-file read
-// gave -- including when one line is longer than the window.
+// logTail is the last n lines of the file at path, without a trailing newline,
+// or "" when the file is absent or empty. It is text for humans and is never
+// parsed. It reads the tail, not the file: a legacy builder log grows for the
+// whole round and only its last few lines are ever shown. The window is grown
+// until it holds n lines, so the answer is the one a whole-file read gave --
+// including when one line is longer than the window.
 func logTail(path string, n int) string {
 	if n <= 0 {
 		return ""
@@ -206,9 +190,8 @@ func logTail(path string, n int) string {
 			return ""
 		}
 		lines := strings.Split(s, "\n")
-		// A window that starts mid-line yields one short leading line, so the
-		// tail is only settled once the window holds n breaks or reaches the
-		// file's start.
+		// A window starting mid-line yields one short leading line, so the tail
+		// settles only once the window holds n breaks or reaches the start.
 		if off == 0 || strings.Count(s, "\n") >= n {
 			if len(lines) > n {
 				lines = lines[len(lines)-n:]
@@ -220,19 +203,17 @@ func logTail(path string, n int) string {
 }
 
 // clearProcess drops the endpoint's process fields; identity -- name, kind,
-// mode -- is untouched.
+// mode -- stays.
 func clearProcess(e store.Endpoint) store.Endpoint {
 	e.PID, e.StartedAt, e.LogPath = 0, 0, ""
 	return e
 }
 
 // exitEntry is the log record of a headless builder that exited without a
-// report: relevo → log only, Confirmed, never a pending payload.
-// codeText is the exit code, or "unknown" when the supervisor's trailer is
-// missing (killed, or the log unreadable). payload is the builder's last
-// logTailLines of evidence, computed by the caller with builderTail, for the
-// human; relevo reads nothing out of it. shape picks the word for the missing
-// artifact: a reader's is an output.
+// report: relevo → log only, Confirmed, never a pending payload. codeText is the exit
+// code, or "unknown" when the supervisor's trailer is missing. payload is the
+// builder's last logTailLines lines for the human; relevo reads nothing out
+// of it. shape picks the word for the missing artifact: a reader's is output.
 func exitEntry(now time.Time, round int, logPath, codeText, suffix, payload, shape string) store.LogEntry {
 	return store.LogEntry{
 		TS:        now,
@@ -248,9 +229,8 @@ func exitEntry(now time.Time, round int, logPath, codeText, suffix, payload, sha
 
 // streamLastActivity is when a live headless builder's stream last moved: the
 // later of the stream file's mtime and the round's start. A missing or
-// unreadable stream is not an error -- a round that has not produced a line
-// yet counts from its start, and a stream that never appears for stall_after_ms
-// on a live process is exactly a stall.
+// unreadable stream is not an error -- a round yet to produce a line counts
+// from its start, and a stream never appearing on a live process is a stall.
 func streamLastActivity(rt Runtime, b store.Binding) time.Time {
 	st, err := os.Stat(rt.Store.StreamPath(b.Name, b.Round))
 	if err != nil {
@@ -263,24 +243,16 @@ func streamLastActivity(rt Runtime, b store.Binding) time.Time {
 	return last
 }
 
-// stallLimitGateRecorded reports whether this stalled round has already
-// recorded its rate-limit gate. gateOnLimit writes the ledger
-// entry before it looks for the round's report, so a stalled live builder whose
-// round already produced a report was re-recording the same gate on every tick
-// for as long as the stall held -- and with a reset the scan reads relative to
-// now ("resets in 23m", or no reset at all and the fallback), each record moved
-// Until forward, so every other binding on the same candidate or account stayed
-// gated indefinitely. A repeat tick carries no new fact about the provider, so
-// it must not record again: one entry per round is the whole observation, and
-// the tick falls through to deliverAndSettle exactly as a tail that matched
-// nothing does.
-//
-// Scoped to the current round by RoundStartedAt, which a switch restarts, so a
-// new round gates afresh. The report is required to be on disk because that is
-// the only shape that reaches here without having switched: a match with no
-// report ends the tick in gateOnLimit -> switchBuilder, and the replacement
-// starts with a fresh RoundStartedAt. Without the report a gate-on-limit tick
-// is the existing single-tick switch path, unchanged.
+// stallLimitGateRecorded reports whether this stalled round already recorded
+// its rate-limit gate. gateOnLimit writes the ledger entry before looking for
+// the round's report, so a stalled live builder with a report was re-recording
+// the same gate every tick, each record moving Until forward and keeping every
+// other binding on the same candidate gated indefinitely. A repeat tick carries
+// no new fact about the provider, so it records once per round and otherwise
+// falls through to deliverAndSettle. The report must be on disk: a match with
+// no report ends the tick in gateOnLimit -> switchBuilder instead. Scoped to
+// the current round by RoundStartedAt, which a switch restarts, so a new round
+// gates afresh.
 func stallLimitGateRecorded(rt Runtime, b store.Binding) bool {
 	if rt.Gates == nil {
 		return false

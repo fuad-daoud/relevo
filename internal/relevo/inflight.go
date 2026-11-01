@@ -8,7 +8,7 @@ import (
 
 // LiveBuilder reports whether b holds a slot at its provider: a headless
 // builder with a process, on a binding that is not DONE or PAUSED. A queued
-// round holds no slot yet and a halted round has no process.
+// round holds no slot yet, and a halted round has no process.
 func LiveBuilder(b store.Binding) bool {
 	return b.Builder.Headless() && b.Builder.PID != 0 && b.State != store.StateDone && b.State != store.StatePaused
 }
@@ -27,8 +27,6 @@ func openRoundsByCandidate(bindings []store.Binding) map[string]int {
 	return out
 }
 
-// CountInFlight is openRoundsByCandidate over bindings without the one named
-// except.
 func CountInFlight(bindings []store.Binding, except string) map[string]int {
 	kept := make([]store.Binding, 0, len(bindings))
 	for _, b := range bindings {

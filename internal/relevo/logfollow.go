@@ -9,15 +9,12 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// FollowLog streams a binding's new log entries to emit as they appear,
-// polling every interval. after is the last Seq the caller has already seen
-// (0 for every entry). It returns nil when the binding reaches DONE or is
-// removed -- both mean there is nothing left to follow -- and ctx.Err() when
-// ctx is cancelled.
-//
-// DONE is checked AFTER draining, so the entries that closed the round are
-// emitted before the loop stops; checking it first would drop the closing
-// report.
+// FollowLog streams a binding's new log entries to emit as they appear, polling
+// every interval. after is the last Seq the caller has already seen (0 for
+// every entry). It returns nil when the binding reaches DONE or is removed --
+// both mean there is nothing left to follow -- and ctx.Err() when ctx is
+// cancelled. DONE is checked AFTER draining, so the entries that closed the
+// round are emitted before the loop stops.
 func FollowLog(ctx context.Context, rt Runtime, name string, after int, interval time.Duration, emit func(store.LogEntry)) error {
 	if name == "" {
 		return errors.New("follow log: empty binding name")

@@ -9,14 +9,13 @@ import (
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// liveStatCacheTTL bounds how long a cached live diff stat is reused. ui
-// polls every 2s and would otherwise pay for a git diff on every tick;
-// status is one-shot and still reads close to live within this window.
+// liveStatCacheTTL bounds how long a cached live diff stat is reused: ui polls
+// every 2s and would otherwise pay for a git diff on every tick, and status is
+// one-shot and still reads close to live within this window.
 const liveStatCacheTTL = 5 * time.Second
 
-// liveDiffDeadline is liveDeadline's git sibling: the detail pane opens a row
-// and waits on it, so a slow or wedged git shows no diff line rather than
-// stalling the open.
+// liveDiffDeadline is liveDeadline's git sibling: the detail pane waits on it,
+// so a slow or wedged git shows no diff line rather than stalling the open.
 const liveDiffDeadline = 500 * time.Millisecond
 
 type liveStatEntry struct {
@@ -24,28 +23,23 @@ type liveStatEntry struct {
 	diff view.LiveDiff
 }
 
-// liveStatCache is keyed by the binding's working directory + "@" + the
-// round's baseline tree, package-level and shared by every caller in this
-// process. The two halves are what the diff actually reads -- one worktree
-// against one tree -- so two bindings sharing a worktree share an entry and
-// one binding read twice in a window reads it once. The binding's name is not
-// in the key because it names no input to the read: a new round gets a new
-// baseline, so the key changes with it, and a stale round's entry is simply
-// never looked up again -- there is nothing to invalidate.
-//
-// Shared is per binding, not per diff, so it is filled in on the way out and
-// never cached: two bindings with one worktree can disagree on it.
+// liveStatCache is keyed by the binding's working directory + "@" + the round's
+// baseline tree: one worktree against one tree, the diff's two actual inputs,
+// so two bindings sharing a worktree share an entry. The binding's name is not
+// in the key because it names no input to the read, and a stale round's entry
+// is simply never looked up again -- there is nothing to invalidate. Shared is
+// per binding, not per diff, so it is filled in on the way out and never
+// cached.
 var (
 	liveStatMu    sync.Mutex
 	liveStatCache = map[string]liveStatEntry{}
 )
 
-// liveStat is the live "+N/-M in F" a status row shows while a round is
-// open: b's working tree against the round's baseline, no patch
-// body. nil when there is nothing to diff -- no Git wired, no round open,
-// no recorded baseline, or no working tree -- or when the git read itself
-// fails, is refused, or runs past liveDiffDeadline; a status row degrades
-// rather than fails because of it.
+// liveStat is the live "+N/-M in F" a status row shows while a round is open:
+// b's working tree against the round's baseline, no patch body. nil when
+// there is nothing to diff -- no Git, no round open, no baseline, no working
+// tree -- or when the git read fails, is refused, or runs past
+// liveDiffDeadline; a status row degrades rather than fails because of it.
 func liveStat(ctx context.Context, rt Runtime, b store.Binding) *view.LiveDiff {
 	if rt.Git == nil || b.RoundStartedAt.IsZero() || b.RoundBaselineTree == "" || b.CWD == "" {
 		return nil
@@ -61,9 +55,8 @@ func liveStat(ctx context.Context, rt Runtime, b store.Binding) *view.LiveDiff {
 	if entry, ok := liveStatCache[key]; ok && now.Sub(entry.at) < liveStatCacheTTL {
 		liveStatMu.Unlock()
 		d := entry.diff
-		// A --cwd binding has no worktree of its own: its "live" diff is
-		// against the worktree's own tree, shared with whatever else is
-		// running there.
+		// A --cwd binding has no worktree of its own: its "live" diff is against
+		// the worktree's own tree, shared with whatever else runs there.
 		d.Shared = b.Worktree == ""
 		return &d
 	}

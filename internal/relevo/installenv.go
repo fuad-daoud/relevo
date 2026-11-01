@@ -8,15 +8,11 @@ import (
 )
 
 // AgentInstallEnv is the InstallEnv every agent-definition surface reads and
-// writes through -- `relevo config agents` and the cockpit's `:agents` view
-// alike: the OS-backed env with the role manifest in the machine database's
-// kv row "agents-manifest".
-//
-// The state root is composed here through tmpdir.DefaultRoot, the one path
-// relevo's state always resolves through, and its database is opened here
-// because internal/harness cannot import internal/store. It lives here rather
-// than in cmd because internal/ui cannot import package main, and the
-// cockpit's mastermindActions needs the same env.
+// writes through: the OS-backed env with the role manifest in the machine
+// database's kv row "agents-manifest". The state root is composed here through
+// tmpdir.DefaultRoot, and its database is opened here because
+// internal/harness cannot import internal/store; it lives here rather than in
+// cmd because internal/ui cannot import package main.
 func AgentInstallEnv() (harness.InstallEnv, error) {
 	root, err := tmpdir.DefaultRoot()
 	if err != nil {
@@ -33,11 +29,9 @@ func AgentInstallEnv() (harness.InstallEnv, error) {
 
 // MachineConfig opens the config store of the same machine database
 // AgentInstallEnv keeps the role manifest in: the custom agents live in the
-// config, so the surfaces that install them read both through one state root.
-//
-// The store carries the file applier as well, so the hooks section's embedded
-// scripts are written where the argv rows name them rather than only held in
-// the database.
+// config, so both read through one state root. The store carries the file
+// applier as well, so the hooks section's embedded scripts are written where
+// the argv rows name them rather than only held in the database.
 func MachineConfig() (*config.Store, error) {
 	root, err := tmpdir.DefaultRoot()
 	if err != nil {

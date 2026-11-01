@@ -14,9 +14,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/histq"
 )
 
-// ErrNoDatabase is Bindings's error when rt.DB is nil: the caller (the ui's
-// "all" scope) has no database to read past bindings from and must
-// fall back to live-only, not fail.
+// ErrNoDatabase is Bindings's error when rt.DB is nil: the caller has no
+// database to read past bindings from and must fall back to live-only, not
+// fail.
 var (
 	ErrNoDatabase = errors.New("relevo: no database")
 
@@ -25,13 +25,13 @@ var (
 	ErrBadSince = histq.ErrBadSince
 )
 
-// ParseSince turns "" (no cut), "24h", "7d" or "YYYY-MM-DD" into the
-// instant before which entries are ignored.
+// ParseSince turns "" (no cut), "24h", "7d" or "YYYY-MM-DD" into the instant
+// before which entries are ignored.
 func ParseSince(s string, now time.Time) (time.Time, error) { return histq.ParseSince(s, now) }
 
-// HistoryBinding is one binding shaped for the ui's rail, without the
-// caller touching internal/db directly. Live is left false here -- the ui
-// sets it once it knows which names are also in the live report.
+// HistoryBinding is one binding shaped for the ui's rail, without the caller
+// touching internal/db directly. Live stays false here; the ui sets it once it
+// knows which names are also in the live report.
 type HistoryBinding struct {
 	Name         string
 	ID           string
@@ -45,12 +45,10 @@ type HistoryBinding struct {
 	Live         bool
 }
 
-// Bindings lists every binding newest activity first, narrowed to the repo
-// here belongs to. rt.DB == nil reports ErrNoDatabase. A here that is not
-// a git repository (or a nil rt.Git) means no filter at all, not an error:
-// the ui's "all" scope wants every binding when it cannot place the cwd in
-// a repo, while HistoryOptions.Filter's CLI caller fails loud on an
-// unresolvable --here.
+// Bindings lists every binding newest activity first, narrowed to the repo here
+// belongs to. A here that is not a git repository (or a nil rt.Git) means no
+// filter at all, not an error: the ui's "all" scope wants every binding when
+// it cannot place the cwd in a repo.
 func Bindings(ctx context.Context, rt Runtime, here string) ([]HistoryBinding, error) {
 	if rt.DB == nil {
 		return nil, ErrNoDatabase
@@ -102,7 +100,7 @@ func Bindings(ctx context.Context, rt Runtime, here string) ([]HistoryBinding, e
 	return out, nil
 }
 
-// HistoryOptions is `relevo history`'s flags. The zero value asks for every
+// HistoryOptions is `relevo history`'s flags; the zero value asks for every
 // round, newest first.
 type HistoryOptions struct {
 	Here                                                                       string
@@ -121,18 +119,16 @@ type HistoryOptions struct {
 	parsed histq.Query
 }
 
-// ParsedQuery returns the histq.Query Filter built, with the regroup axis.
-// It is the zero Query until Filter has run.
+// ParsedQuery is the histq.Query Filter built, with the regroup axis; the zero
+// Query until Filter has run.
 func (o HistoryOptions) ParsedQuery() histq.Query { return o.parsed }
 
-// Filter resolves o into a db.Filter, merging the -q query with the flags.
-// The query is parsed first; every explicit flag (non-empty, or a non-nil
-// Archived) then sets the field it names, and a flag that disagrees with a
-// value the query set appends `note: --<flag> overrides <key>:<value> from
-// -q` to the returned notes, which the CLI prints to stderr. Here, when set,
-// is resolved via rt.Git.RepoFacts into the repo's normalised origin URL
-// when it has a remote, else its common dir -- errors when Here is not a git
-// repository. Newest is always true: `relevo history` prints newest first.
+// Filter resolves o into a db.Filter, merging the -q query with the flags. The
+// query is parsed first; every explicit flag then sets the field it names, and
+// a flag disagreeing with a value the query set appends a note for the CLI to
+// print. Here resolves via rt.Git.RepoFacts into the normalised origin URL or
+// the common dir, erroring when Here is not a git repository. Newest is always
+// true: `relevo history` prints newest first.
 func (o *HistoryOptions) Filter(ctx context.Context, rt Runtime, now time.Time) (db.Filter, []string, error) {
 	q := histq.Query{By: histq.AxisNone}
 	if strings.TrimSpace(o.Query) != "" {
@@ -228,8 +224,8 @@ func (o *HistoryOptions) Filter(ctx context.Context, rt Runtime, now time.Time) 
 	}
 
 	// A candidate filter given as a name resolves to its canonical token, so
-	// the stored rounds match; an unresolved value is left as typed, and
-	// matches no rounds.
+	// the stored rounds match; an unresolved value is left as typed, matching
+	// no rounds.
 	if o.Names != nil && f.Candidate != "" && !strings.Contains(f.Candidate, "/") {
 		if c, err := o.Names.Resolve(f.Candidate); err == nil {
 			f.Candidate = c.Ref().String()

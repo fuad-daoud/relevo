@@ -18,8 +18,7 @@ import (
 // nudgePlanOnMarker resumes an exited plan-writing reader whose marker is down
 // but whose output holds no plan steps. The marker is removed once the resume
 // has started, so the round closes on the resumed runner's exit and not on the
-// marker that was already there. resumed is false, and nothing changes, for any
-// round that does not owe the nudge.
+// marker already there.
 func nudgePlanOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry) (store.Binding, bool, error) {
 	if rt.Runner == nil {
 		return b, false, nil
@@ -42,9 +41,8 @@ func nudgePlanOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 }
 
 // readerFinalMessageGrace is how long a reader round whose marker is present
-// waits for its runner to exit before relevo gives up on it: a runner writes
-// its final message just after the marker and then exits, so two minutes is
-// generous, and a hung one must not hold the round forever.
+// waits for its runner to exit: a runner writes its final message just after
+// the marker and then exits, and a hung one must not hold the round forever.
 const readerFinalMessageGrace = 2 * time.Minute
 
 // readerSummaryEarlyNote is the note a reader round closes with when its
@@ -55,23 +53,11 @@ const readerSummaryEarlyNote = "runner still running after its marker; summary t
 // holdReaderOnMarker reads a reader round's marker once and reports what the
 // close must do with it. A reader's marker is not the end of its stream: the
 // runner writes its final message just after the marker and then exits, and
-// that message is the round's summary. So the round waits for the exit -- held
-// is true while the process is alive inside readerFinalMessageGrace -- and a
-// runner still alive after the grace is stopped the way `relevo stop` stops
-// one, with early true so the caller closes on the stream as it is.
-//
-// present is false when the marker is not on disk this tick: the round is
-// still live, and the caller must close nothing at all. That is what keeps the
-// reader's marker read and its close on one observation: a marker written
-// between this read and closeOnMarker's own would otherwise close the round
-// the instant it appeared, before the runner printed the final message.
-//
-// A marker whose round has no report yet is held inside the grace even when
-// its process is gone: the message can land after the marker while the
-// process exits, so an empty stream must not close as noreport the moment the
-// marker is seen. Past the grace a genuinely empty round is left to the
-// ordinary close. An unreadable liveness check holds this tick, as the
-// unmarked path treats it as alive.
+// that message is the round's summary, so the round waits for the exit. A
+// marker absent this tick closes nothing, and a marker that appears between
+// this read and closeOnMarker's own must not close the round before the final
+// message lands. Inside the grace a report-less round is held even when its
+// process is gone, and an unreadable liveness check holds the tick.
 func holdReaderOnMarker(ctx context.Context, rt Runtime, b store.Binding) (present, held, early bool, err error) {
 	fi, serr := os.Stat(rt.Store.DonePath(b.Name, b.Round))
 	if serr != nil {
@@ -80,11 +66,9 @@ func holdReaderOnMarker(ctx context.Context, rt Runtime, b store.Binding) (prese
 	present = true
 	withinGrace := rt.Now().Sub(fi.ModTime()) < readerFinalMessageGrace
 
-	// A marker can appear before the runner prints its final message and
-	// before it exits: while the round has no report and the grace has not
-	// run out, hold the close so a message still coming is not lost to a
-	// noreport entry. A live process is recorded so a later tick never
-	// classifies it as lost to a restart.
+	// While the round has no report and the grace has not run out, hold the
+	// close so a message still coming is not lost; a live process is
+	// recorded so a later tick never classifies it as lost to a restart.
 	if withinGrace && !readerHasReport(rt, b) {
 		if b.Builder.PID != 0 && rt.Runner != nil {
 			alive, aerr := rt.Runner.Alive(ctx, handleOf(b.Builder))
@@ -120,28 +104,15 @@ func holdReaderOnMarker(ctx context.Context, rt Runtime, b store.Binding) (prese
 	return present, false, true, nil
 }
 
-// markerClose is the marker branch of reconcileHeadless: it calls
-// closeOnMarker and, when the marker is present and the gate is done, runs the
-// post-close sequence (served-round close, process clear, verify consult,
-// delivery, repair round). The normal read and the re-check in the
-// exited branch share it, so a marker that appears inside one tick is handled
-// by one implementation instead of a copy of the post-close block.
-//
-// closed and gating are reported so the caller returns exactly what the marker
-// branch does; a marker-absent read comes back unchanged with both false.
+// markerClose is the marker branch of reconcileHeadless: closeOnMarker and,
+// when the marker is present and the gate is done, the post-close sequence.
+// The normal read and the re-check in the exited branch share it, so a marker
+// appearing inside one tick is handled by one implementation.
 func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, markerNote string, wantVerify bool) (store.Binding, bool, bool, error) {
-	// A reader round closes on its runner's exit, not on the marker: the runner
-	// may have written its output near the end, so the summary is only complete
-	// once the process has gone. While the runner is alive the round stays
-	// open; past the grace the runner is stopped and the round closes with the
-	// summary taken early.
-	//
-	// The reader's marker is read exactly here, and a marker that is absent
-	// this tick closes nothing: the round is still live and the next tick
-	// re-reads it. Reading it here and again in closeOnMarker would let a
-	// marker written between the two reads close the round the instant it
-	// appeared, before the runner printed the final message the summary is
-	// taken from.
+	// A reader round closes on its runner's exit, not on the marker: the
+	// summary is only complete once the process has gone. The marker is read
+	// exactly here, so a marker written between this read and closeOnMarker's
+	// own cannot close the round before the final message lands.
 	if b.Shape == store.ShapeReader {
 		present, held, early, err := holdReaderOnMarker(ctx, rt, b)
 		if err != nil {
@@ -172,18 +143,16 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		next = rt.CloseServedRound(ctx, rt, next)
 	}
 	next.Builder = clearProcess(next.Builder)
-	// A runner that wrote its marker and then died inside the same tick is
-	// gone; end its scope now, best effort. A live runner is left alone:
-	// its own supervisor reaps the scope as it exits. The scope check leads,
-	// so a scopes-off close pays for no liveness read.
+	// A runner that wrote its marker and died inside the same tick is gone;
+	// end its scope now, best effort. A live runner is left to its own
+	// supervisor, and the scope check leads so a scopes-off close pays for no
+	// liveness read.
 	if rt.Scope != nil && !roundRunnerAlive(ctx, rt, b) {
 		endRoundScope(ctx, rt, b, closedRound)
 	}
 	next.StalledSince = time.Time{}
-	// The gate result -> report queued -> verify consult started ->
-	// delivery, exactly as the pane path orders it: the reviewer
-	// sees the gate's output, so it starts after the gate and before the
-	// mastermind is told.
+	// Verify starts after the gate and before the mastermind is told, as the
+	// pane path orders it, so the reviewer sees the gate's output.
 	if wantVerify && next.Shape != store.ShapeReader {
 		gateLogPath := ""
 		if rec != nil {
@@ -198,19 +167,12 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	if err != nil {
 		return next, true, false, err
 	}
-	// The report is queued; a failing gate may now open round N+1, as a
-	// fresh process, exactly as Send would. The failed
-	// round's own report, diff and gate=fail stand.
-	//
-	// A chain member's red gate is the chain's to spend: the wiring already
-	// decided in this tick whether a repair can run, on this binding and this
-	// gate log, so the two agree. It opens the round only when that decision
-	// allowed one; when it did not, the red event went to the chain's reviewer
-	// and the member must be left alone rather than halted.
-	//
-	// Only a done round may buy a repair: a chain member that reported halted,
-	// blocked or unstructured halts the chain instead, whatever its gate says
-	// (the gate runs on the done marker, not on the report).
+	// The report is queued; a failing gate may now open round N+1, exactly as
+	// Send would. A chain member's red gate is the chain's to spend: the
+	// wiring already decided this tick whether a repair can run, so the two
+	// agree. Only a done round may buy a repair: a member that reported
+	// halted, blocked or unstructured halts the chain instead, whatever its
+	// gate says.
 	if halted, ok, herr := housekeep.HaltOnEnvironmentGate(ctx, HousekeepDeps(rt), tx, next, rec, closedRound); ok || herr != nil {
 		return halted, true, false, herr
 	}
@@ -231,9 +193,8 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 }
 
 // closedReportOutcome is the outcome the just-closed round's report entry
-// recorded, or "" when the log holds no such entry. The chain wiring reads it
-// for the same round the close wrote, so the repair decision and the close
-// agree on what the builder actually reported.
+// recorded, or "" when the log holds none; the chain wiring reads it for the
+// same round the close wrote, so the repair decision and the close agree.
 func closedReportOutcome(tx *store.Tx, name string, round int) string {
 	entries, err := tx.ReadLog(name)
 	if err != nil {
@@ -248,7 +209,6 @@ func closedReportOutcome(tx *store.Tx, name string, round int) string {
 	return ""
 }
 
-// appendUnique returns s with v appended, unless it is already present.
 func appendUnique(s []string, v string) []string {
 	if slices.Contains(s, v) {
 		return s
