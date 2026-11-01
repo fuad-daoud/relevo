@@ -273,8 +273,26 @@ func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusC
 		row.LandedPR = b.LandedPR
 	}
 
+	applyStatusBuilderBranch(ctx, rt, b, cfg.detail, loads, &row)
+	statusRowProgress(rt, b, &row)
+
+	entries, err := statusLogHead(rt, b, &row)
+	if err != nil {
+		return view.BindingStatus{}, err
+	}
+	statusLogSpend(ctx, rt, b, cfg.detail, &row, entries)
+	statusLogTail(b, &row, entries)
+
+	return row, nil
+}
+
+// applyStatusBuilderBranch fills the row's builder figures: a headless
+// builder's status and tail, or a remote binding's server, status word and
+// live facts. A gate in flight still overrides whatever this writes, and a
+// broken row still reads its detail below, so this runs before both.
+func applyStatusBuilderBranch(ctx context.Context, rt Runtime, b store.Binding, detail bool, loads *rowLoads, row *view.BindingStatus) {
 	if b.Builder.Headless() {
-		row.BuilderStatus, row.Headless = headlessStatus(ctx, rt, b, cfg.detail, loads.aliveMap())
+		row.BuilderStatus, row.Headless = headlessStatus(ctx, rt, b, detail, loads.aliveMap())
 	} else if b.Builder.Remote() {
 		row.Server = b.Builder.Server
 		row.BuilderStatus = b.Builder.RemoteStatus
@@ -285,16 +303,21 @@ func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusC
 			row.BuilderStatus = view.QueueText(b.Builder.RemoteQueue, b.Builder.Server, rt.Now())
 		}
 		if b.Builder.RemoteStatus == string(remote.RoundRunning) && b.Builder.RemoteLive != nil {
-			view.ApplyRemoteLive(&row, b.Builder.RemoteLive, !b.StalledSince.IsZero(), rt.Store.BuilderLogPath(b.Name, b.Round), rt.Now())
+			view.ApplyRemoteLive(row, b.Builder.RemoteLive, !b.StalledSince.IsZero(), rt.Store.BuilderLogPath(b.Name, b.Round), rt.Now())
 		}
 		if !b.StalledSince.IsZero() && b.Builder.RemoteStatus == string(remote.RoundRunning) {
 			row.BuilderStatus = "stalled " + view.AgeText(rt.Now().Sub(b.StalledSince))
 		}
 	}
+}
 
+// statusRowProgress fills the row's progress figures: the stale and working
+// labels, the gate override while a gate is in flight, and the broken
+// detail. The labels run before the gate override so a gated row still reads
+// "gating ..."; the detail runs after, so a broken row still reads it.
+func statusRowProgress(rt Runtime, b store.Binding, row *view.BindingStatus) {
 	// The progress labels: the stale label is the row's own, the working
-	// label is a headless row's out of headlessStatus. This runs before the
-	// gate override so a gated row still reads "gating ...".
+	// label is a headless row's out of headlessStatus.
 	labelsNow := time.Now()
 	if rt.Now != nil {
 		labelsNow = rt.Now()
@@ -326,10 +349,15 @@ func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusC
 	if b.State == store.StateBroken {
 		row.Detail = view.DiagnoseBuilder(b).Detail(b.Round)
 	}
+}
 
+// statusLogHead reads the binding's log and fills the row's round figures:
+// the plan round, the waiting line, the last and payload events, the next
+// inputs, the last close and the round facts.
+func statusLogHead(rt Runtime, b store.Binding, row *view.BindingStatus) ([]store.LogEntry, error) {
 	entries, err := rt.Store.ReadLog(b.Name)
 	if err != nil {
-		return view.BindingStatus{}, err
+		return nil, err
 	}
 	for _, e := range entries {
 		if store.IsPromptKind(e.Kind) && e.Round > row.PlanRound {
@@ -358,7 +386,7 @@ func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusC
 			break
 		}
 	}
-	setNextInputs(rt, &row, entries)
+	setNextInputs(rt, row, entries)
 	for i := len(entries) - 1; i >= 0; i-- {
 		if e := entries[i]; e.Kind == store.KindDiff {
 			row.LastClose = &view.CloseInfo{Round: e.Round, Commits: e.Commits, Tree: e.Tree}
@@ -370,6 +398,14 @@ func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusC
 	if b.Builder.Remote() && row.RoundEnd.IsZero() && b.Builder.RemoteLive != nil {
 		row.RoundPriorTokens = b.Builder.RemoteLive.PriorTokens
 	}
+	return entries, nil
+}
+
+// statusLogSpend fills the row's spend and live figures from the log in
+// hand: the recorded sums stay exactly what the log entries give, and a
+// running round's own figure is read live after they are set, on the same
+// clock the quiet age reuses so the two never disagree.
+func statusLogSpend(ctx context.Context, rt Runtime, b store.Binding, detail bool, row *view.BindingStatus, entries []store.LogEntry) {
 	var usages []usage.Usage
 	var consults []bool
 	var switches []usage.Usage
@@ -403,14 +439,12 @@ func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusC
 		}
 		row.Spend = &s
 	}
-	// A running round gets its figure read live, after Spend is set, so the
-	// recorded sums stay exactly what the log entries give. A nil rt.Now
-	// falls back to the wall clock.
+	// A nil rt.Now falls back to the wall clock.
 	now := time.Now()
 	if rt.Now != nil {
 		now = rt.Now()
 	}
-	if cfg.detail && !b.Builder.Remote() {
+	if detail && !b.Builder.Remote() {
 		row.LiveUsage = peekUsage(ctx, rt, b, now)
 	}
 	row.Dirty = row.LastClose != nil && row.LastClose.Tree == "dirty" && b.RoundStartedAt.IsZero()
@@ -418,21 +452,22 @@ func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusC
 	// The live diff: the round's working tree against its baseline while a
 	// round is open. liveStat degrades to nil on its own, so this never
 	// fails the row.
-	if cfg.detail && !b.Builder.Remote() {
+	if detail && !b.Builder.Remote() {
 		row.Live = liveStat(ctx, rt, b)
 	}
 
 	// The quiet age: only for an ACTIVE row with an open round sampled at
-	// least once. Reuses the live usage figure's now, so the two clocks in
-	// one row never disagree.
+	// least once.
 	if row.Display == "ACTIVE" && !b.RoundStartedAt.IsZero() && !row.LastProgressAt.IsZero() {
 		row.QuietFor = view.AgeText(now.Sub(row.LastProgressAt))
 	}
+}
 
-	// The unread marker: the newest report entry is newer than the
-	// binding's .viewed stamp, or there is no stamp and a report exists.
-	// The stamp rides the binding List/Load already read, so the marker
-	// costs no second RecordGet.
+// statusLogTail fills the row's unread, pending and verdict flags from the
+// log in hand: the unread marker off the .viewed stamp the binding already
+// carries, the pending payload off the oldest unconfirmed entry, and the
+// verdict while it judged the round just closed.
+func statusLogTail(b store.Binding, row *view.BindingStatus, entries []store.LogEntry) {
 	for i := len(entries) - 1; i >= 0; i-- {
 		if entries[i].Kind != store.KindReport {
 			continue
@@ -449,10 +484,6 @@ func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusC
 		break
 	}
 
-	// Pending is the oldest unconfirmed to-mastermind payload, derived from
-	// the log in hand rather than a second store read. TS is the pending
-	// entry's own write time, so the row can say how long the payload has
-	// been waiting for a collector.
 	for _, e := range entries {
 		if e.Direction == store.DirToMasterMind && !e.Confirmed {
 			row.Pending = &view.PendingInfo{Round: e.Round, Kind: e.Kind, TS: e.TS}
@@ -460,12 +491,8 @@ func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusC
 		}
 	}
 
-	// The newest reviewer verdict, while it judged the round just closed:
-	// LastVerdict.Round == b.Round-1 means no later round has closed since.
 	// An older verdict stays in `relevo log`.
 	if b.LastVerdict != nil && b.LastVerdict.Round == b.Round-1 {
 		row.Verdict = fmt.Sprintf("verdict: %s (%d reasons)", b.LastVerdict.Verdict, len(b.LastVerdict.Reasons))
 	}
-
-	return row, nil
 }

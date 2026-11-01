@@ -18,7 +18,11 @@ import (
 // path, leaving the rename into place to the apply half. A discarded fetch
 // removes it, so the final name never holds a file the apply did not accept.
 func downloadTemp(root, final string, r io.ReadCloser) (string, error) {
-	defer r.Close()
+	defer func() {
+		if cerr := r.Close(); cerr != nil {
+			slog.Warn("close fetched file failed", "path", final, "err", cerr)
+		}
+	}()
 	dir := filepath.Dir(final)
 	if err := housekeep.EnsureRealDir(root, dir); err != nil {
 		return "", err

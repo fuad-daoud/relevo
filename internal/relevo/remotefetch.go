@@ -122,6 +122,15 @@ func reportMissingForRound(rt Runtime, name string, round int) bool {
 	return !HasEntry(entries, round, store.DirToMasterMind, store.KindReport)
 }
 
+// warnClose closes c and warns when that fails: a fetch body already read to
+// its end, whose close error the fetch cannot return since the bytes already
+// decided the outcome.
+func warnClose(c io.Closer, msg string, args ...any) {
+	if err := c.Close(); err != nil {
+		slog.Warn(msg, append(args, "err", err)...)
+	}
+}
+
 // fetchLogMirror is the network half of the builder-log mirror: it reads the
 // mirror file's length, range-reads the bytes the server holds past it, and
 // returns the update the apply half should write.
@@ -158,7 +167,7 @@ func fetchLogMirror(ctx context.Context, rt Runtime, server, name string, round 
 
 	switch {
 	case fr.Honored && fr.From == local && fr.Size >= local:
-		defer rc.Close()
+		defer warnClose(rc, "mirror builder log close failed", "server", server, "name", name, "round", round)
 		body, ok := readBounded(rc)
 		if !ok || len(body) == 0 {
 			return nil
@@ -177,14 +186,14 @@ func fetchLogMirror(ctx context.Context, rt Runtime, server, name string, round 
 			}
 			return nil
 		}
-		defer rc2.Close()
+		defer warnClose(rc2, "mirror builder log close failed", "server", server, "name", name, "round", round)
 		body, ok := readBounded(rc2)
 		if !ok {
 			return nil
 		}
 		return &logMirror{Path: path, Base: -1, Body: body}
 	default:
-		defer rc.Close()
+		defer warnClose(rc, "mirror builder log close failed", "server", server, "name", name, "round", round)
 		body, ok := readBounded(rc)
 		if !ok {
 			return nil
@@ -213,7 +222,7 @@ func fetchDrift(ctx context.Context, rt Runtime, server, name string, round int)
 		}
 		return nil
 	}
-	defer rc.Close()
+	defer warnClose(rc, "mirror drift close failed", "server", server, "name", name, "round", round)
 	data, err := io.ReadAll(rc)
 	if err != nil {
 		slog.Warn("mirror drift read failed", "server", server, "name", name, "round", round, "err", err)
@@ -272,7 +281,7 @@ func applyLogMirror(rt Runtime, name string, round int, m *logMirror) {
 		slog.Warn("mirror builder log failed", "name", name, "round", round, "err", err)
 		return
 	}
-	defer f.Close()
+	defer warnClose(f, "mirror builder log close failed", "name", name, "round", round)
 	if _, err := f.Write(m.Body); err != nil {
 		slog.Warn("mirror builder log failed", "name", name, "round", round, "err", err)
 	}

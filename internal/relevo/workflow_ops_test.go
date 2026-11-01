@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -378,6 +379,27 @@ func loadWorkflowsOrFail(t *testing.T, rt Runtime) map[string]config.StoredWorkf
 		t.Fatalf("config.Load: %v", err)
 	}
 	return L.Workflows
+}
+
+// TestWorkflowProblemsfClassSurvivesWrapping pins the classification a caller
+// maps to an exit code: the invalid class stays reachable through errors.Is,
+// and the problems through errors.As, even when a caller wraps the failure.
+func TestWorkflowProblemsfClassSurvivesWrapping(t *testing.T) {
+	err := workflowProblemsf("custom", []string{"rule 1: bad"})
+	wrapped := fmt.Errorf("add workflow: %w", err)
+	if !errors.Is(wrapped, ErrWorkflowInvalid) {
+		t.Fatalf("wrapped problems error = %v, want it to match ErrWorkflowInvalid", wrapped)
+	}
+	var we *WorkflowError
+	if !errors.As(wrapped, &we) {
+		t.Fatalf("wrapped problems error = %v, want it to carry a *WorkflowError", wrapped)
+	}
+	if len(we.Problems()) != 1 {
+		t.Fatalf("problems = %v, want the one rule failure", we.Problems())
+	}
+	if we.Workflow() != "custom" {
+		t.Errorf("workflow = %q, want custom", we.Workflow())
+	}
 }
 
 // TestWorkflowNameProblem pins the line both edit loops reopen a renamed source
