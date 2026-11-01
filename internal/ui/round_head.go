@@ -152,7 +152,7 @@ func (p roundPane) openCmd(env widget.Env) tea.Cmd {
 			return notice(terr.Error())
 		}
 		if _, werr := tmp.WriteString(c.artifactBody); werr != nil {
-			tmp.Close()
+			_ = tmp.Close()
 			return notice(werr.Error())
 		}
 		if cerr := tmp.Close(); cerr != nil {
@@ -173,7 +173,9 @@ func (p roundPane) openCmd(env widget.Env) tea.Cmd {
 				return widget.NoticeMsg{Text: serr.Error()}
 			}
 			if cmd.Process != nil {
-				cmd.Process.Release()
+				if rerr := cmd.Process.Release(); rerr != nil {
+					return widget.NoticeMsg{Text: rerr.Error()}
+				}
 			}
 			return nil
 		}

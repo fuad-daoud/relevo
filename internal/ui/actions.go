@@ -307,9 +307,11 @@ func (a *mastermindActions) Retry(ctx context.Context, key, candidate string) wi
 	if err != nil {
 		return widget.Result{Err: err, Refresh: true}
 	}
-	defer os.Remove(tmpPath)
 
 	res, err := relevo.Send(ctx, rt, name, tmpPath, relevo.SendOptions{Builder: candidate})
+	if rerr := os.Remove(tmpPath); rerr != nil && err == nil {
+		return widget.Result{Err: rerr, Refresh: true}
+	}
 	if err != nil {
 		return widget.Result{Err: err, Refresh: true}
 	}

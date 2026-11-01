@@ -261,7 +261,9 @@ func roundExecCmd(args []string, env widget.Env, p prefs) tea.Cmd {
 	key := args[0]
 	n := 0
 	if len(args) > 1 {
-		fmt.Sscanf(args[1], "%d", &n)
+		if scanned, serr := fmt.Sscanf(args[1], "%d", &n); serr != nil || scanned != 1 {
+			n = 0
+		}
 	}
 	if !liveBinding(env, key) {
 		return notice(fmt.Sprintf("unknown binding %q", key))

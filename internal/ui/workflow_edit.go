@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -125,11 +126,11 @@ func workflowEditStart(env widget.Env, name string) (workflowEditStep, error) {
 		actors: env.Actions.WorkflowActors(),
 	}
 	if err := f.Close(); err != nil {
-		os.Remove(step.path)
+		_ = os.Remove(step.path)
 		return workflowEditStep{}, err
 	}
 	if err := workflowEditWrite(step, step.prev); err != nil {
-		os.Remove(step.path)
+		_ = os.Remove(step.path)
 		return workflowEditStep{}, err
 	}
 	return step, nil
@@ -160,7 +161,9 @@ func workflowEditRunCmd(env widget.Env, step workflowEditStep) tea.Cmd {
 }
 
 func workflowEditStop(step workflowEditStep, text string) tea.Cmd {
-	os.Remove(step.path)
+	if err := os.Remove(step.path); err != nil && !os.IsNotExist(err) {
+		return notice(text + "; remove temp file: " + err.Error())
+	}
 	return notice(text)
 }
 
@@ -172,7 +175,7 @@ func (v workflowsView) editCmd(env widget.Env, w relevo.WorkflowSummary) tea.Cmd
 	}
 	step, err := workflowEditStart(env, w.Name)
 	if err != nil {
-		if err == errShippedWorkflow {
+		if errors.Is(err, errShippedWorkflow) {
 			return notice(workflowEditShippedNotice)
 		}
 		return notice(err.Error())
@@ -203,11 +206,14 @@ func (v workflowsView) editPass(env widget.Env, step workflowEditStep, res workf
 	switch res.end {
 	case workflowEditSaved:
 		step.prev = res.prev
-		os.Remove(step.path)
-		return runAction(env.Ctx, "edit workflow", workflowWriteKey("edit", step.name),
+		save := runAction(env.Ctx, "edit workflow", workflowWriteKey("edit", step.name),
 			func(ctx context.Context) widget.Result {
 				return env.Actions.WorkflowSave(ctx, step.name, res.source, res.def)
 			})
+		if err := os.Remove(step.path); err != nil && !os.IsNotExist(err) {
+			return tea.Batch(notice(err.Error()), save)
+		}
+		return save
 	case workflowEditDone:
 		text := "no changes"
 		if res.aborted {
