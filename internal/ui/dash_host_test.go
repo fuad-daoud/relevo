@@ -25,7 +25,7 @@ func dashHostModel(t *testing.T, width, height int, opts Options, rows ...view.B
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
-	t.Cleanup(func() { d.Close() })
+	t.Cleanup(func() { _ = d.Close() })
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st, DB: d}
 	opts.Interval = time.Second
@@ -144,7 +144,7 @@ func TestOptionsStartRounds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
-	t.Cleanup(func() { d.Close() })
+	t.Cleanup(func() { _ = d.Close() })
 	st := store.New(t.TempDir())
 	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st, DB: d}}, Options{Interval: time.Second, Start: "rounds"})
 	m.now = func() time.Time { return railNow }
@@ -228,7 +228,7 @@ func TestRoundsSavePrefsOnChange(t *testing.T) {
 	m = res.(Model)
 	res, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = res.(Model)
-	m = drain(t, m, cmd)
+	drain(t, m, cmd)
 	if got := loadPrefs(ps).Dashboard; got != "harness:agy" {
 		t.Errorf("saved Dashboard = %q, want harness:agy", got)
 	}

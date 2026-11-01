@@ -11,9 +11,16 @@ import (
 
 func (f fleetView) cardLines(env widget.Env, b view.BindingStatus, width int) []string {
 	g := groupOf(b)
+	title := cardTitle(b, env.Now)
+	metaContent := cardMeta(b, g)
+	keysContent := cardKeysRow(cardKeysFor(g, env.Actions != nil))
 
+	return renderCard(width, title, "", []string{metaContent, "", keysContent})
+}
+
+func cardTitle(b view.BindingStatus, now time.Time) string {
 	sr := shownRound(b)
-	rn := rowNow(b, env.Now)
+	rn := rowNow(b, now)
 	if sr > 0 {
 		rn = strings.TrimPrefix(rn, fmt.Sprintf("r%d · ", sr))
 	}
@@ -21,8 +28,10 @@ func (f fleetView) cardLines(env widget.Env, b view.BindingStatus, width int) []
 	if sr == 0 {
 		roundPart = rn
 	}
-	title := widget.AccentStyle.Bold(true).Render(b.Key()) + "  " + widget.FaintStyle.Render(roundPart)
+	return widget.AccentStyle.Bold(true).Render(b.Key()) + "  " + widget.FaintStyle.Render(roundPart)
+}
 
+func cardMeta(b view.BindingStatus, g fleetGroup) string {
 	var metaParts []string
 	mastermindName := mastermindCell(b)
 	if g == groupNeedsYou {
@@ -48,50 +57,48 @@ func (f fleetView) cardLines(env widget.Env, b view.BindingStatus, width int) []
 	if s := spendCell(b); s != "" {
 		metaParts = append(metaParts, widget.MutedStyle.Render(s))
 	}
-	metaContent := "  " + strings.Join(metaParts, widget.MutedStyle.Render("  ·  "))
+	return "  " + strings.Join(metaParts, widget.MutedStyle.Render("  ·  "))
+}
 
-	var cardKeys []widget.KeyHelp
-	if env.Actions == nil {
-		cardKeys = []widget.KeyHelp{{Key: "enter", Help: "open round"}}
-	} else {
-		switch g {
-		case groupNeedsYou:
-			cardKeys = []widget.KeyHelp{
-				{Key: "enter", Help: "open round"},
-				{Key: "s", Help: "send the next plan"},
-				{Key: "o", Help: "shell"},
-				{Key: "x", Help: "stop"},
-			}
-		case groupWorking:
-			cardKeys = []widget.KeyHelp{
-				{Key: "enter", Help: "open round"},
-				{Key: "x", Help: "stop"},
-				{Key: "g", Help: "gate"},
-				{Key: "o", Help: "shell"},
-			}
-		case groupIdle:
-			cardKeys = []widget.KeyHelp{
-				{Key: "s", Help: "send the next plan"},
-				{Key: "enter", Help: "open round"},
-				{Key: "D", Help: "done"},
-				{Key: "o", Help: "shell"},
-			}
-		case groupHeld, groupOther:
-			cardKeys = []widget.KeyHelp{
-				{Key: "enter", Help: "open round"},
-				{Key: "s", Help: "send"},
-				{Key: "D", Help: "done"},
-			}
-		case groupDone:
-			cardKeys = []widget.KeyHelp{
-				{Key: "enter", Help: "open round"},
-				{Key: "u", Help: "unbind"},
-			}
+func cardKeysFor(g fleetGroup, actions bool) []widget.KeyHelp {
+	if !actions {
+		return []widget.KeyHelp{{Key: "enter", Help: "open round"}}
+	}
+	switch g {
+	case groupNeedsYou:
+		return []widget.KeyHelp{
+			{Key: "enter", Help: "open round"},
+			{Key: "s", Help: "send the next plan"},
+			{Key: "o", Help: "shell"},
+			{Key: "x", Help: "stop"},
+		}
+	case groupWorking:
+		return []widget.KeyHelp{
+			{Key: "enter", Help: "open round"},
+			{Key: "x", Help: "stop"},
+			{Key: "g", Help: "gate"},
+			{Key: "o", Help: "shell"},
+		}
+	case groupIdle:
+		return []widget.KeyHelp{
+			{Key: "s", Help: "send the next plan"},
+			{Key: "enter", Help: "open round"},
+			{Key: "D", Help: "done"},
+			{Key: "o", Help: "shell"},
+		}
+	case groupHeld, groupOther:
+		return []widget.KeyHelp{
+			{Key: "enter", Help: "open round"},
+			{Key: "s", Help: "send"},
+			{Key: "D", Help: "done"},
+		}
+	case groupDone:
+		return []widget.KeyHelp{
+			{Key: "enter", Help: "open round"},
+			{Key: "u", Help: "unbind"},
 		}
 	}
-	keysContent := cardKeysRow(cardKeys)
-
-	return renderCard(width, title, "", []string{metaContent, "", keysContent})
+	return nil
 }
 
 func gatedLine(env widget.Env, width int) string {

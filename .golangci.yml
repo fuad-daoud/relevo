@@ -36,11 +36,6 @@ linters:
         text: '.*'
       - path: '^internal/setup/'
         text: '.*'
-      - path: '^internal/ui/[^/]+\.go$'
-        text: '.*'
-      - path: '^internal/ui/dash/'
-        text: '.*'
-
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0

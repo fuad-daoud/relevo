@@ -151,99 +151,20 @@ func newSettingsForm(env widget.Env, doc relevo.ConfigDoc, form, focusKey string
 	switch form {
 	case "rounds":
 		title = "rounds"
-		msField := textSettingField("max_switches", byKey("max_switches"), parseNonNegInt("a whole number, 0 or more"))
-
-		tierChips := []string{"read", "edit", "yolo"}
-		tierSel := candIndex(tierChips, byKey("max_tier").Value)
-		if tierSel < 0 {
-			tierSel = 0
-		}
-		tierField := settingField{
-			label: "max_tier", path: "max_tier",
-			chips: tierChips, sel: tierSel, origSel: tierSel,
-			value: func(sel int) any {
-				if sel < 0 || sel >= len(tierChips) {
-					return nil
-				}
-				return tierChips[sel]
-			},
-		}
-
-		verifyChips := []string{"on", "off"}
-		verifySel := 1
-		if byKey("verify.default").Value == "on" {
-			verifySel = 0
-		}
-		verifyField := settingField{
-			label: "verify.default", path: "verify.default",
-			chips: verifyChips, sel: verifySel, origSel: verifySel,
-			value: func(sel int) any { return sel == 0 },
-		}
-
-		amsField := textSettingField("artifact_max_mb", byKey("artifact_max_mb"), parseNonNegInt("a whole number, 0 or more"))
-
-		dmfField := textSettingField("disk_min_free_gb", byKey("disk_min_free_gb"), parseNonNegInt("a whole number, 0 or more"))
-
-		fields = []settingField{msField, tierField, verifyField, amsField, dmfField}
-		switch focusKey {
-		case "max_switches":
-			focus = 0
-		case "max_tier":
-			focus = 1
-		case "verify.default":
-			focus = 2
-		case "artifact_max_mb":
-			focus = 3
-		case "disk_min_free_gb":
-			focus = 4
-		}
+		fields, focus = settingsRoundsFields(byKey, focusKey)
 
 	case "check":
 		title = "check"
-		cmdField := textSettingField("command", byKey("gate.default"), parseOptionalText)
-		cmdField.path = "gate.default"
-
-		toField := textSettingField("timeout", byKey("gate.timeout"), parseDuration)
-		toField.path = "gate.timeout_ms"
-
-		rrField := textSettingField("repair rounds", byKey("gate.regate"), parseNonNegInt("a whole number, 0 or more"))
-		rrField.path = "gate.regate"
-
-		fields = []settingField{cmdField, toField, rrField}
+		fields, focus = settingsCheckFields(byKey, focusKey)
 		note = checkSentence(doc)
-		switch focusKey {
-		case "gate.default":
-			focus = 0
-		case "gate.timeout":
-			focus = 1
-		case "gate.regate":
-			focus = 2
-		}
 
 	case "timing":
 		title = "timing"
-		defs := []struct{ label, key, path string }{
-			{"limit_gate_default", "limit_gate_default", "limit_gate_default_ms"},
-			{"stall_after", "stall_after", "stall_after_ms"},
-			{"silent_after", "silent_after", "silent_after_ms"},
-			{"progress_interval", "progress_interval", "progress_interval_ms"},
-			{"explore_after", "explore_after", "explore_after_ms"},
-			{"stale_after", "stale_after", "stale_after_ms"},
-		}
-		for i, d := range defs {
-			f := textSettingField(d.label, byKey(d.key), parseDuration)
-			f.path = d.path
-			fields = append(fields, f)
-			if d.key == focusKey {
-				focus = i
-			}
-		}
+		fields, focus = settingsTimingFields(byKey, focusKey)
 
 	case "max_builders":
 		title = "serve.max_builders"
-		f := textSettingField("max_builders", byKey("serve.max_builders"), parseIntMin(1, "a whole number, 1 or more"))
-		f.path = "serve.max_builders"
-		fields = []settingField{f}
+		fields = []settingField{settingsMaxBuildersField(byKey)}
 		focus = 0
 
 	case "scope", "serve.scope":
@@ -265,6 +186,102 @@ func newSettingsForm(env widget.Env, doc relevo.ConfigDoc, form, focusKey string
 		note:    note,
 	}
 	return f.setFocus(focus)
+}
+
+func settingsRoundsFields(byKey func(string) relevo.Setting, focusKey string) ([]settingField, int) {
+	msField := textSettingField("max_switches", byKey("max_switches"), parseNonNegInt("a whole number, 0 or more"))
+
+	tierChips := []string{"read", "edit", "yolo"}
+	tierSel := candIndex(tierChips, byKey("max_tier").Value)
+	if tierSel < 0 {
+		tierSel = 0
+	}
+	tierField := settingField{
+		label: "max_tier", path: "max_tier",
+		chips: tierChips, sel: tierSel, origSel: tierSel,
+		value: func(sel int) any {
+			if sel < 0 || sel >= len(tierChips) {
+				return nil
+			}
+			return tierChips[sel]
+		},
+	}
+
+	verifyChips := []string{"on", "off"}
+	verifySel := 1
+	if byKey("verify.default").Value == "on" {
+		verifySel = 0
+	}
+	verifyField := settingField{
+		label: "verify.default", path: "verify.default",
+		chips: verifyChips, sel: verifySel, origSel: verifySel,
+		value: func(sel int) any { return sel == 0 },
+	}
+
+	amsField := textSettingField("artifact_max_mb", byKey("artifact_max_mb"), parseNonNegInt("a whole number, 0 or more"))
+
+	dmfField := textSettingField("disk_min_free_gb", byKey("disk_min_free_gb"), parseNonNegInt("a whole number, 0 or more"))
+
+	focus := 0
+	switch focusKey {
+	case "max_tier":
+		focus = 1
+	case "verify.default":
+		focus = 2
+	case "artifact_max_mb":
+		focus = 3
+	case "disk_min_free_gb":
+		focus = 4
+	}
+	return []settingField{msField, tierField, verifyField, amsField, dmfField}, focus
+}
+
+func settingsCheckFields(byKey func(string) relevo.Setting, focusKey string) ([]settingField, int) {
+	cmdField := textSettingField("command", byKey("gate.default"), parseOptionalText)
+	cmdField.path = "gate.default"
+
+	toField := textSettingField("timeout", byKey("gate.timeout"), parseDuration)
+	toField.path = "gate.timeout_ms"
+
+	rrField := textSettingField("repair rounds", byKey("gate.regate"), parseNonNegInt("a whole number, 0 or more"))
+	rrField.path = "gate.regate"
+
+	focus := 0
+	switch focusKey {
+	case "gate.timeout":
+		focus = 1
+	case "gate.regate":
+		focus = 2
+	}
+	return []settingField{cmdField, toField, rrField}, focus
+}
+
+func settingsTimingFields(byKey func(string) relevo.Setting, focusKey string) ([]settingField, int) {
+	defs := []struct{ label, key, path string }{
+		{"limit_gate_default", "limit_gate_default", "limit_gate_default_ms"},
+		{"stall_after", "stall_after", "stall_after_ms"},
+		{"silent_after", "silent_after", "silent_after_ms"},
+		{"progress_interval", "progress_interval", "progress_interval_ms"},
+		{"explore_after", "explore_after", "explore_after_ms"},
+		{"stale_after", "stale_after", "stale_after_ms"},
+	}
+	var fields []settingField
+	focus := 0
+	for i, d := range defs {
+		f := textSettingField(d.label, byKey(d.key), parseDuration)
+		f.path = d.path
+		fields = append(fields, f)
+		if d.key == focusKey {
+			focus = i
+		}
+	}
+	return fields, focus
+}
+
+func settingsMaxBuildersField(byKey func(string) relevo.Setting) settingField {
+	f := textSettingField("max_builders", byKey("serve.max_builders"), parseIntMin(1, "a whole number, 1 or more"))
+	f.path = "serve.max_builders"
+	return f
 }
 
 // setFocus moves focus to field i, wrapping, focusing that field's input

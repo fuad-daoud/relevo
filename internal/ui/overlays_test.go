@@ -236,7 +236,7 @@ func TestGateFormEmptyDurationIsUntilCleared(t *testing.T) {
 	res, cmd0 := m.Update(key('g'))
 	m = drain(t, res.(Model), cmd0)
 	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = drain(t, res.(Model), cmd)
+	drain(t, res.(Model), cmd)
 
 	if len(fa.gates) != 1 {
 		t.Fatalf("gates = %+v, want one call", fa.gates)

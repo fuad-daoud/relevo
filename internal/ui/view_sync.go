@@ -414,15 +414,13 @@ func (v syncView) installationLines() []string {
 	out = append(out, "     "+header)
 	for _, in := range v.snap.Installation {
 		own := in.ID != "" && in.ID == v.snap.OwnID
-		style := widget.MutedStyle
+		style := widget.FaintStyle
 		label := in.Label
 		if label == "" {
 			label = syncDash
 		}
 		if own {
 			style = widget.TextStyle
-		} else {
-			style = widget.FaintStyle
 		}
 		row := widget.Pad(label, 18) + widget.Pad(clipMiddle(in.ID, 16), 18) + style.Render(syncDate(in.LastSeen))
 		out = append(out, "     "+row)

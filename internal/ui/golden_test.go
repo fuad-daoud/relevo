@@ -482,7 +482,7 @@ func goldenRoundsModel(t *testing.T, width, height int) Model {
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
-	t.Cleanup(func() { d.Close() })
+	t.Cleanup(func() { _ = d.Close() })
 	st := store.New(t.TempDir())
 	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st, DB: d}},
 		Options{Interval: time.Second, Start: "rounds", Version: goldenVersion})
@@ -580,7 +580,7 @@ func goldenLogModel(t *testing.T, width, height int) Model {
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
-	t.Cleanup(func() { d.Close() })
+	t.Cleanup(func() { _ = d.Close() })
 	st := store.New(t.TempDir())
 	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st, DB: d}},
 		Options{Interval: time.Second, Start: "log", Version: goldenVersion})
@@ -617,7 +617,7 @@ func goldenStatsModel(t *testing.T, width, height int, rep stats.Report) Model {
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
-	t.Cleanup(func() { d.Close() })
+	t.Cleanup(func() { _ = d.Close() })
 	st := store.New(t.TempDir())
 	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st, DB: d}},
 		Options{Interval: time.Second, Start: "stats", Version: goldenVersion})

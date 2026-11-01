@@ -23,12 +23,10 @@ import (
 )
 
 // mastermindActions is the real Actions: a thin adapter over internal/relevo.
-// repo is os.Getwd() at start, or "" when not inside a git repo; you is the
-// human mastermind's id, from ensureYou.
+// repo is os.Getwd() at start, or "" when not inside a git repo.
 type mastermindActions struct {
 	live  *liveRuntime
 	repo  string
-	you   string
 	probe availability.LineExec
 }
 
@@ -309,9 +307,11 @@ func (a *mastermindActions) Retry(ctx context.Context, key, candidate string) wi
 	if err != nil {
 		return widget.Result{Err: err, Refresh: true}
 	}
-	defer os.Remove(tmpPath)
 
 	res, err := relevo.Send(ctx, rt, name, tmpPath, relevo.SendOptions{Builder: candidate})
+	// The send has happened or failed by now; a temp file left behind is the
+	// tmp sweep's to collect, not a reason to report a sent round as failed.
+	_ = os.Remove(tmpPath)
 	if err != nil {
 		return widget.Result{Err: err, Refresh: true}
 	}

@@ -190,7 +190,7 @@ func TestActorViewIgnoresChangeKeysWhileRunning(t *testing.T) {
 
 	env.Running = map[string]string{"actor:builder": "edit actor"}
 	next, cmd = v.Update(tea.KeyMsg{Type: tea.KeyShiftDown}, env)
-	v = next.(actorView)
+	_ = next.(actorView)
 	if cmd != nil {
 		t.Errorf("a change key with the edit running returned a command: %T", cmd())
 	}

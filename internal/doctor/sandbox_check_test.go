@@ -8,22 +8,13 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
-// sandboxStateRoot is the state root TestMain's temp HOME implies, so the
-// marker a test writes lands under the package's own isolated root and never
-// under the developer's real state.
+// sandboxStateRoot is a fresh temp root per test, so the marker a test
+// writes never lands under real state and concurrent runs cannot race on it.
 func sandboxStateRoot(t *testing.T) string {
 	t.Helper()
-	root, err := tmpdir.DefaultRoot()
-	if err != nil {
-		t.Fatalf("store.DefaultRoot: %v", err)
-	}
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		t.Fatalf("MkdirAll(%s): %v", root, err)
-	}
-	return root
+	return t.TempDir()
 }
 
 // writeSandboxMarker writes the marker scripts/relevo-dev-user.sh writes: a
