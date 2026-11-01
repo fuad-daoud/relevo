@@ -111,9 +111,7 @@ type Prefixer interface {
 	ShowPrefix(ctx context.Context, dir string) (string, error)
 }
 
-// Refs is the narrow git surface ref cleanup needs: the head existence
-// probe, the relevo ref listing, the pushed check, and the branch and ref
-// deletes. The engine's git client satisfies it.
+// Refs is the narrow git surface ref cleanup needs.
 type Refs interface {
 	RefSHA(ctx context.Context, dir, ref string) (string, bool, error)
 	ListRefs(ctx context.Context, dir, prefix string) ([]string, error)
@@ -122,9 +120,7 @@ type Refs interface {
 	DeleteRef(ctx context.Context, dir, ref string) error
 }
 
-// Git is the narrow git surface scratch worktrees need: the HEAD and
-// snapshot reads and the detached-worktree add, materialize and remove. The
-// engine's git client satisfies it.
+// Git is the narrow git surface scratch worktrees need.
 type Git interface {
 	HeadCommit(ctx context.Context, dir string) (string, error)
 	SnapshotTree(ctx context.Context, dir string) (string, error)

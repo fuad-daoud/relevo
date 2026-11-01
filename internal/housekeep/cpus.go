@@ -32,10 +32,8 @@ func pickCPU(pool, held []int) (int, bool) {
 	return best, ok
 }
 
-// HeldIn collects the cores held by live rounds other than the binding named
-// self: every binding whose RoundCPU is set and whose builder process is live
-// (PID != 0) or whose gate is running (GateRun != nil). Using liveness rather
-// than "the field is set" means a halted, done, re-queued or crashed round
+// HeldIn collects the cores held by live rounds other than self. Liveness, not
+// "the field is set", decides: a halted, done, re-queued or crashed round
 // never blocks a core, even on a path that forgets to clear the field. Pure.
 func HeldIn(bindings []store.Binding, self string) []int {
 	var held []int
@@ -71,15 +69,12 @@ func CPUPinText(b store.Binding) string {
 }
 
 // AssignRoundCPU gives b the core its round runs on, called by startRound
-// right before it builds the spec. It never fails.
-//
-// The pool is the runtime scope's allowed_cpus, parsed; an empty pool or a nil
-// tx (a caller that has no round to pin) leaves RoundCPU nil. A census error
-// and an exhausted pool both mean "whole pool, warn", and both leave RoundCPU
-// nil so the round runs unpinned rather than failing. A relaunch or a
-// mid-round switch keeps its core when that core is still in the pool and
-// still free. The returned binding carries RoundCPU, so the caller's tx.Save
-// persists it.
+// right before it builds the spec. It never fails: an empty
+// pool or a nil tx leaves RoundCPU nil, and a census error or an exhausted
+// pool leaves it nil so the round runs unpinned rather than failing. A
+// relaunch or a mid-round switch keeps its core when that core is still in
+// the pool and still free. The returned binding carries RoundCPU, so the
+// caller's tx.Save persists it.
 func AssignRoundCPU(deps Deps, tx *store.Tx, b store.Binding) store.Binding {
 	var pool []int
 	if deps.AllowedCPUs != "" {

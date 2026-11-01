@@ -68,7 +68,6 @@ func ScanInstructionShaped(text []byte, extra []*regexp.Regexp) int {
 	return len(ScanLines(text, extra))
 }
 
-// CompileScanPatterns compiles policy extra scan patterns.
 func CompileScanPatterns(p policy.Policy) []*regexp.Regexp {
 	if len(p.ScanPatterns) == 0 {
 		return nil

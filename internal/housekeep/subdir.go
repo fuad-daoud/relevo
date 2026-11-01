@@ -11,14 +11,10 @@ import (
 
 // NormalizeSubdir puts a subdirectory prefix into the form RoundDir joins: a
 // slash-separated path relative to the tree root, with git's trailing slash
-// dropped. An empty prefix, the room at the tree's root, is its own empty
-// answer.
-//
-// A prefix that could move the round's directory outside the tree -- an
-// absolute path, a `..` segment, a `.` segment -- or that is meaningless as an
-// offset -- bare separators -- is refused here, at the one boundary every
-// surface stores through, so the round's directory always stays inside the
-// tree.
+// dropped. An empty prefix is its own empty answer. A prefix that could move
+// the round's directory outside the tree is refused here, at the one boundary
+// every surface stores through, so the round's directory always stays inside
+// the tree.
 func NormalizeSubdir(raw string) (string, error) {
 	s := strings.TrimSuffix(raw, "/")
 	if strings.HasPrefix(s, "/") {
@@ -54,10 +50,8 @@ func ResolveSubdir(ctx context.Context, git Prefixer, repo string) string {
 }
 
 // RoundDir names the directory a binding's round runs in: the binding's tree
-// plus its subdirectory. CWD keeps the tree's own meaning -- the tree relevo
-// cut, the repository every git call runs against -- so only the round's
-// working directory is joined here; every surface that launches a process in
-// it goes through RoundTree, which calls this.
+// plus its subdirectory. Every surface that launches a process in it goes
+// through RoundTree, which calls this.
 func RoundDir(b store.Binding) string {
 	if b.Subdir == "" {
 		return b.CWD

@@ -100,8 +100,8 @@ type PlannedMember struct {
 // MemberNames names the members a workflow would create for a chain: one
 // binding per actor its run steps reach, the chain's own name for its writer
 // and "<chain>-<actor>" for every other actor. The shipped default names its
-// reviewer, planner and security actors with the suffixes a legacy chain
-// always wrote. An actor the registry does not define is refused, because a
+// reviewer, planner and security actors with the -rev, -plan and -sec
+// suffixes. An actor the registry does not define is refused, because a
 // member without one cannot be resolved.
 func MemberNames(name string, def workflow.Definition, actors map[string]workflow.ActorInfo) ([]PlannedMember, error) {
 	used := workflow.UsedActors(def)
@@ -187,7 +187,6 @@ func WriterKeeper(def workflow.Definition, used []string, actors map[string]work
 	return writers[0]
 }
 
-// HasParam reports whether a workflow declares the named param.
 func HasParam(def workflow.Definition, name string) bool {
 	_, ok := def.Params[name]
 	return ok

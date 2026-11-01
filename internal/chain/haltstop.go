@@ -32,7 +32,6 @@ type ChainHaltedError struct {
 	Name string
 }
 
-// Error renders the answer the chain's name gives.
 func (e *ChainHaltedError) Error() string { return ChainHaltedStopText(e.Name) }
 
 // Unwrap yields ErrChainHalted, the class the CLI maps to the conflict family.

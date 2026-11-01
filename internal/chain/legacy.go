@@ -1,6 +1,5 @@
-// Package chain reads trace rows written before workflows carried them: it
-// decodes their event and action documents and renders them as trace lines. It
-// also holds the member, phase, step and gate words those rows and a chain's
+// Package chain reads stored trace rows and renders them as lines. It also
+// holds the member, phase, step and gate words those rows and a chain's
 // persisted columns share.
 package chain
 
@@ -17,7 +16,6 @@ import (
 // that arrives afterwards changes nothing.
 type Status string
 
-// The statuses a chain holds.
 const (
 	StatusRunning Status = "running"
 	StatusHalted  Status = "halted"
@@ -36,7 +34,6 @@ const (
 // never advances to another plan.
 type Phase string
 
-// The phases a chain holds.
 const (
 	PhaseBuild    Phase = "build"
 	PhaseSecurity Phase = "security"
@@ -46,7 +43,6 @@ const (
 // Step is what the active member is doing.
 type Step string
 
-// The steps a chain holds.
 const (
 	StepBuilding      Step = "building"
 	StepReviewing     Step = "reviewing"
@@ -59,7 +55,6 @@ const (
 // none.
 type Verdict string
 
-// The verdicts a reviewer may give.
 const (
 	VerdictPass    Verdict = "pass"
 	VerdictChanges Verdict = "changes"
@@ -121,7 +116,6 @@ type State struct {
 // EventKind names the close that produced an event.
 type EventKind string
 
-// The closes that reach a chain.
 const (
 	EventBuilderClosed  EventKind = "builder_closed"
 	EventReviewerClosed EventKind = "reviewer_closed"
@@ -150,7 +144,6 @@ type Event struct {
 // action at all.
 type ActionKind string
 
-// The actions a transition may produce.
 const (
 	ActionNone   ActionKind = ""
 	ActionSend   ActionKind = "send"
@@ -163,7 +156,6 @@ const (
 // caller sends the plan file itself.
 type SeedKind string
 
-// The seeds a chain renders.
 const (
 	SeedReviewer   SeedKind = "reviewer"
 	SeedCorrection SeedKind = "correction"
@@ -184,10 +176,7 @@ type Action struct {
 // BuilderHaltReason is the one-line reason a builder close that is not done
 // carries onto the chain: the first present of the report tail's halted_at,
 // the close note and the first not_done item, each labelled; the outcome word
-// when none of them is set. A value that carries a newline is cut at its first
-// one and trimmed before it is labelled, and a control character in what
-// survives is made inert before it is labelled, and an empty source is skipped
-// rather than rendered as an empty label. Pure.
+// when none of them is set. Pure.
 func BuilderHaltReason(tail reporttail.Tail, note, outcome string) string {
 	for _, src := range []struct{ label, value string }{
 		{"halted_at", tail.HaltedAt},

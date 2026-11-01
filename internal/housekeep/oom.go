@@ -194,8 +194,7 @@ func AdmitOOMQueued(ctx context.Context, deps Deps, bindings []store.Binding) {
 }
 
 // OOMNote is the prompt addition for a round that was interrupted by an oom
-// kill. It tells the builder what happened and to run git status and git diff
-// first.
+// kill.
 func OOMNote(t time.Time) string {
 	return fmt.Sprintf(oomNoteFormat, t.UTC().Format("2006-01-02T15:04:05Z"))
 }

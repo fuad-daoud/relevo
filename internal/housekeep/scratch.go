@@ -28,17 +28,10 @@ type Scratch struct {
 }
 
 // CreateScratch makes the throwaway worktree a reader round runs in: the
-// binding's HEAD plus its whole working state -- tracked edits (staged or
-// not), deletions and untracked non-ignored files -- with every difference
-// unstaged and nothing committed. An open reader round is the caller.
-//
-// Preconditions: deps.Git is set and b.CWD names the binding's git tree.
-// Postconditions: on success a detached worktree at Scratch.Path holds b.CWD's
-// working state; b.CWD itself is untouched. On any failure no worktree is left
-// behind.
-//
-// Errors: every failure wraps ErrScratch and names the step that failed
-// ("head", "snapshot", "add", "materialize" or "leftover").
+// binding's HEAD plus its whole working state, with every difference unstaged
+// and nothing committed. On any failure no worktree is left behind; every
+// failure wraps ErrScratch and names the step that failed ("head", "snapshot",
+// "add", "materialize" or "leftover").
 func CreateScratch(ctx context.Context, deps Deps, b store.Binding, round int) (Scratch, error) {
 	if deps.Git == nil || b.CWD == "" {
 		return Scratch{}, fmt.Errorf("%w: binding %s has no git tree", ErrScratch, b.Name)
@@ -91,11 +84,8 @@ func CreateScratchFrom(ctx context.Context, deps Deps, b store.Binding, round in
 
 // RoundTree is the working tree a round's process runs in: the binding's
 // tree plus its subdirectory for a writer, the binding's throwaway scratch
-// worktree joined with the same subdirectory for a reader. Every place a
-// runner process is launched or relaunched for a round names its tree
-// through this, so a reader can never run in the binding's tree, a writer is
-// unchanged for a tree-root round, and both sides land where a bind started
-// below the root asked them to.
+// worktree joined with the same subdirectory for a reader. Every launch names
+// its tree through this, so a reader can never run in the binding's tree.
 func RoundTree(deps Deps, b store.Binding) string {
 	if b.Shape == store.ShapeReader {
 		return filepath.Join(deps.Store.ScratchWorktreePath(b.Name, b.Round), b.Subdir)
@@ -105,9 +95,8 @@ func RoundTree(deps Deps, b store.Binding) string {
 
 // prepareScratchPath returns the path b's round should use, with the scratch
 // directory's parent in place. A path that is already there is a leftover from
-// a crash: it is taken away before `git worktree add`, which refuses an
-// existing path. A path that is already gone costs one stat, so calling it
-// again is safe.
+// a crash and is taken away before `git worktree add`, which refuses one. A
+// path that is already gone costs one stat.
 func prepareScratchPath(ctx context.Context, deps Deps, b store.Binding, round int) (string, error) {
 	path := deps.Store.ScratchWorktreePath(b.Name, round)
 
@@ -154,9 +143,6 @@ func scratchRel(st *store.Store, path string) (string, bool) {
 	return rel, true
 }
 
-// RemoveScratch takes a reader round's throwaway worktree away. A path that is
-// already gone is success: RemoveWorktree prunes the stale administrative
-// entry in that case.
 // RemoveScratch removes a reader round's throwaway worktree. A scratch whose
 // source tree is already gone and whose path no longer exists is already
 // removed: the release that took the source tree -- a chain's done removes the
@@ -174,14 +160,10 @@ func RemoveScratch(ctx context.Context, deps Deps, b store.Binding, round int) e
 	return deps.Git.RemoveWorktree(ctx, b.CWD, path, true)
 }
 
-// SweepScratch removes the scratch worktrees whose round is closed -- the
-// daemon's cleanup of leftovers a crash left behind. keep is the caller's
-// answer to "this binding still has an open reader round N"; a kept entry is
-// left alone.
-//
-// A missing scratch directory is (nil, nil). The removed paths are returned
-// sorted. Per-entry failures are collected and joined after the whole sweep,
-// so one bad entry never stops the others.
+// SweepScratch removes the scratch worktrees whose round is closed. keep is
+// the caller's answer to "this binding still has an open reader round N". A
+// missing scratch directory is (nil, nil); removed paths come back sorted, and
+// per-entry failures are joined after the whole sweep.
 func SweepScratch(ctx context.Context, deps Deps, keep func(binding string, round int) bool) ([]string, error) {
 	root, err := deps.Store.WorktreeRoot()
 	if err != nil {
@@ -240,11 +222,9 @@ func SweepScratch(ctx context.Context, deps Deps, keep func(binding string, roun
 }
 
 // removeScratchEntry removes one scratch worktree. With a binding record, the
-// binding's own tree names the repository. Without one -- the binding is gone
-// -- the worktree's .git file names it instead: the directory goes first, and
-// the RemoveWorktree call afterwards only prunes the now-stale admin entry.
-// Both the .git read and the removal go through the .worktrees root, so a
-// plant that escapes it is refused.
+// binding's own tree names the repository; without one the worktree's .git
+// file names it instead. Both the .git read and the removal go through the
+// .worktrees root, so a plant that escapes it is refused.
 func removeScratchEntry(ctx context.Context, deps Deps, root *os.Root, name, rel, path string) error {
 	if b, err := deps.Store.Load(name); err == nil {
 		return deps.Git.RemoveWorktree(ctx, b.CWD, path, true)

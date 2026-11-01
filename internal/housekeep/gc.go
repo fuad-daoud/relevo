@@ -56,27 +56,17 @@ type GCResult struct {
 }
 
 // GC clears away every binding the calling mastermind has marked done, or, with
-// opts.AllMasterMinds, every mastermind's. Only StateDone is touched: a broken or
-// orphaned binding still needs a human, and removing it would throw away the
-// state that explains why.
-//
-// Exactly one of opts.MasterMindID and opts.AllMasterMinds must be set: GC
-// refuses to run with neither, so no caller can get "everything" by leaving
-// the scope empty, and refuses with both, since they are exclusive. A
-// binding with an empty MasterMindID belongs to no
-// mastermind, and is cleared only by AllMasterMinds.
-//
-// By default, finished bindings are archived rather than deleted; passing
-// opts.Delete removes them entirely.
-//
-// GC also deletes the binding's branch and client refs once they are on a
-// remote-tracking ref, never an adopted branch, and never while the worktree
-// is kept.
-//
-// Local bindings are scanned and removed in one critical section, so one cannot
-// be marked done, or resumed, between the scan and the removal. A remote
-// binding's server is asked between two critical sections, never inside one,
-// and the binding is re-loaded before it is removed.
+// opts.AllMasterMinds, every mastermind's. Only StateDone is touched: a broken
+// or orphaned binding still needs a human, and removing it would throw away
+// the state that explains why. Exactly one of opts.MasterMindID and
+// opts.AllMasterMinds must be set, so no caller gets "everything" by leaving
+// the scope empty. GC also deletes the binding's branch and client refs once
+// they are on a remote-tracking ref, never an adopted branch, and never while
+// the worktree is kept. Local bindings are scanned and removed in one
+// critical section, so one cannot be marked done, or resumed, between the
+// scan and the removal; a remote binding's server is asked between two
+// critical sections, never inside one, and the binding is re-loaded before it
+// is removed.
 func GC(ctx context.Context, deps Deps, opts GCOptions) ([]GCResult, error) {
 	switch {
 	case opts.MasterMindID == "" && !opts.AllMasterMinds:

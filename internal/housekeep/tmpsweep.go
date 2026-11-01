@@ -16,13 +16,11 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
-// The tmp root is the one place a crashed or killed process leaves something
-// behind: its private temp directory. Every route that ends a process removes
-// its own, but a kill the route never reaches -- a crash between the prepare
-// and the record, a chain stopped beside its running check -- leaves the
-// directory, and the state tmp is the default every process now writes to.
-// The sweep is the backstop, and it decides from the records alone: it never
-// opens a leftover's contents and never asks a process whether it is done.
+// The tmp root is where a crashed or killed process leaves its private temp
+// directory: every route that ends a process removes its own, so only a kill
+// the route never reaches leaves one. The sweep is the backstop, deciding from
+// the records alone: it never opens a leftover's contents or asks a process
+// whether it is done.
 
 const (
 	// tmpFreshGuard is how long a checks/ entry outlives every record. A
@@ -45,18 +43,12 @@ const SweepEvery = 10 * time.Minute
 const SweepMaxRemovals = 256
 
 // SweepTmp removes the leftovers under deps.TmpRoot: round directories whose
-// binding is gone, DONE, or whose round is not open; check directories
-// that no live record names any more; and up to SweepMaxRemovals loose
-// directories nobody has touched for the whole age window, the rest waiting
-// for a later sweep. bindings is the caller's own binding list, so the sweep
-// decides from the same snapshot its tick is reconciling rather than a second
-// read that could disagree with it. now is the clock, passed in so the rules
-// are testable without one.
-//
-// The removed paths are returned sorted. A runtime with no tmp root has
-// nothing under it and the sweep answers empty. Every failure is per entry:
-// errors are joined after the whole walk, so one bad entry never stops the
-// rest, and a listing or collection that fails skips only its own rule.
+// binding is gone, DONE, or whose round is not open; check directories no live
+// record names; and up to SweepMaxRemovals loose directories untouched for the
+// whole age window. bindings is the caller's own binding list, so the sweep
+// decides from the same snapshot its tick reconciles. now is the clock, passed
+// in so the rules are testable without one. Removed paths come back sorted;
+// every failure is per entry and joined after the whole walk.
 func SweepTmp(_ context.Context, deps Deps, bindings []store.Binding, now time.Time) ([]string, error) {
 	if deps.TmpRoot == "" {
 		return nil, nil
@@ -86,13 +78,12 @@ func SweepDue(last, now time.Time) bool {
 	return last.IsZero() || !now.Before(last.Add(SweepEvery))
 }
 
-// SweepTick is the daemon's hook: the sweep on the tick's own binding list
-// and clock, every removal logged the way every other sweep logs its work. A
-// deps with no tmp root -- container mode, any host that names none -- has
-// nothing to sweep and is skipped. The walk reads the whole root, so the hook
-// runs it at most once per SweepEvery per daemon, on the daemon's own
-// first tick and never on a package-wide timer. last carries the pace across
-// ticks: the caller hands its own last sweep in and reads the attempt back.
+// SweepTick is the sweep on the tick's own binding list and clock. A deps with
+// no tmp root has nothing to sweep and is skipped. The walk reads the whole
+// root, so the hook runs it at most once per SweepEvery per daemon, on the
+// daemon's own first tick and never on a package-wide timer. last carries the
+// pace across ticks: the caller hands its own last sweep in and reads the
+// attempt back.
 func SweepTick(ctx context.Context, deps Deps, bindings []store.Binding, last *time.Time, now time.Time) {
 	if deps.TmpRoot == "" {
 		return
@@ -130,13 +121,12 @@ func tmpRoundKept(b *store.Binding, open bool, round int) bool {
 
 // sweepRoundDirs walks rounds/ and removes what the rule condemns. A binding's
 // log is read once per binding: the daemon ticks every few seconds over a
-// store that may hold a hundred records, and most ticks own no tmp entry at
-// all. Short entries match the expected set the sweep derives through the
-// same helpers the prepare and remove routes use; long entries still parse
-// and keep the same rule, so they self-clean without a separate migration.
-// An entry whose round cannot be decided -- an unreadable log, an
-// unparseable name -- is kept: the sweep removes what it is sure about,
-// and the next tick reads again.
+// store that may hold a hundred records. Short entries match the expected set
+// derived
+// through the same helpers the prepare and remove routes use; long entries
+// still parse and keep the same rule, so they self-clean without a separate
+// migration. An entry whose round cannot be decided is kept: the sweep removes
+// what it is sure about, and the next tick reads again.
 func sweepRoundDirs(deps Deps, bindings []store.Binding) ([]string, error) {
 	entries, err := deps.Store.ListTmpEntries(deps.TmpRoot, SubRounds)
 	if err != nil {
@@ -198,9 +188,8 @@ func expectedRoundDirs(deps Deps, bindings []store.Binding, logged map[string][]
 	return expected, errors.Join(errs...)
 }
 
-// sweepOneRoundDir decides one rounds/ entry: an expected short name is
-// kept, a stale short name goes, and a long name is parsed and kept only
-// while its binding still owns that round.
+// sweepOneRoundDir decides one rounds/ entry against the expected set, parsing
+// long names to their binding and round.
 func sweepOneRoundDir(deps Deps, byName map[string]store.Binding, logged map[string][]store.LogEntry, expected map[string]bool, e store.TmpEntry) (string, bool, error) {
 	if expected[filepath.Join(SubRounds, e.Name)] {
 		return "", false, nil
@@ -295,11 +284,10 @@ type tmpOpenChainCheck struct {
 
 // tmpChainCheckRuns collects the unsettled check rows of the chains that have
 // not ended, under one state lock. A terminal chain is left out on purpose:
-// the stop and the abandon kill their runs' processes but never pass the gate
-// runner's advance, so the directory a killed chain check left behind is not
-// anything's to keep -- removing it is this sweep's whole reason to walk the
-// chains. Runs are allocated contiguously, so the walk stops at the first run
-// the chain has not recorded.
+// the stop and the abandon kill their runs' processes without passing the
+// gate runner's advance, so the directories those checks left behind are
+// nothing's to keep. Runs are allocated contiguously, so the walk stops at the
+// first run the chain has not recorded.
 func tmpChainCheckRuns(deps Deps) ([]tmpOpenChainCheck, error) {
 	chains, err := deps.Store.Chains()
 	if err != nil {
@@ -332,13 +320,11 @@ func tmpChainCheckRuns(deps Deps) ([]tmpOpenChainCheck, error) {
 	return runs, nil
 }
 
-// tmpOpenCheckUnits is the keep-set for checks/ in both spellings, built
-// from the same spec helpers that make the directories: a binding's running
-// gate process, its unsettled served check, and each unsettled run of a
-// chain that has not ended. Each unit contributes the bare unit -- the
-// long leaf -- alongside its ShortCheckID hash -- the leaf the check routes
-// use -- so a live process's leftover is kept by either name, while a
-// settled row contributes neither spelling and still self-cleans.
+// tmpOpenCheckUnits is the keep-set for checks/ in both spellings, built from
+// the same spec helpers that make the directories. Each unit contributes the
+// bare unit alongside its ShortCheckID hash, so a live process's leftover is
+// kept by either name, while a settled row contributes neither spelling and
+// still self-cleans.
 func tmpOpenCheckUnits(deps Deps, bindings []store.Binding, chainChecks []tmpOpenChainCheck) map[string]bool {
 	units := make(map[string]bool, 2*(len(bindings)+len(chainChecks)))
 	for _, b := range bindings {
