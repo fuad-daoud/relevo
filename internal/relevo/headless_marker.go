@@ -116,33 +116,66 @@ func holdReaderOnMarker(ctx context.Context, rt Runtime, b store.Binding) (prese
 // gating are the two bools reported: a read with no marker comes back
 // unchanged with both false.
 func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, markerNote string, wantVerify bool) (store.Binding, bool, bool, error) {
-	// A reader round closes on its runner's exit, not on the marker: the
-	// summary is only complete once the process has gone. The marker is read
-	// exactly here, so a marker written between this read and closeOnMarker's
-	// own cannot close the round before the final message lands.
-	if b.Shape == store.ShapeReader {
-		present, held, early, err := holdReaderOnMarker(ctx, rt, b)
-		if err != nil {
-			return b, false, false, err
-		}
-		if !present || held {
-			return b, false, false, nil
-		}
-		if early {
-			markerNote = joinNotes(markerNote, readerSummaryEarlyNote)
-		} else if next, resumed, nerr := nudgePlanOnMarker(ctx, rt, tx, b, entries); nerr != nil {
-			return b, false, false, nerr
-		} else if resumed {
-			return next, false, true, nil
-		}
-	}
-	base := b.RoundBaselineTree
-	next, closed, gating, rec, err := closeOnMarker(ctx, rt, tx, b, entries, markerNote)
+	out, note, closed, gating, done, err := markerCloseReader(ctx, rt, tx, b, entries, markerNote)
 	if err != nil {
 		return b, false, false, err
 	}
+	if done {
+		return out, closed, gating, nil
+	}
+	next, closed, gating, rec, err := markerCloseVerify(ctx, rt, tx, out, entries, note, wantVerify)
+	if err != nil {
+		return next, closed, gating, err
+	}
 	if gating || !closed {
 		return next, closed, gating, nil
+	}
+	return markerCloseRepair(ctx, rt, tx, b, next, rec)
+}
+
+// markerCloseReader is the reader-shape prologue of markerClose. A reader
+// round closes on its runner's exit, not on the marker: the summary is only
+// complete once the process has gone, so the marker is read exactly here and
+// a marker written between this read and closeOnMarker's own cannot close the
+// round before the final message lands. done reports whether the tick ends
+// here with out, closed and gating to return; otherwise out and note continue
+// into the marker close below.
+func markerCloseReader(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, markerNote string) (out store.Binding, note string, closed, gating, done bool, err error) {
+	if b.Shape != store.ShapeReader {
+		return b, markerNote, false, false, false, nil
+	}
+	present, held, early, herr := holdReaderOnMarker(ctx, rt, b)
+	if herr != nil {
+		return b, markerNote, false, false, false, herr
+	}
+	if !present || held {
+		return b, markerNote, false, false, true, nil
+	}
+	if early {
+		return b, joinNotes(markerNote, readerSummaryEarlyNote), false, false, false, nil
+	}
+	next, resumed, nerr := nudgePlanOnMarker(ctx, rt, tx, b, entries)
+	if nerr != nil {
+		return b, markerNote, false, false, false, nerr
+	}
+	if resumed {
+		return next, markerNote, false, true, true, nil
+	}
+	return b, markerNote, false, false, false, nil
+}
+
+// markerCloseVerify closes the round on its marker and runs the post-close
+// sequence: the served-round record, the scope end, the verify consult and
+// the delivery. rec is the gate record the repair below reads; it is nil on
+// the paths that return before the close.
+func markerCloseVerify(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, markerNote string, wantVerify bool) (next store.Binding, closed, gating bool, rec *store.GateRecord, err error) {
+	base := b.RoundBaselineTree
+	next, closed, gating, rec, err = closeOnMarker(ctx, rt, tx, b, entries, markerNote)
+	if err != nil {
+		return b, false, false, nil, err
+	}
+	if gating || !closed {
+		return next, closed, gating, nil, nil
 	}
 
 	closedRound := b.Round
@@ -167,13 +200,22 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		}
 		next, err = consult.StartVerify(ctx, consultDeps(rt), tx, next, closedRound, consult.VerifyDiffCommand(base, next.RoundClosedTree), gateLogPath)
 		if err != nil {
-			return next, true, false, err
+			return next, true, false, nil, err
 		}
 	}
 	next, err = deliverAndSettle(ctx, rt, tx, next)
 	if err != nil {
-		return next, true, false, err
+		return next, true, false, nil, err
 	}
+	return next, true, false, rec, nil
+}
+
+// markerCloseRepair runs the repair decision after a marked close: a halt the
+// environment gate owes, then a failing gate's repair round. b is the binding
+// as the tick read it, naming the member and round the wiring decided on;
+// next is the closed binding the repair stages onto.
+func markerCloseRepair(ctx context.Context, rt Runtime, tx *store.Tx, b, next store.Binding, rec *store.GateRecord) (store.Binding, bool, bool, error) {
+	closedRound := b.Round
 	// The report is queued; a failing gate may now open round N+1, exactly as
 	// Send would. A chain member's red gate is the chain's to spend: the
 	// wiring already decided this tick whether a repair can run, on this
@@ -193,6 +235,7 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 			repair = repair && closedReportOutcome(tx, b.Name, closedRound) == reporttail.OutcomeDone
 		}
 		if repair {
+			var err error
 			next, err = startRepairRound(ctx, rt, tx, next, *rec, closedRound)
 			if err != nil {
 				return next, true, false, err

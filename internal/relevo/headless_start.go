@@ -92,16 +92,32 @@ func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 // restart kills it, so the spawn refuses and the caller falls through to its
 // exit path as for any other resume Start error.
 func startProcessResuming(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, argv []string, c candidate.Candidate, resume bool) (store.Binding, error) {
+	b, shimEnv, err := prepareSpawnStreamState(rt, tx, b)
+	if err != nil {
+		return b, err
+	}
+	b, spec, cleanupProc, err := buildSpawnProcSpec(ctx, rt, b, argv, c, shimEnv, resume)
+	if err != nil {
+		return b, err
+	}
+	return classifySpawnStartError(ctx, rt, b, c, spec, cleanupProc)
+}
+
+// prepareSpawnStreamState readies the stream state a spawn appends to: the
+// writer's git shim, the binding's out directory, and the round's stream
+// cursor and segment list. A new process announces its own session, so the
+// endpoint's session is cleared for the drain to fill in again.
+func prepareSpawnStreamState(rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, []string, error) {
 	// A writer's git shim must exist before the process starts; a write failure
 	// refuses the round with nothing spawned.
 	shimEnv, err := gitShimEnv(rt, b)
 	if err != nil {
-		return b, err
+		return b, nil, err
 	}
 	// The harness's writable root is <binding>/out; create it before the
 	// process starts so the report, done marker and artifacts all land there.
 	if err := rt.Store.EnsureOutDir(b.Name); err != nil {
-		return b, fmt.Errorf("ensure out dir for %q: %w", b.Name, err)
+		return b, nil, fmt.Errorf("ensure out dir for %q: %w", b.Name, err)
 	}
 	if b.Builder.StreamRound != b.Round {
 		// A new round is a new stream file; a mid-round switch keeps rendering
@@ -139,6 +155,14 @@ func startProcessResuming(ctx context.Context, rt Runtime, tx *store.Tx, b store
 	// A new process announces its own session on its own stream; drainStream
 	// fills this in again from the first line it writes.
 	b.Builder.StreamSessionID = ""
+	return b, shimEnv, nil
+}
+
+// buildSpawnProcSpec builds the spawn spec for the round's process: the
+// stderr path, the reader scratch worktree, and the temp dir through the one
+// prepare seam. cleanupProc releases the prepared temp dir when the start
+// below fails.
+func buildSpawnProcSpec(ctx context.Context, rt Runtime, b store.Binding, argv []string, c candidate.Candidate, shimEnv []string, resume bool) (store.Binding, spawn.ProcSpec, func(), error) {
 	// stderr joins the round's stream, as it does for consults and gates: a
 	// round that already had a NNN-builder.log keeps writing stderr there
 	// instead.
@@ -154,7 +178,7 @@ func startProcessResuming(ctx context.Context, rt Runtime, tx *store.Tx, b store
 	if b.Shape == store.ShapeReader {
 		if _, err := os.Stat(housekeep.RoundTree(HousekeepDeps(rt), b)); err != nil {
 			if _, err := housekeep.CreateScratchFrom(ctx, HousekeepDeps(rt), b, b.Round, b.RoundBaselineHead, b.RoundBaselineTree); err != nil {
-				return b, err
+				return b, spawn.ProcSpec{}, nil, err
 			}
 		}
 	}
@@ -166,7 +190,7 @@ func startProcessResuming(ctx context.Context, rt Runtime, tx *store.Tx, b store
 		kind: procKindRound, key: b.Name, tree: housekeep.RoundTree(HousekeepDeps(rt), b), binding: &b,
 	})
 	if err != nil {
-		return b, err
+		return b, spawn.ProcSpec{}, nil, err
 	}
 	spec := spawn.ProcSpec{
 		Dir: housekeep.RoundTree(HousekeepDeps(rt), b), Argv: argv,
@@ -179,6 +203,13 @@ func startProcessResuming(ctx context.Context, rt Runtime, tx *store.Tx, b store
 	// With no scope template there is no scope to require, and a fresh send
 	// never requires one, so a failed probe still runs it unscoped.
 	spec.RequireScope = resume && rt.Scope != nil
+	return b, spec, cleanupProc, nil
+}
+
+// classifySpawnStartError starts the round's process and classifies a start
+// failure: a host failure comes back plain, while a candidate failure gates
+// the candidate and is marked for the lost-builder path's one fresh attempt.
+func classifySpawnStartError(ctx context.Context, rt Runtime, b store.Binding, c candidate.Candidate, spec spawn.ProcSpec, cleanupProc func()) (store.Binding, error) {
 	h, err := rt.Runner.Start(ctx, spec)
 	if err != nil {
 		// Nothing started, so the directory the preparation made goes back.
@@ -204,7 +235,7 @@ func startProcessResuming(ctx context.Context, rt Runtime, tx *store.Tx, b store
 	rt.Watched.Mark(h.PID, h.StartedAt.Unix())
 	b.Builder.PID = h.PID
 	b.Builder.StartedAt = h.StartedAt.Unix()
-	b.Builder.LogPath = logPath
+	b.Builder.LogPath = spec.LogPath
 	return b, nil
 }
 

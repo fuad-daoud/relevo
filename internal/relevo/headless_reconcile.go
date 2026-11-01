@@ -35,37 +35,8 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	if err != nil {
 		return b, err
 	}
-	roundOpen := store.RoundOpen(entries, b.Round)
-
-	if !roundOpen {
-		// Idle is normal between rounds. One with no round is a stray whose
-		// round closed some other way, and relevo stops it rather than let
-		// it edit a tree nobody is watching.
-		if b.Builder.PID != 0 {
-			if rt.Runner != nil {
-				// No round is open, nothing reads this handle's exit, and
-				// b.Round may be 0, which is why Kill gets "".
-				if err := rt.Runner.Kill(ctx, handleOf(b.Builder), ""); err != nil {
-					slog.Warn("stray headless process not killed", "binding", b.Name, "pid", b.Builder.PID, "err", err)
-				} else {
-					slog.Warn("killed stray headless process", "binding", b.Name, "pid", b.Builder.PID)
-					b = abandonSession(b)
-					// Belt for the close hook this stray's round already ran: no
-					// kill route leaves a round's temp dir behind.
-					housekeep.RemoveRoundTmp(HousekeepDeps(rt), b, b.Round)
-				}
-			}
-			b.Builder = clearProcess(b.Builder)
-			b.StalledSince = time.Time{}
-		}
-		if b.State == store.StateBroken {
-			b.State = store.StateActive
-			// The fault that broke the binding is over, so the halt that
-			// recorded it goes with it: left in place the next send is
-			// refused with 409 round_halted naming a switch already replaced.
-			b = ClearHaltFields(b)
-		}
-		return deliverAndSettle(ctx, rt, tx, b)
+	if !store.RoundOpen(entries, b.Round) {
+		return reconcileIdleNoRound(ctx, rt, tx, b)
 	}
 
 	// A queued round has no process and no clocks: nothing to reconcile until
@@ -75,27 +46,15 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		return b, nil
 	}
 
-	// The marker is the contract: the process is done with whatever it exits
-	// as, and it exits on its own. Never Kill here. A report without a marker
-	// is a process still working. The escape check runs before closeOnMarker,
-	// not inside
-	// it, and only when the marker is there: queueReport clears
-	// RoundBaselineTree, and the snapshot must be compared while still on b.
-	// A live round pays no git subprocess every tick for it.
-	markerNote := ""
-	if _, _, ok, _ := rt.Store.StatFile(rt.Store.DonePath(b.Name, b.Round)); ok {
-		if escapeCheck(ctx, rt, b, true) == git.EscapeNote {
-			markerNote = git.EscapedNote
-		}
-	}
+	// The marker close runs in reconcileMarkedClose below.
 	// queueReport's reset clears RoundVerify: read the verify flag before the
 	// close consumes it, as the pane path does.
 	wantVerify := b.RoundVerify
-	next, closed, gating, err := markerClose(ctx, rt, tx, b, entries, markerNote, wantVerify)
+	next, done, err := reconcileMarkedClose(ctx, rt, tx, b, entries, wantVerify)
 	if err != nil {
 		return b, err
 	}
-	if gating || closed {
+	if done {
 		return next, nil
 	}
 
@@ -134,50 +93,127 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		rt.Watched.Mark(b.Builder.PID, b.Builder.StartedAt)
 	}
 	if alive {
-		now := rt.Now().UTC()
-		next, halted, err := checkRoundTimeout(ctx, rt, tx, b)
-		if halted {
-			return next, err // the halt queued its entry and settled delivery itself
-		}
-		if err != nil {
-			return b, err
-		}
-		// The progress clock reads the tree and the stream as two signals, and
-		// a stall is quiet on both. The read is gated on the interval: a tick
-		// inside it samples nothing.
-		if view.ProgressDue(next, now, rt.Policy.ProgressInterval()) {
-			next = progressStep(rt, next, now, sampleSignals(ctx, rt, next))
-			if err := noteResumedIdle(tx, b, next, now); err != nil {
-				return next, err
-			}
-			if acted, handled, err := actOnSilence(ctx, rt, tx, next, entries, now); err != nil || handled {
-				return acted, err
-			}
-		}
-		// A builder quiet on both signals may sit on a provider rate-limit
-		// answer it never got to exit and report, so the stall is the gate:
-		// scan the current process's own harness lines and, on a match, take
-		// the gateOnLimit -> switchBuilder path, uncounted and with closeOld
-		// (the call's bare `true`), so the replacement starts on the same
-		// round. Only a stalled binding is scanned, and the
-		// scan is limit patterns only, keeping escape and denial precedence at
-		// exit. stallLimitGateRecorded skips the block once this round has
-		// recorded one, since a repeat tick reads the same unchanged tail.
-		if !next.StalledSince.IsZero() && !stallLimitGateRecorded(rt, next) {
-			scanText, scanResetMS := limitScan(ctx, rt, next)
-			gated, _, handled, gerr := gateOnLimit(ctx, rt, tx, next, scanText, scanResetMS, true)
-			if gerr != nil {
-				return next, gerr
-			}
-			if handled {
-				// A switch tick does not deliver: replacing the builder is the
-				// whole of what this tick did.
-				return gated, nil
-			}
-		}
-		return deliverAndSettle(ctx, rt, tx, next)
+		return reconcileLiveBuilder(ctx, rt, tx, b, entries)
 	}
 
+	// The exited builder is reconciled in reconcileExitedBuilder below.
+	return reconcileExitedBuilder(ctx, rt, tx, b, entries, wantVerify, switchable)
+}
+
+// reconcileIdleNoRound settles a tick with no open round: a stray process is
+// stopped rather than left editing a tree nobody is watching, a binding
+// broken by a fault already over goes active again, and the tick delivers.
+func reconcileIdleNoRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, error) {
+	// Idle is normal between rounds. One with no round is a stray whose
+	// round closed some other way, and relevo stops it rather than let
+	// it edit a tree nobody is watching.
+	if b.Builder.PID != 0 {
+		if rt.Runner != nil {
+			// No round is open, nothing reads this handle's exit, and
+			// b.Round may be 0, which is why Kill gets "".
+			if err := rt.Runner.Kill(ctx, handleOf(b.Builder), ""); err != nil {
+				slog.Warn("stray headless process not killed", "binding", b.Name, "pid", b.Builder.PID, "err", err)
+			} else {
+				slog.Warn("killed stray headless process", "binding", b.Name, "pid", b.Builder.PID)
+				b = abandonSession(b)
+				// Belt for the close hook this stray's round already ran: no
+				// kill route leaves a round's temp dir behind.
+				housekeep.RemoveRoundTmp(HousekeepDeps(rt), b, b.Round)
+			}
+		}
+		b.Builder = clearProcess(b.Builder)
+		b.StalledSince = time.Time{}
+	}
+	if b.State == store.StateBroken {
+		b.State = store.StateActive
+		// The fault that broke the binding is over, so the halt that
+		// recorded it goes with it: left in place the next send is
+		// refused with 409 round_halted naming a switch already replaced.
+		b = ClearHaltFields(b)
+	}
+	return deliverAndSettle(ctx, rt, tx, b)
+}
+
+// reconcileMarkedClose runs the marker close for an open round: the marker is
+// the contract, so a present marker closes the round whatever the process did.
+// done reports whether the tick ends here with next to return.
+func reconcileMarkedClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, wantVerify bool) (store.Binding, bool, error) {
+	// The marker is the contract: the process is done with whatever it exits
+	// as, and it exits on its own. Never Kill here. A report without a marker
+	// is a process still working. The escape check runs before closeOnMarker,
+	// not inside
+	// it, and only when the marker is there: queueReport clears
+	// RoundBaselineTree, and the snapshot must be compared while still on b.
+	// A live round pays no git subprocess every tick for it.
+	markerNote := ""
+	if _, _, ok, _ := rt.Store.StatFile(rt.Store.DonePath(b.Name, b.Round)); ok {
+		if escapeCheck(ctx, rt, b, true) == git.EscapeNote {
+			markerNote = git.EscapedNote
+		}
+	}
+	next, closed, gating, err := markerClose(ctx, rt, tx, b, entries, markerNote, wantVerify)
+	if err != nil {
+		return b, false, err
+	}
+	if gating || closed {
+		return next, true, nil
+	}
+	return b, false, nil
+}
+
+// reconcileLiveBuilder advances a round whose builder is still alive: the
+// round timeout, the progress clock with its stall handling, and the
+// rate-limit gate scan, then the delivery.
+func reconcileLiveBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry) (store.Binding, error) {
+	now := rt.Now().UTC()
+	next, halted, err := checkRoundTimeout(ctx, rt, tx, b)
+	if halted {
+		return next, err // the halt queued its entry and settled delivery itself
+	}
+	if err != nil {
+		return b, err
+	}
+	// The progress clock reads the tree and the stream as two signals, and
+	// a stall is quiet on both. The read is gated on the interval: a tick
+	// inside it samples nothing.
+	if view.ProgressDue(next, now, rt.Policy.ProgressInterval()) {
+		next = progressStep(rt, next, now, sampleSignals(ctx, rt, next))
+		if err := noteResumedIdle(tx, b, next, now); err != nil {
+			return next, err
+		}
+		if acted, handled, err := actOnSilence(ctx, rt, tx, next, entries, now); err != nil || handled {
+			return acted, err
+		}
+	}
+	// A builder quiet on both signals may sit on a provider rate-limit
+	// answer it never got to exit and report, so the stall is the gate:
+	// scan the current process's own harness lines and, on a match, take
+	// the gateOnLimit -> switchBuilder path, uncounted and with closeOld
+	// (the call's bare `true`), so the replacement starts on the same
+	// round. Only a stalled binding is scanned, and the
+	// scan is limit patterns only, keeping escape and denial precedence at
+	// exit. stallLimitGateRecorded skips the block once this round has
+	// recorded one, since a repeat tick reads the same unchanged tail.
+	if !next.StalledSince.IsZero() && !stallLimitGateRecorded(rt, next) {
+		scanText, scanResetMS := limitScan(ctx, rt, next)
+		gated, _, handled, gerr := gateOnLimit(ctx, rt, tx, next, scanText, scanResetMS, true)
+		if gerr != nil {
+			return next, gerr
+		}
+		if handled {
+			// A switch tick does not deliver: replacing the builder is the
+			// whole of what this tick did.
+			return gated, nil
+		}
+	}
+	return deliverAndSettle(ctx, rt, tx, next)
+}
+
+// reconcileExitedBuilder reconciles a round whose builder exited: the marker
+// re-check, the unmarked-report close, and the exit without a report path
+// below it. The save and deliver order of the original tick is kept, and the
+// escape halt keeps its precedence before the rate-limit gate.
+func reconcileExitedBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, wantVerify, switchable bool) (store.Binding, error) {
 	// The runner exited, so whatever the round's scope still holds is an
 	// abandoned straggler: end it before anything below relaunches, switches
 	// or nudges under the same unit name. Best effort -- the close must not
