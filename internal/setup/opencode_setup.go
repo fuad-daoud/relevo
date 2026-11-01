@@ -73,10 +73,14 @@ func askOpencodeModels(w io.Writer, sc *bufio.Scanner, q Question) ([]string, er
 		picks = append(picks, got...)
 	}
 	if len(picks) == 0 {
-		fmt.Fprintln(w, "  -> no opencode model")
+		if _, err := fmt.Fprintln(w, "  -> no opencode model"); err != nil {
+			return nil, fmt.Errorf("print the opencode answer: %w", err)
+		}
 		return []string{OpencodeNone}, nil
 	}
-	fmt.Fprintf(w, "  -> %s\n", strings.Join(trimOpencode(picks), ", "))
+	if _, err := fmt.Fprintf(w, "  -> %s\n", strings.Join(trimOpencode(picks), ", ")); err != nil {
+		return nil, fmt.Errorf("print the opencode answer: %w", err)
+	}
 	return picks, nil
 }
 
@@ -148,7 +152,9 @@ func askProviderModels(w io.Writer, sc *bufio.Scanner, p opencodeProviderModels,
 func searchProviderModels(w io.Writer, sc *bufio.Scanner, p opencodeProviderModels, have []string) ([]string, error) {
 	var added []string
 	for {
-		fmt.Fprintf(w, "\nAdd more %s models: type part of a name (e.g. qwen) to search, or press Enter to finish\n> ", p.name)
+		if _, err := fmt.Fprintf(w, "\nAdd more %s models: type part of a name (e.g. qwen) to search, or press Enter to finish\n> ", p.name); err != nil {
+			return nil, fmt.Errorf("print the opencode search: %w", err)
+		}
 		if !sc.Scan() {
 			return nil, io.ErrUnexpectedEOF
 		}
@@ -160,34 +166,53 @@ func searchProviderModels(w io.Writer, sc *bufio.Scanner, p opencodeProviderMode
 			if !slices.Contains(have, word) && !slices.Contains(added, word) {
 				added = append(added, word)
 			}
-			fmt.Fprintf(w, "  + %s\n", word)
+			if _, err := fmt.Fprintf(w, "  + %s\n", word); err != nil {
+				return nil, fmt.Errorf("print the opencode search: %w", err)
+			}
 			continue
 		}
 		matches := matchingModels(p.models, word)
 		if len(matches) == 0 {
-			fmt.Fprintf(w, "  no %s model holds %q\n", p.name, word)
+			if _, err := fmt.Fprintf(w, "  no %s model holds %q\n", p.name, word); err != nil {
+				return nil, fmt.Errorf("print the opencode search: %w", err)
+			}
 			continue
 		}
-		mq := Question{ID: p.name + "-search", Multi: true,
-			Prompt: fmt.Sprintf("%d %s models hold %q. Which? Enter adds none", len(matches), p.name, word)}
-		if len(matches) > opencodeListMax {
-			mq.Prompt = fmt.Sprintf("%d %s models hold %q; the first %d are listed, type more of the name to narrow. Which? Enter adds none", len(matches), p.name, word, opencodeListMax)
-			matches = matches[:opencodeListMax]
-		}
-		for _, m := range matches {
-			mq.Choices = append(mq.Choices, Choice{Value: m})
-		}
-		got, _, err := askOneSetupQuestion(w, sc, mq)
+		more, err := pickProviderModels(w, sc, p, have, added, matches, word)
 		if err != nil {
 			return nil, err
 		}
-		for _, m := range got {
-			if !slices.Contains(have, m) && !slices.Contains(added, m) {
-				added = append(added, m)
-				fmt.Fprintf(w, "  + %s\n", m)
-			}
-		}
+		added = append(added, more...)
 	}
+}
+
+// pickProviderModels asks which of the models holding word to add and
+// returns the ones neither picked nor added before, echoing each.
+func pickProviderModels(w io.Writer, sc *bufio.Scanner, p opencodeProviderModels, have, added, matches []string, word string) ([]string, error) {
+	mq := Question{ID: p.name + "-search", Multi: true,
+		Prompt: fmt.Sprintf("%d %s models hold %q. Which? Enter adds none", len(matches), p.name, word)}
+	if len(matches) > opencodeListMax {
+		mq.Prompt = fmt.Sprintf("%d %s models hold %q; the first %d are listed, type more of the name to narrow. Which? Enter adds none", len(matches), p.name, word, opencodeListMax)
+		matches = matches[:opencodeListMax]
+	}
+	for _, m := range matches {
+		mq.Choices = append(mq.Choices, Choice{Value: m})
+	}
+	got, _, err := askOneSetupQuestion(w, sc, mq)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, m := range got {
+		if slices.Contains(have, m) || slices.Contains(added, m) || slices.Contains(out, m) {
+			continue
+		}
+		if _, err := fmt.Fprintf(w, "  + %s\n", m); err != nil {
+			return nil, fmt.Errorf("print the opencode search: %w", err)
+		}
+		out = append(out, m)
+	}
+	return out, nil
 }
 
 func matchingModels(models []string, word string) []string {

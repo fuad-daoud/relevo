@@ -80,16 +80,23 @@ func (f *smokeFeed) step(now time.Time) {
 		return
 	}
 	for _, line := range f.newLines(f.rt.Store.StreamPath(b.Name, b.Round)) {
-		f.say(now, "  "+line)
+		if serr := f.say(now, "  "+line); serr != nil {
+			return
+		}
 	}
 	if now.Sub(f.spoke) >= smokeQuietAfter {
-		f.say(now, fmt.Sprintf("  still working (%s)", now.Sub(f.started).Truncate(time.Second)))
+		if serr := f.say(now, fmt.Sprintf("  still working (%s)", now.Sub(f.started).Truncate(time.Second))); serr != nil {
+			return
+		}
 	}
 }
 
-func (f *smokeFeed) say(now time.Time, line string) {
-	fmt.Fprintln(f.w, line)
+func (f *smokeFeed) say(now time.Time, line string) error {
+	if _, err := fmt.Fprintln(f.w, line); err != nil {
+		return fmt.Errorf("print the smoke feed: %w", err)
+	}
 	f.spoke = now
+	return nil
 }
 
 // switchTo names the builder now holding the round; a stream the switch
@@ -97,9 +104,9 @@ func (f *smokeFeed) say(now time.Time, line string) {
 func (f *smokeFeed) switchTo(token string) {
 	name := f.rt.Candidates.NameOf(token)
 	if f.builder == "" {
-		fmt.Fprintf(f.w, "  builder %s is working on it\n", name)
+		_, _ = fmt.Fprintf(f.w, "  builder %s is working on it\n", name)
 	} else {
-		fmt.Fprintf(f.w, "  %s stopped (a usage limit or a failure); %s takes over\n", f.rt.Candidates.NameOf(f.builder), name)
+		_, _ = fmt.Fprintf(f.w, "  %s stopped (a usage limit or a failure); %s takes over\n", f.rt.Candidates.NameOf(f.builder), name)
 	}
 	f.builder, f.kind, f.render = token, smokeKindOf(f.rt, token), transcript.NewRenderer()
 	f.spoke = time.Now()
@@ -124,7 +131,10 @@ func (f *smokeFeed) newLines(path string) []string {
 	if err != nil {
 		return nil
 	}
-	defer fh.Close()
+	defer func() {
+		// The chunk is already read; a close failure has nothing to report to.
+		_ = fh.Close()
+	}()
 	if st, err := fh.Stat(); err == nil && st.Size() < f.offset {
 		f.offset, f.partial = 0, nil
 	}

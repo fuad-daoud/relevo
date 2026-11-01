@@ -96,14 +96,17 @@ func setupApply(ctx context.Context, deps Deps, rt relevo.Runtime, inv Inventory
 	var files Files
 	run := func(step string, do func() (SetupStepDoc, error)) bool {
 		if start := setupStepStarts[step]; start != "" {
-			fmt.Fprintf(w, "%s: %s...\n", step, start)
+			_, _ = fmt.Fprintf(w, "%s: %s...\n", step, start)
 		}
 		doc, serr := do()
 		if serr != nil && !doc.OK {
 			doc = setupStepDocOf(step, serr)
 		}
 		steps = append(steps, doc)
-		setupPrintStep(w, doc)
+		if perr := setupPrintStep(w, doc); perr != nil && serr == nil {
+			err = perr
+			return false
+		}
 		err = serr
 		return serr == nil
 	}
@@ -137,17 +140,22 @@ func setupApply(ctx context.Context, deps Deps, rt relevo.Runtime, inv Inventory
 		})
 	}
 	if goOn && slices.Contains(want, "smoke") {
-		goOn = run("smoke", func() (SetupStepDoc, error) {
+		run("smoke", func() (SetupStepDoc, error) {
 			return runSetupSmoke(ctx, deps, firstToken(answers["builder"]))
 		})
 	}
 
 	if err == nil {
-		fmt.Fprintln(w, "next: relevo doctor")
-		fmt.Fprintln(w, "next: "+setupOpenHint(want))
+		if _, perr := fmt.Fprintln(w, "next: relevo doctor"); perr != nil {
+			err = fmt.Errorf("print the closing hint: %w", perr)
+		} else if _, perr := fmt.Fprintln(w, "next: "+setupOpenHint(want)); perr != nil {
+			err = fmt.Errorf("print the closing hint: %w", perr)
+		}
 	}
 	if asJSON {
-		_ = deps.PrintDoc(setupResultDocOf(steps))
+		if perr := deps.PrintDoc(setupResultDocOf(steps)); perr != nil && err == nil {
+			err = fmt.Errorf("write the setup result document: %w", perr)
+		}
 	}
 	return silenceStep(err)
 }
@@ -203,18 +211,27 @@ var setupStepStarts = map[string]string{
 	"smoke":       "binding a builder to a throwaway repository and sending it one small plan; this takes a minute or two",
 }
 
-func setupPrintStep(w io.Writer, doc SetupStepDoc) {
+func setupPrintStep(w io.Writer, doc SetupStepDoc) error {
 	if doc.OK {
-		fmt.Fprintf(w, "%s ok\n", doc.Step)
-		if doc.Detail != "" {
-			fmt.Fprintf(w, "  %s\n", doc.Detail)
+		if _, err := fmt.Fprintf(w, "%s ok\n", doc.Step); err != nil {
+			return fmt.Errorf("print the %s step: %w", doc.Step, err)
 		}
-		return
+		if doc.Detail != "" {
+			if _, err := fmt.Fprintf(w, "  %s\n", doc.Detail); err != nil {
+				return fmt.Errorf("print the %s step: %w", doc.Step, err)
+			}
+		}
+		return nil
 	}
-	fmt.Fprintf(w, "%s FAILED: %s\n", doc.Step, doc.Detail)
+	if _, err := fmt.Fprintf(w, "%s FAILED: %s\n", doc.Step, doc.Detail); err != nil {
+		return fmt.Errorf("print the %s step: %w", doc.Step, err)
+	}
 	if doc.Next != "" {
-		fmt.Fprintf(w, "  next: %s\n", doc.Next)
+		if _, err := fmt.Fprintf(w, "  next: %s\n", doc.Next); err != nil {
+			return fmt.Errorf("print the %s step: %w", doc.Step, err)
+		}
 	}
+	return nil
 }
 
 // firstToken is a multi answer's first pick, the smoke round's builder.
@@ -257,7 +274,9 @@ func runSetupAgents(env SetupEnv, files Files, w io.Writer, inSandbox bool) erro
 	// Agent definitions install under the real HOME, not the sandbox's, so a
 	// sandbox run would rewrite the developer's own files.
 	if inSandbox {
-		fmt.Fprintln(w, sandboxAgentsNote)
+		if _, err := fmt.Fprintln(w, sandboxAgentsNote); err != nil {
+			return fmt.Errorf("print the agents note: %w", err)
+		}
 		return nil
 	}
 	for _, kind := range files.Kinds {
@@ -266,7 +285,9 @@ func runSetupAgents(env SetupEnv, files Files, w io.Writer, inSandbox bool) erro
 			return err
 		}
 		for _, r := range results {
-			fmt.Fprintln(w, r.Line())
+			if _, err := fmt.Fprintln(w, r.Line()); err != nil {
+				return fmt.Errorf("print the agents install: %w", err)
+			}
 			if r.Outcome == harness.OutcomeError {
 				return fmt.Errorf("agent definitions for %s failed to install", kind)
 			}

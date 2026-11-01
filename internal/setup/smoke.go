@@ -262,7 +262,7 @@ func SmokeLimitFailure(ctx context.Context, rt relevo.Runtime, smokeDir string) 
 func smokeHelloOkay(repo string) error {
 	body, err := os.ReadFile(filepath.Join(repo, "HELLO.md"))
 	if err != nil {
-		return fmt.Errorf("the round closed, but HELLO.md is missing: %v", err)
+		return fmt.Errorf("the round closed, but HELLO.md is missing: %w", err)
 	}
 	if !strings.Contains(string(body), "relevo works") {
 		return errors.New("the round closed, but HELLO.md does not hold the line")

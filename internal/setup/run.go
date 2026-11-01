@@ -47,7 +47,9 @@ func Run(rt relevo.Runtime, deps Deps, answersFlag []string, asJSON, stdinTTY, s
 	defer stop()
 
 	w := deps.Notices
-	fmt.Fprintln(w, "checking which coding agents are installed and logged in...")
+	if _, err := fmt.Fprintln(w, "checking which coding agents are installed and logged in..."); err != nil {
+		return fmt.Errorf("print the setup notice: %w", err)
+	}
 	inv := Probe(deps.Env)
 	if deps.InSandbox {
 		inv.Notes = append(inv.Notes, sandboxServiceNote)
@@ -60,9 +62,13 @@ func Run(rt relevo.Runtime, deps Deps, answersFlag []string, asJSON, stdinTTY, s
 		return err
 	}
 
-	fmt.Fprintln(w, setupInventoryLine(inv))
+	if _, err := fmt.Fprintln(w, setupInventoryLine(inv)); err != nil {
+		return fmt.Errorf("print the setup notice: %w", err)
+	}
 	for _, note := range inv.Notes {
-		fmt.Fprintln(w, note)
+		if _, err := fmt.Fprintln(w, note); err != nil {
+			return fmt.Errorf("print the setup notice: %w", err)
+		}
 	}
 
 	questionsFor := func(a Answers) []Question {
@@ -219,7 +225,7 @@ func parseSetupAnswers(raw []string, questions []Question) (Answers, error) {
 		}
 		q, known := findQuestion(questions, id)
 		if !known {
-			fmt.Fprintf(answerNoteWriter(), "relevo setup: --answer %s is for a question that no longer applies; it is ignored\n", id)
+			_, _ = fmt.Fprintf(answerNoteWriter(), "relevo setup: --answer %s is for a question that no longer applies; it is ignored\n", id)
 			continue
 		}
 		vals, err := ParseAnswer(q, value)

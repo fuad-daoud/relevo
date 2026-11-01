@@ -599,7 +599,7 @@ func TestSetupCodedStepErrorKeepsItsRowAndExit(t *testing.T) {
 			}
 			in := error(row.in)
 			var ce *CodedStepError
-			if out := silenceStep(in); out != in {
+			if out := silenceStep(in); !errors.Is(out, row.in) {
 				t.Errorf("silenceStep = %v, want the shaped error back unwrapped", out)
 			} else if !errors.As(out, &ce) || ce.Code != row.in.Code {
 				t.Errorf("silenceStep = %v, want the exit %d preserved", out, row.in.Code)

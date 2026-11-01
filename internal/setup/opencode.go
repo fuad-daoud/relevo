@@ -19,9 +19,6 @@ const (
 	opencodePlannerVariant = "max"
 )
 
-// opencodeFree is the provider whose models need no login.
-const opencodeFree = "opencode"
-
 const OpencodeNone = "none"
 
 // probeOpencode lists the models opencode can run: `opencode models
