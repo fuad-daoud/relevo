@@ -74,16 +74,11 @@ func runLockHelper() int {
 	select {}
 }
 
-// TestMain joins the transparency switch: when RELEVO_DBTEST_OWNER is set, every
-// database this package opens is reached through an in-process owner, and the
-// unset default opens the file directly. Before the switch it migrates one
-// template database and points Open at it, so a fresh Open copies the migrated
-// file instead of running the migrations itself. The order matters twice: the
-// helper dispatch runs first, so a child process opens directly, and the
-// template is migrated before the owner switch is installed, because a
-// hop-opened template would be left with a live owner and a -wal sibling only
-// its open handles see, and a copy of the main file alone would miss what the
-// WAL still carries.
+// TestMain runs this package as every database-backed package runs
+// (dbtest.Main): a fresh Open copies a once-migrated template instead of
+// migrating, and RELEVO_DBTEST_OWNER reaches every database through an
+// in-process owner. The helper dispatch runs first, so a child process opens
+// its database directly and installs nothing.
 func TestMain(m *testing.M) {
 	if root := os.Getenv(engineHelperRootEnv); root != "" {
 		os.Exit(runEngineHelper(root))
@@ -91,55 +86,7 @@ func TestMain(m *testing.M) {
 	if os.Getenv(lockHelperEnv) != "" {
 		os.Exit(runLockHelper())
 	}
-	templateCleanup, err := installFreshTemplate()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	ownerCleanup, err := dbtest.OwnerMode()
-	if err != nil {
-		templateCleanup()
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	code := m.Run()
-	ownerCleanup()
-	templateCleanup()
-	os.Exit(code)
-}
-
-// installFreshTemplate opens a template database in a fresh temp directory and
-// points Open at the migrated file it leaves behind, so a fresh path is seeded
-// with a copy of it. cleanup clears the point and removes the directory, so the
-// binary leaves nothing behind. The template is closed before it is installed:
-// the close checkpoints the WAL, and a copied main file carries the whole
-// schema only when that checkpoint left the -wal sibling empty, so a non-empty
-// one fails the install rather than seeding a file without its schema.
-func installFreshTemplate() (cleanup func(), err error) {
-	dir, err := os.MkdirTemp("", "relevo-db-template-")
-	if err != nil {
-		return nil, err
-	}
-	cleanup = func() {
-		db.SetFreshTemplate("")
-		_ = os.RemoveAll(dir)
-	}
-	tpl := filepath.Join(dir, "template.db")
-	d, err := db.Open(tpl)
-	if err != nil {
-		cleanup()
-		return nil, err
-	}
-	if err := d.Close(); err != nil {
-		cleanup()
-		return nil, err
-	}
-	if fi, serr := os.Stat(tpl + "-wal"); serr == nil && fi.Size() > 0 {
-		cleanup()
-		return nil, fmt.Errorf("db: test template %s has a non-empty -wal sibling (%d bytes)", tpl, fi.Size())
-	}
-	db.SetFreshTemplate(tpl)
-	return cleanup, nil
+	os.Exit(dbtest.Main(m))
 }
 
 // runEngineHelper opens the helper's database, which prepares the engine, and
