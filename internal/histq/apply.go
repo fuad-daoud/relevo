@@ -7,8 +7,8 @@ import (
 )
 
 // Apply is the in-Go half of a query: the conditions db.Query cannot express,
-// applied to the rows it returned, order preserved. A bare Word matches the
-// row's binding name, repo or feature as a case-insensitive substring.
+// applied to the rows it returned, order preserved. A bare Word matches the row's
+// binding name, repo or feature as a case-insensitive substring.
 func (q Query) Apply(rows []db.RoundRow) []db.RoundRow {
 	out := make([]db.RoundRow, 0, len(rows))
 	for _, r := range rows {
@@ -103,7 +103,7 @@ func compareNum(op string, have, want float64) bool {
 	return false
 }
 
-// RowTokens is the sum of a row's four token columns, nil counting zero.
+// RowTokens is the sum of a row's four token columns, nil counting as zero.
 func RowTokens(r db.RoundRow) int64 {
 	var n int64
 	for _, p := range []*int64{r.InTokens, r.CacheTokens, r.WriteTokens, r.OutTokens} {
@@ -114,7 +114,7 @@ func RowTokens(r db.RoundRow) int64 {
 	return n
 }
 
-// strEquals reports whether a nullable column equals want; nil never does.
+// strEquals reports whether a nullable column equals want; a nil column never does.
 func strEquals(have *string, want string) bool {
 	return have != nil && *have == want
 }

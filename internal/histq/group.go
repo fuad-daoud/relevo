@@ -30,16 +30,16 @@ type Tiles struct {
 	Tokens  int64
 	Halted  int
 	Exited  int
-	// MedianDurationMS is the median of the rows whose DurationMS is set, 0
-	// when none are; an even count takes the mean of the two middles.
+	// MedianDurationMS is the median over rows with DurationMS set, 0 when none;
+	// an even count takes the mean of the two middles.
 	MedianDurationMS int64
 	Bindings         int
 	Builders         int
 }
 
 // Group buckets rows by an axis and sums each bucket; AxisNone (or "") is no
-// regroup and returns nil. day keys are the StartedAt date in loc, so the
-// caller's timezone decides where a round's day starts.
+// regroup and returns nil. Day keys are the StartedAt date in loc, so the caller's
+// timezone decides where a round's day starts.
 func Group(rows []db.RoundRow, by Axis, loc *time.Location) []GroupRow {
 	if by == AxisNone || by == "" {
 		return nil
@@ -111,8 +111,8 @@ func Group(rows []db.RoundRow, by Axis, loc *time.Location) []GroupRow {
 	return groups
 }
 
-// Totals summarises rows for the dashboard's tiles line. It is Totals, not
-// Tiles: Go forbids a type and a function of one name.
+// Totals summarises rows for the dashboard's tiles line. It is named Totals, not
+// Tiles, since Go forbids a type and a function of one name.
 func Totals(rows []db.RoundRow) Tiles {
 	var t Tiles
 	bindings := make(map[string]bool, len(rows))

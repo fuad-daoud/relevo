@@ -10,15 +10,15 @@ import (
 	"time"
 )
 
-// sigV4Algorithm is the one string the whole scheme is named by: it opens both
-// the Authorization header and the string to sign.
+// sigV4Algorithm is the one string the whole scheme is named by, opening both the
+// Authorization header and the string to sign.
 const sigV4Algorithm = "AWS4-HMAC-SHA256"
 
 // signedHeaders are the headers a request's signature covers: the host, every
-// x-amz- header, and the two request headers whose value changes what the
-// endpoint returns. The list is chosen rather than "everything present" so that
-// a header the transport adds on its own -- its User-Agent, its Accept-Encoding
-// -- cannot change the signature between the client's view and the endpoint's.
+// x-amz- header, and the two request headers whose value changes what the endpoint
+// returns. The list is chosen rather than "everything present", so a header the
+// transport adds on its own cannot change the signature between the client's view
+// and the endpoint's.
 func signedHeaders(req *http.Request) []string {
 	names := []string{"host"}
 	for name := range req.Header {
@@ -32,10 +32,9 @@ func signedHeaders(req *http.Request) []string {
 }
 
 // canonicalRequest builds the string SigV4 signs: method, path, sorted query,
-// sorted signed headers, and the payload hash, each on its own line. The signed
-// header list is sorted because the endpoint sorts it too, and the header
-// values are collapsed because the endpoint collapses them -- signing the
-// unfolded form would give a different string for the same request.
+// sorted signed headers, and the payload hash, each on its own line. The list is
+// sorted and the values collapsed because the endpoint sorts and collapses them;
+// signing the unfolded form would sign a different string for the same request.
 func canonicalRequest(req *http.Request, payloadHash string, names []string) string {
 	var b strings.Builder
 	b.WriteString(req.Method + "\n")
@@ -44,18 +43,17 @@ func canonicalRequest(req *http.Request, payloadHash string, names []string) str
 	for _, name := range names {
 		b.WriteString(name + ":" + strings.Join(strings.Fields(headerValue(req, name)), " ") + "\n")
 	}
-	// The blank line closes the header block: the endpoint reads the signed
-	// header list as the line after the last header, so leaving it out would
-	// fold the two together and sign a string the endpoint never builds.
+	// The blank line closes the header block: the endpoint reads the signed header
+	// list as the line after the last header, so leaving it out would fold the two
+	// together and sign a string the endpoint never builds.
 	b.WriteString("\n")
 	b.WriteString(strings.Join(names, ";") + "\n")
 	b.WriteString(payloadHash)
 	return b.String()
 }
 
-// canonicalURI is the escaped path, always with a leading slash: a request to
-// the bucket root has an empty path, which would otherwise sign as an empty
-// line the endpoint reads as the root.
+// canonicalURI is the escaped path, always with a leading slash: a bucket-root
+// request has an empty path, which would otherwise sign as an empty line.
 func canonicalURI(req *http.Request) string {
 	path := req.URL.EscapedPath()
 	if path == "" {
@@ -64,9 +62,9 @@ func canonicalURI(req *http.Request) string {
 	return path
 }
 
-// canonicalQuery sorts the query parameters by name and then by value, and
-// escapes both. A listing sends list-type, prefix and a continuation token, so
-// an unsorted or unescaped form would not match what the endpoint reconstructs.
+// canonicalQuery sorts the query parameters by name and then by value, escaping
+// both: a listing sends list-type, prefix and a continuation token, and an
+// unsorted or unescaped form would not match what the endpoint reconstructs.
 func canonicalQuery(req *http.Request) string {
 	q := req.URL.Query()
 	type pair struct{ k, v string }
@@ -94,7 +92,7 @@ func canonicalQuery(req *http.Request) string {
 
 // headerValue reads a header by its lower-case name, falling back to the Host
 // field for "host": Go moves that header out of the map when the request is
-// written, so it is not in req.Header under any name.
+// written, so req.Header never holds it.
 func headerValue(req *http.Request, name string) string {
 	if name == "host" {
 		return req.Host
@@ -102,9 +100,8 @@ func headerValue(req *http.Request, name string) string {
 	return req.Header.Get(name)
 }
 
-// signRequest puts x-amz-date and Authorization on req. payloadHash is the
-// value already in x-amz-content-sha256, which the signature covers by name as
-// well as by the trailing line.
+// signRequest puts x-amz-date and Authorization on req. payloadHash is the value
+// already in x-amz-content-sha256, covered by name as well as by the trailing line.
 func signRequest(req *http.Request, keyID, secret, region, service, payloadHash string, now time.Time) {
 	stamp := now.UTC().Format(s3TimeFormat)
 	date := stamp[:8]
@@ -125,9 +122,9 @@ func signRequest(req *http.Request, keyID, secret, region, service, payloadHash 
 		", Signature="+signature)
 }
 
-// signingKey derives the key four HMAC steps down from the secret, one step per
-// scoping field. Deriving it per request rather than caching it by day is what
-// keeps the store free of the clock-to-cache invalidation a cached key needs.
+// signingKey derives the key four HMAC steps down from the secret, one per scoping
+// field. Deriving it per request rather than caching it by day spares the store
+// the clock-to-cache invalidation a cached key needs.
 func signingKey(secret, date, region, service string) []byte {
 	k := hmacSHA256([]byte("AWS4"+secret), []byte(date))
 	k = hmacSHA256(k, []byte(region))
@@ -142,9 +139,8 @@ func hmacSHA256(key, msg []byte) []byte {
 }
 
 // uriEscape escapes everything outside the unreserved set, which is what SigV4
-// signs and what differs from Go's own query escaping: Go writes a space as "+"
-// and SigV4 signs it as %20, so a prefix holding a space would sign one string
-// and send another.
+// signs: Go writes a space as "+" where SigV4 signs %20, so a prefix holding a
+// space would sign one string and send another.
 func uriEscape(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); i++ {

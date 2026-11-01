@@ -16,30 +16,28 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// Source is one binding, live or archived: it decodes bind.json, lists and opens
-// member files by basename, and reports its own origin.
+// Source is one binding, live or archived: it decodes bind.json, opens members
+// by basename, and reports its own origin.
 type Source interface {
 	Name() string
 	// Bind decodes bind.json. ErrSource when it is missing or invalid.
 	Bind() (store.Binding, error)
 	// Open returns member's content, its size, and os.ErrNotExist when absent.
-	// The reader is seekable: append-only members are read from a cursor, not
-	// from the top.
+	// The reader is seekable, so append-only members read from a cursor.
 	Open(member string) (io.ReadSeekCloser, int64, error)
 	List() ([]string, error)
 	// Origin reports "live" and the directory, or "archive" and an empty path.
 	Origin() (kind, path string)
 }
 
-// seekCloser is the io.ReadSeekCloser a bytes-backed member is opened as: the
-// cursor can seek past what it already confirmed, and a synthesized member has
-// nothing to close.
+// seekCloser is the io.ReadSeekCloser a bytes-backed member opens as: the cursor
+// seeks past what it confirmed, and a synthesized member has nothing to close.
 type seekCloser struct{ *bytes.Reader }
 
 func (seekCloser) Close() error { return nil }
 
-// archivedAtter is a Source that knows when it was archived; the mirror's binding
-// row carries that stamp.
+// archivedAtter is a Source that knows when it was archived for the mirror's
+// binding row.
 type archivedAtter interface {
 	ArchivedAt() (time.Time, bool)
 }
@@ -48,7 +46,6 @@ type dirSource struct {
 	dir string
 }
 
-// DirSource returns a Source over a live binding directory.
 func DirSource(dir string) Source { return dirSource{dir: filepath.Clean(dir)} }
 
 func (d dirSource) Name() string { return filepath.Base(d.dir) }
@@ -102,7 +99,7 @@ type storeSource struct {
 }
 
 // StoreSource returns a Source over a live binding held in the store's database:
-// bind.json and log.jsonl come from Load and ReadLog, and every other member from
+// bind.json and log.jsonl come from Load and ReadLog, every other member from
 // Store.ReadFile -- disk while the round is open, the sealed round_file row once
 // it is not.
 func StoreSource(st *store.Store, name string) Source {
@@ -177,9 +174,8 @@ type archivedSource struct {
 	recordID string
 }
 
-// ArchivedSource returns a Source over an archived record held in the store's
-// database: bind.json is the record re-indented, log.jsonl is ArchivedLog's
-// entries, and every NNN-* member is read through Store.ArchivedFile.
+// ArchivedSource returns a Source over an archived record: bind.json re-indented,
+// log.jsonl from ArchivedLog, every NNN-* member through Store.ArchivedFile.
 func ArchivedSource(st *store.Store, recordID string) Source {
 	return archivedSource{st: st, recordID: recordID}
 }
@@ -257,15 +253,15 @@ func (s archivedSource) List() ([]string, error) {
 }
 
 // Origin reports the kind the mirror records; the path is empty, since an
-// archived record has no directory behind it.
+// archived record has no directory.
 func (s archivedSource) Origin() (string, string) { return "archive", "" }
 
 func (s archivedSource) ArchivedAt() (time.Time, bool) {
 	return s.st.ArchivedAtOf(s.recordID)
 }
 
-// roundMember reports whether member is a round file's basename: the NNN- prefix
-// every file relevo writes for a round carries. Only those can be sealed.
+// roundMember reports whether member carries the NNN- prefix every round file
+// carries. Only those can be sealed.
 func roundMember(member string) bool {
 	if len(member) < 4 || member[3] != '-' {
 		return false

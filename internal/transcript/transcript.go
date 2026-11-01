@@ -1,6 +1,6 @@
-// Package transcript renders a headless builder's streamed output -- one JSON
-// event per line, in each harness's own shape -- into the lines a human reads
-// in the builder log. It is presentation only: nothing decides anything on it.
+// Package transcript renders a headless builder's streamed output -- one JSON event
+// per line, in each harness's own shape -- into the lines a human reads in the
+// builder log. It is presentation only: nothing decides anything on it.
 package transcript
 
 import (
@@ -15,8 +15,6 @@ const maxArg = 200
 
 var argKeys = []string{"command", "file_path", "path", "AbsolutePath", "pattern", "description", "prompt", "query", "url"}
 
-// sanitizeLines applies sanitize.Text to every rendered line, in place of the
-// raw text a harness wrote.
 func sanitizeLines(lines []string) []string {
 	if len(lines) == 0 {
 		return lines
@@ -37,8 +35,8 @@ func unknown(obj map[string]any) string {
 	return "[?]"
 }
 
-// toolLine is "● <name> <main argument>"; the marker lets a reader tell a call
-// from assistant prose.
+// toolLine is "● <name> <main argument>"; the marker tells a call from assistant
+// prose.
 func toolLine(name string, params map[string]any) string {
 	if arg, ok := mainArg(params); ok {
 		return "● " + name + " " + oneLine(arg)
@@ -65,8 +63,8 @@ func mainArg(params map[string]any) (string, bool) {
 	return str(params[strs[0]]), true
 }
 
-// okLine is a successful tool result on one line, so three parallel calls'
-// results still tell apart.
+// okLine is a successful tool result on one line, so parallel calls' results
+// still tell apart.
 func okLine(output string) string {
 	if output = oneLine(output); output == "" {
 		return "  ⎿ ok"

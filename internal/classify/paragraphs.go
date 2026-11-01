@@ -7,7 +7,7 @@ import (
 
 const (
 	MaxParagraphs = 120    // one noul question each; ~120 tokens per question keeps the 64k total budget
-	MaxStateBytes = 96_000 // ~24k tokens at 4 bytes/token, under the documented 32k state ceiling
+	MaxStateBytes = 96_000 // ~24k tokens at 4 bytes/token, under the 32k state ceiling
 )
 
 func IsFence(line string) bool {
@@ -24,7 +24,7 @@ func IsFence(line string) bool {
 }
 
 // Split turns text into paragraphs: CR stripped from every line; a fence line
-// opens a fenced paragraph that runs to the next fence line, and is in none.
+// opens a fenced paragraph running to the next fence line, itself in none.
 func Split(text []byte) []Paragraph {
 	if len(text) == 0 {
 		return nil
@@ -91,8 +91,8 @@ func Split(text []byte) []Paragraph {
 	return paras
 }
 
-// Trim keeps at most MaxParagraphs paragraphs within MaxStateBytes, taking from
-// the head and tail alternately so both ends of a long report are seen.
+// Trim keeps at most MaxParagraphs paragraphs within MaxStateBytes, taking from head
+// and tail alternately so both ends of a long report are seen.
 func Trim(paras []Paragraph) (kept []Paragraph, partial bool) {
 	totalBytes := 0
 	for _, p := range paras {

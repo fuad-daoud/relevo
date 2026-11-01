@@ -31,7 +31,7 @@ type agyEvent struct {
 
 // agyStream reads a headless round's stream: the result event's usage, or each
 // agent_response step_update with usage when there is none. agy reports no dollars
-// and keeps no pane record, so there is no pane reader.
+// and keeps no pane record, so no pane reader exists.
 func agyStream(r io.Reader, fallbackProvider, fallbackModel string) []Sample {
 	c, _ := newCarry("agy", fallbackProvider, fallbackModel)
 	scanLines(r, c.feed)

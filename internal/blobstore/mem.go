@@ -10,10 +10,10 @@ import (
 	"time"
 )
 
-// MemBlobStore is the in-memory BlobStore every test in this slice runs against:
-// it holds bodies in a map, so CI needs no bucket and no network. It copies the
-// bytes on the way in and on the way out, so a caller reusing its buffer after a
-// Put cannot change what the store holds.
+// MemBlobStore is the in-memory BlobStore the tests run against: it holds bodies
+// in a map, so CI needs no bucket and no network. It copies the bytes on the way
+// in and on the way out, so a caller reusing its buffer after a Put cannot change
+// what the store holds.
 type MemBlobStore struct {
 	mu      sync.Mutex
 	objects map[string]memObject
@@ -22,15 +22,15 @@ type MemBlobStore struct {
 	Gets    int
 }
 
-// memObject is a stored body and the time it was written. The bytes are a copy
-// the map owns outright.
+// memObject is a stored body and the time it was written, the bytes a copy the
+// map owns outright.
 type memObject struct {
 	body     []byte
 	modified time.Time
 }
 
-// NewMemBlobStore returns an empty store clocked by now. A nil now reads the
-// wall clock, which is what a caller outside a test wants.
+// NewMemBlobStore returns an empty store clocked by now, or the wall clock when
+// now is nil, which is what a caller outside a test wants.
 func NewMemBlobStore(now func() time.Time) *MemBlobStore {
 	if now == nil {
 		now = time.Now
@@ -39,8 +39,8 @@ func NewMemBlobStore(now func() time.Time) *MemBlobStore {
 }
 
 // Put stores a copy of body under key. A body shorter or longer than size is
-// refused, so a caller that miscounts fails here rather than leaving an object
-// the importer would later read under the wrong length.
+// refused, so a miscounting caller fails here rather than leaving an object the
+// importer would later read under the wrong length.
 func (m *MemBlobStore) Put(_ context.Context, key string, body io.Reader, size int64) error {
 	buf, err := readSized(body, size)
 	if err != nil {
@@ -77,8 +77,8 @@ func (m *MemBlobStore) Has(_ context.Context, key string) (bool, error) {
 	return ok, nil
 }
 
-// List returns every object whose key starts with prefix, in the key order the
-// S3 store returns, so a caller cannot tell the two apart by what it walks.
+// List returns every object whose key starts with prefix, in the S3 store's key
+// order, so a caller cannot tell the two apart by what it walks.
 func (m *MemBlobStore) List(_ context.Context, prefix string) ([]Object, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -92,9 +92,8 @@ func (m *MemBlobStore) List(_ context.Context, prefix string) ([]Object, error) 
 	return out, nil
 }
 
-// Delete drops key. An absent key is not an error: the weekly cleanup asks
-// whether an object is still referenced by deleting it, and a body another run
-// already removed is the outcome it wanted.
+// Delete drops key. An absent key is not an error: the weekly cleanup asks by
+// deleting, and a body another run removed is the outcome it wanted.
 func (m *MemBlobStore) Delete(_ context.Context, key string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -102,9 +101,9 @@ func (m *MemBlobStore) Delete(_ context.Context, key string) error {
 	return nil
 }
 
-// readSized reads body in full and checks it against the length the caller
-// expected. The copy belongs to the caller, which is what lets a Put store the
-// bytes without holding on to a buffer it is about to reuse.
+// readSized reads body in full and checks it against the caller's expected
+// length. The copy belongs to the caller, so a Put stores the bytes without
+// holding a buffer it is about to reuse.
 func readSized(body io.Reader, size int64) ([]byte, error) {
 	buf, err := io.ReadAll(body)
 	if err != nil {

@@ -10,15 +10,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/transcript"
 )
 
-// tsKeys is the order in which a stream record's timestamp field is tried.
+// tsKeys is the order a stream record's timestamp field is tried in.
 var tsKeys = []string{"ts", "timestamp", "time"}
 
 // streamTranscriptRecords turns raw builder-stream lines into TranscriptRecord
-// rows starting at startSeq. The batch owns one transcript renderer, so a
-// claude call and its result in the same batch keep the span between their two
-// events. A line that is not a JSON object is kept verbatim in RecordJSON with
-// Rendered empty and counted in skipped; the renderer never fails and would
-// otherwise render it as itself.
+// rows from startSeq. The batch owns one transcript renderer, so a claude call
+// and its result in one batch keep the span between their events. A non-JSON
+// line is kept verbatim in RecordJSON with Rendered empty and counted in skipped,
+// since the renderer would otherwise render it as itself.
 func streamTranscriptRecords(kind string, lines [][]byte, startSeq int) (recs []db.TranscriptRecord, skipped int) {
 	recs = make([]db.TranscriptRecord, 0, len(lines))
 	r := transcript.NewRenderer()
@@ -63,8 +62,8 @@ func tsFromRecord(obj map[string]any) *time.Time {
 	return nil
 }
 
-// logOnlyTranscriptRecords turns NNN-builder.log lines (a pane round or an old
-// archive, with no stream) into TranscriptRecord rows: already-rendered text.
+// logOnlyTranscriptRecords turns NNN-builder.log lines with no stream -- a pane
+// round or an old archive -- into TranscriptRecord rows of already-rendered text.
 func logOnlyTranscriptRecords(lines [][]byte, startSeq int) []db.TranscriptRecord {
 	recs := make([]db.TranscriptRecord, 0, len(lines))
 	for i, line := range lines {

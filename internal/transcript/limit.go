@@ -6,13 +6,12 @@ import (
 	"encoding/json"
 )
 
-// LimitResetMS reports the structured reset one raw muse stream line carries:
-// a failed run's quota resets_at_ms, else a usage event's allowance window
-// resets_at_ms. quota is true for the failed run's own field, false for the
-// allowance window, so a caller scanning a whole stream prefers the failure's
-// instant over the window's. Zero or absent reads as no reset, and any other
-// kind carries none, so only muse lines ever report one. Never errors, never
-// panics.
+// LimitResetMS reports the structured reset one raw muse stream line carries: a
+// failed run's quota resets_at_ms, else a usage event's allowance window
+// resets_at_ms. quota tells the failure's own field from the window's, so a
+// whole-stream scan prefers the failure's instant over the window's. Zero or
+// absent reads as no reset, and only muse lines ever report one. Never errors,
+// never panics.
 func LimitResetMS(kind string, line []byte) (ms int64, quota bool) {
 	if kind != "muse" {
 		return 0, false
@@ -38,15 +37,15 @@ func LimitResetMS(kind string, line []byte) (ms int64, quota bool) {
 	return 0, false
 }
 
-// quotaResetMS reads resets_at_ms out of a failed run's error or reason
-// field, which carries the quota object under "quota". A bare string, a
-// missing object and a zero instant all read as no reset.
+// quotaResetMS reads resets_at_ms out of a failed run's error or reason field
+// under "quota"; a bare string, a missing object and a zero instant all read as
+// no reset.
 func quotaResetMS(v any) int64 {
 	return museMillis(asMap(asMap(v)["quota"])["resets_at_ms"])
 }
 
-// museMillis reads a millisecond instant out of a decoded JSON number.
-// Missing, zero and negative read as no reset.
+// museMillis reads a millisecond instant out of a decoded JSON number; missing,
+// zero and negative read as no reset.
 func museMillis(v any) int64 {
 	f, _ := v.(float64)
 	if f <= 0 {
@@ -55,19 +54,15 @@ func museMillis(v any) int64 {
 	return int64(f)
 }
 
-// LimitLines returns the text of one raw stream line that a limit scan may
-// read: a line the harness itself wrote. The channel each kind keeps is the
-// harness's own report of a failure -- claude's error event and a failed
-// result, agy's failed result, opencode's error event, codex's error and
-// turn.failed events -- plus a non-JSON line that is not a supervisor trailer
-// (the harness's stderr). Everything a model or a tool produced yields nothing:
-// assistant text, tool output, a successful result's text, a successful
-// step's output, thinking and housekeeping. A limit-shaped sentence there is
-// the model talking about a limit, not hitting one.
-//
-// A line that is limit evidence is returned as its own text, and the reset time
-// is parsed from that same text, so a reset phrase on another line never
-// supplies an Until. Empty text yields nothing. Never errors, never panics.
+// LimitLines returns the text of one raw stream line that a limit scan may read:
+// a line the harness itself wrote. Each kind keeps its own failure report --
+// claude's error event and failed result, agy's failed result, opencode's error
+// event, codex's error and turn.failed events -- plus a non-JSON line that is not
+// a supervisor trailer (the harness's stderr). Everything a model or a tool
+// produced yields nothing: a limit-shaped sentence there is the model talking
+// about a limit, not hitting one. The reset time is parsed from that same text,
+// so a reset phrase on another line never supplies an Until. Empty text yields
+// nothing. Never errors, never panics.
 func LimitLines(kind string, line []byte) []string {
 	trimmed := bytes.TrimSpace(line)
 	if len(trimmed) == 0 {
@@ -78,8 +73,8 @@ func LimitLines(kind string, line []byte) []string {
 	}
 	var obj map[string]any
 	if trimmed[0] != '{' || json.Unmarshal(trimmed, &obj) != nil || obj == nil {
-		// A non-JSON line that is not a supervisor trailer is the harness's
-		// own stderr, so it is limit evidence.
+		// A non-JSON line outside a supervisor trailer is the harness's own
+		// stderr, so it is limit evidence.
 		return []string{string(line)}
 	}
 	switch kind {
@@ -98,10 +93,10 @@ func LimitLines(kind string, line []byte) []string {
 }
 
 // TransportLines returns the text of one raw stream line that a transport scan
-// may read. Only opencode's error event qualifies, as "<error.type>:
-// <error.message>" (just the message when the type is empty), plus a non-JSON
-// line that is not a supervisor trailer, because the harness writes some
-// transport failures on stderr. Model text and tool output never classify.
+// may read: only opencode's error event, as "<error.type>: <error.message>" (the
+// message alone when the type is empty), plus a non-JSON line outside a
+// supervisor trailer, since the harness writes some transport failures on stderr.
+// Model text and tool output never classify.
 func TransportLines(kind string, line []byte) []string {
 	trimmed := bytes.TrimSpace(line)
 	if len(trimmed) == 0 || isTrailerLine(trimmed) {
@@ -125,8 +120,8 @@ func TransportLines(kind string, line []byte) []string {
 	return []string{msg}
 }
 
-// claudeLimitLines is the claude row of the channel table: an error event's
-// message, or a result with is_error true -- its result text, else its subtype.
+// claudeLimitLines is the claude row: an error event's message, or a failed
+// result's text, else its subtype.
 func claudeLimitLines(obj map[string]any) []string {
 	switch str(obj["type"]) {
 	case "error":
@@ -142,8 +137,7 @@ func claudeLimitLines(obj map[string]any) []string {
 	return nil
 }
 
-// agyLimitLines is the agy row: a result with a status set and not SUCCESS,
-// taking its error field.
+// agyLimitLines is the agy row: a non-SUCCESS result's error field.
 func agyLimitLines(obj map[string]any) []string {
 	if str(obj["event"]) != "result" {
 		return nil
@@ -175,8 +169,8 @@ func codexLimitLines(obj map[string]any) []string {
 	return nil
 }
 
-// limitErrorText reads an error field that may be a bare string or an object
-// carrying its text under "message".
+// limitErrorText reads an error field holding either a bare string or an object
+// with its text under "message".
 func limitErrorText(v any) string {
 	if s, ok := v.(string); ok {
 		return s
@@ -184,7 +178,6 @@ func limitErrorText(v any) string {
 	return str(asMap(v)["message"])
 }
 
-// nonEmptyLine wraps one evidence line, or nothing when there is no text.
 func nonEmptyLine(s string) []string {
 	if s == "" {
 		return nil

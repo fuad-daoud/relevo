@@ -6,12 +6,11 @@ import (
 	"strings"
 )
 
-// FinalText returns the last assistant text a harness stream carries -- the
-// message a one-shot process leaves behind that reads as its answer -- trimmed,
-// or "" when the stream carries none. Per kind: claude's last assistant text
-// blocks, falling back to the result string; opencode's last text event; agy's
-// result.response, falling back to the last step_update text; codex's last
-// agent_message; muse's terminal text. A non-JSON line and the relevo-exit trailer are ignored.
+// FinalText returns the last assistant text a harness stream carries, trimmed,
+// "" when it carries none: claude's last assistant text blocks, falling back to
+// the result string; opencode's last text event; agy's result.response, falling
+// back to the last step_update text; codex's last agent_message; muse's terminal
+// text. Non-JSON lines and the relevo-exit trailer are ignored.
 func FinalText(kind string, stream []byte) string {
 	var last, fallback string
 
@@ -40,10 +39,8 @@ func FinalText(kind string, stream []byte) string {
 }
 
 // Texts returns every message text FinalText's decoding recognises, in stream
-// order: per JSON line, the same finalCandidates values, the last preferred
-// over the fallback when it is non-empty, skipping non-JSON lines and empty
-// texts. It lets a caller rescan a stream for something earlier than the last
-// message, where FinalText stops at the last one.
+// order, the last preferred over the fallback when non-empty. It lets a caller
+// rescan a stream for something earlier than FinalText's last message.
 func Texts(kind string, stream []byte) []string {
 	var out []string
 	for _, line := range bytes.Split(stream, []byte{'\n'}) {
@@ -66,10 +63,9 @@ func Texts(kind string, stream []byte) []string {
 	return out
 }
 
-// LastWithBlock returns the last text in the stream that carries a fenced
-// `relevo` block: the message a chain's verdict or finding-count parse reads,
-// which a reader that recaps afterwards would otherwise hide from the round's
-// saved artifact. "" when no message carries one.
+// LastWithBlock returns the last stream text carrying a fenced `relevo` block --
+// the message a chain's verdict or finding-count parse reads, which a recapping
+// reader would otherwise hide from the round's saved artifact. "" when none does.
 func LastWithBlock(kind string, stream []byte) string {
 	texts := Texts(kind, stream)
 	for i := len(texts) - 1; i >= 0; i-- {
@@ -113,9 +109,9 @@ func finalCandidates(kind string, obj map[string]any) (last, fallback string) {
 	return "", ""
 }
 
-// claudeTextBlocks is an assistant event's message.content text blocks, in
-// order. It is final.go's own reader of the shape renderClaude walks, so a
-// change to the renderer does not silently change what FinalText returns.
+// claudeTextBlocks is an assistant event's message.content text blocks, in order.
+// It reads the renderer's shape on its own, so a renderer change does not
+// silently change what FinalText returns.
 func claudeTextBlocks(obj map[string]any) []string {
 	var out []string
 	for _, b := range asList(asMap(obj["message"])["content"]) {

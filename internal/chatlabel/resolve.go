@@ -12,8 +12,8 @@ type Resolver struct {
 	OpencodeDB string     // "" -> opencode labels are empty
 }
 
-// Resolve returns the harness's own name for one session. Every failure ends
-// in the empty Label; it never returns an error.
+// Resolve returns the harness's own name for one session. Every failure ends in
+// the empty Label; it never returns an error.
 func (r Resolver) Resolve(ctx context.Context, kind, sessionID string) Label {
 	switch kind {
 	case "opencode":
@@ -24,7 +24,7 @@ func (r Resolver) Resolve(ctx context.Context, kind, sessionID string) Label {
 		defer cancel()
 		out, err := r.Exec.Run(ctx, "sqlite3", "-readonly", r.OpencodeDB, OpencodeQuery(sessionID))
 		if err != nil {
-			// A pre-2.0 database has no session_v2; the legacy table has the title.
+			// A pre-2.0 database has no session_v2; the legacy table holds the title.
 			out, err = r.Exec.Run(ctx, "sqlite3", "-readonly", r.OpencodeDB, OpencodeLegacyQuery(sessionID))
 			if err != nil {
 				return Label{}

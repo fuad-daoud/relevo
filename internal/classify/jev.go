@@ -88,8 +88,8 @@ func (c *Client) Judge(ctx context.Context, req Request) (Answers, error) {
 		baseURL = defaultBaseURL
 	}
 
-	// One retry at most, and only for the overload statuses; ctx's deadline
-	// still bounds the total.
+	// One retry at most, only for overload statuses; ctx's deadline still bounds
+	// the total.
 	for attempt := 0; ; attempt++ {
 		resp, err := c.post(ctx, httpClient, baseURL, body)
 		if err != nil {

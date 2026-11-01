@@ -9,7 +9,7 @@ import (
 )
 
 // Money is the cost word. Plan wins over basis: a subscription lane never shows
-// dollars. Under a cent prints "<$0.01", not "$0.00".
+// dollars, and under a cent prints "<$0.01", not "$0.00".
 func Money(c Cost) string {
 	switch {
 	case c.Plan:
@@ -27,7 +27,7 @@ func Money(c Cost) string {
 	return fmt.Sprintf("%s%.2f", prefix, c.USD)
 }
 
-// ShortTokens: < 1000 as-is, < 1M "182k", else "2.3M".
+// ShortTokens prints < 1000 as-is, < 1M as "182k", else as "2.3M".
 func ShortTokens(n int64) string {
 	switch {
 	case n < 1000:
@@ -39,7 +39,7 @@ func ShortTokens(n int64) string {
 	}
 }
 
-// ShortDuration: "" for 0, "<1m" under a minute, "14m", "1h05m".
+// ShortDuration prints "" for 0, "<1m" under a minute, "14m", "1h05m".
 func ShortDuration(ms int64) string {
 	switch {
 	case ms <= 0:
@@ -54,8 +54,8 @@ func ShortDuration(ms int64) string {
 	return fmt.Sprintf("%dh%02dm", minutes/60, minutes%60)
 }
 
-// tokenCells is the four token cells in order, or nil when there are no samples.
-// `write` is printed even when 0, so a reader learns the field exists.
+// tokenCells is the four token cells in order, nil with no samples. `write` prints
+// even when 0, so a reader learns the field exists.
 func tokenCells(t Tokens, samples int) []string {
 	if samples == 0 {
 		return nil
@@ -111,7 +111,7 @@ func Line(u Usage) string {
 
 // Parts is the round as separable parts for a surface that joins them itself and
 // already names the harness. An unknown note ending in " for <provider>/<model>"
-// loses that suffix.
+// sheds that suffix.
 func Parts(u Usage) []string {
 	var parts []string
 	switch {
@@ -132,13 +132,13 @@ func Parts(u Usage) []string {
 	return append(parts, money)
 }
 
-// LiveParts is Parts with the word "live" prepended: a figure for a running round.
+// LiveParts is Parts with "live" prepended: a figure for a running round.
 func LiveParts(u Usage) []string {
 	return append([]string{"live"}, Parts(u)...)
 }
 
-// LiveShort is the card/statusline form of a live figure; "" with no samples, so a
-// surface shows nothing rather than "live unknown".
+// LiveShort is the card/statusline form of a live figure; "" with no samples, so
+// a surface shows nothing rather than "live unknown".
 func LiveShort(u Usage) string {
 	if u.Samples == 0 {
 		return ""

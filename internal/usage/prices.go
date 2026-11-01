@@ -24,7 +24,7 @@ type ModelPrice struct {
 }
 
 // Prices is the table. Models is keyed "provider/model", as candidate refs use
-// minus the harness.
+// them minus the harness.
 type Prices struct {
 	AsOf   string                `json:"as_of"`
 	Source string                `json:"source"`
@@ -43,8 +43,8 @@ func DefaultPrices() Prices {
 }
 
 // LoadPrices reads path over the embedded default: a missing file is the default,
-// a present file's rows replace default rows of the same key, and a malformed file
-// is ErrBadPrices.
+// a present file's rows replace default rows of the same key, a malformed file is
+// ErrBadPrices.
 func LoadPrices(path string) (Prices, error) {
 	base := DefaultPrices()
 	raw, err := os.ReadFile(path)
@@ -62,7 +62,7 @@ func LoadPrices(path string) (Prices, error) {
 }
 
 // ParsePrices returns the embedded default overlaid by the rows in data. Errors
-// wrap ErrBadPrices and carry no path: LoadPrices adds the file's.
+// wrap ErrBadPrices and carry no path; LoadPrices adds the file's.
 func ParsePrices(data []byte) (Prices, error) {
 	base := DefaultPrices()
 	var file Prices
@@ -84,7 +84,7 @@ func ParsePrices(data []byte) (Prices, error) {
 	return base, nil
 }
 
-// Estimate prices t for provider/model; ok is false when there is no row.
+// Estimate prices t for provider/model; ok is false with no row for them.
 func (p Prices) Estimate(provider, model string, t Tokens) (float64, bool) {
 	m, ok := p.Models[provider+"/"+model]
 	if !ok {

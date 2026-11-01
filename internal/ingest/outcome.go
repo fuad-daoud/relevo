@@ -18,10 +18,9 @@ import (
 //	switch entry              -> switched
 //	otherwise                 -> open
 //
-// The open arm reads store.RoundOpen, the definition `stop` and the served view
-// read too, so history cannot call a round closed that they call open. A halt
-// on the current round names the round it halted, and only that one: a halt
-// recorded against a later round says nothing about an earlier one.
+// The open arm reads store.RoundOpen, as `stop` and the served view do, so
+// history cannot call closed a round they call open. A halt names only the round
+// it halted: one recorded against a later round says nothing about an earlier one.
 func deriveOutcome(events []store.LogEntry, n int, b store.Binding, members map[string]bool) string {
 	var hasReport, hasExit, hasSwitch, hasStop bool
 	for _, e := range events {
@@ -58,10 +57,10 @@ func deriveOutcome(events []store.LogEntry, n int, b store.Binding, members map[
 	}
 }
 
-// switchesForRound counts switch entries for round n. A relaunch replaces a lost
-// process with the same candidate, so its note prefix is skipped. A poll's entry
-// for a switch it observed is skipped once the log holds the server's own record
-// of the round's switches, which names the same switches in full.
+// switchesForRound counts switch entries for round n, skipping a relaunch's note
+// prefix -- a relaunch replaces a lost process with the same candidate -- and a
+// poll's entry once the log holds the server's own record of the round's switches
+// in full.
 func switchesForRound(events []store.LogEntry, n int) int {
 	count, polled := 0, 0
 	for _, e := range events {
@@ -81,13 +80,11 @@ func switchesForRound(events []store.LogEntry, n int) int {
 	return count
 }
 
-// candidateForRound resolves round n's candidate: the token from the round's own
-// last pick or switch entry's note. A round with none carries the builder the
-// earlier rounds left running, and only a round with no record at all, nor an
-// earlier one to carry, falls back to b.BuilderCandidate. A pick naming an actor
-// other than the binding's own is a consult's pick (or another runner's) and is
-// skipped. candidateTok is verbatim; ref has a trailing "#..." stripped, since a
-// ":effort" suffix belongs to the model.
+// candidateForRound resolves round n's candidate from the round's own last pick
+// or switch entry's note, else the builder earlier rounds left running, else
+// b.BuilderCandidate when no round records one. A pick naming another actor is a
+// consult's and is skipped. candidateTok is verbatim; ref sheds a trailing
+// "#...", since a ":effort" suffix belongs to the model.
 func candidateForRound(events []store.LogEntry, n int, b store.Binding) (candidateTok string, ref candidate.Ref, ok bool) {
 	tok := lastBuilderToken(events, b.WriterRole(), func(round int) bool { return round == n })
 	if tok == "" {
@@ -106,8 +103,8 @@ func candidateForRound(events []store.LogEntry, n int, b store.Binding) (candida
 	return tok, ref, true
 }
 
-// lastBuilderToken is the token of the last pick or switch entry, among those
-// whose round inRound accepts, that names the builder actor plays.
+// lastBuilderToken is the token of the last pick or switch entry in rounds
+// inRound accepts that names the builder actor plays.
 func lastBuilderToken(events []store.LogEntry, actor string, inRound func(int) bool) string {
 	tok := ""
 	for _, e := range events {
@@ -122,7 +119,7 @@ func lastBuilderToken(events []store.LogEntry, actor string, inRound func(int) b
 	return tok
 }
 
-// isOtherActorPick reports whether note is the pick `ask` writes for a consult:
+// isOtherActorPick reports whether note is `ask`'s consult pick --
 // "picked <tok> for <role>: ..." with a role other than actor.
 func isOtherActorPick(note, actor string) bool {
 	const prefix = "picked "
@@ -157,8 +154,7 @@ func parseBuilderNote(kind store.Kind, note string) string {
 	return ""
 }
 
-// parsePickNote parses the first space-delimited word after "picked ", with one
-// trailing ":" stripped.
+// parsePickNote parses the first word after "picked ", minus one trailing ":".
 func parsePickNote(note string) string {
 	const prefix = "picked "
 	if !strings.HasPrefix(note, prefix) {
@@ -172,8 +168,8 @@ func parsePickNote(note string) string {
 	return strings.TrimSuffix(tok, ":")
 }
 
-// parseSwitchNote parses the pick clause when present, otherwise the token after
-// the last "->", trimmed of a trailing ")" and whitespace.
+// parseSwitchNote parses the pick clause when present, else the token after the
+// last "->", trimmed of a trailing ")" and whitespace.
 func parseSwitchNote(note string) string {
 	if i := strings.LastIndex(note, "picked "); i >= 0 {
 		return parsePickNote(note[i:])

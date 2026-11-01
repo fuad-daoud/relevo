@@ -47,9 +47,9 @@ func scanLines(r io.Reader, fn func(line []byte)) {
 	}
 }
 
-// claudeStream reads a headless round's stream-json. The result event's usage is
-// the sample (HasCost when total_cost_usd is present); with no result event, the
-// assistant events deduped by message.id are the samples, tokens only.
+// claudeStream reads a headless round's stream-json: the result event's usage when
+// present (HasCost when total_cost_usd is), else the assistant events deduped by
+// message.id, tokens only.
 func claudeStream(r io.Reader, fallbackProvider string) []Sample {
 	c, _ := newCarry("claude", fallbackProvider, "")
 	scanLines(r, c.feed)

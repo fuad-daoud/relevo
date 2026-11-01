@@ -14,15 +14,15 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// GitFacts is the slice of git identity ingest needs. It matches
+// GitFacts is the slice of git identity ingest needs, matching
 // relevo.Git.RepoFacts structurally so a *relevo.Runtime's Git passes through
 // Deps without ingest importing its caller.
 type GitFacts interface {
 	RepoFacts(ctx context.Context, dir string) (originURL, commonDir string, err error)
 }
 
-// Deps are Ingest's optional collaborators. The zero value is usable: no repo is
-// resolved, Now is time.Now and Logger is slog.Default().
+// Deps are Ingest's optional collaborators; the zero value is usable, resolving
+// no repo, with Now as time.Now and Logger as slog.Default().
 type Deps struct {
 	// Git resolves a live binding's repo identity when bind.json carries no
 	// RepoRef. Nil means never resolve.
@@ -46,7 +46,6 @@ type Stats struct {
 	Bindings, Rounds, Events, Artifacts, Skipped int
 }
 
-// Add returns the field-wise sum of s and o.
 func (s Stats) Add(o Stats) Stats {
 	return Stats{
 		Bindings:  s.Bindings + o.Bindings,
@@ -57,14 +56,14 @@ func (s Stats) Add(o Stats) Stats {
 	}
 }
 
-// memberStore is a throwaway *store.Store used only for its path helpers, so
-// every member basename comes from those rather than being hard-coded.
+// memberStore is a throwaway *store.Store kept for its path helpers, so no
+// member basename is hard-coded.
 var memberStore = store.New("/")
 
 func donePathBase(round int) string { return filepath.Base(memberStore.DonePath("x", round)) }
 
-// roundFromMember returns the round number in a round-scoped member's "NNN-"
-// prefix, false when name carries none (bind.json, log.jsonl).
+// roundFromMember returns the round number in a member's "NNN-" prefix, false
+// for bind.json and log.jsonl, which carry none.
 func roundFromMember(name string) (int, bool) {
 	if len(name) < 4 || name[3] != '-' {
 		return 0, false
@@ -83,8 +82,8 @@ func nonEmptyPtr(s string) *string {
 	return &s
 }
 
-// repoRefFromGit resolves dir's repo identity via g, nil when dir is empty,
-// RepoFacts errors, or the facts carry neither an origin nor a common dir.
+// repoRefFromGit resolves dir's repo identity via g, nil when dir is empty, the
+// facts error, or they carry neither origin nor common dir.
 func repoRefFromGit(ctx context.Context, g GitFacts, dir string) *store.RepoRef {
 	if dir == "" {
 		return nil
@@ -108,11 +107,9 @@ func sourceOpener(src Source, member string) (func() (io.ReadSeekCloser, error),
 }
 
 // Ingest reads src -- a binding's directory, live or archived -- and upserts every
-// fact it holds into d in one transaction. Cursors for every member it touched are
-// saved there too, so a later call with unchanged files writes nothing.
-//
-// It returns ErrSource unwrapped when src's bind.json is missing or invalid --
-// nothing is written in that case -- and wraps a database error.
+// fact it holds into d in one transaction, cursors included, so a later call with
+// unchanged files writes nothing. It returns ErrSource unwrapped when src's
+// bind.json is missing or invalid, writing nothing, and wraps a database error.
 func Ingest(ctx context.Context, src Source, d *db.DB, deps Deps) (Stats, error) {
 	deps = deps.defaults()
 
@@ -146,8 +143,8 @@ func Ingest(ctx context.Context, src Source, d *db.DB, deps Deps) (Stats, error)
 	if err != nil {
 		return Stats{}, fmt.Errorf("ingest %s: %w", src.Name(), err)
 	}
-	// Saved only after the commit: a crash in between re-reads lines whose
-	// events are already in, and appending an event twice is a no-op.
+	// Saved only after the commit: a crash in between re-reads recorded lines,
+	// and appending an event twice is a no-op.
 	if run.saved != nil {
 		if err := d.SaveCursor(*run.saved); err != nil {
 			return Stats{}, fmt.Errorf("ingest %s: save log cursor: %w", src.Name(), err)
@@ -168,9 +165,9 @@ func memberSet(src Source) (map[string]bool, error) {
 	return members, nil
 }
 
-// resolveRefs resolves git facts before the write transaction opens: repoRefFromGit
-// shells out to git, and holding the write lock across it starves every other
-// writer.
+// resolveRefs resolves git facts before the write transaction opens, since
+// repoRefFromGit shells out and holding the write lock across it starves every
+// other writer.
 func resolveRefs(ctx context.Context, deps Deps, b store.Binding) *store.RepoRef {
 	ref := b.RepoRef
 	if ref == nil && deps.Git != nil {
@@ -182,7 +179,6 @@ func resolveRefs(ctx context.Context, deps Deps, b store.Binding) *store.RepoRef
 	return ref
 }
 
-// ingestRun carries one Ingest call's inputs and accumulated stats.
 type ingestRun struct {
 	src     Source
 	b       store.Binding
@@ -193,8 +189,8 @@ type ingestRun struct {
 	logger  *slog.Logger
 	stats   Stats
 	// cursor is the log member's saved cursor, read before the transaction;
-	// saved is the one to write after it commits. Both live in the
-	// machine-local file, which the shared transaction cannot reach.
+	// saved is written after it commits. Both live in the machine-local file,
+	// which the shared transaction cannot reach.
 	cursor      db.Cursor
 	cursorFound bool
 	saved       *db.Cursor
