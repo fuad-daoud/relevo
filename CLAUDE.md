@@ -71,6 +71,7 @@ versions corrupt each other and there is no rollback. Two flows exist:
 
 - Plans and specs are local working files. `docs/plans/`, `docs/specs/` and
   `docs/superpowers/` are gitignored and never committed.
+- The package layer map and where new code belongs live in `docs/architecture.md`.
 - State lives in `$XDG_STATE_HOME/relevo` (default `~/.local/state/relevo`);
   config resolves via `$XDG_CONFIG_HOME` (default `~/.config`).
   Compose relevo config paths through `userConfigRoot()` (`cmd/relevo/main.go`),
@@ -78,34 +79,10 @@ versions corrupt each other and there is no rollback. Two flows exist:
 
 ### Code style
 
-- A package comment is 1-3 lines saying what the package owns. A comment says
-  *why*, and only where the code cannot: a non-obvious constraint, where a
-  number comes from, an ordering that matters, a hazard. It never restates the
-  code, and a doc comment on an exported name is written only when it adds
-  something the name and signature do not.
-- No history in the code: no issue or PR numbers, no spec sections, no
-  "round N", "used to", "pre-#NNN". Git and the issues hold history. Tests
-  follow the same rules, and a test's name says what it pins.
-- The dexpace Go styleguide applies, with two exceptions: no "two assertions
-  per function" rule, and no mandatory doc comment on an exported name.
-  Functions are at most 70 lines; non-test files at most 600; one package per
-  concept.
-- `make check` enforces this with golangci-lint (`.golangci.yml`) and
-  `scripts/check-comments.sh` / `scripts/check-filesize.sh`. Packages and files
-  not yet cleaned are listed as exclusions; a round that finishes a package
-  removes its entries, and a new exclusion is never added to get a round green.
-- CI's coverage job fails when a package's statement coverage drops more than
-  one point below `testdata/coverage-baseline.txt`. On a PR it holds only the
-  packages whose own files the PR changed (a drop elsewhere is printed, not
-  failed); a push to main holds every package. A round that moves code
-  between packages regenerates the baseline with
-  `sh scripts/check-coverage.sh --write` and says so in its report, and no
-  round lowers a baseline to get green. The baseline is tied to the Go minor
-  version and platform recorded in its header and is enforced only by that
-  job (`RELEVO_REQUIRE_COVERAGE=1`): elsewhere `make check` prints `skipped`,
-  because another build of the same Go minor can measure a package several
-  points apart. Set `RELEVO_REQUIRE_COVERAGE=1` to compare locally; a Go
-  upgrade on CI's go-stable leg means regenerating it.
+A package comment is 1-3 lines saying what the package owns; a comment says why, never restating the code.
+No history in the code: no issue or PR numbers, no spec sections, no "round N" or "used to" stories; tests follow the same rules.
+Functions hold at most 70 lines, non-test files at most 600, one package per concept; `make check` enforces the rules.
+The full rules live in `docs/style.md`.
 
 ## Merging and CI
 

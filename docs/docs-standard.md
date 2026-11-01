@@ -8,7 +8,7 @@ This standard states where each fact lives and how each page reads. One fact liv
 | --- | --- | --- |
 | `README.md` | What relevo is, requirements, install, first run, quick start, the command surface, and the map of every `docs/` page | `README.md:8-20`, `## Requirements`, `## Install`, `## First run on a clean machine`, `## Quick start`, `## Command surface` |
 | One `docs/` page | One topic: verifying and merging (`runbook.md`), the default sandbox (`env-sandbox.md`), the per-user sandbox (`dev-sandbox.md`), comment and size rules (`style.md`), the layer map (`architecture.md`) | Each page's first lines: `docs/runbook.md:1-7`, `docs/env-sandbox.md:1-11`, `docs/dev-sandbox.md:1-12`, `docs/style.md:1-3`, `docs/architecture.md:1-3` |
-| `CLAUDE.md` | Agent instructions: working with builders, verifying, testing in isolation, conventions, code style, merging | `CLAUDE.md:7-119` |
+| `CLAUDE.md` | Agent instructions: working with builders, verifying, testing in isolation, conventions, code style, merging | `CLAUDE.md:7-96` |
 | Code comments | Why-for-the-reader: the constraint, number source, ordering or hazard the code cannot state | `docs/style.md` "Comments" |
 | `docs/plans/`, `docs/specs/`, `docs/superpowers/` | Local working files, gitignored, never committed | `CLAUDE.md:72-73` |
 
