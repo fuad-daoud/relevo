@@ -100,7 +100,7 @@
   winner's name first. A Claude Code MasterMind instead calls the blocking
   `wait` tool the `relevo mcp` server exposes and ends its turn: the call
   returns with the report in its output (see
-  [Claude Code plugin](../README.md#claude-code-plugin)). The `relevo wait` command is
+  [Claude Code plugin](plugin.md#claude-code-plugin)). The `relevo wait` command is
   the route where there are no MCP tools.
 - `relevo ui [--interval D] [:view [args]]` — the cockpit: `:fleet`, `:rounds [query]`,
   `:round <binding> [N]`, `:chains`, `:stats`, `:candidates`, `:actors`, `:workflows`,
@@ -201,7 +201,7 @@
   manager's restart policy.
 - `relevo mcp [--kind opencode] [--mastermind P]` — run the MCP server over stdio
   for a Claude Code MasterMind, serving the verbs as tools. See
-  [Claude Code plugin](../README.md#claude-code-plugin).
+  [Claude Code plugin](plugin.md#claude-code-plugin).
 - `relevo push [--mastermind P]` — hold this MasterMind's push claim and write its
   round events to the mod on stdout as NDJSON. The holder reads nothing from
   stdin: `relevo push --ack <binding> <seq>` confirms one entry the holder wrote

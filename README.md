@@ -126,7 +126,7 @@ installed plugin this way -- `update` sees the same version and skips it. To
 try one, reinstall: `claude plugin uninstall relevo@relevo && claude plugin
 install relevo@relevo`.
 
-See [Claude Code plugin](#claude-code-plugin) below for how a report reaches
+See [Claude Code plugin](docs/plugin.md#claude-code-plugin) below for how a report reaches
 the MasterMind.
 
 ### Muse
@@ -368,6 +368,18 @@ label is never stored. The same label follows the MasterMind's name in `relevo
 status` and `relevo doctor`. `relevo mastermind rename <id|name> <new-name>`
 gives a MasterMind a name of your own.
 
+## Documentation
+
+- [Command surface](docs/commands.md) — every verb, the round report and the status line.
+- [The cockpit](docs/cockpit.md) — the `relevo ui` terminal interface.
+- [Headless builders](docs/rounds.md) — rounds, gates and running several builders at once.
+- [Remote builders](docs/remote.md) — the server, tenant isolation and the client.
+- [Candidates](docs/candidates.md) — models, policy, actors and permission tiers.
+- [Reader actors](docs/readers.md) — readers, planners, usage and the MasterMind.
+- [The database](docs/database.md) — the record, cloud sync and the daemon.
+- [Lifecycle hooks](docs/hooks.md) — hook events, webhooks and harness setup.
+- [Claude Code plugin](docs/plugin.md) — the MCP server, hooks and slash commands.
+
 ## Status line
 
 `relevo status --line` shows this MasterMind's bindings, one row each (one entry
@@ -416,132 +428,6 @@ the middle is the round's live diff against its baseline. `relevo status --line
 while a round runs. It also carries `text`: the row exactly as the text mode
 renders it, without colour codes, which the OpenCode sidebar prints.
 
-## Running the daemon
-
-`relevo daemon` is the reconciler and the one process that opens `relevo.db`:
-it watches builders, queues reports back to the MasterMind, and flags stalled
-rounds. Every other process reaches the database through the daemon's owner
-socket, so a command that finds no daemon starts one itself:
-
-- `systemctl --user start --no-block relevo` when the user unit is installed;
-- `launchctl kickstart` on macOS when the LaunchAgent is installed;
-- otherwise a `relevo daemon` in a session of its own, appending its output to
-  `$XDG_STATE_HOME/relevo/daemon.log`.
-
-So the CLI works on its own -- you never have to start the daemon first -- and
-reports are delivered even when you run a single verb by hand instead of
-`relevo wait`.
-
-You can just run `relevo daemon` in any spare terminal. To have it start with
-your session:
-
-```
-make service     # systemd user unit on Linux, LaunchAgent on macOS
-make uninstall   # stop it and remove both the binary and the unit
-```
-
-On Linux that installs `dist/relevo.service` to
-`~/.config/systemd/user/relevo.service` and enables it. On macOS it renders
-`dist/com.github.fuad-daoud.relevo.plist.in` into `~/Library/LaunchAgents/` and
-loads it, logging to `~/Library/Logs/relevo.log`.
-
-Only one daemon runs at a time. `relevo daemon` takes an exclusive lock on
-`$XDG_STATE_HOME/relevo/.daemon.lock` and refuses to start if another one holds
-it, so starting a second by hand next to the service is an error rather than
-two reconcilers racing. `relevo daemon --check` exits 0 if a daemon is running
-and 1 if not, printing nothing. `relevo daemon stop` sends SIGTERM to the
-daemon's recorded pid and waits for it to exit, or says so when none is
-running; a service-managed daemon is refused with the service command instead.
-
-## Lifecycle hooks
-
-relevo supports user-defined hook commands dispatched during binding lifecycle
-events. When state changes or a new round begins, `relevo daemon` runs the argv
-lists in the `hooks` section, keyed by event type. Set one with:
-
-```
-relevo config set hooks.state_changed '[["/path/to/script"]]'
-```
-
-A directory of executable scripts dropped into
-`$XDG_CONFIG_HOME/relevo/hooks/<event_type>.d/` (default
-`~/.config/relevo/hooks/<event_type>.d/`) is imported into the `hooks` section
-on the next command and removed; the scripts themselves are never removed.
-
-### Supported events
-
-- `state_changed` — fires whenever a binding transitions between states (`active`, `needs_you`, `broken`, `done`, `paused`).
-- `round_started` — fires whenever a new round starts.
-- `builder_stalled` — fires once when a live local builder's tree and stream or screen have been quiet for `stall_after_ms` (#252, generalised by #135). Clearing the stall fires nothing.
-- `binding_stale` — fires once when a `NEEDS YOU` binding has sat unacted for `stale_after_ms` (#135). Clearing the stamp fires nothing.
-
-### Hook execution & environment
-
-Each hook command is executed asynchronously in a detached process with a 10-second timeout. relevo injects the following environment variables:
-
-- `RELEVO_EVENT`: The event type name (`state_changed`, `round_started`, `builder_stalled`, `binding_stale`).
-- `RELEVO_BINDING`: The name of the binding.
-- `RELEVO_STATE`: The current state of the binding.
-- `RELEVO_OLD_STATE`: The previous state of the binding.
-- `RELEVO_ROUND`: The current round number.
-
-Hook stdout, stderr, and execution failures are recorded in the database's hook run log. `relevo doctor` prints a `hooks` row -- `hooks: N runs, M failed in the last 24h (last: <event>: <err>)`.
-
-Each hook script must have its executable bit set (`chmod +x`). An event with no argv list in the `hooks` section is a silent no-op.
-
-### Webhooks
-
-Beside hook scripts, the policy section's `notify.webhooks` posts lifecycle events straight to a URL -- a Slack incoming webhook, a Discord webhook, or any endpoint that accepts a JSON POST -- with no script required:
-
-```json
-"notify": { "webhooks": [
-  { "url": "https://hooks.slack.com/services/…", "format": "slack", "events": ["state_changed:needs_you", "binding_stale", "builder_stalled"] }
-] }
-```
-
-- `url` (required) -- where the event is POSTed; must be `http://` or `https://`.
-- `events` -- which events reach this webhook; omit (or leave empty) to receive every event. `state_changed:<state>` matches only a `state_changed` event whose new state is `<state>` -- `state_changed:needs_you` is the one most people want.
-- `format` -- `json` (default: the event and its rendered text as a JSON object), `slack` (`{"text": ...}`), or `discord` (`{"content": ...}`).
-
-One sentence per event name, for a webhook filter:
-
-- `state_changed` -- a binding transitioned between states; filter to one target state with `state_changed:<state>`.
-- `round_started` -- a new round began.
-- `fork_created` -- a new binding was branched from an earlier round of an existing binding.
-- `builder_stalled` -- a live headless builder's stream went quiet for `stall_after_ms`.
-- `binding_stale` -- a NEEDS YOU binding sat unacted for `stale_after_ms`.
-
-Each matching webhook POSTs in its own goroutine with a 5-second timeout and never blocks a daemon tick. A failure -- a non-2xx response or a transport error -- is logged to the hook run log with the URL's host only, never the full URL, since a webhook URL is a secret. There are no retries and no queue: a webhook is best-effort, exactly like a hook script.
-
-## Setting up your agent harnesses
-
-A harness needs nothing installed beyond its own binary on `PATH` and the agent
-definitions relevo installs (`relevo config agents`). relevo starts each builder
-as a non-interactive process and reads the round from the harness's own stream,
-so there is no lifecycle hook to install for it.
-
-### opencode permission allowlist
-
-relevo stages prompts and reports under `~/.local/state/relevo/<binding>/`, outside
-the repo the builder is working in, so a fresh opencode builder blocks on an
-"Access external directory" dialog on its first round. To skip it entirely, add
-this to `~/.config/opencode/opencode.jsonc`:
-
-```jsonc
-"permission": {
-  "external_directory": {
-    "/home/you/.local/state/relevo/*": "allow",
-    "/home/you/.local/state/relevo/**": "allow"
-  }
-}
-```
-
-Substitute your real home directory: opencode does not expand `~` or `$HOME`
-in these patterns. Claude builders (`claude/anthropic/sonnet`) have their own permission model
-and are not covered by that entry.
-
-relevo doctor warns when this entry is missing (row external_directory under opencode).
-
 ## Platform support
 
 **Linux and macOS.** Both are exercised in CI, on the Go 1.25 floor and on
@@ -552,86 +438,6 @@ Windows is not supported. State locking is behind a build tag
 harnesses and process supervision relevo relies on are unix-shaped. The tree
 still cross-compiles for `windows/amd64` (CI checks it), and relevo will refuse
 at runtime with a clear error rather than running without a state lock.
-
-## Claude Code plugin
-
-The relevo plugin gives a Claude Code MasterMind two things: the `relevo mcp` MCP
-server, which exposes `status`, `send`, `wait`, `done`, `show` and `gate` as tools
-(`--kind opencode` serves the five without `wait`), and
-a `SessionStart` hook that runs `relevo mastermind init`. The MCP server, the
-hooks and the slash commands below all run through tiny scripts under
-`${CLAUDE_PLUGIN_ROOT}/scripts/` that exec `relevo` from `PATH`; without it the
-hooks stay silent, and the MCP server and the commands print one install hint.
-The hook exports `RELEVO_MASTERMIND` and tells the model its MasterMind name.
-Install it once per machine:
-
-    /plugin marketplace add fuad-daoud/relevo
-    /plugin install relevo@relevo
-
-The plugin also carries slash commands over relevo's verbs:
-
-- `/relevo:status [--name <binding>] [--all]` -- the bindings, round and state.
-- `/relevo:show [<binding>] [--round N] [--diff|--drift|--log|--report|--prompt|--transcript]` -- one round's prompt, report, diff, drift, log or transcript, already fetched.
-- `/relevo:enable` -- this session answers the consent question yes.
-- `/relevo:enable-repo` -- this repository answers yes from now on.
-- `/relevo:disable` -- this session answers no.
-- `/relevo:disable-repo` -- never in this repository.
-- `/relevo:reset` -- ask the consent question again in this repository and this session.
-
-The plugin also ships a `planner-loop` skill that walks the send → wait → read the report → verify with the project's check → done loop.
-
-Then launch Claude Code normally:
-
-    claude --agent architect --model opus
-
-**The `wait` tool covers sessions without a holder.** After each `relevo send`, the MasterMind
-calls
-
-    wait(name: "<n>", timeout: "<budget>")
-
-and ends its turn. The call blocks until the round closes. Where no push holder
-runs, its output is the report (or the reason the round stopped); where the
-mod already delivered the report, its output is only the outcome line
-("delivered by the mod"). The `relevo mcp` send result
-points at that tool for the binding, carrying the round's budget, so the model
-does not have to remember it. Act on the wait's output
-after every return except `still-open`; on a timeout, run `relevo status --name
-<n>` and wait again if the round is still running.
-
-**Push is the Claude Code default where the mod loads.** A `relevo push` holder
-writes reports, consult answers and edge artifacts to the session's mod as
-NDJSON the moment the daemon has them. The session's mod starts the holder and
-acks each line with `relevo push --ack <binding> <seq>`, which confirms that
-entry and exits; the holder sees the confirm and sends the next line, so by the
-time the `wait` tool returns its outcome line the report is already in the
-session. Meanwhile the status line under the prompt keeps the bindings, round
-and state in view (see [Status line](#status-line)). Without a holder -- the mod
-not loaded, another harness, a session where no MasterMind resolved -- reports
-arrive through the `wait` tool above instead. `relevo help --json push`
-documents both routes of the verb.
-
-**How reports arrive.** relevo identifies the MasterMind session itself -- the
-plugin's hook registers it, and `relevo mastermind list` shows the records -- so no
-verb has to guess who is calling. A report then reaches the MasterMind by exactly
-one of four routes: the push holder (the Claude Code default where the mod
-loads), the `wait` tool (where no holder runs), a deliverer for a harness
-that has one (opencode, agy), or
-`relevo wait` by hand. Nothing is ever typed into a terminal.
-
-An agy MasterMind runs `relevo mastermind init` once inside agy, with no flags: relevo
-detects the session from agy's own environment, so nothing has to be exported by
-hand. Every relevo command that MasterMind runs refreshes the session's local
-agentapi credentials, which relevo keeps 0600 under its state directory and never
-prints. A report relevo pushes through those credentials wakes the idle agy
-session, so an agy MasterMind is woken by a report rather than polling for it --
-and that wake-up costs one turn of the agy session.
-
-## Design
-
-[`docs/design.md`](docs/design.md) is the architecture document written before
-relevo was built. It explains why the CLI and the daemon are split and what was
-deliberately left out. It is a historical record, not maintained against the
-code.
 
 ## Contributing
 

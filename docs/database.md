@@ -54,3 +54,40 @@ machines share the same bindings. It is off until joined:
 `relevo db sync status` shows the exchange, and `push` and `pull` drive each
 half by hand. `relevo help --json db sync` lists every verb (`enable`,
 `disable`, `retry`, `status`, `push`, `pull`, `reconcile`, `unlock`, `invite`).
+
+## Running the daemon
+
+`relevo daemon` is the reconciler and the one process that opens `relevo.db`:
+it watches builders, queues reports back to the MasterMind, and flags stalled
+rounds. Every other process reaches the database through the daemon's owner
+socket, so a command that finds no daemon starts one itself:
+
+- `systemctl --user start --no-block relevo` when the user unit is installed;
+- `launchctl kickstart` on macOS when the LaunchAgent is installed;
+- otherwise a `relevo daemon` in a session of its own, appending its output to
+  `$XDG_STATE_HOME/relevo/daemon.log`.
+
+So the CLI works on its own -- you never have to start the daemon first -- and
+reports are delivered even when you run a single verb by hand instead of
+`relevo wait`.
+
+You can just run `relevo daemon` in any spare terminal. To have it start with
+your session:
+
+```
+make service     # systemd user unit on Linux, LaunchAgent on macOS
+make uninstall   # stop it and remove both the binary and the unit
+```
+
+On Linux that installs `dist/relevo.service` to
+`~/.config/systemd/user/relevo.service` and enables it. On macOS it renders
+`dist/com.github.fuad-daoud.relevo.plist.in` into `~/Library/LaunchAgents/` and
+loads it, logging to `~/Library/Logs/relevo.log`.
+
+Only one daemon runs at a time. `relevo daemon` takes an exclusive lock on
+`$XDG_STATE_HOME/relevo/.daemon.lock` and refuses to start if another one holds
+it, so starting a second by hand next to the service is an error rather than
+two reconcilers racing. `relevo daemon --check` exits 0 if a daemon is running
+and 1 if not, printing nothing. `relevo daemon stop` sends SIGTERM to the
+daemon's recorded pid and waits for it to exit, or says so when none is
+running; a service-managed daemon is refused with the service command instead.
