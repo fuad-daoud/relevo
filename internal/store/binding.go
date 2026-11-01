@@ -8,8 +8,7 @@ import (
 
 // Binding shapes name what a binding's actor does to its working tree:
 // ShapeWriter changes the tree, ShapeReader only leaves artifacts. Every
-// record names one; a record written before A5 (format 8 and earlier) has no
-// shape key and reads as a writer, because a reader could not be bound then.
+// record names one; a record with no shape key reads as a writer.
 const (
 	ShapeWriter = "writer"
 	ShapeReader = "reader"
@@ -20,11 +19,9 @@ const (
 // plus the grace.
 //
 // HaltKindBroken names the episode that put a remote binding on NEEDS YOU
-// because the server reported a round whose builder is gone. The server ships a
-// reason for that break when it has one and omits it otherwise, so the halt text
-// is either the server's own account or the fallback this file writes; the kind
-// is what says the halt came from a broken view either way, and an answering
-// view clears it by that and never by the text.
+// because the server reported a round whose builder is gone. The kind is what
+// says the halt came from a broken view either way, and an answering view
+// clears it by that and never by the text.
 //
 // The kind is the episode's identity and the halt text is only the reason a
 // human reads, and the two are kept apart on purpose: a halt written by the
@@ -35,28 +32,22 @@ const (
 	HaltKindBroken      = "broken"
 )
 
-// haltKindFormat is the format that records Binding.RemoteHaltKind. A record
-// written before it has no kind on disk and named its episode in the halt text
-// alone, so that text is read once, on load, to recover the kind it cannot
-// carry. Reading it there and nowhere else is what keeps a halt this binary did
-// not decide from being taken for one it did.
+// haltKindFormat records Binding.RemoteHaltKind. The halt text is read once, on
+// load, to recover the kind, and nowhere else: a halt this binary did not decide
+// must not be taken for one it did.
 const haltKindFormat = 16
 
 // UnreachableHaltMarker is the phrase an unreachable halt's text carries. It
 // names the sentence a binding records, not the episode behind it: the kind is
-// the episode, and this phrase is read only for a record written before
-// haltKindFormat, the one case where the kind is not on disk to be read.
+// the episode, and this phrase is read only when no kind is on disk to be read.
 const UnreachableHaltMarker = "unreachable for"
 
 // BrokenHaltText is the reason a broken-round halt gets when the server named no
-// reason of its own. It lives here, beside the migration that recovers
-// HaltKindBroken from it, so the sentence written and the sentence read are one
-// constant.
+// reason of its own. The sentence written and the sentence read are one constant.
 //
 // The kind, not this text, is what says a halt came from a broken view; this is
-// read only for a record written before haltKindFormat, and only on an exact
-// match, because a server that named its own reason for a break wrote a
-// different sentence and that halt is not this one.
+// read only on an exact match, because a server that named its own reason for a
+// break wrote a different sentence and that halt is not this one.
 const BrokenHaltText = "the server's builder for this round is gone; rebind before sending"
 
 // RepoRef identifies the git repository a binding works in; nil means it could
@@ -66,7 +57,6 @@ type RepoRef struct {
 	CommonDir string `json:"common_dir,omitempty"`
 }
 
-// ForkRef records the source binding and round a fork was cut from.
 type ForkRef struct {
 	Name  string `json:"name"`
 	Round int    `json:"round"`
@@ -85,21 +75,20 @@ type Progress struct {
 	SampledAt time.Time `json:"sampled_at"`
 	Tree      string    `json:"tree,omitempty"`
 	TreeAt    time.Time `json:"tree_at"`
-	// Output is a pre-pane-removal builder's last screen fingerprint; only an
-	// old bind.json carries one.
+	// Output is a pre-pane-removal builder's last screen fingerprint; a record
+	// that drops it carries none.
 	Output   string    `json:"output,omitempty"`
 	OutputAt time.Time `json:"output_at"`
 	// ResumedAt is when relevo last resumed the round's session; it shortens
-	// the exploring threshold. An older relevo that drops it loses only that.
+	// the exploring threshold. A record that drops it loses only that.
 	ResumedAt time.Time `json:"resumed_at,omitempty"`
 	// CPUTicks is the builder's process-tree CPU at the last sample and
-	// CPUTicksAt the last sample where it burned more than the busy floor. An
-	// older relevo that drops them loses only the silence label.
+	// CPUTicksAt the last sample where it burned more than the busy floor. A
+	// record that drops them loses only the silence label.
 	CPUTicks   uint64    `json:"cpu_ticks,omitempty"`
 	CPUTicksAt time.Time `json:"cpu_ticks_at,omitempty"`
 }
 
-// GateRun is the gate process for the CURRENT round while it runs.
 type GateRun struct {
 	PID       int    `json:"pid"`
 	StartedAt int64  `json:"started_at"`
@@ -129,8 +118,8 @@ type CheckRun struct {
 	PID       int   `json:"pid,omitempty"`
 	StartedAt int64 `json:"started_at,omitempty"`
 	Round     int   `json:"round,omitempty"`
-	// Attempt is 0 for the run's first process and 1 for the single re-run
-	// allowed after a daemon restart took the first one with it; never greater.
+	// Attempt is 0 for the run's first process and 1 for its single re-run,
+	// as in GateRun.
 	Attempt    int    `json:"attempt,omitempty"`
 	Result     string `json:"result,omitempty"`
 	ExitCode   int    `json:"exit_code,omitempty"`
@@ -204,8 +193,8 @@ type ServeFacts struct {
 
 // Binding ties one mastermind to one builder over one working tree.
 type Binding struct {
-	// Format is the on-disk format: 0 (a missing key) is format 1, today's
-	// shape; save refuses to overwrite a Format it does not know.
+	// Format is the on-disk format: 0 (a missing key) is format 1; save
+	// refuses to overwrite a Format it does not know.
 	Format int `json:"format,omitempty"`
 
 	// ViewedAt is the binding's .viewed stamp as read from its record: nil
@@ -226,8 +215,8 @@ type Binding struct {
 	// older record decodes to "", which is the tree root as that record
 	// always ran at.
 	Subdir string `json:"subdir,omitempty"`
-	// MasterMind's json key is the historical "planner": bind.json keys are
-	// state already written.
+	// MasterMind's json key is "planner": bind.json keys are state already
+	// written.
 	MasterMind Endpoint `json:"planner"`
 	// MasterMindID names the relevo mastermind record this binding belongs to. A
 	// remote binding carries the client mastermind's id too, even though the
@@ -249,7 +238,7 @@ type Binding struct {
 	Role string `json:"actor"`
 	// Shape is what the runner's actor does to the tree: ShapeWriter changes
 	// it, ShapeReader only leaves artifacts. It is always written; a record
-	// with no shape key (format 8 and earlier) decodes as a writer.
+	// with no shape key decodes as a writer.
 	Shape string `json:"shape"`
 	// Tier "" means harness.
 	Tier      string `json:"tier,omitempty"`
@@ -465,7 +454,7 @@ func (b Binding) WriterRole() string {
 // new keys with the ordinary field rules.
 type bindingAlias Binding
 
-// bindingNewKeys records which A4 keys a record carried, so a legacy key is
+// bindingNewKeys records which new keys a record carried, so a legacy key is
 // only consulted when its replacement is absent: when both are present the new
 // key wins.
 type bindingNewKeys struct {
@@ -477,7 +466,7 @@ type bindingNewKeys struct {
 	RunnerScreenAt     *time.Time `json:"runner_screen_at"`
 }
 
-// bindingLegacyKeys are the pre-A4 spellings of Binding's renamed fields.
+// bindingLegacyKeys are the legacy spellings of Binding's renamed fields.
 type bindingLegacyKeys struct {
 	Builder             *Endpoint  `json:"builder"`
 	BuilderCandidate    *string    `json:"builder_candidate"`
@@ -487,9 +476,9 @@ type bindingLegacyKeys struct {
 	BuilderScreenAt     *time.Time `json:"builder_screen_at"`
 }
 
-// UnmarshalJSON reads a binding record written by this relevo or by one before
-// the A4 rename, mapping the old keys onto the same fields. A record with no
-// actor decodes to the "builder" actor, so readers never see an empty one.
+// UnmarshalJSON reads a binding record, mapping the legacy keys onto the same
+// fields. A record with no actor decodes to the "builder" actor, so readers
+// never see an empty one.
 func (b *Binding) UnmarshalJSON(raw []byte) error {
 	var alias bindingAlias
 	if err := json.Unmarshal(raw, &alias); err != nil {
@@ -526,43 +515,33 @@ func (b *Binding) UnmarshalJSON(raw []byte) error {
 	if out.Role == "" {
 		out.Role = "builder"
 	}
-	// A record with no shape predates A5, when only writers could be bound.
+	// A record with no shape reads as a writer.
 	if out.Shape == "" {
 		out.Shape = ShapeWriter
 	}
-	// A record written before haltKindFormat carries its remote halt episode in
-	// the halt text alone. It is the one place the text is read, and it runs on
-	// the load rather than the save so a binding never polls with the mismatch
-	// the text and the kind disagree about.
+	// A record with no kind carries its remote halt episode in the halt text
+	// alone. The text is read here, on the load rather than the save, so a
+	// binding never polls with the mismatch the text and the kind disagree about.
 	//
 	// Bounded by the format rather than by the key's absence: at this format a
 	// record with no kind is a binding that has no remote halt, and reading
 	// its text would find nothing anyway -- but only because this binary writes
 	// every unreachable halt with the marker and every broken halt with the
-	// fallback, which is the property the two text tests below stop depending on
-	// elsewhere. The format bound is what makes the migration stop mattering once
-	// every record is written at this one.
+	// fallback.
 	//
-	// The two tests are deliberately unlike each other. The unreachable text is a
-	// builder's failure lines, which can quote the marker anywhere, so it is a
-	// containment; the broken text is a fixed sentence this binary writes whole,
-	// so it is an equality -- a server that named its own reason for a break wrote
-	// a different one, and naming that episode is not this migration's to do.
-	// The unreachable case is bounded by the format, because it is a
-	// containment: its text is a builder's failure lines, which can quote the
-	// marker anywhere, so at this format a no-kind record means there is no
-	// remote halt and reading its text would match nothing that is actually an
-	// unreachable halt -- unless a builder quoted the marker in an ordinary
+	// The two tests are deliberately unlike each other: the unreachable text is a
+	// containment, the broken text an equality. The unreachable case is bounded
+	// by the format, because its text is a builder's failure lines, which can
+	// quote the marker anywhere, so at this format a no-kind record means there
+	// is no remote halt and reading its text would match nothing that is actually
+	// an unreachable halt -- unless a builder quoted the marker in an ordinary
 	// failure, which is exactly what must not be named one.
 	//
 	// The broken case is not, because it is an equality: BrokenHaltText is a
 	// fixed sentence this binary writes WHOLE, and it writes it only with the
-	// kind already stamped (grep HaltKindBroken -- every write site sets it), so
-	// a record whose Halt equals that sentence and whose kind is empty can only
-	// be a pre-kind one. That window was real: the format was raised to 16
-	// before the kind was added, so builds in between wrote the broken text at
-	// format 16 with no kind. A server that named its own reason for a break
-	// wrote a different sentence, and naming that episode is not this
+	// kind already stamped, so a record whose Halt equals that sentence and whose
+	// kind is empty can only be a pre-kind one. A server that named its own reason
+	// for a break wrote a different sentence, and naming that episode is not this
 	// migration's to do.
 	if out.Format < haltKindFormat && out.RemoteHaltKind == "" && strings.Contains(out.Halt, UnreachableHaltMarker) {
 		out.RemoteHaltKind = HaltKindUnreachable

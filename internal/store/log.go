@@ -34,13 +34,11 @@ type Kind string
 const (
 	KindPrompt Kind = "prompt"
 	KindReport Kind = "report"
-	// KindQuestion has no writer left: nothing has appended a to_planner
-	// question entry since the round vocabulary settled, and no code path
-	// reaches one. It stays because the log is append-only state on disk --
-	// a log.jsonl written before that still carries question entries, and
-	// every reader below (view.WaitingOn, the statusline's payload phase, the
-	// report tab) has to decode and classify them rather than drop a
-	// persisted record on the floor. Removing the constant would not remove
+	// KindQuestion has no writer left: no code path appends one. It stays because
+	// the log is append-only state on disk -- an old log.jsonl still carries
+	// question entries, and every reader below (view.WaitingOn, the statusline's
+	// payload phase, the report tab) has to decode and classify them rather than
+	// drop a persisted record on the floor. Removing the constant would not remove
 	// those entries; it would only stop them being named.
 	KindQuestion Kind = "question"
 	KindAnswer   Kind = "answer"
@@ -122,9 +120,7 @@ func HasKind(entries []LogEntry, round int, dir Direction, kind Kind) bool {
 // It lives here because three readers need it and none of them can import each
 // other: the daemon and the served view decide whether a round is in flight,
 // `stop` decides whether there is something to stop, and the history ingest
-// decides what a round's outcome was. When each spelled the condition its own
-// way they disagreed, and the disagreement showed a human a closed round as
-// open (so `stop` refused to end it) or an open one as closed.
+// decides what a round's outcome was.
 //
 // The log is the whole answer, not the binding's state word: a round that has a
 // prompt and no report is open whatever the state says, so a halt, a pause or a
@@ -206,8 +202,8 @@ type LogEntry struct {
 // logEntryAlias is LogEntry without its methods, for the ordinary decode.
 type logEntryAlias LogEntry
 
-// UnmarshalJSON reads a log entry written by this relevo or by one before the
-// A4 rename: the old direction value "to_builder" maps to DirToBuilder, and a
+// UnmarshalJSON reads a log entry, mapping the legacy keys onto the same
+// fields: the old direction value "to_builder" maps to DirToBuilder, and a
 // legacy "builder_session" key maps to BuilderSession. The new "runner_session"
 // key wins when both are present.
 func (e *LogEntry) UnmarshalJSON(raw []byte) error {
@@ -320,7 +316,8 @@ func (s *Store) ConfirmIndex(name string, idx int, route string) error {
 }
 
 // AdmitIndex marks one pending mastermind entry as admitted by a push route,
-// under the same state lock ConfirmIndex takes. Admit and confirm must exclude
+// under the same state lock ConfirmIndex takes: the route's own queue holds the
+// payload and no reader may claim it again. Admit and confirm must exclude
 // each other, because a reader's claim and a push route's admit are answers to
 // the one question "may I deliver this entry?".
 func (s *Store) AdmitIndex(name string, idx int) error {
@@ -363,26 +360,26 @@ func (t *Tx) ConfirmIndex(name string, idx int, route string) error {
 	return t.s.confirmIndex(name, idx, route)
 }
 
-// AdmitIndex marks the idx'th event in Seq order as admitted by a push route:
-// the route's own queue holds the payload and no reader may claim it again.
+// AdmitIndex marks the idx'th event admitted by a push route, as in
+// Store.AdmitIndex.
 func (t *Tx) AdmitIndex(name string, idx int) error {
 	return t.s.admitIndex(name, idx)
 }
 
-// ClearAdmitIndex drops the idx'th event's admit stamp: the payload is pending
-// and claimable again.
+// ClearAdmitIndex drops the idx'th event's admit stamp, as in
+// Store.ClearAdmitIndex.
 func (t *Tx) ClearAdmitIndex(name string, idx int) error {
 	return t.s.clearAdmitIndex(name, idx)
 }
 
-// ClaimableForMasterMind reads the oldest mastermind payload no reader has
-// claimed and no push route has admitted, under the held lock.
+// ClaimableForMasterMind is PendingForMasterMind narrowed to the claimable: no
+// reader has claimed the payload and no push route has admitted it.
 func (t *Tx) ClaimableForMasterMind(name string) (LogEntry, int, bool, error) {
 	return t.s.claimableForMasterMind(name)
 }
 
-// ClaimableForMasterMindThrough reads every claimable mastermind payload whose
-// round is at most round -- every round when round <= 0 -- in log order.
+// ClaimableForMasterMindThrough is ClaimableForMasterMind's through-round
+// sibling, as in PendingForMasterMindThrough.
 func (t *Tx) ClaimableForMasterMindThrough(name string, round int) ([]PendingEntry, error) {
 	return t.s.claimableForMasterMindThrough(name, round)
 }

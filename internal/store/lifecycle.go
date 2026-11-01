@@ -394,7 +394,7 @@ func (s *Store) chainMemberNames(name string) ([]string, error) {
 }
 
 // isWriter reports whether b's actor changes its tree. An empty shape is a
-// writer: every record written before A5 had no shape key.
+// writer: a record with no shape key reads as one.
 func isWriter(b Binding) bool {
 	return b.Shape != ShapeReader
 }

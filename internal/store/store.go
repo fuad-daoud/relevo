@@ -170,7 +170,6 @@ func (e *invalid) Error() string { return e.msg }
 
 func (e *invalid) Unwrap() error { return e.class }
 
-// invalidOf builds a validation error of a class from a format and arguments.
 func invalidOf(class error, format string, args ...any) error {
 	return &invalid{msg: fmt.Sprintf(format, args...), class: class}
 }
