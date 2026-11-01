@@ -17,9 +17,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/text"
 )
 
-// worktreeOutcome is what a teardown attempt decided about one binding's
-// relevo-created worktree. Exactly one of Removed, Kept, Gone is set, or none
-// when the binding never had a worktree.
+// worktreeOutcome is what a teardown attempt decided. Exactly one of
+// Removed, Kept, Gone is set, or none when the binding never had a worktree.
 type worktreeOutcome struct {
 	Removed string // worktree relevo removed, or ""
 	Kept    string // worktree relevo left in place, or ""
@@ -27,19 +26,15 @@ type worktreeOutcome struct {
 	Gone    string // recorded worktree whose directory no longer exists, or ""
 }
 
-// worktreeTeardown decides what to do with a binding's relevo-created worktree
-// and reports what it did. It never returns an error: failing to remove a
-// directory must not fail the unbind or the sweep that asked for it.
+// worktreeTeardown decides what to do with a binding's relevo-created
+// worktree and reports what it did. It never returns an error: failing to
+// remove a directory must not fail the unbind or the sweep that asked for it.
 //
-// Rules, in order:
-//  1. b.Worktree == ""        -> nothing to do (zero outcome)
-//  2. rt.Git == nil           -> keep, reason "git unavailable"
-//  3. stat(worktree) is ErrNotExist -> gone (the directory was already removed)
-//  4. the dirty check errors    -> keep, reason naming the FAILED CHECK: "dirty check failed: " + brief(err)
-//  5. the tree is dirty         -> keep, reason "uncommitted changes"
-//  6. otherwise                 -> remove; on failure keep with the git error brief(err)
+// The rules run in order, from "no worktree" to remove-when-clean; a dirty
+// tree and a failed check are kept with the reason.
 //
-// worktreeTeardown never removes a branch; GC removes a relevo-created branch once it is on a remote-tracking ref (refclean.go).
+// worktreeTeardown never removes a branch; GC removes a relevo-created one
+// once it is on a remote-tracking ref.
 func worktreeTeardown(ctx context.Context, rt Runtime, b store.Binding, dryRun bool) worktreeOutcome {
 	if b.Worktree == "" {
 		return worktreeOutcome{}
@@ -76,8 +71,7 @@ func worktreeTeardown(ctx context.Context, rt Runtime, b store.Binding, dryRun b
 
 // UnbindResult is what unbinding actually did. Exactly one of WorktreeRemoved,
 // WorktreeKept, WorktreeGone is set, or none when the binding never had a
-// worktree. A kept worktree is the important case: it means the fork's tree
-// still holds uncommitted work, so relevo left it alone and the human decides.
+// worktree. A kept worktree still holds uncommitted work; the human decides.
 type UnbindResult struct {
 	Archived        bool   // true when the binding was archived rather than deleted
 	WorktreeRemoved string // worktree relevo removed, or ""
@@ -104,8 +98,8 @@ func keptRefusal(name string, res UnbindResult) error {
 }
 
 // askServerUnbind tells a remote binding's server to release it before
-// anything local changes. A 404 means the server already considers it gone,
-// which is not a reason to refuse the local unbind.
+// anything local changes. A 404 is not a refusal: the server already
+// considers it gone.
 func askServerUnbind(ctx context.Context, rt Runtime, b store.Binding, force bool) error {
 	if rt.Remote == nil {
 		return ErrRemoteUnavailable
@@ -131,10 +125,10 @@ func askServerUnbind(ctx context.Context, rt Runtime, b store.Binding, force boo
 	return fmt.Errorf("%s: %w", b.Builder.Server, uerr)
 }
 
-// reapSessions deletes the builder's session and everything already abandoned,
-// directly: the record is about to go, so nothing is saved and a failed delete
-// only warns. Deletion is safe only once the process is really stopped -- a
-// live one still holds its session.
+// reapSessions deletes the builder's session and everything already
+// abandoned. The record is about to go, so nothing is saved and a failed
+// delete only warns; only a stopped process is safe to reap, since a live
+// one still holds its session.
 func reapSessions(ctx context.Context, rt Runtime, b store.Binding, res UnbindResult) {
 	if res.ProcessStopped != 0 && res.ProcessErr == "" {
 		b = abandonSession(b)
@@ -154,16 +148,11 @@ func Unbind(ctx context.Context, rt Runtime, name string, archive bool) (UnbindR
 	return UnbindWith(ctx, rt, name, archive, false)
 }
 
-// UnbindWith clears away one binding's state, leaving its builder process and
-// worktree release to the paths below.
-//
-// When archive is set the binding's record is archived rather than deleted,
-// which frees the name for a fresh bind while its log and every round file
-// survive as rows -- the record of what the mastermind actually told the builder.
-// If relevo created a git worktree for this binding, UnbindWith removes it provided
-// it is clean, never removing the branch. When the worktree is kept the binding
-// stays, resumable, and the result comes back with ErrWorktreeKept; force
-// archives or deletes it anyway.
+// UnbindWith clears away one binding's state. When archive is set the record
+// is archived rather than deleted, freeing the name while its log and round
+// files survive. A relevo-created worktree is removed when clean, never the
+// branch; a kept worktree keeps the binding resumable with ErrWorktreeKept,
+// and force archives or deletes it anyway.
 func UnbindWith(ctx context.Context, rt Runtime, name string, archive, force bool) (UnbindResult, error) {
 	b, err := rt.Store.Load(name)
 	if err != nil {
@@ -171,9 +160,8 @@ func UnbindWith(ctx context.Context, rt Runtime, name string, archive, force boo
 	}
 
 	// A running chain owns its member's rounds: unbinding one would steal the
-	// record the chain's next send needs, and the chain has no way to resume
-	// it. The refusal is read-only and sits before every side effect below --
-	// a late one would stop a process and then keep the record.
+	// record the chain's next send needs. The refusal sits before every side
+	// effect: a late one would stop a process and then keep the record.
 	if err := chain.RefuseRunningMemberStore(rt.Store, name); err != nil {
 		return UnbindResult{}, err
 	}
@@ -186,9 +174,8 @@ func UnbindWith(ctx context.Context, rt Runtime, name string, archive, force boo
 
 	var res UnbindResult
 	// Stop a live headless round before touching its tree: a builder still
-	// writing would dirty the worktree relevo is about to judge clean or not.
-	// A failed stop is reported, never fatal -- the unbind is the human's
-	// decision and it proceeds.
+	// writing would dirty the worktree under judgment. A failed stop is
+	// reported, never fatal.
 	if pid, err := stopProcess(ctx, rt, b, "unbind"); err != nil {
 		res.ProcessErr = fmt.Sprintf("pid %d: %v", pid, err)
 	} else if pid != 0 {

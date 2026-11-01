@@ -17,16 +17,15 @@ import (
 )
 
 // resume re-points an existing binding at the calling mastermind, and -- when
-// the caller supplied a builder, or asked for one with Rebind -- at a new builder as well.
-// The binding must exist, and when a builder is supplied the current one must
-// not be alive: rebinding over a working builder would abandon a round
-// mid-flight.
+// the caller supplied a builder, or asked for one with Rebind -- at a new
+// builder as well. The current builder must not be alive: rebinding over a
+// working builder would abandon a round mid-flight.
 //
 // A rebind of a DONE binding is refused; a mastermind-only resume of one is
 // allowed and reactivates it. RoundClosedTree is cleared with a new builder:
 // a tree that changed hands says nothing about the builder that left it.
-// Round, CWD, Name, RoundBaselineTree and the round log are untouched, and so
-// is the binding's mode: a remote binding stays remote, a local one headless.
+// Round, CWD, Name and the round log are untouched, and so is the binding's
+// mode: a remote binding stays remote, a local one headless.
 //
 // Errors: store.ErrNotFound; ErrBuilderAlive; ErrRunnerUnavailable; a wrapped
 // git or remote error.
@@ -43,9 +42,8 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		}
 	}
 
-	// A remote binding has no pane and no worktree: its mode is fixed at
-	// creation (like a headless binding's), so none of the pane/worktree
-	// logic below applies to it.
+	// A remote binding's mode is fixed at creation, so none of the
+	// pane/worktree logic below applies to it.
 	if b.Builder.Remote() {
 		return resumeRemote(ctx, rt, opts, mastermindEP, b)
 	}
@@ -80,10 +78,9 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		if rt.Git == nil {
 			return store.Binding{}, resolve.Resolution{}, errors.New("git unavailable; cannot restore worktree")
 		}
-		// An add binding's CWD is the worktree itself (add.go), which is the
-		// directory that is gone; the repository it was cut from is not
-		// recorded. The caller's cwd is where add ran, so restore from there
-		// once the branch is confirmed to live in it.
+		// An add binding's CWD is the worktree itself, which is gone, and the
+		// repository it was cut from is not recorded: restore from the
+		// caller's cwd once the branch is confirmed to live in it.
 		exists, err := rt.Git.BranchExists(ctx, opts.CWD, b.Branch)
 		if err != nil {
 			return store.Binding{}, resolve.Resolution{}, fmt.Errorf("restore worktree: %w", err)
@@ -116,9 +113,8 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		if b.State == store.StateDone && !restore {
 			return store.Binding{}, resolve.Resolution{}, fmt.Errorf("binding %q is done: `relevo bind` to start fresh", opts.Name)
 		}
-		// A binding's mode is fixed at creation. A local builder is a
-		// process, so ask the Runner whether its PID is still alive: a PID
-		// has no "moved pane" ambiguity.
+		// A local builder is a process, so aliveness is asked of the Runner:
+		// a PID has no "moved pane" ambiguity.
 		if rt.Runner == nil {
 			return store.Binding{}, resolve.Resolution{}, spawn.ErrRunnerUnavailable
 		}
@@ -172,10 +168,8 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 			return fmt.Errorf("binding %q is done: `relevo bind` to start fresh", opts.Name)
 		}
 
-		// RepoRef and Feature are deliberately left untouched here (beyond
-		// the explicit Feature/Ticket overrides below): a resume re-points
-		// endpoints, it does not rediscover facts a fresh bind already
-		// captured.
+		// RepoRef and Feature stay untouched beyond the overrides below: a
+		// resume re-points endpoints, it does not rediscover facts.
 		b.MasterMind = mastermindEP
 		if opts.MasterMindID != "" {
 			b.MasterMindID = opts.MasterMindID
@@ -189,28 +183,22 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 			b.Ticket = ticket
 		}
 		wasPaused := b.State == store.StatePaused
-		// A resume is a fresh attempt, so the halt the previous one left goes
-		// with it: every field of it, or the per-round notification key dedups
-		// the next halt of this round against a reason nobody is looking at any
-		// more. OwedHalt is left alone, as the other human paths leave it.
+		// A resume is a fresh attempt, so the previous halt goes with it: the
+		// per-round key would dedup the next halt against a reason nobody is
+		// looking at. OwedHalt is left alone.
 		b = ClearHaltFields(b)
 		b.State = store.StateActive
-		// A resume or a rebind is a fresh attempt, so the previous round's
-		// progress clock, stall, exploring and stale stamps say nothing about
-		// it.
+		// A resume is a fresh attempt, so the previous round's progress,
+		// stall, exploring and stale stamps go with it.
 		b.StalledSince = time.Time{}
 		b.Progress = nil
 		b.ExploringSince = time.Time{}
 		b.StaleSince = time.Time{}
 		if rebinding {
-			// A rebind can land mid-round: resume refuses only while the
-			// current process is alive (ErrBuilderAlive above), so an open
-			// round whose process exited rebinds here with
-			// StreamRound == Round. The round's stream cursor and its
-			// segment list then move onto the replacement, so the drain
-			// keeps rendering the same file from where it left off. Between
-			// rounds (StreamRound != Round) there is nothing to carry and
-			// the fresh endpoint stands.
+			// A rebind can land mid-round with StreamRound == Round: the
+			// stream cursor and segment list move onto the replacement, so
+			// the drain keeps rendering the same file from where it left
+			// off. Between rounds there is nothing to carry.
 			if b.Builder.StreamRound == b.Round {
 				b.Builder = carryStream(b.Builder, builder)
 			} else {
@@ -220,9 +208,9 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 			b.BuilderAccount = res.Account
 			b.BuilderPinned = res.How == resolve.HowExplicit
 			b = ClearHaltFields(b)
-			// The owed notification goes with the halt: the replacement builder
-			// is a fresh attempt, and an entry the replaced round still owed
-			// would be notified as a halt of a round nobody is running.
+			// The owed notification goes with the halt: the replacement is a
+			// fresh attempt, and the old entry would notify a halt of a round
+			// nobody is running.
 			b.OwedHalt = nil
 			b.BuilderScreen = ""
 			b.BuilderScreenAt = time.Time{}
@@ -242,8 +230,8 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 			}
 		}
 
-		// The resume entry is appended after the pick so it is the log's
-		// last word on the binding: it is the event, the pick is a detail.
+		// The resume entry is appended after the pick, so it is the log's
+		// last word: the resume is the event, the pick a detail.
 		if wasPaused {
 			if err := tx.AppendLog(opts.Name, store.LogEntry{
 				Round:     b.Round,
@@ -267,23 +255,20 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 }
 
 // resumeRemote is resume's remote-binding path. A remote binding's mode is
-// fixed at creation, so this never adopts a pane or spawns one: it only
-// forwards to the server and, once the server agrees, repoints the mastermind
-// and reactivates the binding locally.
+// fixed at creation: it never adopts a pane or spawns one, only forwards to
+// the server and repoints the mastermind once the server agrees.
 //
-// Errors: "cannot change a remote builder; unbind and add" when the caller
-// asked to change the builder (--rebind, --candidate, or --headless); the
-// label refusal when --feature, --no-feature or --ticket is set -- no server
-// endpoint could change a stored label, and a mirror-only change would
-// recreate the laptop/server disagreement; ErrRemoteUnavailable; a wrapped
-// server error; a wrapped git error; or a message naming the binding when
-// its branch is gone.
+// Errors: "cannot change a remote builder; unbind and add" on --rebind,
+// --candidate or --headless; the label refusal on --feature, --no-feature or
+// --ticket, which has no server endpoint and would leave the mirror
+// disagreeing; ErrRemoteUnavailable; a wrapped server or git error; a message
+// naming the binding when its branch is gone.
 func resumeRemote(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP store.Endpoint, b store.Binding) (store.Binding, resolve.Resolution, error) {
 	if opts.Rebind || opts.Candidate != "" || opts.Headless {
 		return store.Binding{}, resolve.Resolution{}, refusal.BadInputf("cannot change a remote builder; unbind and add")
 	}
-	// --feature/--no-feature/--ticket have no server endpoint to reach,
-	// so a remote resume refuses them rather than changing only the mirror.
+	// --feature/--no-feature/--ticket have no server endpoint, so a remote
+	// resume refuses them rather than changing only the mirror.
 	if opts.Feature != "" || opts.NoFeature || opts.Ticket != "" {
 		return store.Binding{}, resolve.Resolution{}, refusal.BadInputf("cannot change a remote binding's feature or ticket; unbind and add")
 	}

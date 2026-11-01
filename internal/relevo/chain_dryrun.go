@@ -13,9 +13,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
-// DryRunDoc is what a dry run resolved: the workflow it read, the params it
-// applied, the step graph from start, the members it would create and every
-// validation problem found. Rendering it starts nothing and writes nothing.
+// DryRunDoc is what a dry run resolved: workflow, params, step graph,
+// members and every validation problem. Rendering it starts nothing and
+// writes nothing.
 type DryRunDoc struct {
 	Workflow string
 	Origin   string
@@ -24,20 +24,15 @@ type DryRunDoc struct {
 	Members  []DryRunMember
 	// Cap is the longest chain name the members allow.
 	Cap int
-	// Problems is every validation failure, one line each, in the order the
-	// validator reported them.
+	// Problems is every validation failure, one line each, in validator order.
 	Problems []string
 }
 
-// DryRunParam is one effective workflow param: its name and rendered value.
 type DryRunParam struct {
 	Name  string
 	Value string
 }
 
-// DryRunStep is one step of the resolved graph: its kind, the actor a run runs
-// and where that actor's placement puts it, every reference it carries and
-// every edge out of it.
 type DryRunStep struct {
 	ID        string
 	Kind      string
@@ -48,30 +43,23 @@ type DryRunStep struct {
 	Edges     []string
 }
 
-// DryRunMember is one binding the chain would create: its name, the actor it
-// runs and whether that actor writes.
 type DryRunMember struct {
 	Name   string
 	Actor  string
 	Writer bool
 }
 
-// ChainDryRun resolves a chain's workflow without starting anything: it reads
-// the workflow, applies the params, validates it against the actors present
-// and the inputs given, and names the members it would create. A workflow it
-// cannot resolve or whose params it cannot apply is an error; a workflow that
-// does not validate comes back in the document, so a caller prints every
-// problem at once rather than only the first.
+// ChainDryRun resolves a chain's workflow without starting anything. A
+// workflow that does not validate comes back in the document, so a caller
+// prints every problem at once rather than only the first.
 func ChainDryRun(ctx context.Context, rt Runtime, opts ChainOptions) (DryRunDoc, error) {
 	def, origin, err := chainDryRunWorkflow(rt, opts.Workflow)
 	if err != nil {
 		return DryRunDoc{}, err
 	}
-	// The chain's repository is resolved before the params are computed, on
-	// the same terms a start uses: the gate param reads the repository's own
-	// settings, and a directory that is not a repository reads as "no
-	// settings" rather than a failure -- a dry run starts nothing, so it must
-	// not fail on a tree git cannot identify either.
+	// The repository is resolved before the params, on a start's terms: a
+	// directory git cannot identify reads as "no settings", since a dry run
+	// starts nothing and must not fail on it.
 	repo, err := os.Getwd()
 	if err != nil {
 		return DryRunDoc{}, fmt.Errorf("resolve working directory: %w", err)
@@ -117,9 +105,7 @@ func chainDryRunWorkflow(rt Runtime, name string) (workflow.Definition, string, 
 	return resolve.ResolveWorkflow(rt.Config, name)
 }
 
-// dryRunEnv is the workflow environment a dry run validates against: the actors
-// present, the inputs the invocation gives, the shipped seed names and a
-// read-only resolver for a fork's children.
+// dryRunEnv is the workflow environment a dry run validates against.
 func dryRunEnv(rt Runtime, opts ChainOptions) workflow.Env {
 	return workflow.Env{
 		Actors: rt.RoleRegistry().WorkflowActors(),
@@ -132,8 +118,7 @@ func dryRunEnv(rt Runtime, opts ChainOptions) workflow.Env {
 	}
 }
 
-// dryRunParams is the workflow's effective params, sorted by name and rendered
-// as the run would read them.
+// dryRunParams is the workflow's effective params, sorted by name.
 func dryRunParams(def workflow.Definition) []DryRunParam {
 	names := make([]string, 0, len(def.Params))
 	for name := range def.Params {
@@ -147,8 +132,7 @@ func dryRunParams(def workflow.Definition) []DryRunParam {
 	return out
 }
 
-// dryRunSteps lists every step of the resolved graph, sorted by id, with the
-// edges, references, actor and placement a reviewer needs to read it.
+// dryRunSteps lists every step of the resolved graph, sorted by id.
 func dryRunSteps(def workflow.Definition, actors map[string]workflow.ActorInfo, rt Runtime, opts ChainOptions) []DryRunStep {
 	ids := make([]string, 0, len(def.Steps))
 	for id := range def.Steps {
@@ -176,7 +160,6 @@ func dryRunSteps(def workflow.Definition, actors map[string]workflow.ActorInfo, 
 	return out
 }
 
-// dryRunForkChildren names the children a fork step would create.
 func dryRunForkChildren(name string, f *workflow.Fork, opts ChainOptions) []string {
 	if name == "" {
 		name = "<chain>"
@@ -194,8 +177,7 @@ func dryRunForkChildren(name string, f *workflow.Fork, opts ChainOptions) []stri
 	return out
 }
 
-// dryRunRefs returns the references one step's templates carry, deduped and
-// sorted, in the source form a reviewer recognises.
+// dryRunRefs returns one step's references, deduped and sorted, in source form.
 func dryRunRefs(step workflow.Step) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -226,8 +208,7 @@ func dryRunRefs(step workflow.Step) []string {
 	return out
 }
 
-// dryRunEdges returns a step's edges as "match=target", its on entries in
-// sorted match order and a budget's then edge last.
+// dryRunEdges returns a step's edges as "match=target", budget's then last.
 func dryRunEdges(step workflow.Step) []string {
 	keys := make([]string, 0, len(step.On))
 	for key := range step.On {
@@ -244,8 +225,6 @@ func dryRunEdges(step workflow.Step) []string {
 	return out
 }
 
-// dryRunTarget renders a target: the step it names, done, or a halt with its
-// reason.
 func dryRunTarget(t workflow.Target) string {
 	switch t.Kind {
 	case workflow.TargetStep:
@@ -257,8 +236,8 @@ func dryRunTarget(t workflow.Target) string {
 	}
 }
 
-// dryRunPlacement names where an actor's placement puts its round: its
-// preferred entries joined, or local when the actor names none.
+// dryRunPlacement names where an actor's placement puts its round, or local
+// when it names none.
 func dryRunPlacement(rt Runtime, actor string) string {
 	if r, ok := rt.RoleRegistry().Role(actor); ok && len(r.Placement) > 0 {
 		return strings.Join(r.Placement, ",")
@@ -266,10 +245,8 @@ func dryRunPlacement(rt Runtime, actor string) string {
 	return resolve.LocalPlacement
 }
 
-// RenderChainDryRun renders a dry-run document as text: the workflow and its
-// origin, the effective params, the step graph, the members and the chain-name
-// cap, and every validation problem. The name carries "Chain" because the send
-// verb's own RenderDryRun already owns the plain name.
+// RenderChainDryRun renders a dry-run document as text. The name carries
+// "Chain" because the send verb's RenderDryRun owns the plain name.
 func RenderChainDryRun(doc DryRunDoc) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "workflow: %s (%s)\n", doc.Workflow, doc.Origin)

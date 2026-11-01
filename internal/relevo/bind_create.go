@@ -49,11 +49,10 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		}
 	}
 
-	// Refuse a name that is already taken, before anything is spawned. Save
-	// would overwrite only the binding record: the round log and the NNN-*
-	// files survive, so a fresh round 1 would collide with the previous
-	// session's round 1 and Reconcile would read that old report entry as
-	// "already handled" -- silently, with no error and no notification.
+	// Refuse a taken name before anything is spawned: Save overwrites only
+	// the record, so a fresh round 1 would collide with the previous
+	// session's round 1 and read its report entry as already handled,
+	// silently.
 	if _, err := rt.Store.Load(name); err == nil {
 		return store.Binding{}, resolve.Resolution{}, refusal.BadInputf(
 			"binding %q already exists: `relevo unbind %s` to start fresh, or `relevo bind --resume --name %s` to adopt it",
@@ -62,9 +61,8 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		return store.Binding{}, resolve.Resolution{}, err
 	}
 
-	// Check the working tree before spawning anything. Save re-checks under the
-	// lock and stays authoritative, but without this a refused bind would leave
-	// a started builder pane stranded with nothing pointing at it.
+	// Check the working tree before spawning anything: without this a refused
+	// bind would leave a started builder stranded with nothing pointing at it.
 	//
 	// Only a writer can be blocked here: a reader may share a writer's
 	// tree, so this refusal applies between two writers only.
@@ -101,8 +99,8 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 	if err != nil {
 		return store.Binding{}, resolve.Resolution{}, err
 	}
-	// The placement rides on the resolution so the pick note says where the
-	// binding landed and what it passed over.
+	// The placement rides on the resolution, so the pick note says where the
+	// binding landed.
 	res.Placement = placement
 	// The gate resolution rides on the resolution too, so the CLI can print
 	// which tier supplied the command the binding stored.
@@ -154,9 +152,8 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		return store.Binding{}, resolve.Resolution{}, fmt.Errorf("bind failed: %w", err)
 	}
 
-	// Save fills in the defaults it owns -- round cap, round budget -- on its
-	// own copy, so read back what was actually stored rather than returning
-	// the pre-Save value and letting the two drift.
+	// Save fills in the defaults it owns on its own copy, so read back what
+	// was stored rather than the pre-Save value.
 	stored, err := rt.Store.Load(b.Name)
 	if err != nil {
 		return store.Binding{}, resolve.Resolution{}, err
@@ -165,9 +162,9 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 	return stored, res, nil
 }
 
-// builderAgentName composes and validates the agent name for a binding's
-// builder. It runs before any worktree exists, so a name relevo would refuse
-// fails as a validation error with nothing to clean up.
+// builderAgentName composes the agent name for a binding's builder. It runs
+// before any worktree exists, so a refused name fails with nothing to clean
+// up.
 func builderAgentName(name string) (string, error) {
 	agentName := name + "-builder"
 	if err := store.ValidName(agentName); err != nil {
@@ -178,12 +175,10 @@ func builderAgentName(name string) (string, error) {
 }
 
 // resolveBuilder returns a headless endpoint for a local builder. Nothing is
-// opened and nothing is started: the endpoint records the mode, the name and
-// the kind, and Send fills in the process fields per round.
+// opened and nothing is started: Send fills in the process fields per round.
 //
-// Before returning, the candidate's launch is rendered once with
-// headlessLaunch, so the permission-tier refusals (ErrTierUnsupported,
-// ErrExtraArgsPermission) fire at bind/add/fork, before a worktree is kept.
+// The candidate's launch is rendered once before returning, so the
+// permission-tier refusals fire at bind/add/fork, before a worktree is kept.
 //
 // The second return is the resolution, for the pick line.
 func resolveBuilder(ctx context.Context, rt Runtime, tx *store.Tx, opts BindOptions, name string) (store.Endpoint, resolve.Resolution, error) {

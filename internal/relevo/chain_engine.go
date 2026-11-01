@@ -15,22 +15,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
-// A chain that runs a user workflow stores its definition and its engine state
-// on the row: a non-empty workflow column selects the engine path, an empty one
-// the chain's own fixed state machine.
+// A chain that runs a user workflow stores its definition and engine state
+// on the row: a non-empty workflow column selects the engine path.
 
-// chainResumeWorkflowRow is the resume path's read of a chain row's engine
-// definition and state. The sweep that migrates pre-engine rows runs at daemon
-// start, so a verb can meet a row the sweep could not finish: it is halted with
-// the reason the conversion named and carries neither a workflow nor a state.
-// Reading such a row as a plain error left `chain --resume` answering internal
-// on a chain the human can still look at.
-//
-// A row with no workflow is migrated here, through the same single-row
-// conversion the sweep runs, so a chain the sweep simply has not reached yet
-// resumes as any other. Whatever still lacks a workflow or a state is refused in
-// the input class instead, naming the row's own reason and the command that
-// reads it.
+// chainResumeWorkflowRow is the resume path's read of that definition and
+// state. A row the migration sweep has not reached yet converts here, through
+// the same single-row conversion; whatever still lacks a workflow or a state
+// is refused in the input class, naming the row's own reason and the command
+// that reads it.
 func chainResumeWorkflowRow(rt Runtime, c db.ChainRow) (db.ChainRow, workflow.Definition, workflow.State, error) {
 	if len(c.WorkflowJSON) == 0 {
 		fresh, err := convertLegacyChainRow(rt, c.Name)
@@ -58,13 +50,11 @@ func chainResumeWorkflowRow(rt Runtime, c db.ChainRow) (db.ChainRow, workflow.De
 		c.Name, why, c.Name)
 }
 
-// chainFlowMembers returns a chain's member rows, in creation order: the actors
-// it runs and the bindings that run them.
+// chainFlowMembers returns a chain's member rows, in creation order.
 func chainFlowMembers(tx *store.Tx, c db.ChainRow) ([]db.ChainMemberRow, error) {
 	return tx.ChainMembers(c.Name)
 }
 
-// chainFlowMemberName returns the binding name that runs an actor on a chain.
 func chainFlowMemberName(tx *store.Tx, c db.ChainRow, actor string) (string, error) {
 	rows, err := chainFlowMembers(tx, c)
 	if err != nil {
@@ -78,7 +68,6 @@ func chainFlowMemberName(tx *store.Tx, c db.ChainRow, actor string) (string, err
 	return "", fmt.Errorf("chain %s has no member for actor %q", c.Name, actor)
 }
 
-// chainFlowActor returns the actor the named binding runs on a chain.
 func chainFlowActor(tx *store.Tx, c db.ChainRow, binding string) string {
 	rows, err := chainFlowMembers(tx, c)
 	if err != nil {
@@ -92,10 +81,9 @@ func chainFlowActor(tx *store.Tx, c db.ChainRow, binding string) string {
 	return ""
 }
 
-// chainAdvance moves a workflow chain by one event: it runs the pure transition
-// and performs every action it produced in the caller's critical section. A
-// close that is not the awaited one -- or that arrives once the chain is
-// terminal -- changes nothing and writes no trace row.
+// chainAdvance moves a workflow chain by one event, in the caller's critical
+// section. A close that is not the awaited one changes nothing and writes no
+// trace row.
 func chainAdvance(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, ev workflow.Event) error {
 	def, err := chain.WorkflowDef(c)
 	if err != nil {
@@ -122,7 +110,6 @@ func chainAdvance(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, 
 	return nil
 }
 
-// chainFlowTerminal reports whether a run status ends the chain.
 func chainFlowTerminal(st workflow.Status) bool {
 	return st == workflow.StatusHalted || st == workflow.StatusStopped || st == workflow.StatusDone
 }
@@ -144,8 +131,7 @@ func cloneFlowState(s workflow.State) workflow.State {
 }
 
 // chainRunAction performs one transition action in the caller's critical
-// section. A send renders the seed and hands it to the member; a run_check
-// starts one check run; finish, halt and stop end the chain.
+// section.
 func chainRunAction(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before workflow.State, next *workflow.State, ev workflow.Event, act workflow.Action) error {
 	switch act.Kind {
 	case workflow.ActionSend:
@@ -163,9 +149,8 @@ func chainRunAction(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow
 	}
 }
 
-// chainFlowSend renders a run step's seed and starts the actor member's round.
-// A member that cannot start halts the chain in the same critical section, with
-// the member's own reason.
+// chainFlowSend renders a run step's seed and starts the member's round. A
+// member that cannot start halts the chain with its own reason.
 func chainFlowSend(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before workflow.State, next *workflow.State, ev workflow.Event, act workflow.Action) error {
 	name, err := chainFlowMemberName(tx, c, act.Actor)
 	if err != nil {
@@ -178,10 +163,9 @@ func chainFlowSend(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow,
 	return chainFlowSendText(ctx, rt, tx, c, def, before, next, ev, act, name, text)
 }
 
-// chainFlowSendText starts a run step's member round with the text it is handed:
-// the rendered seed for an ordinary send, the round's own staged prompt for a
-// resume that re-sends a round already under way. A member that cannot start
-// halts the chain in the same critical section, with the member's own reason.
+// chainFlowSendText starts a member round with the text it is handed: the
+// rendered seed, or the staged prompt for a resume re-sending a round under
+// way. A member that cannot start halts the chain with its own reason.
 func chainFlowSendText(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before workflow.State, next *workflow.State, ev workflow.Event, act workflow.Action, name, text string) error {
 	member, err := tx.Load(name)
 	if err != nil {
@@ -199,23 +183,19 @@ func chainFlowSendText(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 	if ev.Kind == workflow.EventNeedsYou {
 		ev.Round = sent.Round
 	}
-	// A send that opens a plan records the commit the plan began at, so the
-	// plan's review can diff its whole span. The send that follows a next from
-	// the plans for-each is the one that opens a plan on the engine path, and
-	// so does the security phase's fix plan after the planner writes it.
+	// A send that opens a plan records the commit it began at, so the plan's
+	// review can diff its whole span.
 	if chainFlowPlanStart(def, before, act.Step) {
 		c.PlanStartCommit = sent.RoundBaselineHead
 	}
 	return chainSaveFlow(rt, tx, c, def, before, *next, ev, act, name)
 }
 
-// chainFixSeedName is the shipped seed the security phase's fix planner
-// renders; the builder send that follows it opens a new plan scope.
+// chainFixSeedName is the shipped seed the fix planner renders; the send
+// after it opens a new plan scope.
 const chainFixSeedName = "shipped:fix"
 
-// chainFlowPlanStart reports whether a send opens a plan: its step is the
-// target the plans for-each routes its next item to, or the send follows the
-// fix planner that renders the shipped fix seed.
+// chainFlowPlanStart reports whether a send opens a plan.
 func chainFlowPlanStart(def workflow.Definition, before workflow.State, step string) bool {
 	for _, s := range def.Steps {
 		if s.ForEach != "plans" {
@@ -229,7 +209,6 @@ func chainFlowPlanStart(def workflow.Definition, before workflow.State, step str
 	return ok && prev.Seed == chainFixSeedName
 }
 
-// chainNextPlacedCheckRun returns the next run sequence number for placed checks.
 func chainNextPlacedCheckRun(rt Runtime, c db.ChainRow) int {
 	rows, err := rt.Store.ChainEvents(c.Name)
 	if err != nil {
@@ -252,11 +231,9 @@ func chainCheckID(run int) string {
 	return fmt.Sprintf("chk-%d", run)
 }
 
-// chainFlowCheck starts one check run for a check step. For a placed writer on
-// a server with check support, it starts the check via the check route. On a
-// server without check support, it falls back to answering from the writer's
-// newest closed round's gate record. Local checks run through the gate runner
-// on the chain's tree.
+// chainFlowCheck starts one check run for a check step: via the check route
+// on a server with check support, from the writer's newest closed round's
+// gate record without it, and through the gate runner locally.
 func chainFlowCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before workflow.State, next *workflow.State, ev workflow.Event, act workflow.Action) error {
 	member, err := chainFlowWriterMember(tx, c)
 	if err == nil {
@@ -292,14 +269,10 @@ func chainFlowCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow
 	return chainSaveFlow(rt, tx, c, def, before, *next, ev, act, member)
 }
 
-// chainRepeatRedCheck reports whether a red check's output repeats the previous
-// red's: the state before the event carries that red's sealed log, and the two
-// signatures agree. A green check, no previous red, or an unreadable log is not
-// a repeat, so a repair is only ever skipped for a failure already seen.
-//
-// The previous red must belong to the for-each item the chain is on now: a
-// plan's first red is never a repeat, however closely it resembles the red the
-// plan before it saw.
+// chainRepeatRedCheck reports whether a red check's output repeats the
+// previous red's, so a repair is only ever skipped for a failure already
+// seen. The previous red must belong to the for-each item the chain is on:
+// a plan's first red is never a repeat.
 func chainRepeatRedCheck(rt Runtime, c db.ChainRow, before workflow.State, step, log string) bool {
 	prev, ok := before.Results[step]
 	if !ok || prev.Status != chainCheckRed {
@@ -316,10 +289,9 @@ func chainRepeatRedCheck(rt Runtime, c db.ChainRow, before workflow.State, step,
 	return sig != "" && sig == gateSignature(rt.Store.ReadFile, log)
 }
 
-// chainRepeatSameItem reports whether the previous red of a check step closed
-// under the for-each item the state is on. The trace row that recorded that
-// close carries the item position as the legacy plan column, so comparing it
-// with the state's own position keeps the repeat inside one repair loop.
+// chainRepeatSameItem reports whether the previous red closed under the
+// for-each item the state is on. The trace row carries the item as the legacy
+// plan column, so the repeat stays inside one repair loop.
 func chainRepeatSameItem(rt Runtime, c db.ChainRow, before workflow.State, step string) bool {
 	rows, err := rt.Store.ChainEvents(c.Name)
 	if err != nil {
@@ -339,23 +311,18 @@ func chainRepeatSameItem(rt Runtime, c db.ChainRow, before workflow.State, step 
 	return false
 }
 
-// chainFlowPullCheck answers a placed writer's check from the gate record its
-// newest closed round carries. No record yet leaves the chain awaiting the
-// check, so a later tick answers it once the round is pulled.
-//
-// It records no run id: no check runs on the server here, so there is nothing
-// to poll, and the round number is not a run id. Leaving one on the state let
-// the next check step inherit it, and its tick then asked the server for a
-// check run that was never created.
+// chainFlowPullCheck answers a placed writer's check from its newest closed
+// round's gate record. No record yet leaves the chain awaiting, for a later
+// tick. It records no run id: the next check step would inherit it and ask
+// the server for a run that was never created.
 func chainFlowPullCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before workflow.State, next *workflow.State, ev workflow.Event, act workflow.Action, member string) error {
 	round := chain.NewestClosedRound(tx, member)
 	rec, err := chain.RoundGate(tx, member, round)
 	if err != nil {
 		return err
 	}
-	// The round is the record's round, not a run id: the state an id-less
-	// awaiting check carries is Run 0, and the close below has to name the same
-	// run the state awaits or the engine reads it as a close for another run.
+	// The round is the record's round, not a run id: the close below must name
+	// the run the state awaits, or the engine reads another run's close.
 	next.Awaiting.Run = 0
 	if rec == nil {
 		return chainSaveFlow(rt, tx, c, def, before, *next, ev, act, member)
@@ -376,8 +343,8 @@ func chainFlowPullCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chai
 	})
 }
 
-// chainFlowWriterMember names the chain's writer member whose tree a check
-// runs on: the keeper writer, or the first member when the workflow has none.
+// chainFlowWriterMember names the member whose tree a check runs on: the
+// keeper writer, or the first member when the workflow has none.
 func chainFlowWriterMember(tx *store.Tx, c db.ChainRow) (string, error) {
 	if c.Builder != "" {
 		return c.Builder, nil
@@ -393,8 +360,7 @@ func chainFlowWriterMember(tx *store.Tx, c db.ChainRow) (string, error) {
 }
 
 // chainSaveFlow writes a workflow chain's state and its one trace row in a
-// single database transaction. The trace names the step it was on and the
-// closing member, and carries the encoded workflow event and action.
+// single database transaction.
 func chainSaveFlow(rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before, next workflow.State, ev workflow.Event, act workflow.Action, closing string) error {
 	now := rt.Now().UTC()
 	row := c
@@ -406,9 +372,8 @@ func chainSaveFlow(rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definit
 	}
 	row.StateJSON = stateJSON
 	applyChainLegacy(&row, def, next)
-	// A start's send has no event of its own: the row's state is the record,
-	// exactly as the fixed state machine's start keeps no trace row. A fork
-	// action writes its trace row so the trace records the fork.
+	// A start's send has no event of its own: the row's state is the record.
+	// A fork writes its trace row so the trace records the fork.
 	if ev.Kind == "" && act.Kind != workflow.ActionFork {
 		return tx.ChainPut(row)
 	}
@@ -439,8 +404,6 @@ func applyChainLegacy(row *db.ChainRow, def workflow.Definition, st workflow.Sta
 	}
 }
 
-// flowTraceStep is the step a trace row names: the step whose close or action
-// the row records.
 func flowTraceStep(before workflow.State, ev workflow.Event) string {
 	if ev.Step != "" {
 		return ev.Step
@@ -448,9 +411,8 @@ func flowTraceStep(before workflow.State, ev workflow.Event) string {
 	return before.At
 }
 
-// flowPlanPos is a state's current plan position for the trace's legacy plan
-// column: the plan the transition reached. An exhausted walk holds index -1,
-// the same as one that has not started, so Done reads the last plan.
+// flowPlanPos is a state's plan position for the trace's legacy plan column.
+// An exhausted walk reads the last plan, like one that has not started.
 func flowPlanPos(st workflow.State) int {
 	it := st.Iter["plans"]
 	if it.Done && len(it.Items) > 0 {
@@ -463,9 +425,8 @@ func flowPlanPos(st workflow.State) int {
 	return plan
 }
 
-// chainCheckStartReason is the halt reason of a check that could not start. A
-// preflight refusal is the machine's, so it reads as itself rather than as a
-// red check.
+// chainCheckStartReason is the halt reason of a check that could not start.
+// A preflight refusal reads as itself, not as a red check.
 func chainCheckStartReason(step string, err error) string {
 	var envErr *EnvironmentError
 	if errors.As(err, &envErr) {

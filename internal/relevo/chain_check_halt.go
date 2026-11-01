@@ -12,19 +12,15 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
-// haltCheckTailLines is how much of a failed check's log a halt reason quotes:
-// enough to name the failing test or error, short enough for a notice. The
-// gate's own tail is shorter because it serves a one-line status.
+// haltCheckTailLines is how much of a failed check's log a halt reason
+// quotes: enough to name the failure, short enough for a notice.
 const haltCheckTailLines = 20
 
-// haltCheckResults are the settled check results that make a halt a check's
-// doing.
 var haltCheckResults = map[string]bool{"fail": true, "timeout": true, "error": true}
 
-// chainHaltReason is the reason a chain that ends halted or stopped is saved
-// with: the engine's own reason, followed by the newest check's result, the
-// command that reads its log and the log's tail when that check settled as a
-// non-pass. Any other end keeps the engine's wording exactly.
+// chainHaltReason is the reason a halted or stopped chain is saved with: the
+// engine's reason, plus the newest non-pass check's result, log reader and
+// tail. Any other end keeps the engine's wording.
 func chainHaltReason(rt Runtime, tx *store.Tx, c db.ChainRow, s workflow.State) string {
 	if s.Status != workflow.StatusHalted && s.Status != workflow.StatusStopped {
 		return s.Reason
