@@ -17,7 +17,6 @@ import (
 // same; a view the server sent no name for with the same harness and model, a
 // provider renamed between the two machines. Pure.
 func serverCandidate(views []remote.CandidateView, token, name string) (string, bool) {
-	// Rule 1: exact token match.
 	for _, v := range views {
 		if v.Token == token {
 			return v.Token, true
@@ -26,7 +25,6 @@ func serverCandidate(views []remote.CandidateView, token, name string) (string, 
 
 	ref, rerr := candidate.ParseRef(token)
 	if rerr == nil {
-		// Rule 2a: same provider and same model.
 		for _, v := range views {
 			vref, err := candidate.ParseRef(v.Token)
 			if err != nil {
@@ -36,7 +34,6 @@ func serverCandidate(views []remote.CandidateView, token, name string) (string, 
 				return v.Token, true
 			}
 		}
-		// Rule 2b: same provider, any model.
 		for _, v := range views {
 			vref, err := candidate.ParseRef(v.Token)
 			if err != nil {
@@ -48,7 +45,6 @@ func serverCandidate(views []remote.CandidateView, token, name string) (string, 
 		}
 	}
 
-	// Rule 3: same name, under whatever provider the server gives it.
 	if name != "" {
 		for _, v := range views {
 			if v.Name == name {
@@ -57,7 +53,6 @@ func serverCandidate(views []remote.CandidateView, token, name string) (string, 
 		}
 	}
 
-	// Rule 4: server predates Name; match by harness and model for a renamed provider.
 	if rerr == nil {
 		for _, v := range views {
 			if v.Name != "" {

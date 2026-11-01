@@ -103,8 +103,8 @@ wrote. It must end with this block, filled in honestly:
 %s
 ` + "```" + ``
 
-// promptHead is the prompt's first two non-empty lines: enough for a human to
-// recognise the handoff without printing the whole template.
+// promptHead is enough of the prompt for a human to recognise the handoff
+// without printing the whole template.
 func promptHead(prompt string) []string {
 	var out []string
 	for _, line := range strings.Split(prompt, "\n") {
@@ -130,10 +130,8 @@ func absoluteOr(path string) string {
 }
 
 // composePrompt renders this round's handoff prompt: the reader template for a
-// reader binding, the builder template for a writer. Line 1 is the origin line
-// naming the round and actor, followed by a blank line and the handoff text.
-// rt is needed to name a reader's scratch tree, artifact dir and output
-// label.
+// reader binding, the builder template for a writer. rt names a reader's
+// scratch tree, artifact dir and output label.
 func composePrompt(rt Runtime, b store.Binding, promptPath, reportPath, donePath string) string {
 	origin := delivery.OriginLine(b.Name, b.Round, store.DirToBuilder, store.KindPrompt)
 	if b.Shape == store.ShapeReader {
@@ -143,9 +141,6 @@ func composePrompt(rt Runtime, b store.Binding, promptPath, reportPath, donePath
 	return origin + "\n\n" + body
 }
 
-// composeChainReaderPrompt is composePrompt for a chain's reader member: the
-// same origin line and reader header, with the chain's own closing block in
-// place of the reporttail block (chainReaderPrompt).
 func composeChainReaderPrompt(rt Runtime, b store.Binding, promptPath, donePath, block string) string {
 	origin := delivery.OriginLine(b.Name, b.Round, store.DirToBuilder, store.KindPrompt)
 	return origin + "\n\n" + chainReaderPromptFor(rt, b, promptPath, donePath, block)

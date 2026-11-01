@@ -20,7 +20,6 @@ import (
 // round of the binding is still open.
 var ErrNoCompletedRound = errors.New("no completed round yet; --round N to read an open round's prompt")
 
-// ShowSection is one of a round's readable parts.
 type ShowSection string
 
 const (
@@ -41,7 +40,6 @@ const (
 	ShowWorkflow ShowSection = "workflow"
 )
 
-// ValidShowSection reports whether s is one of the ShowSection values.
 func ValidShowSection(s ShowSection) bool {
 	switch s {
 	case ShowPrompt, ShowReport, ShowDiff, ShowDrift, ShowLog, ShowTranscript, ShowGate, ShowFindings, ShowOutput, ShowArtifacts, ShowTrace, ShowWorkflow:
@@ -191,8 +189,6 @@ func Show(ctx context.Context, rt Runtime, opts ShowOptions) (ShowResult, error)
 	return ShowResult{}, fmt.Errorf("binding %q not found (live or in the database): %w", opts.Name, store.ErrNotFound)
 }
 
-// liveFindingsPresent reports whether a live binding's round holds a consult's
-// findings: its findings file, read through the store, is present.
 func liveFindingsPresent(rt Runtime, name, id string) func(round int) (bool, error) {
 	return func(round int) (bool, error) {
 		_, missing, err := readFileOrMissing(rt.Store.ReadFile, rt.Store.FindingsPath(name, round, id))
@@ -203,9 +199,6 @@ func liveFindingsPresent(rt Runtime, name, id string) func(round int) (bool, err
 	}
 }
 
-// archivedFindingsRound resolves the --findings round against an archived
-// record: the record's own round counter bounds the scan and its sealed bytes
-// answer it.
 func archivedFindingsRound(rt Runtime, ab store.ArchivedBinding, rounds int, opts ShowOptions) (int, error) {
 	present := func(round int) (bool, error) {
 		base := filepath.Base(rt.Store.FindingsPath(ab.Binding.Name, round, opts.FindingsID))
@@ -215,7 +208,6 @@ func archivedFindingsRound(rt Runtime, ab store.ArchivedBinding, rounds int, opt
 	return view.FindingsRoundFor(opts.Round, ab.Binding.Round, rounds, ab.Binding.Name, opts.FindingsID, present)
 }
 
-// showLive resolves opts against b's files.
 func showLive(rt Runtime, b store.Binding, opts ShowOptions) (ShowResult, error) {
 	entries, err := rt.Store.ReadLog(b.Name)
 	if err != nil {
@@ -393,7 +385,6 @@ func showArchived(rt Runtime, ab store.ArchivedBinding, opts ShowOptions) (ShowR
 
 	round := opts.Round
 	if opts.Section == ShowFindings {
-		// The archived analogue of showLive's findings branch.
 		if round, err = archivedFindingsRound(rt, ab, rounds, opts); err != nil {
 			return ShowResult{}, err
 		}
@@ -505,8 +496,8 @@ func showDB(rt Runtime, binding db.BindingRow, opts ShowOptions) (ShowResult, er
 		}
 	case ShowLog:
 		// internal/ingest links event.round_id to its round once that
-		// round's row exists (Task 0(a)), so db.Events(bindingID, round)
-		// itself scopes to round -- no client-side re-filtering needed.
+		// round's row exists, so db.Events(bindingID, round) itself scopes
+		// to round -- no client-side re-filtering needed.
 		var events []db.Event
 		events, err = rt.DB.Events(binding.ID, round)
 		for _, e := range events {

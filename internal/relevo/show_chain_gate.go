@@ -8,14 +8,11 @@ import (
 
 // showChainCheckGate fills res with the round's chain check log when the
 // round has no gate log of its own: a chain runs its checks against its
-// writer's newest closed round, so the check run's sealed log is the gate
-// output that round holds. The log shown is the one with the highest run
-// number, under a label naming the run. Runs are numbered across the whole
-// chain, so a round may hold runs 3, 4 and 5 and none below 3 -- the round's
-// files are listed rather than probed run by run. list yields the binding's
-// round-file names, a live store's disk files and sealed rows or an archive
-// record's sealed names, and read reads one back by the key CheckLogPath
-// builds. With no check log for the round, res is left as it is.
+// writer's newest closed round, so the sealed log is the gate output that
+// round holds. The log shown is the one with the highest run number -- runs
+// are numbered across the whole chain, so the round's files are listed
+// rather than probed run by run. With no check log for the round, res is
+// left as it is.
 func showChainCheckGate(rt Runtime, name string, round int, read func(path string) (text string, missing bool, err error), list func() ([]string, error), res *ShowResult) error {
 	names, err := list()
 	if err != nil {

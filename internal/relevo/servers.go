@@ -40,14 +40,6 @@ type ServerProbe struct {
 // client's enrollment on it, in name order. It is pure over rt.Remote (a
 // RemoteClient), so it is tested with fakeRemote, and shared by `relevo
 // servers` and `relevo doctor`'s per-server checks.
-//
-// rt.Remote == nil means no client key: every server probes "no key",
-// naming the fix. Otherwise each server is checked with WhoAmI: success is
-// "enrolled"; a 401 is "not enrolled" (Detail is the caller's enrollLine,
-// the line to hand the admin); ErrCertChanged is "cert changed";
-// ErrUnreachable is "unreachable" (Detail is the failure cause); anything
-// else -- a plain error, ErrServerTooOld, ErrWrongAudience -- is "error"
-// (Detail is the error text).
 func ProbeServers(ctx context.Context, rt Runtime, servers map[string]remote.ServerEntry, enrollLine string) []ServerProbe {
 	names := make([]string, 0, len(servers))
 	for n := range servers {
@@ -99,7 +91,6 @@ func ProbeServers(ctx context.Context, rt Runtime, servers map[string]remote.Ser
 	return probes
 }
 
-// probeStatusText is one ServerProbe's status word.
 func probeStatusText(p ServerProbe) string {
 	switch p.State {
 	case "enrolled":
@@ -122,8 +113,7 @@ func ServerTierWarning(p ServerProbe) string {
 	return ""
 }
 
-// RenderServers formats probes as the table `relevo config server list` prints: one row
-// per server, name, url, and enrollment status, aligned on the longest name.
+// RenderServers formats probes as the table `relevo config server list` prints.
 func RenderServers(probes []ServerProbe) string {
 	if len(probes) == 0 {
 		return "no servers configured; relevo config server add <name> <url>\n"

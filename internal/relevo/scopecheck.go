@@ -9,14 +9,13 @@ import (
 	"github.com/fuad-daoud/relevo/internal/text"
 )
 
-// judgeRoundScope resolves the closing binding's actor and judges the round's
-// changed paths against its scope.
+// judgeRoundScope judges the round's changed paths against its scope.
 //
-// It returns the zero verdict for an actor with no scope, and for a role the
-// registry no longer knows -- treated as unscoped, with a warning, so a
-// config change does not strand an in-flight round. An actor that declared a
-// scope but whose round cannot be judged (no baseline, no git, a git error)
-// is refused with the reason: refuse, never guess.
+// An actor with no scope, or a role the registry no longer knows, yields the
+// zero verdict -- treated as unscoped, with a warning, so a config change
+// does not strand an in-flight round. A round that cannot be judged (no
+// baseline, no git, a git error) is refused with the reason: refuse, never
+// guess.
 func judgeRoundScope(ctx context.Context, rt Runtime, b store.Binding) pathscope.Verdict {
 	role := b.WriterRole()
 	r, ok := rt.RoleRegistry().Role(role)

@@ -28,8 +28,8 @@ func StagePlan(path string, data []byte) error {
 	return writeStagedPlan(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|housekeep.NoFollow, data)
 }
 
-// writeStagedPlan is StagePlan's write half: open, write, close. A close error
-// is the write's own and is surfaced rather than swallowed.
+// writeStagedPlan is StagePlan's write half. A close error is the write's own
+// and is surfaced rather than swallowed.
 func writeStagedPlan(path string, flag int, data []byte) error {
 	f, err := os.OpenFile(path, flag, 0o644)
 	if err != nil {
