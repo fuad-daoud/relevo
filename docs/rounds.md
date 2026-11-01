@@ -52,13 +52,11 @@ What this means in practice:
   never kills anything: it flags `NEEDS YOU` and leaves the process alone.
 - **`relevo gate`** on the provider mid-round kills the running process
   and starts the next candidate on the same round.
-- **opencode 2.x** headless builders launch `run` with `--standalone` (#256):
+- **opencode 2.x** headless builders launch `run` with `--standalone`:
   each headless round gets its own private server instead of the one
   `opencode serve --service` shared by every `opencode run` on that machine,
   so a kill, `relevo done`/`unbind`, a `relevo stop`, or a mid-round switch
-  stops the agent for real -- before the fix, the client process died but the
-  agent session kept running inside the shared service, still editing the
-  worktree relevo had already switched away from. `relevo doctor` notes the shared
+  stops the agent for real. `relevo doctor` notes the shared
   service (and, when readable, its session count from opencode.db) whenever
   `~/.config/opencode/service.json` exists. They also pass `--thinking`, so
   the model's reasoning reaches the transcript.
@@ -79,8 +77,7 @@ What this means in practice:
 named `relevo-round-local-<binding>-<round>` (an owned remote binding uses its
 owner's id where `local` sits). It is a *sibling* of `relevo.service`, not a
 child: `systemctl --user restart relevo` -- what `make service` does -- leaves a
-running round alone instead of killing it, so a restart no longer looks to
-relevo like a builder that "exited without a report". With no `scope` block
+running round alone instead of killing it. With no `scope` block
 configured this is the whole change: a local headless builder moves out of
 `relevo.service`'s cgroup into its own scope, with no quota and no memory cap --
 only its location, and with it restart survival. The gate, a consult and the
@@ -98,9 +95,8 @@ one core from it: the gate runs on its round's core, while a consult and the
 verify reviewer run on the whole pool. When every core is taken, a round runs
 on the whole pool instead. Pinning needs `cpuset` delegated to your user
 manager through a root drop-in on `user@.service`, and `relevo doctor` checks
-this; if systemd refuses it, relevo logs one warning and runs unpinned. #314
-measured a CPU-bound job pinned to one core using 10–18% less CPU time than the
-same job left to float. Every scoped builder, gate, consult and verify reviewer
+this; if systemd refuses it, relevo logs one warning and runs unpinned.
+Every scoped builder, gate, consult and verify reviewer
 also gets `GOMAXPROCS` set to the CPUs its scope allows -- 1 for a pinned round,
 `ceil(quota)` otherwise -- replacing any `GOMAXPROCS` the daemon inherited, such
 as a shell-wide export; this affects Go processes only, and Go's `-p` and
@@ -245,7 +241,7 @@ While a round is open that round's files sit in `$XDG_STATE_HOME/relevo/<name>/`
 patch (`NNN-diff.patch`), captured dialog and builder stream -- and when the
 round closes relevo seals them into the database and removes them.
 
-`unread`/`●new` comes from the binding record's `viewed_at` stamp (#143):
+`unread`/`●new` comes from the binding record's `viewed_at` stamp:
 `relevo show` (`--prompt`, `--diff`, `--log`) each stamps it after a successful
 print of a live binding, and `status` compares the binding's newest report
 against it. `relevo ui` never writes it directly -- it stamps through the same
@@ -274,7 +270,8 @@ relevo unbind --done --delete # remove them instead
 
 Archiving is the default because every other destruction decision in relevo keeps
 by default. An archived binding keeps every row it had -- its rounds, its events,
-its artifacts and its transcripts -- so `relevo history`, `relevo show` and the
+its artifacts and its transcripts -- so [`relevo history`](commands.md#relevo-history),
+[`relevo show`](commands.md#relevo-show) and the
 ui's `all` scope still read it months later, and the name frees for a fresh
 binding.
 
@@ -298,8 +295,8 @@ other bindings (or that it serves none), the `--ticket` issue it serves
 (stored as `#N`, `owner/repo#N`, an issue key like `ABC-123`, or an http(s)
 URL stored whole), and which
 binding and round it was forked from. None of this
-changes what you see day to day; it exists for `relevo history`, the ui's
-dashboard and the database below.
+changes what you see day to day; it exists for [`relevo history`](commands.md#relevo-history),
+the ui's [dashboard](cockpit.md) and [the database](database.md#the-database).
 
 ## Gate
 

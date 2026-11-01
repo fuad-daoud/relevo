@@ -23,15 +23,15 @@
   [Excalidraw](https://excalidraw.com) whiteboard instead, saving the scene and
   (for a repo scene) a companion `.svg` beside it. `relevo board url` prints a
   live board's URL and `relevo board promote` copies a live board into the repo.
-  Foreground; Ctrl-C stops. See "relevo board" below.
+  Foreground; Ctrl-C stops. See [relevo board](#relevo-board).
 - `relevo board comments [path|--board NAME] [--json]` — list every comment in the
   resolved scene in scene order (`id, x, y, text, by, at`); `--json` is one compact
   array. `relevo board comment [path|--board NAME] --text S [--x X --y Y] [--by B]`
   — append one comment element, leaving every other byte of the scene unchanged.
-  See "relevo board" below.
+  See [relevo board](#relevo-board).
 - `relevo board text <file> [--json]`, `relevo board annotate <file> --text S
   [--x X --y Y]` — list the scene's text elements, or append one without
-  touching the rest of the scene. See "relevo board" below.
+  touching the rest of the scene. See [relevo board](#relevo-board).
 - `relevo send [NAME|--name N] --file PATH [--dry-run] [--tier T [--allow-yolo]] [--candidate CANDIDATE] [--verify|--no-verify] [--regate N] [--force]` — stage the file as the current round's
   prompt and hand it to the builder as the prompt of a fresh process started in
   the binding's tree. A planner actor's prompt is a seed, capped at 4 KiB, and a
@@ -60,8 +60,8 @@
   with `--stat` and `--round`, and defaults to the currently open round where plain
   `relevo show --diff` defaults to the newest completed one. Pass `--anchors` to prefix
   each hunk and each `' '`/`'+'` line with its `path:line`, ready to quote into a
-  review comment (see "Reviewing a round" below).
-- `relevo status [NAME|--name N] [--json] [--all] [--line]` — one row per binding: round, display state, the builder's own status, the last relayed event and anything pending. `--line` is the one-row-per-binding form Claude Code's status line runs (see [Status line](../README.md#status-line)). Rows are attention-first -- NEEDS YOU, ACTIVE, PAUSED, DONE, stale first within a group, newest last-event first -- the same order `relevo ui` has always used, so the two never disagree. Naming a binding shows only that one. Bindings marked DONE are hidden by default and the footer names how many are hidden.
+  review comment (see [Reviewing a round](#reviewing-a-round)).
+- `relevo status [NAME|--name N] [--json] [--all] [--line]` — one row per binding: round, display state, the builder's own status, the last relayed event and anything pending. `--line` is the one-row-per-binding form Claude Code's status line runs (see [Status line](../README.md#status-line)). Rows are attention-first -- NEEDS YOU, ACTIVE, PAUSED, DONE, stale first within a group, newest last-event first -- the same order `relevo ui` uses, so the two never disagree. Naming a binding shows only that one. Bindings marked DONE are hidden by default and the footer names how many are hidden.
   While a round is open a row also shows the round's live diff against its baseline (`+120/-30 in 6`, `(shared tree)` for a `--cwd` binding sharing the MasterMind's own working tree), an ACTIVE row's `quiet <age>` since its last progress sample, and `●new` when the binding's newest report is unread (its record's `viewed_at` stamp is older than the newest report).
   `--json` also carries fields the prose above does not spell out:
   ```
@@ -74,16 +74,16 @@
   unread      true when the binding's newest report is newer than its .viewed stamp
               (or there is no stamp and a report exists)
   ```
-- `relevo show NAME [--round N] --log [--after N] [--follow] [--json]` — the binding's append-only round log. Every entry carries a 1-based `seq`, monotonic within the binding and never rewritten; `--round N` shows one round, `--after N` shows only entries with a greater `seq`, `--json` prints one compact JSON object per line (NDJSON, `seq` included), and `--follow` keeps printing new entries until the binding is DONE or gone. A file written before `seq` existed reads back with `seq` equal to the line number, so nothing is rewritten.
+- `relevo show NAME [--round N] --log [--after N] [--follow] [--json]` — the binding's append-only round log. Every entry carries a 1-based `seq`, monotonic within the binding and never rewritten; `--round N` shows one round, `--after N` shows only entries with a greater `seq`, `--json` prints one compact JSON object per line (NDJSON, `seq` included), and `--follow` keeps printing new entries until the binding is DONE or gone.
   A hook or script that has already seen up to a known `seq` asks only for the rest:
   ```bash
   last_seq=$(relevo status --json | jq -r '.bindings[] | select(.name == "NAME") | .last_seq')
   relevo show NAME --log --after $(last_seq) --json
   ```
 - `relevo history [--here] [--binding B] [--mastermind P] [--since D] [--limit N] [-q "<query>"] [--json] [--rows]` —
-  round history as a JSON array across every binding relevo has ever recorded, live or archived, newest first. `-q` filters with the query language. See "The database" below.
+  round history as a JSON array across every binding relevo has ever recorded, live or archived, newest first. `-q` filters with the query language. See [The database](database.md#the-database).
 - `relevo show <name> [--round N] [--prompt|--report|--diff [--stat|--anchors]|--drift|--log [--follow --after N]|--transcript|--gate|--findings <id>|--output] [--json]` —
-  one round's prompt, report, diff, drift, log, transcript, gate log, output file or a consult's findings: from a live binding's open round files, or, for anything sealed or archived, from the database. See "The database" below.
+  one round's prompt, report, diff, drift, log, transcript, gate log, output file or a consult's findings: from a live binding's open round files, or, for anything sealed or archived, from the database. See [The database](database.md#the-database).
 - `relevo wait [NAME|--name N] [--any N1 N2 ...] [--round R] [--timeout D] [--peek]` — block
   until the round closes or the binding needs you, reading relevo's own state only.
   Exit 0: closed on the marker, stdout is the report path. 2: closed
@@ -98,8 +98,7 @@
   64 KiB), marked delivered, unless `--peek` asks for the outcome line only.
   `--any` waits on several and prints the
   winner's name first. A Claude Code MasterMind instead calls the blocking
-  `wait` tool the `relevo mcp` server exposes and ends its turn: the call
-  returns with the report in its output (see
+  `wait` tool the `relevo mcp` server exposes and ends its turn (see
   [Claude Code plugin](plugin.md#claude-code-plugin)). The `relevo wait` command is
   the route where there are no MCP tools.
 - `relevo ui [--interval D] [:view [args]]` — the cockpit: `:fleet`, `:rounds [query]`,
@@ -115,7 +114,7 @@
   round 1. This is how one MasterMind drives several builders at once.
   `--actor R` is the writer actor the binding runs (default `builder`).
   `relevo bind --no-feature --name N --server S [--base REF]` runs that builder on a
-  configured remote server instead (see "Remote builders: the client" below);
+  configured remote server instead (see [Remote builders: the client](remote.md#remote-builders-the-client));
   `--cwd` cannot be combined with `--server`.
   `relevo bind --no-feature --branch B` checks an existing branch out into relevo's own
   worktree instead of cutting `relevo/<name>`: a local `B` is used first, and
@@ -202,8 +201,9 @@
 - `relevo mcp [--kind opencode] [--mastermind P]` — run the MCP server over stdio
   for a Claude Code MasterMind, serving the verbs as tools. See
   [Claude Code plugin](plugin.md#claude-code-plugin).
-- `relevo push [--mastermind P]` — hold this MasterMind's push claim and write its
-  round events to the mod on stdout as NDJSON. The holder reads nothing from
+- `relevo push [--mastermind P]` — hold this MasterMind's push claim; what the
+  holder writes and where is described under
+  [Claude Code plugin](plugin.md#claude-code-plugin). The holder reads nothing from
   stdin: `relevo push --ack <binding> <seq>` confirms one entry the holder wrote
   and exits 0, and the holder moves on once it sees that confirm. `--json` is
   accepted on both routes; the holder's stream is already NDJSON, so on the ack
@@ -248,30 +248,6 @@ back to whichever binding owns the current working directory, and a bare
 `relevo status` lists them all. Naming one is **required** for `done`,
 `stop` and `unbind`: those act on a specific loop — `stop` kills a
 process, the others end one — and they refuse to guess (see below).
-
-## Renamed commands
-
-Every verb the housekeeping removed, and the form that replaces it. An old
-name exits 2 and names its replacement:
-
-| removed | use instead |
-| --- | --- |
-| `relevo init` | `relevo config init` |
-| `relevo candidates` | `relevo config` |
-| `relevo policy` | `relevo config` |
-| `relevo roles` | `relevo config` |
-| `relevo agent` | `relevo config agents` |
-| `relevo client` | `relevo config server` |
-| `relevo servers` | `relevo config server list` |
-| `relevo add` | `relevo bind --worktree` |
-| `relevo diff` | `relevo show --diff` |
-| `relevo log` | `relevo show --log` |
-| `relevo gc` | `relevo unbind --done` |
-| `relevo pause` | `relevo done`, then `relevo bind --resume` |
-| `relevo statusline` | `relevo status --line` |
-| `relevo pull` | `relevo wait (it prints the report)` |
-| `relevo unavailable` | `relevo gate <token>` |
-| `relevo available` | `relevo gate --clear <provider>` |
 
 ## Reviewing a round
 
@@ -331,13 +307,12 @@ Two switches turn the same query into an aggregate instead of a
 row-per-round list:
 
 - `--tab` — tokens and cost across bindings, archived ones included (see
-  "Round usage" below).
+  [Round usage](readers.md#round-usage)).
 - `--stats` — rounds, outcomes, switches, gate results and consults across
   bindings, archived ones included, with the last 30 days of provider blocks
-  (see "Usage stats" below).
+  (see [Usage stats](readers.md#usage-stats)).
 
-Every flag is one field of the shared `Filter` the ui's coming `all` scope
-and dashboard query too. `--archived` and `--live` together, and an
+Every flag is one field of the shared `Filter`. `--archived` and `--live` together, and an
 `--outcome` outside the enum above, are usage errors. A plain line looks
 like:
 
@@ -536,8 +511,7 @@ accent good warn bad comment`) are required, and each is a `#` followed by 3,
 form, is refused at write time naming the entry and the field. Precedence is
 `--theme`, then the repository's own stored setting (`relevo config repo set
 board_theme <name>`), then the repo-local git config key `relevo.boardTheme`
-(`git config relevo.boardTheme blueprint`, kept so existing setups keep
-working), then `cockpit`. A `relevo board` that runs before the state root
+(`git config relevo.boardTheme blueprint`), then `cockpit`. A `relevo board` that runs before the state root
 has a database at all -- a fresh install that has never opened it writable --
 paints the palettes the embedded seed file carries. An unknown name is a
 usage error, exit 2, that lists the names the consulted set holds and says
@@ -595,8 +569,8 @@ so they cannot disagree.
 
 `relevo done` and `relevo unbind` both require a binding name (`relevo done ai`, or
 `--name ai`) or `--pick`, which lists the bindings and runs the verb on the one
-you choose. Neither resolves the current directory for you: a bare `relevo done` once ended a live
-loop by accident, and the recovery is `relevo bind --resume --name <name>`.
+you choose. Neither resolves the current directory for you; a binding ended by
+mistake is recovered with `relevo bind --resume --name <name>`.
 `--pick` is explicit for the same reason -- a bare verb never opens a picker,
 so a MasterMind agent can never fall into one.
 And because a popup takes focus the instant it opens, `Enter` on a binding
@@ -613,10 +587,8 @@ that is not `DONE` asks first -- `mark webshop done? it is ACTIVE in round 5`
   builder process, a round that ran past its timeout, and a binding that hit
   its round cap.
 - **PAUSED** — the binding's worktree was released between rounds, keeping the
-  branch and the round log; nothing sets this state today, but a binding a
-  pre-housekeeping relevo left paused still reads as PAUSED, and
-  `relevo bind --resume` restores it. Nothing needs a human, and
-  `relevo unbind --done` leaves it alone.
+  branch and the round log; `relevo bind --resume` restores it. Nothing needs
+  a human, and `relevo unbind --done` leaves it alone.
 - **DONE** — the MasterMind declared the work verified via `relevo done`, and
   relaying has stopped deliberately, not because anything went wrong: unlike
   NEEDS YOU, nothing needs a human here. `Reconcile` returns immediately for
@@ -627,8 +599,8 @@ that is not `DONE` asks first -- `mark webshop done? it is ACTIVE in round 5`
 ## Recovering a broken binding
 
 If the builder's process dies without a report, relevo switches to the next
-candidate or, when none serves the binding, goes `NEEDS YOU` — see "Headless
-builders". A binding whose builder is gone between rounds is `BROKEN` and
+candidate or, when none serves the binding, goes `NEEDS YOU` (see [Headless
+builders](rounds.md#headless-builders)). A binding whose builder is gone between rounds is `BROKEN` and
 relaying stops until you point it at a new builder:
 
 ```bash
@@ -648,8 +620,7 @@ If only the MasterMind moved or restarted, `relevo bind --resume --name N` re-po
 the MasterMind without touching the builder. If you want to start over from scratch,
 use `relevo unbind N` and bind fresh.
 
-A headless binding is never `BROKEN` for lack of a process: between rounds
-there is none. If its process died mid-round the daemon already switched or
-halted it (see "Headless builders"). To move a binding to a fresh process by
+A headless binding is never `BROKEN` for lack of a process (see [Headless
+builders](rounds.md#headless-builders)). To move a binding to a fresh process by
 hand, `relevo send` the staged prompt again once `relevo status` shows the
 builder `exited`.

@@ -17,7 +17,7 @@ detail, `esc` goes back to it, `:` opens the command line (`:fleet`,
 `:actors`, `:workflows`, `:agents`, `:servers`, `:sync`, `:settings`, `:audit`,
 `:log`), `?` lists every key, and `q`
 quits at the root. A writer round's pane has five tabs:
-- **prompt** — the round's own prompt file, first in the order (#183).
+- **prompt** — the round's own prompt file, first in the order.
 - **report** — that round's MasterMind-bound report or question payload.
 - **terminal** — recent live terminal output from the builder's log.
 - **diff** — the captured git patch from the round.
@@ -38,8 +38,9 @@ showing stale content.
 ## `relevo ui`'s `:rounds` view: every round, filtered and regrouped
 
 `:rounds` opens a second view: every round relevo's database has recorded, live
-or archived, as a grid. It is the same data `relevo history` reads, with the
-query language as a filter line and the sums of `--by` above the rows. `esc`
+or archived, as a grid. It is the same data
+[`relevo history`](commands.md#relevo-history) reads, with the query language
+as a filter line and the sums of `--by` above the rows. `esc`
 returns to the fleet with the query intact; `relevo ui :rounds` opens here
 directly, and `relevo ui :rounds harness:agy` opens it with a query.
 
@@ -54,7 +55,7 @@ started           binding       rnd  builder                               outco
 
 `/` opens the query line, prefilled with the current query; `enter` applies it,
 `esc` cancels, and a parse error is shown under the input with the previous
-query kept. The grammar is exactly `relevo history -q`'s:
+query kept. The grammar is exactly [`relevo history -q`](commands.md#relevo-history)'s:
 
 ```
 / harness:agy outcome:halted since:30d
@@ -75,7 +76,7 @@ and the sort column are remembered in the machine database.
 Below 140 columns the grid drops `gate`, below 120 `tree` and `commits`, below
 100 `tokens`; `cost` always stays. A round's cost reads `unknown` as `?`, a
 round with no usage at all as `-`; archived rounds are dim; the same filter
-grammar is documented in full under `relevo history`.
+grammar is documented in full under [`relevo history`](commands.md#relevo-history).
 
 ## `relevo ui`'s archived bindings: every binding, not just today's
 

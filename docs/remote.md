@@ -125,8 +125,8 @@ Set up once per machine:
    or `cert changed` (the pinned fingerprint no longer matches -- a hard
    refusal the client never overrides silently).
 
-**Version skew.** This release binds every signature to the server's
-identity, so the two ends upgrade together -- there is no window that accepts
+**Version skew.** Signatures are bound to the server's
+identity, so the two ends upgrade together -- no window accepts
 both the old and the new signed string. A pre-upgrade client against an
 upgraded server gets HTTP 426, and `relevo config server list` prints
 `error: server rejected protocol version (426)`. An upgraded client against a
