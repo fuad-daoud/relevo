@@ -214,9 +214,7 @@ func reconcileExitedBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b sto
 	if next, done, err := exitUnmarkedReport(ctx, rt, tx, b, entries, codeText); err != nil || done {
 		return next, err
 	}
-	// The suffix is consumed by the exit entry inside exitSignalsAndEntry, so
-	// only the state the later steps read is kept.
-	oom, oomPeak, tail, denialLine, _, isDenial, now, err := exitSignalsAndEntry(ctx, rt, tx, b, codeText)
+	oom, oomPeak, tail, denialLine, isDenial, now, err := exitSignalsAndEntry(ctx, rt, tx, b, codeText)
 	if err != nil {
 		return b, err
 	}

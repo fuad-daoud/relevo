@@ -102,13 +102,13 @@ func exitUnmarkedReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 	return b, false, nil
 }
 
-func exitSignalsAndEntry(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, codeText string) (oom bool, oomPeak int64, tail, denialLine, suffix string, isDenial bool, now time.Time, err error) {
+func exitSignalsAndEntry(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, codeText string) (oom bool, oomPeak int64, tail, denialLine string, isDenial bool, now time.Time, err error) {
 	now = rt.Now().UTC()
 	h, _ := harness.Lookup(b.Builder.Kind)
 	c := builderCandidateOf(rt, b)
 	tail = currentBuilderTail(rt, b, availability.LimitScanLines)
 	denialLine, isDenial = matchDenial(tail, denialPatterns(c, h))
-	suffix = text.DenialSuffix(denialLine, isDenial)
+	suffix := text.DenialSuffix(denialLine, isDenial)
 
 	// Detect the oom kill before the exit entry, so the entry says it; a
 	// requested stop still wins and is checked below. A cgroup kill reads as
@@ -122,10 +122,10 @@ func exitSignalsAndEntry(ctx context.Context, rt Runtime, tx *store.Tx, b store.
 	}
 
 	if err = tx.AppendLog(b.Name, exitEntry(now, b.Round, b.Builder.LogPath, codeText, suffix, builderTail(rt, b, logTailLines), b.Shape)); err != nil {
-		return oom, oomPeak, tail, denialLine, suffix, isDenial, now, err
+		return oom, oomPeak, tail, denialLine, isDenial, now, err
 	}
 	slog.Info("headless builder exited without a report", "binding", b.Name, "round", b.Round, "pid", b.Builder.PID, "code", codeText)
-	return oom, oomPeak, tail, denialLine, suffix, isDenial, now, nil
+	return oom, oomPeak, tail, denialLine, isDenial, now, nil
 }
 
 func exitCloseStopped(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, bool, error) {
