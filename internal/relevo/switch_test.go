@@ -741,9 +741,10 @@ func TestSwitchDefersWhileTheOldScopeIsBusy(t *testing.T) {
 	}
 }
 
-// errScopeCollision is systemd-run's own refusal text, verbatim in
-// shape: the transient scope could not be started because the unit was already
-// loaded -- the old round's scope, still reaping.
+// errScopeCollision is systemd-run's own refusal text with its leading capital
+// lowered for Go's error style: the transient scope could not be started
+// because the unit was already loaded -- the old round's scope, still reaping.
+// The collision matcher reads only "already loaded".
 var errScopeCollision = errors.New("failed to start transient scope unit: Unit relevo-round-local-webshop-1.scope was already loaded: hostfailure")
 
 // TestScopeCollisionStartDoesNotGateTheCandidate pins that a Start the host
