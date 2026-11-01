@@ -4,9 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
-	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/policy"
 )
@@ -61,19 +59,9 @@ func orderOf(role string, toks ...string) policy.Policy {
 	return policy.Policy{Order: map[string][]string{role: toks}}
 }
 
-// spawnGate is a SpawnFailed gate on token, for tests.
-func spawnGate(token string) availability.Gate {
-	return availability.Gate{Token: token, Kind: availability.SpawnFailed, Until: baseTime.Add(10 * time.Minute)}
-}
-
 // fakeRoleChecker is a harness.RoleChecker test double: Missing(kind) looks
 // up kind in the map, returning nil (present) for any kind not listed. It
 // answers the same way whatever definitions are asked for.
 type fakeRoleChecker map[string][]string
 
 func (f fakeRoleChecker) Missing(kind string, _ []string) []string { return f[kind] }
-
-// limit is a RateLimited gate on token with no Until, for tests.
-func limit(token string) availability.Gate {
-	return availability.Gate{Token: token, Kind: availability.RateLimited}
-}
