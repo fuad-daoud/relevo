@@ -199,9 +199,9 @@ func TestFailReclassifiesSandboxDeniedInternal(t *testing.T) {
 	if strings.Contains(ce.next, "bugreport") {
 		t.Errorf("next = %q, want no bugreport hint", ce.next)
 	}
-	requireCLIError(t, failNext(codeInternal, "relevo bugreport", "%v", e), codeOwnerSandboxDenied, wantNext)
-	requireCLIError(t, failWrap(codeInternal, e, "relevo could not build the runtime"), codeOwnerSandboxDenied, wantNext)
+	_ = requireCLIError(t, failNext(codeInternal, "relevo bugreport", "%v", e), codeOwnerSandboxDenied, wantNext)
+	_ = requireCLIError(t, failWrap(codeInternal, e, "relevo could not build the runtime"), codeOwnerSandboxDenied, wantNext)
 
-	requireCLIError(t, fail(codeInternal, "%v", errors.New("boom")), codeInternal, "relevo bugreport")
-	requireCLIError(t, fail(codeUsage, "%v", e), codeUsage, "relevo help")
+	_ = requireCLIError(t, fail(codeInternal, "%v", errors.New("boom")), codeInternal, "relevo bugreport")
+	_ = requireCLIError(t, fail(codeUsage, "%v", e), codeUsage, "relevo help")
 }
