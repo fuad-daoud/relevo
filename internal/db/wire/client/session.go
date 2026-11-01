@@ -133,7 +133,6 @@ func (c *conn) connLost(err error) error {
 // stream.
 func (c *conn) IsValid() bool { return !c.dead.Load() }
 
-// ResetSession discards a dead connection before the pool hands it out again.
 func (c *conn) ResetSession(context.Context) error {
 	if c.dead.Load() {
 		return driver.ErrBadConn
@@ -511,7 +510,6 @@ func (r *rows) requestNext() error {
 	}
 }
 
-// awaitDone reads the done frame the server sent after a final batch.
 func (r *rows) awaitDone() error {
 	kind, frame, err := r.c.await(r.ctx, r.id)
 	if err != nil {

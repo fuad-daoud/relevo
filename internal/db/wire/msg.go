@@ -15,23 +15,20 @@ const (
 	TypeCancel  = "cancel"
 	TypeError   = "error"
 
-	TypeSyncVerb   = "sync_verb"
-	TypeSyncResult = "sync_result"
-	// TypeSyncFreshen is the fire-and-forget hint that a reader wants current
-	// data.
+	TypeSyncVerb    = "sync_verb"
+	TypeSyncResult  = "sync_result"
 	TypeSyncFreshen = "sync_freshen"
 )
 
-// Header is the part every control message shares: its type and the request id
-// that ties a response to its request.
+// Header ties a response to its request: the type and request id every control
+// message shares.
 type Header struct {
 	Type string `json:"type"`
 	ID   int    `json:"id"`
 }
 
 // The two files one owner serves, named by the scope a connection asks for.
-// A connection that names none is served the shared file, which is what a
-// client predating the field expects.
+// A connection that names none is served the shared file.
 const (
 	// ScopeShared is the file that leaves this machine.
 	ScopeShared = "shared"
@@ -43,14 +40,11 @@ const (
 // Hello opens the handshake; SchemaKnow is this client's highest embedded
 // migration, carried as information for the owner. AdHoc marks a connection on
 // the ad-hoc read path (`db query`), which the owner may refuse while it is
-// reaping an abandoned statement; it is additive, so an owner that predates the
-// bit ignores it and a client that predates it never sends one.
+// reaping an abandoned statement.
 //
-// Scope names which of the owner's files this connection speaks to, and is
-// additive for the same reason: a client that predates it sends none and is
-// served the shared file, and an owner that predates it serves the shared file
-// to everyone. A client therefore never mistakes the shared file for the local
-// one across an upgrade window -- it attaches no local handle at all.
+// Scope names which of the owner's files this connection speaks to; a client
+// that names none is served the shared file, so it never mistakes the shared
+// file for the local one.
 type Hello struct {
 	Header
 	Proto      string `json:"proto"`
@@ -67,8 +61,7 @@ type Hello struct {
 //
 // HasLocal says the owner serves a machine-local file beside the shared one, so
 // a client may open a second connection scoped to it. It is false on an owner
-// opened without one, and on an owner that predates the field, which is what
-// keeps an old owner from being asked for a file it does not have.
+// opened without one.
 type Welcome struct {
 	Header
 	Proto      string   `json:"proto"`
@@ -94,22 +87,19 @@ type Refusal struct {
 
 func (r *Refusal) Error() string { return r.Message }
 
-// Exec runs one statement that returns a result.
 type Exec struct {
 	Header
 	Query string `json:"query"`
 }
 
-// Query starts one statement whose rows stream back in batches.
 type Query struct {
 	Header
 	Query string `json:"query"`
 }
 
-// Rows is a value frame: its header names the columns (first batch only), the
-// batch's row count, and whether another batch follows. When none does, a done
-// frame follows immediately, so a client that stops after the last row can
-// still leave the stream in a known state.
+// Rows is a value frame; when no batch follows, a done frame follows
+// immediately, so a client that stops after the last row still leaves the
+// stream in a known state.
 type Rows struct {
 	Header
 	Columns []string `json:"columns,omitempty"`
@@ -117,12 +107,11 @@ type Rows struct {
 	More    bool     `json:"more"`
 }
 
-// Next asks for the batch after the one just delivered.
 type Next struct {
 	Header
 }
 
-// Done ends a request. For an exec it carries the result callers read back.
+// Done ends a request, carrying for an exec the result callers read back.
 type Done struct {
 	Header
 	RowsAffected int64 `json:"rows_affected"`
@@ -135,7 +124,6 @@ type Close struct {
 	Header
 }
 
-// Cancel interrupts the request with this id.
 type Cancel struct {
 	Header
 }
@@ -167,10 +155,8 @@ const (
 	SyncVerbRekey = "rekey"
 	// SyncVerbAttempt asks the owner to run an attempt now rather than at the
 	// end of the export debounce. A client that has just written something worth
-	// the other machines seeing in seconds -- a rate limit a person recorded --
-	// sends this instead of waiting for the window, and the owner queues the
-	// attempt it would have queued anyway had the write arrived through a
-	// trigger of its own.
+	// the other machines seeing in seconds sends this instead of waiting for
+	// the window.
 	SyncVerbAttempt = "attempt"
 )
 
@@ -189,8 +175,7 @@ const (
 	SyncCodeNoRemote = "no_remote"
 	// SyncCodeNoR2 is an enable with no complete set of bucket credentials
 	// from its flags or the stored ones.
-	SyncCodeNoR2 = "no_r2"
-	// SyncCodeAlreadyEnabled is a machine already syncing.
+	SyncCodeNoR2           = "no_r2"
 	SyncCodeAlreadyEnabled = "already_enabled"
 	// SyncCodeRemoteConflict is a --url that contradicts the stored remote.
 	SyncCodeRemoteConflict = "remote_conflict"

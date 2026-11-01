@@ -32,8 +32,7 @@ var maxLiveConns = 256
 // connection drop.
 var ownerUID = os.Getuid()
 
-// Server serves one database handle. Construct it with New and run it with
-// Serve; Close stops it and drops every client.
+// Server serves one database handle.
 type Server struct {
 	dbh *sql.DB
 	// localDB is the machine-local file beside dbh, or nil when the owner was
@@ -73,17 +72,11 @@ type Server struct {
 	OnAbandoned func()
 
 	// OnSyncVerb, when set, runs one sync verb against the handles the server
-	// already holds. It is the daemon's executor, so a client asks for enable,
-	// push, pull or disable and the work happens with the owner's own direct
-	// handles rather than a second open in the caller's process, so a writing
-	// verb never contends with the daemon for the file lock.
+	// already holds.
 	//
 	// The request carries the settings body and the token bytes; the hook is
 	// handed both and is trusted to keep the token out of every message, log
-	// line and response it produces. The socket is under the 0700 state root
-	// and every peer passes the uid check above, so the caller and this process
-	// are the same user on the same machine; the token crosses the stream and
-	// nothing else.
+	// line and response it produces.
 	//
 	// Nil refuses the verb (RefuseNoSyncVerb) rather than accepting it and
 	// doing nothing, so an owner with no executor installed cannot be read as a
@@ -163,8 +156,6 @@ func (s *Server) errorCode(err error) (int, int) {
 	return code, wire.ExtendedCodeOf(err)
 }
 
-// Serve accepts connections until the server is closed. Each accepted
-// connection is handled in its own goroutine.
 func (s *Server) Serve(l net.Listener) error {
 	s.mu.Lock()
 	s.ln = l
@@ -243,7 +234,6 @@ func (s *Server) waitTransactions(ctx context.Context) {
 	}
 }
 
-// anyInTx reports whether any live connection is still inside a transaction.
 func (s *Server) anyInTx() bool {
 	s.mu.Lock()
 	conns := make([]*conn, 0, len(s.conns))
@@ -260,8 +250,8 @@ func (s *Server) anyInTx() bool {
 	return false
 }
 
-// dropClients closes every live client connection. Each connection's cleanup
-// rolls its pinned connection back; the listener is untouched.
+// dropClients closes every live client connection, rolling each pinned
+// connection back; the listener is untouched.
 func (s *Server) dropClients() {
 	s.mu.Lock()
 	conns := make([]*conn, 0, len(s.conns))
