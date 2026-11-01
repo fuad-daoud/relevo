@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/text"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
@@ -411,7 +412,7 @@ func (v logView) Body(env widget.Env, width, height int) string {
 
 	for r := range runs {
 		label := labels[r]
-		rightText := " " + pluralEvent(len(runs[r]), "event")
+		rightText := " " + text.Plural(len(runs[r]), "event")
 		leftWidth := lipgloss.Width(label) + 1
 		rightWidth := lipgloss.Width(rightText)
 		fill := cw - leftWidth - rightWidth

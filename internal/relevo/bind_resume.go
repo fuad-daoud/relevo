@@ -135,12 +135,12 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		// A resume re-points the binding at a builder; it keeps its stored
 		// writer role, so BindOptions.Role is ignored here.
 		opts.Role = b.Role
-		resCandidate, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, resolve.WithSkillGates(ResolveDeps(rt), availability.Gates(AvailabilityDeps(rt)), b.CWD, nil), opts.Candidate, resolve.BindingRole(b))
+		resCandidate, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, resolve.WithSkillGates(ResolveDeps(rt), availability.Gates(AvailabilityDeps(rt)), b.CWD, nil), opts.Candidate, b.WriterRole())
 		if err != nil {
 			return store.Binding{}, resolve.Resolution{}, err
 		}
 		if opts.Tier != "" {
-			tier := resolve.ResolveTier(opts.Tier, resCandidate.Candidate, rt.RoleRegistry(), resolve.BindingRole(b))
+			tier := resolve.ResolveTier(opts.Tier, resCandidate.Candidate, rt.RoleRegistry(), b.WriterRole())
 			if err := resolve.CheckTierCap(tier, rt.Policy, opts.AllowYolo); err != nil {
 				return store.Binding{}, resolve.Resolution{}, err
 			}

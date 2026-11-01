@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ui/dash"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -562,7 +563,7 @@ func TestFrameBlankRowUnderHeader(t *testing.T) {
 	}
 	// line index 2 is the context row
 	ctxLeft, ctxRight := m.top().Context(m.env())
-	expectedContext := widget.Fit(spread(ctxLeft, ctxRight, 132), 132)
+	expectedContext := widget.Fit(dash.Spread(ctxLeft, ctxRight, 132), 132)
 	if lines[2] != expectedContext {
 		t.Errorf("line index 2 must be context row:\n got  %q\n want %q", lines[2], expectedContext)
 	}

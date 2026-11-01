@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/tmpdir"
+	"github.com/fuad-daoud/relevo/internal/ui/dash"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -20,7 +21,7 @@ import (
 // tokensLine renders the tokens and facts row at the top of the body.
 func (p roundPane) tokensLine(b *view.BindingStatus) string {
 	left, right := p.tokensParts(b)
-	return spread(left, right, p.width)
+	return dash.Spread(left, right, p.width)
 }
 
 // tokensParts is the tokens line's two halves, the left indented three
@@ -101,7 +102,7 @@ func (p roundPane) tabsRow() string {
 	rightText := fmt.Sprintf("  r%d of %d  ", p.detail.round, p.detail.rounds)
 	right := widget.FaintStyle.Render("round  ") + widget.Chip(widget.KbdStyle, "[") + widget.TextStyle.Bold(true).Render(rightText) + widget.Chip(widget.KbdStyle, "]") + "  "
 
-	return spread(left, right, p.width)
+	return dash.Spread(left, right, p.width)
 }
 
 // moveArtifact moves the artifacts cursor by delta and refetches the newly

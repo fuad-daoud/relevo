@@ -20,6 +20,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // setupMarketplaceRef and setupPluginToken are the marketplace and the
@@ -177,7 +178,7 @@ func silenceStep(err error) error {
 	if errors.As(err, &na) {
 		return err
 	}
-	return &StepError{Message: firstLine(err.Error())}
+	return &StepError{Message: text.FirstLine(err.Error())}
 }
 
 // setupOpenHint is the closing hint: open the MasterMind harness the plugin
@@ -297,7 +298,7 @@ func runSetupPlugin(ctx context.Context) (SetupStepDoc, error) {
 	if rerr != nil || exit != 0 {
 		detail := "the plugin install failed"
 		if line := strings.TrimSpace(string(out)); line != "" {
-			detail = firstLine(line)
+			detail = text.FirstLine(line)
 		}
 		return SetupStepDoc{}, &StepError{Message: detail, Next: doctor.PluginInstallCommand}
 	}
@@ -330,7 +331,7 @@ func runSetupMusePlugin(ctx context.Context) (SetupStepDoc, error) {
 	if rerr != nil || exit != 0 {
 		detail := "the plugin install failed"
 		if line := strings.TrimSpace(string(out)); line != "" {
-			detail = firstLine(line)
+			detail = text.FirstLine(line)
 		}
 		return SetupStepDoc{}, &StepError{Message: detail, Next: setupMusePluginCommand}
 	}
@@ -338,7 +339,7 @@ func runSetupMusePlugin(ctx context.Context) (SetupStepDoc, error) {
 	if appErr != nil || appExit != 0 {
 		detail := "the plugin approval failed"
 		if line := strings.TrimSpace(string(appOut)); line != "" {
-			detail = firstLine(line)
+			detail = text.FirstLine(line)
 		}
 		return SetupStepDoc{}, &StepError{Message: detail, Next: setupMusePluginCommand}
 	}

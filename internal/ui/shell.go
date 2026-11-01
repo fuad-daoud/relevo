@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/fuad-daoud/relevo/internal/text"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -305,21 +306,21 @@ func (m Model) finishAction(msg actionMsg) (tea.Model, tea.Cmd) {
 	delete(m.running, msg.key)
 	m.noticeErr = false
 	m.noticeFaint = false
-	text := msg.res.Text
+	logText := msg.res.Text
 	isErr := false
 	if msg.res.Err != nil {
 		m.notice = msg.res.Err.Error()
 		m.noticeErr = true
-		text = msg.res.Err.Error()
+		logText = msg.res.Err.Error()
 		isErr = true
 	} else {
-		m.notice = firstLine(msg.res.Text)
+		m.notice = text.FirstRaw(msg.res.Text)
 	}
 	m.actionLog = append(m.actionLog, widget.ActionEntry{
 		At:   m.now(),
 		Verb: msg.verb,
 		Key:  msg.key,
-		Text: text,
+		Text: logText,
 		Err:  isErr,
 	})
 	var cmd tea.Cmd
@@ -328,14 +329,6 @@ func (m Model) finishAction(msg actionMsg) (tea.Model, tea.Cmd) {
 		cmd = fetchStatus(m.ctx, m.src)
 	}
 	return m, cmd
-}
-
-// firstLine is s up to its first newline.
-func firstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return s[:i]
-	}
-	return s
 }
 
 // updateKey is the key routing, the first rule that applies.

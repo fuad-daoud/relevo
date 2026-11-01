@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // GCOptions controls how finished bindings are cleared away.
@@ -165,7 +166,7 @@ func gcRefs(ctx context.Context, deps Deps, b store.Binding, dryRun bool) []RefO
 	}
 	refs, err := bindingRefCandidates(ctx, deps, dir, b)
 	if err != nil {
-		return []RefOutcome{{Ref: "refs/relevo/" + b.Name + "/", Reason: "check failed: " + firstLine(err)}}
+		return []RefOutcome{{Ref: "refs/relevo/" + b.Name + "/", Reason: "check failed: " + text.Brief(err)}}
 	}
 
 	return cleanRefs(ctx, deps, dir, refs, dryRun)

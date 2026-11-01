@@ -14,6 +14,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // Git is the slice of the git CLI capture needs. *git.Client satisfies it.
@@ -54,19 +55,6 @@ func formatFiles(n int) string {
 		return "1 file"
 	}
 	return fmt.Sprintf("%d files", n)
-}
-
-// brief reduces an error to one line, for a reason or note field where a
-// multi-line git message would break the line's shape.
-func brief(err error) string {
-	if err == nil {
-		return ""
-	}
-	s := strings.TrimSpace(err.Error())
-	if idx := strings.Index(s, "\n"); idx != -1 {
-		s = strings.TrimSpace(s[:idx])
-	}
-	return s
 }
 
 // commitClause renders the commit facts for a diff note (forLine false) or
@@ -191,7 +179,7 @@ func RoundDiff(ctx context.Context, d Deps, tx *store.Tx, b store.Binding) DiffR
 		return DiffResult{Available: false}
 	}
 	if err != nil {
-		return DiffResult{Available: false, Reason: brief(err)}
+		return DiffResult{Available: false, Reason: text.Brief(err)}
 	}
 
 	diff, err := d.Git.DiffTrees(ctx, b.CWD, b.RoundBaselineTree, end)
@@ -199,7 +187,7 @@ func RoundDiff(ctx context.Context, d Deps, tx *store.Tx, b store.Binding) DiffR
 		return DiffResult{Available: false, EndTree: end}
 	}
 	if err != nil {
-		return DiffResult{Available: false, Reason: brief(err), EndTree: end}
+		return DiffResult{Available: false, Reason: text.Brief(err), EndTree: end}
 	}
 
 	if diff.Stat.Empty() {
@@ -212,7 +200,7 @@ func RoundDiff(ctx context.Context, d Deps, tx *store.Tx, b store.Binding) DiffR
 
 	patchPath := d.Store.DiffPath(b.Name, b.Round)
 	if err := tx.PutRoundFile(b.Name, b.Round, patchPath, diff.Patch); err != nil {
-		return DiffResult{Available: false, Reason: brief(err), EndTree: end}
+		return DiffResult{Available: false, Reason: text.Brief(err), EndTree: end}
 	}
 
 	return DiffResult{Available: true, Path: patchPath, Stat: diff.Stat, EndTree: end}
@@ -256,7 +244,7 @@ func PlanDiff(ctx context.Context, d Deps, tx *store.Tx, spec PlanDiffSpec) Diff
 		return DiffResult{Available: false}
 	}
 	if err != nil {
-		return DiffResult{Available: false, Reason: brief(err)}
+		return DiffResult{Available: false, Reason: text.Brief(err)}
 	}
 
 	if diff.Stat.Empty() {
@@ -269,7 +257,7 @@ func PlanDiff(ctx context.Context, d Deps, tx *store.Tx, spec PlanDiffSpec) Diff
 		return DiffResult{Available: false, Reason: "no path"}
 	}
 	if err := tx.PutRoundFile(spec.Name, spec.Round, spec.Path, diff.Patch); err != nil {
-		return DiffResult{Available: false, Reason: brief(err)}
+		return DiffResult{Available: false, Reason: text.Brief(err)}
 	}
 	return DiffResult{Available: true, Path: spec.Path, Stat: diff.Stat}
 }
@@ -309,21 +297,21 @@ func CommitFacts(ctx context.Context, d Deps, b store.Binding) CommitResult {
 		return CommitResult{}
 	}
 	if err != nil {
-		return CommitResult{Reason: "head: " + brief(err)}
+		return CommitResult{Reason: "head: " + text.Brief(err)}
 	}
 	n, err := d.Git.RevListCount(ctx, b.CWD, b.RoundBaselineHead, head)
 	if errors.Is(err, git.ErrNotRepo) {
 		return CommitResult{}
 	}
 	if err != nil {
-		return CommitResult{Reason: "rev-list: " + brief(err)}
+		return CommitResult{Reason: "rev-list: " + text.Brief(err)}
 	}
 	dirty, err := d.Git.Dirty(ctx, b.CWD)
 	if errors.Is(err, git.ErrNotRepo) {
 		return CommitResult{}
 	}
 	if err != nil {
-		return CommitResult{Reason: "dirty check: " + brief(err)}
+		return CommitResult{Reason: "dirty check: " + text.Brief(err)}
 	}
 	return CommitResult{Known: true, Commits: n, Dirty: dirty}
 }

@@ -83,7 +83,7 @@ func demoteLast(in []RankedEntry, gates []availability.Gate) []RankedEntry {
 // It is the legacy registry's ranked list: RankedRoleFor over the derivation
 // of set and pol.
 func RankedList(set *candidate.Set, pol policy.Policy, role string, gates ...availability.Gate) []RankedEntry {
-	return RankedRoleFor(legacyRegistry(set, pol), set, role, gates)
+	return RankedRoleFor(LegacyRegistry(set, pol), set, role, gates)
 }
 
 // SkipGates is gates without the Demote ones: a demote window reorders the

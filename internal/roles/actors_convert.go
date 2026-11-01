@@ -47,7 +47,7 @@ func rowFor(name string, actor Actor, agents map[string]AgentEntry) (Row, error)
 	// A builtin actor name keeps its builtin shape; a shape that would change
 	// what relevo's loop does with the actor is refused.
 	if builtin, ok := harness.RoleByName(name); ok {
-		if want := shapeWordFor(builtin.Shape); shape != want {
+		if want := shapeWord(builtin.Shape); shape != want {
 			return Row{}, fmt.Errorf("actor %s must run a %s agent: %w", name, want, ErrBadRoles)
 		}
 	}
@@ -140,16 +140,4 @@ func agentFor(name string, agents map[string]AgentEntry) (string, map[string]Def
 		}
 	}
 	return entry.Shape, defs, nil
-}
-
-// shapeWordFor renders a harness role shape as the word roles.json uses, the
-// same mapping internal/roles applies.
-func shapeWordFor(shape harness.RoleShape) string {
-	switch shape {
-	case harness.ShapeBuilder:
-		return "writer"
-	case harness.ShapeConsult:
-		return "reader"
-	}
-	return string(shape)
 }

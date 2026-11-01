@@ -13,7 +13,6 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
-	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -499,7 +498,7 @@ func TestRemoteArtifactOutputRelNamesTheClosePath(t *testing.T) {
 
 	rt, b := bindReader(t, readerRepo(t))
 	rel := OutputFile(rt, b)
-	dir := rt.Store.ArtifactDir(b.Name, b.Round, resolve.BindingRole(b))
+	dir := rt.Store.ArtifactDir(b.Name, b.Round, b.WriterRole())
 	if got, want := filepath.Join(dir, filepath.FromSlash(rel)), reportPathFor(rt, b); got != want {
 		t.Errorf("artifact dir + output rel = %q, want the close path %q", got, want)
 	}

@@ -7,10 +7,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/agentsrc"
-	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 type actorView struct {
@@ -107,17 +107,6 @@ func actorCheckLine(doc relevo.ConfigDoc, name string, width int) (string, bool)
 		widget.TextStyle.Render(":settings"), true
 }
 
-func actorScopeText(scope *pathscope.Scope) string {
-	parts := strings.Join(scope.Paths, ", ")
-	if scope.Comments {
-		if parts == "" {
-			return "comments"
-		}
-		parts += " + comments"
-	}
-	return parts
-}
-
 func (v actorView) bodyLines(env widget.Env, width int) []string {
 	a := v.doc.Actors[v.name]
 	nameW, cols := actorPickLayout(width)
@@ -138,7 +127,7 @@ func (v actorView) bodyLines(env widget.Env, width int) []string {
 		lines = append(lines, widget.Fit(check, width))
 	}
 	if scope := a.Scope; scope != nil {
-		lines = append(lines, widget.Fit("   "+widget.MutedStyle.Render("scope ")+widget.TextStyle.Render(actorScopeText(scope)), width))
+		lines = append(lines, widget.Fit("   "+widget.MutedStyle.Render("scope ")+widget.TextStyle.Render(view.ScopeText(scope)), width))
 	}
 	return lines
 }

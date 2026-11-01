@@ -190,14 +190,14 @@ func UniqStrings(in []string) []string {
 // It is the legacy registry's resolver: ResolveRole over the derivation of
 // set and pol.
 func Resolve(set *candidate.Set, pol policy.Policy, gates []availability.Gate, token, role string, picks ...AccountPick) (Resolution, error) {
-	return ResolveRole(legacyRegistry(set, pol), set, gates, token, role, picks...)
+	return ResolveRole(LegacyRegistry(set, pol), set, gates, token, role, picks...)
 }
 
-// legacyRegistry is the registry derived from candidates.json and
+// LegacyRegistry is the registry derived from candidates.json and
 // policy.json, the behaviour every path had before roles.json. It is
 // roles.Build with no file, which never errors in legacy mode, so the error
 // is discarded.
-func legacyRegistry(set *candidate.Set, pol policy.Policy) *roles.Registry {
+func LegacyRegistry(set *candidate.Set, pol policy.Policy) *roles.Registry {
 	reg, _ := roles.Build(nil, set, pol)
 	return reg
 }

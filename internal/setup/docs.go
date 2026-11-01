@@ -11,6 +11,8 @@ import (
 	"io"
 	"strconv"
 	"strings"
+
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // SetupQuestionsDoc is the machine shape of "questions are still open": the
@@ -179,17 +181,7 @@ func setupStepDocOf(step string, err error) SetupStepDoc {
 	if errors.As(err, &na) {
 		return SetupStepDoc{Step: step, OK: false, Detail: na.Message, Next: "relevo setup"}
 	}
-	return SetupStepDoc{Step: step, OK: false, Detail: firstLine(err.Error())}
-}
-
-// firstLine is the first non-empty line of s, for a step failure's detail.
-// It mirrors the CLI's own helper so rows read the same.
-func firstLine(s string) string {
-	s = strings.TrimSpace(s)
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return strings.TrimSpace(s[:i])
-	}
-	return s
+	return SetupStepDoc{Step: step, OK: false, Detail: text.FirstLine(err.Error())}
 }
 
 // askSetupQuestions walks the open questions in order, reading one answer

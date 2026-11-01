@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -100,13 +99,7 @@ func (e *realEnv) LookPath(binary string) (string, error) {
 	return exec.LookPath(binary)
 }
 
-func (e *realEnv) HomePath(rel string) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, rel), nil
-}
+func (e *realEnv) HomePath(rel string) (string, error) { return harness.HomePath(rel) }
 
 func (e *realEnv) Stat(path string) error {
 	_, err := os.Stat(path)

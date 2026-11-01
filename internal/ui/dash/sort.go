@@ -90,7 +90,7 @@ func roundLess(a, b db.RoundRow, key string, desc bool) bool {
 		}
 		return a.StartedAt.Before(b.StartedAt)
 	case "tokens":
-		return cmpInt64(tokenValue(a), tokenValue(b), desc)
+		return cmpInt64(histq.RowTokens(a), histq.RowTokens(b), desc)
 	case "duration":
 		return cmpInt64(durationValue(a), durationValue(b), desc)
 	case "commits":
@@ -114,17 +114,6 @@ func groupLess(a, b histq.GroupRow, key string, desc bool) bool {
 		return a.Last.Before(b.Last)
 	}
 	return false
-}
-
-// tokenValue is the sum of a row's four token columns, nil counting zero.
-func tokenValue(r db.RoundRow) int64 {
-	var n int64
-	for _, p := range []*int64{r.InTokens, r.CacheTokens, r.WriteTokens, r.OutTokens} {
-		if p != nil {
-			n += *p
-		}
-	}
-	return n
 }
 
 func durationValue(r db.RoundRow) int64 {

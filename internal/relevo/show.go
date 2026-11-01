@@ -12,7 +12,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/refusal"
-	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -283,7 +282,7 @@ func showLive(rt Runtime, b store.Binding, opts ShowOptions) (ShowResult, error)
 		return readBytesMissing(rt.Store.ReadFile, path)
 	}
 	list := func() ([]string, error) { return rt.Store.RoundFiles(b.Name) }
-	if err := showSections(rt, b.Name, round, resolve.BindingRole(b), b.Shape, OutputFile(rt, b), entries, b.Builder, read, readBytes, list, opts, &res); err != nil {
+	if err := showSections(rt, b.Name, round, b.WriterRole(), b.Shape, OutputFile(rt, b), entries, b.Builder, read, readBytes, list, opts, &res); err != nil {
 		return ShowResult{}, err
 	}
 	return res, nil
@@ -437,7 +436,7 @@ func showArchived(rt Runtime, ab store.ArchivedBinding, opts ShowOptions) (ShowR
 		return rt.Store.ArchivedFile(ab.RecordID, filepath.Base(path))
 	}
 	list := func() ([]string, error) { return rt.Store.ArchivedFiles(ab.RecordID) }
-	if err := showSections(rt, ab.Binding.Name, round, resolve.BindingRole(ab.Binding), ab.Binding.Shape, OutputFile(rt, ab.Binding), entries, ab.Binding.Builder, read, readBytes, list, opts, &res); err != nil {
+	if err := showSections(rt, ab.Binding.Name, round, ab.Binding.WriterRole(), ab.Binding.Shape, OutputFile(rt, ab.Binding), entries, ab.Binding.Builder, read, readBytes, list, opts, &res); err != nil {
 		return ShowResult{}, err
 	}
 	return res, nil

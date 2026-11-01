@@ -11,7 +11,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/remote"
-	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -229,7 +228,7 @@ func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusC
 		State: string(b.State), Display: view.DisplayState(b.State),
 		BuilderCandidate: b.BuilderCandidate,
 		BuilderAccount:   b.BuilderAccount,
-		Role:             resolve.BindingRole(b),
+		Role:             b.WriterRole(),
 		Shape:            view.BindingShape(b),
 		ForkedFrom:       b.ForkedFrom,
 		ForkedAtRound:    b.ForkedAtRound,
@@ -252,7 +251,7 @@ func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusC
 	// leaves the document alone. The definition named is the binding's
 	// own role's.
 	if kind := b.Builder.Kind; kind != "" {
-		if role, ok := rt.RoleRegistry().Role(resolve.BindingRole(b)); ok {
+		if role, ok := rt.RoleRegistry().Role(b.WriterRole()); ok {
 			if d, ok := role.Definitions[kind]; ok && d.Custom {
 				row.BuilderDefinition = d.Agent
 				row.BuilderDefinitionCustom = true

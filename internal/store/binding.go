@@ -453,6 +453,14 @@ type Binding struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// WriterRole is the writer role b runs: b.Role, or "builder" when it is "".
+func (b Binding) WriterRole() string {
+	if b.Role == "" {
+		return "builder"
+	}
+	return b.Role
+}
+
 // bindingAlias is Binding without its methods, so UnmarshalJSON decodes the
 // new keys with the ordinary field rules.
 type bindingAlias Binding

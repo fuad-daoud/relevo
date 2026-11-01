@@ -77,7 +77,7 @@ func Group(rows []db.RoundRow, by Axis, loc *time.Location) []GroupRow {
 		if r.Commits != nil {
 			g.Commits += *r.Commits
 		}
-		g.Tokens += rowTokens(r)
+		g.Tokens += RowTokens(r)
 		if costKnown(r) {
 			g.CostUSD += *r.CostUSD
 		}
@@ -120,7 +120,7 @@ func Totals(rows []db.RoundRow) Tiles {
 	durations := make([]int64, 0, len(rows))
 	for _, r := range rows {
 		t.Rounds++
-		t.Tokens += rowTokens(r)
+		t.Tokens += RowTokens(r)
 		if costKnown(r) {
 			t.CostUSD += *r.CostUSD
 		}

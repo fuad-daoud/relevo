@@ -8,6 +8,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // DriftResult is what one between-rounds capture attempt produced. A zero value
@@ -49,7 +50,7 @@ func Drift(ctx context.Context, d Deps, tx *store.Tx, b store.Binding, baseline 
 		return DriftResult{Available: false}
 	}
 	if err != nil {
-		return DriftResult{Available: false, Reason: brief(err)}
+		return DriftResult{Available: false, Reason: text.Brief(err)}
 	}
 
 	if diff.Stat.Empty() {
@@ -62,7 +63,7 @@ func Drift(ctx context.Context, d Deps, tx *store.Tx, b store.Binding, baseline 
 
 	patchPath := d.Store.DriftPath(b.Name, b.Round)
 	if err := tx.PutRoundFile(b.Name, b.Round, patchPath, diff.Patch); err != nil {
-		return DriftResult{Available: false, Reason: brief(err)}
+		return DriftResult{Available: false, Reason: text.Brief(err)}
 	}
 
 	return DriftResult{Available: true, Path: patchPath, Stat: diff.Stat}

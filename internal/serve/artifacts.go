@@ -8,7 +8,6 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
-	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -67,7 +66,7 @@ func (s *Server) handleRoundArtifacts(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	files, err := relevo.RoundArtifacts(rt, b.Name, n, resolve.BindingRole(b), relevo.OutputFile(rt, b))
+	files, err := relevo.RoundArtifacts(rt, b.Name, n, b.WriterRole(), relevo.OutputFile(rt, b))
 	if err != nil {
 		if errors.Is(err, relevo.ErrNoArtifact) {
 			writeErr(w, http.StatusNotFound, remote.CodeNotFound, "no such artifact")
@@ -77,7 +76,7 @@ func (s *Server) handleRoundArtifacts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, remote.ArtifactList{
-		Actor:  resolve.BindingRole(b),
+		Actor:  b.WriterRole(),
 		Output: relevo.OutputFile(rt, b),
 		Files:  artifactFiles(files),
 	})
@@ -92,7 +91,7 @@ func (s *Server) handleRoundArtifact(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	data, err := relevo.ReadArtifact(rt, b.Name, n, resolve.BindingRole(b), r.PathValue("rel"))
+	data, err := relevo.ReadArtifact(rt, b.Name, n, b.WriterRole(), r.PathValue("rel"))
 	if err != nil {
 		if errors.Is(err, relevo.ErrNoArtifact) {
 			writeErr(w, http.StatusNotFound, remote.CodeNotFound, "no such artifact")

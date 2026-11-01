@@ -14,7 +14,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
-	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/transcript"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -24,7 +23,7 @@ import (
 // artifact-directory output file, a writer's flat NNN-report.md.
 func reportPathFor(rt Runtime, b store.Binding) string {
 	if b.Shape == store.ShapeReader {
-		return rt.Store.OutputPath(b.Name, b.Round, resolve.BindingRole(b), readerOutputLabel(rt, b))
+		return rt.Store.OutputPath(b.Name, b.Round, b.WriterRole(), readerOutputLabel(rt, b))
 	}
 	return rt.Store.ReportPath(b.Name, b.Round)
 }

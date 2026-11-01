@@ -8,7 +8,6 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -184,7 +183,7 @@ func chainLegacyFacts(tx *store.Tx, c db.ChainRow) (workflow.Legacy, []db.ChainM
 		}
 		seen[name] = true
 		if name == c.Builder {
-			leg.Builder = resolve.BindingRole(b)
+			leg.Builder = b.WriterRole()
 		}
 		members = append(members, db.ChainMemberRow{Binding: name, Actor: b.Role, Seq: len(members)})
 		cleared = append(cleared, name)

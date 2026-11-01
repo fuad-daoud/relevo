@@ -145,7 +145,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 				remoteBuilder = c.Ref().String()
 			}
 		} else {
-			p, err := resolveSendBuilder(rt, resolve.BindingRole(b), b.BuilderCandidate, opts.Builder, b.CWD)
+			p, err := resolveSendBuilder(rt, b.WriterRole(), b.BuilderCandidate, opts.Builder, b.CWD)
 			if err != nil {
 				return preflight{}, err
 			}
