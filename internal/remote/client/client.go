@@ -59,7 +59,6 @@ func (e *HTTPError) Error() string {
 	return fmt.Sprintf("http %d: %s", e.Status, e.Body.Code)
 }
 
-// HTTPStatus is the response status the error carries.
 func (e *HTTPError) HTTPStatus() int {
 	return e.Status
 }
@@ -231,8 +230,7 @@ func (c *Client) newRequest(ctx context.Context, entry remote.ServerEntry, metho
 	return req, nil
 }
 
-// responseError maps a non-success status to the error doRequest returns. A
-// gateway status is a redeploy, not an answer, so its CDN HTML body is dropped.
+// A gateway status is a redeploy, not an answer, so its CDN HTML body is dropped.
 func responseError(resp *http.Response) error {
 	if resp.StatusCode == http.StatusUpgradeRequired {
 		_ = resp.Body.Close()
@@ -276,7 +274,6 @@ func responseError(resp *http.Response) error {
 	}
 }
 
-// isGatewayStatus covers Cloudflare's 520-527 and 530 beside 502, 503 and 504.
 func isGatewayStatus(status int) bool {
 	switch status {
 	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:

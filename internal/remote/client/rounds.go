@@ -131,9 +131,6 @@ func copyBundleField(mw *multipart.Writer, bundle io.Reader) error {
 	return nil
 }
 
-// StartRound begins a round on the server. tags nil or empty omits the field;
-// candidate "" leaves the binding's builder unchanged; force true carries the
-// --force opt-out of the seed cap; verify nil takes the server's own policy.
 // retryOnUnreachable is safe only when the server advertised
 // remote.FeatureIdempotentSend.
 func (c *Client) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier, candidate string, force bool, tags []remote.TagRef, retryOnUnreachable bool, verify *bool) (remote.BindingView, error) {
@@ -236,8 +233,7 @@ func (c *Client) RoundArtifacts(ctx context.Context, server, name string, round 
 }
 
 // RoundArtifact downloads one artifact, rel exactly as RoundArtifacts listed
-// it. The rel is escaped one segment at a time, so a nested rel keeps its
-// slashes.
+// it.
 func (c *Client) RoundArtifact(ctx context.Context, server, name string, round int, rel string) (io.ReadCloser, error) {
 	path := fmt.Sprintf("/v1/bindings/%s/rounds/%d/artifacts/%s", url.PathEscape(name), round, escapeRel(rel))
 	return retry(ctx, retryAttempts, retryBase, func(ctx context.Context) (io.ReadCloser, error) {
