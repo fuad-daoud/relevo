@@ -5,8 +5,7 @@ and reports: relevo runs one headless process, it never edits the shared tree,
 and its output lands in the round's artifact directory. That output is
 `NNN-<actor>/<label>.md` -- the reader's final message -- named after the
 actor's resolved output label (`plan.md` for the architect, `findings.md` for
-the reviewer, `notes.md` for the researcher), plus any files it produced. A
-round from before the rename answers `summary.md`, its old fallback name.
+the reviewer, `notes.md` for the researcher), plus any files it produced.
 
 The MasterMind runs, from its own session:
 
@@ -21,10 +20,9 @@ queued to the MasterMind like any report. `relevo show <name> --output` prints
 the output file, `relevo show <name> --artifacts` lists the round's other files,
 and the cockpit's artifacts tab shows both.
 
-A bound reader round is the only way to get a reader's answer: the old
-one-shot `relevo ask` consult is gone. `relevo show <name> --findings <id>`
-still reads the findings of a consult recorded before that removal, and it is
-how a verify reviewer's findings are read.
+A bound reader round is the way to get a reader's answer.
+`relevo show <name> --findings <id>` reads a recorded consult's findings,
+and it is how a verify reviewer's findings are read.
 
 The process is the only thing relevo can observe: relevo kills one that
 outlives its deadline, and a process that exits without a final message is
@@ -122,7 +120,7 @@ the fleet's SPEND column and in the round pane's `spend` row.
 A remote builder's round is measured on the server, from the builder's
 own stream there, and shipped with the round: the client keeps the
 server's figure verbatim instead of reading a record it does not have. A
-server built before this ships no figure, and its rounds print
+round with no usage figure from the server prints
 `unknown · remote: server sent no usage`.
 
 While a round is running, `relevo status` and `relevo ui` show a `live`
@@ -140,9 +138,8 @@ sums every round relevo has recorded, including bindings `unbind --done` has
 archived, one row per group and a total, with the four token columns
 `in`, `cache`, `write`, `out` (a sum across models has no meaningful
 ratio, so `cache` carries no percentage). Measured and estimated dollars
-never share a column; `plan` and `unknown` are counts of rounds. `--tab`
-is the second exception to the #114 verb freeze, taken because its
-sums exist regardless (they are on `status --json`) and a cross-binding
+never share a column; `plan` and `unknown` are counts of rounds. Those
+sums exist regardless (they are on `status --json`), and a cross-binding
 view has no other home.
 
 ### Usage stats
@@ -201,14 +198,14 @@ In the actors section:
 ```
 
 Until the reviewer actor lists a candidate, the verify consult fails with
-`no configured candidate serves actor "reviewer"`.
+`no configured candidate serves actor "reviewer"`. For a custom agent
+standing in for `reviewer` in a chain, see [Actors and agents](candidates.md#actors-and-agents).
 
 ## The MasterMind: architect
 
 `architect` is the planner actor's contract and a session persona. As the
-planner actor's contract, `planner` and `lite-planner` run it as a reader round:
-a seed goes in, and the plan comes out as the final message, saved as `plan.md`.
-The contract is minimal -- the plan says the behaviour, the cases, the seams and
+contract, `planner` and `lite-planner` run it as a [Planner actors](#planner-actors)
+round. The contract is minimal -- the plan says the behaviour, the cases, the seams and
 one-line ordered steps, and the planner never edits and never builds; a strong
 builder owns the how.
 

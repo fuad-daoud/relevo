@@ -17,8 +17,8 @@ on the next command and removed; the scripts themselves are never removed.
 
 - `state_changed` — fires whenever a binding transitions between states (`active`, `needs_you`, `broken`, `done`, `paused`).
 - `round_started` — fires whenever a new round starts.
-- `builder_stalled` — fires once when a live local builder's tree and stream or screen have been quiet for `stall_after_ms` (#252, generalised by #135). Clearing the stall fires nothing.
-- `binding_stale` — fires once when a `NEEDS YOU` binding has sat unacted for `stale_after_ms` (#135). Clearing the stamp fires nothing.
+- `builder_stalled` — fires once when a live local builder's tree and stream or screen have been quiet for [`stall_after_ms`](candidates.md#policy). Clearing the stall fires nothing.
+- `binding_stale` — fires once when a `NEEDS YOU` binding has sat unacted for [`stale_after_ms`](candidates.md#policy). Clearing the stamp fires nothing.
 
 ### Hook execution & environment
 

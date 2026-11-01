@@ -3,15 +3,10 @@
 The relevo plugin gives a Claude Code MasterMind two things: the `relevo mcp` MCP
 server, which exposes `status`, `send`, `wait`, `done`, `show` and `gate` as tools
 (`--kind opencode` serves the five without `wait`), and
-a `SessionStart` hook that runs `relevo mastermind init`. The MCP server, the
-hooks and the slash commands below all run through tiny scripts under
-`${CLAUDE_PLUGIN_ROOT}/scripts/` that exec `relevo` from `PATH`; without it the
-hooks stay silent, and the MCP server and the commands print one install hint.
-The hook exports `RELEVO_MASTERMIND` and tells the model its MasterMind name.
-Install it once per machine:
-
-    /plugin marketplace add fuad-daoud/relevo
-    /plugin install relevo@relevo
+a `SessionStart` hook that runs `relevo mastermind init`. The hook exports
+`RELEVO_MASTERMIND` and tells the model its MasterMind name. Install it once
+per machine as [The Claude Code plugin](../README.md#the-claude-code-plugin)
+describes; that section also covers how the plugin's scripts reach `relevo`.
 
 The plugin also carries slash commands over relevo's verbs:
 

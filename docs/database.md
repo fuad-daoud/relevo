@@ -44,7 +44,8 @@ the live and archived binding counts, and the route it was read by.
 
 `relevo history` and `relevo show` read the database for anything that is not a
 live binding's open round, so a round from months ago renders the same way a
-live one does. See "relevo history" and "relevo show" below.
+live one does (see [relevo history](commands.md#relevo-history) and
+[relevo show](commands.md#relevo-show)).
 
 ## Cloud sync
 

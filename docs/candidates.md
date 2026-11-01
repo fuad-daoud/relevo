@@ -161,12 +161,12 @@ unacted before relevo labels it `stale`; absent defaults to four hours,
 and must be `> 0` when present. `scan_patterns` is an optional list of extra
 regular expressions appended to relevo's built-in instruction-shaped scan list;
 each pattern must compile. `gate` configures the default acceptance command
-(see [Gate](rounds.md#gate) below): `default` is the command a binding gets when it
-does not set `--gate` or `--no-gate` itself, absent or `""` meaning no gate;
+(see [Gate](rounds.md#gate)): `default` is the acceptance command a binding
+falls back to, absent or `""` meaning no gate;
 `timeout_ms` bounds one gate run, absent defaulting to ten minutes, and must
-be `> 0` when present. `regate` is how many automatic repair rounds a new
-binding may open after a failing gate (see [Repair
-rounds](rounds.md#repair-rounds) below), absent or `0` meaning none, and must be
+be `> 0` when present. `regate` caps the repair-round loop for a new
+binding (see [Repair
+rounds](rounds.md#repair-rounds)), absent or `0` meaning none, and must be
 `>= 0` when present.
 
 `classify` configures an optional classifier (TypeSafe's Jev model) to run
@@ -202,9 +202,7 @@ reviewer  (config actors)
 The marker is computed by the same code `bind` runs, so it cannot
 disagree with what `bind` does next. Change an actor's order by editing its
 `candidates` list (`relevo config set actors.builder.candidates '["…"]'` or
-`relevo config edit`). The rest of #61 --
-scoring for unordered actors, peak windows, mid-round switching -- will add keys
-to the policy section as it lands.
+`relevo config edit`).
 
 ### Actors and agents
 
@@ -403,14 +401,7 @@ or `verdict: changes`, which relevo's round prompt already tells it to write;
 then `--reviewer-actor morphic-reviewer`. Outcomes are declared on actors, never
 on agents; `outcomes` or `role` on an agent is refused.
 
-- A new **reader** actor runs as a binding's actor too: `relevo bind
-  --worktree --no-feature --actor <name>` or `relevo bind --no-feature --actor <name>`, then `relevo
-  send` hands it the round's prompt. Its round writes `NNN-<actor>/<label>.md`
-  -- the actor's resolved output label (`plan.md` for the architect,
-  `findings.md` for the reviewer, `notes.md` for the researcher) -- and any
-  files it produced, and the MasterMind reads it with
-  `relevo show <name> --output`. A new **writer** actor runs a round the same
-  way. Every round of that binding runs it.
+- A new **reader** actor runs as a binding's actor too, as [Reader actors](readers.md#reader-actors) describes; a planner actor as [Planner actors](readers.md#planner-actors) describes. A new **writer** actor runs a round the same way. Every round of that binding runs it.
 
 With `relevo bind --worktree --no-feature --server S --actor <r>`, the server resolves `<r>`
 against **its own** actors section, and your local sections do not travel. A
@@ -447,9 +438,6 @@ ignored, and relevo warns about any that remain.
 labelled `(config actors)`, then the candidates; `relevo status --json` has
 `agent_definition` for a custom runner. `relevo status` shows `actor <r>` on
 the runner line, and `status --json` has `actor`.
-
-**Remote builders.** A server resolves actors from its *own* config, not the
-client's.
 
 ### Availability
 
@@ -525,11 +513,11 @@ the next candidate. The halt always states its reason, even on a round
 that has already notified once; a `relevo send` re-send resets the
 round's switch budget, since the human asked for another attempt.
 
-A builder gone between rounds is `BROKEN` as before: `relevo bind --resume`
+A builder gone between rounds is `BROKEN`: `relevo bind --resume`
 starts a fresh one. relevo selects an agent for every builder it starts, with
 `--agent` on the launch line.
 
-`aliases.json` from earlier versions is no longer read, and neither is anything else an older relevo kept in `~/.config/relevo`.
+`aliases.json` is not read.
 
 #### History
 
@@ -614,13 +602,3 @@ If a permission denial pattern matches (for example, if a tool was refused becau
 - relevo does **not** switch to another candidate (which would waste quota on a configuration error) and does **not** record a rate-limit gate.
 
 To recover from a permission-blocked halt, adjust the tier (e.g. `relevo send --tier edit` or `relevo send --tier yolo --allow-yolo`) or update permissions, then re-send the plan.
-
-### Migration from extra_args
-
-Previously, permission bypass flags were often passed via `extra_args` in the candidates section (such as `"--dangerously-skip-permissions"` or `"--auto"`).
-
-When any explicit tier (`read`, `edit`, `yolo`) is active, relevo validates that `extra_args` does not contain conflicting permission flags (e.g. `--permission-mode`, `--dangerously-skip-permissions`, `--mode`, `--auto`). If detected, relevo refuses to launch.
-
-To migrate:
-- Move `--dangerously-skip-permissions` (or `--auto`) from `extra_args` to `"tier": "yolo"` on the candidate in the candidates section, and set `"max_tier": "yolo"` in the policy section (or use `--allow-yolo` on CLI commands).
-- Alternatively, leave `tier` unset (or set to `"harness"`), and relevo will leave `extra_args` untouched.
