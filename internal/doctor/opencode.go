@@ -24,9 +24,8 @@ var opencodeServicePaths = []string{opencodeStateServicePath, opencodeConfigServ
 // database/sql) so the session count needs no network call and no credential.
 const opencodeDBPath = ".local/share/opencode/opencode.db"
 
-// opencodeServiceCheck reports opencode 2.x's shared-service model: a killed
-// or switched-away client leaves its agent session running inside the one
-// `opencode serve --service` per user. Informational (always SevOK), and
+// opencodeServiceCheck reports opencode 2.x's shared-service model: one
+// `opencode serve --service` per user. Informational, always SevOK, and
 // appears only when service.json exists.
 func opencodeServiceCheck(ctx context.Context, env Env) Check {
 	var usedRelPath string
@@ -61,7 +60,7 @@ func opencodeServiceCheck(ctx context.Context, env Env) Check {
 	return Check{Group: "opencode", Name: "service", Severity: SevOK, Detail: detail}
 }
 
-// opencodeSessionCount tries session_v2 (2.0.14) then legacy session (pre-2.0).
+// opencodeSessionCount tries session_v2 (2.0.14), then session.
 func opencodeSessionCount(ctx context.Context, env Env, dbPath string) (int, bool) {
 	for _, query := range []string{
 		"select count(*) from session_v2",
@@ -81,10 +80,9 @@ func opencodeSessionCount(ctx context.Context, env Env, dbPath string) (int, boo
 }
 
 // opencodeAllowlistCheck reports whether opencode's own config lets a
-// headless builder read the plan relevo stages under stateRoot: it refuses
-// that read unless permission.external_directory allows the directory, and
-// does not expand ~ or $HOME. Every failure mode is a SevWarn row carrying a
-// Fix.
+// headless builder read the plan under stateRoot: only allow entries open
+// it. It does not expand ~ or $HOME; every failure mode is a SevWarn row
+// carrying a Fix.
 func opencodeAllowlistCheck(env Env, stateRoot string) Check {
 	var path string // the first readable candidate wins
 	var body []byte
@@ -152,9 +150,7 @@ func opencodeAllowlistCheck(env Env, stateRoot string) Check {
 	return warn(fmt.Sprintf("%s has no permission.external_directory allow entry for %s/**; headless opencode builders auto-reject reading their plan", path, stateRoot))
 }
 
-// patternCovers reports whether an allow entry opens stateRoot: everything
-// ("*"), the root itself, with /* or /**, or a glob whose prefix is a parent
-// of the root.
+// patternCovers reports whether an allow entry opens stateRoot.
 func patternCovers(pattern, stateRoot string) bool {
 	if pattern == "*" || pattern == "**" {
 		return true
@@ -218,7 +214,6 @@ func stripJSONC(b []byte) []byte {
 	return out
 }
 
-// copyStringLiteral copies a string literal verbatim from its opening quote.
 func copyStringLiteral(b []byte, i int, out []byte) ([]byte, int) {
 	out = append(out, b[i])
 	i++
@@ -274,9 +269,9 @@ func jsoncSpace(c byte) bool {
 
 const opencodePluginDirPath = ".config/opencode/plugins/relevo"
 
-// opencodePluginCheck reports whether relevo's OpenCode plugin is installed:
-// none present is a quiet OK (opt-in), all byte-equal is installed, else a
-// warning naming each problem file.
+// opencodePluginCheck reports whether relevo's OpenCode plugin is
+// installed: none present is a quiet OK, all byte-equal is installed, else
+// a warning naming each problem file.
 func opencodePluginCheck(env Env) Check {
 	h, ok := harness.Lookup("opencode")
 	if !ok {
@@ -327,7 +322,7 @@ var opencodeReservedKeys = map[string]bool{
 }
 
 // opencodePluginKeysCheck reports whether another command binds a key the
-// relevo plugin uses. No row unless the plugin is installed.
+// relevo plugin uses; no row unless the plugin is installed.
 func opencodePluginKeysCheck(env Env) Check {
 	if !opencodePluginInstalled(env) {
 		return Check{}

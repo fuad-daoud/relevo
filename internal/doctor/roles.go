@@ -8,8 +8,8 @@ import (
 )
 
 // BindingRoleChecks reports one FAIL row per binding that is not DONE whose
-// role (b.Role, or "builder" when it is empty) the registry does not define.
-// A remote binding's role is resolved by its server, so the local registry
+// role the registry does not define. An empty role reads as "builder"; a
+// remote binding's role is resolved by its server, so the local registry
 // cannot judge it. known is the caller's registry lookup, so internal/doctor
 // needs no internal/relevo import.
 func BindingRoleChecks(bindings []store.Binding, known func(role string) bool) []Check {

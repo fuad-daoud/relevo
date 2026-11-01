@@ -23,10 +23,8 @@ import (
 const bindPreflightTimeout = 2 * time.Second
 
 // assembleKinds is the scope: every kind named by a configured candidate,
-// plus every existing binding's builder kind. storeErr is returned rather than
-// aborting -- a diagnostic that refuses to diagnose because one of its own
-// inputs is unreadable is worse than one that reports the gap, so the caller
-// renders it as a row and checks the kinds it did find.
+// plus every existing binding's builder kind. storeErr is returned rather
+// than aborting so the caller renders it as a row.
 func assembleKinds(set *candidate.Set, st *store.Store) (kinds []string, storeErr error) {
 	seen := make(map[string]bool)
 	if set != nil {
@@ -61,8 +59,6 @@ func assembleKinds(set *candidate.Set, st *store.Store) (kinds []string, storeEr
 	return kinds, storeErr
 }
 
-// accountHomes maps a harness kind to the per-process homes its configured
-// accounts pin it to.
 func accountHomes(accounts account.Set) map[string][]string {
 	homes := make(map[string][]string)
 	for _, a := range accounts {
@@ -80,19 +76,16 @@ func builderDefinitions() []string {
 	return append([]string(nil), spec.Definitions...)
 }
 
-// legacyRegistryFor is the roles registry derived from set and policy: the
-// registry for callers without roles.json. Legacy mode never
-// errors, so the error is discarded.
+// legacyRegistryFor is the roles registry derived from set and policy. It
+// never errors, so the error is discarded.
 func legacyRegistryFor(set *candidate.Set) *roles.Registry {
 	reg, _ := roles.Build(nil, set, policy.Policy{})
 	return reg
 }
 
 // assembleRoleDefinitions is doctor's per-kind role scope read from the
-// registry: the definitions some candidate on that harness would
-// load, given the roles the registry says serve it. A kind in kinds that no
-// candidate names reached doctor through a binding, and a binding is always a
-// builder, so it gets the builder's definitions for that kind.
+// registry. A kind no candidate names reached doctor through a binding,
+// and a binding is always a builder, so it gets the builder's definitions.
 func assembleRoleDefinitions(reg *roles.Registry, set *candidate.Set, kinds []string) map[string][]string {
 	seen := make(map[string]map[string]bool)
 	add := func(kind string, defs []string) {
@@ -140,8 +133,7 @@ func assembleRoleDefinitions(reg *roles.Registry, set *candidate.Set, kinds []st
 	return out
 }
 
-// assembleDefinitions is assembleRoleDefinitions over the legacy registry: the
-// behaviour every pre-roles.json caller had.
+// assembleDefinitions is assembleRoleDefinitions over the legacy registry.
 func assembleDefinitions(set *candidate.Set, kinds []string) map[string][]string {
 	return assembleRoleDefinitions(legacyRegistryFor(set), set, kinds)
 }
@@ -198,9 +190,8 @@ func Render(w io.Writer, rep Report) {
 		if rep.NoCandidates {
 			_, _ = fmt.Fprintf(w, "%s, %s -- no candidates configured; run relevo setup.\n", warnPart, failPart)
 		} else if !rep.UsableBuilder {
-			// Say why. Every row can be `ok` and still leave no usable builder --
-			// a machine whose only alias names a kind relevo was not taught reads
-			// as entirely healthy, so a bare verdict would point at nothing.
+			// Say why: every row can be `ok` and still leave no usable builder,
+			// so a bare verdict would point at nothing.
 			_, _ = fmt.Fprintf(w, "%s, %s -- could not establish a usable builder: no checked harness has its binary on PATH.\n", warnPart, failPart)
 		} else if rep.BuilderRefusal != "" {
 			_, _ = fmt.Fprintf(w, "%s, %s -- relevo cannot pick a builder: %s.\n", warnPart, failPart, rep.BuilderRefusal)
@@ -217,8 +208,7 @@ func Render(w io.Writer, rep Report) {
 }
 
 // candidatesCheck is the no-candidates row. Its fix is the one-time setup
-// wizard, which writes the same seeds a fresh machine needs (candidates,
-// policy, actors), so the machine's next steps all point at one command.
+// wizard, so the machine's next steps all point at one command.
 func candidatesCheck() Check {
 	return Check{
 		Name:     "candidates",
@@ -228,10 +218,9 @@ func candidatesCheck() Check {
 	}
 }
 
-// clientKeyReplaced reads what this machine's own file recorded when an arriving
-// client key took the place of the one it held. A row that will not read is
-// reported as no swap: the doctor is telling an operator what to act on, and a
-// corrupt row is a worse thing to interrupt that with than a missing warning.
+// clientKeyReplaced reads what this machine's own file recorded. A row
+// that will not read is reported as no swap: a corrupt row is worse to
+// interrupt an operator with than a missing warning.
 func clientKeyReplaced(cfg *config.Store) ClientKeyReplacedInput {
 	swapped, ok, err := cfg.ReadClientKeyReplaced()
 	if err != nil || !ok {
@@ -240,11 +229,9 @@ func clientKeyReplaced(cfg *config.Store) ClientKeyReplacedInput {
 	return ClientKeyReplacedInput{Swapped: true, From: swapped.From, To: swapped.To}
 }
 
-// RunReport runs every check `relevo doctor` has: the configured harness
-// kinds, the server rows, the release, database, scope and role rows, the
-// hooks row and the mastermind checks. The cmd-owned facts arrive through
-// deps; the bundle calls this so both carry the same report. (Named RunReport
-// because Report is the report type.)
+// RunReport runs every check `relevo doctor` has. The cmd-owned facts
+// arrive through deps; the bundle calls this so both carry the same report.
+// (Named RunReport because Report is the report type.)
 func RunReport(rt relevo.Runtime, L config.Loaded, deps Deps) (Report, error) {
 	kinds, storeErr := assembleKinds(rt.Candidates, rt.Store)
 	env := deps.Env
@@ -287,11 +274,9 @@ func RunReport(rt relevo.Runtime, L config.Loaded, deps Deps) (Report, error) {
 	return rep, nil
 }
 
-// agentFileCheck reads the config's carried harness files and the ones that
-// have drifted off them, plus the rendered definitions of the config's own
-// agents that a person has edited against the role manifest. A config store or
-// an install env that cannot be opened leaves what it could not read out, as
-// every other best-effort row does.
+// agentFileCheck reads the config's carried harness files and the drifted
+// ones, plus the rendered definitions of the config's own agents. Anything
+// it cannot open leaves what it could not read out.
 func agentFileCheck(open func() (*config.Store, error)) Check {
 	store, err := open()
 	if err != nil {
@@ -317,9 +302,9 @@ func agentFilesUnavailable() Check {
 }
 
 // editedRenderedAgents names the rendered definitions of the config's own
-// source agents that the role manifest does not vouch for -- a person's edit
-// on a file the re-render keeps. An install env that cannot be opened yields
-// nothing rather than failing the row: the native half is still worth showing.
+// source agents that the role manifest does not vouch for. An install env
+// that cannot be opened yields nothing: the native half is still worth
+// showing.
 func editedRenderedAgents(store *config.Store) []EditedFile {
 	env, err := relevo.AgentInstallEnv()
 	if err != nil {
@@ -347,9 +332,8 @@ func editedRenderedAgents(store *config.Store) []EditedFile {
 	return out
 }
 
-// hookFileCheck reads the config's carried hook scripts and the ones that have
-// drifted off them. A config store that cannot be opened leaves the row off,
-// as every other best-effort row does.
+// hookFileCheck reads the config's carried hook scripts and the drifted
+// ones. A config store that cannot be opened leaves the row off.
 func hookFileCheck(open func() (*config.Store, error)) Check {
 	store, err := open()
 	if err != nil {

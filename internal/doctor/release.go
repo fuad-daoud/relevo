@@ -98,9 +98,8 @@ func releaseFix(kind release.Kind, latest, goos, goarch string) string {
 	return ""
 }
 
-// daemonCheck builds the daemon row while the daemon is running. Four
-// states: no record (predates version tracking), a binary the daemon
-// refused, a version behind the CLI (transient during a re-exec), and equal.
+// daemonCheck builds the daemon row while the daemon is running: no
+// record, a refused binary, a version behind the CLI, and equal.
 func daemonCheck(env Env) Check {
 	cli, _, _, _ := env.ReleaseState()
 	info, ok, err := env.DaemonInfo()

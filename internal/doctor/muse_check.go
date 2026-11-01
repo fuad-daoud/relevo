@@ -10,9 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
-// gatePluginRowsFor sets the plugin-row gate matching a harness kind, from a
-// candidate kind or a mastermind record's HarnessKind: claude gates the
-// Claude rows, muse the muse rows.
+// gatePluginRowsFor sets the plugin-row gate matching a harness kind.
 func gatePluginRowsFor(kind string, in *MasterMindCheckInput) {
 	switch kind {
 	case "claude":
@@ -22,12 +20,9 @@ func gatePluginRowsFor(kind string, in *MasterMindCheckInput) {
 	}
 }
 
-// museSessionGate opens the muse MasterMind row when MUSE_SESSION_ID is set.
-// The id is read directly because mastermind.Detect in
-// internal/mastermind/ident.go answers "muse" only once the parallel change
-// lands there; Detect owns session detection and this gate is the duplicate
-// to converge on it. A stray id on a host with no muse candidate, record or
-// binary reports no rows, the same shape as the Claude gating.
+// museSessionGate opens the muse MasterMind row when MUSE_SESSION_ID is
+// set. A stray id on a host with no muse candidate, record or binary
+// reports no rows.
 func museSessionGate(rt relevo.Runtime, in *MasterMindCheckInput, resolver chatlabel.Resolver) {
 	if os.Getenv("MUSE_SESSION_ID") == "" {
 		return
@@ -39,11 +34,9 @@ func museSessionGate(rt relevo.Runtime, in *MasterMindCheckInput, resolver chatl
 	museMasterMindFacts(rt, in, resolver)
 }
 
-// museMasterMindFacts fills the session-row fields for a muse session exactly
-// as mastermindCheckInput's claude branch fills them. It resolves through
-// mastermind.Resolve, which reads MUSE_SESSION_ID only once Detect in
-// internal/mastermind/ident.go knows the muse kind; until then the row reads
-// FAIL (no record resolved), never guesses an identity.
+// museMasterMindFacts fills the session-row fields for a muse session as
+// mastermindCheckInput's claude branch fills them. Until Resolve knows the
+// muse kind the row reads FAIL, never a guessed identity.
 func museMasterMindFacts(rt relevo.Runtime, in *MasterMindCheckInput, resolver chatlabel.Resolver) {
 	in.MCPChild = HasMCPChild(hostChildProcesses(os.Getppid()))
 	if rt.MasterMinds == nil {
@@ -69,9 +62,9 @@ func museMasterMindFacts(rt relevo.Runtime, in *MasterMindCheckInput, resolver c
 	}
 }
 
-// museBinaryPresent is the direct exec.LookPath this package already makes
-// of the host's process table; doctor's Env is not threaded into
-// mastermindCheckInput. A muse with no PATH entry is not a muse session.
+// museBinaryPresent is the direct exec.LookPath this package already makes;
+// doctor's Env is not threaded into mastermindCheckInput. A muse with no
+// PATH entry is not a muse session.
 func museBinaryPresent() bool {
 	_, err := exec.LookPath("muse")
 	return err == nil

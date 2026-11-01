@@ -6,10 +6,9 @@ import (
 	"strings"
 )
 
-// SandboxMarker is what scripts/relevo-dev-user.sh writes under a state root
-// to say this account is a dev sandbox rather than a production install: the
-// short name the sandbox was created with, and the port it was given for
-// `relevo serve`.
+// SandboxMarker is what scripts/relevo-dev-user.sh writes under a state
+// root to say this account is a dev sandbox: the short name the sandbox
+// was created with and the port it was given.
 type SandboxMarker struct {
 	Name string // the short name, without the rv- prefix
 	Port int    // the serve port this sandbox owns, 0 when none was asked for
@@ -24,9 +23,9 @@ const LingerDir = "/var/lib/systemd/linger"
 const DefaultServePort = 7777
 
 // ParseSandboxMarker reads the marker body: one `key=value` per line, with
-// name and port the keys. ok is false when the body carries no name, which is
-// what a truncated or hand-mangled marker reads as; the caller then shows no
-// sandbox rows at all rather than rows about a sandbox it cannot name.
+// name and port the keys. ok is false when the body carries no name, so the
+// caller shows no sandbox rows rather than rows about a sandbox it cannot
+// name.
 func ParseSandboxMarker(raw []byte) (SandboxMarker, bool) {
 	var m SandboxMarker
 	for _, line := range strings.Split(string(raw), "\n") {
@@ -49,26 +48,24 @@ func ParseSandboxMarker(raw []byte) (SandboxMarker, bool) {
 	return m, true
 }
 
-// SandboxInput is everything the three sandbox rows need that they cannot
-// read themselves: the environment values as inherited, the roots those values
-// resolved to, the running user's identity, and what the sandbox recorded.
 type SandboxInput struct {
-	StateHome  string // $XDG_STATE_HOME, "" when unset
-	ConfigHome string // $XDG_CONFIG_HOME, "" when unset
-	StateRoot  string // the state root those values resolved to
-	ConfigRoot string // the config root those values resolved to
-	User       string // the login name running doctor
-	UID        int    // that user's uid
-	MarkerPort int    // the port the sandbox marker recorded
-	Listen     string // the serve.daemon row's listen address, "" when absent
+	// StateHome is $XDG_STATE_HOME, "" when unset.
+	StateHome string
+	// ConfigHome is $XDG_CONFIG_HOME, "" when unset.
+	ConfigHome string
+	StateRoot  string
+	ConfigRoot string
+	User       string
+	UID        int
+	MarkerPort int
+	// Listen is the serve.daemon row's listen address, "" when absent.
+	Listen string
 }
 
-// XDGCheck is the `xdg` row: a parent process that exported XDG_STATE_HOME or
-// XDG_CONFIG_HOME hands them to a child that runs as another user, and the
-// child then writes its state under the parent's directory. It warns when a
-// variable is set and the root it resolved to exists and belongs to a uid
-// other than the running user's, which is that case established rather than
-// guessed. A root that does not exist yet, or one this user owns, is OK.
+// XDGCheck is the `xdg` row: a parent that exported XDG_STATE_HOME or
+// XDG_CONFIG_HOME hands them to a child running as another user. It warns
+// only when the root exists and belongs to another uid, which is that case
+// established rather than guessed.
 func XDGCheck(env Env, in SandboxInput) Check {
 	c := Check{Name: "xdg"}
 	if in.StateHome == "" && in.ConfigHome == "" {
@@ -111,9 +108,8 @@ func XDGCheck(env Env, in SandboxInput) Check {
 }
 
 // LingerCheck is the `linger` row, which exists only on a sandbox. Without
-// lingering, the sandbox's user manager -- and so its daemon -- stops at
-// logout, and the sandbox looks like a random broken install next login. It
-// warns when systemd holds no linger file for this account.
+// lingering the sandbox's user manager stops at logout, so it warns when
+// systemd holds no linger file for this account.
 func LingerCheck(env Env, in SandboxInput) Check {
 	c := Check{Name: "linger"}
 	path := LingerPath(in.User)
@@ -128,14 +124,12 @@ func LingerCheck(env Env, in SandboxInput) Check {
 	return c
 }
 
-// LingerPath is where systemd records that user may outlive a logout.
 func LingerPath(user string) string { return LingerDir + "/" + user }
 
-// PortCheck is the `port` row, which exists only on a sandbox that also runs
-// `relevo serve`. It warns on the default port, which the production serve on
-// the same host already owns, and on a port that is not the one the sandbox
-// was created with, which means the unit on disk no longer matches the port
-// recorded at creation.
+// PortCheck is the `port` row, which exists only on a sandbox that also
+// runs `relevo serve`. It warns on the default port the production serve
+// already owns and on a port that no longer matches the one recorded at
+// creation.
 func PortCheck(in SandboxInput) Check {
 	c := Check{Name: "port"}
 	port, ok := ListenPort(in.Listen)

@@ -58,10 +58,8 @@ type Report struct {
 	BuilderRefusal string // RoleRefusal.Text for builder, "" when bind would pick
 }
 
-// Failures counts checks with SevFail.
 func (r Report) Failures() int { return r.countSeverity(SevFail) }
 
-// Warnings counts checks with SevWarn.
 func (r Report) Warnings() int { return r.countSeverity(SevWarn) }
 
 func (r Report) countSeverity(sev Severity) int {
@@ -74,7 +72,6 @@ func (r Report) countSeverity(sev Severity) int {
 	return n
 }
 
-// RunOption configures doctor execution.
 type RunOption func(*runConfig)
 
 type runConfig struct {
@@ -124,14 +121,14 @@ func WithStateRoot(root string) RunOption {
 	return func(cfg *runConfig) { cfg.stateRoot = root }
 }
 
-// WithConfigWarnings supplies the unknown-key and skipped-candidate warnings
-// the config readers produced, rendered as the one global `config` row.
+// WithConfigWarnings supplies the unknown-key and skipped-candidate
+// warnings the config readers produced.
 func WithConfigWarnings(warnings []string) RunOption {
 	return func(cfg *runConfig) { cfg.configWarnings = warnings }
 }
 
-// ConfigCheck is the one global doctor row for config the readers could not
-// fully use. No warnings -> OK; otherwise a Warn listing them all.
+// ConfigCheck is the one global doctor row for config the readers could
+// not fully use.
 func ConfigCheck(warnings []string) Check {
 	c := Check{Name: "config", Group: ""}
 	if len(warnings) == 0 {
@@ -187,8 +184,8 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 	return Report{Checks: checks, UsableBuilder: usableBuilder}
 }
 
-// daemonRow handles the two states Run itself can tell (a probe error, or
-// the daemon not running) and defers to daemonCheck for the rest.
+// daemonRow handles the two states Run itself can tell and defers to
+// daemonCheck for the rest.
 func daemonRow(ctx context.Context, env Env) Check {
 	running, err := env.DaemonRunning(ctx)
 	switch {
@@ -201,7 +198,7 @@ func daemonRow(ctx context.Context, env Env) Check {
 	}
 }
 
-// checksForKind builds every row for one harness kind. A missing binary
+// checksForKind builds every row for one harness kind; a missing binary
 // stops here with only the binary row.
 func checksForKind(ctx context.Context, env Env, cfg runConfig, kind string) ([]Check, bool) {
 	h, known := harness.Lookup(kind)
@@ -270,9 +267,8 @@ func versionCheck(ctx context.Context, env Env, kind string, h harness.Harness, 
 	}
 }
 
-// roleRows builds the role-staleness row, one row per role definition, and a
-// custom row per unshipped definition in scope; an unknown kind gets a
-// single "not checked" placeholder instead.
+// roleRows builds the role rows for one harness kind; an unknown kind gets
+// a single "not checked" placeholder instead.
 func roleRows(env Env, cfg runConfig, kind string, h harness.Harness, known bool) []Check {
 	var checks []Check
 	if known {

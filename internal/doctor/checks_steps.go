@@ -11,9 +11,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// mastermindConsent fills the repository consent fields: whether the working
-// directory names a repository and what it answers. Each read is best-effort
-// like the rest of the row: a store or git read that fails leaves the row off.
+// mastermindConsent fills the repository consent fields. Each read is
+// best-effort: a failed read leaves the row off.
 func mastermindConsent(rt relevo.Runtime, in *MasterMindCheckInput, deps Deps) {
 	if rt.Git == nil || in.Repo == "" {
 		return
@@ -68,14 +67,12 @@ func liveMasterMindIDs(rt relevo.Runtime) map[string]bool {
 	return live
 }
 
-// isStaleMasterMind reports whether a record is old and has no live binding.
 func isStaleMasterMind(rec mastermind.Record, live map[string]bool, cutoff time.Time) bool {
 	return rec.SeenAt.Before(cutoff) && !live[rec.ID]
 }
 
 // mastermindClaudeSession fills the session fields when this process runs
-// inside Claude Code: the detection flag, the push-route child check and the
-// resolved mastermind with its chat label and live claim.
+// inside Claude Code.
 func mastermindClaudeSession(rt relevo.Runtime, in *MasterMindCheckInput, deps Deps) {
 	ident, ok := mastermind.Detect(os.Getenv, os.Getppid())
 	if !ok || ident.Kind != "claude" {

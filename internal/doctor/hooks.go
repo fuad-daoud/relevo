@@ -18,8 +18,6 @@ type HooksCheckInput struct {
 	Now  time.Time
 }
 
-// HooksCheck reports "hooks: N runs, M failed in the last 24h", plus the
-// last failure's event and error, on one line.
 func HooksCheck(in HooksCheckInput) Check {
 	failed := 0
 	last := -1

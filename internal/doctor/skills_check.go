@@ -8,8 +8,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
-// skillChecks builds the skill needs from the registry and checks them in the
-// working directory.
 func skillChecks(env Env, reg *roles.Registry, set *candidate.Set) []Check {
 	repo, _ := os.Getwd()
 	return SkillChecks(env, repo, skillNeeds(reg, set))

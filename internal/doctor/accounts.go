@@ -10,15 +10,13 @@ import (
 	"github.com/fuad-daoud/relevo/internal/account"
 )
 
-// opencodeDBRel is opencode's own SQLite store under $HOME, the same file
-// internal/doctor reads for its session count.
+// opencodeDBRel is opencode's own SQLite store under $HOME, read for its
+// session count.
 const opencodeDBRel = ".local/share/opencode/opencode.db"
 
-// accountChecks probes every configured account's home: the directory exists
-// and holds a login, so a round that draws it can authenticate. It is
-// read-only and best-effort, like every doctor row: a fact relevo cannot
-// establish is a warning naming the account and the check that failed, never a
-// crash. No accounts means no rows, so doctor's output is unchanged.
+// accountChecks probes every configured account's home. It is best-effort:
+// a fact relevo cannot establish is a warning naming the account, never a
+// crash. No accounts means no rows.
 func accountChecks(ctx context.Context, accounts account.Set, env Env) []Check {
 	if len(accounts) == 0 {
 		return nil
@@ -33,8 +31,6 @@ func accountChecks(ctx context.Context, accounts account.Set, env Env) []Check {
 	return checks
 }
 
-// accountCheck is one account's row: the login file for claude and codex, the
-// credential row for opencode.
 func accountCheck(ctx context.Context, a account.Account, env Env) Check {
 	c := Check{Group: string(a.Harness), Name: "account"}
 	switch a.Harness {
@@ -52,9 +48,8 @@ func accountCheck(ctx context.Context, a account.Account, env Env) Check {
 	return c
 }
 
-// loginFileCheck is the per-process home check claude and codex share: the home
-// directory exists and holds the named credential file. login is the command
-// that authenticates a missing one.
+// loginFileCheck checks the home directory holds the named credential file;
+// login is the command that authenticates a missing one.
 func loginFileCheck(c Check, name, home, file string, env Env, login string) Check {
 	if home == "" {
 		c.Severity = SevWarn
@@ -78,11 +73,10 @@ func loginFileCheck(c Check, name, home, file string, env Env, login string) Che
 	return c
 }
 
-// opencodeAccountCheck reports whether the account's integration+label pair is
-// a row in opencode's credential table, read the way the rest of doctor reads
-// that database: sqlite3 -readonly, never database/sql and never a network
-// call. A missing table or an unreadable database is a probe failure, so the
-// row says it could not be established rather than guessing.
+// opencodeAccountCheck reports whether the account's integration+label pair
+// is a row in opencode's credential table, read via sqlite3 -readonly,
+// never database/sql and never a network call. A missing table or an
+// unreadable database is a probe failure, never a guess.
 func opencodeAccountCheck(ctx context.Context, c Check, a account.Account, env Env) Check {
 	dbPath, err := env.HomePath(opencodeDBRel)
 	if err != nil {

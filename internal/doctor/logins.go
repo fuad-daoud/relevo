@@ -25,10 +25,9 @@ var loginSpecs = map[string]loginSpec{
 }
 
 // LoginChecks is one row per harness kind and home saying whether that
-// harness's login file is present on this machine. homes maps a kind to the
-// per-account homes configured for it; a kind with none is checked at its
-// default home. A kind whose binary is not on PATH already has a warning row
-// and gets none here. Local file checks only: no network, no harness spawn.
+// harness's login file is present. A kind with no account home is checked
+// at its default home; a kind whose binary is not on PATH gets no row
+// here. Local file checks only: no network, no harness spawn.
 func LoginChecks(env Env, kinds []string, homes map[string][]string) []Check {
 	var checks []Check
 	for _, kind := range kinds {
@@ -71,8 +70,7 @@ func WithHomeEnv(homes map[string][]string, getenv func(string) string) map[stri
 }
 
 // getenvFor reads one variable from the env when it carries its own values,
-// else from the process: the seam that keeps the login path injectable in
-// tests without process-global reads in the check path.
+// else from the process, keeping the login path injectable in tests.
 func getenvFor(env Env) func(string) string {
 	if g, ok := env.(interface{ Getenv(string) string }); ok {
 		return g.Getenv
@@ -80,11 +78,10 @@ func getenvFor(env Env) func(string) string {
 	return os.Getenv
 }
 
-// loginDirs is the directories to check: the account homes when there are any,
-// else the kind's default home resolved under $HOME ("" for a kind whose login
-// file is itself home-relative). Muse's default honours XDG_CONFIG_HOME the
-// way setup's museAuthPath does: set and non-empty names $XDG/muse, otherwise
-// the home-relative default below.
+// loginDirs is the directories to check: the account homes when there are
+// any, else the kind's default home. "" names a kind whose login file is
+// itself home-relative; muse's default honours XDG_CONFIG_HOME the way
+// setup's museAuthPath does.
 func loginDirs(env Env, kind string, spec loginSpec, accountHomes []string) []string {
 	if len(accountHomes) > 0 {
 		return accountHomes

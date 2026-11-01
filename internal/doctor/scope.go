@@ -5,11 +5,10 @@ import (
 	"strings"
 )
 
-// ScopeBlock is one policy scope block whose allowed_cpus asks relevo to pin
-// a round per core. Key is the block-qualified field name the row's messages
-// use ("scope.allowed_cpus" or "serve.scope.allowed_cpus"); MaxCPU is the
-// highest core AllowedCPUs names (the caller computes it with
-// policy.ParseCPUList, so this package never imports policy).
+// ScopeBlock is one policy scope block whose allowed_cpus asks relevo to
+// pin a round per core. Key is the block-qualified field name the row's
+// messages use; MaxCPU is the highest core AllowedCPUs names, computed by
+// the caller so this package never imports policy.
 type ScopeBlock struct {
 	Key         string
 	AllowedCPUs string
@@ -23,10 +22,8 @@ func UserManagerControllersPath(uid int) string {
 	return fmt.Sprintf("/sys/fs/cgroup/user.slice/user-%d.slice/user@%d.service/cgroup.controllers", uid, uid)
 }
 
-// ScopeChecks checks every scope block that asks for cpu pinning: the user
-// manager must have cpuset delegated, and the pool must name only cores this
-// host has. Returns nil when every block is empty; each non-empty block gets
-// one row.
+// ScopeChecks checks every scope block that asks for cpu pinning. It
+// returns nil when every block is empty; each non-empty block gets one row.
 func ScopeChecks(env Env, blocks []ScopeBlock, controllersPath string, ncpu int) []Check {
 	nonEmpty := blocks[:0:0]
 	for _, b := range blocks {
