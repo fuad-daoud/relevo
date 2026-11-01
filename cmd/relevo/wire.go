@@ -34,9 +34,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/uplink"
 )
 
-// hooksRunLog is the hook run log over d's machine-local file: the kv row every
-// hook run and webhook failure is recorded in. A nil log records nothing, so a
-// caller with no database open wires the nil it already gets from a nil handle.
+// hooksRunLog is the hook run log over d's machine-local file. A nil log
+// records nothing, so a caller with no database open wires the nil it already
+// gets from a nil handle.
 func hooksRunLog(d *db.DB) hooks.RunLog {
 	if d == nil {
 		return nil
@@ -44,9 +44,8 @@ func hooksRunLog(d *db.DB) hooks.RunLog {
 	return hooks.NewKVLog(db.TxKV{DB: d.LocalOrSelf()})
 }
 
-// newHooksDispatcher wires the local hooks.d script dispatcher, and, when
-// config policy's notify.webhooks is non-empty, a WebhookSink beside it:
-// both receive every event, fanned out by a MultiDispatcher.
+// newHooksDispatcher fans every event out to the local hooks.d dispatcher and,
+// when notify.webhooks is non-empty, a WebhookSink beside it.
 func newHooksDispatcher(hooksCfg hooks.Config, pol policy.Policy) hooks.Dispatcher {
 	sinks := []hooks.Dispatcher{hooks.NewLocalDispatcher(hooksCfg, hooks.NewOSExecutor(hooksCfg.Log))}
 
@@ -60,10 +59,8 @@ func newHooksDispatcher(hooksCfg hooks.Config, pol policy.Policy) hooks.Dispatch
 	return hooks.MultiDispatcher(sinks)
 }
 
-// opencodeServiceFiles returns candidate service.json paths in preference
-// order: the state dir first ($XDG_STATE_HOME/opencode/service.json or
-// ~/.local/state/opencode/service.json), then the config dir
-// ($XDG_CONFIG_HOME/opencode/service.json or ~/.config/opencode/service.json).
+// opencodeServiceFiles returns candidate service.json paths in preference order:
+// the state dir first, then the config dir.
 func opencodeServiceFiles() []string {
 	home, _ := os.UserHomeDir()
 	stateFile := filepath.Join(home, ".local", "state", "opencode", "service.json")
@@ -87,16 +84,10 @@ func opencodeDBPath() string {
 	return filepath.Join(home, ".local", "share", "opencode", "opencode.db")
 }
 
-// captureAgyEnv persists the calling agy session's agentapi credentials, when
-// the environment carries them. It runs for every verb rather than a
-// chosen list, and it costs nothing when ANTIGRAVITY_* is absent: the machine
-// database is opened only when there is something to capture, because the
-// capture itself short-circuits on the same check.
-//
-// Both failures are deliberately silent: capture is best-effort and must never
-// change a command's exit code or output, so a root relevo cannot resolve, a
-// database it cannot open, and an environment with nothing to capture all
-// end the same way -- nothing written, nothing printed.
+// captureAgyEnv persists the calling agy session's agentapi credentials when the
+// environment carries them. It runs for every verb but opens the machine
+// database only when there is something to capture. Failures stay silent:
+// capture is best-effort and must never change a command's exit code or output.
 func captureAgyEnv() {
 	if !delivery.AgyEnvPresent(os.Getenv) {
 		return
@@ -116,18 +107,14 @@ func captureAgyEnv() {
 	_, _ = delivery.CaptureAgyCreds(os.Getenv, secrets, time.Now().UTC())
 }
 
-// newDeliverers builds Runtime.Deliverers: the agy deliverer always, and an
-// OpencodeDeliverer keyed by "opencode" when sqlite3 is on PATH. No sqlite3 means the
-// opencode deliverer could never confirm a delivery, so an opencode mastermind's
-// reports stay pending for the background wait. agy needs no external tool: it reads
-// the captured credential secret from the machine database and runs agy
-// itself, and reports its own failure as OutcomeUnavailable.
-//
-// It takes the runtime's own store, so the deliverer reads and writes the same
-// database the rest of the runtime does: for a client that is one more dialled
-// owner connection, and for the daemon the one shared handle. The peek verbs
-// pass openGates false and wire no deliverers at all, which is what keeps
-// `--preflight`/`--check` from opening the database a deliverer would.
+// newDeliverers builds Runtime.Deliverers over the runtime's own store, so they
+// read and write the same database the rest of the runtime does: the agy
+// deliverer always (agy needs no external tool), and an OpencodeDeliverer
+// keyed by "opencode" when sqlite3 is on PATH. Without sqlite3 the opencode
+// deliverer could never confirm a
+// delivery, so its reports stay pending. The peek verbs wire no deliverers at
+// all, which keeps --preflight/--check from opening the database a deliverer
+// would.
 func newDeliverers(st *store.Store) map[string]delivery.MasterMindDeliverer {
 	deliverers := map[string]delivery.MasterMindDeliverer{}
 	// DBIfExists, not DB: a root with no relevo.db yet -- `daemon
@@ -173,28 +160,23 @@ func newRuntime() (relevo.Runtime, error) {
 }
 
 // newRuntimeOn constructs the daemon's runtime over the one handle it opened
-// and serves: the runtime's store borrows d (store.NewShared), so nothing in
-// the daemon dials its own socket and the file is opened exactly once.
+// and serves: the runtime's store borrows d, so the file is opened exactly once.
 func newRuntimeOn(root string, d *db.DB) (relevo.Runtime, error) {
 	rt, err := newRuntimeWith(root, d, store.NewShared(root, "", d))
 	if err != nil {
 		return relevo.Runtime{}, err
 	}
-	// The chain conversion, at daemon start: every row without a workflow
-	// gains the default one and its engine state, so the engine drives it.
-	// Each row converts in its own transaction; a row that cannot convert is
-	// halted with the failure as its reason and the rows after it still
-	// convert, so only a store-level read or write failure warns here.
+	// The chain conversion at daemon start gives every row without a workflow
+	// the default one, each in its own transaction, so one bad row halts with
+	// its reason while the rest still convert and only a store-level failure warns.
 	if err := relevo.ConvertLegacyChains(rt); err != nil {
 		slog.Warn("chains not converted to workflows", "err", err)
 	}
 	return rt, nil
 }
 
-// newRuntimeWith is the one body both constructors share: the config store
-// reads, imports and migrates through d, and buildRuntime wires the runtime
-// over st -- the store the caller's shape needs, a routed New for a client and
-// a shared one for the daemon.
+// newRuntimeWith is the one body both constructors share: the config store reads,
+// imports and migrates through d, and buildRuntime wires the runtime over st.
 func newRuntimeWith(root string, d *db.DB, st *store.Store) (relevo.Runtime, error) {
 	cs := config.Open(d)
 
@@ -208,31 +190,26 @@ func newRuntimeWith(root string, d *db.DB, st *store.Store) (relevo.Runtime, err
 			return relevo.Runtime{}, err
 		}
 	} else {
-		// A schema a newer relevo wrote is never written by this binary: read
-		// what is there and skip the import.
+		// A schema a newer relevo wrote is never written by this binary.
 		slog.Warn("relevo.db schema is newer; config import skipped")
 	}
 
 	if !d.Newer() {
-		// Write a name for every stored candidate. Names are
-		// derived in memory by candidate.Parse either way, so a failure here
-		// is a warning, never a refusal to start.
+		// Names are derived in memory by candidate.Parse either way, so a
+		// failure here is a warning, never a refusal to start.
 		if _, err := cs.EnsureCandidateNames(); err != nil {
 			slog.Warn("candidate names not written to config", "err", err)
 		}
-		// One-time migration: a pre-actors config becomes actors
-		// plus agents, as a "migration" revision. An error is a warning too,
-		// and the old config keeps working.
+		// One-time migration of a pre-actors config to actors plus agents; an
+		// error is a warning too, and the old config keeps working.
 		if migrated, err := cs.MigrateToActors(); err != nil {
 			slog.Warn("config: roles not migrated to actors", "err", err)
 		} else if migrated {
 			slog.Info("config: roles migrated to actors (relevo config log)")
 		}
-		// The theme seed: the release's two palettes written into the themes
-		// section once per database, recorded by a config marker so a user
-		// who unsets a palette later keeps it unset. It writes locally through
-		// the migration path and reads nothing back; a failure is a warning
-		// the same way the other seedings are.
+		// The theme seed writes the release's two palettes into the themes
+		// section once per database, so a later unset stays unset; a failure
+		// is a warning like the others.
 		if seeded, err := cs.EnsureThemesSeed(); err != nil {
 			slog.Warn("config: themes not seeded", "err", err)
 		} else if seeded {
@@ -255,8 +232,7 @@ func newRuntimeWith(root string, d *db.DB, st *store.Store) (relevo.Runtime, err
 }
 
 // openDB opens path: the machine database dials the owner when one is installed
-// and is opened directly otherwise; every other path -- tests, e2e roots,
-// serve's per-owner roots -- is opened directly.
+// and is opened directly otherwise, as is every other path.
 func openDB(path string) (*db.DB, error) {
 	if d, ok, err := openDBRoute(path); ok {
 		return d, err
@@ -264,9 +240,8 @@ func openDB(path string) (*db.DB, error) {
 	return openDBDirect(path)
 }
 
-// openDBDirect opens path itself, ensuring its directory exists (Open's
-// precondition) and minting the installation file beside it. It is the opener
-// the daemon and the tests use. The machine-local file beside the shared
+// openDBDirect opens path itself, ensuring its directory exists and minting the
+// installation file beside it. The machine-local file beside the shared
 // database is opened with it and runs the same migrations, so the split is a
 // placement decision rather than a schema fork.
 func openDBDirect(path string) (*db.DB, error) {
@@ -281,9 +256,7 @@ func openDBDirect(path string) (*db.DB, error) {
 }
 
 // newRuntimePeek constructs the runtime `relevo daemon --preflight` and
-// `--check` need. It never creates, migrates or writes anything: it reads the
-// config files when any is present, else the database read-only when one
-// exists, else nothing at all.
+// `--check` need. It never creates, migrates or writes anything.
 func newRuntimePeek() (relevo.Runtime, error) {
 	root, err := tmpdir.DefaultRoot()
 	if err != nil {
@@ -304,11 +277,10 @@ func newRuntimePeek() (relevo.Runtime, error) {
 	return buildRuntime(root, L, store.New(root), false)
 }
 
-// buildRuntime wires the Runtime from one loaded config and one store, the
-// shape newRuntimeWith uses. openGates opens the store's database for the gate,
-// availability and latency records: newRuntime passes true, and
-// a DB() error is fatal for the verb; newRuntimePeek passes false, so preflight
-// and check leave the root with no database, nil gates and no deliverers.
+// buildRuntime wires the Runtime from one loaded config and one store.
+// openGates opens the store's database for the gate, availability and latency
+// records: newRuntime passes true, and newRuntimePeek false, so preflight and
+// check leave the root with no database, nil gates and no deliverers.
 func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool) (relevo.Runtime, error) {
 	pol := L.Policy
 
@@ -323,10 +295,8 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 
 	gitClient := git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes)
 
-	// Gates and latency live in the store root's database.
-	// The push claims, the mastermind registry and the hooks run log live in
-	// the same database, so `relevo daemon --preflight`
-	// and `--check`, which pass openGates false, open no database at all.
+	// Gates and latency live in the store root's database, so --preflight and
+	// --check, which pass openGates false, open no database at all.
 	var (
 		gates   db.KV
 		gatesDB *db.DB
@@ -340,28 +310,21 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 		if err != nil {
 			return relevo.Runtime{}, err
 		}
-		// Gates, latency, the claims and the run log are all this machine's own
-		// records -- a pid, a listen address, a row about a round that ran here
-		// -- so they bind the machine-local file. The binding happens once, here,
-		// rather than in each surface, so a surface added later cannot reach the
-		// shared file by accident.
+		// These are this machine's own records, so they bind the machine-local
+		// file: the binding happens once here, so a later surface cannot reach
+		// the shared file by accident.
 		local := d.LocalOrSelf()
 		gates = local
-		// The gates document records a write's stamp and its export signal in
-		// this same file, so it needs the handle that can open a transaction
+		// The gates document needs the handle that can open a transaction,
 		// rather than the bare kv surface the ledger reads and writes through.
 		gatesDB = local
 		claims = &delivery.KVClaims{KV: db.TxKV{DB: local}}
 		waits = &delivery.KVWaitClaims{KV: db.TxKV{DB: local}}
 		runLog = hooksRunLog(d)
 		// The one-time move of the two history documents into their tables runs
-		// here, where the runtime opens both files and before anything reads or
-		// writes either history. Every reader below -- the daemon, every verb, the
-		// join `db sync enable` performs on the daemon's side -- goes through
-		// this block, so one pass covers them all and none of them can see a
-		// document the tables have replaced. A failure warns and leaves the
-		// documents in place: the marker says the move did not happen, and the
-		// next start retries it.
+		// here, before anything reads either history, so one pass covers every
+		// reader. A failure warns and leaves the documents in place for the next
+		// start to retry.
 		if moved, err := availability.MigrateHistoryDocuments(local, d, d.Origin()); err != nil {
 			slog.Warn("availability history documents not migrated", "err", err)
 		} else if moved.Events+moved.Samples > 0 {
@@ -400,9 +363,8 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 		return relevo.Runtime{}, err
 	}
 
-	// The runner's children keep their temp files under the same state tmp dir
-	// the transport writes bundles into, so a parallel round never fills the
-	// system temp a serve daemon happens to inherit.
+	// The runner's children share the state tmp dir the transport writes into,
+	// so a parallel round never fills the system temp.
 	runner := proc.New()
 	runner.TmpDir = tmpDir
 
@@ -440,16 +402,13 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 		OpencodeSessionDir: opencodeSessionDir,
 		SessionReaper:      relevo.NewSessionReaper(binExec{}),
 	}
-	// Deliverers need the runtime's store, and a runtime with no database open
-	// (preflight, check) carries none at all: wiring one would open -- and
-	// migrate -- the very database the peek must leave alone.
+	// A runtime with no database open (preflight, check) carries no deliverers:
+	// wiring one would open the very database the peek must leave alone.
 	if openGates {
 		rt.Deliverers = newDeliverers(st)
 	}
-	// The registry needs the runtime's own store and clock, so it is wired
-	// here rather than in the literal above. A runtime with no database open
-	// (preflight, check) keeps a nil registry, which every caller already
-	// treats as "no masterminds".
+	// A runtime with no database open keeps a nil registry, which every caller
+	// already treats as "no masterminds".
 	if openGates {
 		reg, rerr := mastermindRegistry(rt)
 		if rerr != nil {
@@ -458,8 +417,8 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 		rt.MasterMinds = reg
 	}
 	rt.CloseServedRound = serve.CloseServedRound
-	// The remote send runs above the engine: one wiring point here covers the
-	// CLI and the daemon, which share buildRuntime.
+	// The remote send runs above the engine, so one wiring point here covers
+	// both the CLI and the daemon.
 	rt.RemoteSend = relevo.RemoteSendDeps{
 		Send:   uplink.SendRemote,
 		Ship:   uplink.Ship,
@@ -469,9 +428,8 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 }
 
 // procStartUnix reads a process's start time in Unix seconds, the pid-reuse
-// defence mastermind.Resolve's host step and relevo mcp's claim need. A read
-// failure is returned, not swallowed: Resolve treats the error as "the host
-// step cannot run" and falls through to the session.
+// defence behind mastermind.Resolve's host step. A failure is returned, not
+// swallowed: Resolve treats it as "the host step cannot run".
 func procStartUnix(pid int) (int64, error) {
 	started, err := proc.StartTime(context.Background(), pid)
 	if err != nil {
@@ -480,8 +438,8 @@ func procStartUnix(pid int) (int64, error) {
 	return started.Unix(), nil
 }
 
-// museCommOf reads one process's command name from /proc/<pid>/comm, the
-// muse ancestor walk's eyes. A process that has gone reads as missing.
+// museCommOf reads one process's command name from /proc/<pid>/comm. A process
+// that has gone reads as missing.
 func museCommOf(pid int) (string, bool) {
 	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
 	if err != nil {
@@ -493,10 +451,8 @@ func museCommOf(pid int) (string, bool) {
 	return "", false
 }
 
-// museEnvironOf reads one process's environment from /proc/<pid>/environ,
-// the scrubbed-environment fallback's eyes: a hook or plugin MCP server sees
-// only the allowlist, while its muse host still carries the round marker. A
-// process that has gone reads as missing.
+// museEnvironOf reads one process's environment from /proc/<pid>/environ, the
+// scrubbed-environment fallback's eyes. A process that has gone reads as missing.
 func museEnvironOf(pid int) (map[string]string, bool) {
 	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
 	if err != nil {
@@ -505,9 +461,8 @@ func museEnvironOf(pid int) (map[string]string, bool) {
 	return mastermind.ParseEnviron(raw), true
 }
 
-// musePPidOf reads one process's parent pid from /proc/<pid>/status, the
-// muse ancestor walk's legs. A process that has gone, or a status without a
-// PPid line, reads as missing.
+// musePPidOf reads one process's parent pid from /proc/<pid>/status. A process
+// that has gone, or a status without a PPid line, reads as missing.
 func musePPidOf(pid int) (int, bool) {
 	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
 	if err != nil {
@@ -526,14 +481,12 @@ func musePPidOf(pid int) (int, bool) {
 	return 0, false
 }
 
-// newRemoteClient wires Runtime.Remote through the one rule that turns a
-// servers section and a stored key into a client: nil when the section is
-// absent or empty. Servers without a client key are not fatal -- every remote
-// path already reports ErrRemoteUnavailable on a nil Runtime.Remote -- but the
-// fix prints once, since a configured server this client cannot reach is a
-// setup mistake worth naming immediately rather than only when a remote
-// command is next run. The daemon's config reload builds its client through
-// the same rule.
+// newRemoteClient wires Runtime.Remote through the one rule the daemon's config
+// reload shares: nil when the servers section is absent or empty. Servers without
+// a client key are not fatal -- every remote path already reports
+// ErrRemoteUnavailable on a nil Runtime.Remote -- but the fix prints once, since
+// a configured server this client cannot reach is a setup mistake worth naming
+// immediately rather than only when a remote command is next run.
 func newRemoteClient(servers remote.Servers, key []byte) (relevo.RemoteClient, error) {
 	remoteClient, err := relevo.NewRemoteClient(servers, key)
 	if errors.Is(err, relevo.ErrNoClientKey) {

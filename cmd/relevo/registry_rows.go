@@ -1,10 +1,5 @@
 package main
 
-// registry is the whole dispatched surface, one entry per verb, in name order
-// and with each entry's flags in name order. output is filled only where the
-// verb prints a JSON document today; errors lists the catalog codes the verb
-// can emit today, which is usage wherever parseFlags can fire.
-
 import "slices"
 
 var registryBindChain = []verbEntry{
@@ -391,6 +386,10 @@ var registryTail = []verbEntry{
 	},
 }
 
+// registry is the whole dispatched surface, one entry per verb, in name order
+// and with each entry's flags in name order. output is filled only where the
+// verb prints JSON today; errors lists the catalog codes the verb can emit,
+// which is usage wherever parseFlags can fire.
 var registry = slices.Concat(
 	registryBindChain,
 	registryConfigVerbs,

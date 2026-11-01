@@ -6,12 +6,11 @@ import (
 	"strings"
 )
 
-// errorCode names a class of failure with a stable, lowercase snake word. The
-// catalog below is the one table of them; a code is never reused for a
-// different meaning, so an agent can branch on the code instead of on prose.
+// errorCode names a class of failure with a stable, lowercase snake word. A code
+// is never reused for a different meaning, so an agent can branch on the code
+// instead of on prose.
 type errorCode string
 
-// The initial catalog: one name per code the catalog carries.
 const (
 	codeUsage              errorCode = "usage"
 	codeRefused            errorCode = "refused"
@@ -51,8 +50,8 @@ type catalogEntry struct {
 	next string
 }
 
-// catalog is the error catalog: one row per code above. It is the only place a
-// code's exit or next hint is decided.
+// catalog is the error catalog. It is the only place a code's exit or next hint
+// is decided.
 var catalog = map[errorCode]catalogEntry{
 	codeUsage:              {exit: 2, next: "relevo help"},
 	codeRefused:            {exit: 2},
@@ -85,9 +84,8 @@ var catalog = map[errorCode]catalogEntry{
 }
 
 // cliError is the frame's error value: a catalog code, a human message that is
-// never part of the contract, and the next command when one exists. cause is
-// the failure this one was classified out of, kept so a caller that probes a
-// library sentinel with errors.Is still finds it under the code.
+// never part of the contract, and the classified-out cause, kept so errors.Is
+// still finds a library sentinel under the code.
 type cliError struct {
 	code    errorCode
 	message string
@@ -101,8 +99,7 @@ func (e *cliError) Error() string {
 	return fmt.Sprintf("%s: %s", e.code, e.message)
 }
 
-// Unwrap exposes the classified cause, so errors.Is and errors.As reach the
-// sentinel a library returned even though the frame now renders a code.
+// Unwrap exposes the classified cause.
 func (e *cliError) Unwrap() error {
 	return e.cause
 }
@@ -120,7 +117,7 @@ func (e *cliError) As(target any) bool {
 }
 
 // catalogExit is the exit a code earns; an unknown code is treated as internal
-// rather than panicking, so the renderer can never be the thing that fails.
+// rather than panicking.
 func catalogExit(code errorCode) int {
 	entry, ok := catalog[code]
 	if !ok {
@@ -129,12 +126,9 @@ func catalogExit(code errorCode) int {
 	return entry.exit
 }
 
-// sandboxCode is the one central reclassification rule: a failure a call site
-// built as internal whose arguments or cause carry the sandbox denial was not
-// relevo failing -- the shell's sandbox refused the owner socket -- so it is
-// built under its own code, whose catalog next names the unsandboxed shell.
-// Every other code, and internal without the sentinel, comes back unchanged.
-// Pure: it reads only the values it is given.
+// sandboxCode is the one central reclassification rule: an internal failure whose
+// arguments or cause carry the sandbox denial is built under its own code.
+// Every other code comes back unchanged.
 func sandboxCode(code errorCode, args []any, cause error) errorCode {
 	if code != codeInternal {
 		return code
@@ -150,13 +144,12 @@ func sandboxCode(code errorCode, args []any, cause error) errorCode {
 	return code
 }
 
-// fail builds a coded error whose next hint is the catalog's own.
 func fail(code errorCode, format string, args ...any) error {
 	return newCLIError(sandboxCode(code, args, nil), "", fmt.Sprintf(format, args...))
 }
 
-// failNext is fail with an explicit next hint, overriding the catalog's --
-// unless the failure is reclassified, whose hint is the new code's own.
+// failNext is fail with an explicit next hint, unless the failure is
+// reclassified.
 func failNext(code errorCode, next, format string, args ...any) error {
 	code = sandboxCode(code, args, nil)
 	if code == codeOwnerSandboxDenied {
@@ -165,11 +158,8 @@ func failNext(code errorCode, next, format string, args ...any) error {
 	return newCLIError(code, next, fmt.Sprintf(format, args...))
 }
 
-// failWrap is fail keeping cause, so a coded failure classified out of a
-// library error that a caller probes with errors.Is still unwraps to it. The
-// cause's own text is folded into the message when the formatted text does not
-// already carry it, so a sentinel such as ErrNotConverted still reaches the
-// user instead of being reduced to a code.
+// failWrap is fail keeping cause, so the coded failure still unwraps to the
+// library error it was classified out of.
 func failWrap(code errorCode, cause error, format string, args ...any) error {
 	code = sandboxCode(code, args, cause)
 	message := fmt.Sprintf(format, args...)
@@ -179,7 +169,6 @@ func failWrap(code errorCode, cause error, format string, args ...any) error {
 	return newCLIErrorCause(code, "", message, cause)
 }
 
-// newCLIErrorCause is newCLIError with the classified cause attached.
 func newCLIErrorCause(code errorCode, next, message string, cause error) error {
 	entry, ok := catalog[code]
 	if !ok {
@@ -192,9 +181,8 @@ func newCLIErrorCause(code errorCode, next, message string, cause error) error {
 	return &cliError{code: code, message: message, next: next, cause: cause}
 }
 
-// newCLIError resolves a code and hint against the catalog. An uncatalogued
-// code becomes internal: a typo in a call site must never panic the CLI or
-// emit a code the catalog does not list.
+// newCLIError resolves a code and hint against the catalog; an uncatalogued code
+// becomes internal.
 func newCLIError(code errorCode, next, message string) error {
 	entry, ok := catalog[code]
 	if !ok {
@@ -208,12 +196,11 @@ func newCLIError(code errorCode, next, message string) error {
 }
 
 // errorEnvelope is the JSON shape of a failure on stderr: one object, one
-// line, the same three fields the human form carries.
+// line, carrying the same three fields as the human form.
 type errorEnvelope struct {
 	Error errorDocument `json:"error"`
 }
 
-// errorDocument is the error object inside errorEnvelope.
 type errorDocument struct {
 	Code    errorCode `json:"code"`
 	Message string    `json:"message"`

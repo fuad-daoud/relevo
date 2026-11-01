@@ -20,8 +20,8 @@ const listenFDEnv = "RELEVO_LISTEN_FD"
 const daemonDrainWindow = 5 * time.Second
 
 // handoffFD holds the inherited listener descriptor so its finalizer cannot
-// close it before syscall.Exec runs. It is set once, on the re-exec path, and
-// released by closeHandoff when the exec never happened.
+// close it before syscall.Exec runs; closeHandoff releases it when the exec
+// never happened.
 var handoffFD *os.File
 
 // checkSocketPath refuses a state root whose socket path cannot fit sun_path.
@@ -32,9 +32,9 @@ func checkSocketPath(root string) error {
 	return err
 }
 
-// openOwnerListener binds the owner socket, or adopts the listener an earlier
-// image passed in RELEVO_LISTEN_FD. Adoption never unlinks or rebinds, so
-// connections queued across the exec are served by this image.
+// openOwnerListener binds the owner socket, or adopts the listener passed in
+// RELEVO_LISTEN_FD. Adoption never unlinks or rebinds, so connections queued
+// across the exec are served by this image.
 func openOwnerListener(root string) (net.Listener, error) {
 	if v := os.Getenv(listenFDEnv); v != "" {
 		fd, err := strconv.Atoi(v)
@@ -47,9 +47,8 @@ func openOwnerListener(root string) (net.Listener, error) {
 }
 
 // drainAndHandoff drains the owner and returns the inherited listener's
-// descriptor for the next image. Draining before the caller closes the database
-// is what lets an open transaction commit; the dup has close-on-exec cleared so
-// the descriptor survives syscall.Exec.
+// descriptor for the next image. Draining before the caller closes the
+// database lets an open transaction commit; the dup has close-on-exec cleared.
 func drainAndHandoff(srv *owner.Server, ln net.Listener) (int, error) {
 	if srv != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), daemonDrainWindow)

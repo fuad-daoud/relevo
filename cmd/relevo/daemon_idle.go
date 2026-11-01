@@ -12,7 +12,6 @@ import (
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
-// idlePoll is how often the idle watcher samples the daemon's activity.
 const idlePoll = 30 * time.Second
 
 // daemonActivity is one sample of what the daemon has to do: live owner
@@ -33,15 +32,13 @@ type daemonActivity struct {
 	RootHeld bool
 }
 
-// busy is whether anything keeps the daemon from idling out.
 func (a daemonActivity) busy() bool {
 	return a.Conns > 0 || a.Running || a.Queued || a.SyncOn || a.Joining
 }
 
-// idleExit decides whether an idle daemon should exit: the root is gone or
-// no longer the one it locked, or
-// nothing is busy and the idle period has elapsed. It is pure, so a table test
-// can pin every condition.
+// idleExit decides whether an idle daemon exits: the root is gone or
+// displaced, or nothing is busy and the idle period elapsed. It is pure, so a
+// table test pins every condition.
 func idleExit(a daemonActivity, idleFor, after time.Duration) bool {
 	if !a.RootHeld {
 		return true
@@ -55,14 +52,12 @@ func idleExit(a daemonActivity, idleFor, after time.Duration) bool {
 	return idleFor >= after
 }
 
-// daemonActivityNow samples the daemon's current activity. The root is stat'ed
-// first: a missing root is what a deleted throwaway state root looks like, and
-// must exit the daemon at once. So must a displaced lock: anything that touches
-// a deleted root re-creates it, with an empty database whose every read fails,
-// and a failed read would otherwise keep the daemon busy forever. A nil owner
-// server counts as no connections -- there is no socket a client could use, and
-// the sampler must never dereference it -- and a store read that fails is not
-// idle: an unreadable root must never read as "nothing to do".
+// daemonActivityNow samples the daemon's activity, stat'ing the root first: a
+// missing root must exit at once, and so must a displaced lock -- touching a
+// deleted root re-creates it with an empty database whose every read fails,
+// and those failures would keep the daemon busy forever. A nil owner server
+// counts as no connections and is never dereferenced, and an unreadable root
+// must never read as idle, so a failed read counts as busy.
 func daemonActivityNow(root string, lock *store.DaemonLock, srv *owner.Server, st *store.Store) daemonActivity {
 	var a daemonActivity
 	if _, err := os.Stat(root); err != nil {
@@ -105,10 +100,8 @@ func daemonActivityNow(root string, lock *store.DaemonLock, srv *owner.Server, s
 	return a
 }
 
-// syncSampledOn reads the machine-local enabled marker. A machine with no
-// database, or no local file beside it, cannot be syncing. A read that fails is
-// busy rather than idle, for the same reason an unreadable root is: the daemon
-// must not exit on a sample it could not take.
+// syncSampledOn reads the machine-local enabled marker; a failed read counts
+// as busy, so the daemon never exits on a sample it could not take.
 func syncSampledOn(st *store.Store) bool {
 	mdb, err := st.DBIfExists()
 	if err != nil {
@@ -130,10 +123,9 @@ func syncSampledOn(st *store.Store) bool {
 	return state.Enabled
 }
 
-// watchDaemonIdle cancels the daemon's own context once it has been idle for
-// after. The first idle sample starts the clock, any busy sample resets it, and
-// the exit lands on the first sample at or after the period. ctx done returns.
-// A nil now is time.Now, so the caller may pass the runtime's clock as-is.
+// watchDaemonIdle cancels the daemon's context once it has been idle for
+// after: the first idle sample starts the clock and any busy sample resets
+// it. A nil now is time.Now.
 func watchDaemonIdle(ctx context.Context, cancel context.CancelFunc, after, poll time.Duration, now func() time.Time, sample func() daemonActivity) {
 	if now == nil {
 		now = time.Now

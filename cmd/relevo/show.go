@@ -28,8 +28,8 @@ const showUsage = `usage: relevo show <name> [--round N] [--prompt|--report|--di
        relevo show <chain> --workflow [--json]
        relevo show <name> --owner <label|id> [--log] [--state DIR]`
 
-// flagGiven reports whether the named flag was set on the command line. It is
-// how `--after 0` is told from the flag's default 0.
+// flagGiven reports whether the named flag was set; it is how `--after 0` is
+// told from the default 0.
 func flagGiven(fs *flag.FlagSet, name string) bool {
 	given := false
 	fs.Visit(func(f *flag.Flag) {
@@ -40,25 +40,21 @@ func flagGiven(fs *flag.FlagSet, name string) bool {
 	return given
 }
 
-// showSectionArgs is showSectionFlags' input: which section flags were given.
-// It is a struct rather than a parameter list because the section flags do
-// not fit a readable argument list.
+// showSectionArgs is showSectionFlags' input. It is a struct because the
+// section flags do not fit a readable argument list.
 type showSectionArgs struct {
 	prompt, report, diff, drift bool
 	log, transcript, gate       bool
 	output, artifacts           bool
 	trace                       bool
 	workflow                    bool
-	findingsID                  string
-	artifactRel                 string
+	findingsID                  string // findingsID is --findings's value and names the findings section when non-empty.
+	artifactRel                 string // artifactRel is --artifact's rel and names the artifacts section when non-empty.
 }
 
-// showSectionFlags counts how many section flags are set and resolves the
-// one section they name, defaulting to prompt when none is given. It is a
-// pure function so a cmd/relevo test can pin "more than one is a usage
-// error" without executing the subcommand. findingsID is `--findings`'s
-// value: a non-empty id names the findings section. A non-empty artifactRel
-// is `--artifact`'s rel and names the artifacts section, as --artifacts does.
+// showSectionFlags resolves the one section the flags name, defaulting to
+// prompt. It is pure so a test can pin "more than one is a usage error"
+// without executing the subcommand.
 func showSectionFlags(a showSectionArgs) (relevo.ShowSection, error) {
 	sections := []struct {
 		on      bool
@@ -120,9 +116,8 @@ type showFlagValues struct {
 	state       *string
 }
 
-// renamedShowFlag answers --summary with the flag that replaced it. Old
-// references still name it, so the flag package's generic "not defined"
-// would leave a reader with no way forward.
+// renamedShowFlag answers --summary with the flag that replaced it; old
+// references still name it.
 func renamedShowFlag(args []string) error {
 	for _, a := range args {
 		if a == "--summary" || a == "-summary" || strings.HasPrefix(a, "--summary=") {
@@ -159,9 +154,7 @@ func showFlagSet(fs *flag.FlagSet) *showFlagValues {
 	return v
 }
 
-// cmdShow prints one round's plan, report, diff, drift, log or transcript,
-// read from a live binding's files or, for anything not live, from the
-// database.
+// cmdShow prints one round's plan, report, diff, drift, log or transcript.
 func cmdShow(args []string) error {
 	fs := flag.NewFlagSet("show", flag.ContinueOnError)
 	v := showFlagSet(fs)
@@ -202,7 +195,7 @@ func cmdShow(args []string) error {
 	})
 	if serr != nil {
 		// An --owner invocation runs the serve show body, so its section
-		// conflict keeps that route's name and a hint naming that form.
+		// conflict keeps that route's name.
 		if *owner != "" {
 			return failNext(codeUsage, "relevo show --owner", "serve show: %v", serr)
 		}
@@ -262,11 +255,9 @@ func cmdShow(args []string) error {
 	return classifyReadErr(printShow(rt, opts, true, true, ""))
 }
 
-// classifyReadErr maps a read verb's failure onto the catalog: a binding the
-// store does not hold, a round with nothing completed, an artifact no listing
-// names, and everything else internal. The helpers printShow, printLog and
-// printDiff keep returning the errors they always did, each wrapping one of
-// these causes, so the classification lives at this one boundary.
+// classifyReadErr maps a read verb's failure onto the catalog. The helpers
+// keep returning the errors they always did, so the classification lives at
+// this one boundary.
 func classifyReadErr(err error) error {
 	switch {
 	case err == nil:
@@ -276,31 +267,28 @@ func classifyReadErr(err error) error {
 	case errors.Is(err, relevo.ErrNoCompletedRound):
 		return fail(codeRoundNotFound, "%v", err)
 	case errors.Is(err, refusal.ErrRoundNotFound):
-		// An out-of-range --round: the binding is there, the round asked for
-		// is not. Same code as an unreadable round, different cause.
+		// An out-of-range --round names a round that is not there: same code
+		// as an unreadable round, different cause.
 		return fail(codeRoundNotFound, "%v", err)
 	case errors.Is(err, relevo.ErrNoArtifact):
 		return fail(codeArtifactNotFound, "%v", err)
 	case errors.Is(err, relevo.ErrNotAChain):
-		// --trace names a chain, and only a chain has one: the name exists,
-		// the request for it is what is wrong.
+		// --trace names a chain, and only a chain has one.
 		return failWrap(codeUsage, err, "%v", err)
 	default:
 		return fail(codeInternal, "%v", err)
 	}
 }
 
-// printShow is cmdShow's body after section resolution.
-// allowDB=false means a non-live binding returns store.ErrNotFound instead
-// of opening (and so creating) the database: `relevo serve show` reads live
-// bindings only. markViewed guards the .viewed stamp the same way
-// printLog's does. headerPrefix is prepended to the stderr header, which is
-// how `relevo serve show` names the owner it read from.
+// printShow is cmdShow's body after section resolution. allowDB=false means a
+// non-live binding returns store.ErrNotFound instead of opening (and so
+// creating) the database;
+// markViewed guards the .viewed stamp, and headerPrefix names the owner.
 func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB bool, headerPrefix string) error {
 	name := opts.Name
 
-	// A live binding needs no database at all; only open one -- and only
-	// fail on it -- once we know the binding is not live.
+	// A live binding needs no database; only open one once the binding is
+	// known not live.
 	live := false
 	if _, loadErr := rt.Store.Load(name); loadErr != nil {
 		if !errors.Is(loadErr, store.ErrNotFound) {
@@ -318,9 +306,8 @@ func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB b
 	} else {
 		live = true
 	}
-	// A successful print is what "viewed" means, for a live binding
-	// only -- an archived binding's record stays as it is.
-	// Best-effort: never fails the read.
+	// A successful print is what "viewed" means, for a live binding only;
+	// best-effort, never failing the read.
 	stampViewed := func() {
 		if markViewed && live {
 			_ = rt.Store.MarkViewed(name, time.Now())
@@ -354,7 +341,7 @@ func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB b
 	}
 
 	// A trace or a workflow names no round: the header says chain and the
-	// section instead.
+	// section.
 	var header string
 	if res.Section == relevo.ShowTrace {
 		header = fmt.Sprintf("%s%s · trace", headerPrefix, res.Name)
@@ -369,8 +356,8 @@ func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB b
 	fmt.Fprintln(os.Stderr, header)
 
 	if opts.ArtifactRel != "" {
-		// --artifact: the file's bytes, raw, with nothing added. An unlisted
-		// rel is an error Show already returned.
+		// --artifact writes the file's bytes, raw; an unlisted rel is an
+		// error Show already returned.
 		if _, err := os.Stdout.Write([]byte(res.Text)); err != nil {
 			return err
 		}
@@ -431,9 +418,8 @@ func printDiff(rt relevo.Runtime, name string, round int, stat, drift, anchors b
 	if targetRound < 1 {
 		return fmt.Errorf("binding %q has no completed round yet: %w", name, relevo.ErrNoCompletedRound)
 	}
-	// Upper bound: a --round past the binding's counter is a missing round,
-	// not a missing diff. Without this the lookup below falls through to
-	// ErrNoArtifact and an out-of-range round reads as artifact_not_found.
+	// A --round past the binding's counter is a missing round, not a missing
+	// diff; without this the lookup below falls through to ErrNoArtifact.
 	if targetRound > b.Round {
 		return refusal.RoundOutOfRange(name, targetRound, b.Round, drift)
 	}
@@ -461,8 +447,8 @@ func printDiff(rt relevo.Runtime, name string, round int, stat, drift, anchors b
 			return fmt.Errorf("no diff recorded for round %d of %q: %w", targetRound, name, relevo.ErrNoArtifact)
 		}
 		fmt.Println(found.Note)
-		// A successful print is what "viewed" means; the stamp is
-		// best-effort and must never fail a read command.
+		// A successful print is what "viewed" means; the stamp is best-effort
+		// and never fails a read.
 		_ = rt.Store.MarkViewed(name, time.Now())
 		return nil
 	}
@@ -495,27 +481,23 @@ func printDiff(rt relevo.Runtime, name string, round int, stat, drift, anchors b
 		return err
 	}
 	// A successful print is what "viewed" means; the stamp is best-effort
-	// and must never fail a read command.
+	// and never fails a read.
 	_ = rt.Store.MarkViewed(name, time.Now())
 	return nil
 }
 
-// printLog is the log body after flag parsing and newRuntime(): it prints
-// name's entries, applying the --round filter, JSON-encoded when asJSON is
-// set, and follows new entries until the binding is DONE or removed when
-// follow is set. markViewed guards the .viewed stamp: `relevo show --log`
-// stamps and the read-only `relevo serve log` must not, because the stamp is
-// the owner's, not the admin's.
+// printLog prints name's entries and follows new ones when follow is set.
+// markViewed guards the .viewed stamp: the read-only `relevo serve log` must
+// not stamp, because the stamp is the owner's.
 func printLog(rt relevo.Runtime, name string, round, after int, asJSON, follow, markViewed bool) error {
-	// A binding that does not exist is named at once, the way every other
-	// command reports it; only a binding that disappears mid-follow (below)
+	// A missing binding is named at once; only one that disappears mid-follow
 	// ends the loop quietly.
 	if _, err := rt.Store.Load(name); err != nil {
 		return err
 	}
 
-	// emit applies the --round filter, so the initial batch and every
-	// followed entry render identically.
+	// emit applies the --round filter, so the initial batch and every followed
+	// entry render identically.
 	emit := func(e store.LogEntry) {
 		if round != 0 && e.Round != round {
 			return
@@ -538,8 +520,8 @@ func printLog(rt relevo.Runtime, name string, round, after int, asJSON, follow, 
 	}
 
 	if !follow {
-		// A successful print is what "viewed" means; the stamp is
-		// best-effort and must never fail a read command.
+		// A successful print is what "viewed" means; the stamp is best-effort
+		// and never fails a read.
 		if markViewed {
 			_ = rt.Store.MarkViewed(name, time.Now())
 		}
@@ -551,8 +533,7 @@ func printLog(rt relevo.Runtime, name string, round, after int, asJSON, follow, 
 
 	if err := relevo.FollowLog(ctx, rt, name, last, time.Second, emit); err != nil {
 		if ctx.Err() != nil {
-			// Interrupted: what was already printed is the answer, and the
-			// stamp is the same as any other exit.
+			// Interrupted: what was already printed is the answer.
 			if markViewed {
 				_ = rt.Store.MarkViewed(name, time.Now())
 			}

@@ -14,10 +14,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// notePick prints why relevo chose the candidate it spawned. Silent for
-// an explicit token (the mastermind already knows) and for adoption
-// (nothing was chosen); the gated note, if any, is printed separately.
-// The line names the candidate by its short name.
+// notePick prints why relevo chose the candidate it spawned. Silent for an
+// explicit token and for adoption; the gated note, if any, is printed
+// separately.
 func notePick(rt relevo.Runtime, role string, res resolve.Resolution) {
 	if res.How == "" || res.How == resolve.HowExplicit {
 		return
@@ -25,9 +24,8 @@ func notePick(rt relevo.Runtime, role string, res resolve.Resolution) {
 	fmt.Fprintln(os.Stderr, resolve.PickText(role, res, rt.Candidates))
 }
 
-// roleOrBuilder is the role name a flag value means: "builder" for "", else
-// the value. The CLI's --actor and the registry both spell the default builder
-// as "".
+// roleOrBuilder is the role name a flag value means: "builder" for "", else the
+// value.
 func roleOrBuilder(r string) string {
 	if r == "" {
 		return "builder"
@@ -35,8 +33,7 @@ func roleOrBuilder(r string) string {
 	return r
 }
 
-// builderWhere is how the bound/added lines name the builder's place: a local
-// builder is always headless (a process relevo runs itself).
+// builderWhere is how the bound/added lines name the builder's place.
 func builderWhere(ep store.Endpoint) string {
 	if ep.Headless() {
 		return "headless"
@@ -68,9 +65,7 @@ func cmdCandidates(args []string) error {
 		}
 		fmt.Fprintf(os.Stderr, "probing %d candidate(s) from %s, one at a time\n", n, host)
 
-		// The column is sized from the names FormatProbe prints, not from
-		// argv: Probe resolves each argument and FormatProbe prints the
-		// resolved candidate's short name.
+		// The column is sized from the names FormatProbe prints, not from argv.
 		var names []string
 		if len(tokens) > 0 {
 			for _, tok := range tokens {
@@ -98,8 +93,6 @@ func cmdCandidates(args []string) error {
 	return nil
 }
 
-// formatCandidates renders the candidate table cmdCandidates' non-probe form
-// prints -- the candidates block `relevo config` shows.
 func formatCandidates(rt relevo.Runtime) string {
 	deps := relevo.AvailabilityDeps(rt)
 	h := availability.LatencyHistory{}
@@ -118,10 +111,8 @@ func formatCandidates(rt relevo.Runtime) string {
 	return view.FormatCandidatesLatencyFor(rt.RoleRegistry(), rt.Candidates, availability.Gates(deps), lat)
 }
 
-// loadHistory reads the availability history for display, treating an
-// unreadable record as empty after one stderr line -- the same rule Gates
-// applies to the ledger. The body lives in relevo.LoadHistory; this keeps
-// the stderr line for its other callers.
+// loadHistory reads the availability history for display, treating an unreadable
+// record as empty after one stderr line.
 func loadHistory(rt relevo.Runtime) availability.History {
 	h, err := availability.LoadHistory(relevo.AvailabilityDeps(rt))
 	if err != nil {
@@ -131,23 +122,20 @@ func loadHistory(rt relevo.Runtime) availability.History {
 	return h
 }
 
-// formatPolicy renders the per-role pick explanation the `pick` block of
-// `relevo config` shows.
 func formatPolicy(rt relevo.Runtime) string {
 	return resolve.FormatPolicyFor(rt.RoleRegistry(), rt.Accounts, rt.Candidates, rt.Policy,
 		pickGates(rt), liveLedgerEntries(rt), loadHistory(rt), rt.Now(), time.Local)
 }
 
 // pickGates includes the skill gates a bind from the working directory would
-// apply, so the shown pick is the one bind makes.
+// apply.
 func pickGates(rt relevo.Runtime) []availability.Gate {
 	wd, _ := os.Getwd()
 	return resolve.PickGates(relevo.ResolveDeps(rt), wd)
 }
 
-// liveLedgerEntries is the live availability ledger, for the policy pool view's
-// per-account gate text. A read failure reads as none, the same rule the gates
-// projection follows.
+// liveLedgerEntries is the live availability ledger. A read failure reads as
+// none.
 func liveLedgerEntries(rt relevo.Runtime) []availability.Entry {
 	if rt.Gates == nil {
 		return nil

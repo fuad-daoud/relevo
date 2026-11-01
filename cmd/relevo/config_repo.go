@@ -13,17 +13,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
-// The `config repo` verbs: a thin CLI over the repos config section, one
-// repository's settings keyed by the repository's identity. The verbs read and
-// write through the existing config machinery -- the same store, the same
-// revision log, the same shared config doc -- so a `config repo set` and a
-// `config set repos.<id>.gate` are the same write seen two ways.
+// The `config repo` verbs are a thin CLI over the repos section: a
+// `config repo set` and a `config set repos.<id>.gate` are the same write seen
+// two ways.
 
-// repoEntryKeys is the key vocabulary one entry takes. Anything else is a
-// usage refusal naming these four.
+// repoEntryKeys is the key vocabulary one entry takes; anything else is a
+// usage refusal.
 var repoEntryKeys = []string{"name", "gate", "board_theme", "trimpath"}
 
-// repoKeyKnown reports whether key names a field a repos entry carries.
 func repoKeyKnown(key string) bool {
 	for _, k := range repoEntryKeys {
 		if k == key {
@@ -34,9 +31,7 @@ func repoKeyKnown(key string) bool {
 }
 
 // configRepoUsage is the whole `config repo` surface. The trimpath paragraph
-// is the one longer bit of prose the surface carries, because the flag's cost
-// is not visible from the word "on" alone: paths a test may compare
-// disappear with it.
+// stays long because the flag's cost is not visible from the word "on" alone.
 const configRepoUsage = `usage: relevo config repo [--repo <path>] [--json]
        relevo config repo set <name|gate|board_theme|trimpath> <value> [--repo <path>] [--json]
        relevo config repo unset <name|gate|board_theme|trimpath> [--repo <path>] [--json]
@@ -47,8 +42,8 @@ runtime.Caller become module-relative, so tests that compare absolute source
 paths can break; set trimpath off opts this repository out, and unset
 restores the default.`
 
-// cmdConfigRepo dispatches the `config repo` verbs. A bare invocation, or one
-// whose first argument is a flag, shows the working directory's own settings.
+// cmdConfigRepo dispatches the `config repo` verbs; a bare invocation shows
+// the working directory's own settings.
 func cmdConfigRepo(args []string) error {
 	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
 		fmt.Fprintln(os.Stderr, configRepoUsage)
@@ -72,40 +67,37 @@ func cmdConfigRepo(args []string) error {
 	}
 }
 
-// configRepoFlagValues holds the pointers the show/set/unset verbs share: the
-// repository path the settings are read for, and the --json document switch.
 type configRepoFlagValues struct {
 	repo   *string
 	asJSON *bool
 }
 
-// configRepoShowFlagSet defines show's flags on fs and returns what they parse
-// into, so the registry's parity test finds exactly one installer per verb.
+// configRepoShowFlagSet exists so the registry's parity test finds exactly one
+// installer per verb.
 func configRepoShowFlagSet(fs *flag.FlagSet) *configRepoFlagValues {
 	return newConfigRepoFlagValues(fs)
 }
 
-// configRepoSetFlagSet defines set's flags on fs and returns what they parse
-// into.
+// configRepoSetFlagSet exists so the registry's parity test finds exactly one
+// installer per verb.
 func configRepoSetFlagSet(fs *flag.FlagSet) *configRepoFlagValues {
 	return newConfigRepoFlagValues(fs)
 }
 
-// configRepoUnsetFlagSet defines unset's flags on fs and returns what they
-// parse into.
+// configRepoUnsetFlagSet exists so the registry's parity test finds exactly
+// one installer per verb.
 func configRepoUnsetFlagSet(fs *flag.FlagSet) *configRepoFlagValues {
 	return newConfigRepoFlagValues(fs)
 }
 
-// configRepoListFlagSet defines list's flags on fs and returns what they parse
-// into. List takes no --repo: it lists every repository the section carries.
+// configRepoListFlagSet exists so the registry's parity test finds exactly one
+// installer per verb. List takes no --repo.
 func configRepoListFlagSet(fs *flag.FlagSet) *configRepoFlagValues {
 	v := &configRepoFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the stored entries as a JSON document")
 	return v
 }
 
-// newConfigRepoFlagValues declares --repo and --json on fs.
 func newConfigRepoFlagValues(fs *flag.FlagSet) *configRepoFlagValues {
 	v := &configRepoFlagValues{}
 	v.repo = fs.String("repo", "", "read the settings of this repository path instead of the working directory")
@@ -113,9 +105,8 @@ func newConfigRepoFlagValues(fs *flag.FlagSet) *configRepoFlagValues {
 	return v
 }
 
-// ConfigRepoDoc is `config repo --json`: the repository's identity and, when
-// the section carries one for it, the stored entry's fields. An absent field is
-// absent from the document, exactly as it is from the entry.
+// ConfigRepoDoc is `config repo --json`: the repository's identity and the
+// stored entry's fields.
 type ConfigRepoDoc struct {
 	Repo       string `json:"repo"`
 	Name       string `json:"name,omitempty"`
@@ -124,16 +115,15 @@ type ConfigRepoDoc struct {
 	Trimpath   string `json:"trimpath,omitempty"`
 }
 
-// ConfigRepoListDoc is `config repo list --json`: one row per repository the
-// section carries, in identity order. Repos is never nil, so an empty answer
-// marshals [] rather than null.
+// ConfigRepoListDoc is `config repo list --json`: one row per repository in
+// identity order. Repos is never nil, so an empty answer marshals [] rather
+// than null.
 type ConfigRepoListDoc struct {
 	Repos []ConfigRepoDoc `json:"repos"`
 }
 
-// configRepoShow prints the working directory's -- or --repo's -- own settings.
-// A directory that is not a repository is a usage refusal: there is no
-// identity to read settings for.
+// configRepoShow prints the working directory's, or --repo's, own settings. A
+// directory that is not a repository is a usage refusal.
 func configRepoShow(args []string) error {
 	fs := flag.NewFlagSet("relevo config repo", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -182,9 +172,9 @@ func configRepoShow(args []string) error {
 	return nil
 }
 
-// configRepoSet stores one field of the working directory's -- or --repo's --
-// own entry. A field set to "" is stored as absent, and an entry left with no
-// field at all is not stored at all, which is the section's own encoding.
+// configRepoSet stores one field of the working directory's, or --repo's, own
+// entry. A field set to "" is stored as absent, and an entry left with no
+// field at all is not stored, which is the section's own encoding.
 func configRepoSet(args []string) error {
 	fs := flag.NewFlagSet("relevo config repo set", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -255,9 +245,9 @@ func configRepoSet(args []string) error {
 	return nil
 }
 
-// configRepoUnset clears one field of the working directory's -- or --repo's --
-// own entry. A field that is not set is a refusal, the same answer
-// `config unset` gives; an entry the clear leaves empty is dropped.
+// configRepoUnset clears one field of the working directory's, or --repo's,
+// own entry. An unset field is a refusal, the same answer `config unset`
+// gives; an entry the clear leaves empty is dropped.
 func configRepoUnset(args []string) error {
 	fs := flag.NewFlagSet("relevo config repo unset", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -339,8 +329,6 @@ func configRepoUnset(args []string) error {
 	return nil
 }
 
-// configRepoList prints one row per repository the section carries, in
-// identity order.
 func configRepoList(args []string) error {
 	fs := flag.NewFlagSet("relevo config repo list", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -385,10 +373,9 @@ func configRepoList(args []string) error {
 	return nil
 }
 
-// configRepoLines renders one entry's set fields, one "key value" word pair
-// per line, in the entry's own field order. The trimpath line always renders
-// through its effective value, so an entry that stores nothing for it still
-// shows what the repository's Go trees build with.
+// configRepoLines renders one entry's set fields. The trimpath line renders
+// through its effective value, so an entry storing nothing still shows what
+// the Go trees build with.
 func configRepoLines(entry config.RepoEntry) []string {
 	var lines []string
 	if entry.Name != "" {
@@ -408,8 +395,6 @@ func configRepoLines(entry config.RepoEntry) []string {
 	return lines
 }
 
-// repoDirOf is the directory the settings are read for: --repo's path, or the
-// working directory.
 func repoDirOf(repo string) (string, error) {
 	if repo != "" {
 		return repo, nil
@@ -421,7 +406,7 @@ func repoDirOf(repo string) (string, error) {
 	return dir, nil
 }
 
-// repoKeyOf is the identity dir's settings are keyed on, or ok=false when git
+// repoKeyOf is the identity dir's settings are keyed on; ok is false when git
 // cannot identify the tree.
 func repoKeyOf(ctx context.Context, rt relevo.Runtime, dir string) (string, bool, error) {
 	return relevo.RepoKey(ctx, rt.Git, dir)
@@ -429,10 +414,9 @@ func repoKeyOf(ctx context.Context, rt relevo.Runtime, dir string) (string, bool
 
 // errNotARepository marks a directory git cannot give an identity for. The
 // `config repo` verbs refuse it as usage, while the gate paths read it as "no
-// settings" -- the two answers the seed names for the same fact.
+// settings".
 var errNotARepository = fmt.Errorf("not a git repository (a repository with no commits has no identity either)")
 
-// storedRepos reads the whole stored repos section, parsed.
 func storedRepos(rt relevo.Runtime) (map[string]config.RepoEntry, error) {
 	body, present, err := rt.Config.Body(config.Repos)
 	if err != nil {
@@ -444,8 +428,6 @@ func storedRepos(rt relevo.Runtime) (map[string]config.RepoEntry, error) {
 	return config.ParseRepos(body)
 }
 
-// reposEntry is one identity's stored entry, and whether the section carries
-// one for it.
 func reposEntry(rt relevo.Runtime, key string) (config.RepoEntry, bool, error) {
 	entries, err := storedRepos(rt)
 	if err != nil {
@@ -456,9 +438,7 @@ func reposEntry(rt relevo.Runtime, key string) (config.RepoEntry, bool, error) {
 }
 
 // repoValueString is the string a `config repo set` value stores: a JSON
-// string is decoded, and anything else is the literal text as typed, so
-// `config repo set gate "make check"` and `config repo set gate make check`
-// store the same command.
+// string is decoded, and anything else is the literal text as typed.
 func repoValueString(raw string) string {
 	var s string
 	if err := json.Unmarshal([]byte(raw), &s); err == nil {

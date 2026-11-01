@@ -23,18 +23,13 @@ import (
 var errOwnerUnavailable = errors.New("relevo owner unavailable")
 
 // errOwnerSandboxDenied marks a dial the host's sandbox refused outright: the
-// socket call earned a permission error rather than an answer. The verb, the
-// daemon and the socket are all fine -- the shell is not -- so this is a
-// class of its own, and the way out it names is an unsandboxed shell, not a
-// bug report.
+// verb, the daemon and the socket are all fine, so the way out is an
+// unsandboxed shell, not a bug report.
 var errOwnerSandboxDenied = errors.New("relevo owner socket denied by the sandbox")
 
 // dialSandboxDenied reports whether a dial failure is the sandbox refusing
-// the socket call: a permission errno, EACCES or EPERM, at any wrapping depth
-// -- the bare errno, the *os.SyscallError and *net.OpError a unix dial
-// returns over it, or any form os.IsPermission already resolves. A missing
-// socket, a refused connection and a spent deadline are not permission
-// denials: those keep reading as an owner that never answered.
+// the socket call: a permission errno at any depth. A missing socket, refused
+// connection or spent deadline keeps reading as an owner that never answered.
 func dialSandboxDenied(err error) bool {
 	return errors.Is(err, syscall.EACCES) ||
 		errors.Is(err, syscall.EPERM) ||
@@ -63,11 +58,9 @@ const (
 	statuslineDialBudget = 500 * time.Millisecond
 )
 
-// ownerStartWait is how long a verb waits for a daemon that is already
-// starting: the drain window, the re-exec gap and the new image's config load,
-// lock and migration add up to about ten seconds, and this leaves margin. It
-// sits far below any service manager's start timeout, and it is measured from
-// the first dial attempt, so a verb spends at most this much in total.
+// ownerStartWait is how long a verb waits for a starting daemon: drain,
+// re-exec gap, config load, lock and migration add up to about ten seconds,
+// with margin, measured from the first dial attempt.
 const ownerStartWait = 15 * time.Second
 
 var (
@@ -138,10 +131,8 @@ func routeForArgs(args []string) (dbRoute, time.Duration, time.Duration) {
 // the file directly or through an owner that is already up, and board, whose
 // runtime reads and writes the repository itself. A peek verb also skips
 // captureAgyEnv, which would open -- and can migrate -- the very database the
-// verb promises not to touch. bugreport's own flags (--name/--round/--logs),
-// db query's SQL, and board's ([path]/--board/--mastermind/--theme/--no-open,
-// plus promote's --to/--force) pick what the verb does and never change the
-// route.
+// verb promises not to touch. Their own flags pick what the verb does and
+// never change the route.
 func isPeekArgs(args []string) bool {
 	if len(args) == 0 {
 		return false
@@ -164,14 +155,12 @@ func isPeekArgs(args []string) bool {
 	return args[0] == "daemon" && hasArg(args[1:], "--check", "--preflight")
 }
 
-// isStatuslineArgs reports the statusline, whose budget is the short one.
 func isStatuslineArgs(args []string) bool {
 	return len(args) > 0 && args[0] == "status" && hasArg(args[1:], "--line")
 }
 
-// isHookArgs reports a hook invocation, which is every verb the claude plugin
-// runs: a hook must answer in the verb budget and never waits for a daemon that
-// is still starting, because the editor is blocked on it.
+// isHookArgs reports a hook invocation: it must answer in the verb budget
+// and never waits for a starting daemon, because the editor is blocked on it.
 func isHookArgs(args []string) bool {
 	return hasArg(args, "--hook")
 }
@@ -197,13 +186,9 @@ func machineDBPath() string {
 	return filepath.Join(root, "relevo.db")
 }
 
-// openDBRoute is the store's machine opener: it answers only for the machine
-// path on the owner route, and only then does it dial. ok true means the store
-// must take the result as-is -- the handle, or the refusal.
-//
-// The first attempt spends the route's own dial budget. When it fails and the
-// route carries a start wait, and the evidence says a daemon is still starting,
-// the opener waits inside one deadline measured from that first attempt.
+// openDBRoute is the store's machine opener for the machine path on the owner
+// route only; ok true means the store takes the result as-is. A starting
+// daemon is awaited inside one deadline measured from the first attempt.
 func openDBRoute(path string) (*db.DB, bool, error) {
 	if dbRouteMode != routeOwner || path != machineDBPath() {
 		return nil, false, nil
@@ -250,11 +235,9 @@ func attemptExpired(ctx context.Context, err error) bool {
 		errors.Is(ctx.Err(), context.DeadlineExceeded)
 }
 
-// awaitStartingOwner waits for a daemon that is still starting: it prints the
-// one waiting line, then re-dials against the single deadline with a short
-// jittered pause between attempts. The limit has run out when the deadline
-// passes, and the refusal names the daemon as starting or unresponsive so a
-// reader does not take it for a plain refusal.
+// awaitStartingOwner waits for a starting daemon: one waiting line, then
+// re-dials against the single deadline. The refusal names the daemon as
+// starting or unresponsive so it does not read as a plain refusal.
 func awaitStartingOwner(sock string, deadline time.Time, limit time.Duration) (*db.DB, bool, error) {
 	fmt.Fprintf(os.Stderr, "relevo: the relevo daemon is starting; waiting up to %s (%s)\n", limit, sock)
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)

@@ -7,18 +7,12 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
-// resolveHooksConfig builds the hook dispatcher environment: the hooks section
-// the config store loaded, and the run log its runs are recorded in.
-// log is the machine database's kv log; a caller with no database open
-// (preflight, check, serve's admin paths) passes nil, and hook output is then
-// recorded nowhere.
-//
-// The argv rows arrive under the names the config doc carries them: a script
-// under this machine's config root is root-relative, so it travels, and one
-// outside it is machine-local and already absolute. The dispatcher executes
-// paths, so every relative argv[0] is resolved against root here -- the last
-// point before the hook runs, where a name this machine did not write still
-// becomes a path this machine can.
+// resolveHooksConfig builds the hook dispatcher environment from the loaded
+// hooks section and the run log. A caller with no database open passes nil for
+// the log, and hook output is then recorded nowhere. Every relative argv[0]
+// is resolved against root here, the last point before the hook runs: a script
+// under the config root is root-relative so it travels, and one outside it is
+// machine-local and already absolute.
 func resolveHooksConfig(hooksMap map[string][][]string, log hooks.RunLog) (hooks.Config, error) {
 	root, err := relevo.ConfigRoot()
 	if err != nil {
@@ -30,10 +24,9 @@ func resolveHooksConfig(hooksMap map[string][][]string, log hooks.RunLog) (hooks
 	}, nil
 }
 
-// absolutizeHookArgv resolves every relative argv[0] against root, leaving the
-// arguments after it alone: they are the script's own, and the dispatcher
-// passes them through untouched. An argv row that is empty, or whose argv[0] is
-// already absolute, is kept as it is.
+// absolutizeHookArgv resolves every relative argv[0] against root and passes the
+// remaining arguments through untouched; an empty row, or one already absolute,
+// is kept as it is.
 func absolutizeHookArgv(hooksMap map[string][][]string, root string) map[string][][]string {
 	out := make(map[string][][]string, len(hooksMap))
 	for event, rows := range hooksMap {

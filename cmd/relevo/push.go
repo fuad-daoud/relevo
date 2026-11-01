@@ -13,14 +13,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/delivery"
 )
 
-// pushFlagValues holds the pointer push parses into.
 type pushFlagValues struct {
 	mastermind *string
 	ack        *string
 	asJSON     *bool
 }
 
-// pushFlagSet defines push's flags on fs and returns what they parse into.
+// pushFlagSet defines push's flags, so cmdPush and the tests read one flag
+// surface.
 func pushFlagSet(fs *flag.FlagSet) *pushFlagValues {
 	v := &pushFlagValues{}
 	v.mastermind = fs.String("mastermind", "", "mastermind id or name (default: $RELEVO_MASTERMIND, else this session's host)")
@@ -29,10 +29,8 @@ func pushFlagSet(fs *flag.FlagSet) *pushFlagValues {
 	return v
 }
 
-// pushAckArgs is the parsed `--ack <binding> <seq>` shape: the binding is the
-// flag's value and the seq the one positional that follows it. ok is false with
-// a usage error already attached whenever the caller asked for an ack without
-// that one positional, or gave a positional to the long form.
+// pushAckArgs is the parsed `--ack <binding> <seq>` shape. ok is false with a
+// usage error attached whenever the ack shape is wrong.
 func pushAckArgs(v *pushFlagValues, positional []string) (binding string, seq int, ok bool, err error) {
 	if *v.ack == "" {
 		if len(positional) > 0 {
@@ -50,12 +48,9 @@ func pushAckArgs(v *pushFlagValues, positional []string) (binding string, seq in
 	return *v.ack, n, true, nil
 }
 
-// cmdPush runs relevo push. Without --ack it resolves this MasterMind like
-// every verb, then holds its push claim and drains its mailbox to stdout as
-// NDJSON, waiting for each entry to be confirmed by a `relevo push --ack`
-// elsewhere. With --ack it confirms one entry and exits 0 silently. A refused
-// claim (ErrClaimHeld) means another push already holds it: this process exits
-// without draining.
+// cmdPush holds this MasterMind's push claim and drains its mailbox to stdout
+// as NDJSON. With --ack it confirms one entry and exits silently; a refused
+// claim means another push already holds it.
 func cmdPush(args []string) error {
 	fs := flag.NewFlagSet("push", flag.ContinueOnError)
 	v := pushFlagSet(fs)
@@ -93,8 +88,8 @@ func cmdPush(args []string) error {
 		if ackErr != nil {
 			return writeError(ackErr)
 		}
-		// Without --json the ack stays silent and exits 0, as it always has:
-		// the holder reads the confirmation off the log, not off stdout.
+		// Without --json the ack stays silent and exits 0: the holder reads the
+		// confirmation off the log, not off stdout.
 		if *v.asJSON {
 			return printDoc(pushAckDocOf(res))
 		}

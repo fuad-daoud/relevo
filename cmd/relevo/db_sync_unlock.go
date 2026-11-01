@@ -14,16 +14,11 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 )
 
-// dbSyncPassphraseEnv names the environment variable the passphrase route reads.
 const dbSyncPassphraseEnv = "RELEVO_SYNC_PASSPHRASE"
 
-// errPassphraseUnavailable is a passphrase that could not be read because
-// nothing carried one and there was no terminal to ask on.
-//
-// It is its own sentinel rather than a bare usage failure so a caller that does
-// not need a passphrase can tell "none is available here" apart from "the one
-// supplied was blank" -- the second is a mistake worth refusing, the first is
-// just a machine with nothing to give.
+// errPassphraseUnavailable is a passphrase nothing carried with no terminal to
+// ask on. It is its own sentinel so a caller that does not need one can tell
+// "none is available" apart from "the one supplied was blank".
 var errPassphraseUnavailable = errors.New("no passphrase is available: pass --passphrase-stdin or set " + dbSyncPassphraseEnv)
 
 // The passphrase sources are package vars so a test never touches a real handle.
@@ -60,15 +55,14 @@ func dbSyncUnlockFlagSet(fs *flag.FlagSet) *dbSyncUnlockFlagValues {
 	return v
 }
 
-// dbSyncUnlockDoc is what `db sync unlock --json` prints.
 type dbSyncUnlockDoc struct {
 	Unlocked bool `json:"unlocked"`
 	Created  bool `json:"created"`
 }
 
-// dbSyncPassphrase resolves the passphrase: standard input, else the
-// environment, else a prompt with echo off. A new key from a prompt asks twice.
-// Nothing here puts the passphrase into an error.
+// dbSyncPassphrase resolves the passphrase: standard input, else the environment,
+// else a prompt with echo off, asked twice for a new key. Nothing here puts the
+// passphrase into an error.
 func dbSyncPassphrase(fromStdin, isNew bool) ([]byte, error) {
 	var pass []byte
 	switch {
@@ -113,8 +107,8 @@ func dbSyncPassphrasePrompt(isNew bool) ([]byte, error) {
 	return pass, nil
 }
 
-// cmdDBSyncUnlock sends the passphrase to the daemon, which derives the key and
-// stores it when it matches the remote's check.
+// cmdDBSyncUnlock sends the passphrase to the daemon, which stores the derived
+// key when it matches the remote's check.
 func cmdDBSyncUnlock(args []string) error {
 	fs := flag.NewFlagSet("db sync unlock", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)

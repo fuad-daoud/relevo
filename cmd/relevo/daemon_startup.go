@@ -15,38 +15,12 @@ import (
 
 // daemonStartup is a daemon start's order: the owner is served first, the
 // one-time passes run after it, and the sync verb executor is installed last.
-//
-// Serving first is what bounds a client's wait. A listener that is bound but
-// has nothing accepting on it is a socket with a backlog and no server: a
-// client that connects in the meantime spends its whole start wait on an owner
-// that is never given the chance to answer, and then fails. On a large
-// database the passes are open-ended, so that window is open-ended too, and a
-// plain read -- which needs no write lock and would succeed against a serving
-// owner -- fails anyway. Served first, a client is answered the moment it
-// connects and its statement queues behind the pass's own transaction on the
-// one shared pool, under the same busy mapping and begin-retry every other
-// write already gets.
-//
-// The passes run unchanged underneath that: the same rows move, in the same
-// order, out of the same place. What changes is what they can no longer do --
-// the in-place compaction each one wanted would close the pool the owner's
-// clients are reading through, so each one skips it and says so, and the freed
-// pages stay on the file's free list until the next start returns them before
-// it serves.
-//
-// The verb executor is installed after the passes and not with the serve, and
-// it is the last thing here for a reason: a verb is the one request that pushes
-// rows off this machine, and the split and the origin backfill are the passes
-// that must finish before any row may leave it. A verb that arrives while they
-// run is refused with the owner's own no-executor code, which a client of any
-// version already knows how to read, rather than answered from a database whose
-// secrets are still in the shared file. It is installed only once both passes
-// recorded themselves, so a database whose split failed keeps refusing it and
-// says why, instead of exporting the very rows the split exists to move.
-//
-// Nothing else here starts a push. The daemon's own tick, the daemon it builds
-// later, and the verb hook that daemon installs are all further down the start,
-// and the sync worker is a child no verb and no tick has driven yet.
+// Serving first bounds a client's wait, which the open-ended passes would
+// otherwise leave unbounded. The passes skip their in-place compaction, which
+// would close the pool the owner's clients read through. The verb comes last
+// because the split and the origin backfill must finish before any row may
+// leave this machine; a database whose split failed keeps refusing it instead
+// of exporting the secrets the split exists to move.
 func daemonStartup(rt *relevo.Runtime, d *db.DB, ln net.Listener, onAbandoned func()) *owner.Server {
 	reclaimBeforeServing(d)
 	srv := daemonServeOwner(d, ln, onAbandoned)
@@ -57,11 +31,9 @@ func daemonStartup(rt *relevo.Runtime, d *db.DB, ln net.Listener, onAbandoned fu
 	return srv
 }
 
-// reclaimBeforeServing returns to the filesystem the pages an earlier start's
-// passes freed but could not compact on a served handle. This is the one moment
-// the handle is not served yet, and a client that connects meanwhile waits for
-// a starting daemon; the bounds in db keep that wait short. A failure is one
-// warning, and the start goes on with the file as it is.
+// reclaimBeforeServing returns the pages an earlier start's passes freed but
+// could not compact on a served handle. This is the one moment the handle is
+// not served yet; a failure is one warning and the start goes on.
 func reclaimBeforeServing(d *db.DB) {
 	files, err := reclaimFreePages(d)
 	for _, f := range files {
@@ -77,10 +49,9 @@ func reclaimBeforeServing(d *db.DB) {
 // owner does not serve yet.
 var reclaimFreePages = db.ReclaimFreePages
 
-// daemonServeOwner starts the owner over d on ln. A listener or a handle that
-// cannot be served is one warning and no server: the daemon keeps running its
-// passes over the handle it holds, and a client that finds no socket is the same
-// dead end it found before the passes ran.
+// daemonServeOwner starts the owner over d on ln; a listener or handle that
+// cannot be served is one warning and no server, and the daemon still runs
+// its passes over the handle it holds.
 func daemonServeOwner(d *db.DB, ln net.Listener, onAbandoned func()) *owner.Server {
 	srv, err := serveOwner(d, ln, onAbandoned)
 	if err != nil {
@@ -89,23 +60,14 @@ func daemonServeOwner(d *db.DB, ln net.Listener, onAbandoned func()) *owner.Serv
 	return srv
 }
 
-// daemonStartupPasses is the one-time work a start owes the database, and it is
-// a var so a test can stand in a pass that outlives the start wait and pin that
-// the owner is already answering while it runs. The passes themselves are pinned
-// by their own tests; what only the wiring can get wrong is the order.
+// daemonStartupPasses is the one-time work a start owes the database, a var
+// so a test can pin that the owner answers while a pass outlives the start
+// wait. The passes are pinned by their own tests; only the order is wiring's.
 var daemonStartupPasses = runStartupPasses
 
-// runStartupPasses runs the passes in the order a start has always run them.
-//
-// The ingest mirror's proven duplicates go first, then the conversion of the
-// bulk history columns, so the conversion and its backup run on the smaller
-// database the dedupe left. Then the dead change-capture table. Then the
-// installation's own row, and behind it the local split and the origin
-// backfill -- the two passes the enable preflight names when it refuses, so
-// running them here is what gives a refusal its fix.
-//
-// Not one failure stops the daemon: a machine with no database still runs, and a
-// pass that failed is retried on the next start.
+// runStartupPasses runs the passes in a start's order, dedupe first so the
+// conversion runs on the smaller database it leaves. No failure stops the
+// daemon: a failed pass is retried on the next start.
 func runStartupPasses(rt *relevo.Runtime) bool {
 	now := time.Now()
 	backupDir := filepath.Dir(rt.Store.DBPath())
@@ -171,12 +133,9 @@ func runStartupPasses(rt *relevo.Runtime) bool {
 		}
 	}
 
-	// A client key stored under the pre-rename PEM label is rewritten once here,
-	// so every later reader sees the current label. The reader accepts either
-	// label, so no remote path refuses the key in the meantime; the trigger is
-	// the stored label itself, so the pass is self-limiting and needs no kv
-	// once-row. A failure never stops the daemon, and the key stays readable, so
-	// the next start retries.
+	// A client key under a stale PEM label is rewritten once here; readers
+	// accept either label, so the key stays readable throughout. The stored
+	// label is the trigger, so the pass needs no once-row; a failure retries.
 	if rt.DB != nil {
 		if wrote, err := rt.Config.NormalizeClientKey(); err != nil {
 			slog.Warn("relevo daemon: client key label not updated", "err", err)

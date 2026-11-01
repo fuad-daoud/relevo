@@ -21,15 +21,11 @@ const sunPathLimit = 104
 // own user: a profile shows the process's memory and command line.
 const pprofSocketMode = 0o600
 
-// servePprof serves net/http/pprof on a unix socket and returns the listener
-// whose lifetime the caller owns. Only a caller that asked for it calls this,
-// so the endpoints exist exactly while an operator watches.
-//
-// A socket file left behind by an image that exec'd away is removed before the
-// bind; anything else at path refuses, because deleting an operator's file to
-// make room for a socket is not this function's call. The mux is local rather
-// than http.DefaultServeMux, so importing the handlers cannot open endpoints
-// the binary never meant to serve.
+// servePprof serves net/http/pprof on a unix socket while the caller holds
+// the listener. A socket left by an image that exec'd away is removed before
+// the bind; anything else at path refuses, since deleting an operator's file
+// is not this function's call. The mux is local, so the import cannot open
+// endpoints the binary never meant to serve.
 func servePprof(path string) (net.Listener, error) {
 	if len(path) >= sunPathLimit {
 		return nil, fmt.Errorf("pprof socket %s: path is %d bytes, over the %d-byte unix socket limit", path, len(path), sunPathLimit)

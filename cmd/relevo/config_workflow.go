@@ -15,13 +15,11 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
-// configWorkflowFlagSet declares the bare `config workflow` dispatcher's flags:
-// none today. It exists so the registry's parity test finds exactly one
+// configWorkflowFlagSet exists so the registry's parity test finds exactly one
 // installer per verb.
 func configWorkflowFlagSet(*flag.FlagSet) {}
 
-// configWorkflow is the workflow half of `relevo config`: the saved workflows a
-// chain can be started with.
+// configWorkflow is the workflow half of `relevo config`.
 func configWorkflow(args []string) error {
 	const usage = `usage: relevo config workflow add <file> [--replace] [--force]
        relevo config workflow rm <name>
@@ -51,8 +49,7 @@ func configWorkflow(args []string) error {
 }
 
 // formatWorkflows renders the `workflows` block of `relevo config`: the shipped
-// workflow first, then every saved one, each with the word that says where it
-// comes from.
+// workflow first, then every saved one.
 func formatWorkflows(L config.Loaded) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s  shipped\n", workflow.Default().Name)
@@ -67,13 +64,13 @@ func formatWorkflows(L config.Loaded) string {
 	return b.String()
 }
 
-// workflowAddFlagValues holds the pointers `config workflow add` parses into.
 type workflowAddFlagValues struct {
 	replace *bool
 	force   *bool
 }
 
-// workflowAddFlagSet defines those flags on fs and returns what they parse into.
+// workflowAddFlagSet exists so the registry's parity test finds exactly one
+// installer per verb.
 func workflowAddFlagSet(fs *flag.FlagSet) *workflowAddFlagValues {
 	v := &workflowAddFlagValues{}
 	v.replace = fs.Bool("replace", false, "overwrite a saved workflow of the same name")
@@ -81,7 +78,6 @@ func workflowAddFlagSet(fs *flag.FlagSet) *workflowAddFlagValues {
 	return v
 }
 
-// cmdWorkflowAdd validates and stores a workflow read from a file.
 func cmdWorkflowAdd(args []string) error {
 	fs := flag.NewFlagSet("relevo config workflow add", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -106,11 +102,9 @@ func cmdWorkflowAdd(args []string) error {
 	return nil
 }
 
-// workflowError maps a workflow operation's class onto the catalog code that
-// class earns, keeping the message the operation wrote. The classes are one
-// place in internal/relevo so the cockpit can map them to text; this is the CLI's
-// side of the same table, and the code is picked from the class rather than
-// parsed out of the message.
+// workflowError maps a workflow operation's class onto the catalog code it
+// earns. This is the CLI's side of the table in internal/relevo; the code is
+// picked from the class rather than parsed out of the message.
 func workflowError(err error) error {
 	code := codeConfigInvalid
 	switch {
@@ -124,7 +118,8 @@ func workflowError(err error) error {
 	return failWrap(code, err, "%s", err)
 }
 
-// workflowRmFlagSet declares `config workflow rm`'s flags: none today.
+// workflowRmFlagSet exists so the registry's parity test finds exactly one
+// installer per verb.
 func workflowRmFlagSet(*flag.FlagSet) {}
 
 // cmdWorkflowRm removes a saved workflow, leaving the shipped ones alone.
@@ -152,12 +147,12 @@ func cmdWorkflowRm(args []string) error {
 	return nil
 }
 
-// workflowShowFlagValues holds the pointer `config workflow show` parses into.
 type workflowShowFlagValues struct {
 	asJSON *bool
 }
 
-// workflowShowFlagSet defines that flag on fs and returns what it parses into.
+// workflowShowFlagSet exists so the registry's parity test finds exactly one
+// installer per verb.
 func workflowShowFlagSet(fs *flag.FlagSet) *workflowShowFlagValues {
 	v := &workflowShowFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the parsed definition instead of the source")
@@ -165,7 +160,7 @@ func workflowShowFlagSet(fs *flag.FlagSet) *workflowShowFlagValues {
 }
 
 // cmdWorkflowShow prints a saved workflow's source, comments kept, or its
-// stored definition under --json.
+// definition under --json.
 func cmdWorkflowShow(args []string) error {
 	fs := flag.NewFlagSet("relevo config workflow show", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -208,11 +203,11 @@ func cmdWorkflowShow(args []string) error {
 	return nil
 }
 
-// workflowEditFlagSet declares `config workflow edit`'s flags: none today.
+// workflowEditFlagSet exists so the registry's parity test finds exactly one
+// installer per verb.
 func workflowEditFlagSet(*flag.FlagSet) {}
 
-// cmdWorkflowEdit opens a saved workflow's source in $EDITOR and stores what the
-// edit loop accepts.
+// cmdWorkflowEdit opens a saved workflow's source in $EDITOR.
 func cmdWorkflowEdit(args []string) error {
 	fs := flag.NewFlagSet("relevo config workflow edit", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -244,11 +239,9 @@ func cmdWorkflowEdit(args []string) error {
 	return editWorkflowLoop(rt, name, config.StoredWorkflow{Source: source, Definition: def})
 }
 
-// editWorkflowLoop is the $EDITOR half of the update loop. It writes the buffer,
-// runs the editor, and lets WorkflowEditRound decide: a valid workflow is saved,
-// an unchanged or empty buffer is a no-op, and any other result reopens the
-// editor with the problems on top. The round returns the definition to store,
-// so the saved source and the embedded file: seeds stay in step.
+// editWorkflowLoop is the $EDITOR half of the edit loop: it writes the buffer,
+// runs the editor, and lets WorkflowEditRound decide. The round returns the
+// definition to store, so the saved source and the seed stay in step.
 func editWorkflowLoop(rt relevo.Runtime, name string, saved config.StoredWorkflow) error {
 	actors := rt.RoleRegistry().WorkflowActors()
 	prev := []byte(saved.Source)
@@ -313,9 +306,8 @@ func editWorkflowLoop(rt relevo.Runtime, name string, saved config.StoredWorkflo
 	}
 }
 
-// reopenWith puts the problem lines at the top, then a blank line and the text
-// the user last wrote with any earlier problem block stripped, so the next
-// editor pass opens on something fixable and the comments never accumulate.
+// reopenWith puts the problem lines at the top and the text the user last wrote
+// below, so the next editor pass opens on something fixable.
 func reopenWith(problems []string, edited []byte) []byte {
 	return relevo.WorkflowEditReopen(problems, edited)
 }

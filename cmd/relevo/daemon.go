@@ -40,12 +40,10 @@ func daemonFlagSet(fs *flag.FlagSet) *daemonFlagValues {
 	v.check = fs.Bool("check", false, "exit 0 if a daemon is running, 1 if not; print nothing")
 	v.pprof = fs.String("pprof", "", "serve net/http/pprof on this unix socket path (profiling only; off by default)")
 	// --preflight is internal: the daemon runs a candidate binary's own
-	// --preflight before re-exec'ing into it. It stays out of
-	// the usage text and the README, so it is defined but not printed.
+	// --preflight before re-exec'ing into it, so it is defined but hidden.
 	v.preflight = fs.Bool("preflight", false, "validate the runtime configuration and exit (internal)")
-	// --auto-exit-after is internal: only the daemon this CLI spawns gets it,
-	// so only a daemon with nothing to do exits on its own. It stays out of
-	// the usage text and the README, so it is defined but not printed.
+	// --auto-exit-after is internal: only a CLI-spawned daemon gets it, so
+	// only a daemon with nothing to do exits on its own; defined but hidden.
 	v.autoExitAfter = fs.Duration("auto-exit-after", 0, "exit after this long idle (internal)")
 	return v
 }
@@ -63,9 +61,8 @@ func cmdDaemon(args []string) error {
 		return err
 	}
 
-	// `daemon stop` is a positional form, checked before the --check/--preflight
-	// peek so `daemon stop --check` is a usage error rather than a silent
-	// --check. Any other positional is refused with the usage line.
+	// `daemon stop` is checked before the --check/--preflight peek, so
+	// `daemon stop --check` is a usage error rather than a silent --check.
 	if pos := fs.Args(); len(pos) > 0 {
 		if len(pos) == 1 && pos[0] == "stop" && !*check && !*preflight {
 			return daemonStop()
@@ -73,35 +70,29 @@ func cmdDaemon(args []string) error {
 		return fail(codeUsage, "usage: relevo daemon [--interval D] [--check] [--pprof <path>]; relevo daemon stop")
 	}
 
-	// --preflight and --check are the read-only peek: neither writes; each
-	// reads config files and a database read-only and opens nothing that
-	// migrates. They return here, before the daemon path resolves a root,
-	// takes the lock or opens the database.
+	// --preflight and --check are the read-only peek: neither writes and
+	// neither opens a database, which would migrate it, so they return here,
+	// before the lock or the database.
 	if *preflight || *check {
 		rt, err := newRuntimePeek()
 		if err != nil {
 			if *preflight {
-				// The error goes to stderr, exit 1. Returning rather than
-				// os.Exit keeps the path a plain function call a test can make.
+				// Return rather than os.Exit so a test can call this path.
 				fmt.Fprintf(os.Stderr, "relevo: %v\n", err)
 				return exitCodeErr{code: 1}
 			}
 			return err
 		}
 		if *preflight {
-			// newRuntimePeek read and validated config only: it took no lock,
-			// opened no DB (which would migrate), started no process and made
-			// no network call, and this returns before the DB open below.
+			// newRuntimePeek took no lock and opened no DB: a candidate
+			// binary's --preflight runs against the live database, so this
+			// returns before the DB open below.
 			fmt.Printf("ok %s %s\n", buildVersion(), upgrade.SplitCapability)
 			return nil
 		}
 
-		// --check is the plugin startup hook's probe. It prints nothing on
-		// either path: the exit status is the whole answer, and a hook that
-		// printed would only fill a log with noise on every server start.
-		// Returning exitCodeErr rather than calling os.Exit keeps the
-		// no-db-yet ordering a test can call: main maps the code
-		// to the same exit status.
+		// --check is the plugin startup hook's probe: the exit status is the
+		// whole answer, so it prints nothing and returns its code for main.
 		running, err := rt.Store.DaemonRunning()
 		if err != nil {
 			return err
@@ -112,10 +103,8 @@ func cmdDaemon(args []string) error {
 		return nil
 	}
 
-	// The daemon path: the read-only config load runs first, exactly as
-	// --preflight's does, so a malformed config fails before the lock and the
-	// root stays read-only until then. The loaded value is discarded --
-	// newRuntime reloads config from the database it imports into.
+	// The read-only config load runs first, so a malformed config fails
+	// before the lock. The loaded value is discarded: newRuntime reloads it.
 	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		return err
@@ -142,11 +131,9 @@ func cmdDaemon(args []string) error {
 	// into an error that matters.
 	defer lock.Close()
 
-	// The socket path is checked before newRuntime mints anything, so a start
-	// whose path could never bind refuses with one clear line and leaves no
-	// half-created root. The listener is bound here, under the lock, so a
-	// connection made while the startup passes run waits in the backlog instead
-	// of finding no socket; Serve starts once the handle is ready.
+	// The socket path is checked before newRuntime mints anything, so a bad
+	// path refuses with one line and leaves no half-created root. The listener
+	// is bound here, under the lock, so early connections wait in the backlog.
 	if err := checkSocketPath(root); err != nil {
 		return err
 	}
@@ -163,11 +150,9 @@ func cmdDaemon(args []string) error {
 		_ = ln.Close()
 	}()
 
-	// The profiling socket is opt-in and never fatal: a path it cannot bind
-	// must not take the daemon -- and the database it owns -- down. It is
-	// bound before the one-time passes so a start stuck in a migration can
-	// still be profiled. A re-exec skips the deferred cleanup (the image is
-	// replaced), and the next image removes the socket file it finds.
+	// The profiling socket is opt-in and never fatal, and is bound before the
+	// one-time passes so a stuck migration can still be profiled. A re-exec
+	// skips the deferred cleanup; the next image removes the socket it finds.
 	if *pprofSocket != "" {
 		pln, perr := servePprof(*pprofSocket)
 		if perr != nil {
@@ -181,17 +166,10 @@ func cmdDaemon(args []string) error {
 		}
 	}
 
-	// The daemon's one handle: opened directly, here under the lock, and shared
-	// by store.NewShared with everything in the daemon -- the config store, the
-	// runtime's store (gates, claims, run log, daemon.json, the release cache)
-	// and the agy deliverer's creds store. Nothing in the daemon dials the
-	// owner, and the owner never opens a second handle of its own. Clients
-	// still hold their own dialled connections. The open brings the
-	// machine-local file beside it along, at the same schema version.
-	//
-	// Closing is explicit rather than a bare defer: the re-exec path closes the
-	// DB itself before syscall.Exec, and the deferred pass must then do
-	// nothing. *db.DB.Close is not idempotent.
+	// The daemon's one handle: opened here under the lock and shared with
+	// everything in the daemon; nothing in the daemon dials the owner. Closing
+	// is explicit, not a bare defer, because *db.DB.Close is not idempotent
+	// and the re-exec path closes it before syscall.Exec.
 	d, err := openDBDirect(filepath.Join(root, "relevo.db"))
 	if err != nil {
 		return err
@@ -208,10 +186,9 @@ func cmdDaemon(args []string) error {
 	}
 	defer closeDB()
 
-	// newRuntimeOn is the one constructor, called under the lock: it mints a
-	// whole installation.json (above, in openDBDirect), opens and migrates
-	// relevo.db, imports config and builds the runtime with gates over the
-	// shared handle. Nothing before this point touches the database.
+	// newRuntimeOn is the one constructor, called under the lock: it opens and
+	// migrates relevo.db and builds the runtime over the shared handle.
+	// Nothing before this point touches the database.
 	rt, err := newRuntimeOn(root, d)
 	if err != nil {
 		return err
@@ -220,21 +197,16 @@ func cmdDaemon(args []string) error {
 	// Nowhere else: a CLI one-shot (any other command) must not relaunch a
 	// builder it merely happens to observe as "exited, code unknown".
 	rt.StartedAt = time.Now()
-	// The daemon's in-memory "seen alive" set: it tells a process this
-	// daemon actually watched from one that merely predates it, so a
-	// restart relaunches only what it really took down. Nothing else
-	// creates one; every CLI one-shot leaves Watched nil and keeps the
-	// rule above exactly.
+	// The daemon's in-memory "seen alive" set: it tells a process this daemon
+	// actually watched from one that merely predates it, so a restart
+	// relaunches only what it really took down.
 	rt.Watched = relevo.NewWatched()
-	// The daemon's per-binding auth grace: a transient 401 (clock skew after
-	// a reboot) is shown and warned about, and only halts a binding after 15
-	// minutes. Every CLI one-shot leaves AuthGrace nil, so it never halts on
-	// one.
+	// The daemon's per-binding auth grace: a transient 401 halts a binding
+	// only after 15 minutes. Every CLI one-shot leaves AuthGrace nil.
 	rt.AuthGrace = relevo.NewAuthGrace()
 	// The scope template newRuntime filled is logged once here, in the same
-	// shape `relevo serve` uses. "off" is scope.enabled: false; the local
-	// daemon does not probe at startup, so there is no "unavailable" here --
-	// a later probe failure is the runner's one-line warning.
+	// shape `relevo serve` uses ("off" is scope.enabled: false; the local
+	// daemon does not probe at startup, so there is no "unavailable" here).
 	slog.Info(fmt.Sprintf("scopes=%s", scopeStatusText(rt.Scope)))
 
 	// The reaper is built before anything can spawn a child, so it sees only
@@ -242,10 +214,9 @@ func cmdDaemon(args []string) error {
 	// started after this point is never in its set.
 	reaper := proc.NewInheritedReaper(os.Getpid(), "/proc")
 
-	// Capture the executable and the identity of the image this process is
-	// running, not of the path: a replacement landing after exec would become
-	// the baseline, and the watcher would never fire. A failure disables
-	// re-exec with a warning; the daemon runs on.
+	// Capture the identity of the running image, not of the path: a
+	// replacement landing after exec would become the baseline and the watcher
+	// would never fire. A failure disables re-exec with a warning.
 	exe, exeErr := upgrade.ResolveExe()
 	exeID, idErr := upgrade.SelfImageIdentity()
 	reexecOK := exeErr == nil && idErr == nil
@@ -269,11 +240,10 @@ func cmdDaemon(args []string) error {
 	// daemon's own ingest may write it.
 	daemonRuntimeHandle(&rt, d)
 
-	// An abandoned statement the owner cannot interrupt is ended by re-execing
-	// this binary: the hook the owner calls once logs the reap and asks the
-	// upgrade hook below to return true on its next tick. With re-exec
-	// unavailable the hook is not wired, so the owner keeps refusing ad-hoc
-	// reads without any way to end the statement -- a safe degradation.
+	// An abandoned statement the owner cannot interrupt is ended by re-execing:
+	// the hook asks the upgrade hook below to return true on its next tick.
+	// Without it the owner keeps refusing ad-hoc reads with no way to end the
+	// statement, which is a safe degradation.
 	var reapRequested atomic.Bool
 	var onAbandoned func()
 	if reexecOK {
@@ -284,10 +254,9 @@ func cmdDaemon(args []string) error {
 		}
 	}
 
-	// The owner is served before the one-time passes, which then run under the
-	// owner's normal write path; the sync verb executor is installed after them,
-	// and only once they recorded themselves. See daemonStartup for why the
-	// order is this one.
+	// The owner is served before the one-time passes, which run under the
+	// owner's write path; the sync verb executor is installed after them, once
+	// they recorded themselves (see daemonStartup for why).
 	srv = daemonStartup(&rt, d, ln, onAbandoned)
 
 	// daemon.json: what this image runs. Written under the lock, so its
@@ -334,10 +303,9 @@ func cmdDaemon(args []string) error {
 	defer stop()
 
 	// The watcher and its hook are the daemon's whole upgrade decision:
-	// debounce the new identity over two ticks, preflight it, then either
-	// re-exec or refuse and record the refusal.
-	// The split guard refuses a candidate that cannot read the local split:
-	// following one would flap the visible config across re-execs. The
+	// debounce the new identity over two ticks, preflight it, then re-exec or
+	// refuse. The split guard refuses a candidate that cannot read the local
+	// split, which would flap the visible config across re-execs. The split
 	// marker cannot appear later in this process's life, so reading it once
 	// here is current for every later tick.
 	up := &upgrade.Watcher{
@@ -354,10 +322,8 @@ func cmdDaemon(args []string) error {
 		if !reexecOK {
 			return false
 		}
-		// The owner's grace elapsed on a statement the engine will not
-		// interrupt. Only the new image ends it: execing gives the process a
-		// fresh thread for the abandoned statement while the drain lets
-		// ordinary work finish.
+		// Only the new image ends an abandoned statement: execing gives the
+		// process a fresh thread for it while the drain lets other work finish.
 		if reapRequested.Load() {
 			return true
 		}
@@ -392,9 +358,7 @@ func cmdDaemon(args []string) error {
 	}
 
 	// The idle watcher is the CLI-spawned daemon's own exit: the flag is
-	// internal, so a service-managed or hand-started daemon never gets it. It
-	// cancels this context once the daemon has been idle past the period, which
-	// Run reports as a clean shutdown.
+	// internal, so a service-managed or hand-started daemon never gets it.
 	var running atomic.Pointer[relevo.Daemon]
 	if *autoExitAfter > 0 {
 		go watchDaemonIdle(ctx, stop, *autoExitAfter, idlePoll, rt.Now, func() daemonActivity {
@@ -406,23 +370,20 @@ func cmdDaemon(args []string) error {
 
 	slog.Info("relevo daemon starting", "interval", *interval)
 	daemon := relevo.NewDaemon(rt, *interval).WithRefresh(watcher.Refresh).WithUpgrade(hook)
-	// A gate this daemon records has to reach the other machines now, not at
-	// the end of the export debounce, so the runtime it was built from carries
-	// the daemon's own trigger. The daemon is bound afterwards, because the
-	// trigger is the daemon asking itself for an attempt.
+	// A gate this daemon records has to reach the other machines now, so the
+	// runtime carries the daemon's own trigger and the daemon is bound
+	// afterwards: the trigger is the daemon asking itself for an attempt.
 	daemon.BindSyncNow(ctx)
-	// The verb hook was installed before this Daemon existed, because the owner
-	// is served before it is built. Rebind it now with the guard: from here a
-	// verb and a seal or idle tick are serialized against each other, which is
-	// what keeps one machine's markers from being written twice at once.
+	// Rebind the verb hook now with the guard: from here a verb and a seal or
+	// idle tick are serialized, keeping one machine's markers from being
+	// written twice at once.
 	installSyncVerbSerializing(ctx, daemon, srv, d)
 	running.Store(daemon)
 	err = daemon.Run(ctx)
 	if errors.Is(err, relevo.ErrReexec) {
-		// Drain the owner first: an open transaction must be able to commit
-		// before closeDB takes the handle away. Then close explicitly what must
-		// not survive the exec -- the DB, the signal context and the lock --
-		// and pass the listener's descriptor with close-on-exec cleared so the
+		// Drain the owner first: an open transaction must commit before closeDB
+		// takes the handle away. Then close what must not survive the exec and
+		// pass the listener's descriptor with close-on-exec cleared, so the
 		// next image adopts it instead of rebinding.
 		fd, herr := drainAndHandoff(srv, ln)
 		if herr != nil {
@@ -448,15 +409,11 @@ func cmdDaemon(args []string) error {
 	return err
 }
 
-// daemonRuntimeHandle decides whether the daemon's own ingest may write d, the
-// one handle the daemon opened and the owner serves. A schema a newer relevo
-// wrote is never migrated or written by this binary: rt.DB stays nil so every
-// ingest call site treats it as a machine with no database, and the reason is
-// said once. The owner still serves the handle, so a dialled client gets its
-// schema answer.
-//
-// It is a function of its own so the tests drive the very branch the daemon
-// does; rt is a pointer because a Runtime is copied by value everywhere else.
+// daemonRuntimeHandle decides whether the daemon's own ingest may write d: a
+// schema a newer relevo wrote is never migrated or written here, so rt.DB
+// stays nil and every ingest call site treats it as a machine with no
+// database. The owner still serves the handle, so a dialled client gets its
+// schema answer. rt is a pointer because Runtime is copied by value elsewhere.
 func daemonRuntimeHandle(rt *relevo.Runtime, d *db.DB) {
 	if d.Newer() {
 		have, know := d.SchemaVersions()
@@ -466,16 +423,10 @@ func daemonRuntimeHandle(rt *relevo.Runtime, d *db.DB) {
 	rt.DB = d
 }
 
-// refreshRoles lands relevo's shipped agent definitions and the custom agents
-// the config renders, once per image start. The kinds are the ones `relevo
-// config agents` picks by default
-// -- harness.Install's own "every harness whose binary is on PATH" selection --
-// and the env is the same one that verb uses, so both read and write the one
-// manifest at <state root>/agents-manifest.json.
-//
-// It is never fatal: a definition that could not be written is one warning, a
-// manifest relevo cannot read or save is one warning, and the daemon's own work
-// does not depend on either.
+// refreshRoles lands relevo's shipped agent definitions and the
+// config-rendered custom agents once per image start, with the same selection
+// and env the config agents verb uses, so both share the one manifest at
+// <state root>/agents-manifest.json. It is never fatal.
 func refreshRoles(cfg *config.Store) {
 	env, err := agentInstallEnv()
 	if err != nil {

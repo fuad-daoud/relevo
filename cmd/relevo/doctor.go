@@ -10,13 +10,12 @@ import (
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
-// doctorFlagValues holds the pointer doctor parses into.
 type doctorFlagValues struct {
 	asJSON *bool
 }
 
-// doctorFlagSet defines that flag on fs and returns what it parses into, so
-// the registry's parity test finds exactly one installer per verb.
+// doctorFlagSet exists so the registry's parity test finds exactly one
+// installer per verb.
 func doctorFlagSet(fs *flag.FlagSet) *doctorFlagValues {
 	v := &doctorFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the report as a JSON document")
@@ -24,7 +23,7 @@ func doctorFlagSet(fs *flag.FlagSet) *doctorFlagValues {
 }
 
 // doctorDeps gathers the cmd-owned values the doctor report reads: the build
-// facts and helpers that stay in cmd/relevo because other commands use them.
+// facts and helpers other commands use.
 func doctorDeps(rt relevo.Runtime) doctor.Deps {
 	d := doctor.Deps{
 		Env:              unitEnv{Env: doctor.NewEnv(rt.Store, releaseInputs())},
@@ -76,7 +75,7 @@ func cmdDoctor(args []string) error {
 	}
 
 	// A failing check still exits 1 in both shapes: the exit code is part of
-	// the contract, and --json only changes where the report goes.
+	// the contract.
 	if rep.Failures() > 0 {
 		return exitCodeErr{code: 1}
 	}

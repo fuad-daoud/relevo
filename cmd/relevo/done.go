@@ -11,18 +11,13 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
-// runStopChain is cmdStop's chain arm: the name is a chain, so the chain's own
-// stop runs. A chain that has already stopped is the same "nothing to stop"
-// answer a binding with no open round gives, and it changes nothing. A halted
-// chain is its own answer -- it names `relevo done` as the command that closes
-// it -- and it is a conflict-class refusal like any other answer about the
-// chain's state, so it is printed and then returned as the coded failure a
-// script can branch on.
+// runStopChain is cmdStop's chain arm. A halted chain names `relevo done` as
+// the command that closes it; its refusal prints, then returns as the coded
+// failure a script can branch on.
 func runStopChain(rt relevo.Runtime, name string, asJSON bool) error {
 	res, err := relevo.ChainStop(context.Background(), rt, name)
 	// A halted chain carries its own wording, so it is classified rather than
-	// printed here: the human line and the --json envelope both come out of the
-	// coded refusal, and neither invents bytes the other does not have.
+	// printed here: both shapes come out of the coded refusal.
 	if errors.Is(err, chain.ErrChainHalted) {
 		return writeError(err)
 	}
@@ -40,8 +35,7 @@ func runStopChain(rt relevo.Runtime, name string, asJSON bool) error {
 	if asJSON {
 		return printDoc(chainStopDocOf(name, res))
 	}
-	// The member had no open round, so the chain was stopped directly rather
-	// than by a member's close; StopText's wording is about a round.
+	// The member had no open round, so the chain was stopped directly.
 	if res.Action == relevo.ChainStopActionStopped {
 		fmt.Printf("stopped chain %s: its awaited member had no open round\n", name)
 		return nil
@@ -50,11 +44,9 @@ func runStopChain(rt relevo.Runtime, name string, asJSON bool) error {
 	return nil
 }
 
-// runDoneChain is cmdDone's chain arm: the name is a chain, so every member is
-// released and the chain is marked done. A running chain is refused with the
-// conflict that says to stop it first. A member whose process could not be
-// stopped still marked itself done, so the result prints before the failure is
-// returned, exactly as the binding path does.
+// runDoneChain is cmdDone's chain arm: every member is released and the chain
+// is marked done. A member whose stop failed still marked itself done, so the
+// result prints before the failure is returned.
 func runDoneChain(rt relevo.Runtime, name string, asJSON bool) error {
 	res, err := relevo.ChainDone(context.Background(), rt, name)
 	if err != nil && !errors.Is(err, relevo.ErrStopFailed) {
@@ -114,8 +106,8 @@ func cmdDone(args []string) error {
 	if err != nil {
 		return writeError(err)
 	}
-	// A name that resolves to a chain releases the whole chain: every member
-	// is marked done, builder first, and the chain row follows.
+	// A chain name releases every member, builder first, and the chain row
+	// follows.
 	if statusChain(rt, target) {
 		return runDoneChain(rt, target, *asJSON)
 	}
@@ -124,8 +116,8 @@ func cmdDone(args []string) error {
 		return writeError(err)
 	}
 
-	// A failed process stop still marked the binding done, so the result is
-	// printed before the failure is returned -- as the document under --json.
+	// A failed stop still marked the binding done, so the result prints before
+	// the failure is returned.
 	if *asJSON {
 		if perr := printDoc(doneDocOf(target, res)); perr != nil {
 			return perr
@@ -140,10 +132,6 @@ func cmdDone(args []string) error {
 	return nil
 }
 
-// cmdStop ends a binding's open round on purpose: a headless builder
-// is killed now and the round closes without a report unless one is already
-// on disk. It takes the binding from --name or a positional and never from
-// the current directory -- a stop ends a round, so it must not guess.
 type stopFlagValues struct {
 	name   *string
 	asJSON *bool
@@ -156,6 +144,10 @@ func stopFlagSet(fs *flag.FlagSet) *stopFlagValues {
 	return v
 }
 
+// cmdStop ends a binding's open round on purpose: a headless builder is
+// killed now and the round closes without a report unless one is already
+// on disk. It never takes the binding from the current directory -- a stop
+// must not guess.
 func cmdStop(args []string) error {
 	fs := flag.NewFlagSet("stop", flag.ContinueOnError)
 	v := stopFlagSet(fs)
@@ -174,16 +166,15 @@ func cmdStop(args []string) error {
 	if err != nil {
 		return writeError(err)
 	}
-	// A name that resolves to a chain stops the chain, not one of its members:
-	// the member the chain awaits is the one whose open round ends, and its
-	// stopped close is what marks the chain stopped.
+	// A chain name stops the chain, not one of its members: the awaited
+	// member's open round ends.
 	if statusChain(rt, target) {
 		return runStopChain(rt, target, *asJSON)
 	}
 	res, err := relevo.Stop(context.Background(), rt, target, relevo.StopOptions{})
 	if errors.Is(err, relevo.ErrNothingToStop) {
 		// Nothing to stop is an answer, not a failure: its document names the
-		// action "nothing" rather than leaving an empty one.
+		// action "nothing".
 		if *asJSON {
 			return printDoc(stopDocOf(target, res))
 		}

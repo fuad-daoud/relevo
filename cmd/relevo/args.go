@@ -80,13 +80,9 @@ func withEnv(env []string, key, val string) []string {
 	return out
 }
 
-// bindingArg picks the binding name out of a --name flag and whatever
-// positionals were left over, and refuses to take two. An empty return means
-// no name was given at all, which each caller interprets for itself.
-//
-// It refuses even when both spellings agree: a caller who wrote the name twice
-// has a mistaken model of the command, and silently accepting one of them hides
-// that until the day the two differ.
+// bindingArg picks the binding name out of --name and leftover positionals;
+// empty means no name was given. It refuses even agreeing spellings:
+// accepting one hides a mistaken model of the command.
 func bindingArg(nameFlag string, positional []string) (string, error) {
 	switch {
 	case nameFlag != "" && len(positional) > 0:
@@ -102,12 +98,9 @@ func bindingArg(nameFlag string, positional []string) (string, error) {
 	}
 }
 
-// resolveBinding names the binding a command should act on: the one given by
-// --name or as a positional, else the binding that owns the current directory,
-// so the mastermind rarely has to name it at all.
-//
-// The positional form is not decoration: a dropped positional would act on the
-// current directory's binding instead of the named one.
+// resolveBinding names the binding a command acts on: --name, a positional,
+// or the binding owning the current directory. The positional form is not
+// decoration: dropping it would act on the directory's binding instead.
 func resolveBinding(rt relevo.Runtime, nameFlag string, positional []string) (string, error) {
 	name, err := bindingArg(nameFlag, positional)
 	if err != nil {
@@ -134,10 +127,9 @@ func resolveBinding(rt relevo.Runtime, nameFlag string, positional []string) (st
 	return b.Name, nil
 }
 
-// warnWaitingOnYou prints one stderr line per other binding that is waiting
-// on a human. except is the binding the verb just acted on.
-// It never changes the caller's return value or exit code: a WaitingOnYou
-// error is itself only a stderr warning.
+// warnWaitingOnYou prints one stderr line per other binding waiting on a
+// human. It never changes the caller's return: WaitingOnYou is itself only
+// a stderr warning.
 func warnWaitingOnYou(rt relevo.Runtime, except string) {
 	lines, err := relevo.WaitingOnYou(rt, except)
 	if err != nil {
@@ -149,20 +141,9 @@ func warnWaitingOnYou(rt relevo.Runtime, except string) {
 	}
 }
 
-// parseFlags parses one subcommand's flags. It turns `-h` into a clean exit:
-// the flag package has already printed usage, so the caller just returns.
-//
-// It parses iteratively rather than once, because flag.Parse stops at the first
-// non-flag argument -- a flag after a positional would otherwise be silently
-// dropped. Each pass takes
-// one leftover word as a positional and re-parses the remainder, so flags are
-// found wherever they appear. Letting Parse do the work is what keeps this
-// correct without knowing any flag's arity: Parse has already consumed a
-// flag's value before the leftovers are looked at, so `--round 2` never leaves
-// a stray "2" behind.
-//
-// There is no `--` passthrough anywhere in this CLI, so nothing here needs to
-// stop early and treat a tail as literal.
+// parseFlags parses one subcommand's flags iteratively, since flag.Parse stops
+// at the first non-flag argument; letting Parse do the work keeps this correct
+// without knowing any flag's arity (`-h` is a clean exit; no `--` passthrough).
 func parseFlags(fs *flag.FlagSet, args []string) error {
 	var positional []string
 
@@ -183,11 +164,8 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 		rest = rest[1:]
 	}
 
-	// Re-parse the collected positionals so fs.Args() reports them, leaving
-	// every caller's `fs.Args()` working exactly as before. Parse stops at the
-	// first non-flag argument and every element here is one, so this consumes
-	// nothing and simply reinstates the list. Flag values already set by the
-	// passes above survive: Parse does not reset them.
+	// Re-parse the positionals so fs.Args() reports them; Parse does not
+	// reset already-set flag values.
 	if err := fs.Parse(positional); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return errHelpShown
@@ -197,11 +175,10 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 	return nil
 }
 
-// regateFlag turns --regate into the *int the relevo package takes. The flag's
-// default is -1, meaning "not given", which becomes nil so the
-// policy default or the existing binding value stands; any value the human
-// actually typed must be >= 0, and a bad one exits 2 -- before any runtime is
-// built, so nothing touches the state directory or launches a harness.
+// regateFlag turns --regate into the *int the relevo package takes: the -1
+// default means not given and becomes nil, so the policy default or the
+// existing binding value stands; a typed value must be >= 0, and a bad one
+// exits 2 before any runtime is built.
 func regateFlag(fs *flag.FlagSet, regate *int) (*int, error) {
 	given := false
 	fs.Visit(func(f *flag.Flag) {
@@ -218,10 +195,9 @@ func regateFlag(fs *flag.FlagSet, regate *int) (*int, error) {
 	return regate, nil
 }
 
-// noteRegateNoGate says when a repair budget landed on a binding that has no
-// gate to fail: accepted and inert, because a binding with no
-// gate never produces gate=fail, but not worth leaving unexplained. w is the
-// mode's notice writer: stdout for the human default, stderr under --json.
+// noteRegateNoGate says when a repair budget landed on a binding with no
+// gate to fail: accepted and inert. w is stdout by default, stderr under
+// --json.
 func noteRegateNoGate(w io.Writer, b store.Binding) {
 	if b.Regate > 0 && b.Gate == "" {
 		fmt.Fprintf(w, "  regate %d (no gate configured)\n", b.Regate)
@@ -238,11 +214,9 @@ func noticeWriter(jsonMode bool) io.Writer {
 	return os.Stdout
 }
 
-// writeError classifies a failure out of one of the relevo write paths into
-// the frame's catalog code. It is the one place the write verbs decide
-// a failure class, and it never invents a code: the sentinels relevo and store
-// export are the only distinctions the library makes, and anything else is
-// internal. An error that is already coded passes through untouched.
+// writeError classifies a failure out of the relevo write paths into the
+// frame's catalog code: the sentinels relevo and store export are the only
+// distinctions, and anything else is internal. Coded errors pass through.
 func writeError(err error) error {
 	if err == nil {
 		return nil
@@ -255,10 +229,9 @@ func writeError(err error) error {
 	var candOpen *relevo.CandidateRoundOpenError
 	var envErr *relevo.EnvironmentError
 	switch {
-	// The busy family is checked before the bare refusal.ErrRefused case, because
-	// each of these sentinels also unwraps to refusal.ErrRefused: they are refusals
-	// first and a named reason second, and only the reason picks the next
-	// hint the caller should follow.
+	// The busy family is checked before the bare refusal case: each sentinel
+	// also unwraps to refusal.ErrRefused, and only the named reason picks the
+	// next hint.
 	case errors.Is(err, relevo.ErrBuilderBusy):
 		return failNext(codeRefused, "relevo done", "%v", err)
 	case errors.Is(err, relevo.ErrReportPending):
@@ -301,11 +274,9 @@ func writeError(err error) error {
 		// builder; the cap is not an internal failure.
 		return failWrap(codeRoundCap, err, "%v", err)
 	case errors.Is(err, store.ErrCWDTaken), errors.Is(err, chain.ErrRunningMember), errors.Is(err, relevo.ErrChainRunning), errors.Is(err, relevo.ErrChainDone), errors.Is(err, chain.ErrChainHalted):
-		// A halted chain's stop answer is a statement about the chain's own
-		// state -- stop it and nothing is running to stop -- so it is the
-		// conflict family, the same class its running and done siblings have.
-		// The message itself already names `relevo done`, so the catalog's
-		// next hint would only repeat it.
+		// A halted chain's stop answer is about the chain's own state, so it
+		// is the conflict family like its running and done siblings. The
+		// message already names `relevo done`, so the catalog adds no hint.
 		return fail(codeConflict, "%v", err)
 	case errors.As(err, &openMember):
 		return failNext(codeConflict, "relevo stop "+openMember.Member, "%v", err)
@@ -333,10 +304,9 @@ func writeError(err error) error {
 	case errors.Is(err, candidate.ErrUnknownCandidate),
 		errors.Is(err, candidate.ErrBadRef),
 		errors.Is(err, availability.ErrUnknownProvider):
-		// A candidate, a ref or a provider the caller named on the command line
-		// is their own argument: a corrected subject is the whole way out, so
-		// it is usage (exit 2) and never `relevo bugreport`. The message names
-		// the accepted forms so a typo does not have to be guessed at.
+		// A candidate, ref or provider named on the command line is the
+		// caller's own argument, so a typo is usage and never `relevo
+		// bugreport`. The message names the accepted forms.
 		return fail(codeUsage, "%s", availability.UsageText(err))
 	case errors.Is(err, client.ErrUnreachable):
 		return fail(codeRemoteUnreachable, "%v", err)

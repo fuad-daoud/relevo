@@ -14,27 +14,23 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// ownerRouteSupported reports that this platform can serve and dial the owner.
 func ownerRouteSupported() bool { return true }
 
-// ownerSocket resolves the socket the owner serves under root.
 func ownerSocket(root string) (string, error) { return owner.SocketPath(root) }
 
-// dialUDS is one plain unix dial.
 func dialUDS(ctx context.Context, sock string) (net.Conn, error) {
 	var d net.Dialer
 	return d.DialContext(ctx, "unix", sock)
 }
 
-// firstDial is dialWithStart's opening dial: the seam a test replaces to hand
-// it a refusal no real socket path would answer. The re-dials stay the plain
-// dialUDS.
+// firstDial is dialWithStart's opening dial, a var so a test can hand it a
+// refusal no real socket would answer.
 var firstDial = dialUDS
 
 // ownerStarting reports whether a daemon that is still starting is evident
 // under root: a plain connect to sock that succeeds means some process holds
 // the listener, which is what survives a re-exec; when the connect fails the
-// daemon lock is probed. The connect comes first because DaemonRunning takes
+// daemon lock is probed. The connect comes first because probing the lock takes
 // the flock for a moment, which would cost a daemon that takes it at that
 // instant its start.
 func ownerStarting(root, sock string) bool {
@@ -44,9 +40,8 @@ func ownerStarting(root, sock string) bool {
 	return daemonLockHeld(root)
 }
 
-// listenerHeld is one plain connect, with no auto-start and no re-dial: a
-// connection the kernel queues in the backlog is the evidence that a listener
-// exists, whether or not anyone is accepting yet.
+// listenerHeld is one plain connect with no auto-start and no re-dial: a
+// kernel-queued connection is the evidence a listener exists.
 func listenerHeld(sock string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), statuslineDialBudget)
 	defer cancel()
@@ -67,8 +62,8 @@ var (
 )
 
 // daemonLockHeld reports whether a daemon holds the lock under root, probing
-// the lock once per process and reusing the answer. It also creates the state
-// root and the lock file, exactly as the daemon itself does.
+// once per process and reusing the answer. Like the daemon, it creates the
+// state root and lock file.
 func daemonLockHeld(root string) bool {
 	daemonLockProbeMu.Lock()
 	defer daemonLockProbeMu.Unlock()
@@ -81,12 +76,9 @@ func daemonLockHeld(root string) bool {
 	return held
 }
 
-// dialWithStart is the client dial hook: it dials, returns a sandboxed
-// refusal at once, and otherwise starts the owner when the socket does not
-// answer, then re-dials with jittered steps until the budget is spent. A
-// refusal never resolves by waiting, and a daemon started from the same
-// sandboxed shell would be refused the same way, so neither the starter nor
-// the retry budget is spent for it. It never falls back to opening the file.
+// dialWithStart is the client dial hook: a sandboxed refusal returns at once,
+// since waiting or starting cannot change it; otherwise it starts the owner
+// and re-dials until the budget is spent. It never falls back to the file.
 func dialWithStart(ctx context.Context, sock string) (net.Conn, error) {
 	deadline := time.Now().Add(dbRouteBudget)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {

@@ -15,17 +15,15 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
-// historyJSONRow is one `relevo history --json` row: db.RoundRow's fields
-// plus the candidate's short name beside the token. The embedded struct keeps
-// every token field where it always was.
+// historyJSONRow is one `relevo history --json` row: db.RoundRow's fields plus
+// the candidate's short name.
 type historyJSONRow struct {
 	db.RoundRow
 	BuilderName string `json:"BuilderName,omitempty"`
 }
 
-// historyJSONRows wraps each row with its candidate's short name as set
-// resolves it. A token the set no longer holds stays as the name, exactly as
-// the text listing renders it (Set.NameOf never errors).
+// historyJSONRows wraps each row with its candidate's short name; a token the
+// set no longer holds stays as the name.
 func historyJSONRows(rows []db.RoundRow, set *candidate.Set) []historyJSONRow {
 	out := make([]historyJSONRow, len(rows))
 	for i, r := range rows {
@@ -42,8 +40,8 @@ const historyUsage = `usage: relevo history [--here] [--binding <name>] [--featu
                      [--mastermind <session>] [--since <window>] [--limit <n>] [--by <axis>]
                      [-q "<query>"] [--json] [--rows]`
 
-// groupJSON blanks each group's Rows unless --rows asked for them. A nil
-// list encodes as [], not null.
+// groupJSON blanks each group's Rows unless --rows asked for them. Nil encodes
+// as [], not null.
 func groupJSON(groups []histq.GroupRow, withRows bool) []histq.GroupRow {
 	if groups == nil {
 		groups = []histq.GroupRow{}
@@ -72,8 +70,8 @@ type historyFlagValues struct {
 	withRows   *bool
 }
 
-// json is accepted and ignored -- history always prints JSON -- so it has no
-// pointer.
+// historyFlagSet accepts and ignores --json: history always prints JSON, so it
+// has no pointer.
 func historyFlagSet(fs *flag.FlagSet) *historyFlagValues {
 	v := &historyFlagValues{}
 	v.here = fs.Bool("here", false, "filter to the repo the current directory belongs to")
@@ -90,8 +88,7 @@ func historyFlagSet(fs *flag.FlagSet) *historyFlagValues {
 	return v
 }
 
-// cmdHistory prints history as JSON across every binding relevo has ever
-// recorded, live or archived, newest first.
+// cmdHistory prints history as JSON across every binding, newest first.
 func cmdHistory(args []string) error {
 	fs := flag.NewFlagSet("history", flag.ContinueOnError)
 	v := historyFlagSet(fs)

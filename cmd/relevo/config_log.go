@@ -16,8 +16,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/sanitize"
 )
 
-// revisionJSON is the --json shape of one revision. Snapshot is present
-// only for `--rev`, where it is the raw snapshot object.
+// revisionJSON is the --json shape of one revision; Snapshot is present only
+// for --rev.
 type revisionJSON struct {
 	Rev      int64           `json:"rev"`
 	At       string          `json:"at"`
@@ -28,8 +28,8 @@ type revisionJSON struct {
 	Snapshot json.RawMessage `json:"snapshot,omitempty"`
 }
 
-// revChangeList decodes a revision row's raw change list; a row whose changes
-// do not parse reads as no changes rather than failing the whole listing.
+// revChangeList decodes a revision row's change list; an unparsable row reads
+// as no changes rather than failing the listing.
 func revChangeList(r db.RevisionRow) []config.Change {
 	var cs []config.Change
 	if err := json.Unmarshal(r.Changes, &cs); err != nil {
@@ -61,15 +61,13 @@ func revisionJSONOf(r db.RevisionRow, withSnapshot bool) revisionJSON {
 	return out
 }
 
-// inertText makes a stored source or message safe to print: a synced revision's
-// label and message are chosen by a peer. sanitize keeps newlines, which would
-// let one forge a line of their own, so they go too.
+// inertText makes a stored source or message safe to print: a synced
+// revision's label and message are chosen by a peer. sanitize keeps newlines,
+// which would let a peer forge a line, so they go too.
 func inertText(s string) string {
 	return strings.ReplaceAll(sanitize.Text(s), "\n", "\uFFFD")
 }
 
-// printRevisionText prints one revision's header, its message when it has one,
-// and one Describe line per change indented by two spaces.
 func printRevisionText(r db.RevisionRow) error {
 	fmt.Printf("#%d  %s  %s  config version %d\n",
 		r.Rev, r.At.Local().Format("2006-01-02 15:04"), inertText(r.Source), r.Version)
@@ -86,8 +84,6 @@ func printRevisionText(r db.RevisionRow) error {
 	return nil
 }
 
-// cmdConfigLog lists revisions newest first, or shows one with --rev. The list
-// is a header line per revision; --rev adds the message and every change.
 type configLogFlagValues struct {
 	n      *int
 	rev    *int64
@@ -102,6 +98,7 @@ func configLogFlagSet(fs *flag.FlagSet) *configLogFlagValues {
 	return v
 }
 
+// cmdConfigLog lists revisions newest first, or shows one with --rev.
 func cmdConfigLog(args []string) error {
 	fs := flag.NewFlagSet("relevo config log", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -164,8 +161,8 @@ func cmdConfigLog(args []string) error {
 	return nil
 }
 
-// sourceWidth is the column a source needs: a synced revision's source carries
-// the sending machine's label, so it is longer than any local source.
+// sourceWidth is the column a source needs; a synced revision's source carries
+// the sending machine's label.
 func sourceWidth(rows []db.RevisionRow) int {
 	width := len("migration")
 	for _, r := range rows {
@@ -174,8 +171,6 @@ func sourceWidth(rows []db.RevisionRow) int {
 	return width
 }
 
-// cmdConfigRollback prints what rolling back to rev would change, confirms
-// with the user unless --yes, then writes the rollback as one new revision.
 type configRollbackFlagValues struct {
 	yes *bool
 	msg *string
@@ -188,6 +183,8 @@ func configRollbackFlagSet(fs *flag.FlagSet) *configRollbackFlagValues {
 	return v
 }
 
+// cmdConfigRollback previews the rollback, confirms unless --yes, then writes
+// it as one new revision.
 func cmdConfigRollback(args []string) error {
 	fs := flag.NewFlagSet("relevo config rollback", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)

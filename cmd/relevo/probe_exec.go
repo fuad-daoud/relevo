@@ -12,9 +12,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/proc"
 )
 
-// probeWaitDelay is how long Wait waits for stdout/stderr to close after the
-// process exits or is killed. It bounds a harness that leaves a descendant
-// holding the stdout pipe open.
+// probeWaitDelay bounds Wait's wait for stdout/stderr to close after exit: a
+// harness may leave a descendant holding the pipe open.
 const probeWaitDelay = 5 * time.Second
 
 // lineWriter is an io.Writer that splits its input into lines and hands each
@@ -26,9 +25,8 @@ type lineWriter struct {
 	buf    []byte       // bytes of a line not yet terminated
 }
 
-// Write appends p to buf and calls onLine for every complete line now in buf.
-// A \r right before the \n is dropped as well. onLine must not retain the
-// slice.
+// Write feeds p through onLine one line at a time, dropping a \r before each
+// \n; onLine must not retain the slice.
 func (w *lineWriter) Write(p []byte) (int, error) {
 	w.buf = append(w.buf, p...)
 	for {

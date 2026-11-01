@@ -1,6 +1,5 @@
-// setup.go is the setup verb's thin front end: flag parsing, the runtime,
-// the tty detection and the exit mapping. The wizard's work lives in
-// internal/setup; this file only translates between it and the CLI frame.
+// setup.go is the setup verb's thin front end: it translates between the CLI
+// frame and the wizard in internal/setup.
 package main
 
 import (
@@ -14,7 +13,7 @@ import (
 )
 
 // setupAnswerList is the repeatable --answer flag: a Set keeps every value,
-// unlike a scalar flag which forgets the earlier ones.
+// unlike a scalar flag.
 type setupAnswerList []string
 
 func (a *setupAnswerList) String() string { return strings.Join(*a, " ") }
@@ -24,8 +23,6 @@ func (a *setupAnswerList) Set(v string) error {
 	return nil
 }
 
-// setupFlagValues holds the pointers setup's flags parse into. setupFlagSet
-// defines them on fs, so cmds and tests read the same surface.
 type setupFlagValues struct {
 	answers *setupAnswerList
 	asJSON  *bool
@@ -73,11 +70,9 @@ func cmdSetup(args []string) error {
 	return setupExitOf(setup.Run(rt, deps, []string(*v.answers), asJSON, isTerminal(os.Stdin), isTerminal(os.Stdout)))
 }
 
-// setupExitOf is the exit a setup run takes without a second print: a step
-// failure's row (or the result document) already said what failed and what
-// fixes it, so a shaped failure exits silently. A usage error or a
-// machine-state refusal printed nothing yet, so those report like any other
-// caller-side failure.
+// setupExitOf exits without a second print: a step failure's row already said
+// what failed, so a shaped failure exits silently, while a usage error reports
+// like any other caller-side failure.
 func setupExitOf(err error) error {
 	if err == nil {
 		return nil
@@ -113,9 +108,8 @@ func setupExitOf(err error) error {
 }
 
 // classifySetupTransport shapes a smoke-transport failure writeError
-// classified: its row carries the full message with the doctor fix, and it
-// exits with its own code. Anything writeError leaves internal crosses raw,
-// whose row truncates and exits internal as before.
+// classified: its row carries the full message, and it exits with its own
+// code.
 func classifySetupTransport(err error) error {
 	var ce *cliError
 	if coded := writeError(err); errors.As(coded, &ce) && ce.code != codeInternal {
@@ -124,9 +118,8 @@ func classifySetupTransport(err error) error {
 	return err
 }
 
-// setupServiceInstall installs the service unit as `relevo service install`
-// does, shaped as a setup step failure: the row carries the install's own
-// message and fix.
+// setupServiceInstall installs the service unit, shaped as a setup step
+// failure.
 func setupServiceInstall() error {
 	u, err := osUnitSpec()
 	if err != nil {
@@ -142,8 +135,8 @@ func setupServiceInstall() error {
 	return nil
 }
 
-// inEnvSandbox reports an env sandbox: the sandbox moves XDG paths, not
-// systemd's user manager or launchd, so host-owned installs stay out.
+// inEnvSandbox reports an env sandbox: it moves XDG paths, not the host's
+// service managers, so host-owned installs stay out.
 func inEnvSandbox() bool { return os.Getenv("RELEVO_SANDBOX") != "" }
 
 func setupUnitPresent() bool {

@@ -1,6 +1,5 @@
-// board.go is the board verb's thin front end: flag parsing, the dependency
-// wiring and the exit mapping. The verb's work lives in internal/board; this
-// file only translates between it and the CLI frame.
+// board.go is the board verb's thin front end: the verb's work lives in
+// internal/board, and this file only translates between it and the CLI frame.
 package main
 
 import (
@@ -22,7 +21,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
-// boardFlagValues holds the pointers board parses into.
 type boardFlagValues struct {
 	noOpen     *bool
 	theme      *string
@@ -30,8 +28,8 @@ type boardFlagValues struct {
 	mastermind *string
 }
 
-// boardFlagSet defines board's flags on fs and returns what it parses into, so
-// the registry's parity test finds exactly one installer per verb.
+// boardFlagSet exists so the registry's parity test finds exactly one installer
+// per verb.
 func boardFlagSet(fs *flag.FlagSet) *boardFlagValues {
 	v := &boardFlagValues{}
 	v.noOpen = fs.Bool("no-open", false, "print the URL without opening a browser")
@@ -41,14 +39,11 @@ func boardFlagSet(fs *flag.FlagSet) *boardFlagValues {
 	return v
 }
 
-// boardURLFlagValues holds the pointers `board url` parses into.
 type boardURLFlagValues struct {
 	board      *string
 	mastermind *string
 }
 
-// boardURLFlagSet defines `board url`'s flags on fs and returns what it parses
-// into.
 func boardURLFlagSet(fs *flag.FlagSet) *boardURLFlagValues {
 	v := &boardURLFlagValues{}
 	v.board = fs.String("board", "", "the live scene name whose URL to print (default: the pointer)")
@@ -56,13 +51,11 @@ func boardURLFlagSet(fs *flag.FlagSet) *boardURLFlagValues {
 	return v
 }
 
-// boardCommentsFlagValues holds the pointers `board comments` parses into.
 type boardCommentsFlagValues struct {
 	board *string
 	json  *bool
 }
 
-// boardCommentsFlagSet defines `board comments`'s flags on fs.
 func boardCommentsFlagSet(fs *flag.FlagSet) *boardCommentsFlagValues {
 	v := &boardCommentsFlagValues{}
 	v.board = fs.String("board", "", "the live scene name to read (default: the pointer, else board)")
@@ -70,7 +63,6 @@ func boardCommentsFlagSet(fs *flag.FlagSet) *boardCommentsFlagValues {
 	return v
 }
 
-// boardCommentFlagValues holds the pointers `board comment` parses into.
 type boardCommentFlagValues struct {
 	board *string
 	text  *string
@@ -79,7 +71,6 @@ type boardCommentFlagValues struct {
 	by    *string
 }
 
-// boardCommentFlagSet defines `board comment`'s flags on fs.
 func boardCommentFlagSet(fs *flag.FlagSet) *boardCommentFlagValues {
 	v := &boardCommentFlagValues{}
 	v.board = fs.String("board", "", "the live scene name to write (default: the pointer, else board)")
@@ -90,7 +81,6 @@ func boardCommentFlagSet(fs *flag.FlagSet) *boardCommentFlagValues {
 	return v
 }
 
-// boardPromoteFlagValues holds the pointers `board promote` parses into.
 type boardPromoteFlagValues struct {
 	board      *string
 	mastermind *string
@@ -98,8 +88,8 @@ type boardPromoteFlagValues struct {
 	force      *bool
 }
 
-// boardPromoteFlagSet defines `board promote`'s flags on fs and returns what it
-// parses into, so the registry's parity test finds exactly one installer.
+// boardPromoteFlagSet exists so the registry's parity test finds exactly one
+// installer.
 func boardPromoteFlagSet(fs *flag.FlagSet) *boardPromoteFlagValues {
 	v := &boardPromoteFlagValues{}
 	v.board = fs.String("board", "", "the live board name to promote (default: the pointer, else board)")
@@ -109,28 +99,24 @@ func boardPromoteFlagSet(fs *flag.FlagSet) *boardPromoteFlagValues {
 	return v
 }
 
-// boardTextFlagValues holds the pointers board text parses into.
 type boardTextFlagValues struct {
 	asJSON *bool
 }
 
-// boardTextFlagSet defines board text's flags on fs and returns what it parses
-// into, so the registry's parity test finds exactly one installer per verb.
+// boardTextFlagSet exists so the registry's parity test finds exactly one
+// installer per verb.
 func boardTextFlagSet(fs *flag.FlagSet) *boardTextFlagValues {
 	v := &boardTextFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the text elements as a JSON document")
 	return v
 }
 
-// boardAnnotateFlagValues holds the pointers board annotate parses into.
 type boardAnnotateFlagValues struct {
 	text *string
 	x    *float64
 	y    *float64
 }
 
-// boardAnnotateFlagSet defines board annotate's flags on fs and returns what it
-// parses into.
 func boardAnnotateFlagSet(fs *flag.FlagSet) *boardAnnotateFlagValues {
 	v := &boardAnnotateFlagValues{}
 	v.text = fs.String("text", "", "the text to append")
@@ -139,9 +125,7 @@ func boardAnnotateFlagSet(fs *flag.FlagSet) *boardAnnotateFlagValues {
 	return v
 }
 
-// boardDeps gathers the cmd-owned values the board verbs read: the effects
-// and helpers that stay in cmd/relevo because other commands use them, and
-// the board package's own default effects.
+// boardDeps gathers the cmd-owned values the board verbs read.
 func boardDeps() board.Deps {
 	return board.Deps{
 		Listen:           board.Listen,
@@ -160,8 +144,6 @@ func boardDeps() board.Deps {
 	}
 }
 
-// boardThemeSetsOf adapts the staying stored-set read to the dependency the
-// board package takes: the repository's board theme name and the palette set.
 func boardThemeSetsOf(cwd string) (string, map[string]board.Theme, error) {
 	repo, stored, err := boardThemeSets(cwd)
 	if err != nil {
@@ -170,8 +152,8 @@ func boardThemeSetsOf(cwd string) (string, map[string]board.Theme, error) {
 	return repo.BoardTheme, stored, nil
 }
 
-// cmdBoard parses the verb and runs the foreground server. The subverbs
-// dispatch first.
+// cmdBoard parses the verb and runs the foreground server; the subverbs dispatch
+// first.
 func cmdBoard(args []string) error {
 	var sub string
 	if len(args) > 0 {
@@ -212,8 +194,7 @@ func cmdBoard(args []string) error {
 	return boardRefusal(board.Run(boardDeps(), cwd, *v.mastermind, *v.theme, *v.board, arg, *v.noOpen, nil))
 }
 
-// cmdBoardURL prints the live board's URL for a shell copy when the statusline
-// is not at hand (S9).
+// cmdBoardURL prints the live board's URL for a shell copy.
 func cmdBoardURL(args []string) error {
 	fs := flag.NewFlagSet("relevo board url", flag.ContinueOnError)
 	v := boardURLFlagSet(fs)
@@ -226,7 +207,7 @@ func cmdBoardURL(args []string) error {
 	return boardRefusal(board.URL(boardDeps(), *v.mastermind, *v.board))
 }
 
-// cmdBoardComments prints every comment in the resolved scene in scene order.
+// cmdBoardComments prints every comment in the resolved scene.
 func cmdBoardComments(args []string) error {
 	fs := flag.NewFlagSet("relevo board comments", flag.ContinueOnError)
 	v := boardCommentsFlagSet(fs)
@@ -248,8 +229,7 @@ func cmdBoardComments(args []string) error {
 	return boardRefusal(board.Comments(boardDeps(), cwd, "", *v.board, arg, *v.json))
 }
 
-// cmdBoardComment appends one comment to the resolved scene and prints
-// comment: <id>  <path>.
+// cmdBoardComment appends one comment to the resolved scene.
 func cmdBoardComment(args []string) error {
 	fs := flag.NewFlagSet("relevo board comment", flag.ContinueOnError)
 	v := boardCommentFlagSet(fs)
@@ -278,8 +258,7 @@ func cmdBoardComment(args []string) error {
 	return boardRefusal(board.WriteComment(boardDeps(), cwd, in))
 }
 
-// cmdBoardText lists a scene's text elements: one JSON document under --json,
-// one tabwriter row each otherwise.
+// cmdBoardText lists a scene's text elements.
 func cmdBoardText(args []string) error {
 	fs := flag.NewFlagSet("relevo board text", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -298,9 +277,9 @@ func cmdBoardText(args []string) error {
 	return boardRefusal(board.Text(boardDeps(), cwd, positional[0], *v.asJSON))
 }
 
-// cmdBoardAnnotate appends one text element to a scene and prints its id. The
-// presence of --text/--x/--y is read here, where the flags live; the values
-// are checked in the board package before any repository, theme or file work.
+// cmdBoardAnnotate appends one text element to a scene and prints its id. Flag
+// presence is read here, where the flags live; the values are checked in the
+// board package.
 func cmdBoardAnnotate(args []string) error {
 	fs := flag.NewFlagSet("relevo board annotate", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -333,7 +312,6 @@ func cmdBoardAnnotate(args []string) error {
 	return boardRefusal(board.AnnotateScene(boardDeps(), cwd, positional[0], req))
 }
 
-// cmdBoardPromote copies a live board into the repo.
 func cmdBoardPromote(args []string) error {
 	fs := flag.NewFlagSet("relevo board promote", flag.ContinueOnError)
 	v := boardPromoteFlagSet(fs)
@@ -351,12 +329,8 @@ func cmdBoardPromote(args []string) error {
 	return boardRefusal(board.PromoteToRepo(boardDeps(), cwd, *v.mastermind, *v.board, *v.to, *v.force))
 }
 
-// boardRefusal maps a board package refusal to the catalog code it earns: a
-// usage error exits 2 with the usage hint, a missing or invalid scene is a
-// refused error with no next command, a held file whose owner did not answer
-// keeps its conflict code, and anything else is internal. An error the staying
-// helpers already classified (a cliError from the registry lookup or the
-// stored-set read) reaches the user as it is.
+// boardRefusal maps a board package refusal to the catalog code it earns. An
+// error the helpers already classified reaches the user as it is.
 func boardRefusal(err error) error {
 	var ce *cliError
 	var he *board.HeldError
@@ -386,21 +360,16 @@ func boardRefusal(err error) error {
 	}
 }
 
-// boardInvalidText is the board.ErrInvalid message without its sentinel word,
-// so the refusal names the scene's fault rather than the sentinel.
+// boardInvalidText is the board.ErrInvalid message without its sentinel word.
 func boardInvalidText(err error) string {
 	return strings.TrimPrefix(err.Error(), board.ErrInvalid.Error()+": ")
 }
 
 // boardThemeSets is where the theme resolution reads this machine's stored
-// sets: the repository's settings (its board_theme) through the repository
-// identity, and the palettes of the `themes` section. It reads the machine's
-// own database when one exists and never writes: a board verb keeps creating
-// nothing. A held database (a daemon has the file) is read through the owner
-// an ad-hoc dial reaches; the owner is never started, and when it does not
-// answer the read refuses with the registry's conflict rather than resolving
-// against the seed. The seed file is read only where the resolution keeps a
-// fallback: no database exists yet, or the section was never seeded.
+// sets. It never writes: a board verb keeps creating nothing. A held database
+// is read through the owner an ad-hoc dial reaches; the owner is never
+// started, and when it does not answer the read refuses rather than resolving
+// against the seed, which would paint a section that exists wrong.
 func boardThemeSets(cwd string) (relevo.RepoSettings, map[string]board.Theme, error) {
 	repo := relevo.RepoSettings{}
 	root, err := tmpdir.DefaultRoot()
@@ -416,10 +385,9 @@ func boardThemeSets(cwd string) (relevo.RepoSettings, map[string]board.Theme, er
 		return repo, nil, failWrap(codeRefused, err, "open %s", path)
 	}
 	if errors.Is(err, db.ErrLocked) {
-		// The daemon holds the file, so the section and the repository's
-		// settings live behind the owner: read through an ad-hoc dial, which
-		// never starts the owner. A dial that gets no answer refuses with the
-		// registry's conflict rather than substituting the seed, which would
+		// The daemon holds the file, so the section lives behind the owner: read
+		// through an ad-hoc dial, which never starts the owner. A dial that gets
+		// no answer refuses rather than substituting the seed, which would
 		// paint a section that exists wrong.
 		d, err = dialOwnerAdHoc(context.Background(), root, verbDialBudget)
 		if err != nil {
@@ -445,13 +413,9 @@ func boardThemeSets(cwd string) (relevo.RepoSettings, map[string]board.Theme, er
 	return repo, stored, nil
 }
 
-// boardHeldRefusal is the refusal a stored-set read raises when the machine
-// file is held and no owner answers, carrying the registry's own refusal out:
-// the held file and the unanswered socket, classified conflict, with the lock
-// error as its cause so a caller probing db.ErrLocked still finds it. The
-// stored sets are never resolved against the seed here, so a held database
-// with a section the owner serves paints that section or refuses, never the
-// seed.
+// boardHeldRefusal is the refusal a stored-set read raises when the machine file
+// is held and no owner answers, classified conflict with the lock error as its
+// cause.
 func boardHeldRefusal(root string, lockErr error) error {
 	path := filepath.Join(root, "relevo.db")
 	sock, sockErr := ownerSocket(root)
@@ -462,10 +426,7 @@ func boardHeldRefusal(root string, lockErr error) error {
 }
 
 // boardThemeStored is the palette set a lookup resolves against: the seeded
-// `themes` section when the database carries one, else the embedded seed
-// file, which is the only fallback a board verb reads. A runtime with no
-// database -- or one that has never been seeded -- resolves against the seed
-// file the same way.
+// `themes` section when the database carries one, else the embedded seed file.
 func boardThemeStored(rt relevo.Runtime) (map[string]board.Theme, error) {
 	if rt.Config != nil {
 		body, present, err := rt.Config.Body(config.Themes)

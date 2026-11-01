@@ -10,9 +10,8 @@ import (
 )
 
 // dropChangeCaptureTable removes the dead change-capture table an earlier
-// engine left behind, once, after a backup of each file that holds it; the
-// VACUUM inside the pass is what returns its pages to the disk. A refusal for
-// lack of space or a failure never stops the daemon, and the next start retries.
+// engine left behind, after a backup of each file holding it. A refusal or a
+// failure never stops the daemon; the next start retries.
 func dropChangeCaptureTable(rt relevo.Runtime) {
 	if rt.DB == nil {
 		return

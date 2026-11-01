@@ -2,11 +2,10 @@ package main
 
 import "fmt"
 
-// dbSyncAdoptIntake checks the flags of an adoption before anything is dialed.
-// An adoption is the one enable that cannot be walked back -- it spends this
-// machine's identity -- so it asks for --yes, and it takes the remote from
-// --url or the stored section rather than from an invite code, which names a
-// fleet to join and not an installation to become.
+// dbSyncAdoptIntake checks the flags of an adoption before anything is dialed. An
+// adoption spends this machine's identity and cannot be walked back, so it asks
+// for --yes, and takes the remote from --url or the stored section rather than
+// from an invite code.
 func dbSyncAdoptIntake(as string, yes, joining bool) error {
 	if as == "" {
 		return nil
@@ -21,9 +20,9 @@ func dbSyncAdoptIntake(as string, yes, joining bool) error {
 	return nil
 }
 
-// dbSyncAdoptedLine is what a finished adoption tells the owner to do next: the
-// daemon reads its origin when it opens, so it must restart before it can write
-// as the adopted installation.
+// dbSyncAdoptedLine is what a finished adoption prints: the daemon reads its
+// origin when it opens, so it must restart before it can write as the adopted
+// installation.
 func dbSyncAdoptedLine(as string) string {
 	return fmt.Sprintf("this machine is now installation %s; sync stays off until the daemon restarts: restart the relevo daemon, then run `relevo db sync enable` to finish", as)
 }

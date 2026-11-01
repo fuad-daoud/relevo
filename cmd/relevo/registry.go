@@ -15,17 +15,14 @@ type verbEntry struct {
 	Errors  []string `json:"errors"`
 }
 
-// installer adapts a flag installer that hands back the values it parsed into
-// to the plain func(*flag.FlagSet) shape the parity test walks this map with.
-// Installers that already declare-and-return-nothing are used as they are.
+// installer adapts a flag installer to the plain func(*flag.FlagSet) shape the
+// parity test walks this map with.
 func installer[V any](f func(*flag.FlagSet) V) func(*flag.FlagSet) {
 	return func(fs *flag.FlagSet) { f(fs) }
 }
 
 // verbFlagSets maps every registry entry to the one function that declares its
-// flags, so a test can walk the surface the registry describes. The verbs with
-// no flags still map to their own installer: the parity rule is one installer
-// per entry, both ways.
+// flags. The parity rule is one installer per entry, both ways.
 var verbFlagSets = map[string]func(*flag.FlagSet){
 	"bind":                 installer(bindFlagSet),
 	"board":                installer(boardFlagSet),
@@ -126,16 +123,14 @@ var verbFlagSets = map[string]func(*flag.FlagSet){
 	"wait":                 installer(waitFlagSet),
 }
 
-// versionFlagSet declares version's flags: --json selects the document, and
-// the bare form keeps the version line. The parity test demands exactly one
-// installer per entry.
+// versionFlagSet declares version's flags: --json selects the document. The
+// parity test demands exactly one installer per entry.
 func versionFlagSet(fs *flag.FlagSet) *versionFlagValues {
 	v := &versionFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the version as a JSON document")
 	return v
 }
 
-// registryEntry finds one entry by exact name.
 func registryEntry(name string) (verbEntry, bool) {
 	for _, e := range registry {
 		if e.Name == name {
@@ -146,8 +141,7 @@ func registryEntry(name string) (verbEntry, bool) {
 }
 
 // registryDocument is the machine description of the surface: the registry
-// itself plus the error catalog, which is the same table the frame renders
-// failures from.
+// plus the error catalog.
 func registryDocument() registryDoc {
 	return registryDoc{
 		Tool:    "relevo",
@@ -174,7 +168,6 @@ type catalogDoc struct {
 	Next string `json:"next"`
 }
 
-// catalogDocument renders the catalog as the document's errors object.
 func catalogDocument() map[string]catalogDoc {
 	doc := make(map[string]catalogDoc, len(catalog))
 	for code, entry := range catalog {

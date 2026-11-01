@@ -28,10 +28,8 @@ import (
 // the module version the toolchain records in the build info.
 var version = ""
 
-// distribution is stamped by release.yml with
-// -X main.distribution=release. No Makefile target and no `go install` sets
-// it, so it is empty in every other build; release.Detect reads the zero
-// value as "no claim".
+// distribution is stamped by release.yml with -X main.distribution=release;
+// empty in every other build, which release.Detect reads as "no claim".
 var distribution = ""
 
 const usage = `relevo automates the plan/report handoff between two AI coding agent
@@ -124,8 +122,7 @@ func (e exitCodeErr) Error() string {
 }
 
 // errHelpShown reports that help was printed on request, so main exits 0
-// without adding an error line. errUsagePrinted is its failure twin: usage is
-// already on stderr and main should exit 1 silently.
+// silently; errUsagePrinted is its failure twin, exiting 1 the same way.
 var (
 	errHelpShown    = errors.New("help shown")
 	errUsagePrinted = errors.New("usage printed")
@@ -133,8 +130,7 @@ var (
 
 // activeVerb is the subcommand this invocation dispatched, read beside the
 // runtime construction; empty under --json, whose stderr carries only the
-// error document. The exempt verbs never build a runtime, so a verb that
-// reaches one already needs config.
+// error document.
 var activeVerb string
 
 func main() {
@@ -155,12 +151,9 @@ func main() {
 	os.Exit(code)
 }
 
-// report renders run's error on w and returns the process exit code. It is the
-// one renderer every failure funnels through: a nil error, or help already
-// printed on request, is silent; a coded failure prints one human line plus
-// its next command, or the JSON envelope when the caller asked for --json; an
-// exitCodeErr exits with its own code and prints nothing; anything else keeps
-// the prose line the CLI has always printed.
+// report renders run's error on w and returns the process exit code: a coded
+// failure prints one human line plus its next command, or the JSON envelope
+// under --json; an exitCodeErr exits with its own code and prints nothing.
 func report(w io.Writer, err error, jsonMode bool) int {
 	switch {
 	case err == nil, errors.Is(err, errHelpShown):
@@ -199,9 +192,8 @@ func report(w io.Writer, err error, jsonMode bool) int {
 }
 
 // jsonRequested reports whether --json is one of args. The scan is an exact
-// token match, not a prefix one: this CLI has no `--` passthrough, so a
-// standalone --json anywhere in the arguments is the caller asking for the
-// machine shape, while a value that merely starts with the word is not.
+// token match: this CLI has no `--` passthrough, so a standalone --json
+// anywhere is the caller asking for the machine shape.
 func jsonRequested(args []string) bool {
 	for _, a := range args {
 		if a == "--json" {
@@ -223,15 +215,10 @@ func run(args []string) error {
 		}
 	}
 
-	// Every verb captures the calling agy session's agentapi credentials: an
-	// agy mastermind runs relevo constantly (send, wait, pull,
-	// status), and whichever verb it happens to run after an agy restart is
-	// the one that refreshes the session's agentapi credentials.
-	//
-	// The route is installed first, from the same command line: the peek verbs
-	// are read-only and must not capture (which opens and can migrate the
-	// database), and every other verb opens the machine database through the
-	// route once it is set.
+	// Every verb captures the calling agy session's credentials, since
+	// whichever runs after an agy restart refreshes them. The route is
+	// installed first: the peek verbs must not capture, which opens and can
+	// migrate the database.
 	if peek := installRouteForArgs(args); !peek {
 		captureAgyEnv()
 	}
@@ -324,10 +311,10 @@ func run(args []string) error {
 	}
 }
 
-// removedVerbs names each removed verb and the form that replaces it: the
-// seven folded into `relevo config`, the seven merged into bind, show,
-// unbind and status, the verbs folded into wait and gate, and the three
-// folded into history and doctor.
+// removedVerbs maps each entry below to its replacement: the seven folded
+// into `relevo config`, the seven merged into bind, show, unbind and status,
+// the verbs folded into wait and gate, and the three folded into history and
+// doctor.
 var removedVerbs = map[string]string{
 	"init":       "relevo config init",
 	"candidates": "relevo config",
@@ -350,8 +337,7 @@ var removedVerbs = map[string]string{
 	"tab":         "relevo ui :rounds",
 	"stats":       "relevo ui :stats",
 
-	// The old spelling exits 2 through this map exactly like every other
-	// removed verb: the verb is `relevo mastermind`.
+	// The old spelling exits 2 through this map like every other entry here.
 	"planner": "relevo mastermind",
 }
 
@@ -427,11 +413,9 @@ func cmdUI(args []string) error {
 	})
 }
 
-// uiStart maps `relevo ui`'s positional args to the shell's start command: an
-// empty list starts at :fleet; otherwise the first arg names a view after ':'
-// and every arg is joined into its command line.
-// Pure, so a cmd test covers it without running the ui, which needs a
-// terminal.
+// uiStart maps `relevo ui`'s positional args to the shell's start command:
+// empty starts at :fleet, otherwise the first arg names a view after ':'. It
+// is pure, so a cmd test covers it without a terminal.
 func uiStart(args []string) (string, error) {
 	if len(args) == 0 {
 		return "", nil
@@ -444,9 +428,8 @@ func uiStart(args []string) (string, error) {
 }
 
 // runPick opens the interactive picker for one verb. The three non-zero
-// outcomes have already been shown on screen, so they exit 1 silently: a
-// second "relevo: ..." line would go to the plugin log, not to the human.
-// Anything else is a startup failure and prints.
+// outcomes already showed on screen, so they exit 1 silently; anything else
+// is a startup failure and prints.
 func runPick(opts pick.Options) error {
 	rt, err := newRuntime()
 	if err != nil {

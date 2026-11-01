@@ -12,9 +12,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// planSlice collects the repeatable --plan flag in the order it was given: a
-// chain's plans are ordered, so the order the flags appear is the order they
-// run.
+// planSlice collects the repeatable --plan flag in order: a chain's plans run in
+// the order the flags appear.
 type planSlice []string
 
 func (p *planSlice) String() string { return strings.Join(*p, ",") }
@@ -24,8 +23,7 @@ func (p *planSlice) Set(val string) error {
 	return nil
 }
 
-// paramSlice collects the repeatable --param k=v flag; parseChainParams turns
-// it into the map a workflow takes.
+// paramSlice collects the repeatable --param k=v flag.
 type paramSlice []string
 
 func (p *paramSlice) String() string { return strings.Join(*p, ",") }
@@ -35,7 +33,6 @@ func (p *paramSlice) Set(val string) error {
 	return nil
 }
 
-// chainFlagValues holds the pointers `relevo chain` parses into.
 type chainFlagValues struct {
 	name           *string
 	plans          *planSlice
@@ -64,8 +61,8 @@ type chainFlagValues struct {
 	from           *string
 }
 
-// chainFlagSet defines chain's flags on fs and returns what they parse into,
-// so the registry's parity test finds exactly one installer per verb.
+// chainFlagSet exists so the registry's parity test finds exactly one installer
+// per verb.
 func chainFlagSet(fs *flag.FlagSet) *chainFlagValues {
 	v := &chainFlagValues{}
 	v.plans = &planSlice{}
@@ -98,32 +95,30 @@ func chainFlagSet(fs *flag.FlagSet) *chainFlagValues {
 	return v
 }
 
-// ChainDoc is `relevo chain --json`: the chain it started, its members, how
-// many plans it holds, and the state it begins in.
+// ChainDoc is what `relevo chain --json` prints for the chain it started.
 type ChainDoc struct {
 	Name    string           `json:"name"`
 	Members []ChainMemberDoc `json:"members"`
 	Plans   int              `json:"plans"`
 	Status  string           `json:"status"`
 	Step    string           `json:"step"`
-	// Check is the builder member's resolved acceptance command, rendered
-	// "none" when it ran no check.
+	// Check is the builder member's resolved acceptance command, "none" when it
+	// ran no check.
 	Check string `json:"check"`
 }
 
-// ChainMemberDoc is one member in the document: its binding name, the actor it
-// runs and where it runs.
+// ChainMemberDoc is one member in the document.
 type ChainMemberDoc struct {
 	Name  string `json:"name"`
 	Actor string `json:"actor"`
 	// Placement names where the member runs: "local", or the server a remote
-	// member's builder endpoint names.
+	// member runs on.
 	Placement string `json:"placement"`
 }
 
 // cmdChain starts a chain, or resumes a halted or stopped one. Every refusal it
 // can make on its own flags runs before newRuntime, so a bad invocation touches
-// no state directory.
+// nothing.
 func cmdChain(args []string) error {
 	fs := flag.NewFlagSet("relevo chain", flag.ContinueOnError)
 	v := chainFlagSet(fs)
@@ -178,10 +173,9 @@ func cmdChain(args []string) error {
 }
 
 // chainOptions turns the parsed flags into a start request, refusing the
-// combinations the verb's contract makes invalid: exactly one feature flag, a
-// named chain (a positional is not a name), at least one non-empty plan, and
-// one security flag. A dry run skips the start-input requirements, because the
-// workflow's own inputs decide what it needs and the dry run validates them.
+// combinations the verb's contract makes invalid. A dry run skips the
+// start-input requirements, because the workflow's own inputs decide what it
+// needs and the dry run validates them.
 func chainOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ChainOptions, error) {
 	if *v.name == "" {
 		return relevo.ChainOptions{}, fail(codeUsage, "relevo chain needs --name NAME")
@@ -268,8 +262,8 @@ func chainOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ChainOptions, er
 	return opts, nil
 }
 
-// parseChainParams reads the repeatable --param k=v flag into the map a
-// workflow takes. An entry with no key or no equals sign is a usage error.
+// parseChainParams reads the repeatable --param k=v flag into the map a workflow
+// takes.
 func parseChainParams(params *paramSlice) (map[string]string, error) {
 	if params == nil || len(*params) == 0 {
 		return nil, nil
@@ -285,9 +279,8 @@ func parseChainParams(params *paramSlice) (map[string]string, error) {
 	return out, nil
 }
 
-// chainTaskBody is the chain's task input: --task's own text, or the contents
-// of --task-file when it named one. The two are refused together before either
-// is read.
+// chainTaskBody is the chain's task input: --task's text, or --task-file's
+// contents.
 func chainTaskBody(v *chainFlagValues) (string, error) {
 	if *v.taskFile == "" {
 		return *v.task, nil
@@ -299,11 +292,9 @@ func chainTaskBody(v *chainFlagValues) (string, error) {
 	return string(body), nil
 }
 
-// chainResumeOptions turns the parsed flags into a resume request: the chain's
-// name, and only the settings whose flags were given, so every unflagged
-// setting keeps the value the chain was started with. A resume names no plan
-// and no label of its own -- the chain already holds both -- so the
-// feature-choice rule is the resume one.
+// chainResumeOptions turns the parsed flags into a resume request: only the
+// settings whose flags were given, so every unflagged setting keeps the value
+// the chain was started with.
 func chainResumeOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ResumeOptions, error) {
 	if *v.name == "" {
 		return relevo.ResumeOptions{}, fail(codeUsage, "relevo chain --resume needs --name NAME")
@@ -317,11 +308,9 @@ func chainResumeOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ResumeOpti
 	if *v.security && *v.noSecurity {
 		return relevo.ResumeOptions{}, fail(codeUsage, "--security and --no-security are exclusive")
 	}
-	// A start's own flags: --resume continues a chain that already holds its
-	// plans, its label, its workflow and its mastermind, so these have nothing
-	// to act on. Silently ignoring one would leave the caller believing it took
-	// effect, so each is refused by name -- before any runtime is built (round
-	// 6's review; --mastermind is the same dead flag the sweep found).
+	// A start's own flags have nothing to act on in a resume, so each is
+	// refused by name before any runtime is built: silently ignoring one would
+	// leave the caller believing it took effect.
 	for _, name := range []string{"plan", "base", "ticket", "feature", "no-feature", "mastermind", "workflow", "task", "task-file", "dry-run"} {
 		if flagGiven(fs, name) {
 			return relevo.ResumeOptions{}, fail(codeUsage, "relevo chain --resume does not take --%s: a resume continues the chain it names, which already holds its plans, label, workflow and mastermind", name)
@@ -360,9 +349,8 @@ func chainResumeOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ResumeOpti
 	return opts, nil
 }
 
-// chainIntFlag turns a chain integer flag into the *int the chain takes: its
-// -1 default means "not given", which becomes nil so the policy stands; any
-// value the human typed must be >= 0.
+// chainIntFlag turns a chain integer flag into the *int the chain takes: the -1
+// default means "not given" and becomes nil so the policy stands.
 func chainIntFlag(fs *flag.FlagSet, name string, value int) (*int, error) {
 	if !flagGiven(fs, name) {
 		return nil, nil
@@ -373,7 +361,6 @@ func chainIntFlag(fs *flag.FlagSet, name string, value int) (*int, error) {
 	return &value, nil
 }
 
-// chainDocOf is chain's document.
 func chainDocOf(res relevo.ChainResult) ChainDoc {
 	doc := ChainDoc{
 		Name:   res.Chain.Name,
@@ -392,8 +379,7 @@ func chainDocOf(res relevo.ChainResult) ChainDoc {
 	return doc
 }
 
-// chainMemberPlacement names where a member runs: the server a remote member's
-// builder endpoint names, or "local" for every member that runs here.
+// chainMemberPlacement names where a member runs: the server, or "local".
 func chainMemberPlacement(m store.Binding) string {
 	if m.Builder.Server != "" {
 		return m.Builder.Server
@@ -401,7 +387,6 @@ func chainMemberPlacement(m store.Binding) string {
 	return "local"
 }
 
-// chainPartOf names the part a member fills, from the chain row's columns.
 func chainPartOf(row db.ChainRow, name string) string {
 	switch name {
 	case row.Builder:
@@ -416,8 +401,7 @@ func chainPartOf(row db.ChainRow, name string) string {
 	return ""
 }
 
-// chainStartedText is what a start prints for a human: the chain, its members
-// with where each runs and the command that watches it.
+// chainStartedText is what a start prints for a human.
 func chainStartedText(rt relevo.Runtime, res relevo.ChainResult) {
 	fmt.Printf("started chain %s: %d plan(s), status %s\n",
 		res.Chain.Name, res.Plans, res.Chain.Status)
@@ -443,8 +427,8 @@ func chainStartedText(rt relevo.Runtime, res relevo.ChainResult) {
 	fmt.Printf("  relevo wait --name %s\n", res.Chain.Name)
 }
 
-// chainCheckText renders a resolved check for a human and the document: "none"
-// when the builder ran no check, the command itself otherwise.
+// chainCheckText renders a resolved check: "none" when the builder ran no check,
+// the command itself otherwise.
 func chainCheckText(check string) string {
 	if check == "" {
 		return "none"
@@ -452,8 +436,7 @@ func chainCheckText(check string) string {
 	return check
 }
 
-// chainResumedText is what a resume prints for a human: the chain's state now,
-// the round it awaits, where each member runs and the command that watches it.
+// chainResumedText is what a resume prints for a human.
 func chainResumedText(res relevo.ChainResult) {
 	c := res.Chain
 	fmt.Printf("resumed chain %s: status %s, step %s\n",

@@ -16,22 +16,22 @@ import (
 	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
-// configGetFlagValues holds the pointer `config get` parses into. It prints
-// the value itself, so --json is an accepted no-op.
+// configGetFlagValues holds the pointer `config get` parses into. The command
+// prints the value itself, so --json is an accepted no-op.
 type configGetFlagValues struct {
 	asJSON *bool
 }
 
-// configGetFlagSet defines that flag on fs and returns what it parses into, so
-// the registry's parity test finds exactly one installer per verb.
+// configGetFlagSet exists so the registry's parity test finds exactly one
+// installer per verb.
 func configGetFlagSet(fs *flag.FlagSet) *configGetFlagValues {
 	v := &configGetFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the value at the path")
 	return v
 }
 
-// configGet prints the JSON value at a path, indented. A missing section or
-// key is config_path_not_set.
+// configGet prints the JSON value at a path; a missing section or key is
+// config_path_not_set.
 func configGet(args []string) error {
 	fs := flag.NewFlagSet("relevo config get", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -68,17 +68,14 @@ func configGet(args []string) error {
 	return printJSON(os.Stdout, value)
 }
 
-// configSet sets a JSON value at a path, creating intermediate objects. A
-// value that is not valid JSON is stored as a JSON string. A path through a
-// non-object is config_invalid. With no key the whole section is replaced.
 type configSetFlagValues struct {
 	asJSON *bool
 	force  *bool
 	local  *bool
 }
 
-// configSetFlagSet defines those flags on fs and returns what they parse into,
-// so the registry's parity test finds exactly one installer per verb.
+// configSetFlagSet exists so the registry's parity test finds exactly one
+// installer per verb.
 func configSetFlagSet(fs *flag.FlagSet) *configSetFlagValues {
 	v := &configSetFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the document the write produced")
@@ -87,6 +84,8 @@ func configSetFlagSet(fs *flag.FlagSet) *configSetFlagValues {
 	return v
 }
 
+// configSet sets a JSON value at <section>[.<key>...]; with no key the whole
+// section is replaced, and a path through a non-object is config_invalid.
 func configSet(args []string) error {
 	return outcomeError(configSetRun(args))
 }
@@ -158,8 +157,6 @@ func configSetRun(args []string) error {
 	return nil
 }
 
-// configUnset removes a key, or, with no key, deletes the whole section. A
-// path through a non-object, or a key that is not set, is config_invalid.
 type configUnsetFlagValues struct {
 	asJSON *bool
 	force  *bool
@@ -174,6 +171,8 @@ func configUnsetFlagSet(fs *flag.FlagSet) *configUnsetFlagValues {
 	return v
 }
 
+// configUnset removes a key, or the whole section with no key; a missing key
+// is config_invalid.
 func configUnset(args []string) error {
 	return outcomeError(configUnsetRun(args))
 }
@@ -202,10 +201,10 @@ func configUnsetRun(args []string) error {
 		return err
 	}
 	if len(keys) == 0 {
-		// Dropping the whole candidates section is a drop of everything an
-		// actor names, so it takes the same guard as a replace. A key-level
-		// unset on the section is already refused below: its keys run through
-		// the array, which is not an object.
+		// Dropping the whole candidates section drops everything an actor
+		// names, so it takes the same guard as a replace. A key-level unset
+		// on it is already refused below, since its keys run through the
+		// array.
 		if err := guardCandidatesDrop(rt, sec, nil, *force); err != nil {
 			return err
 		}
@@ -246,10 +245,6 @@ func configUnsetRun(args []string) error {
 	return nil
 }
 
-// configEdit opens the whole-config document in $VISUAL, else $EDITOR, else
-// vi, and stores what the editor leaves. A file left empty aborts, an
-// unchanged file is a no-op, and an invalid document goes round again with the
-// editor so the user can fix it.
 type configEditFlagValues struct {
 	local *bool
 }
@@ -260,6 +255,9 @@ func configEditFlagSet(fs *flag.FlagSet) *configEditFlagValues {
 	return v
 }
 
+// configEdit opens the whole-config document in $VISUAL, else $EDITOR, else
+// vi. A file left empty aborts and an unchanged one is a no-op; an invalid
+// document reopens the editor so the user can fix it.
 func configEdit(args []string) error {
 	fs := flag.NewFlagSet("relevo config edit", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -354,19 +352,17 @@ func configEdit(args []string) error {
 	}
 }
 
-// configWriter is the part of a config store a verb writes through. It is an
-// interface so the routing a flag chooses can be tested without a database,
-// which a test in this package may not open.
+// configWriter is the part of a config store a verb writes through, so the
+// flag routing is testable without a database, which a test in this package
+// may not open.
 type configWriter interface {
 	Put(config.Section, []byte) ([]string, error)
 	PutDoc(config.Doc) ([]string, error)
 	PutLocal(config.Doc) error
 }
 
-// writeConfigSection stores one section body, either as this machine's override
-// or as the shared section. Both routes read the same merged body first, so
-// `--local` changes where the write lands and nothing about what the caller
-// edited.
+// writeConfigSection stores one section body; --local changes where the write
+// lands, not what the caller edited.
 func writeConfigSection(w configWriter, sec config.Section, body []byte, local bool) error {
 	if local {
 		return w.PutLocal(config.Doc{sec: json.RawMessage(body)})
@@ -375,9 +371,8 @@ func writeConfigSection(w configWriter, sec config.Section, body []byte, local b
 	return err
 }
 
-// putEditedDoc stores the edited document, either as this machine's overrides
-// or as the shared sections. The editor always works on the merged document, so
-// `--local` changes where the changes land and not what the user saw.
+// putEditedDoc stores the edited document; --local changes where the changes
+// land, not what the user saw.
 func putEditedDoc(w configWriter, parsed map[config.Section]json.RawMessage, local bool) ([]string, error) {
 	if local {
 		return nil, w.PutLocal(parsed)
@@ -386,7 +381,7 @@ func putEditedDoc(w configWriter, parsed map[config.Section]json.RawMessage, loc
 }
 
 // runEditor runs $VISUAL, else $EDITOR, else vi (split on spaces) with path
-// appended, its standard streams attached. It returns the editor's exit code.
+// appended. It returns the editor's exit code.
 func runEditor(path string) (int, error) {
 	editor := os.Getenv("VISUAL")
 	if editor == "" {
@@ -411,8 +406,8 @@ func runEditor(path string) (int, error) {
 	return 0, nil
 }
 
-// configPath splits <section>[.<key>...] into its section and key path. ok is
-// false for an empty path or a section name relevo does not know.
+// configPath splits a path into its section and key path; ok is false for an
+// empty path or an unknown section.
 func configPath(path string) (config.Section, []string, bool) {
 	if path == "" {
 		return "", nil, false
@@ -434,15 +429,11 @@ func configSectionKnown(sec config.Section) bool {
 	return false
 }
 
-// guardCandidatesDrop refuses a write of the candidates section that would
-// newly break an actor's reference to a candidate. body is the section's new
-// content, or nil when the write removes the section outright. Any other
-// section passes through untouched.
-//
-// The guard reads the stored candidates and actors bodies, overlays the write,
-// and asks config.DroppedActorCandidates what it newly drops. The refusal names
-// the first drop only, so the message stays one line; --force overrules it,
-// because a non-interactive script cannot answer a question.
+// guardCandidatesDrop refuses a write that newly breaks an actor's candidate
+// reference. body is the section's new content, or nil when the write removes
+// the section outright; any other section passes through untouched. The
+// refusal names the first drop only, so the message stays one line; --force
+// overrules it for scripts.
 func guardCandidatesDrop(rt relevo.Runtime, sec config.Section, body []byte, force bool) error {
 	if sec != config.Candidates || force {
 		return nil
@@ -467,9 +458,8 @@ func guardCandidatesDrop(rt relevo.Runtime, sec config.Section, body []byte, for
 	return fail(codeConflict, "%s; pass --force to drop it", drops[0])
 }
 
-// storedCandidatesDoc reads the stored candidates and actors bodies as the old
-// side of the drop guard. An absent section is left out of the document, which
-// is the empty form the helper reads it as.
+// storedCandidatesDoc reads the stored candidates and actors bodies; an absent
+// section is left out.
 func storedCandidatesDoc(rt relevo.Runtime) (config.Doc, error) {
 	doc := config.Doc{}
 	for _, sec := range []config.Section{config.Candidates, config.Actors} {
@@ -484,8 +474,8 @@ func storedCandidatesDoc(rt relevo.Runtime) (config.Doc, error) {
 	return doc, nil
 }
 
-// rawJSONOrString is the value `config set` stores: raw is kept when it is
-// valid JSON, and otherwise treated as a JSON string.
+// rawJSONOrString is the value `config set` stores: valid JSON is kept,
+// anything else becomes a JSON string.
 func rawJSONOrString(raw string) json.RawMessage {
 	if json.Valid([]byte(raw)) {
 		return json.RawMessage(raw)
@@ -494,7 +484,6 @@ func rawJSONOrString(raw string) json.RawMessage {
 	return encoded
 }
 
-// printJSON writes raw as indented JSON on its own line.
 func printJSON(w io.Writer, raw json.RawMessage) error {
 	var out bytes.Buffer
 	if err := json.Indent(&out, raw, "", "  "); err != nil {

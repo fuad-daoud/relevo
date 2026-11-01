@@ -15,10 +15,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// WaitDoc is `relevo wait --json`'s document: the binding the wait resolved,
-// the round it waited on, the protocol code (which is also the exit), the
-// outcome line, and -- when one was delivered -- the pending payload. The
-// deliver_error field carries a delivery failure that never changed the exit.
+// WaitDoc is `relevo wait --json`'s document: the binding, the round waited
+// on, the protocol code (also the exit), the outcome line, and the pending
+// payload. deliver_error carries a delivery failure that never changed the
+// exit.
 type WaitDoc struct {
 	Name         string `json:"name"`
 	Round        int    `json:"round"`
@@ -28,8 +28,8 @@ type WaitDoc struct {
 	DeliverError string `json:"deliver_error,omitempty"`
 }
 
-// waitDocOf builds the document from the name wait resolved and the result it
-// classified. It is a pure function, so the shape is pinned without a harness.
+// waitDocOf builds the document from the name and the result. It is pure, so
+// the shape is pinned without a harness.
 func waitDocOf(name string, res relevo.WaitResult) WaitDoc {
 	doc := WaitDoc{Name: name, Round: res.Round, Code: res.Code, Line: res.Line, Payload: res.Payload}
 	if res.DeliverErr != nil {
@@ -38,8 +38,6 @@ func waitDocOf(name string, res relevo.WaitResult) WaitDoc {
 	return doc
 }
 
-// cmdWait blocks until a round closes or needs a human. It reads relevo's own
-// state only: it launches nothing.
 type waitFlagValues struct {
 	name    *string
 	any     *bool
@@ -60,6 +58,8 @@ func waitFlagSet(fs *flag.FlagSet) *waitFlagValues {
 	return v
 }
 
+// cmdWait blocks until a round closes or needs a human. It reads relevo's own
+// state only; it launches nothing.
 func cmdWait(args []string) error {
 	fs := flag.NewFlagSet("wait", flag.ContinueOnError)
 	v := waitFlagSet(fs)
@@ -135,10 +135,9 @@ func cmdWait(args []string) error {
 		if res.Line != "" {
 			fmt.Println(res.Line)
 		}
-		// After the outcome line, a blank line and the pending payload --
-		// the same text `pull` prints -- for every exit but the timeout and a
-		// gone binding. A delivery failure is printed and never changes the exit
-		// code.
+		// After the outcome line, a blank line and the pending payload for every
+		// exit but the timeout and a gone binding. A delivery failure is printed
+		// and never changes the exit code.
 		if res.DeliverErr != nil {
 			fmt.Fprintf(os.Stderr, "relevo wait: round %d not delivered, it stays pending (the next relevo wait prints it): %v\n", res.Round, res.DeliverErr)
 		}
@@ -165,10 +164,9 @@ func waitFailure(err error) error {
 	return fail(codeInternal, "%v", err)
 }
 
-// waitChain is cmdWait's chain arm: a name that is a chain blocks until the
-// chain is no longer running, then prints the chain's end line and, unless
-// --peek, the one end delivery it queued. The protocol is the chain's own: 0
-// finished, 3 halted or stopped, 124 on the timeout.
+// waitChain is cmdWait's chain arm: it blocks until the chain is no longer
+// running. The protocol is the chain's own: 0 finished, 3 halted or stopped,
+// 124 on the timeout.
 func waitChain(ctx context.Context, rt relevo.Runtime, name string, timeout time.Duration, peek, asJSON bool) error {
 	res, err := relevo.WaitChain(ctx, rt, name, timeout, time.Second, peek)
 	if err != nil {

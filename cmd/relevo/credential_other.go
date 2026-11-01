@@ -8,6 +8,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
-// applyCredential is a no-op off unix: there is no SysProcAttr.Credential to
-// set, and the tree still has to compile for the windows build.
+// applyCredential is a no-op off unix; the tree still has to compile for
+// windows.
 func applyCredential(*exec.Cmd, *spawn.Credential) {}

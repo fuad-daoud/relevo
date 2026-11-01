@@ -19,9 +19,8 @@ import (
 // launchdLabel names the macOS agent; the Makefile's LABEL is the same string.
 const launchdLabel = "com.github.fuad-daoud.relevo"
 
-// unitSpec is where the daemon's service unit lives on this OS and what the
-// binary ships for it. goos, bin and home are fields so a test can pick the
-// platform without running on it.
+// unitSpec is where the daemon's service unit lives and what the binary
+// ships for it; the fields let a test pick the platform without running on it.
 type unitSpec struct {
 	goos string
 	path string
@@ -71,11 +70,10 @@ func (u unitSpec) doc() string {
 // is a seam so tests pin the order and the dedup without shell PATH lookups.
 var lookPath = exec.LookPath
 
-// servicePath assembles the daemon's PATH: the fixed list the unit has
-// always carried, in %h form because systemd expands the specifiers at exec
-// and the rendered unit has to keep naming %h/go/bin (where go installs the
-// CLIs the daemon runs lint with), then the directory of every harness
-// binary LookPath finds, deduplicated, in harness.All() order.
+// servicePath assembles the daemon's PATH: the fixed prefix in %h form,
+// since systemd expands the specifiers at exec and the rendered unit keeps
+// naming %h/go/bin, where go installs the CLIs the daemon runs lint with,
+// plus each harness binary's directory, deduplicated, in harness.All() order.
 func servicePath(home string) string {
 	prefix := "%h/.local/bin:%h/go/bin:/usr/local/bin:/usr/bin:/bin"
 	// The %h entries expand to the same homes the harness LookPath can find,
@@ -116,7 +114,6 @@ func (u unitSpec) shipped() []byte {
 	return serviceunit.ShippedService()
 }
 
-// rendered is what gets written to u.path.
 func (u unitSpec) rendered() []byte {
 	if u.darwin() {
 		return serviceunit.RenderPlist(serviceunit.ShippedPlistTemplate(), u.bin, u.home)
@@ -177,9 +174,9 @@ func (u unitSpec) write() error {
 	return os.Rename(tmp.Name(), u.path)
 }
 
-// refreshServiceUnit rewrites a unit an older release shipped unedited and
-// leaves every other state alone. It never restarts the daemon: the new unit
-// takes effect at the next restart, which `relevo doctor` says is due.
+// refreshServiceUnit rewrites a shipped-but-unedited unit and leaves every
+// other state alone. It never restarts the daemon: the new unit takes effect
+// at the next restart, which `relevo doctor` says is due.
 func refreshServiceUnit(u unitSpec, r serviceunit.Runner, before func(doc, sha string) bool) (serviceunit.Action, error) {
 	act, err := u.decide(before)
 	if err != nil {
@@ -200,7 +197,7 @@ func refreshServiceUnit(u unitSpec, r serviceunit.Runner, before func(doc, sha s
 }
 
 // refreshServiceUnitAtStart is the daemon's once-per-image-start refresh,
-// never fatal like refreshRoles: the daemon runs fine on an old unit.
+// never fatal: the daemon runs fine on a stale unit.
 func refreshServiceUnitAtStart() {
 	u, err := osUnitSpec()
 	if err != nil {
