@@ -129,3 +129,15 @@ This is an ops step, not code.
   builders did not.
 - End plans for builders that skip gofmt with: "`gofmt -l` changed files,
   `make check-affected`, commit, then report".
+- A change that only edits comments still changes meaning: a trimmed comment
+  can drop the reason behind a rule, a consequence, or what a nil or empty
+  value means. Read the whole diff before merging one. Chain reviewers and the
+  builder's own audit passed every such loss in the comment pass, and the
+  compiler and tests cannot see it.
+- A lane that brings a package under a check (lint, comments, file size)
+  deletes that package's exclusion or allow-list entry in its first plan, not
+  its last. While the entry stands, the chain gate cannot see what is left, so
+  the lane can report done with the package still failing.
+- Keep at most two whole-repo gates running on zen at once. Above that its
+  load passes 60 and the slowest suites time out, which reads as a failed
+  change.
