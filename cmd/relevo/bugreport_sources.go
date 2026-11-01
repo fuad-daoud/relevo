@@ -340,9 +340,7 @@ func logsSource(rt relevo.Runtime, opts bugreportOptions) bugreport.Source {
 		if err != nil {
 			return bugreport.Section{}, err
 		}
-		for _, line := range hookOutputLines(runs) {
-			sec.Lines = append(sec.Lines, line)
-		}
+		sec.Lines = append(sec.Lines, hookOutputLines(runs)...)
 		return sec, nil
 	}}
 }

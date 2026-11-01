@@ -395,44 +395,60 @@ func checkTarget(on map[string]workflow.Target, result string) string {
 // orderWorkflowSteps orders steps breadth-first from start, then the sorted
 // unreachable ones.
 func orderWorkflowSteps(def workflow.Definition) []string {
+	ordered, seen := bfsWorkflowSteps(def)
+	return append(ordered, unreachableWorkflowSteps(def, seen)...)
+}
+
+// bfsWorkflowSteps visits the steps reachable from the start breadth-first,
+// following sorted transition keys then the budget target. It returns the
+// visit order with the visited set.
+func bfsWorkflowSteps(def workflow.Definition) ([]string, map[string]bool) {
 	var ordered []string
 	seen := map[string]bool{}
 
-	if def.Start != "" && def.Steps != nil {
-		if _, ok := def.Steps[def.Start]; ok {
-			queue := []string{def.Start}
-			for len(queue) > 0 {
-				id := queue[0]
-				queue = queue[1:]
-				if seen[id] {
-					continue
-				}
-				seen[id] = true
-				ordered = append(ordered, id)
+	if def.Start == "" || def.Steps == nil {
+		return ordered, seen
+	}
+	if _, ok := def.Steps[def.Start]; !ok {
+		return ordered, seen
+	}
+	queue := []string{def.Start}
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		ordered = append(ordered, id)
 
-				s := def.Steps[id]
-				var onKeys []string
-				for k := range s.On {
-					onKeys = append(onKeys, k)
-				}
-				sort.Strings(onKeys)
-				for _, k := range onKeys {
-					t := s.On[k]
-					if t.Kind == workflow.TargetStep && t.Step != "" {
-						if _, exists := def.Steps[t.Step]; exists && !seen[t.Step] {
-							queue = append(queue, t.Step)
-						}
-					}
-				}
-				if s.Budget != nil && s.Budget.Then.Kind == workflow.TargetStep && s.Budget.Then.Step != "" {
-					if _, exists := def.Steps[s.Budget.Then.Step]; exists && !seen[s.Budget.Then.Step] {
-						queue = append(queue, s.Budget.Then.Step)
-					}
-				}
+		s := def.Steps[id]
+		var onKeys []string
+		for k := range s.On {
+			onKeys = append(onKeys, k)
+		}
+		sort.Strings(onKeys)
+		var targets []string
+		for _, k := range onKeys {
+			if t := s.On[k]; t.Kind == workflow.TargetStep && t.Step != "" {
+				targets = append(targets, t.Step)
+			}
+		}
+		if s.Budget != nil && s.Budget.Then.Kind == workflow.TargetStep && s.Budget.Then.Step != "" {
+			targets = append(targets, s.Budget.Then.Step)
+		}
+		for _, next := range targets {
+			if _, exists := def.Steps[next]; exists && !seen[next] {
+				queue = append(queue, next)
 			}
 		}
 	}
+	return ordered, seen
+}
 
+// unreachableWorkflowSteps names the steps no path from the start reaches,
+// sorted.
+func unreachableWorkflowSteps(def workflow.Definition, seen map[string]bool) []string {
 	var unreachable []string
 	for id := range def.Steps {
 		if !seen[id] {
@@ -440,8 +456,7 @@ func orderWorkflowSteps(def workflow.Definition) []string {
 		}
 	}
 	sort.Strings(unreachable)
-	ordered = append(ordered, unreachable...)
-	return ordered
+	return unreachable
 }
 
 func chainWhere(c db.ChainRow, memberNames []string, repByName map[string]view.BindingStatus, storeBindings map[string]store.Binding) string {

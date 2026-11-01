@@ -26,17 +26,9 @@ linters:
         linters: [funlen, gocognit]
       # One rule per package not yet cleaned; every linter is excluded for that
       # path. A change that cleans a package deletes its rule.
-      - path: '^cmd/relevo/'
-        text: '.*'
       - path: '^internal/e2e/'
         text: '.*'
-      - path: '^internal/jsonshape/'
-        text: '.*'
-      - path: '^internal/patch/'
-        text: '.*'
       - path: '^internal/pick/'
-        text: '.*'
-      - path: '^internal/relevo/'
         text: '.*'
       - path: '^internal/remote/[^/]+\.go$'
         text: '.*'

@@ -142,277 +142,293 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 	// the builder already has. Spawning a process does not wait on it, so
 	// holding the lock across it costs milliseconds, not the length of a turn.
 	err = rt.Store.WithLock(func(tx *store.Tx) error {
-		// pending collects this round's log entries, so the binding and all of
-		// them are written in one transaction.
-		var pending []store.LogEntry
-
-		b, err := tx.Load(name)
+		b, err := recheckSendGuards(ctx, rt, tx, name, opts, pf)
 		if err != nil {
 			return err
 		}
-		// Re-check under the lock, exactly as the preflight's read-only check
-		// did: the chain may have started between the two.
-		if err := chain.RefuseRunningMember(tx, name); err != nil {
+		b, planPath, started, staged, err := stagePlanAndStart(ctx, rt, tx, name, b, pf, opts, baseline, baselineHead)
+		spawned, round = started, staged
+		if err != nil {
 			return err
 		}
-		if b.State == store.StateBroken {
-			return fmt.Errorf("binding %q is broken; rebind before sending", name)
-		}
-		if b.State == store.StatePaused {
-			return fmt.Errorf("binding %q is paused; relevo bind --resume --name %s first", name, name)
-		}
-		if b.Round > b.RoundCap {
-			return roundCapRefusal(name, b.RoundCap)
-		}
-		// One process per round: a previous round's
-		// process still running means the human is early, not that relevo
-		// should start a second builder in the same tree.
-		if b.Builder.PID != 0 {
-			if rt.Runner == nil {
-				return fmt.Errorf("binding %q: %w", name, spawn.ErrRunnerUnavailable)
-			}
-			alive, err := rt.Runner.Alive(ctx, handleOf(b.Builder))
-			if err != nil {
-				return fmt.Errorf("binding %q: check previous process %d: %w", name, b.Builder.PID, err)
-			}
-			if alive {
-				return fmt.Errorf("binding %q (pid %d): %w", name, b.Builder.PID, ErrBuilderBusy)
-			}
-		}
-
-		// Re-check under the lock: the daemon may have closed the round
-		// between the preflight and this lock, in which case b.Round here is
-		// already the next round and its files do not exist, so the send
-		// proceeds. The other order -- a marker appearing after the preflight
-		// -- is what this guards: the round is over and nothing may be staged
-		// or spawned for it.
-		if path, found := pendingRoundFile(rt, name, b.Round); found {
-			return fmt.Errorf("binding %q round %d: %s exists: %w", name, b.Round, filepath.Base(path), ErrReportPending)
-		}
-
-		// --candidate is re-applied under the lock, against the fresh binding:
-		// the preflight's resolution must not be trusted over a round that
-		// opened in between. The re-check writes nothing when it fires.
-		// A re-pick is not a --candidate change, so it skips the refusal.
-		if pf.pick != nil {
-			if pf.repickFrom == "" {
-				entries, err := tx.ReadLog(name)
-				if err != nil {
-					return err
-				}
-				if candidateSendRefused(b, entries) {
-					return &CandidateRoundOpenError{Name: name, Round: b.Round}
-				}
-			}
-			b, err = applyBuilder(b, *pf.pick, rt.RoleRegistry(), rt.Policy, opts.AllowYolo)
-			if err != nil {
-				return err
-			}
-		}
-
-		if opts.Tier != "" {
-			b.RoundTier = opts.Tier
-		}
-
-		// The round before this one must not still hold a scope: a supervisor
-		// that died before its own reap leaves one behind, and the new round
-		// would then run beside it. Nothing is staged yet, so a refusal here
-		// leaves no plan file and no NEEDS YOU.
-		if err := endEarlierRoundScope(ctx, rt, b); err != nil {
-			return err
-		}
-
-		planPath := rt.Store.PromptPath(name, b.Round)
-		reportPath := rt.Store.ReportPath(name, b.Round)
-		donePath := rt.Store.DonePath(name, b.Round)
-		if err := StagePlan(planPath, pf.body); err != nil {
-			return fmt.Errorf("stage plan at %s: %w", planPath, err)
-		}
-
-		text := composePrompt(rt, b, planPath, reportPath, donePath)
-
-		deferred := opts.Defer
-
-		late := false
-		if !deferred {
-			// A live scope for this round means a builder for it is already
-			// alive -- most likely an earlier send started one whose writes
-			// failed. Refuse before spawning a second one; nothing is
-			// saved and the staged plan is removed, like the tier-unsupported
-			// branch below.
-			if unit := scopeUnitName(b); scopeRunning(ctx, rt, unit) {
-				_ = os.Remove(planPath)
-				return fmt.Errorf("binding %q round %d: scope %s.scope is still running -- a builder for this round is already alive (an earlier send may have started it); inspect it with systemctl --user status %s.scope, and relevo stop %s ends it: %w",
-					name, b.Round, unit, unit, name, ErrScopeActive)
-			}
-			// A reader round runs in a throwaway scratch worktree, never in
-			// b.CWD. Create it from the round's captured baseline
-			// before anything is spawned; if it cannot be created, the round
-			// does not start, and there is never a fallback to b.CWD.
-			if b.Shape == store.ShapeReader {
-				if _, err := housekeep.CreateScratchFrom(ctx, HousekeepDeps(rt), b, b.Round, baselineHead, baseline); err != nil {
-					return err
-				}
-			}
-			started, err := startRound(ctx, rt, tx, b, text, opts.AllowYolo)
-			if err != nil {
-				if errors.Is(err, harness.ErrTierUnsupported) || errors.Is(err, harness.ErrExtraArgsPermission) {
-					_ = os.Remove(planPath)
-					return err
-				}
-				// The plan is staged and the round is open; nothing was
-				// started. NEEDS YOU says so in status, and the ledger's
-				// spawn_failed (written by startRound) gates the candidate
-				// for the next pick.
-				b.State = store.StateNeedsYou
-				b.Halt = spawnHaltText(err)
-				b.HaltAt = rt.Now().UTC()
-				// The builder change is still recorded first, so the log
-				// explains why the round was sent to the new candidate.
-				var failEntries []store.LogEntry
-				if pf.pick != nil {
-					failEntries = append(failEntries, resolve.PickEntry(rt.Now().UTC(), b.Round, "builder", *pf.pick))
-				}
-				if saveErr := tx.SaveWithLog(b, failEntries...); saveErr != nil {
-					return fmt.Errorf("%v; and saving NEEDS YOU failed: %w", err, saveErr)
-				}
-				return err
-			}
-			b = started
-			h := handleOf(started.Builder)
-			spawned = &h
-			// The round the started process runs: the rollback below needs
-			// it to remove the temp dir the start prepared.
-			round = b.Round
-			if sendAfterSpawn != nil {
-				if err := sendAfterSpawn(name); err != nil {
-					return err
-				}
-			}
-		}
-
-		// The pick entry is filed under the new round, before its plan entry,
-		// so builderForRound attributes the round to the new builder. It goes
-		// after startRound on purpose: an ErrTierUnsupported /
-		// ErrExtraArgsPermission early return saves nothing, so a builder
-		// change that did not happen must not be recorded.
-		if pf.pick != nil {
-			pending = append(pending, resolve.PickEntry(rt.Now().UTC(), b.Round, "builder", *pf.pick))
-			if pf.repickFrom != "" {
-				pickLine = repickLine(rt, pf.repickFrom, pf.repickWhy, *pf.pick)
-			} else {
-				pickLine = resolve.PickText("builder", *pf.pick, rt.Candidates)
-			}
-		}
-
-		entry := store.LogEntry{
-			TS: rt.Now().UTC(), Round: b.Round,
-			Direction: store.DirToBuilder, Kind: store.KindPrompt,
-			Path: planPath, Confirmed: true, Late: late,
-			Tier: string(resolve.EffectiveTier(b)),
-		}
-		pending = append(pending, entry)
-
-		driftLine := ""
-		if b.Shape != store.ShapeReader && b.Round == hintRound {
-			res := capture.Drift(ctx, captureDeps(rt), tx, b, baseline)
-			if (res.Available && !res.Stat.Empty()) || res.Reason != "" {
-				driftEntry := store.LogEntry{
-					TS: rt.Now().UTC(), Round: b.Round,
-					Direction: store.DirToMasterMind, Kind: store.KindDrift,
-					Path: res.Path, Note: capture.DriftSummary(res),
-					Confirmed: true,
-				}
-				pending = append(pending, driftEntry)
-				driftLine = capture.DriftLine(res, b.Name, b.Round)
-			}
-		}
-
-		round = b.Round
-		driftLineOut = driftLine
-		b.RoundBaselineTree = baseline
-		b.RoundBaselineHead = baselineHead
-		b.RoundRepoBaselineTree = repoBaseline
-		b.RoundClosedTree = ""
-		if deferred {
-			b.QueuedAt = rt.Now().UTC()
-		} else {
-			b.RoundStartedAt = rt.Now().UTC()
-		}
-		b.FinishPending = true
-		b.State = store.StateActive
-		// The halt that stopped the previous attempt goes with the attempt, all
-		// of it: reason, stamp and the kind naming its episode. A human re-send
-		// is a fresh attempt, so the next halt in this round notifies again.
-		b = ClearHaltFields(b)
-		// An owed notification goes with the halt it was about: the re-send is
-		// the human answering that halt, so the entry it still owes would land
-		// under a round the human has already moved past.
-		b.OwedHalt = nil
-		b.RoundSwitches = 0
-		b.RoundExcluded = nil
-		b.RoundOOMKills = 0
-		// A fresh send is a fresh process: any stall stamp from the previous
-		// round is gone, and so is the whole progress clock -- the
-		// tree, the output and the stale stamp all describe the round that
-		// just ended.
-		b.StalledSince = time.Time{}
-		// A new round supersedes any stop requested for the old one:
-		// the builder is being asked to work again, not to wrap up.
-		b.StopRequestedAt = time.Time{}
-		b.StopGraceMS = 0
-		// A new round moves the branch again, so the last land belongs to the
-		// previous round: status stops saying "landed" here.
-		b.LandedAt = time.Time{}
-		b.LandedPR = ""
-		b.Progress = nil
-		b.ExploringSince = time.Time{}
-		b.StaleSince = time.Time{}
-		// A human send is a fresh attempt, so the repair bookkeeping from the
-		// old rounds says nothing about this one: the budget
-		// starts unspent and no previous failure is held against the builder.
-		b.RepairCount = 0
-		b.LastGateSig = ""
-		if opts.Regate != nil {
-			b.Regate = *opts.Regate
-		}
-
-		// Whether this round gets a reviewer at its close: the flag,
-		// else policy.json verify.default. Persisted with the round, and
-		// cleared by queueReport once the close has acted on it. A reader
-		// takes no verify, whatever the policy says.
-		if b.Shape == store.ShapeReader {
-			b.RoundVerify = false
-		} else if opts.Verify != nil {
-			b.RoundVerify = *opts.Verify
-		} else {
-			b.RoundVerify = rt.Policy.VerifyDefault()
-		}
-
-		return tx.SaveWithLog(b, pending...)
+		round, driftLineOut, pickLine, err = stampSentRound(ctx, rt, tx, b, planPath, pf, opts, baseline, baselineHead, repoBaseline, hintRound)
+		return err
 	})
 	if err != nil {
-		if spawned != nil {
-			// The process is running but the send could not record it: stop
-			// it, and say so in its log, before returning. The binding
-			// and its log entries are one transaction, so nothing of this
-			// round was recorded: the previous state stands and the mastermind
-			// may resend.
-			stream := ""
-			if round > 0 {
-				stream = rt.Store.StreamPath(name, round)
-			}
-			kerr := rt.Runner.Kill(context.WithoutCancel(ctx), *spawned, stream)
-			if kerr != nil {
-				return SendResult{}, fmt.Errorf("%w; and stopping the builder it started (pid %d) failed: %v", err, spawned.PID, kerr)
-			}
-			// The rollback killed the round's process outside stopProcess, so
-			// it removes the temp dir the start prepared.
-			housekeep.RemoveRoundTmp(HousekeepDeps(rt), store.Binding{Name: name}, round)
-			return SendResult{}, fmt.Errorf("%w; the builder it started (pid %d) was stopped", err, spawned.PID)
-		}
-		return SendResult{}, err
+		return SendResult{}, rollbackSpawnedBuilder(ctx, rt, name, spawned, round, err)
 	}
 
 	return SendResult{Round: round, Drift: driftLineOut, Pick: pickLine}, nil
+}
+
+func recheckSendGuards(ctx context.Context, rt Runtime, tx *store.Tx, name string, opts SendOptions, pf preflight) (store.Binding, error) {
+	b, err := tx.Load(name)
+	if err != nil {
+		return store.Binding{}, err
+	}
+	// Re-check under the lock, exactly as the preflight's read-only check
+	// did: the chain may have started between the two.
+	if err := chain.RefuseRunningMember(tx, name); err != nil {
+		return store.Binding{}, err
+	}
+	if b.State == store.StateBroken {
+		return store.Binding{}, fmt.Errorf("binding %q is broken; rebind before sending", name)
+	}
+	if b.State == store.StatePaused {
+		return store.Binding{}, fmt.Errorf("binding %q is paused; relevo bind --resume --name %s first", name, name)
+	}
+	if b.Round > b.RoundCap {
+		return store.Binding{}, roundCapRefusal(name, b.RoundCap)
+	}
+	// One process per round: a previous round's
+	// process still running means the human is early, not that relevo
+	// should start a second builder in the same tree.
+	if b.Builder.PID != 0 {
+		if rt.Runner == nil {
+			return store.Binding{}, fmt.Errorf("binding %q: %w", name, spawn.ErrRunnerUnavailable)
+		}
+		alive, err := rt.Runner.Alive(ctx, handleOf(b.Builder))
+		if err != nil {
+			return store.Binding{}, fmt.Errorf("binding %q: check previous process %d: %w", name, b.Builder.PID, err)
+		}
+		if alive {
+			return store.Binding{}, fmt.Errorf("binding %q (pid %d): %w", name, b.Builder.PID, ErrBuilderBusy)
+		}
+	}
+
+	// Re-check under the lock: the daemon may have closed the round
+	// between the preflight and this lock, in which case b.Round here is
+	// already the next round and its files do not exist, so the send
+	// proceeds. The other order -- a marker appearing after the preflight
+	// -- is what this guards: the round is over and nothing may be staged
+	// or spawned for it.
+	if path, found := pendingRoundFile(rt, name, b.Round); found {
+		return store.Binding{}, fmt.Errorf("binding %q round %d: %s exists: %w", name, b.Round, filepath.Base(path), ErrReportPending)
+	}
+
+	// --candidate is re-applied under the lock, against the fresh binding:
+	// the preflight's resolution must not be trusted over a round that
+	// opened in between. The re-check writes nothing when it fires.
+	// A re-pick is not a --candidate change, so it skips the refusal.
+	if pf.pick != nil {
+		if pf.repickFrom == "" {
+			entries, err := tx.ReadLog(name)
+			if err != nil {
+				return store.Binding{}, err
+			}
+			if candidateSendRefused(b, entries) {
+				return store.Binding{}, &CandidateRoundOpenError{Name: name, Round: b.Round}
+			}
+		}
+		b, err = applyBuilder(b, *pf.pick, rt.RoleRegistry(), rt.Policy, opts.AllowYolo)
+		if err != nil {
+			return store.Binding{}, err
+		}
+	}
+
+	if opts.Tier != "" {
+		b.RoundTier = opts.Tier
+	}
+
+	// The round before this one must not still hold a scope: a supervisor
+	// that died before its own reap leaves one behind, and the new round
+	// would then run beside it. Nothing is staged yet, so a refusal here
+	// leaves no plan file and no NEEDS YOU.
+	if err := endEarlierRoundScope(ctx, rt, b); err != nil {
+		return store.Binding{}, err
+	}
+	return b, nil
+}
+
+func stagePlanAndStart(ctx context.Context, rt Runtime, tx *store.Tx, name string, b store.Binding, pf preflight, opts SendOptions, baseline, baselineHead string) (store.Binding, string, *spawn.ProcHandle, int, error) {
+	planPath := rt.Store.PromptPath(name, b.Round)
+	reportPath := rt.Store.ReportPath(name, b.Round)
+	donePath := rt.Store.DonePath(name, b.Round)
+	if err := StagePlan(planPath, pf.body); err != nil {
+		return store.Binding{}, "", nil, 0, fmt.Errorf("stage plan at %s: %w", planPath, err)
+	}
+
+	text := composePrompt(rt, b, planPath, reportPath, donePath)
+
+	deferred := opts.Defer
+
+	if !deferred {
+		// A live scope for this round means a builder for it is already
+		// alive -- most likely an earlier send started one whose writes
+		// failed. Refuse before spawning a second one; nothing is
+		// saved and the staged plan is removed, like the tier-unsupported
+		// branch below.
+		if unit := scopeUnitName(b); scopeRunning(ctx, rt, unit) {
+			_ = os.Remove(planPath)
+			return store.Binding{}, "", nil, 0, fmt.Errorf("binding %q round %d: scope %s.scope is still running -- a builder for this round is already alive (an earlier send may have started it); inspect it with systemctl --user status %s.scope, and relevo stop %s ends it: %w",
+				name, b.Round, unit, unit, name, ErrScopeActive)
+		}
+		// A reader round runs in a throwaway scratch worktree, never in
+		// b.CWD. Create it from the round's captured baseline
+		// before anything is spawned; if it cannot be created, the round
+		// does not start, and there is never a fallback to b.CWD.
+		if b.Shape == store.ShapeReader {
+			if _, err := housekeep.CreateScratchFrom(ctx, HousekeepDeps(rt), b, b.Round, baselineHead, baseline); err != nil {
+				return store.Binding{}, "", nil, 0, err
+			}
+		}
+		started, err := startRound(ctx, rt, tx, b, text, opts.AllowYolo)
+		if err != nil {
+			if errors.Is(err, harness.ErrTierUnsupported) || errors.Is(err, harness.ErrExtraArgsPermission) {
+				_ = os.Remove(planPath)
+				return store.Binding{}, "", nil, 0, err
+			}
+			// The plan is staged and the round is open; nothing was
+			// started. NEEDS YOU says so in status, and the ledger's
+			// spawn_failed (written by startRound) gates the candidate
+			// for the next pick.
+			b.State = store.StateNeedsYou
+			b.Halt = spawnHaltText(err)
+			b.HaltAt = rt.Now().UTC()
+			// The builder change is still recorded first, so the log
+			// explains why the round was sent to the new candidate.
+			var failEntries []store.LogEntry
+			if pf.pick != nil {
+				failEntries = append(failEntries, resolve.PickEntry(rt.Now().UTC(), b.Round, "builder", *pf.pick))
+			}
+			if saveErr := tx.SaveWithLog(b, failEntries...); saveErr != nil {
+				return store.Binding{}, "", nil, 0, fmt.Errorf("%w; and saving NEEDS YOU failed: %w", err, saveErr)
+			}
+			return store.Binding{}, "", nil, 0, err
+		}
+		b = started
+		h := handleOf(started.Builder)
+		spawned := &h
+		if sendAfterSpawn != nil {
+			if err := sendAfterSpawn(name); err != nil {
+				return store.Binding{}, "", spawned, b.Round, err
+			}
+		}
+		return b, planPath, spawned, b.Round, nil
+	}
+	return b, planPath, nil, 0, nil
+}
+
+func stampSentRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, planPath string, pf preflight, opts SendOptions, baseline, baselineHead, repoBaseline string, hintRound int) (int, string, string, error) {
+	// pending collects this round's log entries, so the binding and all of
+	// them are written in one transaction.
+	var pending []store.LogEntry
+
+	late := false
+
+	// The pick entry is filed under the new round, before its plan entry,
+	// so builderForRound attributes the round to the new builder. It goes
+	// after startRound on purpose: an ErrTierUnsupported /
+	// ErrExtraArgsPermission early return saves nothing, so a builder
+	// change that did not happen must not be recorded.
+	var pickLine string
+	if pf.pick != nil {
+		pending = append(pending, resolve.PickEntry(rt.Now().UTC(), b.Round, "builder", *pf.pick))
+		if pf.repickFrom != "" {
+			pickLine = repickLine(rt, pf.repickFrom, pf.repickWhy, *pf.pick)
+		} else {
+			pickLine = resolve.PickText("builder", *pf.pick, rt.Candidates)
+		}
+	}
+
+	entry := store.LogEntry{TS: rt.Now().UTC(), Round: b.Round, Direction: store.DirToBuilder, Kind: store.KindPrompt, Path: planPath, Confirmed: true, Late: late, Tier: string(resolve.EffectiveTier(b))}
+	pending = append(pending, entry)
+
+	driftLine := ""
+	if b.Shape != store.ShapeReader && b.Round == hintRound {
+		res := capture.Drift(ctx, captureDeps(rt), tx, b, baseline)
+		if (res.Available && !res.Stat.Empty()) || res.Reason != "" {
+			driftEntry := store.LogEntry{TS: rt.Now().UTC(), Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindDrift, Path: res.Path, Note: capture.DriftSummary(res), Confirmed: true}
+			pending = append(pending, driftEntry)
+			driftLine = capture.DriftLine(res, b.Name, b.Round)
+		}
+	}
+
+	round := b.Round
+	b.RoundBaselineTree = baseline
+	b.RoundBaselineHead = baselineHead
+	b.RoundRepoBaselineTree = repoBaseline
+	b.RoundClosedTree = ""
+	if opts.Defer {
+		b.QueuedAt = rt.Now().UTC()
+	} else {
+		b.RoundStartedAt = rt.Now().UTC()
+	}
+	b.FinishPending = true
+	b.State = store.StateActive
+	// The halt that stopped the previous attempt goes with the attempt, all
+	// of it: reason, stamp and the kind naming its episode. A human re-send
+	// is a fresh attempt, so the next halt in this round notifies again.
+	b = ClearHaltFields(b)
+	// An owed notification goes with the halt it was about: the re-send is
+	// the human answering that halt, so the entry it still owes would land
+	// under a round the human has already moved past.
+	b.OwedHalt = nil
+	b.RoundSwitches = 0
+	b.RoundExcluded = nil
+	b.RoundOOMKills = 0
+	// A fresh send is a fresh process: any stall stamp from the previous
+	// round is gone, and so is the whole progress clock -- the
+	// tree, the output and the stale stamp all describe the round that
+	// just ended.
+	b.StalledSince = time.Time{}
+	// A new round supersedes any stop requested for the old one:
+	// the builder is being asked to work again, not to wrap up.
+	b.StopRequestedAt = time.Time{}
+	b.StopGraceMS = 0
+	// A new round moves the branch again, so the last land belongs to the
+	// previous round: status stops saying "landed" here.
+	b.LandedAt = time.Time{}
+	b.LandedPR = ""
+	b.Progress = nil
+	b.ExploringSince = time.Time{}
+	b.StaleSince = time.Time{}
+	// A human send is a fresh attempt, so the repair bookkeeping from the
+	// old rounds says nothing about this one: the budget
+	// starts unspent and no previous failure is held against the builder.
+	b.RepairCount = 0
+	b.LastGateSig = ""
+	if opts.Regate != nil {
+		b.Regate = *opts.Regate
+	}
+
+	// Whether this round gets a reviewer at its close: the flag,
+	// else policy.json verify.default. Persisted with the round, and
+	// cleared by queueReport once the close has acted on it. A reader
+	// takes no verify, whatever the policy says.
+	if b.Shape == store.ShapeReader {
+		b.RoundVerify = false
+	} else if opts.Verify != nil {
+		b.RoundVerify = *opts.Verify
+	} else {
+		b.RoundVerify = rt.Policy.VerifyDefault()
+	}
+
+	if err := tx.SaveWithLog(b, pending...); err != nil {
+		return 0, "", "", err
+	}
+	return round, driftLine, pickLine, nil
+}
+
+func rollbackSpawnedBuilder(ctx context.Context, rt Runtime, name string, spawned *spawn.ProcHandle, round int, sendErr error) error {
+	if spawned == nil {
+		return sendErr
+	}
+	// The process is running but the send could not record it: stop
+	// it, and say so in its log, before returning. The binding
+	// and its log entries are one transaction, so nothing of this
+	// round was recorded: the previous state stands and the mastermind
+	// may resend.
+	stream := ""
+	if round > 0 {
+		stream = rt.Store.StreamPath(name, round)
+	}
+	kerr := rt.Runner.Kill(context.WithoutCancel(ctx), *spawned, stream)
+	if kerr != nil {
+		return fmt.Errorf("%w; and stopping the builder it started (pid %d) failed: %w", sendErr, spawned.PID, kerr)
+	}
+	// The rollback killed the round's process outside stopProcess, so
+	// it removes the temp dir the start prepared.
+	housekeep.RemoveRoundTmp(HousekeepDeps(rt), store.Binding{Name: name}, round)
+	return fmt.Errorf("%w; the builder it started (pid %d) was stopped", sendErr, spawned.PID)
 }

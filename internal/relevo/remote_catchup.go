@@ -14,7 +14,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
-	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
 // catchUp fetches a closed round's files and bundle and installs them under
@@ -267,7 +266,7 @@ func applyCatchUpReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 	}
 
 	payload, note := catchUpPayload(b, a.View, a.HaveReport, closeClause(rt, b, a.View.ClosedRound))
-	var u *usage.Usage = a.View.Usage
+	u := a.View.Usage
 	if u == nil {
 		// A pre-usage server ships no figure: record honestly that the server
 		// sent none rather than reading a record the client does not have.

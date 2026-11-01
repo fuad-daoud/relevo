@@ -171,7 +171,7 @@ func TestReadVerbErrorCodes(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			stdout, stderr, runErr := captureOutput(t, func() error { return run(c.args) })
-			requireCLIError(t, runErr, c.code, c.next)
+			_ = requireCLIError(t, runErr, c.code, c.next)
 
 			var ec exitCodeErr
 			if !errors.As(runErr, &ec) || ec.code != catalogExit(c.code) {
@@ -203,7 +203,7 @@ func TestReadVerbErrorCodesOwnerRoute(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			stdout, stderr, runErr := captureOutput(t, func() error { return run(c.args) })
-			requireCLIError(t, runErr, codeBindingNotFound, "relevo status --all")
+			_ = requireCLIError(t, runErr, codeBindingNotFound, "relevo status --all")
 			if len(stdout) != 0 {
 				t.Errorf("stdout = %q, want empty before report", stdout)
 			}

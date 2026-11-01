@@ -3,7 +3,6 @@ package relevo
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strconv"
 
@@ -82,48 +81,4 @@ func servedChainEngineCreate(ctx context.Context, rt Runtime, plan ServedChainPl
 		row = current
 	}
 	return row, nil
-}
-
-// servedChainAddMembers creates the members a served chain's resume brought
-// in, each built in the served shape beside the served builder. seq is the
-// next member sequence the chain's existing rows leave off at.
-func servedChainAddMembers(rt Runtime, tx *store.Tx, c db.ChainRow, builder store.Binding, add []chainMember, seq int) (db.ChainRow, error) {
-	if builder.Serve == nil {
-		return c, fmt.Errorf("chain %s has a served builder with no serve facts", c.Name)
-	}
-	set, err := resumeSettings(rt, c, ResumeOptions{})
-	if err != nil {
-		return c, err
-	}
-	facts := servedFacts{
-		owner: builder.Owner, repoID: builder.Serve.RepoID, worktree: builder.CWD,
-		bare: builder.Serve.BareRepo, base: builder.Base, feature: c.Feature, ticket: c.Ticket,
-		subdir:     builder.Subdir,
-		authorName: builder.Serve.AuthorName, authorEmail: builder.Serve.AuthorEmail,
-		plans: c.Plans, settings: set,
-		now: rt.Now().UTC(),
-	}
-	rows := make([]db.ChainMemberRow, 0, len(add))
-	for i, m := range add {
-		pick, err := servedActorPick(rt, m.actor)
-		if err != nil {
-			return c, err
-		}
-		b := servedChainMember(m, pick, facts)
-		if _, lerr := tx.Load(b.Name); lerr == nil {
-			return c, fmt.Errorf("binding %q already exists: `relevo unbind %s` first", b.Name, b.Name)
-		} else if !errors.Is(lerr, store.ErrNotFound) {
-			return c, lerr
-		}
-		if err := tx.Save(b); err != nil {
-			return c, err
-		}
-		rows = append(rows, db.ChainMemberRow{Binding: b.Name, Actor: b.Role, Seq: seq + i})
-		setChainMemberColumn(&c, m.part, b.Name)
-	}
-	if err := tx.ChainMembersPut(c.Name, rows); err != nil {
-		return c, err
-	}
-	c.UpdatedAt = rt.Now().UTC()
-	return c, tx.ChainPut(c)
 }

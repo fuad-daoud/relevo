@@ -20,7 +20,7 @@ func TestMirrorArchivedFeedsOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("db.OpenSplit: %v", err)
 	}
-	t.Cleanup(func() { d.Close() })
+	t.Cleanup(func() { _ = d.Close() })
 	if _, _, err := db.SplitOnce(d, t.TempDir(), time.Now()); err != nil {
 		t.Fatalf("first SplitOnce: %v", err)
 	}

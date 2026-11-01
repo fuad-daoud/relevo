@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -54,68 +55,155 @@ func cmdDaemon(args []string) error {
 	interval, check, preflight, pprofSocket := v.interval, v.check, v.preflight, v.pprof
 	autoExitAfter := v.autoExitAfter
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), "usage: relevo daemon [--interval D] [--check] [--pprof <path>]")
-		fmt.Fprintln(fs.Output(), "       relevo daemon stop")
+		_, _ = fmt.Fprintln(fs.Output(), "usage: relevo daemon [--interval D] [--check] [--pprof <path>]")
+		_, _ = fmt.Fprintln(fs.Output(), "       relevo daemon stop")
 	}
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
-	// `daemon stop` is checked before the --check/--preflight peek, so
-	// `daemon stop --check` is a usage error rather than a silent --check.
-	if pos := fs.Args(); len(pos) > 0 {
-		if len(pos) == 1 && pos[0] == "stop" && !*check && !*preflight {
-			return daemonStop()
-		}
-		return fail(codeUsage, "usage: relevo daemon [--interval D] [--check] [--pprof <path>]; relevo daemon stop")
+	if stop, err := daemonStopOrUsage(fs.Args(), *check, *preflight); err != nil {
+		return err
+	} else if stop {
+		return daemonStop()
 	}
 
-	// --preflight and --check are the read-only peek: neither writes and
-	// neither opens a database, which would migrate it, so they return here,
-	// before the lock or the database.
-	if *preflight || *check {
-		rt, err := newRuntimePeek()
-		if err != nil {
-			if *preflight {
-				// Return rather than os.Exit so a test can call this path.
-				fmt.Fprintf(os.Stderr, "relevo: %v\n", err)
-				return exitCodeErr{code: 1}
-			}
-			return err
-		}
-		if *preflight {
-			// newRuntimePeek took no lock and opened no DB: a candidate
-			// binary's --preflight runs against the live database, so this
-			// returns before the DB open below.
-			fmt.Printf("ok %s %s\n", buildVersion(), upgrade.SplitCapability)
-			return nil
-		}
-
-		// --check is the plugin startup hook's probe: the exit status is the
-		// whole answer, so it prints nothing and returns its code for main.
-		running, err := rt.Store.DaemonRunning()
-		if err != nil {
-			return err
-		}
-		if !running {
-			return exitCodeErr{code: 1}
-		}
+	if done, err := runDaemonPeek(*preflight, *check); err != nil {
+		return err
+	} else if done {
 		return nil
 	}
 
+	return runDaemon(*interval, *pprofSocket, *autoExitAfter)
+}
+
+// daemonStopOrUsage routes `daemon stop`: true runs the stop arm, an error
+// refuses any other positional, and false continues into the daemon itself.
+// `daemon stop` is checked before the --check/--preflight peek, so
+// `daemon stop --check` is a usage error rather than a silent --check.
+func daemonStopOrUsage(positional []string, check, preflight bool) (bool, error) {
+	if len(positional) == 0 {
+		return false, nil
+	}
+	if len(positional) == 1 && positional[0] == "stop" && !check && !preflight {
+		return true, nil
+	}
+	return false, fail(codeUsage, "usage: relevo daemon [--interval D] [--check] [--pprof <path>]; relevo daemon stop")
+}
+
+// runDaemonPeek runs the read-only peek: --preflight validates the runtime
+// and prints, --check probes whether a daemon runs. Neither writes and
+// neither opens a database, which would migrate it. True means the peek
+// answered and the daemon must not start.
+func runDaemonPeek(preflight, check bool) (bool, error) {
+	if !preflight && !check {
+		return false, nil
+	}
+	rt, err := newRuntimePeek()
+	if err != nil {
+		if preflight {
+			// Return rather than os.Exit so a test can call this path.
+			_, _ = fmt.Fprintf(os.Stderr, "relevo: %v\n", err)
+			return true, exitCodeErr{code: 1}
+		}
+		return true, err
+	}
+	if preflight {
+		// newRuntimePeek took no lock and opened no DB: a candidate
+		// binary's --preflight runs against the live database, so this
+		// returns before the DB open below.
+		fmt.Printf("ok %s %s\n", buildVersion(), upgrade.SplitCapability)
+		return true, nil
+	}
+
+	// --check is the plugin startup hook's probe: the exit status is the
+	// whole answer, so it prints nothing and returns its code for main.
+	running, err := rt.Store.DaemonRunning()
+	if err != nil {
+		return true, err
+	}
+	if !running {
+		return true, exitCodeErr{code: 1}
+	}
+	return true, nil
+}
+
+// daemonHandles carries runDaemon's open state across its phases: the lock
+// held since start, the owner listener and server, the shared database
+// handle, and the image identity the upgrade watcher compares against.
+type daemonHandles struct {
+	root          string
+	configDirPath string
+	lock          *store.DaemonLock
+	ln            net.Listener
+	srv           *owner.Server
+	pprofCleanup  func()
+	d             *db.DB
+	closeDB       func()
+	rt            relevo.Runtime
+	watcher       *relevo.ConfigWatcher
+	daemonInfo    store.DaemonInfo
+	exe           string
+	exeID         store.FileID
+	reexecOK      bool
+	reapRequested *atomic.Bool
+	onAbandoned   func()
+}
+
+// runDaemon starts the daemon over its open handles: the runtime, its hooks
+// and the serve loop. The lock, the listener and the database close here, in
+// the reverse of the order openDaemonHandles took them.
+func runDaemon(interval time.Duration, pprofSocket string, autoExitAfter time.Duration) error {
+	h, err := openDaemonHandles(pprofSocket)
+	if err != nil {
+		return err
+	}
+	// DaemonLock.Close is already idempotent (it nils its file), so the
+	// explicit close on the re-exec path and this defer cannot double-close
+	// into an error that matters.
+	defer func() { _ = h.lock.Close() }()
+	defer func() {
+		if h.srv != nil {
+			_ = h.srv.Close()
+			return
+		}
+		_ = h.ln.Close()
+	}()
+	if h.pprofCleanup != nil {
+		defer h.pprofCleanup()
+	}
+	// Closing is explicit, not a bare defer, because *db.DB.Close is not
+	// idempotent and the re-exec path closes it before syscall.Exec.
+	defer h.closeDB()
+
+	if err := initDaemonRuntime(h); err != nil {
+		return err
+	}
+	if err := loadDaemonHooks(h); err != nil {
+		return err
+	}
+	return serveDaemon(h, interval, autoExitAfter)
+}
+
+// openDaemonHandles reads the config, takes the lock, binds the owner
+// listener and opens the shared database. A failure releases what an earlier
+// phase took, as runDaemon's deferred cleanup would.
+func openDaemonHandles(pprofSocket string) (*daemonHandles, error) {
+	h := &daemonHandles{}
 	// The read-only config load runs first, so a malformed config fails
 	// before the lock. The loaded value is discarded: newRuntime reloads it.
 	root, err := tmpdir.DefaultRoot()
 	if err != nil {
-		return err
+		return nil, err
 	}
+	h.root = root
 	configDir, err := userConfigRoot()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	configDirPath := filepath.Join(configDir, "relevo")
-	if _, err := loadConfigReadOnly(root, configDirPath, lockedSkip); err != nil {
-		return err
+	h.configDirPath = filepath.Join(configDir, "relevo")
+	if _, err := loadConfigReadOnly(root, h.configDirPath, lockedSkip); err != nil {
+		return nil, err
 	}
 
 	// The lock is the first effect of a daemon start: a daemon that loses it
@@ -124,58 +212,42 @@ func cmdDaemon(args []string) error {
 	// `relevo serve`'s state root is its own and stays out of scope.
 	lock, err := store.New(root).AcquireDaemonLock()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	// DaemonLock.Close is already idempotent (it nils its file), so the
-	// explicit close on the re-exec path and this defer cannot double-close
-	// into an error that matters.
-	defer lock.Close()
-
+	h.lock = lock
 	// The socket path is checked before newRuntime mints anything, so a bad
 	// path refuses with one line and leaves no half-created root. The listener
 	// is bound here, under the lock, so early connections wait in the backlog.
 	if err := checkSocketPath(root); err != nil {
-		return err
+		_ = lock.Close()
+		return nil, err
 	}
 	ln, err := openOwnerListener(root)
 	if err != nil {
-		return err
+		_ = lock.Close()
+		return nil, err
 	}
-	var srv *owner.Server
-	defer func() {
-		if srv != nil {
-			_ = srv.Close()
-			return
-		}
-		_ = ln.Close()
-	}()
+	h.ln = ln
 
 	// The profiling socket is opt-in and never fatal, and is bound before the
 	// one-time passes so a stuck migration can still be profiled. A re-exec
 	// skips the deferred cleanup; the next image removes the socket it finds.
-	if *pprofSocket != "" {
-		pln, perr := servePprof(*pprofSocket)
-		if perr != nil {
-			slog.Warn("relevo daemon: pprof socket not served", "err", perr)
-		} else {
-			defer func() {
-				_ = pln.Close()
-				_ = os.Remove(*pprofSocket)
-			}()
-			slog.Info("relevo daemon: pprof socket", "path", *pprofSocket)
-		}
-	}
+	h.pprofCleanup = serveDaemonPprof(pprofSocket)
 
 	// The daemon's one handle: opened here under the lock and shared with
-	// everything in the daemon; nothing in the daemon dials the owner. Closing
-	// is explicit, not a bare defer, because *db.DB.Close is not idempotent
-	// and the re-exec path closes it before syscall.Exec.
+	// everything in the daemon; nothing in the daemon dials the owner.
 	d, err := openDBDirect(filepath.Join(root, "relevo.db"))
 	if err != nil {
-		return err
+		if h.pprofCleanup != nil {
+			h.pprofCleanup()
+		}
+		_ = ln.Close()
+		_ = lock.Close()
+		return nil, err
 	}
+	h.d = d
 	var dbClosed bool
-	closeDB := func() {
+	h.closeDB = func() {
 		if dbClosed {
 			return
 		}
@@ -184,43 +256,63 @@ func cmdDaemon(args []string) error {
 			slog.Warn("relevo daemon: close db", "err", cerr)
 		}
 	}
-	defer closeDB()
+	return h, nil
+}
 
+// serveDaemonPprof binds the profiling socket when asked. A failure warns and
+// the daemon runs without it; the cleanup is nil unless a listener was bound.
+func serveDaemonPprof(socket string) func() {
+	if socket == "" {
+		return nil
+	}
+	pln, perr := servePprof(socket)
+	if perr != nil {
+		slog.Warn("relevo daemon: pprof socket not served", "err", perr)
+		return nil
+	}
+	slog.Info("relevo daemon: pprof socket", "path", socket)
+	return func() {
+		_ = pln.Close()
+		_ = os.Remove(socket)
+	}
+}
+
+// initDaemonRuntime builds the daemon's runtime over the shared handle and
+// runs its one-time passes: the re-exec identity, the config watcher, the
+// owner server and the daemon record.
+func initDaemonRuntime(h *daemonHandles) error {
 	// newRuntimeOn is the one constructor, called under the lock: it opens and
 	// migrates relevo.db and builds the runtime over the shared handle.
 	// Nothing before this point touches the database.
-	rt, err := newRuntimeOn(root, d)
+	rt, err := newRuntimeOn(h.root, h.d)
 	if err != nil {
 		return err
 	}
+	h.rt = rt
 
 	// Nowhere else: a CLI one-shot (any other command) must not relaunch a
 	// builder it merely happens to observe as "exited, code unknown".
-	rt.StartedAt = time.Now()
+	h.rt.StartedAt = time.Now()
 	// The daemon's in-memory "seen alive" set: it tells a process this daemon
 	// actually watched from one that merely predates it, so a restart
 	// relaunches only what it really took down.
-	rt.Watched = relevo.NewWatched()
+	h.rt.Watched = relevo.NewWatched()
 	// The daemon's per-binding auth grace: a transient 401 halts a binding
 	// only after 15 minutes. Every CLI one-shot leaves AuthGrace nil.
-	rt.AuthGrace = relevo.NewAuthGrace()
+	h.rt.AuthGrace = relevo.NewAuthGrace()
 	// The scope template newRuntime filled is logged once here, in the same
 	// shape `relevo serve` uses ("off" is scope.enabled: false; the local
 	// daemon does not probe at startup, so there is no "unavailable" here).
-	slog.Info(fmt.Sprintf("scopes=%s", scopeStatusText(rt.Scope)))
-
-	// The reaper is built before anything can spawn a child, so it sees only
-	// processes inherited from the previous image across a re-exec. A child
-	// started after this point is never in its set.
-	reaper := proc.NewInheritedReaper(os.Getpid(), "/proc")
+	slog.Info(fmt.Sprintf("scopes=%s", scopeStatusText(h.rt.Scope)))
 
 	// Capture the identity of the running image, not of the path: a
 	// replacement landing after exec would become the baseline and the watcher
 	// would never fire. A failure disables re-exec with a warning.
 	exe, exeErr := upgrade.ResolveExe()
 	exeID, idErr := upgrade.SelfImageIdentity()
-	reexecOK := exeErr == nil && idErr == nil
-	if !reexecOK {
+	h.exe, h.exeID = exe, exeID
+	h.reexecOK = exeErr == nil && idErr == nil
+	if !h.reexecOK {
 		reason := exeErr
 		if reason == nil {
 			reason = idErr
@@ -231,38 +323,40 @@ func cmdDaemon(args []string) error {
 	// The watcher gets a labelled copy, so the import it runs is recorded as
 	// source "import".
 	var configSource relevo.ConfigSource
-	if rt.Config != nil {
-		configSource = rt.Config.As("import", "imported "+configDirPath)
+	if h.rt.Config != nil {
+		configSource = h.rt.Config.As("import", "imported "+h.configDirPath)
 	}
-	watcher := relevo.NewConfigWatcher(configSource, configDirPath, os.Getenv)
+	h.watcher = relevo.NewConfigWatcher(configSource, h.configDirPath, os.Getenv)
 
 	// The one handle is already open and shared; this decides only whether the
 	// daemon's own ingest may write it.
-	daemonRuntimeHandle(&rt, d)
+	daemonRuntimeHandle(&h.rt, h.d)
 
 	// An abandoned statement the owner cannot interrupt is ended by re-execing:
 	// the hook asks the upgrade hook below to return true on its next tick.
 	// Without it the owner keeps refusing ad-hoc reads with no way to end the
 	// statement, which is a safe degradation.
 	var reapRequested atomic.Bool
+	h.reapRequested = &reapRequested
 	var onAbandoned func()
-	if reexecOK {
+	if h.reexecOK {
 		var reapLogged sync.Once
 		onAbandoned = func() {
 			reapLogged.Do(func() { slog.Warn("relevo daemon: reaping an abandoned statement") })
 			reapRequested.Store(true)
 		}
 	}
+	h.onAbandoned = onAbandoned
 
 	// The owner is served before the one-time passes, which run under the
 	// owner's write path; the sync verb executor is installed after them, once
 	// they recorded themselves (see daemonStartup for why).
-	srv = daemonStartup(&rt, d, ln, onAbandoned)
+	h.srv = daemonStartup(&h.rt, h.d, h.ln, onAbandoned)
 
 	// daemon.json: what this image runs. Written under the lock, so its
 	// presence with the lock held means a daemon of this build; removed on a
 	// clean shutdown, kept across a re-exec.
-	info := store.DaemonInfo{
+	h.daemonInfo = store.DaemonInfo{
 		Version:    buildVersion(),
 		PID:        os.Getpid(),
 		StartedAt:  time.Now(),
@@ -270,26 +364,31 @@ func cmdDaemon(args []string) error {
 		ExeID:      exeID,
 		ReexecFrom: os.Getenv("RELEVO_REEXEC_FROM"),
 	}
-	if werr := rt.Store.WriteDaemonInfo(info); werr != nil {
+	if werr := h.rt.Store.WriteDaemonInfo(h.daemonInfo); werr != nil {
 		slog.Warn("relevo daemon: daemon.json not written", "err", werr)
 	}
-	if info.ReexecFrom != "" {
-		slog.Info("re-exec'd", "from", info.ReexecFrom, "to", info.Version)
+	if h.daemonInfo.ReexecFrom != "" {
+		slog.Info("re-exec'd", "from", h.daemonInfo.ReexecFrom, "to", h.daemonInfo.Version)
 	}
 
 	// Role definitions are refreshed once per image start, after the lock and
 	// daemon.json: an upgrade leaves the files relevo wrote for each harness
 	// on disk, and one nobody edited is stale. Never fatal.
-	refreshRoles(rt.Config)
+	refreshRoles(h.rt.Config)
 	// The unit the supervisor starts this binary from is refreshed on the same
 	// beat, never restarting the daemon itself.
 	refreshServiceUnitAtStart()
+	return nil
+}
 
-	loaded, err := rt.Config.Load()
+// loadDaemonHooks loads the config and wires the hooks dispatcher over the
+// stored run log.
+func loadDaemonHooks(h *daemonHandles) error {
+	loaded, err := h.rt.Config.Load()
 	if err != nil {
 		return err
 	}
-	log, lerr := rt.Store.DB()
+	log, lerr := h.rt.Store.DB()
 	if lerr != nil {
 		log = nil
 	}
@@ -297,8 +396,65 @@ func cmdDaemon(args []string) error {
 	if err != nil {
 		return err
 	}
-	rt.Hooks = newHooksDispatcher(hooksCfg, rt.Policy)
+	h.rt.Hooks = newHooksDispatcher(hooksCfg, h.rt.Policy)
+	return nil
+}
 
+// makeDaemonHook builds the per-tick upgrade decision: reap inherited
+// children, end an abandoned statement by re-execing, and debounce the new
+// binary's identity into a re-exec or a refusal.
+func makeDaemonHook(h *daemonHandles, up *upgrade.Watcher) func(context.Context) bool {
+	// The reaper is built before anything can spawn a child, so it sees only
+	// processes inherited from the previous image across a re-exec. A child
+	// started after this point is never in its set.
+	reaper := proc.NewInheritedReaper(os.Getpid(), "/proc")
+	return func(ctx context.Context) bool {
+		// Children inherited from the previous image are reaped here, once
+		// per tick: nothing else will ever wait for them.
+		reaper.Reap()
+		if !h.reexecOK {
+			return false
+		}
+		// Only the new image ends an abandoned statement: execing gives the
+		// process a fresh thread for it while the drain lets other work finish.
+		if h.reapRequested.Load() {
+			return true
+		}
+
+		prev := up.Refused()
+		decision := up.Check(ctx)
+		if !sameFileID(up.Refused(), prev) {
+			if up.Refused() == nil {
+				h.daemonInfo.ReexecFailed = nil
+			} else {
+				h.daemonInfo.ReexecFailed = &store.ReexecFailure{
+					ExeID:  *up.Refused(),
+					At:     time.Now(),
+					Reason: decision.Reason,
+				}
+			}
+			if werr := h.rt.Store.WriteDaemonInfo(h.daemonInfo); werr != nil {
+				slog.Warn("relevo daemon: daemon.json not written", "err", werr)
+			}
+		}
+
+		switch decision.Action {
+		case upgrade.Refused:
+			// Check reports Refused only when the identity changed, so this
+			// is the one warning per refused build.
+			slog.Warn("new relevo binary refused", "exe", h.exe, "reason", decision.Reason)
+		case upgrade.Reexec:
+			slog.Info("re-exec onto new binary", "exe", h.exe)
+			return true
+		}
+		return false
+	}
+}
+
+// serveDaemon runs the daemon's serve loop: the upgrade watcher, the idle
+// watcher for CLI-spawned daemons, and the reconciler with its re-exec
+// handoff.
+func serveDaemon(h *daemonHandles, interval, autoExitAfter time.Duration) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -309,67 +465,26 @@ func cmdDaemon(args []string) error {
 	// marker cannot appear later in this process's life, so reading it once
 	// here is current for every later tick.
 	up := &upgrade.Watcher{
-		Path:      exe,
-		Started:   exeID,
+		Path:      h.exe,
+		Started:   h.exeID,
 		Stat:      upgrade.ExeIdentity,
-		Preflight: upgrade.SplitGuardPreflight(rt.DB != nil && rt.DB.SplitDone()),
+		Preflight: upgrade.SplitGuardPreflight(h.rt.DB != nil && h.rt.DB.SplitDone()),
 	}
-
-	hook := func(ctx context.Context) bool {
-		// Children inherited from the previous image are reaped here, once
-		// per tick: nothing else will ever wait for them.
-		reaper.Reap()
-		if !reexecOK {
-			return false
-		}
-		// Only the new image ends an abandoned statement: execing gives the
-		// process a fresh thread for it while the drain lets other work finish.
-		if reapRequested.Load() {
-			return true
-		}
-
-		prev := up.Refused()
-		decision := up.Check(ctx)
-		if !sameFileID(up.Refused(), prev) {
-			if up.Refused() == nil {
-				info.ReexecFailed = nil
-			} else {
-				info.ReexecFailed = &store.ReexecFailure{
-					ExeID:  *up.Refused(),
-					At:     time.Now(),
-					Reason: decision.Reason,
-				}
-			}
-			if werr := rt.Store.WriteDaemonInfo(info); werr != nil {
-				slog.Warn("relevo daemon: daemon.json not written", "err", werr)
-			}
-		}
-
-		switch decision.Action {
-		case upgrade.Refused:
-			// Check reports Refused only when the identity changed, so this
-			// is the one warning per refused build.
-			slog.Warn("new relevo binary refused", "exe", exe, "reason", decision.Reason)
-		case upgrade.Reexec:
-			slog.Info("re-exec onto new binary", "exe", exe)
-			return true
-		}
-		return false
-	}
+	hook := makeDaemonHook(h, up)
 
 	// The idle watcher is the CLI-spawned daemon's own exit: the flag is
 	// internal, so a service-managed or hand-started daemon never gets it.
 	var running atomic.Pointer[relevo.Daemon]
-	if *autoExitAfter > 0 {
-		go watchDaemonIdle(ctx, stop, *autoExitAfter, idlePoll, rt.Now, func() daemonActivity {
-			a := daemonActivityNow(root, lock, srv, rt.Store)
+	if autoExitAfter > 0 {
+		go watchDaemonIdle(ctx, stop, autoExitAfter, idlePoll, h.rt.Now, func() daemonActivity {
+			a := daemonActivityNow(h.root, h.lock, h.srv, h.rt.Store)
 			a.Joining = running.Load().Joining()
 			return a
 		})
 	}
 
-	slog.Info("relevo daemon starting", "interval", *interval)
-	daemon := relevo.NewDaemon(rt, *interval).WithRefresh(watcher.Refresh).WithUpgrade(hook)
+	slog.Info("relevo daemon starting", "interval", interval)
+	daemon := relevo.NewDaemon(h.rt, interval).WithRefresh(h.watcher.Refresh).WithUpgrade(hook)
 	// A gate this daemon records has to reach the other machines now, so the
 	// runtime carries the daemon's own trigger and the daemon is bound
 	// afterwards: the trigger is the daemon asking itself for an attempt.
@@ -377,35 +492,35 @@ func cmdDaemon(args []string) error {
 	// Rebind the verb hook now with the guard: from here a verb and a seal or
 	// idle tick are serialized, keeping one machine's markers from being
 	// written twice at once.
-	installSyncVerbSerializing(ctx, daemon, srv, d)
+	installSyncVerbSerializing(ctx, daemon, h.srv, h.d)
 	running.Store(daemon)
-	err = daemon.Run(ctx)
+	err := daemon.Run(ctx)
 	if errors.Is(err, relevo.ErrReexec) {
 		// Drain the owner first: an open transaction must commit before closeDB
 		// takes the handle away. Then close what must not survive the exec and
 		// pass the listener's descriptor with close-on-exec cleared, so the
 		// next image adopts it instead of rebinding.
-		fd, herr := drainAndHandoff(srv, ln)
+		fd, herr := drainAndHandoff(h.srv, h.ln)
 		if herr != nil {
 			slog.Warn("relevo daemon: listener handoff failed", "err", herr)
 		}
-		closeDB()
+		h.closeDB()
 		stop()
-		_ = lock.Close()
+		_ = h.lock.Close()
 
 		env := withEnv(os.Environ(), "RELEVO_REEXEC_FROM", buildVersion())
 		if fd >= 0 {
 			env = withEnv(env, listenFDEnv, strconv.Itoa(fd))
 		}
-		execErr := reexec(exe, append([]string{exe}, os.Args[1:]...), env)
+		execErr := reexec(h.exe, append([]string{h.exe}, os.Args[1:]...), env)
 		// Only reached when the exec itself failed: a non-zero exit lets
 		// systemd's Restart=on-failure start the new binary anyway.
 		closeHandoff()
-		return fmt.Errorf("re-exec %s: %w", exe, execErr)
+		return fmt.Errorf("re-exec %s: %w", h.exe, execErr)
 	}
 
 	// A clean shutdown removes the record; the re-exec path above must not.
-	_ = rt.Store.RemoveDaemonInfo()
+	_ = h.rt.Store.RemoveDaemonInfo()
 	return err
 }
 

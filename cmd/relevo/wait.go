@@ -81,29 +81,9 @@ func cmdWait(args []string) error {
 		return err
 	}
 
-	var names []string
-	chain := ""
-	if *anyFlag {
-		if *name != "" || len(fs.Args()) == 0 {
-			return fail(codeUsage, "--any takes one or more positional names, not --name")
-		}
-		names = fs.Args()
-	} else {
-		target, err := resolveBinding(rt, *name, fs.Args())
-		if err != nil {
-			return err
-		}
-		// A name that resolves to a chain waits on the chain -- unless the
-		// chain is no longer running and its builder has a manual round open,
-		// in which case the wait follows that round as any binding's would.
-		binding, isChain, err := relevo.ChainWaitTarget(rt, target)
-		if err != nil {
-			return waitFailure(err)
-		}
-		if isChain {
-			chain = target
-		}
-		names = []string{binding}
+	names, chain, err := resolveWaitNames(rt, *name, *anyFlag, fs.Args())
+	if err != nil {
+		return err
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -150,6 +130,34 @@ func cmdWait(args []string) error {
 		return nil
 	}
 	return exitCodeErr{res.Code}
+}
+
+// resolveWaitNames maps the name flags to the bindings to wait on. --any takes
+// the positionals as the set; otherwise the one name resolves through the
+// binding table, and a chain name waits on the chain itself. chain is empty
+// unless the wait follows a chain.
+func resolveWaitNames(rt relevo.Runtime, name string, anyFlag bool, positional []string) (names []string, chain string, err error) {
+	if anyFlag {
+		if name != "" || len(positional) == 0 {
+			return nil, "", fail(codeUsage, "--any takes one or more positional names, not --name")
+		}
+		return positional, "", nil
+	}
+	target, err := resolveBinding(rt, name, positional)
+	if err != nil {
+		return nil, "", err
+	}
+	// A name that resolves to a chain waits on the chain -- unless the
+	// chain is no longer running and its builder has a manual round open,
+	// in which case the wait follows that round as any binding's would.
+	binding, isChain, err := relevo.ChainWaitTarget(rt, target)
+	if err != nil {
+		return nil, "", waitFailure(err)
+	}
+	if isChain {
+		chain = target
+	}
+	return []string{binding}, chain, nil
 }
 
 // waitFailure classifies a wait error: a missing binding is the caller's

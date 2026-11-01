@@ -354,7 +354,7 @@ func TestBugreportOutUnwritableIsInternal(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
 		return run([]string{"bugreport", "--out", filepath.Join(blocker, "bundle.md")})
 	})
-	requireCLIError(t, err, codeInternal, "")
+	_ = requireCLIError(t, err, codeInternal, "")
 	if got := catalogExit(codeInternal); got != 1 {
 		t.Errorf("internal exit = %d, want 1", got)
 	}
@@ -367,7 +367,7 @@ func TestBugreportRoundRequiresName(t *testing.T) {
 	fakeBugreportExec(t, nil, nil)
 
 	_, _, err := captureOutput(t, func() error { return run([]string{"bugreport", "--round", "2"}) })
-	requireCLIError(t, err, codeUsage, "relevo help")
+	_ = requireCLIError(t, err, codeUsage, "relevo help")
 }
 
 // TestBugreportStdoutAndJSONWriteNoFile pins the agent paths: --stdout prints
@@ -506,7 +506,7 @@ func TestBugreportModesExclusive(t *testing.T) {
 	} {
 		t.Run(strings.Join(args[1:], " "), func(t *testing.T) {
 			_, _, err := captureOutput(t, func() error { return run(args) })
-			requireCLIError(t, err, codeUsage, "relevo help")
+			_ = requireCLIError(t, err, codeUsage, "relevo help")
 			if got := catalogExit(codeUsage); got != 2 {
 				t.Errorf("usage exit = %d, want 2", got)
 			}

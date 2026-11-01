@@ -125,7 +125,7 @@ func idleOutboxRows(t *testing.T, raw *sql.DB) []string {
 	if err != nil {
 		t.Fatalf("read sync_outbox: %v", err)
 	}
-	defer rows.Close()
+	t.Cleanup(func() { _ = rows.Close() })
 	var out []string
 	for rows.Next() {
 		var tbl, pk string

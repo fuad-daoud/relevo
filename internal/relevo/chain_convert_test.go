@@ -221,10 +221,10 @@ func TestConvertLegacyChainsEveryStepThenContinues(t *testing.T) {
 			Kind: workflow.EventStepClosed, Step: st.Awaiting.Step,
 			Member: st.Awaiting.Member, Round: st.Awaiting.Round, Status: "done",
 		}
-		switch {
-		case tc.want == "review" || tc.want == "fix-review":
+		switch tc.want {
+		case "review", "fix-review":
 			ev.Outcomes = map[string]string{"verdict": "changes"}
-		case tc.want == "scan":
+		case "scan":
 			ev.Outcomes = map[string]string{"findings": "0"}
 		}
 		_, acts := workflow.Next(def, st, ev)

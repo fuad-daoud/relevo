@@ -268,22 +268,11 @@ func configRepoUnset(args []string) error {
 	if err != nil {
 		return err
 	}
-	dir, err := repoDirOf(*v.repo)
+	target, err := lookupConfigRepoUnsetTarget(rt, *v.repo)
 	if err != nil {
 		return err
 	}
-	id, ok, err := repoKeyOf(context.Background(), rt, dir)
-	if err != nil {
-		return writeError(err)
-	}
-	if !ok {
-		return fail(codeUsage, "%s: %v", dir, errNotARepository)
-	}
-
-	entries, err := storedRepos(rt)
-	if err != nil {
-		return failWrap(codeConfigInvalid, err, "%v", err)
-	}
+	entries, id := target.entries, target.id
 	entry, ok := entries[id]
 	if !ok {
 		return fail(codeConfigInvalid, "repos.%s.%s: not set", id, key)
@@ -327,6 +316,36 @@ func configRepoUnset(args []string) error {
 		return printDoc(configWriteDocOf("repos."+id+"."+key, string(config.Repos), version))
 	}
 	return nil
+}
+
+// configRepoUnsetTarget is the entry one `config repo unset` clears: the
+// stored entries and the id they are keyed on.
+type configRepoUnsetTarget struct {
+	entries map[string]config.RepoEntry
+	id      string
+}
+
+// lookupConfigRepoUnsetTarget resolves the directory's settings id and loads
+// the entries holding it; the clear-and-store step reports the unset itself.
+func lookupConfigRepoUnsetTarget(rt relevo.Runtime, repoFlag string) (configRepoUnsetTarget, error) {
+	var target configRepoUnsetTarget
+	dir, err := repoDirOf(repoFlag)
+	if err != nil {
+		return target, err
+	}
+	id, ok, err := repoKeyOf(context.Background(), rt, dir)
+	if err != nil {
+		return target, writeError(err)
+	}
+	if !ok {
+		return target, fail(codeUsage, "%s: %v", dir, errNotARepository)
+	}
+	entries, err := storedRepos(rt)
+	if err != nil {
+		return target, failWrap(codeConfigInvalid, err, "%v", err)
+	}
+	target.entries, target.id = entries, id
+	return target, nil
 }
 
 func configRepoList(args []string) error {

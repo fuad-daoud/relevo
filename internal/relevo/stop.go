@@ -88,64 +88,7 @@ func Stop(ctx context.Context, rt Runtime, name string, opts StopOptions) (StopR
 			return fmt.Errorf("binding %q is paused; nothing to stop", name)
 		}
 		if b.Builder.Remote() {
-			server := b.Builder.Server
-			if rt.Remote == nil {
-				return ErrRemoteUnavailable
-			}
-			who, err := rt.Remote.WhoAmI(ctx, server)
-			if err != nil {
-				return fmt.Errorf("%s: %w", server, err)
-			}
-			if !slices.Contains(who.Features, remote.FeatureStop) {
-				return fmt.Errorf("server %s predates remote stop (no %q feature); relevo unbind %s to stop the round and drop the binding",
-					server, remote.FeatureStop, name)
-			}
-			view, err := rt.Remote.Stop(ctx, server, name)
-			if err != nil {
-				var httpErr *client.HTTPError
-				if errors.As(err, &httpErr) {
-					switch {
-					case httpErr.Status == 409 && httpErr.Body.Code == remote.CodeNothingToStop:
-						return ErrNothingToStop
-					case httpErr.Status == 409 && httpErr.Body.Code == remote.CodeRoundHalted:
-						return fmt.Errorf("%s: round %d is halted there: %s", server, b.Round, httpErr.Body.Message)
-					case httpErr.Status == 404:
-						return fmt.Errorf("%s no longer has binding %q; relevo unbind %s to drop it here", server, name, name)
-					}
-				}
-				if errors.Is(err, client.ErrUnreachable) {
-					return fmt.Errorf("%s unreachable: %w", server, err)
-				}
-				return fmt.Errorf("%s: %w", server, err)
-			}
-
-			out.Round = b.Round
-			out.Shape = b.Shape
-			out.Action = view.Stopped
-			if out.Action == "" {
-				out.Action = "killed"
-			}
-
-			// Collect the close now instead of waiting for the next sync. The
-			// server has already stopped the round, so a catch-up that cannot
-			// finish is not an error: the next sync, pull or wait collects it.
-			// A server-chain member is the exception: its round stops on the
-			// server, and the chain pull is what collects it here.
-			if chain.ServerMember(tx, b.Name) {
-				return nil
-			}
-			next, _, oerr := observeRemote(ctx, rt, tx, b)
-			if oerr != nil {
-				return oerr
-			}
-			// The observation is saved whatever the verdict: live fields go to
-			// the overlay, and only a moved synced field rewrites the row.
-			// The stop's caller reads the outcome from out, not from the
-			// shared-row flag.
-			if _, err := tx.SaveWithOverlay(next); err != nil {
-				return err
-			}
-			return nil
+			return stopRemote(ctx, rt, tx, b, name, &out)
 		}
 
 		out.Round = b.Round
@@ -205,6 +148,68 @@ func Stop(ctx context.Context, rt Runtime, name string, opts StopOptions) (StopR
 		reapAbandoned(ctx, rt, name)
 	}
 	return out, err
+}
+
+// stopRemote stops a remote round on its server: refusals first, then the
+// stop, then the close collected now instead of waiting for the next sync.
+// The server has already stopped the round, so a catch-up that cannot finish
+// is not an error: the next sync, pull or wait collects it. A server-chain
+// member is the exception: its round stops on the server, and the chain pull
+// is what collects it here.
+func stopRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, name string, out *StopResult) error {
+	server := b.Builder.Server
+	if rt.Remote == nil {
+		return ErrRemoteUnavailable
+	}
+	who, err := rt.Remote.WhoAmI(ctx, server)
+	if err != nil {
+		return fmt.Errorf("%s: %w", server, err)
+	}
+	if !slices.Contains(who.Features, remote.FeatureStop) {
+		return fmt.Errorf("server %s predates remote stop (no %q feature); relevo unbind %s to stop the round and drop the binding",
+			server, remote.FeatureStop, name)
+	}
+	view, err := rt.Remote.Stop(ctx, server, name)
+	if err != nil {
+		var httpErr *client.HTTPError
+		if errors.As(err, &httpErr) {
+			switch {
+			case httpErr.Status == 409 && httpErr.Body.Code == remote.CodeNothingToStop:
+				return ErrNothingToStop
+			case httpErr.Status == 409 && httpErr.Body.Code == remote.CodeRoundHalted:
+				return fmt.Errorf("%s: round %d is halted there: %s", server, b.Round, httpErr.Body.Message)
+			case httpErr.Status == 404:
+				return fmt.Errorf("%s no longer has binding %q; relevo unbind %s to drop it here", server, name, name)
+			}
+		}
+		if errors.Is(err, client.ErrUnreachable) {
+			return fmt.Errorf("%s unreachable: %w", server, err)
+		}
+		return fmt.Errorf("%s: %w", server, err)
+	}
+
+	out.Round = b.Round
+	out.Shape = b.Shape
+	out.Action = view.Stopped
+	if out.Action == "" {
+		out.Action = "killed"
+	}
+
+	if chain.ServerMember(tx, b.Name) {
+		return nil
+	}
+	next, _, oerr := observeRemote(ctx, rt, tx, b)
+	if oerr != nil {
+		return oerr
+	}
+	// The observation is saved whatever the verdict: live fields go to
+	// the overlay, and only a moved synced field rewrites the row.
+	// The stop's caller reads the outcome from out, not from the
+	// shared-row flag.
+	if _, err := tx.SaveWithOverlay(next); err != nil {
+		return err
+	}
+	return nil
 }
 
 // stopOpenRound stops what an open headless round still has running: its

@@ -101,7 +101,7 @@ func (r *waitRetryer) retry(ctx context.Context, op func() error) error {
 		if !r.inStreak {
 			r.inStreak = true
 			r.streakAt = now
-			fmt.Fprintf(r.stderr, "relevo: db read failed (%v); retrying\n", err)
+			_, _ = fmt.Fprintf(r.stderr, "relevo: db read failed (%v); retrying\n", err)
 		}
 		if now.Sub(r.streakAt) >= waitRetryLimit {
 			return err

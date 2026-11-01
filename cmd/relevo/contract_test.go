@@ -490,7 +490,7 @@ func seedHistoryFixture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
-	defer d.Close()
+	defer func() { _ = d.Close() }()
 
 	t0 := time.Date(2026, 9, 20, 9, 0, 0, 0, time.UTC)
 
@@ -595,7 +595,7 @@ func TestContractHistory(t *testing.T) {
 	stdout, stderr, err := captureOutput(t, func() error {
 		return run([]string{"history", "--json", "-q", "outcome:done"})
 	})
-	requireCLIError(t, err, codeUsage, "relevo help")
+	_ = requireCLIError(t, err, codeUsage, "relevo help")
 	if len(stdout) != 0 {
 		t.Errorf("history -q outcome:done: stdout = %q, want empty", stdout)
 	}
@@ -954,7 +954,7 @@ func TestHelpJSONUnknownVerbRefused(t *testing.T) {
 	if len(stderr) != 0 {
 		t.Errorf("help --json bogus: stderr = %q, want empty before report", stderr)
 	}
-	requireCLIError(t, err, codeUsage, "relevo help")
+	_ = requireCLIError(t, err, codeUsage, "relevo help")
 }
 
 // TestStatuslinePushClaimStepsAsideText pins that a live push claim for this

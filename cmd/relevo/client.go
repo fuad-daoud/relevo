@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -42,43 +43,78 @@ func cmdClientAddServer(args []string) error {
 	return outcomeError(cmdClientAddServerRun(args))
 }
 
+// parseServerAddArgs validates the add positionals and trust flags into the
+// server name and entry: exactly one trust mode, and a well-formed entry.
+func parseServerAddArgs(rest []string, v *clientAddServerFlagValues) (string, remote.ServerEntry, error) {
+	if len(rest) != 2 {
+		return "", remote.ServerEntry{}, fail(codeUsage, "config server add wants <name> <url> (--fingerprint sha256:... | --ca system | --insecure)")
+	}
+	name, rawURL := rest[0], rest[1]
+
+	set := 0
+	if *v.fingerprint != "" {
+		set++
+	}
+	if *v.ca != "" {
+		set++
+	}
+	if *v.insecure {
+		set++
+	}
+	if set > 1 {
+		return "", remote.ServerEntry{}, fail(codeUsage, "--fingerprint, --ca and --insecure are mutually exclusive")
+	}
+
+	entry := remote.ServerEntry{URL: rawURL, Fingerprint: *v.fingerprint, CA: *v.ca, Insecure: *v.insecure}
+	if err := remote.ValidateEntry(entry); err != nil {
+		return "", remote.ServerEntry{}, fail(codeUsage, "%v", err)
+	}
+	return name, entry, nil
+}
+
+// checkServerEnrollment proves the new server accepts our key: a 401 is not
+// an error, and the enrollment lines name what the server admin needs.
+func checkServerEnrollment(servers remote.Servers, name, rawURL string, pem []byte, w io.Writer, asJSON bool) error {
+	key, err := remote.ParsePrivate(pem)
+	if err != nil {
+		return err
+	}
+
+	c := client.New(servers, key, time.Now)
+	who, werr := c.WhoAmI(context.Background(), name)
+	if werr != nil {
+		var httpErr *client.HTTPError
+		if errors.As(werr, &httpErr) && httpErr.Status == 401 {
+			if _, err := fmt.Fprintf(w, "not enrolled on %s: give the admin: %s\n", name, client.EnrollLine(key)); err != nil {
+				return fmt.Errorf("write server report: %w", err)
+			}
+			return addServerDoc(asJSON, name, rawURL)
+		}
+		return fmt.Errorf("%s: %w", name, werr)
+	}
+	if _, err := fmt.Fprintf(w, "enrolled as %s\n", who.Label); err != nil {
+		return fmt.Errorf("write server report: %w", err)
+	}
+	return addServerDoc(asJSON, name, rawURL)
+}
+
 func cmdClientAddServerRun(args []string) error {
 	fs := flag.NewFlagSet("relevo config server add", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	v := clientAddServerFlagSet(fs)
-	fingerprint, ca, insecure, asJSON := v.fingerprint, v.ca, v.insecure, v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
 	// The human lines keep stdout in the default mode and move to stderr under
 	// --json, where stdout carries the document alone.
-	w := noticeWriter(*asJSON)
+	w := noticeWriter(*v.asJSON)
 
-	rest := fs.Args()
-	if len(rest) != 2 {
-		return fail(codeUsage, "config server add wants <name> <url> (--fingerprint sha256:... | --ca system | --insecure)")
+	name, entry, err := parseServerAddArgs(fs.Args(), v)
+	if err != nil {
+		return err
 	}
-	name, rawURL := rest[0], rest[1]
-
-	set := 0
-	if *fingerprint != "" {
-		set++
-	}
-	if *ca != "" {
-		set++
-	}
-	if *insecure {
-		set++
-	}
-	if set > 1 {
-		return fail(codeUsage, "--fingerprint, --ca and --insecure are mutually exclusive")
-	}
-
-	entry := remote.ServerEntry{URL: rawURL, Fingerprint: *fingerprint, CA: *ca, Insecure: *insecure}
-	if err := remote.ValidateEntry(entry); err != nil {
-		return fail(codeUsage, "%v", err)
-	}
+	rawURL := entry.URL
 
 	rt, err := newRuntime()
 	if err != nil {
@@ -110,31 +146,16 @@ func cmdClientAddServerRun(args []string) error {
 	if _, err := rt.Config.As("cli", "config server add "+name).Put(config.Servers, body); err != nil {
 		return err
 	}
-	fmt.Fprintf(w, "added server %s (%s)\n", name, rawURL)
+	if _, err := fmt.Fprintf(w, "added server %s (%s)\n", name, rawURL); err != nil {
+		return fmt.Errorf("write server report: %w", err)
+	}
 
-	if *fingerprint == "" {
+	if entry.Fingerprint == "" {
 		// Pinned by --ca or plain --insecure: there is no fingerprint to pin
 		// the transport to, so there is nothing to enrollment-check yet.
-		return addServerDoc(*asJSON, name, rawURL)
+		return addServerDoc(*v.asJSON, name, rawURL)
 	}
-
-	key, err := remote.ParsePrivate(pem)
-	if err != nil {
-		return err
-	}
-
-	c := client.New(servers, key, time.Now)
-	who, werr := c.WhoAmI(context.Background(), name)
-	if werr != nil {
-		var httpErr *client.HTTPError
-		if errors.As(werr, &httpErr) && httpErr.Status == 401 {
-			fmt.Fprintf(w, "not enrolled on %s: give the admin: %s\n", name, client.EnrollLine(key))
-			return addServerDoc(*asJSON, name, rawURL)
-		}
-		return fmt.Errorf("%s: %w", name, werr)
-	}
-	fmt.Fprintf(w, "enrolled as %s\n", who.Label)
-	return addServerDoc(*asJSON, name, rawURL)
+	return checkServerEnrollment(servers, name, rawURL, pem, w, *v.asJSON)
 }
 
 // addServerDoc prints config server add's document in --json mode, or nothing

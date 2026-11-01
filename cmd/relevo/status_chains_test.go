@@ -27,7 +27,7 @@ func TestStatusChainsRejectsLineAndName(t *testing.T) {
 			t.Errorf("run(%v) = nil, want usage error", args)
 			continue
 		}
-		requireCLIError(t, err, codeUsage, "")
+		_ = requireCLIError(t, err, codeUsage, "")
 	}
 }
 
@@ -142,7 +142,7 @@ func TestStatusChainsTextSanitizesChainFields(t *testing.T) {
 		ID:        db.NewID(),
 		Name:      "hostile-chain",
 		Status:    "run\ning\x1b[2J",
-		Reason:    "reviewer said nobell",
+		Reason:    "reviewer said no\abell",
 		Phase:     "build",
 		Step:      "review\rstep",
 		Plan:      1,

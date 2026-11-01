@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/resolve"
@@ -392,13 +393,27 @@ func chainServedCarrier(b store.Binding) bool {
 // resolves a member's server binding_record id and installation is this
 // server's own id, both exactly as ServedView takes them.
 func ServedChainView(rt Runtime, name string, recordID func(string) string, installation string) (remote.ChainView, error) {
-	c, err := rt.Store.Chain(name)
+	c, view, err := servedChainViewHeader(rt, name)
 	if err != nil {
 		return remote.ChainView{}, err
 	}
+	if view, err = servedChainViewMembers(rt, c, view, recordID, installation); err != nil {
+		return remote.ChainView{}, err
+	}
+	return servedChainViewTrace(rt, name, c, view)
+}
+
+// servedChainViewHeader loads the chain and projects its header: the row's
+// columns with a workflow chain's engine state projected onto the legacy
+// position, read-only.
+func servedChainViewHeader(rt Runtime, name string) (db.ChainRow, remote.ChainView, error) {
+	c, err := rt.Store.Chain(name)
+	if err != nil {
+		return db.ChainRow{}, remote.ChainView{}, err
+	}
 	set, err := chainSettingsOf(c)
 	if err != nil {
-		return remote.ChainView{}, err
+		return db.ChainRow{}, remote.ChainView{}, err
 	}
 	view := remote.ChainView{
 		Name:            c.Name,
@@ -423,11 +438,11 @@ func ServedChainView(rt Runtime, name string, recordID func(string) string, inst
 	if len(c.WorkflowJSON) > 0 {
 		def, derr := chain.WorkflowDef(c)
 		if derr != nil {
-			return remote.ChainView{}, derr
+			return db.ChainRow{}, remote.ChainView{}, derr
 		}
 		st, serr := chain.WorkflowState(c)
 		if serr != nil {
-			return remote.ChainView{}, serr
+			return db.ChainRow{}, remote.ChainView{}, serr
 		}
 		f := workflow.LegacyView(def, st)
 		view.Phase, view.Step = f.Phase, f.Step
@@ -442,6 +457,12 @@ func ServedChainView(rt Runtime, name string, recordID func(string) string, inst
 	if len(c.StateJSON) > 0 {
 		view.State = c.StateJSON
 	}
+	return c, view, nil
+}
+
+// servedChainViewMembers appends each member's binding view with its closed
+// rounds in (acked_round, closed_round], read-only.
+func servedChainViewMembers(rt Runtime, c db.ChainRow, view remote.ChainView, recordID func(string) string, installation string) (remote.ChainView, error) {
 	for _, member := range relevoview.MembersOf(c) {
 		b, err := rt.Store.Load(member)
 		if err != nil {
@@ -470,6 +491,12 @@ func ServedChainView(rt Runtime, name string, recordID func(string) string, inst
 		}
 		view.Members = append(view.Members, mv)
 	}
+	return view, nil
+}
+
+// servedChainViewTrace appends the chain's trace and security findings,
+// read-only.
+func servedChainViewTrace(rt Runtime, name string, c db.ChainRow, view remote.ChainView) (remote.ChainView, error) {
 	events, err := rt.Store.ChainEvents(name)
 	if err != nil {
 		return remote.ChainView{}, err

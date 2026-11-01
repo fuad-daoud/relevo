@@ -726,7 +726,7 @@ func TestConfigRollbackRefusesWithoutTerminal(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CreateTemp: %v", err)
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		return f.Stat()
 	}
 	t.Cleanup(func() { stdinStat = original })

@@ -28,20 +28,6 @@ func picks(t *testing.T, rt Runtime, name string) []store.LogEntry {
 	return out
 }
 
-// kinds returns the kinds in a binding's log, in order, for position checks.
-func kinds(t *testing.T, rt Runtime, name string) []store.Kind {
-	t.Helper()
-	entries, err := rt.Store.ReadLog(name)
-	if err != nil {
-		t.Fatalf("ReadLog(%q): %v", name, err)
-	}
-	out := make([]store.Kind, len(entries))
-	for i, e := range entries {
-		out[i] = e.Kind
-	}
-	return out
-}
-
 func TestBindPicksFirstUngatedInOrder(t *testing.T) {
 	t.Parallel()
 

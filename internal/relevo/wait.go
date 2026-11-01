@@ -378,58 +378,69 @@ func Wait(ctx context.Context, rt Runtime, opts WaitOptions) (name string, res W
 	defer registration.release()
 
 	for {
-		// A remote binding's closed round is collected here too:
-		// with no daemon running, this is the only place `relevo wait` would
-		// otherwise see the round's state go stale. Advisory: a sync error
-		// does not stop the poll, since the loop below re-reads the store
-		// either way.
-		syncRemoteKeepingWaitLive(ctx, rt, registration, waitSyncRefreshEvery(opts.syncRefresh))
-
-		for _, n := range opts.Names {
-			b, err := retryer.load(ctx, n)
-			if errors.Is(err, store.ErrNotFound) {
-				return n, WaitResult{Code: WaitGone, Done: true}, nil
-			}
-			if err != nil {
-				return n, WaitResult{}, err
-			}
-			entries, err := retryer.readLog(ctx, n)
-			if err != nil {
-				return n, WaitResult{}, err
-			}
-			if r := WaitOutcome(b, entries, rounds[n], qf); r.Done {
-				// Deliver the pending payload unless --peek suppresses it; a
-				// delivery failure never changes the exit code.
-				if waitDeliverable(r.Code) && !opts.Peek {
-					delivered, derr := delivery.PullPendingThroughEntries(ctx, rt.Store, n, "wait", rounds[n])
-					if derr != nil {
-						r.DeliverErr = derr
-					} else if len(delivered) > 0 {
-						r.Delivered = delivered
-						r.Payload = delivery.JoinDelivered(delivered)
-					}
-				}
-				r.Round = rounds[n]
-				return n, r, nil
-			}
-		}
-
-		// One clock read per pass serves both the timeout check and the
-		// registration: the same instant answers "has this wait run long
-		// enough to give up" and "is this wait still polling". A wait that is
-		// running therefore keeps its row fresh, and one that died between
-		// passes ages out on its own without anything having to clean it up.
-		now := retryer.now()
-		registration.refresh(now)
-
-		if now.Sub(start) >= opts.Timeout {
-			return "", WaitResult{Code: WaitTimeout, Done: true}, nil
+		name, res, done, err := pollOnce(ctx, rt, opts, retryer, rounds, qf, registration, start)
+		if done || err != nil {
+			return name, res, err
 		}
 
 		if err := retryer.sleep(ctx, opts.Interval); err != nil {
 			return "", WaitResult{}, err
 		}
 	}
+}
+
+// pollOnce runs one wait pass: a remote sync with the registration kept live,
+// then each name's outcome, then the timeout check. done reports the wait
+// stopped on this pass; the caller sleeps between passes.
+func pollOnce(ctx context.Context, rt Runtime, opts WaitOptions, retryer *waitRetryer, rounds map[string]int, qf func(name string, round int) string, registration waitRegistration, start time.Time) (string, WaitResult, bool, error) {
+	// A remote binding's closed round is collected here too:
+	// with no daemon running, this is the only place `relevo wait` would
+	// otherwise see the round's state go stale. Advisory: a sync error
+	// does not stop the poll, since the loop below re-reads the store
+	// either way.
+	syncRemoteKeepingWaitLive(ctx, rt, registration, waitSyncRefreshEvery(opts.syncRefresh))
+
+	for _, n := range opts.Names {
+		b, err := retryer.load(ctx, n)
+		if errors.Is(err, store.ErrNotFound) {
+			return n, WaitResult{Code: WaitGone, Done: true}, true, nil
+		}
+		if err != nil {
+			return "", WaitResult{}, true, err
+		}
+		entries, err := retryer.readLog(ctx, n)
+		if err != nil {
+			return "", WaitResult{}, true, err
+		}
+		if r := WaitOutcome(b, entries, rounds[n], qf); r.Done {
+			// Deliver the pending payload unless --peek suppresses it; a
+			// delivery failure never changes the exit code.
+			if waitDeliverable(r.Code) && !opts.Peek {
+				delivered, derr := delivery.PullPendingThroughEntries(ctx, rt.Store, n, "wait", rounds[n])
+				if derr != nil {
+					r.DeliverErr = derr
+				} else if len(delivered) > 0 {
+					r.Delivered = delivered
+					r.Payload = delivery.JoinDelivered(delivered)
+				}
+			}
+			r.Round = rounds[n]
+			return n, r, true, nil
+		}
+	}
+
+	// One clock read per pass serves both the timeout check and the
+	// registration: the same instant answers "has this wait run long
+	// enough to give up" and "is this wait still polling". A wait that is
+	// running therefore keeps its row fresh, and one that died between
+	// passes ages out on its own without anything having to clean it up.
+	now := retryer.now()
+	registration.refresh(now)
+
+	if now.Sub(start) >= opts.Timeout {
+		return "", WaitResult{Code: WaitTimeout, Done: true}, true, nil
+	}
+	return "", WaitResult{}, false, nil
 }
 
 // WaitOwned lists Store.List() filtered to masterMindID, excluding StateDone,

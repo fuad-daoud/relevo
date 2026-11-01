@@ -118,7 +118,7 @@ func TestDBQueryWithoutSQLIsUsage(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
 		return run([]string{"db", "query"})
 	})
-	requireCLIError(t, err, codeUsage, "relevo help")
+	_ = requireCLIError(t, err, codeUsage, "relevo help")
 }
 
 // TestDBQueryTwoStatementsIsUsage pins the shape rejection: one argument
@@ -130,7 +130,7 @@ func TestDBQueryTwoStatementsIsUsage(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
 		return run([]string{"db", "query", `SELECT 1; SELECT 2`})
 	})
-	requireCLIError(t, err, codeUsage, "relevo help")
+	_ = requireCLIError(t, err, codeUsage, "relevo help")
 }
 
 // TestDBQueryRecursiveIsUsage pins the verb's RECURSIVE limit: the statement is
@@ -141,7 +141,7 @@ func TestDBQueryRecursiveIsUsage(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
 		return run([]string{"db", "query", `WITH RECURSIVE c(x) AS (SELECT 1) SELECT x FROM c`})
 	})
-	requireCLIError(t, err, codeUsage, "relevo help")
+	_ = requireCLIError(t, err, codeUsage, "relevo help")
 }
 
 // TestDBQueryPragmaAssignmentIsUsage pins the narrowed PRAGMA allowance: the
@@ -152,7 +152,7 @@ func TestDBQueryPragmaAssignmentIsUsage(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
 		return run([]string{"db", "query", `PRAGMA user_version = 7`})
 	})
-	requireCLIError(t, err, codeUsage, "relevo help")
+	_ = requireCLIError(t, err, codeUsage, "relevo help")
 }
 
 // TestDBQueryUnlistedPragmaIsUsage pins the list itself: a pragma in the read
@@ -163,7 +163,7 @@ func TestDBQueryUnlistedPragmaIsUsage(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
 		return run([]string{"db", "query", `PRAGMA writable_schema`})
 	})
-	requireCLIError(t, err, codeUsage, "relevo help")
+	_ = requireCLIError(t, err, codeUsage, "relevo help")
 }
 
 // TestDBQueryRunsAListedPragma pins the accepted side of the allowance.
@@ -319,7 +319,7 @@ func TestDBQueryMaxBytesFlagBounds(t *testing.T) {
 		{"db", "query", `SELECT 1`, "--max-bytes", strconv.Itoa(wire.AdHocReadCeiling + 1)},
 	} {
 		_, _, err := captureOutput(t, func() error { return run(args) })
-		requireCLIError(t, err, codeUsage, "relevo help")
+		_ = requireCLIError(t, err, codeUsage, "relevo help")
 	}
 }
 
@@ -440,7 +440,7 @@ func TestDBQueryTimeoutFlagIsCappedBelowTheOpenLockWait(t *testing.T) {
 		{"db", "query", `SELECT 1`, "--limit", "0"},
 	} {
 		_, _, err := captureOutput(t, func() error { return run(args) })
-		requireCLIError(t, err, codeUsage, "relevo help")
+		_ = requireCLIError(t, err, codeUsage, "relevo help")
 	}
 
 	if _, _, err := captureOutput(t, func() error {

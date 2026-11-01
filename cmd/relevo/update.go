@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path"
@@ -34,6 +35,83 @@ func updateFlagSet(fs *flag.FlagSet) *updateFlagValues {
 	return v
 }
 
+// resolveUpdateDecision maps the flags to the update target: the running
+// binary's identity, its kind, and what DecideUpdate says to do. The latest
+// tag is fetched only when the decision can need it.
+func resolveUpdateDecision(to string, forceRelease bool) (exe, running string, kind release.Kind, dec release.UpdateDecision, err error) {
+	in := releaseInputs()
+	kind = release.Detect(in)
+	running = in.Version
+
+	exe, err = upgrade.ResolveExe()
+	if err != nil {
+		return "", "", "", release.UpdateDecision{}, fail(codeInternal, "cannot resolve the running executable: %v", err)
+	}
+
+	// The fetch is skipped whenever the decision cannot need the latest tag:
+	// an explicit --to names the target, a go install only prints, and a
+	// local or unknown build without --release refuses before any target is
+	// read.
+	needLatest := to == "" && kind != release.KindGoInstall &&
+		((kind != release.KindLocalBuild && kind != release.KindUnknown) || forceRelease)
+	latest := ""
+	if needLatest {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		latest, err = release.NewHTTPFetcher("", 0).Latest(ctx)
+		cancel()
+		if err != nil {
+			return "", "", "", release.UpdateDecision{}, fail(codeRemoteUnreachable, "cannot learn the latest release: %v", err)
+		}
+	}
+
+	dec = release.DecideUpdate(release.UpdateRequest{
+		Kind:         kind,
+		Running:      running,
+		Latest:       latest,
+		To:           to,
+		ForceRelease: forceRelease,
+	})
+	return exe, running, kind, dec, nil
+}
+
+// installUpdateTarget downloads the target beside exe, runs the candidate's
+// own checks, and swaps it over the running binary. A failure leaves exe
+// unchanged.
+func installUpdateTarget(running, exe string, dec release.UpdateDecision, w io.Writer) error {
+	archive, _ := release.AssetURLs(dec.Target, runtime.GOOS, runtime.GOARCH)
+	_, _ = fmt.Fprintf(w, "relevo %s -> %s: downloading %s\n", running, dec.Target, path.Base(archive))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	tmp, err := (&release.Downloader{Base: release.DownloadBase}).
+		FetchBinary(ctx, dec.Target, runtime.GOOS, runtime.GOARCH, filepath.Dir(exe))
+	if err != nil {
+		msg := fmt.Sprintf("update failed: %v", err)
+		if errors.Is(err, os.ErrPermission) {
+			msg += fmt.Sprintf(" (relevo update replaces the binary in place and needs write access to %s)", filepath.Dir(exe))
+			return fail(codeInternal, "%s", msg)
+		}
+		return fail(codeRemoteUnreachable, "%s", msg)
+	}
+	// The temp file is removed on every path that does not swap it in.
+	swapped := false
+	defer func() {
+		if !swapped {
+			_ = os.Remove(tmp)
+		}
+	}()
+
+	if err := preflightCandidate(tmp, dec.Target, exe); err != nil {
+		return fail(codeInternal, "%v", err)
+	}
+
+	if err := os.Rename(tmp, exe); err != nil {
+		return fail(codeInternal, "cannot replace %s: %v", exe, err)
+	}
+	swapped = true
+	return nil
+}
+
 // cmdUpdate replaces a release binary with a checksum-verified release binary
 // of the target tag. It never restarts anything: a running daemon follows a
 // replaced binary on its own.
@@ -47,7 +125,7 @@ func cmdUpdateRun(args []string) error {
 	fs := flag.NewFlagSet("relevo update", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), usage)
+		_, _ = fmt.Fprintln(fs.Output(), usage)
 	}
 	v := updateFlagSet(fs)
 	check, to, forceRelease, asJSON := v.check, v.to, v.forceRelease, v.asJSON
@@ -58,38 +136,10 @@ func cmdUpdateRun(args []string) error {
 		return fail(codeUsage, "update wants no arguments, got %v", fs.Args())
 	}
 
-	in := releaseInputs()
-	kind := release.Detect(in)
-	running := in.Version
-
-	exe, err := upgrade.ResolveExe()
+	exe, running, kind, dec, err := resolveUpdateDecision(*to, *forceRelease)
 	if err != nil {
-		return fail(codeInternal, "cannot resolve the running executable: %v", err)
+		return err
 	}
-
-	// The fetch is skipped whenever the decision cannot need the latest tag:
-	// an explicit --to names the target, a go install only prints, and a
-	// local or unknown build without --release refuses before any target is
-	// read.
-	needLatest := *to == "" && kind != release.KindGoInstall &&
-		!((kind == release.KindLocalBuild || kind == release.KindUnknown) && !*forceRelease)
-	latest := ""
-	if needLatest {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		latest, err = release.NewHTTPFetcher("", 0).Latest(ctx)
-		cancel()
-		if err != nil {
-			return fail(codeRemoteUnreachable, "cannot learn the latest release: %v", err)
-		}
-	}
-
-	dec := release.DecideUpdate(release.UpdateRequest{
-		Kind:         kind,
-		Running:      running,
-		Latest:       latest,
-		To:           *to,
-		ForceRelease: *forceRelease,
-	})
 
 	if *check {
 		doc := updateDocOf(running, exe, kind, dec, false)
@@ -122,38 +172,9 @@ func cmdUpdateRun(args []string) error {
 
 	// The progress line moves to stderr under --json, where stdout carries the
 	// document alone.
-	w := noticeWriter(*asJSON)
-	archive, _ := release.AssetURLs(dec.Target, runtime.GOOS, runtime.GOARCH)
-	fmt.Fprintf(w, "relevo %s -> %s: downloading %s\n", running, dec.Target, path.Base(archive))
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-	tmp, err := (&release.Downloader{Base: release.DownloadBase}).
-		FetchBinary(ctx, dec.Target, runtime.GOOS, runtime.GOARCH, filepath.Dir(exe))
-	if err != nil {
-		msg := fmt.Sprintf("update failed: %v", err)
-		if errors.Is(err, os.ErrPermission) {
-			msg += fmt.Sprintf(" (relevo update replaces the binary in place and needs write access to %s)", filepath.Dir(exe))
-			return fail(codeInternal, "%s", msg)
-		}
-		return fail(codeRemoteUnreachable, "%s", msg)
+	if err := installUpdateTarget(running, exe, dec, noticeWriter(*asJSON)); err != nil {
+		return err
 	}
-	// The temp file is removed on every path that does not swap it in.
-	swapped := false
-	defer func() {
-		if !swapped {
-			os.Remove(tmp)
-		}
-	}()
-
-	if err := preflightCandidate(tmp, dec.Target, exe); err != nil {
-		return fail(codeInternal, "%v", err)
-	}
-
-	if err := os.Rename(tmp, exe); err != nil {
-		return fail(codeInternal, "cannot replace %s: %v", exe, err)
-	}
-	swapped = true
 
 	if *asJSON {
 		return printDoc(updateDocOf(running, exe, kind, dec, true))

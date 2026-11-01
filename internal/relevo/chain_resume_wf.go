@@ -26,50 +26,68 @@ var chainResumePostWriteHook func(tx *store.Tx, c db.ChainRow) error
 // to the stored definition, creates the members the params brought in, and
 // runs the resumed action.
 func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts ResumeOptions) (ChainResult, error) {
-	if err := resumeRefusal(c); err != nil {
+	def, before, from, set, merged, err := chainResumePreflight(ctx, rt, c, opts)
+	if err != nil {
 		return ChainResult{}, err
+	}
+	out, err := chainResumeCommitWorkflow(ctx, rt, opts, def, before, from, set, merged)
+	if err != nil {
+		return ChainResult{}, err
+	}
+	return chainResumePostGate(ctx, rt, out, opts)
+}
+
+// chainResumePreflight runs every refusal and resolution a resume needs before
+// writing: the gates, the row's definition and state, the settings, the
+// merged params, and the reroute. Nothing is written.
+func chainResumePreflight(ctx context.Context, rt Runtime, c db.ChainRow, opts ResumeOptions) (workflow.Definition, workflow.State, string, chain.Settings, map[string]string, error) {
+	fail := func(err error) (workflow.Definition, workflow.State, string, chain.Settings, map[string]string, error) {
+		return workflow.Definition{}, workflow.State{}, "", chain.Settings{}, nil, err
+	}
+	if err := resumeRefusal(c); err != nil {
+		return fail(err)
 	}
 	// A child's resume needs its parent able to follow it back into the fork,
 	// so the parent is asked first and nothing is written on a refusal.
 	if err := chainForkParentGate(rt, c); err != nil {
-		return ChainResult{}, err
+		return fail(err)
 	}
 	// A gate change on a server-run writer must reach that server's binding, so
 	// it is refused where the server cannot take it. The delivering push waits
 	// for every other refusal below to clear.
 	if chainResumeChangesGate(opts) {
 		if err := resumeRemoteGateRefusal(ctx, rt, c); err != nil {
-			return ChainResult{}, err
+			return fail(err)
 		}
 	}
 	// A round the halt left open -- no report, no close -- would otherwise be
 	// refused for that open round. A resume is the human ending it, so it
 	// closes the way a stop does and the resume can open the next one.
 	if err := closeDeadMemberRound(ctx, rt, c); err != nil {
-		return ChainResult{}, err
+		return fail(err)
 	}
 	// The row's definition and state, migrated onto the engine when the row
 	// predates it, so a resume never answers internal on a human-readable row.
 	c, def, before, err := chainResumeWorkflowRow(rt, c)
 	if err != nil {
-		return ChainResult{}, err
+		return fail(err)
 	}
 	set, err := resumeSettings(rt, c, opts)
 	if err != nil {
-		return ChainResult{}, err
+		return fail(err)
 	}
 	// A parent on a fork cannot re-enter the fork step: entering it starts the
 	// children a second time. So a fork with a child still standing is refused
 	// here, before anything is written and before the end delivery is
 	// superseded: the human resumes the child instead.
 	if err := chainForkResumeRefusal(c, before); err != nil {
-		return ChainResult{}, err
+		return fail(err)
 	}
 	// The old flags fill the params exactly as a start's do, so a resume can
 	// replace the check or the budgets the chain runs under.
 	flagParams, err := chainResumeFlagParams(def, rt, opts)
 	if err != nil {
-		return ChainResult{}, err
+		return fail(err)
 	}
 	merged := map[string]string{}
 	for key, value := range flagParams {
@@ -80,11 +98,11 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 	}
 	if len(merged) > 0 {
 		if def, err = workflow.WithParams(def, merged); err != nil {
-			return ChainResult{}, refusal.New("%v", err)
+			return fail(refusal.New("%v", err))
 		}
 		given := workflow.Given{Plans: len(before.Iter["plans"].Items) > 0}
 		if err := chainValidateWorkflow(rt, def, given); err != nil {
-			return ChainResult{}, err
+			return fail(err)
 		}
 	}
 	// A resume replacing the check on a zero-budget repair-arm halt goes back
@@ -93,14 +111,19 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 	// the lock writes anything.
 	from, err := chainResumeReroute(def, before, opts)
 	if err != nil {
-		return ChainResult{}, err
+		return fail(err)
 	}
 	// A human has looked at the plan: every budget starts fresh, as a resume
 	// resets the correction count on the fixed state machine.
 	before.Visits = map[string]int{}
+	return def, before, from, set, merged, nil
+}
 
+// chainResumeCommitWorkflow applies the resumed engine step under the state
+// lock.
+func chainResumeCommitWorkflow(ctx context.Context, rt Runtime, opts ResumeOptions, def workflow.Definition, before workflow.State, from string, set chain.Settings, merged map[string]string) (ChainResult, error) {
 	var out ChainResult
-	err = rt.Store.WithLock(func(tx *store.Tx) error {
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
 		res, lerr := chainResumeLocked(ctx, rt, tx, opts, def, before, from, set, merged)
 		if lerr != nil {
 			return lerr
@@ -111,11 +134,17 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 	if err != nil {
 		return ChainResult{}, err
 	}
+	return out, nil
+}
+
+// chainResumePostGate answers a still-halted resume and pushes an owed gate
+// change: the halt is the answer, so it is refused, not reported as an
+// internal fault, and the push waits until the resume committed.
+func chainResumePostGate(ctx context.Context, rt Runtime, out ChainResult, opts ResumeOptions) (ChainResult, error) {
 	// A resume whose send could not start halts the chain, as the fixed state
-	// machine's resume returns the send's own error. The halt is the answer,
-	// so it is refused, not reported as an internal fault: the CLI reads a
-	// refusal as exit 2 with the reason to act on, and an internal as "send
-	// this to bugreport" on a human-readable row.
+	// machine's resume returns the send's own error. The CLI reads a refusal
+	// as exit 2 with the reason to act on, and an internal as "send this to
+	// bugreport" on a human-readable row.
 	if out.Chain.Status == string(workflow.StatusHalted) {
 		return out, refusal.New("chain %s is still halted: %s", out.Chain.Name, out.Chain.Reason)
 	}
@@ -147,92 +176,141 @@ func chainResumeCommitRow(tx *store.Tx, row *db.ChainRow, def workflow.Definitio
 	return tx.ChainPut(*row)
 }
 
+// chainResumePrepared is what the locked resume carries between its phases:
+// the row, the resumed engine state with its actions, and the undo facts.
+type chainResumePrepared struct {
+	row       db.ChainRow
+	resumed   workflow.State
+	acts      []workflow.Action
+	snap      *chainResumeSnapshot
+	toConfirm []pendingDelivery
+}
+
 func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, opts ResumeOptions, def workflow.Definition, before workflow.State, from string, set chain.Settings, merged map[string]string) (ChainResult, error) {
-	row, err := tx.Chain(opts.Name)
+	prep, handled, res, err := chainResumePrepareLocked(ctx, rt, tx, opts, def, before, from, set, merged)
 	if err != nil {
 		return ChainResult{}, err
 	}
-	if err := resumeRefusal(row); err != nil {
+	if handled {
+		return res, nil
+	}
+	if prep, err = chainResumeCommitLocked(ctx, rt, tx, prep, def, before, set, merged); err != nil {
 		return ChainResult{}, err
 	}
+	return chainResumeApplyActionsLocked(ctx, rt, tx, opts, prep, def, before)
+}
+
+// chainResumePrepareLocked loads the row and resolves the resumed engine
+// state, still inside the caller's lock. Nothing is written yet, so its
+// errors return plain.
+func chainResumePrepareLocked(ctx context.Context, rt Runtime, tx *store.Tx, opts ResumeOptions, def workflow.Definition, before workflow.State, from string, set chain.Settings, merged map[string]string) (chainResumePrepared, bool, ChainResult, error) {
+	fail := func(err error) (chainResumePrepared, bool, ChainResult, error) {
+		return chainResumePrepared{}, false, ChainResult{}, err
+	}
+	row, err := tx.Chain(opts.Name)
+	if err != nil {
+		return fail(err)
+	}
+	if err := resumeRefusal(row); err != nil {
+		return fail(err)
+	}
 	if handled, res, err := chainForkResumeParent(ctx, rt, tx, row, def, before); err != nil {
-		return ChainResult{}, err
+		return fail(err)
 	} else if handled {
-		return res, nil
+		return chainResumePrepared{}, true, res, nil
 	}
 	snap, err := newChainResumeSnapshot(tx, row)
 	if err != nil {
-		return ChainResult{}, err
+		return fail(err)
 	}
 	toConfirm, err := collectPendingChainDeliveries(tx, row)
 	if err != nil {
-		return ChainResult{}, err
+		return fail(err)
 	}
 	settingsJSON, err := json.Marshal(set)
 	if err != nil {
-		return ChainResult{}, fmt.Errorf("encode chain %s settings: %w", row.Name, err)
+		return fail(fmt.Errorf("encode chain %s settings: %w", row.Name, err))
 	}
 	row.SettingsJSON = settingsJSON
 	closed, err := chainResumeClosed(ctx, rt, tx, row, before)
 	if err != nil {
-		return ChainResult{}, err
+		return fail(err)
 	}
 	sameRound := false
 	if closed == nil && opts.From == "" {
 		if closed, err = chainResumeDirtyRecovery(ctx, rt, tx, row, before); err != nil {
-			return ChainResult{}, err
+			return fail(err)
 		}
 		sameRound = closed != nil
 	}
 	resumed, acts, err := workflow.Resume(def, before, workflow.ResumeOpts{From: from, Closed: closed, SameRound: sameRound})
 	if err != nil {
-		return ChainResult{}, refusal.New("%v", err)
+		return fail(refusal.New("%v", err))
 	}
+	return chainResumePrepared{row: row, resumed: resumed, acts: acts, snap: snap, toConfirm: toConfirm}, false, ChainResult{}, nil
+}
+
+// chainResumeCommitLocked writes the resumed row, still inside the caller's
+// lock: the added members, the raised caps, and the committed engine state.
+// Every error goes through snap.restore.
+func chainResumeCommitLocked(ctx context.Context, rt Runtime, tx *store.Tx, prep chainResumePrepared, def workflow.Definition, before workflow.State, set chain.Settings, merged map[string]string) (chainResumePrepared, error) {
+	row := prep.row
 	if len(merged) > 0 {
-		if row, err = chainResumeAddMembers(ctx, rt, tx, row, def, snap); err != nil {
-			return ChainResult{}, snap.restore(tx, err)
+		var err error
+		if row, err = chainResumeAddMembers(ctx, rt, tx, row, def, prep.snap); err != nil {
+			return chainResumePrepared{}, prep.snap.restore(tx, err)
 		}
 	}
 	if err := chainResumeRaiseCaps(tx, row, len(before.Iter["plans"].Items), set); err != nil {
-		return ChainResult{}, snap.restore(tx, err)
+		return chainResumePrepared{}, prep.snap.restore(tx, err)
 	}
-	for _, act := range acts {
+	for _, act := range prep.acts {
 		if act.Kind != workflow.ActionSend {
 			continue
 		}
 		if name, merr := chainFlowMemberName(tx, row, act.Actor); merr == nil {
 			if rerr := resumeOpenRoundRefusal(tx, row, name); rerr != nil {
-				return ChainResult{}, snap.restore(tx, rerr)
+				return chainResumePrepared{}, prep.snap.restore(tx, rerr)
 			}
 		}
 		break
 	}
-	if err := chainResumeCommitRow(tx, &row, def, resumed, rt.Now().UTC()); err != nil {
-		return ChainResult{}, snap.restore(tx, err)
+	if err := chainResumeCommitRow(tx, &row, def, prep.resumed, rt.Now().UTC()); err != nil {
+		return chainResumePrepared{}, prep.snap.restore(tx, err)
 	}
 	if chainResumePostWriteHook != nil {
 		if err := chainResumePostWriteHook(tx, row); err != nil {
-			return ChainResult{}, snap.restore(tx, err)
+			return chainResumePrepared{}, prep.snap.restore(tx, err)
 		}
 	}
+	prep.row = row
+	return prep, nil
+}
+
+// chainResumeApplyActionsLocked runs the resume's actions and settles its
+// deliveries, still inside the caller's lock. Every error goes through
+// snap.restore.
+func chainResumeApplyActionsLocked(ctx context.Context, rt Runtime, tx *store.Tx, opts ResumeOptions, prep chainResumePrepared, def workflow.Definition, before workflow.State) (ChainResult, error) {
+	row := prep.row
+	resumed := prep.resumed
 	gateChanged := chainResumeChangesGate(opts)
-	for _, act := range acts {
+	for _, act := range prep.acts {
 		if err := chainResumeRunAction(ctx, rt, tx, row, def, before, &resumed, act, gateChanged); err != nil {
-			return ChainResult{}, snap.restore(tx, err)
+			return ChainResult{}, prep.snap.restore(tx, err)
 		}
 	}
-	if err := confirmPendingChainDeliveries(tx, toConfirm); err != nil {
-		return ChainResult{}, snap.restore(tx, err)
+	if err := confirmPendingChainDeliveries(tx, prep.toConfirm); err != nil {
+		return ChainResult{}, prep.snap.restore(tx, err)
 	}
 	members, err := chainFlowStoredMembers(tx, row)
 	if err != nil {
-		return ChainResult{}, snap.restore(tx, err)
+		return ChainResult{}, prep.snap.restore(tx, err)
 	}
 	if current, cerr := tx.Chain(opts.Name); cerr == nil {
 		row = current
 	}
 	if err := chainForkParentReopen(rt, tx, row); err != nil {
-		return ChainResult{}, snap.restore(tx, err)
+		return ChainResult{}, prep.snap.restore(tx, err)
 	}
 	return ChainResult{Chain: row, Members: members, Plans: len(before.Iter["plans"].Items)}, nil
 }

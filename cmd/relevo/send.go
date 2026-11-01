@@ -40,33 +40,43 @@ func sendFlagSet(fs *flag.FlagSet) *sendFlagValues {
 	return v
 }
 
+// resolveSendFlags refuses the flag combinations send cannot run, before the
+// runtime is built. The refusal touches neither the state directory nor a
+// harness, and must not depend on argv order.
+func resolveSendFlags(fs *flag.FlagSet, v *sendFlagValues) (*int, *bool, error) {
+	if *v.verify && *v.noVerify {
+		return nil, nil, fail(codeRefused, "relevo send --verify and --no-verify are exclusive")
+	}
+	if *v.file == "" {
+		return nil, nil, fail(codeUsage, "relevo send requires --file")
+	}
+	regateOpt, err := regateFlag(fs, v.regate)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var verifyOpt *bool
+	if *v.verify || *v.noVerify {
+		b := *v.verify
+		verifyOpt = &b
+	}
+	return regateOpt, verifyOpt, nil
+}
+
 func cmdSend(args []string) error {
 	fs := flag.NewFlagSet("send", flag.ContinueOnError)
 	v := sendFlagSet(fs)
 	file, name, tier, candidate := v.file, v.name, v.tier, v.candidate
-	allowYolo, dryRun, regate := v.allowYolo, v.dryRun, v.regate
-	verify, noVerify := v.verify, v.noVerify
+	allowYolo, dryRun := v.allowYolo, v.dryRun
 	force, asJSON := v.force, v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	// Before newRuntime: the refusal must not depend on argv order and touches
 	// neither the state directory nor a harness.
-	if *verify && *noVerify {
-		return fail(codeRefused, "relevo send --verify and --no-verify are exclusive")
-	}
-	if *file == "" {
-		return fail(codeUsage, "relevo send requires --file")
-	}
-	regateOpt, err := regateFlag(fs, regate)
+	regateOpt, verifyOpt, err := resolveSendFlags(fs, v)
 	if err != nil {
 		return err
-	}
-
-	var verifyOpt *bool
-	if *verify || *noVerify {
-		v := *verify
-		verifyOpt = &v
 	}
 
 	rt, err := newRuntime()
@@ -109,10 +119,10 @@ func cmdSend(args []string) error {
 	// to stderr, where stdout carries the document alone.
 	notices := noticeWriter(*asJSON)
 	if res.Pick != "" {
-		fmt.Fprintln(notices, res.Pick)
+		_, _ = fmt.Fprintln(notices, res.Pick)
 	}
 	if res.Drift != "" {
-		fmt.Fprintln(notices, res.Drift)
+		_, _ = fmt.Fprintln(notices, res.Drift)
 	}
 	if *asJSON {
 		// The round's candidate and tier: the flags when given, else the

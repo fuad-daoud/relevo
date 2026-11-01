@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -9,8 +10,8 @@ func TestWaitFailureContextCanceled(t *testing.T) {
 	t.Parallel()
 
 	err := waitFailure(context.Canceled)
-	ce, ok := err.(*cliError)
-	if !ok {
+	var ce *cliError
+	if !errors.As(err, &ce) {
 		t.Fatalf("waitFailure(context.Canceled) = %T, want *cliError", err)
 	}
 	if ce.code != codeInternal {

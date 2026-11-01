@@ -200,7 +200,7 @@ func regateFlag(fs *flag.FlagSet, regate *int) (*int, error) {
 // --json.
 func noteRegateNoGate(w io.Writer, b store.Binding) {
 	if b.Regate > 0 && b.Gate == "" {
-		fmt.Fprintf(w, "  regate %d (no gate configured)\n", b.Regate)
+		_, _ = fmt.Fprintf(w, "  regate %d (no gate configured)\n", b.Regate)
 	}
 }
 
@@ -214,6 +214,62 @@ func noticeWriter(jsonMode bool) io.Writer {
 	return os.Stdout
 }
 
+// writeErrorBusy classifies the busy family: each sentinel also unwraps to
+// refusal.ErrRefused, so they are checked before the bare refusal case, and
+// only the named reason picks the next hint.
+func writeErrorBusy(err error) (error, bool) {
+	switch {
+	case errors.Is(err, relevo.ErrBuilderBusy):
+		return failNext(codeRefused, "relevo done", "%v", err), true
+	case errors.Is(err, relevo.ErrReportPending):
+		return failNext(codeRefused, "relevo wait", "%v", err), true
+	case errors.Is(err, relevo.ErrScopeActive):
+		return failNext(codeRefused, "relevo stop", "%v", err), true
+	case errors.Is(err, refusal.ErrRefused):
+		return fail(codeRefused, "%v", err), true
+	default:
+		return nil, false
+	}
+}
+
+// writeErrorUsage classifies the caller's-own-argument family: a bad flag
+// value is usage (exit 2), never internal.
+func writeErrorUsage(err error) (error, bool) {
+	switch {
+	case errors.Is(err, store.ErrInvalidName):
+		return fail(codeUsage, "%v", err), true
+	case errors.Is(err, store.ErrInvalidFeature), errors.Is(err, store.ErrInvalidTicket):
+		return fail(codeUsage, "%v", err), true
+	case errors.Is(err, refusal.ErrBadInput):
+		return fail(codeUsage, "%v", err), true
+	case errors.Is(err, relevo.ErrSeedOverCap):
+		return failNext(codeUsage, "trim the seed or pass --force", "%v", err), true
+	case errors.Is(err, candidate.ErrUnknownCandidate),
+		errors.Is(err, candidate.ErrBadRef),
+		errors.Is(err, availability.ErrUnknownProvider):
+		// The message names the accepted forms.
+		return fail(codeUsage, "%s", availability.UsageText(err)), true
+	default:
+		return nil, false
+	}
+}
+
+// writeErrorMissing classifies the not-found family: the named thing is gone.
+func writeErrorMissing(err error) (error, bool) {
+	switch {
+	case errors.Is(err, refusal.ErrRoundNotFound):
+		return fail(codeRoundNotFound, "%v", err), true
+	case errors.Is(err, store.ErrNotFound):
+		return fail(codeBindingNotFound, "%v", err), true
+	case errors.Is(err, delivery.ErrAckUnknownSeq):
+		return fail(codePushSeqNotFound, "%v", err), true
+	case errors.Is(err, delivery.ErrAckNoClaim):
+		return fail(codePushNoClaim, "%v", err), true
+	default:
+		return nil, false
+	}
+}
+
 // writeError classifies a failure out of the relevo write paths into the
 // frame's catalog code: the sentinels relevo and store export are the only
 // distinctions, and anything else is internal. Coded errors pass through.
@@ -225,50 +281,27 @@ func writeError(err error) error {
 	if errors.As(err, &ce) {
 		return err
 	}
+	if out, ok := writeErrorBusy(err); ok {
+		return out
+	}
+	if out, ok := writeErrorUsage(err); ok {
+		return out
+	}
+	if out, ok := writeErrorMissing(err); ok {
+		return out
+	}
 	var openMember *relevo.RoundOpenError
 	var candOpen *relevo.CandidateRoundOpenError
 	var envErr *relevo.EnvironmentError
 	switch {
-	// The busy family is checked before the bare refusal case: each sentinel
-	// also unwraps to refusal.ErrRefused, and only the named reason picks the
-	// next hint.
-	case errors.Is(err, relevo.ErrBuilderBusy):
-		return failNext(codeRefused, "relevo done", "%v", err)
-	case errors.Is(err, relevo.ErrReportPending):
-		return failNext(codeRefused, "relevo wait", "%v", err)
-	case errors.Is(err, relevo.ErrScopeActive):
-		return failNext(codeRefused, "relevo stop", "%v", err)
-	case errors.Is(err, refusal.ErrRefused):
-		return fail(codeRefused, "%v", err)
-	case errors.Is(err, store.ErrInvalidName):
-		// A binding name is the caller's own argument: a corrected --name is
-		// the whole way out, so this is usage (exit 2), never internal.
-		return fail(codeUsage, "%v", err)
-	case errors.Is(err, store.ErrInvalidFeature), errors.Is(err, store.ErrInvalidTicket):
-		// Same shape as a bad name: the flag value itself is what is wrong.
-		return fail(codeUsage, "%v", err)
-	case errors.Is(err, refusal.ErrBadInput):
-		// A flag pair that cannot both hold, a flag the shape does not
-		// honour, a name already taken: usage, not an internal failure.
-		return fail(codeUsage, "%v", err)
-	case errors.Is(err, refusal.ErrRoundNotFound):
-		return fail(codeRoundNotFound, "%v", err)
 	case errors.Is(err, store.ErrHandedOver), errors.Is(err, db.ErrWriterMoved):
 		return fail(codeRefused, "%v", err)
-	case errors.Is(err, store.ErrNotFound):
-		return fail(codeBindingNotFound, "%v", err)
 	case errors.Is(err, delivery.ErrAckForeignBinding):
 		return fail(codeMastermindMismatch, "%v", err)
-	case errors.Is(err, delivery.ErrAckUnknownSeq):
-		return fail(codePushSeqNotFound, "%v", err)
 	case errors.Is(err, delivery.ErrAckAlreadyConfirmed):
 		return fail(codePushAlreadyConfirm, "%v", err)
 	case errors.Is(err, delivery.ErrAckNotAdmitted):
 		return fail(codePushNotAdmitted, "%v", err)
-	case errors.Is(err, delivery.ErrAckNoClaim):
-		return fail(codePushNoClaim, "%v", err)
-	case errors.Is(err, relevo.ErrSeedOverCap):
-		return failNext(codeUsage, "trim the seed or pass --force", "%v", err)
 	case errors.Is(err, relevo.ErrRoundCap):
 		// A binding that used every round its cap allows needs a fresh
 		// builder; the cap is not an internal failure.
@@ -301,13 +334,6 @@ func writeError(err error) error {
 		errors.Is(err, roles.ErrBadActors),
 		errors.Is(err, roles.ErrBadRoles):
 		return failNext(codePolicyRefused, "relevo config", "%v", err)
-	case errors.Is(err, candidate.ErrUnknownCandidate),
-		errors.Is(err, candidate.ErrBadRef),
-		errors.Is(err, availability.ErrUnknownProvider):
-		// A candidate, ref or provider named on the command line is the
-		// caller's own argument, so a typo is usage and never `relevo
-		// bugreport`. The message names the accepted forms.
-		return fail(codeUsage, "%s", availability.UsageText(err))
 	case errors.Is(err, client.ErrUnreachable):
 		return fail(codeRemoteUnreachable, "%v", err)
 	case errors.Is(err, errOwnerSandboxDenied):

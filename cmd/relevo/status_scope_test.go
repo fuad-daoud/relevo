@@ -212,7 +212,7 @@ func TestStatusExplicitScopeFlagsOverrideResolution(t *testing.T) {
 	_, _, err = captureOutput(t, func() error {
 		return run([]string{"status", "--mastermind", "architect-a", "--all-masterminds"})
 	})
-	requireCLIError(t, err, codeUsage, "relevo help")
+	_ = requireCLIError(t, err, codeUsage, "relevo help")
 	var ec exitCodeErr
 	if !errors.As(err, &ec) || ec.code != 2 {
 		t.Errorf("both scope flags: exit = %v, want 2", err)
@@ -326,7 +326,7 @@ func TestStatusLineRefusesAllMasterminds(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
 		return run([]string{"status", "--line", "--all-masterminds"})
 	})
-	requireCLIError(t, err, codeUsage, "relevo help")
+	_ = requireCLIError(t, err, codeUsage, "relevo help")
 }
 
 // TestStatuslineNamesItsMastermind pins that the document's mastermind is

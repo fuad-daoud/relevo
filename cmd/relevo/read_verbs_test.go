@@ -66,7 +66,7 @@ func assertIngestMirrorEmpty(t *testing.T, path string) {
 	if err != nil {
 		t.Fatalf("open %s: %v", path, err)
 	}
-	defer d.Close()
+	defer func() { _ = d.Close() }()
 
 	stats, err := d.Stats()
 	if err != nil {

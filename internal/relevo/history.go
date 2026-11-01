@@ -148,6 +148,21 @@ func (o *HistoryOptions) Filter(ctx context.Context, rt Runtime, now time.Time) 
 	note := func(flag, queryValue string) {
 		notes = append(notes, fmt.Sprintf("note: --%s overrides %s:%s from -q", flag, flag, queryValue))
 	}
+	if err := applyFlagOverrides(o, &q, &f, note); err != nil {
+		return db.Filter{}, nil, err
+	}
+	if err := applySinceUntilArchived(o, &q, &f, now, note); err != nil {
+		return db.Filter{}, nil, err
+	}
+	if err := resolveHereAndCandidate(ctx, rt, o, &f); err != nil {
+		return db.Filter{}, nil, err
+	}
+	return f, notes, nil
+}
+
+// applyFlagOverrides sets the explicit flag values over the -q query filter,
+// noting each flag that disagrees with the value the query set.
+func applyFlagOverrides(o *HistoryOptions, q *histq.Query, f *db.Filter, note func(flag, queryValue string)) error {
 	set := func(flag, queryValue, flagValue string, dst *string) {
 		if flagValue == "" {
 			return
@@ -172,22 +187,28 @@ func (o *HistoryOptions) Filter(ctx context.Context, rt Runtime, now time.Time) 
 	if o.By != "" {
 		a, ok := histq.ParseAxis(o.By)
 		if !ok {
-			return db.Filter{}, nil, fmt.Errorf("--by %q: want one of %s", o.By, axisList())
+			return fmt.Errorf("--by %q: want one of %s", o.By, axisList())
 		}
 		if q.By != histq.AxisNone && string(q.By) != o.By {
 			note("by", string(q.By))
 		}
 		q.By = a
-		o.parsed = q
+		o.parsed = *q
 	}
+	return nil
+}
 
+// applySinceUntilArchived resolves the --since/--until instants and carries
+// the --archived flag into the filter, noting each flag that disagrees with
+// the value the query set.
+func applySinceUntilArchived(o *HistoryOptions, q *histq.Query, f *db.Filter, now time.Time, note func(flag, queryValue string)) error {
 	if o.Since != "" {
 		if q.Since != "" && q.Since != o.Since {
 			note("since", q.Since)
 		}
 		ts, err := ParseSince(o.Since, now)
 		if err != nil {
-			return db.Filter{}, nil, err
+			return err
 		}
 		f.Since = ts
 	}
@@ -197,7 +218,7 @@ func (o *HistoryOptions) Filter(ctx context.Context, rt Runtime, now time.Time) 
 		}
 		ts, err := ParseSince(o.Until, now)
 		if err != nil {
-			return db.Filter{}, nil, err
+			return err
 		}
 		f.Until = ts
 	}
@@ -207,14 +228,20 @@ func (o *HistoryOptions) Filter(ctx context.Context, rt Runtime, now time.Time) 
 		}
 		f.Archived = o.Archived
 	}
+	return nil
+}
 
+// resolveHereAndCandidate resolves --here through the git repository facts
+// into the filter's repo, then resolves a --candidate name to its canonical
+// token and stamps the limit.
+func resolveHereAndCandidate(ctx context.Context, rt Runtime, o *HistoryOptions, f *db.Filter) error {
 	if o.Here != "" {
 		if rt.Git == nil {
-			return db.Filter{}, nil, fmt.Errorf("--here: %s: not a git repository", o.Here)
+			return fmt.Errorf("--here: %s: not a git repository", o.Here)
 		}
 		originURL, commonDir, err := rt.Git.RepoFacts(ctx, o.Here)
 		if err != nil {
-			return db.Filter{}, nil, fmt.Errorf("--here: %s: not a git repository: %w", o.Here, err)
+			return fmt.Errorf("--here: %s: not a git repository: %w", o.Here, err)
 		}
 		normalised := git.NormalizeOriginURL(originURL)
 		if normalised != "" {
@@ -234,7 +261,7 @@ func (o *HistoryOptions) Filter(ctx context.Context, rt Runtime, now time.Time) 
 	}
 
 	f.Limit = o.Limit
-	return f, notes, nil
+	return nil
 }
 
 func axisList() string {
