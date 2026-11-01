@@ -8,8 +8,7 @@ import (
 	"time"
 )
 
-// The bundle's section names: one identity per part, used as the heading, the
-// word an omission line starts with, and the name a projection sets.
+// The bundle's section names: one identity per part.
 const (
 	SectionDescription = "description"
 	SectionEnvironment = "environment"
@@ -25,8 +24,8 @@ const (
 )
 
 // Section is one named part of the bundle: prose in Lines, a table when
-// Columns is set, or Omitted saying why the part is missing rather than empty.
-// A projection fills it from an allow-list, never from a whole document.
+// Columns is set, or Omitted saying why the part is missing. A projection
+// fills it from an allow-list, never from a whole document.
 type Section struct {
 	Name    string     `json:"name"`
 	Columns []string   `json:"columns,omitempty"`
@@ -35,22 +34,20 @@ type Section struct {
 	Omitted string     `json:"omitted,omitempty"`
 }
 
-// Omission records one source that errored or panicked: the section it would
-// have filled and the reason it did not.
+// Omission records one source that errored or panicked.
 type Omission struct {
 	Section string `json:"section"`
 	Reason  string `json:"reason"`
 }
 
-// Source contributes one section to the bundle. Name is the section's identity
-// when the section itself carries none.
+// Source contributes one section to the bundle; Name fills in when the
+// section itself carries none.
 type Source struct {
 	Name  string
 	Build func() (Section, error)
 }
 
-// Bundle is one assembled report: the header facts, the sections in order, and
-// the sources that could not fill theirs.
+// Bundle is one assembled report.
 type Bundle struct {
 	Title     string
 	Version   string
@@ -61,9 +58,9 @@ type Bundle struct {
 	Omissions []Omission
 }
 
-// Collect runs every source once, in order, and assembles the bundle. A source
-// that returns an error or panics becomes one omission and leaves every other
-// section intact: assembling a bundle never fails the run that asked for it.
+// Collect runs every source once and assembles the bundle. A source that
+// errors or panics becomes one omission: assembling a bundle never fails the
+// run that asked for it.
 func Collect(title, version string, now time.Time, sources []Source) Bundle {
 	b := Bundle{Title: title, Version: version, Created: now.UTC()}
 	for _, src := range sources {
@@ -80,8 +77,7 @@ func Collect(title, version string, now time.Time, sources []Source) Bundle {
 	return b
 }
 
-// runSource runs one source, turning a panic into an error, so one bad source
-// cannot take the bundle down with it.
+// runSource runs one source, turning a panic into an error.
 func runSource(src Source) (sec Section, err error) {
 	if src.Build == nil {
 		return Section{}, fmt.Errorf("no builder")
