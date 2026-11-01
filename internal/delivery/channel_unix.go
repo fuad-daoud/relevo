@@ -7,9 +7,8 @@ import (
 	"syscall"
 )
 
-// defaultClaimAlive reports whether pid names a live process: signal 0
-// succeeds, or fails with EPERM (a process we cannot signal is still
-// alive).
+// defaultClaimAlive reports whether pid is live: signal 0 succeeds or fails
+// with EPERM, which still means alive.
 func defaultClaimAlive(pid int) bool {
 	if pid <= 0 {
 		return false

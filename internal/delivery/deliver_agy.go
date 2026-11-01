@@ -16,35 +16,28 @@ import (
 )
 
 const (
-	// AgyMaxContent bounds the content passed to `agy agentapi send-message`.
-	// Linux's per-argument limit is 131072 bytes; this stays under it so an
-	// argument carrying the whole report is always legal.
+	// AgyMaxContent bounds the send-message content: under Linux's 131072-byte
+	// per-argument limit, so the report argument is always legal.
 	AgyMaxContent = 100_000
-	// AgyConfirmWindow is how long Deliver polls the conversation's inbox for
-	// the read mark before giving up on this attempt. The message is already
-	// sent by then, so giving up is not an error: the next tick finds the
-	// message and reports the same state without resending.
+	// AgyConfirmWindow bounds inbox polling: the message is already sent, so a
+	// close without the mark is not an error -- the next tick finds it without resending.
 	AgyConfirmWindow = 3 * time.Second
 	// AgyConfirmPoll is the gap between inbox scans inside that window.
 	AgyConfirmPoll = 250 * time.Millisecond
-	// agyClockSkew tolerates the receiver's clock reading slightly behind the
-	// releaser's when comparing a message's timestamp against queuedAt.
+	// agyClockSkew tolerates the receiver's clock reading slightly behind the releaser's.
 	agyClockSkew = 2 * time.Second
-	// agyTitleMaxRunes bounds the --title= argument: the origin line, cut to
-	// this many runes so a title stays a title.
+	// agyTitleMaxRunes bounds --title= to a title-length cut of the origin line.
 	agyTitleMaxRunes = 100
 )
 
-// EnvExec runs one binary and returns its stdout. extraEnv is KEY=VALUE pairs
-// appended to the parent environment; there is no shell, so the token rides in
-// the environment and nowhere else.
+// EnvExec runs one binary and returns its stdout. There is no shell, so the
+// token rides in extraEnv and nowhere else.
 type EnvExec interface {
 	Run(ctx context.Context, extraEnv []string, bin string, args ...string) ([]byte, error)
 }
 
-// AgyDeliverer is the MasterMindDeliverer for agy masterminds: it wakes an
-// idle agy session by dropping the payload in that conversation's agentapi
-// inbox, and it confirms the receipt by finding the message read back out of
+// AgyDeliverer is the MasterMindDeliverer for agy masterminds: it drops the
+// payload in the conversation's agentapi inbox and confirms the read-back from
 // agy's own state directory.
 type AgyDeliverer struct {
 	Exec EnvExec // nil -> OutcomeNotMine, "no exec"
@@ -61,8 +54,7 @@ type AgyDeliverer struct {
 	gaveUp giveUpLog
 }
 
-// agyMessage is the part of a message file the inbox scan reads. The real file
-// also carries sender, priority and renderDetails; relevo needs none of them.
+// agyMessage is the part of a message file the inbox scan reads.
 type agyMessage struct {
 	ID        string    `json:"id"`
 	Recipient string    `json:"recipient"`
@@ -94,9 +86,8 @@ func (d *AgyDeliverer) fallbackAfter() time.Duration {
 	return DefaultFallbackAfter
 }
 
-// AdmitHorizon reports agy's short shared horizon: a message the inbox never
-// marks read stops being an admit after this long, so the entry returns to the
-// pending and claimable scans.
+// AdmitHorizon reports agy's short horizon: a never-read message stops being
+// an admit after this long, returning the entry to the pending scans.
 func (d *AgyDeliverer) AdmitHorizon() time.Duration {
 	return d.fallbackAfter()
 }
@@ -115,7 +106,7 @@ func (d *AgyDeliverer) confirmPoll() time.Duration {
 	return AgyConfirmPoll
 }
 
-// home resolves agy's state root: the configured Home, else agy's default.
+// home resolves agy's state root, defaulting to agy's own directory.
 func (d *AgyDeliverer) home() (string, error) {
 	if d.Home != "" {
 		return d.Home, nil
@@ -129,25 +120,15 @@ func (d *AgyDeliverer) home() (string, error) {
 
 // Deliver implements MasterMindDeliverer's push half for agy masterminds.
 //
-// The step order is fixed and non-obvious: guards, conversation id, origin,
-// inbox scan, pastFallback, admitted-if-sent, creds/loopback, send. The inbox
-// scan is read before the give-up gate, so a message already marked read is
-// confirmed at any age -- a late-read message must not be failed by the fallback
-// before it is ever looked at -- and the scan never sends, so a retry after a
-// crash cannot post twice. The gate then runs BEFORE the "sent but not yet read"
-// admit, because that admit is the only outcome that re-enters the loop: an
-// entry queued past the window is no longer an admission candidate, so it is
-// handed to the pull route where a reader can claim it instead of being stamped
-// and polled again. The gate also stays above the creds check, so a
-// conversation past the window still gives up.
+// The step order is fixed: the inbox scan runs before the give-up gate, so a
+// message already marked read is confirmed at any age, and before every send,
+// so a retry after a crash cannot post twice. The gate runs before the
+// sent-but-unread admit -- the only outcome that re-enters the loop -- and
+// above the creds check, so an expired entry goes to the pull route instead of
+// being stamped and polled again.
 //
-// A successful send-message is admission, not delivery: Deliver returns
-// OutcomeAdmitted and the caller records that admit before calling Confirm. It
-// never sends a payload twice: the inbox is scanned before every send, so a
-// retry after a crash between sending and admitting finds the message and
-// reports it admitted instead. It never puts a credential in the reason: the
-// token passes only through the extraEnv of one exec, and any text that came
-// back from agy is redacted before it becomes a reason.
+// A send is admission, not delivery, and the reason never carries a credential:
+// the token passes only through one exec's extraEnv and agy text is redacted.
 func (d *AgyDeliverer) Deliver(ctx context.Context, mastermind store.Endpoint, payload, ref string, queuedAt time.Time) (Outcome, string, error) {
 	if mastermind.Kind != "agy" {
 		return OutcomeNotMine, "", nil
@@ -163,10 +144,8 @@ func (d *AgyDeliverer) Deliver(ctx context.Context, mastermind store.Endpoint, p
 
 	origin := firstPayloadLine(payload)
 
-	// Already there? A previous tick may have sent and crashed before
-	// confirming. Check before the give-up gate, so a message already in the
-	// inbox and marked read is confirmed at any age, and so a retry never sends
-	// twice.
+	// Already there? A previous tick may have sent and crashed; check before
+	// the gate so a read message confirms at any age and a retry never sends twice.
 	state := d.inbox(conv, origin, queuedAt)
 	if state.read {
 		return OutcomeDelivered, "already present", nil
@@ -175,21 +154,14 @@ func (d *AgyDeliverer) Deliver(ctx context.Context, mastermind store.Endpoint, p
 		return OutcomeUnavailable, "agy reports the message undelivered", nil
 	}
 
-	// Past the window, this entry is no longer an admission candidate. The gate
-	// runs before the "sent but not yet read" admit below because that admit is
-	// the one outcome the caller turns back into an admission: it stamps a fresh
-	// admit and then polls Confirm for the whole window, under the state lock,
-	// on every tick -- so an expired entry would be re-admitted in the same pass
-	// and never become claimable. NotMine leaves the entry pending and claimable
-	// through the pull route, and the gate keeps firing for this same queue time,
-	// so the entry stays claimable instead of cycling between admitted and
-	// expired. Nothing was sent: the scan above already proved that.
+	// Past the window the entry is no longer an admission candidate: the admit
+	// below would re-enter the loop and stamp it every tick, so it stays
+	// pending and claimable through the pull route instead.
 	if out, reason, gave := d.pastFallback(conv, payload, queuedAt); gave {
 		return out, reason, nil
 	}
 
-	// A message sitting unread in the inbox is admission, not delivery -- but
-	// only for an entry still inside its window.
+	// An unread inbox message is admission, not delivery, inside the window only.
 	if state.sent {
 		return OutcomeAdmitted, "sent to agy but not yet read", nil
 	}
@@ -221,16 +193,13 @@ func (d *AgyDeliverer) Deliver(ctx context.Context, mastermind store.Endpoint, p
 		return OutcomeUnavailable, redactAgy("send-message: "+msg, creds.CSRFToken), nil
 	}
 
-	// The message is now in agy's inbox: that is admission, not delivery.
-	// The caller records the admit and reads the read mark back through
-	// Confirm.
+	// In the inbox now: admission, not delivery; the caller records the admit
+	// and reads the mark back through Confirm.
 	return OutcomeAdmitted, "sent to agy but not yet read", nil
 }
 
-// Confirm implements MasterMindDeliverer's read-back half for agy masterminds:
-// it reads the conversation's inbox for the payload's read mark and never
-// sends, so a payload admitted by an earlier tick is confirmed rather than
-// delivered again.
+// Confirm is the read-back half for agy: it reads the inbox's read mark and
+// never sends, so an earlier tick's payload confirms rather than redelivers.
 func (d *AgyDeliverer) Confirm(ctx context.Context, mastermind store.Endpoint, payload string, queuedAt time.Time) (Outcome, string, error) {
 	if mastermind.Kind != "agy" {
 		return OutcomeNotMine, "", nil
@@ -251,9 +220,8 @@ func (d *AgyDeliverer) Confirm(ctx context.Context, mastermind store.Endpoint, p
 	return d.confirm(ctx, conv, origin, queuedAt)
 }
 
-// ConfirmOnce is the read-back for a repeat tick: one inbox scan, no poll and
-// never a send. A message that is not marked read leaves the payload admitted
-// for the next tick.
+// ConfirmOnce is the read-back for a repeat tick: one scan, no poll, never a
+// send; an unread payload stays admitted.
 func (d *AgyDeliverer) ConfirmOnce(_ context.Context, mastermind store.Endpoint, payload string, queuedAt time.Time) (Outcome, string, error) {
 	if mastermind.Kind != "agy" {
 		return OutcomeNotMine, "", nil
@@ -273,8 +241,8 @@ func (d *AgyDeliverer) ConfirmOnce(_ context.Context, mastermind store.Endpoint,
 	return OutcomeAdmitted, "sent to agy but not yet read", nil
 }
 
-// pastFallback reports whether the payload has waited past the fallback
-// window, logging once per payload when it has.
+// pastFallback reports whether the payload waited past the fallback window,
+// logging once per payload.
 func (d *AgyDeliverer) pastFallback(conv, payload string, queuedAt time.Time) (Outcome, string, bool) {
 	if queuedAt.IsZero() || d.now().Sub(queuedAt) <= d.fallbackAfter() {
 		return OutcomeNotMine, "", false
@@ -287,11 +255,8 @@ func (d *AgyDeliverer) pastFallback(conv, payload string, queuedAt time.Time) (O
 	return OutcomeNotMine, reason, true
 }
 
-// confirm polls the conversation's inbox until the message is marked read,
-// the confirm window closes, or the context ends. A window that closes without
-// the mark is not a failed delivery: the message is already in the inbox, so
-// it reports OutcomeAdmitted and the caller keeps the admit for a later
-// read-back.
+// confirm polls the inbox for the read mark. A close without the mark is not
+// failure: the message is already sent, so the admit stays for a later read-back.
 func (d *AgyDeliverer) confirm(ctx context.Context, conv, origin string, queuedAt time.Time) (Outcome, string, error) {
 	deadline := d.now().Add(d.confirmWindow())
 	for {
@@ -314,12 +279,9 @@ func (d *AgyDeliverer) confirm(ctx context.Context, conv, origin string, queuedA
 	}
 }
 
-// inbox scans the conversation's inbox for a message that matches this
-// payload, and reports whether it is read, undelivered, or merely sent.
-//
-// A message file is skipped, not an error, when it cannot be read or does not
-// parse: another process is writing these files while relevo reads them, and a
-// half-written file must not fail a delivery.
+// inbox scans the conversation's inbox for this payload's message. An
+// unreadable or half-written file is skipped: another process writes these
+// files while relevo reads them.
 func (d *AgyDeliverer) inbox(conv, origin string, queuedAt time.Time) agyInbox {
 	home, err := d.home()
 	if err != nil {
@@ -356,8 +318,7 @@ func (d *AgyDeliverer) inbox(conv, origin string, queuedAt time.Time) agyInbox {
 	return state
 }
 
-// readAgyMessage reads one message file. An unreadable or malformed file, or
-// one with no id, reports false.
+// readAgyMessage reads one message file; unreadable, malformed or id-less reports false.
 func readAgyMessage(path string) (agyMessage, bool) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -373,8 +334,7 @@ func readAgyMessage(path string) (agyMessage, bool) {
 	return msg, true
 }
 
-// readAgyReadIDs reads messages/read.json, agy's map of read message ids. A
-// missing or malformed file reads as "nothing is read yet".
+// readAgyReadIDs reads agy's map of read message ids; missing or malformed reads as none read.
 func readAgyReadIDs(path string) map[string]bool {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -387,10 +347,9 @@ func readAgyReadIDs(path string) map[string]bool {
 	return ids
 }
 
-// agyMessageMatches is the inbox matching rule: the message is addressed to
-// this conversation, its content's first line is this payload's origin line,
-// and it is not older than the entry that queued it. A zero queuedAt skips the
-// time check.
+// agyMessageMatches is the inbox matching rule: addressed to this
+// conversation, first line is the payload's origin line, not older than the
+// queuing entry. A zero queuedAt skips the time check.
 func agyMessageMatches(msg agyMessage, conv, origin string, queuedAt time.Time) bool {
 	if msg.Recipient != conv {
 		return false
@@ -404,8 +363,7 @@ func agyMessageMatches(msg agyMessage, conv, origin string, queuedAt time.Time) 
 	return true
 }
 
-// agyTitle is the --title= value: the origin line, cut to agyTitleMaxRunes
-// runes.
+// agyTitle is the --title= value: the origin line cut to agyTitleMaxRunes runes.
 func agyTitle(origin string) string {
 	runes := []rune(origin)
 	if len(runes) <= agyTitleMaxRunes {
@@ -414,12 +372,9 @@ func agyTitle(origin string) string {
 	return string(runes[:agyTitleMaxRunes])
 }
 
-// agyOversizeContent is what replaces a payload too long for one argv element:
-// the origin line, how big the report was, and where to read it. It keeps the
-// mastermind's wake-up meaningful -- the title and the first line still identify
-// the round -- without an argv the kernel would refuse. ref is the
-// `relevo show …` command that prints the full text, or ""
-// when the entry names no show section.
+// agyOversizeContent replaces a payload too long for one argv element: the
+// origin line still identifies the round without an argv the kernel would
+// refuse. ref is the `relevo show …` command for the full text, or "".
 func agyOversizeContent(origin string, n int, ref string) string {
 	if ref == "" {
 		return fmt.Sprintf("%s\n\nThe output is too long to push (%d bytes); run relevo wait.", origin, n)
@@ -427,10 +382,8 @@ func agyOversizeContent(origin string, n int, ref string) string {
 	return fmt.Sprintf("%s\n\nThe output is too long to push (%d bytes). Read it: %s", origin, n, ref)
 }
 
-// agySendError returns the first line of a JSON error object send-message
-// printed, or "" when its output is not JSON or carries no error. Output that
-// is not an error object is not treated as a failure: the read-back in the
-// inbox is the proof, and a success message is not required to be JSON.
+// agySendError returns send-message's JSON error's first line, or "". Non-error
+// output is not failure: the inbox read-back is the proof, not the message shape.
 func agySendError(out []byte) string {
 	var v struct {
 		Error string `json:"error"`
@@ -445,10 +398,8 @@ func agySendError(out []byte) string {
 	return line
 }
 
-// redactAgy replaces every occurrence of token in s with <redacted>, so text
-// that came back from agy -- an error quoting the request, a JSON error field
-// -- cannot carry the credential into a log line or a Delivery reason. It does
-// nothing when the token is "".
+// redactAgy replaces token in s with <redacted>, so agy text cannot carry the
+// credential into a log line or reason. Empty token is a no-op.
 func redactAgy(s, token string) string {
 	if token == "" {
 		return s

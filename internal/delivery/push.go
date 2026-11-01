@@ -8,30 +8,23 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// MaxPushBytes caps the file text a push carries. Far above any report
-// relevo has produced; the full text stays one `relevo show` command away,
-// which every push path also carries as metadata.
+// MaxPushBytes caps the file text a push carries; the full text stays one
+// `relevo show` away, carried as metadata on every push path.
 const MaxPushBytes = 64 << 10
 
-// showCommand renders the mastermind-facing command that prints one round's
-// artifact. name is the binding, round the round the artifact belongs to, and
-// section show's own flag that reads it. A closed round's files may be sealed
-// into the database, so the command is the durable way to name them rather
-// than a state-dir path.
+// showCommand renders the mastermind-facing command printing one round's
+// artifact: the durable name once a closed round's files are sealed away.
 func showCommand(name string, round int, section string) string {
 	return fmt.Sprintf("relevo show %s --round %d --%s", name, round, section)
 }
 
-// FindingsCommand is showCommand's findings form, which names the consult:
-// `relevo show <name> --round <n> --findings <id>`.
+// FindingsCommand is showCommand's findings form: it also names the consult.
 func FindingsCommand(name string, round int, id string) string {
 	return fmt.Sprintf("relevo show %s --round %d --findings %s", name, round, id)
 }
 
-// findingsIDOf recovers the consult id from a findings path's basename
-// (NNN-<id>-findings.md) -- the one identifier a findings entry carries, since
-// LogEntry.Path stays the artifact's identifier. It returns "" when the
-// basename is not a findings name.
+// findingsIDOf recovers the consult id from a findings basename, or "" when it
+// is not a findings name.
 func findingsIDOf(path string) string {
 	base := filepath.Base(path)
 	const suffix = "-findings.md"
@@ -46,9 +39,8 @@ func findingsIDOf(path string) string {
 	return base[i+1:]
 }
 
-// LogRef renders the `relevo show` command that prints e's full artifact, or
-// "" when e's kind names none (an edge's prompt file has no show section). A
-// reader's report kind is its output section; a writer's is its report.
+// LogRef renders the `relevo show` command printing e's artifact, or "" when
+// the kind names none.
 func LogRef(b store.Binding, e store.LogEntry) string {
 	switch e.Kind {
 	case store.KindReport:
@@ -68,9 +60,8 @@ func LogRef(b store.Binding, e store.LogEntry) string {
 	return ""
 }
 
-// BindingFor loads name from st, or answers a name-only binding when the store
-// cannot: the shape only picks a word, so a read failure must not change what a
-// push carries -- an unknown name words as a writer.
+// BindingFor loads name from st, or a name-only binding when the store cannot:
+// a read failure must not change what a push carries.
 func BindingFor(st *store.Store, name string) store.Binding {
 	if b, err := st.Load(name); err == nil {
 		return b
@@ -78,19 +69,10 @@ func BindingFor(st *store.Store, name string) store.Binding {
 	return store.Binding{Name: name}
 }
 
-// PushText returns the text a push path should carry for e: the stored
-// Payload (origin line included) for every kind that needs no file, and
-// Payload + blank line + the file's contents for the kinds whose Path
-// names a text artifact the mastermind would otherwise have to open. b is the
-// binding the entry belongs to, threaded so a truncated text can name the
-// `relevo show` command that prints the whole thing.
-//
-// ok reports whether an expansion happened. A read error is not a
-// delivery failure: PushText returns e.Payload and false, because an
-// unreadable report is still a report that arrived.
-//
-// The origin line stays the first line of the result in every case;
-// OpencodeDeliverer's confirmation query depends on it.
+// PushText returns the text a push path carries: the stored Payload, plus the
+// file's contents for kinds whose Path names a text artifact. A read error is
+// not a delivery failure: it returns e.Payload and false. The origin line
+// stays first in every case; OpencodeDeliverer's confirm query depends on it.
 func PushText(e store.LogEntry, b store.Binding, read func(string) ([]byte, error)) (string, bool) {
 	if e.Path == "" || !expandablePushKind(e.Kind) {
 		return e.Payload, false
@@ -103,17 +85,14 @@ func PushText(e store.LogEntry, b store.Binding, read func(string) ([]byte, erro
 
 	ref := LogRef(b, e)
 	if ref == "" {
-		// A kind with no show section (an edge's prompt file): fall back to
-		// the path rather than printing an empty reference.
+		// No show section: fall back to the path, not an empty reference.
 		ref = e.Path
 	}
 
 	return e.Payload + "\n\n" + truncatePushText(string(raw), ref), true
 }
 
-// expandablePushKind reports whether e.Kind is a kind PushText expands.
-// KindDiff and KindDrift are patches the mastermind reads with `relevo show`;
-// every other kind's payload is already its whole text.
+// expandablePushKind reports whether PushText expands e.Kind.
 func expandablePushKind(k store.Kind) bool {
 	switch k {
 	case store.KindReport, store.KindFindings, store.KindEdge:
@@ -123,24 +102,15 @@ func expandablePushKind(k store.Kind) bool {
 	}
 }
 
-// truncatePushText keeps at most MaxPushBytes of text, cut back to the last
-// newline within that budget (or at the budget itself when there is none),
-// and appends a final line naming ref -- the `relevo show` command that
-// prints the full text -- when it truncated.
+// truncatePushText keeps at most MaxPushBytes, cut back to the last newline,
+// naming ref when it truncated.
 func truncatePushText(text, ref string) string {
 	return TruncateTo(text, MaxPushBytes, fmt.Sprintf("%d KiB", MaxPushBytes/1024), ref)
 }
 
-// TruncateTo is truncatePushText at a caller's budget, for the callers that do
-// not share MaxPushBytes: a wait result sharing one output budget across the
-// entries it confirmed truncates each of them to what is still free. label
-// names the budget in the marker ("64 KiB", "12288 bytes"), so one marker
-// shape serves every budget and the 64 KiB push marker stays byte-identical.
-//
-// ref is the command that prints the full text, and the caller's choice of it
-// matters: a pointer that claims (plain `relevo show`) would consume the next
-// pending payload of that round, so a caller delivering an already-confirmed
-// entry passes a --peek pointer.
+// TruncateTo is truncatePushText at a caller's budget, so one marker shape
+// serves every budget. ref must be a --peek pointer for already-confirmed
+// entries: a claiming pointer would consume the round's next pending payload.
 func TruncateTo(text string, budget int, label, ref string) string {
 	if len(text) <= budget {
 		return text
@@ -158,8 +128,7 @@ func TruncateTo(text string, budget int, label, ref string) string {
 	return kept + fmt.Sprintf("[truncated at %s -- full text: %s]", label, ref)
 }
 
-// isStateEvent reports whether s is one of the states a push announces: a
-// binding stalled on a human decision, or one whose builder is gone.
+// isStateEvent reports whether s is a state a push announces.
 func isStateEvent(s store.State) bool {
 	switch s {
 	case store.StateNeedsYou, store.StateBroken:
@@ -169,8 +138,8 @@ func isStateEvent(s store.State) bool {
 	}
 }
 
-// stateEventContent is the body of a state line: the state in the reader's
-// words, the binding's Halt reason when it has one, and the next steps.
+// stateEventContent is the body of a state line: the state, the Halt reason
+// when present, and the next steps.
 func stateEventContent(b store.Binding) string {
 	var reason string
 	if b.Halt != "" {

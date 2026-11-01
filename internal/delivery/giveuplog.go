@@ -7,8 +7,8 @@ import (
 
 const giveUpRelogAfter = time.Hour
 
-// giveUpLog rate-limits the give-up log line to once per key,
-// with at most one hourly re-log while a payload stays pending.
+// giveUpLog rate-limits the give-up log line to once per key, with at most one
+// hourly re-log while a payload stays pending.
 type giveUpLog struct {
 	mu   sync.Mutex
 	last map[string]time.Time

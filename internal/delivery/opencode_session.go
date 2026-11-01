@@ -11,14 +11,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
-// OpencodeSessionFinder finds the active OpenCode session id matching a working directory.
+// OpencodeSessionFinder finds the active session id for a working directory.
 type OpencodeSessionFinder struct {
 	Exec    usage.Exec
 	DBPath  string
 	Timeout time.Duration
 }
 
-// Find queries OpenCode's SQLite database for session records and returns the matching session id.
+// Find returns the session id matching cwd.
 func (f OpencodeSessionFinder) Find(cwd string, now time.Time) (string, error) {
 	if f.Exec == nil {
 		return "", fmt.Errorf("%w: nil exec", mastermind.ErrNoOpencodeSession)
@@ -38,8 +38,7 @@ func (f OpencodeSessionFinder) Find(cwd string, now time.Time) (string, error) {
 	return mastermind.MatchOpencodeSession(cwd, sessions, now)
 }
 
-// Directory returns the working directory OpenCode recorded for one session,
-// so a caller that knows only the session id can resolve its repository.
+// Directory returns the working directory recorded for one session id.
 func (f OpencodeSessionFinder) Directory(sessionID string) (string, error) {
 	if f.Exec == nil {
 		return "", fmt.Errorf("%w: nil exec", mastermind.ErrNoOpencodeSession)
@@ -66,11 +65,8 @@ func (f OpencodeSessionFinder) Directory(sessionID string) (string, error) {
 	return "", fmt.Errorf("%w: session %s has no recorded directory", mastermind.ErrNoOpencodeSession, sessionID)
 }
 
-// sessions reads OpenCode's session records: OpenCode 2.0.14 keeps its
-// own in session_v2, and the legacy session table only holds pre-2.0 rows. The
-// union keeps a legacy row only when session_v2 has no row with the same id, so
-// an id never appears twice. A database with only one of the two tables, or one
-// without session_message, still works.
+// sessions reads both session tables, keeping a legacy row only when session_v2
+// has no row with the same id, so an id never appears twice.
 func (f OpencodeSessionFinder) sessions(ctx context.Context) ([]mastermind.OpencodeSession, error) {
 	tables, err := f.tableSet(ctx)
 	if err != nil {
@@ -95,9 +91,7 @@ func (f OpencodeSessionFinder) sessions(ctx context.Context) ([]mastermind.Openc
 	return sessions, nil
 }
 
-// tableSet reports which of OpenCode's tables the database has, so a database
-// that predates session_v2 (or has not yet created session_message) does not
-// turn into a failed query.
+// tableSet reports which tables exist, so a missing one is not a failed query.
 func (f OpencodeSessionFinder) tableSet(ctx context.Context) (map[string]bool, error) {
 	out, err := f.Exec.Run(ctx, "sqlite3", "-readonly", "-json", f.DBPath,
 		"select name from sqlite_master where type = 'table'")
@@ -123,7 +117,7 @@ func (f OpencodeSessionFinder) tableSet(ctx context.Context) (map[string]bool, e
 	return tables, nil
 }
 
-// readSessions runs one session query and decodes its json rows.
+// readSessions runs one session query and decodes its rows.
 func (f OpencodeSessionFinder) readSessions(ctx context.Context, query string) ([]mastermind.OpencodeSession, error) {
 	out, err := f.Exec.Run(ctx, "sqlite3", "-readonly", "-json", f.DBPath, query)
 	if err != nil {
@@ -165,10 +159,9 @@ func (f OpencodeSessionFinder) readSessions(ctx context.Context, query string) (
 	return sessions, nil
 }
 
-// opencodeV2SessionQuery reads OpenCode 2.0's session_v2 rows. A v2 session's
-// time_updated is not bumped as the session works, so its activity time is the
-// greatest of time_updated, time_idle, time_viewed and the latest
-// session_message row's time_created.
+// opencodeV2SessionQuery reads session_v2 rows; time_updated is not bumped as
+// the session works, so activity time is the greatest of the stored times and
+// the latest session_message row.
 func opencodeV2SessionQuery(hasMessages bool) string {
 	updated := "max(coalesce(time_updated, 0), coalesce(time_idle, 0), coalesce(time_viewed, 0)"
 	if hasMessages {
@@ -181,9 +174,8 @@ func opencodeV2SessionQuery(hasMessages bool) string {
 		" " + updated + " as updated from session_v2"
 }
 
-// opencodeLegacySessionQuery reads the pre-2.0 session table. When session_v2
-// exists, the ids it holds are dropped here, so the union has no duplicates.
-// Its activity time stays time_updated.
+// opencodeLegacySessionQuery reads the pre-2.0 table, dropping ids session_v2
+// already holds so the union has no duplicates.
 func opencodeLegacySessionQuery(hasV2 bool) string {
 	query := "select id, directory, parent_id, title, time_updated as updated, time_archived from session"
 	if hasV2 {

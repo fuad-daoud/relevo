@@ -11,45 +11,25 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// Pull claims the oldest claimable mastermind payload for name with route,
-// unconditionally, and returns the text it carried. It is the in-process
-// reader's own claim: a caller that has printed one specific payload uses
-// PullMatching instead, so a read that printed something else cannot consume it.
+// Pull claims the oldest claimable payload for name with route. A caller that
+// printed one specific payload uses PullMatching instead.
 func Pull(ctx context.Context, st *store.Store, name, route string) (text string, found bool, err error) {
 	return pullMatching(ctx, st, name, route, nil)
 }
 
-// PullMatching is Pull's conditional form: it claims the oldest claimable
-// mastermind payload for name with route THAT MATCH ACCEPTS, scanning past the
-// claimable entries it does not, and answers found false without confirming
-// anything when it accepts none. The claimable scan is unchanged, so an entry a
-// push route already admitted is still not claimable here.
-//
-// Scanning past is what lets a read confirm a payload a stale halt or an older
-// findings entry sits ahead of; stopping at the first claimable entry would
-// leave that payload to be delivered again. The scan is in log order and takes
-// the FIRST entry match accepts, and every entry it rejects is left pending and
-// unconfirmed, so a read may confirm a payload but never reorder or bypass the
-// queue: what is left is still delivered oldest first.
-//
-// match is the caller's answer to "did this read print that entry?", so a
-// reader that printed one section claims only the payload that section is.
-// A nil match accepts every entry, which is what Pull passes -- and then the
-// first claimable entry is the claim, exactly as Pull has always claimed it.
+// PullMatching claims the oldest claimable payload match accepts, scanning past
+// the claimable entries it does not; rejected entries stay pending and
+// unconfirmed, so a read never reorders the queue. match answers "did this
+// read print that entry?"; nil accepts every entry, which is what Pull passes.
 func PullMatching(ctx context.Context, st *store.Store, name, route string, match func(store.LogEntry) bool) (text string, found bool, err error) {
 	return pullMatching(ctx, st, name, route, match)
 }
 
-// busyRetryDelays is the backoff retryBusy sleeps between attempts when a
-// store transaction could not proceed because another process held the
-// database (db.ErrBusy): a short first wait, then two longer ones.
+// busyRetryDelays is retryBusy's backoff on db.ErrBusy: a short wait, then two longer ones.
 var busyRetryDelays = []time.Duration{250 * time.Millisecond, time.Second, 2 * time.Second}
 
-// retryBusy calls fn; while it returns an error that wraps db.ErrBusy and
-// delays remain, it sleeps the next delay and calls fn again. A non-busy error
-// returns at once, and so does the last error once the delays run out. When
-// ctx is done before a sleep it returns ctx.Err(). sleep is injectable for
-// tests; nil means time.Sleep.
+// retryBusy retries fn on db.ErrBusy with the next delay; any other error
+// returns at once. sleep is injectable for tests; nil means time.Sleep.
 func retryBusy(ctx context.Context, delays []time.Duration, sleep func(time.Duration), fn func() error) error {
 	if sleep == nil {
 		sleep = time.Sleep
@@ -66,34 +46,17 @@ func retryBusy(ctx context.Context, delays []time.Duration, sleep func(time.Dura
 	return err
 }
 
-// pullMatching returns the oldest claimable entry match accepts for name, and
-// marks that one delivered with route, WITHOUT pushing anything. A nil match
-// accepts every entry, which is what the removed pull verb did and what the
-// helper `relevo wait` calls once its round has ended: the CLI prints the
-// result to stdout and the mastermind reads it as tool output.
-//
-// The text is PushText(entry, <name's binding>, st.ReadFile): the stored payload (origin
-// line first) plus a blank line plus the report file's text, capped at
-// MaxPushBytes. found is false when nothing is pending and when match rejects
-// every claimable entry, so a rejecting caller confirms nothing and reads no
-// text.
-//
-// The lock and confirm step is wrapped in retryBusy: other relevo processes
-// and the daemon hold the database concurrently, so a busy begin is retried
-// with a short backoff rather than failing the delivery outright. The scan, the
-// match decision and the confirm all run inside the lock, on the log the scan
-// just read, so what is decided and what is confirmed cannot come apart.
+// pullMatching confirms the oldest claimable entry match accepts, without
+// pushing anything; a rejecting caller confirms nothing. The text is PushText
+// for the entry, and the scan, match and confirm run inside one lock on the
+// log just read, retried on busy, so decision and confirm cannot come apart.
 func pullMatching(ctx context.Context, st *store.Store, name, route string, match func(store.LogEntry) bool) (text string, found bool, err error) {
 	var entry store.LogEntry
 
-	// Same critical section as DeliverPending: the daemon may be delivering
-	// this very payload right now, and only one of us may claim it.
+	// Same critical section as DeliverPending: only one claimant may win.
 	err = retryBusy(ctx, busyRetryDelays, nil, func() error {
 		return st.WithLock(func(tx *store.Tx) error {
-			// Every claimable entry in log order, so the scan can pass the ones
-			// match rejects and take the first it accepts. Round 0 is every
-			// round: the claim is this read's own payload, not a waited round's
-			// through-window.
+			// Log order, passing rejected entries for the first accepted one.
 			pending, err := tx.ClaimableForMasterMindThrough(name, 0)
 			if err != nil {
 				return err
@@ -120,32 +83,23 @@ func pullMatching(ctx context.Context, st *store.Store, name, route string, matc
 		return "", false, nil
 	}
 
-	// The file read happens outside the lock: no file I/O under the state
-	// lock.
+	// File reads happen outside the lock: no file I/O under the state lock.
 	text, _ = PushText(entry, BindingFor(st, name), st.ReadFile)
 	return text, true, nil
 }
 
-// Delivered is one pending entry a through-pull confirmed, with the exact text
-// that entry carries: Text is PushText(e, <name's binding>, st.ReadFile), the
-// same string PullPendingThrough concatenates. Splitting the confirmation from
-// the concatenation is what lets a caller that has one output budget for the
-// whole result decide per entry -- deliver it, cut it, or point at it -- without
-// re-reading a queue whose entries are already confirmed.
+// Delivered is one entry a through-pull confirmed with its PushText: splitting
+// confirmation from concatenation lets a caller with one output budget decide
+// per entry without re-reading an already-confirmed queue.
 type Delivered struct {
 	Entry store.LogEntry
 	Text  string
 }
 
-// PullPendingThroughEntries returns one Delivered per pending mastermind
-// payload of name whose round is at most round -- every round when round <= 0
-// -- confirming each with route and WITHOUT pushing anything, ordered so the
-// waited round's report is last. An empty slice with a nil error means nothing
-// was pending and nothing was confirmed.
-//
-// The list and confirm step runs in ONE lock, wrapped in retryBusy: a busy
-// database is retried with a short backoff, and nothing is confirmed unless
-// the whole lock body succeeded. The file reads happen outside the lock.
+// PullPendingThroughEntries confirms every pending payload of name at or below
+// round (every round when round <= 0) without pushing, ordered with ReportLast.
+// The list-and-confirm runs in one lock, retried on busy; file reads happen
+// outside it.
 func PullPendingThroughEntries(ctx context.Context, st *store.Store, name, route string, round int) ([]Delivered, error) {
 	var pending []store.PendingEntry
 
@@ -173,8 +127,7 @@ func PullPendingThroughEntries(ctx context.Context, st *store.Store, name, route
 		return nil, nil
 	}
 
-	// The file reads happen outside the lock: no file I/O under the state
-	// lock, as pullPending does.
+	// File reads happen outside the lock.
 	binding := BindingFor(st, name)
 	out := make([]Delivered, 0, len(pending))
 	for _, p := range pending {
@@ -184,15 +137,9 @@ func PullPendingThroughEntries(ctx context.Context, st *store.Store, name, route
 	return ReportLast(out), nil
 }
 
-// EarlierHeader is the line that introduces an entry a through-pull delivers
-// before the waited round, so an older undelivered payload is neither dropped
-// nor mistaken for the newest text.
-//
-// The path is dropped when there is none. A halt entry carries no artifact, so
-// its Path is empty by design and an unconditional (%s) rendered it as a bare
-// pair of parens -- a header that named nothing while implying it had. Both
-// renderers of this line share the function so the two cannot drift apart on
-// what a label looks like.
+// EarlierHeader introduces an entry delivered before the waited round, so an
+// older payload is neither dropped nor mistaken for the newest text. The path
+// is dropped when there is none: a halt carries no artifact.
 func EarlierHeader(round int, path string) string {
 	if path == "" {
 		return fmt.Sprintf("── round %d: not delivered earlier ──\n", round)
@@ -200,19 +147,14 @@ func EarlierHeader(round int, path string) string {
 	return fmt.Sprintf("── round %d: not delivered earlier (%s) ──\n", round, path)
 }
 
-// HaltHeader is the line that introduces a halt entry collected together with
-// the waited round's report. The halt is the reason a human is needed, and
-// "not delivered earlier" is not what happened to it: it is not a report that
-// went undelivered, it is the round stopping.
+// HaltHeader introduces a halt collected with the waited report: the round
+// stopping, not a report gone undelivered.
 func HaltHeader(round int) string {
 	return fmt.Sprintf("── round %d: halted ──\n", round)
 }
 
-// EntryHeader is the label that introduces an entry rendered before the
-// waited round's own text: the halt label for a halt of that same round, and
-// the not-delivered-earlier label for everything else. Both renderers of
-// these labels go through it, so the joined result and the per-entry result
-// cannot drift apart on what a label says.
+// EntryHeader is the label for an entry before the waited round's text: the
+// halt label for that round's halt, the not-delivered-earlier label otherwise.
 func EntryHeader(e store.LogEntry, waitedRound int) string {
 	if e.Kind == store.KindHalt && e.Round == waitedRound {
 		return HaltHeader(e.Round)
@@ -220,18 +162,10 @@ func EntryHeader(e store.LogEntry, waitedRound int) string {
 	return EarlierHeader(e.Round, e.Path)
 }
 
-// ReportLast returns delivered with the newest round's report entries moved to
-// the end, the rest in the order it came. A round that closed on a halt files
-// that halt after its report, so log order ends on the halt and a reader that
-// took the last entry as the round's own text would print the report under a
-// "not delivered earlier" header and the halt as the main text -- the report
-// demoted and the halt promoted. Moving the report last keeps the report the
-// main text and leaves the halt ahead of it under its own header.
-//
-// The newest round is the one a through-pull waited for: it answers every round
-// at or below the one asked, so the highest round it carries is the waited one.
-// Entries of that round keep their own order, and a round whose only entry is
-// its halt comes back untouched -- there is no report to move.
+// ReportLast moves the newest round's report entries last: log order files a
+// closing halt after its report, which would demote the report under a header.
+// Entries of that round keep their order; a halt-only round comes back
+// untouched.
 func ReportLast(delivered []Delivered) []Delivered {
 	if len(delivered) < 2 {
 		return delivered
@@ -258,14 +192,9 @@ func ReportLast(delivered []Delivered) []Delivered {
 	return append(out, reports...)
 }
 
-// JoinDelivered renders one whole-result string from the per-entry deliveries,
-// waited round last: the single entry's text when there is one, and every
-// earlier entry under a header naming its round otherwise. It is the shape
-// PullPendingThrough returns and the shape WaitResult.Payload carries, so a
-// caller that reads the result whole and a caller that reads it per entry agree
-// on what the entries were. The order it renders is the order it is given, so a
-// caller that wants the waited round's report last orders the entries with
-// ReportLast.
+// JoinDelivered renders one whole-result string, waited round last, earlier
+// entries each under their round's header. It renders the order it is given,
+// so callers order with ReportLast first.
 func JoinDelivered(delivered []Delivered) string {
 	if len(delivered) == 1 {
 		return delivered[0].Text
@@ -282,16 +211,8 @@ func JoinDelivered(delivered []Delivered) string {
 	return b.String()
 }
 
-// PullPendingThrough returns the text for every pending mastermind payload of name
-// whose round is at most round -- every round when round <= 0 -- and marks each
-// delivered with route, WITHOUT pushing anything. The waited round's text is
-// last; every earlier one is prefixed with a header naming its round, so an
-// older undelivered payload is neither dropped nor mistaken for the newest
-// text.
-//
-// It is PullPendingThroughEntries plus the concatenation a reader of one whole
-// result wants: the split form is what a caller with its own per-entry output
-// budget uses, and both confirm the same entries in the same order.
+// PullPendingThrough is PullPendingThroughEntries plus the one-reader
+// concatenation: the waited round's text last, earlier ones each under a header.
 func PullPendingThrough(ctx context.Context, st *store.Store, name, route string, round int) (text string, found bool, err error) {
 	delivered, err := PullPendingThroughEntries(ctx, st, name, route, round)
 	if err != nil {
