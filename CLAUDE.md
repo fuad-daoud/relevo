@@ -85,7 +85,7 @@ The ones a round most often breaks:
 - A comment says *why*, only where the code cannot, and never restates it. No
   history in code or tests: no issue or PR numbers, spec sections, "round N",
   "used to".
-- Functions at most 70 lines, non-test files at most 600, one package per
+- Non-test functions at most 70 lines, non-test files at most 600, one package per
   concept. A package imports only packages below it; a shared helper lives in
   the lower package, never copied.
 - `make check` enforces lint, comments and file size. Packages not yet cleaned
