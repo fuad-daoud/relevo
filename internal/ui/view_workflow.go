@@ -20,7 +20,6 @@ type workflowSourceMsg struct {
 	err     error
 }
 
-// workflowGraphMsg is one workflow's step graph, read off the update loop.
 type workflowGraphMsg struct {
 	name string
 	rows []relevo.GraphRow
@@ -47,12 +46,10 @@ type workflowView struct {
 	vp  viewport.Model
 }
 
-// newWorkflowView pushes one workflow's graph, before either read has landed.
 func newWorkflowView(name string) widget.View {
 	return workflowView{name: name}
 }
 
-// workflowSourceCmd reads one workflow's source text off the update loop.
 func workflowSourceCmd(env widget.Env, name string) tea.Cmd {
 	return func() tea.Msg {
 		if env.Actions == nil {
@@ -63,7 +60,6 @@ func workflowSourceCmd(env widget.Env, name string) tea.Cmd {
 	}
 }
 
-// workflowGraphCmd reads one workflow's step graph off the update loop.
 func workflowGraphCmd(env widget.Env, name string) tea.Cmd {
 	return func() tea.Msg {
 		if env.Actions == nil {
@@ -88,11 +84,8 @@ func (v workflowView) Keys() []widget.KeyHelp {
 	return []widget.KeyHelp{{Key: "↑↓", Help: "move"}, {Key: "s", Help: "source"}}
 }
 
-// HelpKeys is the help overlay's key list: the same set.
 func (v workflowView) HelpKeys() []widget.KeyHelp { return v.Keys() }
 
-// Context is the view's summary line: what the workflow is and how many steps
-// it declares, or which of the two texts s is showing.
 func (v workflowView) Context(env widget.Env) (string, string) {
 	left := "   " + widget.TextStyle.Bold(true).Render(v.name)
 	if v.src {
@@ -141,7 +134,6 @@ func workflowGraphLayout(width int) (int, []workflowCol) {
 	return cw - fixed(cols), cols
 }
 
-// workflowGraphHeaderLine is the graph table's header row, in faint bold.
 func workflowGraphHeaderLine(stepW int, cols []workflowCol, cw int) string {
 	style := widget.FaintStyle.Bold(true)
 	cells := []candCell{{text: widget.Pad("STEP", stepW), style: style}}
@@ -151,10 +143,9 @@ func workflowGraphHeaderLine(stepW int, cols []workflowCol, cw int) string {
 	return candLine(cells, false, cw)
 }
 
-// workflowStepLine is one step's graph row: the step in the text colour, its
-// kind and the actors it names muted, and its edges in their own colour so the
-// paths read apart from the node names. A step that declares no edge shows a
-// dash, which is a step that ends its path.
+// workflowStepLine is one step's graph row, with edges in their own colour so
+// the paths read apart from the node names. A step that declares no edge
+// shows a dash, which is a step that ends its path.
 func workflowStepLine(row relevo.GraphRow, sel bool, stepW int, cols []workflowCol, cw int) string {
 	nameStyle := widget.TextStyle
 	if sel {
@@ -188,7 +179,6 @@ func workflowStepLine(row relevo.GraphRow, sel bool, stepW int, cols []workflowC
 	return candLine(cells, sel, cw)
 }
 
-// graphBodyLines is the whole graph body before the viewport windows it.
 func (v workflowView) graphBodyLines(width int) []string {
 	stepW, cols := workflowGraphLayout(width)
 	cw := width - 6
@@ -204,7 +194,6 @@ func (v workflowView) graphBodyLines(width int) []string {
 	return lines
 }
 
-// follow scrolls the graph so the cursor's step stays visible.
 func (v *workflowView) follow(env widget.Env) {
 	if len(v.rows) == 0 {
 		v.top = 0
@@ -253,7 +242,6 @@ func (v workflowView) Body(env widget.Env, width, height int) string {
 	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
-// sourceBody is the scrolled source text, sized to the shell's body box.
 func (v workflowView) sourceBody(env widget.Env, width, height int) string {
 	if v.sourceErr != nil && !v.sourceLoaded {
 		return strings.Join(widget.Centered(sanitizeText(v.sourceErr.Error()), width, height), "\n")

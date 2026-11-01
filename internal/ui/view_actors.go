@@ -31,8 +31,8 @@ func newActorsView(env widget.Env) (widget.View, tea.Cmd) {
 	return v, candDocCmd(env)
 }
 
-// "" when the agent cannot be resolved. It reuses relevo.AgentShape, which is
-// the one place custom sources are parsed.
+// agentShapeOf is "" when the agent cannot be resolved. It reuses
+// relevo.AgentShape, which is the one place custom sources are parsed.
 func agentShapeOf(doc relevo.ConfigDoc, agent string) string {
 	shape, err := relevo.AgentShape(doc, agent)
 	if err != nil {

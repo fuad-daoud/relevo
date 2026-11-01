@@ -26,7 +26,8 @@ type candidatesView struct {
 	actions bool
 }
 
-// env.Actions must be non-nil: execLine refuses the command otherwise.
+// newCandidatesView builds ':candidates' and the command that loads its doc;
+// env.Actions must be non-nil, as execLine refuses the command otherwise.
 func newCandidatesView(env widget.Env) (widget.View, tea.Cmd) {
 	v := candidatesView{actions: env.Actions != nil}
 	return v, candDocCmd(env)
@@ -109,7 +110,6 @@ func (v *candidatesView) follow(env widget.Env) {
 
 func (v candidatesView) Crumbs() []string { return []string{"candidates"} }
 
-// The view owns no text input of its own.
 func (v candidatesView) Capturing() bool { return false }
 
 // `↑↓ move` is left out: the footer has no room for it at 132 columns

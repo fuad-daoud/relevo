@@ -31,7 +31,8 @@ type agentView struct {
 	top    int
 }
 
-// env.Actions must be non-nil: ':agents' refuses to open without it.
+// newAgentView builds the agent detail view; env.Actions must be non-nil, as
+// ':agents' refuses to open without it.
 func newAgentView(env widget.Env, doc relevo.ConfigDoc, r agentRow) (widget.View, tea.Cmd) {
 	v := agentView{name: r.name, row: r, doc: doc, files: r.files, loaded: true}
 	if env.Actions == nil {
@@ -163,7 +164,6 @@ func (v *agentView) follow(env widget.Env) {
 
 func (v agentView) Crumbs() []string { return []string{v.name} }
 
-// The view owns no text input of its own.
 func (v agentView) Capturing() bool { return false }
 
 // A native custom agent's view has no `r`: relevo writes no file for it, so a
@@ -299,9 +299,8 @@ func copyNoun(custom bool) string {
 	return "copy this relevo ships"
 }
 
-// A reset is a danger confirm, because the edit it discards cannot come back. A
-// missing file is a write rather than a reset: nothing is lost, the confirm's
-// title, label and note say so.
+// A reset is a danger confirm, because the edit it discards cannot come back.
+// A missing file is a write rather than a reset: nothing is lost.
 func (v agentView) resetCmd(env widget.Env, f agentFileRow) tea.Cmd {
 	if f.state != harness.FileEdited && f.state != harness.FileEditedNewer && f.state != harness.FileStale && f.state != harness.FileMissing {
 		return notice(f.kind + "'s " + v.name + " is up to date")

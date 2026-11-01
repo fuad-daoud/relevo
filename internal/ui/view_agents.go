@@ -28,7 +28,8 @@ type agentsView struct {
 	actions bool
 }
 
-// env.Actions must be non-nil: execLine refuses the command otherwise.
+// newAgentsView builds ':agents' and the command that loads its doc and file
+// states; env.Actions must be non-nil, as execLine refuses the command otherwise.
 func newAgentsView(env widget.Env) (widget.View, tea.Cmd) {
 	v := agentsView{actions: env.Actions != nil}
 	return v, agentsCmd(env)
@@ -104,7 +105,6 @@ func (v *agentsView) follow(env widget.Env) {
 
 func (v agentsView) Crumbs() []string { return []string{"agents"} }
 
-// The view owns no text input of its own.
 func (v agentsView) Capturing() bool { return false }
 
 // `d delete` is listed even on a shipped row: the footer has no dimmed key, so

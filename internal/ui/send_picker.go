@@ -15,7 +15,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// planFile is one recent plan: its full path and its modification time.
 type planFile struct {
 	path string
 	mod  time.Time
@@ -52,8 +51,7 @@ func recentPlans(dir, filter string, n int) []planFile {
 	return out
 }
 
-// sendPicker is the s key's plan picker: the plan-file input with its
-// path completion, and a list of the directory's recent markdown plans.
+// sendPicker is the s key's plan picker.
 type sendPicker struct {
 	env   widget.Env
 	b     view.BindingStatus
@@ -72,9 +70,6 @@ type sendPicker struct {
 	err string
 }
 
-// resolve maps a typed value to a path: an absolute value passes
-// through, a relative one is joined to the binding tree, and a value with no
-// tree is unchanged.
 func (p sendPicker) resolve(v string) string {
 	if v == "" || filepath.IsAbs(v) || p.root == "" {
 		return v
@@ -82,7 +77,6 @@ func (p sendPicker) resolve(v string) string {
 	return filepath.Join(p.root, v)
 }
 
-// keys is the picker's footer.
 func (p sendPicker) keys() []widget.KeyHelp {
 	return []widget.KeyHelp{
 		{Key: "↑↓", Help: "choose"},
@@ -138,7 +132,6 @@ func (p sendPicker) filter() string {
 	return filepath.Base(v)
 }
 
-// plans is the picker's current list of recent plans.
 func (p sendPicker) plans() []planFile {
 	dir := p.listDir()
 	if dir == "" {
@@ -163,8 +156,6 @@ func (p sendPicker) step(dir int) int {
 	return (p.pick + dir + n) % n
 }
 
-// completeTab is tab inside the picker: the pathCompletion cycle today's plan
-// prompt used.
 func (p sendPicker) completeTab() sendPicker {
 	if !p.tabbed {
 		p.base = p.input.Value()
@@ -183,8 +174,6 @@ func (p sendPicker) completeTab() sendPicker {
 	return p
 }
 
-// enter uses the selected row (or the typed value), validates the file and
-// opens the existing send confirm.
 func (p sendPicker) enter() (overlay, tea.Cmd, bool) {
 	if list := p.plans(); p.pick >= 0 && p.pick < len(list) {
 		p.input.SetValue(list[p.pick].path)
@@ -224,8 +213,6 @@ func (p sendPicker) view(width int) []string {
 	return rows
 }
 
-// modal renders the picker: the header, the plan-file input, the list,
-// the $EDITOR hint, the error and the buttons. Title "send", want 80.
 func (p sendPicker) modal(width int) (string, []string, int, bool) {
 	const want = 80
 	innerW := modalInnerW(want, width)

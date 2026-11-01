@@ -10,10 +10,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
-// chainStepsView is one chain's steps: the step in flight accented, a step
-// never reached faint, and every step's last outcome as the read model
-// derived it. It carries the whole read model, so a fork child reached from
-// the chains list opens the same view for itself.
+// chainStepsView is one chain's steps, carrying the whole read model, so a
+// fork child reached from the chains list opens the same view for itself.
 type chainStepsView struct {
 	doc   relevo.ChainsDoc
 	chain string
@@ -75,8 +73,6 @@ func chainStepsLayout(width int, entry relevo.ChainEntry) (int, []chainCol) {
 	return stepW, cols
 }
 
-// chainStepWidth is the width STEP needs for the steps it renders: the longest
-// step id, never less than the header.
 func chainStepWidth(steps []relevo.ChainStep) int {
 	w := lipgloss.Width("STEP")
 	for _, s := range steps {
@@ -90,7 +86,6 @@ func chainStepWidth(steps []relevo.ChainStep) int {
 	return w
 }
 
-// chainStepsHeaderLine renders the steps table's header row.
 func chainStepsHeaderLine(stepW int, cols []chainCol, cw int) string {
 	style := widget.FaintStyle.Bold(true)
 	cells := []candCell{{text: widget.Pad("STEP", stepW), style: style}}
@@ -106,9 +101,8 @@ func stepReached(s relevo.ChainStep) bool {
 	return s.InFlight || s.Visits > 0 || s.Round > 0
 }
 
-// chainStepLine renders one step's row. A step never reached is faint
-// throughout, so an unopened plan reads as unopened; the step in flight is
-// accented and the cursor row carries the selection band.
+// chainStepLine renders one step's row; a step never reached is faint
+// throughout, so an unopened plan reads as unopened.
 func chainStepLine(s relevo.ChainStep, sel bool, stepW int, cols []chainCol, cw int) string {
 	base := widget.TextStyle
 	if !stepReached(s) {
@@ -154,7 +148,6 @@ func chainStepLine(s relevo.ChainStep, sel bool, stepW int, cols []chainCol, cw 
 	return candLine(cells, sel, cw)
 }
 
-// chainStepsBodyLines is the whole steps body before the viewport windows it.
 func (v chainStepsView) bodyLines(width int) []string {
 	cw := width - 6
 	if cw < 0 {
@@ -173,8 +166,6 @@ func (v chainStepsView) bodyLines(width int) []string {
 	return lines
 }
 
-// entry is this view's own chain in the read model, or the zero entry when
-// the model no longer holds it.
 func (v chainStepsView) entry() (relevo.ChainEntry, bool) {
 	for _, c := range v.doc.Chains {
 		if c.Name == v.chain {
@@ -184,7 +175,6 @@ func (v chainStepsView) entry() (relevo.ChainEntry, bool) {
 	return relevo.ChainEntry{}, false
 }
 
-// follow scrolls the viewport so the cursor's step stays visible.
 func (v *chainStepsView) follow(env widget.Env) {
 	entry, ok := v.entry()
 	if !ok {
@@ -226,8 +216,6 @@ func (v chainStepsView) Keys() []widget.KeyHelp {
 
 func (v chainStepsView) HelpKeys() []widget.KeyHelp { return v.Keys() }
 
-// Context is the steps context row: the chain's status word and the step the
-// engine is on, or its step count when no step is in flight.
 func (v chainStepsView) Context(env widget.Env) (string, string) {
 	entry, ok := v.entry()
 	if !ok {
@@ -247,7 +235,6 @@ func (v chainStepsView) Context(env widget.Env) (string, string) {
 	return left, right
 }
 
-// pluralStep names a step count.
 func pluralStep(n int) string {
 	if n == 1 {
 		return "1 step"

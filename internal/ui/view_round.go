@@ -121,10 +121,9 @@ func roundsOf(r view.BindingStatus) int {
 type roundView struct {
 	pane    roundPane
 	actions bool
-	// extra carries report rows the shell's report no longer holds: a chain's
-	// own members are folded into its synthetic row by the cockpit's read
-	// model, so a round drilled in from the chains view lends them back for
-	// as long as the view is on screen.
+	// extra carries report rows the shell's report no longer holds, so a round
+	// drilled in from the chains view still resolves its target after a
+	// status refresh.
 	extra []view.BindingStatus
 	// crumbs replaces the default binding-and-round breadcrumb when the round
 	// was reached through a chain, so the trail reads chains › chain › step

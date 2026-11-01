@@ -15,10 +15,9 @@ import (
 // fetchTerminal resolves the binding's builder log for the terminal tab: for
 // a headless builder, or a remote builder relevo has a local log for, the tail
 // of its round log; otherwise a prose line saying where the builder runs.
-// round is the round being viewed; only the binding's current round (b.Round)
-// has a live process, so a headless builder's non-current round with no round
-// log of its own reads as the empty prose "terminal is live; round N left no
-// log".
+// Only the binding's current round (b.Round) has a live process, so a
+// headless builder's non-current round with no round log of its own reads as
+// the empty prose "terminal is live; round N left no log".
 func fetchTerminal(ctx context.Context, src widget.Source, key string, round, lines int) tea.Cmd {
 	if lines < 1 {
 		lines = 1
@@ -104,8 +103,8 @@ func fetchTerminal(ctx context.Context, src widget.Source, key string, round, li
 			}
 			// Rule 1: the endpoint's own log. A live process that names a
 			// log which is not its round's stream reads that file, exactly
-			// as before. In 2b LogPath becomes the stream path itself, so
-			// this branch stops applying and rule 2 renders the stream.
+			// as before. When LogPath is the stream path itself, this branch
+			// stops applying and rule 2 renders the stream.
 			if b.Builder.LogPath != "" && b.Builder.LogPath != rt.Store.StreamPath(name, b.Builder.StreamRound) {
 				if msg, ok := logTab(key, name, rt.Store.ReadFile, b.Builder.LogPath); ok {
 					msg.round = round
@@ -180,7 +179,6 @@ func fetchTerminal(ctx context.Context, src widget.Source, key string, round, li
 	}
 }
 
-// fetchDiff retrieves the stored patch for the specified round.
 func fetchDiff(ctx context.Context, src widget.Source, key string, round int) tea.Cmd {
 	if round < 1 {
 		return func() tea.Msg {

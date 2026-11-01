@@ -12,14 +12,12 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
-// workflowsDocMsg carries the workflow list off the update loop.
 type workflowsDocMsg struct {
 	list []relevo.WorkflowSummary
 	err  error
 }
 
-// workflowsView is ':workflows': the shipped workflow and every saved one, with
-// where each came from, what it says about itself and what it takes.
+// workflowsView is ':workflows': the shipped workflow and every saved one.
 type workflowsView struct {
 	list    []relevo.WorkflowSummary
 	err     error
@@ -29,14 +27,13 @@ type workflowsView struct {
 	actions bool
 }
 
-// newWorkflowsView builds ':workflows' and the command that loads its list.
-// env.Actions must be non-nil: execLine refuses the command otherwise.
+// newWorkflowsView builds ':workflows' and the command that loads its list;
+// env.Actions must be non-nil, as execLine refuses the command otherwise.
 func newWorkflowsView(env widget.Env) (widget.View, tea.Cmd) {
 	v := workflowsView{actions: env.Actions != nil}
 	return v, workflowsDocCmd(env)
 }
 
-// workflowsDocCmd reads the list off the update loop.
 func workflowsDocCmd(env widget.Env) tea.Cmd {
 	return func() tea.Msg {
 		if env.Actions == nil {
@@ -47,7 +44,6 @@ func workflowsDocCmd(env widget.Env) tea.Cmd {
 	}
 }
 
-// workflowCol is one fixed-width table column after NAME.
 type workflowCol struct {
 	key  string
 	head string
@@ -93,7 +89,6 @@ func workflowsLayout(width int) (int, []workflowCol) {
 	return nameW(visible), visible
 }
 
-// workflowsHeaderLine is the list's header row, in faint bold.
 func workflowsHeaderLine(nameW int, cols []workflowCol, cw int) string {
 	style := widget.FaintStyle.Bold(true)
 	cells := []candCell{{text: widget.Pad("NAME", nameW), style: style}}
@@ -103,9 +98,8 @@ func workflowsHeaderLine(nameW int, cols []workflowCol, cw int) string {
 	return candLine(cells, false, cw)
 }
 
-// workflowsInputsText is a workflow's two chain inputs as one cell: each input
-// the workflow takes, with the mode it declares it in. A workflow that takes
-// neither says so.
+// workflowsInputsText is a workflow's two chain inputs as one cell, or "none"
+// when it takes neither.
 func workflowsInputsText(in workflow.Inputs) string {
 	var parts []string
 	for _, f := range []struct {
@@ -125,9 +119,8 @@ func workflowsInputsText(in workflow.Inputs) string {
 	return strings.Join(parts, " · ")
 }
 
-// workflowsParamsText is a workflow's params as one cell: every param by name
-// with the value it ships with, in the order the list carries them. A workflow
-// that declares none says so.
+// workflowsParamsText is a workflow's params as one cell, in the order the
+// list carries them, or "none" when it declares none.
 func workflowsParamsText(params []relevo.WorkflowParam) string {
 	if len(params) == 0 {
 		return "none"
@@ -148,8 +141,8 @@ func workflowOriginText(origin string) (string, lipgloss.Style) {
 	return origin, widget.MutedStyle
 }
 
-// workflowsDataLine is one workflow's row. The cursor row's name is bold and
-// the shipped row's origin accented, so the row the d key refuses stands out.
+// workflowsDataLine is one workflow's row, with the shipped row's origin
+// accented so the row the d key refuses stands out.
 func workflowsDataLine(w relevo.WorkflowSummary, sel bool, nameW int, cols []workflowCol, cw int) string {
 	nameStyle := widget.TextStyle
 	if sel {
@@ -177,9 +170,8 @@ func workflowsDataLine(w relevo.WorkflowSummary, sel bool, nameW int, cols []wor
 	return candLine(cells, sel, cw)
 }
 
-// workflowDetailLines is the cursor row's detail block: the name in faint bold
-// and the origin beside it, then the inputs and the params in full, since the
-// table truncates them.
+// workflowDetailLines is the cursor row's detail block: the inputs and the
+// params in full, since the table truncates them.
 func workflowDetailLines(w relevo.WorkflowSummary, width int) []string {
 	origin, originStyle := workflowOriginText(w.Origin)
 	first := "   " + widget.FaintStyle.Bold(true).Render(w.Name) + "   " + originStyle.Render(origin)
@@ -188,8 +180,6 @@ func workflowDetailLines(w relevo.WorkflowSummary, width int) []string {
 	return []string{widget.Fit(first, width), widget.Fit(second, width), widget.Fit(third, width)}
 }
 
-// bodyLines is the whole list body before it is windowed: a blank line under
-// the context row, the table, two blank lines and the cursor row's detail block.
 func (v workflowsView) bodyLines(env widget.Env, width int) []string {
 	nameW, cols := workflowsLayout(width)
 	cw := width - 6
@@ -209,7 +199,6 @@ func (v workflowsView) bodyLines(env widget.Env, width int) []string {
 	return append(lines, workflowDetailLines(v.list[cur], width)...)
 }
 
-// follow scrolls the page so the cursor's row stays visible.
 func (v *workflowsView) follow(env widget.Env) {
 	if len(v.list) == 0 {
 		v.top = 0
@@ -233,8 +222,6 @@ func (v *workflowsView) follow(env widget.Env) {
 
 func (v workflowsView) Crumbs() []string { return []string{"workflows"} }
 
-// Capturing is always false: the view owns no text input of its own. The add
-// form is an overlay.
 func (v workflowsView) Capturing() bool { return false }
 
 // Keys are the list's keys, shown only when the shell has an widget.Actions seam.
@@ -251,7 +238,6 @@ func (v workflowsView) Keys() []widget.KeyHelp {
 	}
 }
 
-// HelpKeys is the help overlay's key list: the same set.
 func (v workflowsView) HelpKeys() []widget.KeyHelp { return v.Keys() }
 
 // Context is the counts line on the left; the list has no right side.
@@ -333,7 +319,6 @@ func (v workflowsView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd
 	return v, nil
 }
 
-// updateKey is the list's own keys.
 func (v workflowsView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	n := len(v.list)
 	switch k.String() {
@@ -376,7 +361,6 @@ func (v workflowsView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea
 	return v, nil
 }
 
-// openCmd pushes the cursor workflow's graph, with the two reads that fill it.
 func (v workflowsView) openCmd(env widget.Env) tea.Cmd {
 	name := v.list[candClamp(v.cur, len(v.list))].Name
 	return tea.Batch(push(newWorkflowView(name), nil), workflowSourceCmd(env, name), workflowGraphCmd(env, name))

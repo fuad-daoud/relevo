@@ -18,11 +18,7 @@ func dimLines(lines []string) []string {
 	return out
 }
 
-// composeBox draws box over base at column x, row y. For each box row i with
-// y+i in range: left := ansi.Truncate(base[y+i], x, ""); right :=
-// ansi.TruncateLeft(base[y+i], x+boxW, ""); line = left + box[i] + right, then
-// widget.Fit(line, width). Rows outside base are dropped; x is clamped to [0, width-boxW]
-// (0 when the box is wider than width). base is not modified.
+// composeBox draws box over base at column x, row y.
 func composeBox(base, box []string, x, y, width int) []string {
 	out := make([]string, len(base))
 	copy(out, base)
@@ -145,7 +141,6 @@ func modalRow(selected bool, name, desc, note string, innerW int, nameStyle, des
 	return widget.Fit(line, innerW)
 }
 
-// modalSection renders a faint bold section label ("VIEWS").
 func modalSection(label string) string {
 	return widget.FaintStyle.Bold(true).Render(label)
 }

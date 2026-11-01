@@ -2,7 +2,7 @@ package ui
 
 // This file holds the widget.Actions methods that return a command for the cockpit
 // to run in another program: the user's editor, and the pager, browser or
-// editor that opens a round artifact (round 5b).
+// editor that opens a round artifact.
 
 import (
 	"os"
@@ -27,10 +27,10 @@ func (a *mastermindActions) AgentEditor(path string) (*exec.Cmd, error) {
 	return exec.Command(argv[0], argv[1:]...), nil
 }
 
-// OpenArtifact builds the command that opens an artifact file (round 5b):
-// kind "pager" is $PAGER, else less -R; kind "browser" is xdg-open on Linux
-// and open on macOS; anything else is the user's editor, through AgentEditor.
-// Like AgentEditor it never runs anything.
+// OpenArtifact builds the command that opens an artifact file: kind "pager"
+// is $PAGER, else less -R; kind "browser" is xdg-open on Linux and open on
+// macOS; anything else is the user's editor, through AgentEditor. Like
+// AgentEditor it never runs anything.
 func (a *mastermindActions) OpenArtifact(path, kind string) (*exec.Cmd, error) {
 	switch kind {
 	case "pager":

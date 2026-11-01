@@ -29,7 +29,6 @@ func newAddWorkflowForm(env widget.Env) addWorkflowForm {
 	return addWorkflowForm{ctx: env.Ctx, actions: env.Actions, pathIn: in}
 }
 
-// keys is the form's own keys, shown in the footer through overlayKeyer.
 func (f addWorkflowForm) keys() []widget.KeyHelp {
 	return []widget.KeyHelp{{Key: "enter", Help: "add"}, {Key: "esc", Help: "cancel"}}
 }

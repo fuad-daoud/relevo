@@ -37,7 +37,7 @@ type detailModel struct {
 	// bindingID is the database row's id, set only when !live -- fetchShow
 	// does not need it (it re-resolves by name), but relevo.Show's ShowResult
 	// does not carry it either, so it is here for the header and any future
-	// db-keyed lookup Task 5's goldens exercise.
+	// db-keyed lookup.
 	bindingID string
 	// archivedAt is set only when !live and the binding was archived
 	// (tarred by `gc`); zero for a hist row the database recorded but the
@@ -59,7 +59,7 @@ func styleFor(c tabContent) lipgloss.Style {
 // body (colourDiff); a rendered round log's terminal tab colours transcript
 // markers (colourTranscript) -- a headless builder's always is one, and
 // so is a pane builder's once its session record is located; the
-// artifacts tab renders its table and selected file (round 5b); everything
+// artifacts tab renders its table and selected file; everything
 // else returns c.body as before.
 func bodyOf(t tab, c tabContent, headless bool) string {
 	if t == tabArtifacts {

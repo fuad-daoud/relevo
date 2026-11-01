@@ -40,7 +40,6 @@ func auditChangeText(cl relevo.ChangeLine, width int) string {
 	return ansi.Truncate(b.String(), width, "…")
 }
 
-// auditChangeLine is one change line inside the 3-cell margin.
 func auditChangeLine(cl relevo.ChangeLine, width int) string {
 	return widget.Fit("   "+auditChangeText(cl, width-3), width)
 }
@@ -73,7 +72,6 @@ func newAuditRevView(env widget.Env, rev db.RevisionRow, newest int64, lines []r
 
 func (v auditRevView) Crumbs() []string { return []string{fmt.Sprintf("#%d", v.rev.Rev)} }
 
-// Capturing is always false: the view owns no text input of its own.
 func (v auditRevView) Capturing() bool { return false }
 
 // Keys are the detail view's keys: `esc back` is left to the shell's own
@@ -91,7 +89,6 @@ func (v auditRevView) HelpKeys() []widget.KeyHelp {
 	return append([]widget.KeyHelp{{Key: "↑↓", Help: "move"}}, v.Keys()...)
 }
 
-// Context is the revision's own line.
 func (v auditRevView) Context(env widget.Env) (string, string) {
 	meta := fmt.Sprintf("%s · %s · %s", v.rev.Source, v.rev.At.Local().Format("Jan 2 15:04"), v.rev.Message)
 	return "   " + widget.MutedStyle.Render(meta), ""
@@ -119,8 +116,6 @@ func (v auditRevView) Body(env widget.Env, width, height int) string {
 	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
-// bodyLines is the revision's whole body: one line per change, and, for
-// the baseline, the one dim line that says what it is.
 func (v auditRevView) bodyLines(env widget.Env, width int) []string {
 	if v.rev.Rev == 1 {
 		return []string{widget.Fit("   "+widget.MutedStyle.Render("the config as it was when revisions began"), width)}
@@ -162,7 +157,6 @@ func (v auditRevView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd)
 	return v, nil
 }
 
-// updateKey is the detail view's own keys: scrolling, and R.
 func (v auditRevView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	switch k.String() {
 	case "up":

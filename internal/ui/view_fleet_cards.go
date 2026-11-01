@@ -254,9 +254,8 @@ func (f fleetView) windowTopSlots(slots []fleetSlot, height int) int {
 	return windowTopIndex(len(slots), height, f.cursor, f.top, func(i int) int { return slots[i].row })
 }
 
-// The first of n lines to draw so the cursor's row is wholly inside the next
-// height lines, moved as little as possible. rowOf names the row a line
-// belongs to.
+// windowTopIndex is the first of n lines to draw so the cursor's row is
+// wholly inside the next height lines, moved as little as possible.
 func windowTopIndex(n, height, cursor, top int, rowOf func(int) int) int {
 	if height <= 0 || n <= height {
 		return 0

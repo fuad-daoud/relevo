@@ -21,7 +21,6 @@ const (
 // valid placement entry and needs no servers section to name it.
 const placementLocal = "local"
 
-// placementFocus reports whether the placement pane owns the keys.
 func (v actorView) placementFocus() bool { return v.focus == focusPlacement }
 
 // actorPlacementLines is the placement pane: the header and one row per entry,
@@ -41,8 +40,6 @@ func actorPlacementLines(doc relevo.ConfigDoc, name string, focus bool, cur, wid
 	return lines
 }
 
-// actorPlacementHeaderLine is the pane's header row, in faint bold, over the
-// same two columns as its rows.
 func actorPlacementHeaderLine(width int) string {
 	style := widget.FaintStyle.Bold(true)
 	cells := []candCell{
@@ -56,10 +53,9 @@ func actorPlacementHeaderLine(width int) string {
 	return candLine(cells, false, cw)
 }
 
-// actorPlacementLine is one entry's row: a faint number column and the name,
-// the sentinel carrying the note that says what it means. Only the focused
-// pane's cursor row is bold, so the pane that does not own the keys still
-// shows where its cursor sits.
+// actorPlacementLine is one entry's row; only the focused pane's cursor row
+// is bold, so the pane that does not own the keys still shows where its
+// cursor sits.
 func actorPlacementLine(doc relevo.ConfigDoc, name string, i int, sel bool, width int) string {
 	entry := doc.Actors[name].Placement[i]
 	nameStyle := widget.TextStyle
