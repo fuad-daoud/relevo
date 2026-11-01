@@ -21,8 +21,9 @@ func gatePluginRowsFor(kind string, in *MasterMindCheckInput) {
 }
 
 // museSessionGate opens the muse MasterMind row when MUSE_SESSION_ID is
-// set. A stray id on a host with no muse candidate, record or binary
-// reports no rows.
+// set. The id is read directly, duplicating mastermind.Detect's muse rule,
+// which also requires a valid UUID. A stray id on a host with no muse
+// candidate, record or binary reports no rows.
 func museSessionGate(rt relevo.Runtime, in *MasterMindCheckInput, resolver chatlabel.Resolver) {
 	if os.Getenv("MUSE_SESSION_ID") == "" {
 		return
@@ -35,8 +36,7 @@ func museSessionGate(rt relevo.Runtime, in *MasterMindCheckInput, resolver chatl
 }
 
 // museMasterMindFacts fills the session-row fields for a muse session as
-// mastermindCheckInput's claude branch fills them. Until Resolve knows the
-// muse kind the row reads FAIL, never a guessed identity.
+// mastermindCheckInput's claude branch fills them.
 func museMasterMindFacts(rt relevo.Runtime, in *MasterMindCheckInput, resolver chatlabel.Resolver) {
 	in.MCPChild = HasMCPChild(hostChildProcesses(os.Getppid()))
 	if rt.MasterMinds == nil {

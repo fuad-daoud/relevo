@@ -147,7 +147,7 @@ func (r Redactor) redactPaths(s string) string {
 	return homeRe.ReplaceAllString(s, "${1}~")
 }
 
-// tokenBytes are the bytes a whole name is made of.
+// tokenByte reports whether b is a byte a whole name is made of.
 func tokenByte(b byte) bool {
 	switch {
 	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':

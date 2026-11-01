@@ -7,8 +7,10 @@ import (
 	"strconv"
 )
 
-// CommentInput is what one `board comment` asks for. A nil X/Y places the
-// comment below the scene.
+// CommentInput is what one `board comment` asks for: Ref is the --mastermind
+// value, BoardName the --board name, Arg an optional scene path, and the
+// comment text, author and position. A nil X/Y places the comment below the
+// scene.
 type CommentInput struct {
 	Ref       string
 	BoardName string

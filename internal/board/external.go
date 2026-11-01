@@ -66,8 +66,8 @@ func linkLoads(tag string) (href string, ok bool) {
 // duplicates, so the caller can name the first reference and the count.
 //
 // This is a report, not a gate: the server's Content-Security-Policy is what
-// actually blocks the loads, so the user sees the page and learns what did
-// not load.
+// actually blocks the loads, and a board is still served when this lists
+// something, so the user sees the page and learns what did not load.
 func ExternalRefs(html []byte) []string {
 	var out []string
 	seen := map[string]bool{}

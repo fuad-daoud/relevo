@@ -17,6 +17,10 @@ type EditedFile struct {
 	Hash string
 }
 
+// AgentFilesCheckInput is what AgentFilesCheck reports on: Carried counts the
+// harness files the config doc carries, Edited are those a person changed on
+// disk, and Rendered are the hand-edited rendered definitions of the config's
+// own agents.
 type AgentFilesCheckInput struct {
 	Carried  int
 	Edited   []EditedFile

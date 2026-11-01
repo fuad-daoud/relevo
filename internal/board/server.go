@@ -62,10 +62,10 @@ type etagDoc struct {
 	Etag string `json:"etag"`
 }
 
-// boardGuard is the request filter both servers wrap their mux in. The
-// fields live here once, so the HTML server cannot drift into a weaker policy
-// than the Excalidraw one; only csp differs, because the two formats need
-// different policies.
+// boardGuard is the request filter both servers wrap their mux in. The Host
+// check, the security headers and no-store on /api/ live here once, so the
+// HTML server cannot drift into a weaker policy than the Excalidraw one;
+// only csp differs, because the two formats need different policies.
 type boardGuard struct {
 	host string
 	csp  string

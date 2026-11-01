@@ -73,7 +73,8 @@ type MasterMindCheckInput struct {
 	Consent      mastermind.Consent
 
 	// Muse says a muse candidate or mastermind record exists; it gates the
-	// muse plugin rows. MuseInspect is the injected `muse plugins inspect
+	// muse plugin rows. MuseSession mirrors Detected for a muse session, and
+	// MuseInspect is the injected `muse plugins inspect
 	// relevo --json` reader: the rows probe through it because muse's
 	// on-disk runtime_capabilities stores only trusted definition hashes.
 	Muse        bool

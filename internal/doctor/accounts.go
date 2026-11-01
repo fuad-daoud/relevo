@@ -10,8 +10,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/account"
 )
 
-// opencodeDBRel is opencode's own SQLite store under $HOME, read for its
-// session count.
+// opencodeDBRel is opencode's own SQLite store under $HOME, the same file as
+// opencodeDBPath; here it is read for the credential table.
 const opencodeDBRel = ".local/share/opencode/opencode.db"
 
 // accountChecks probes every configured account's home. It is best-effort:

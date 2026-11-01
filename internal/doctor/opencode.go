@@ -24,7 +24,8 @@ var opencodeServicePaths = []string{opencodeStateServicePath, opencodeConfigServ
 // database/sql) so the session count needs no network call and no credential.
 const opencodeDBPath = ".local/share/opencode/opencode.db"
 
-// opencodeServiceCheck reports opencode 2.x's shared-service model: one
+// opencodeServiceCheck reports opencode 2.x's shared-service model: a killed
+// or switched-away client leaves its agent session running inside the one
 // `opencode serve --service` per user. Informational, always SevOK, and
 // appears only when service.json exists.
 func opencodeServiceCheck(ctx context.Context, env Env) Check {
@@ -81,8 +82,8 @@ func opencodeSessionCount(ctx context.Context, env Env, dbPath string) (int, boo
 
 // opencodeAllowlistCheck reports whether opencode's own config lets a
 // headless builder read the plan under stateRoot: only allow entries open
-// it. It does not expand ~ or $HOME; every failure mode is a SevWarn row
-// carrying a Fix.
+// it. opencode does not expand ~ or $HOME, so an entry must spell the root
+// literally. Every failure mode is a SevWarn row carrying a Fix.
 func opencodeAllowlistCheck(env Env, stateRoot string) Check {
 	var path string // the first readable candidate wins
 	var body []byte

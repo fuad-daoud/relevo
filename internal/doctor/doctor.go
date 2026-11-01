@@ -184,8 +184,8 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 	return Report{Checks: checks, UsableBuilder: usableBuilder}
 }
 
-// daemonRow handles the two states Run itself can tell and defers to
-// daemonCheck for the rest.
+// daemonRow handles the two states Run itself can tell (a probe error, or
+// the daemon not running) and defers to daemonCheck for the rest.
 func daemonRow(ctx context.Context, env Env) Check {
 	running, err := env.DaemonRunning(ctx)
 	switch {

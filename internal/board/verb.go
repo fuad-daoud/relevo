@@ -77,7 +77,7 @@ type Options struct {
 }
 
 // Advertise composes the advertisement a live board writes after its
-// listener binds; a repo board -- liveDir empty -- writes none (S6). The port
+// listener binds; a repo board -- liveDir empty -- writes none. The port
 // is read off the printed board URL.
 func Advertise(scene, url string, pid int, startedAt int64, liveDir string) *ServerInfo {
 	if liveDir == "" {
@@ -91,7 +91,7 @@ func Advertise(scene, url string, pid int, startedAt int64, liveDir string) *Ser
 }
 
 // URL prints the live board's URL for a shell copy when the statusline is
-// not at hand (S9). It is read-only: no pointer write, no database write, no
+// not at hand. It is read-only: no pointer write, no database write, no
 // listener. The scene is boardName, else the pointer -- never the default and
 // never written. Without a live server it is ErrNotAvailable.
 func URL(deps Deps, ref, boardName string) error {
@@ -137,7 +137,7 @@ func URL(deps Deps, ref, boardName string) error {
 // foreground server. A scene path names a format rather than a scope: an
 // explicit .excalidraw path keeps the Excalidraw flow and everything else is
 // a single-file board ending in /board.html. So a bare slug is not a path in
-// either format and the collision cannot arise.
+// either format and cannot collide with a subverb name.
 func Run(deps Deps, cwd, ref, themeFlag, boardName, arg string, noOpen bool, shell fs.FS) error {
 	// The theme is resolved before anything else so an unknown theme flag
 	// refuses regardless of which format the path selects. Only the Excalidraw

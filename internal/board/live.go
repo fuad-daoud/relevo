@@ -12,12 +12,12 @@ import (
 )
 
 // Scope names which of the two board scopes a resolved scene belongs to:
-// the committed repo board (S1) or the per-MasterMind live board (D2).
+// the committed repo board or the per-MasterMind live board.
 type Scope string
 
 const (
 	ScopeRepo Scope = "repo"
-	// ScopeLive is a scene under the state root's boards directory (D2).
+	// ScopeLive is a scene under the state root's boards directory.
 	ScopeLive Scope = "live"
 )
 
@@ -27,7 +27,7 @@ const DefaultBoard = "board"
 
 const pointerName = "current"
 
-// sceneNameRe is S3's slug rule: a lowercase letter or digit first, then up to
+// sceneNameRe is the slug rule: a lowercase letter or digit first, then up to
 // 63 more of [a-z0-9-].
 var sceneNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 
@@ -41,7 +41,7 @@ func ValidSceneName(name string) error {
 // Resolved is one scene the verb resolved: its scope and name, the path the
 // server reads and writes, and -- for a live scene -- the live directory.
 // FromPointer is true when the name came from the pointer file, so the
-// caller knows not to rewrite it (S4).
+// caller knows not to rewrite it.
 type Resolved struct {
 	Scope       Scope
 	Scene       string
@@ -55,8 +55,8 @@ type Resolved struct {
 
 // ResolveLiveArg classifies arg as a live scene path: ok when arg names
 // <liveRoot>/<id>/<name>.excalidraw, not ok when arg is not under the live
-// root at all, so the caller falls back to the repo scope (S2). A path under
-// the live root that is not live-shaped is a usage refusal (S1, S5).
+// root at all, so the caller falls back to the repo scope. A path under
+// the live root that is not live-shaped is a usage refusal.
 func ResolveLiveArg(liveRoot, cwd, arg string) (Resolved, bool, error) {
 	path := arg
 	if !filepath.IsAbs(path) {
@@ -89,7 +89,7 @@ func ResolveLiveArg(liveRoot, cwd, arg string) (Resolved, bool, error) {
 		return Resolved{}, false, err
 	}
 
-	// Confinement (S1): after symlinks are resolved the path must still sit
+	// Confinement: after symlinks are resolved the path must still sit
 	// under <live root>/<id>, so a symlinked parent can never steer a write
 	// outside the live directory.
 	realRoot := evalExisting(liveRoot)
@@ -105,7 +105,7 @@ func ResolveLiveArg(liveRoot, cwd, arg string) (Resolved, bool, error) {
 
 // ResolveLiveDir resolves name inside one MasterMind's live directory. When
 // both roots are known it refuses two scopes that nest, so the scopes can
-// never overlap (S5).
+// never overlap.
 func ResolveLiveDir(repoRoot, liveDir, name string) (Resolved, error) {
 	if err := ValidSceneName(name); err != nil {
 		return Resolved{}, err
@@ -122,7 +122,7 @@ func ResolveLiveDir(repoRoot, liveDir, name string) (Resolved, error) {
 	}, nil
 }
 
-// DisjointScopes refuses two scopes that nest (S5). It is a no-op when
+// DisjointScopes refuses two scopes that nest. It is a no-op when
 // either root is unknown. It is exported so the explicit-path branches apply
 // the same rule to the live root, not only to one MasterMind's live
 // directory.
@@ -143,7 +143,7 @@ func DisjointScopes(repoRoot, live string) error {
 
 // SelectScene picks the scene a live board opens: --board when given, else
 // the pointer, else the default. fromPointer is true only when the name came
-// from the pointer file, so the caller knows not to rewrite it (S2/S4).
+// from the pointer file, so the caller knows not to rewrite it.
 func SelectScene(liveDir, flagName string) (name string, fromPointer bool, err error) {
 	if flagName != "" {
 		if err := ValidSceneName(flagName); err != nil {
@@ -160,7 +160,7 @@ func SelectScene(liveDir, flagName string) (name string, fromPointer bool, err e
 
 // Pointer reads a live directory's pointer. A missing or empty file is the
 // default scene with present false. Content that is not a slug refuses
-// naming the file, never silently replaced (S4).
+// naming the file, never silently replaced.
 func Pointer(liveDir string) (name string, present bool, err error) {
 	path := filepath.Join(liveDir, pointerName)
 	data, rerr := os.ReadFile(path)
@@ -182,7 +182,7 @@ func Pointer(liveDir string) (name string, present bool, err error) {
 
 // WritePointer writes name to a live directory's pointer, creating the live
 // directory 0700 and the file 0600. It writes nothing when the pointer
-// already holds the name (S4).
+// already holds the name.
 func WritePointer(liveDir, name string) error {
 	if err := ValidSceneName(name); err != nil {
 		return err
@@ -197,10 +197,10 @@ func WritePointer(liveDir, name string) error {
 }
 
 // serverFileName is the file a running live board writes its address into so a
-// reader can find and copy the URL (S6).
+// reader can find and copy the URL.
 const serverFileName = "server.json"
 
-// ServerInfo is one live board server's advertisement (S6).
+// ServerInfo is one live board server's advertisement.
 type ServerInfo struct {
 	Scene     string `json:"scene"`
 	URL       string `json:"url"`
@@ -210,7 +210,7 @@ type ServerInfo struct {
 }
 
 // WriteServerInfo writes info to liveDir/server.json atomically. A second
-// server on the same board is allowed: the most recent writer wins (S6).
+// server on the same board is allowed: the most recent writer wins.
 func WriteServerInfo(liveDir string, info ServerInfo) error {
 	if err := os.MkdirAll(liveDir, 0o700); err != nil {
 		return fmt.Errorf("create live directory %s: %w", liveDir, err)
@@ -223,7 +223,7 @@ func WriteServerInfo(liveDir string, info ServerInfo) error {
 }
 
 // ReadServerInfo reads liveDir/server.json. A missing or corrupt file reads as
-// absent with no error: a stale advertisement is ignored, never fatal (S6).
+// absent with no error: a stale advertisement is ignored, never fatal.
 func ReadServerInfo(liveDir string) (ServerInfo, bool, error) {
 	data, err := os.ReadFile(filepath.Join(liveDir, serverFileName))
 	if err != nil {
@@ -241,7 +241,7 @@ func ReadServerInfo(liveDir string) (ServerInfo, bool, error) {
 
 // RemoveServerInfo removes liveDir/server.json only when the file still
 // carries own's pid and started_at, so a first server's shutdown never
-// deletes a second server's advertisement (S6).
+// deletes a second server's advertisement.
 func RemoveServerInfo(liveDir string, own ServerInfo) error {
 	cur, ok, err := ReadServerInfo(liveDir)
 	if err != nil || !ok {
@@ -257,7 +257,7 @@ func RemoveServerInfo(liveDir string, own ServerInfo) error {
 }
 
 // LiveURL reads a live board's advertisement and returns its URL when the
-// advertised scene matches and the server is still live (S7/S9). procStart is
+// advertised scene matches and the server is still live. procStart is
 // the liveness seam the caller supplies. A missing, absent or stale
 // advertisement is not live.
 func LiveURL(liveDir, scene string, procStart func(pid int) (int64, error)) (string, bool, error) {
@@ -275,7 +275,7 @@ func LiveURL(liveDir, scene string, procStart func(pid int) (int64, error)) (str
 }
 
 // serverLive reports whether info's process is live: a positive pid and
-// start with a measured start that still matches (S7). started_at 0 -- the
+// start with a measured start that still matches. started_at 0 -- the
 // measurement failure at startup -- reads as not live, as do a dead or
 // unmeasurable pid and a reused one.
 func serverLive(info ServerInfo, procStart func(pid int) (int64, error)) bool {

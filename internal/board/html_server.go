@@ -11,7 +11,8 @@ import (
 // and no name here is a remote origin. script-src and style-src carry
 // 'unsafe-inline' because the shell page is hand-written with inline CSS and
 // an inline bootstrap, and frame-src blob: is how the board document is
-// rendered.
+// rendered. A blob document inherits its creator's policy, so the board's own
+// scripts run under this one too.
 const htmlSecurityHeaders = "default-src 'none'; " +
 	"script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
 	"img-src data: blob:; font-src data:; connect-src 'self'; frame-src blob:; " +

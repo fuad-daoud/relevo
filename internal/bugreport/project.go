@@ -31,7 +31,7 @@ const (
 )
 
 // DescriptionSection is the --body file as the bundle's first section: the
-// section is here even when the file held no text.
+// flag was given, so the section is here even when the file held no text.
 func DescriptionSection(lines []string) Section {
 	return Section{Name: SectionDescription, Lines: lines}
 }
@@ -152,12 +152,15 @@ func pendingKind(p *view.PendingInfo) string {
 	return string(p.Kind)
 }
 
+// BindingLog is one binding's log entries, oldest first.
 type BindingLog struct {
 	Name    string
 	Entries []store.LogEntry
 }
 
-// RoundsSection projects the newest entries of the selected bindings' logs.
+// RoundsSection projects the newest entries of the selected bindings' logs:
+// five per binding; a non-empty name keeps only that binding, and a non-zero
+// round only that round.
 func RoundsSection(logs []BindingLog, name string, round int) Section {
 	sec := Section{
 		Name: SectionRounds,
@@ -178,7 +181,8 @@ func RoundsSection(logs []BindingLog, name string, round int) Section {
 	return sec
 }
 
-// tailRound keeps the newest n entries of one round.
+// tailRound keeps the newest n entries of one round: the round's own entries
+// when round is set, every entry otherwise.
 func tailRound(entries []store.LogEntry, round, n int) []store.LogEntry {
 	out := make([]store.LogEntry, 0, len(entries))
 	for _, e := range entries {

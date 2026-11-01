@@ -84,7 +84,7 @@ var renameFile = os.Rename
 // Save writes scene to path and its companion svg beside it, atomically.
 // If-Match must equal the etag of the bytes on disk (empty for a new file)
 // or the save is refused with ErrConflict. The scene is renamed into place
-// first, then the svg.
+// first, then the svg. It returns the scene's new etag.
 func Save(path string, scene, svg []byte, ifMatch string) (string, error) {
 	current := ""
 	if old, err := os.ReadFile(path); err == nil {

@@ -37,6 +37,7 @@ type Env interface {
 	// BinaryVersion runs `<path> --version` and returns the first field of
 	// its trimmed stdout, so a harness with a version floor can be held to it.
 	BinaryVersion(ctx context.Context, path string) (string, error)
+	// Probe tests whether dir is writable by creating and removing a temp file.
 	Probe(dir string) error
 	// Command runs bin with args and returns its stdout, for a fact no other
 	// Env method exposes (opencode's session count via sqlite3).

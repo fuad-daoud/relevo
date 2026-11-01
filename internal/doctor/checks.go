@@ -58,8 +58,9 @@ func databaseCheck(st *store.Store) Check {
 	return c
 }
 
-// engineCheck is doctor's `engine` row. A missing library warns; a library
-// the loader refuses fails because nothing can open until it is removed.
+// engineCheck is doctor's `engine` row. A missing library warns -- a fresh
+// root has none until something opens a database there -- and a library the
+// loader refuses fails because nothing can open until it is removed.
 func engineCheck(status db.EngineState) Check {
 	c := Check{Name: "engine", Severity: SevOK}
 	switch {
@@ -100,7 +101,7 @@ func ownerCheck(status db.OwnerStatus, probeErr error) Check {
 
 // ledgerChecks turns live gates into doctor rows under the candidate's
 // harness. They warn, never fail: a gated provider is a fact about right
-// now, not a broken install.
+// now, not a broken install, and must not change doctor's exit code.
 func ledgerChecks(gates []availability.Gate) []Check {
 	checks := make([]Check, 0, len(gates))
 	for _, g := range gates {
@@ -133,8 +134,9 @@ func ledgerChecks(gates []availability.Gate) []Check {
 }
 
 // serverChecks turns each configured server's probe into a doctor row. An
-// unreachable probe is ProbeFailed, not wrong; a changed certificate fails
-// because the client hard-refuses it.
+// unreachable probe is ProbeFailed, because relevo could not establish the
+// fact, not because anything is wrong; a changed certificate fails because
+// the client hard-refuses it.
 func serverChecks(probes []relevo.ServerProbe) []Check {
 	checks := make([]Check, 0, len(probes))
 	for _, p := range probes {
@@ -401,8 +403,9 @@ func InsertGlobalCheck(checks []Check, c Check) []Check {
 }
 
 // BindPreflightDefs runs the bind-time preflight for one kind and renders
-// its warning lines. The timeout lives here so it cannot be dropped by
-// accident; adopted passes through to Run.
+// its warning lines. defs are the kind's resolved definitions; nil means the
+// shipped builder definitions. The timeout lives here so it cannot be dropped
+// by accident; adopted passes through to Run.
 func BindPreflightDefs(ctx context.Context, env Env, kind string, adopted bool, defs []string) []string {
 	if defs == nil {
 		defs = builderDefinitions()

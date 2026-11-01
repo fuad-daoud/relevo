@@ -13,7 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
-// LiveRoot is <state root>/boards, the live scope's root (S1).
+// LiveRoot is <state root>/boards, the live scope's root.
 func LiveRoot() (string, error) {
 	root, err := tmpdir.DefaultRoot()
 	if err != nil {
@@ -23,7 +23,7 @@ func LiveRoot() (string, error) {
 }
 
 // OpenRegistry opens the state root's registry read-only, the minimum
-// database contact R2 allows, following the exact shape of openDBQuery. When
+// database contact, following the exact shape of openDBQuery. When
 // <state root>/relevo.db exists it dials an already-running owner, else it
 // opens the file directly read-only, when the file is held it makes one more
 // dial, and otherwise it refuses. It never starts the owner, and it never
@@ -38,10 +38,10 @@ func OpenRegistry(deps Deps) (*mastermind.DBRegistry, *db.DB, error) {
 		return nil, nil, &notFoundError{msg: fmt.Sprintf("no relevo.db at %s; name a MasterMind with --mastermind <id|name> or RELEVO_MASTERMIND", path)}
 	}
 
-	// The registry binds the machine-local file. The board reads through a
-	// dialled handle when the owner holds the file and through a read-only
-	// one otherwise, so the binding goes on the handle rather than on either
-	// path.
+	// The registry binds the machine-local file because a record names a pid
+	// and a cwd on this machine. The board reads through a dialled handle
+	// when the owner holds the file and through a read-only one otherwise,
+	// so the binding goes on the handle rather than on either path.
 	registry := func(d *db.DB) *mastermind.DBRegistry {
 		return &mastermind.DBRegistry{KV: db.TxKV{DB: d.LocalOrSelf()}}
 	}
@@ -80,7 +80,7 @@ func OpenRegistry(deps Deps) (*mastermind.DBRegistry, *db.DB, error) {
 
 // Mastermind resolves the MasterMind whose live board the verb acts on:
 // the --mastermind value, else RELEVO_MASTERMIND, else the single registered
-// MasterMind (R2, S2). It returns the record's id and, when the registry was
+// MasterMind. It returns the record's id and, when the registry was
 // read, its name (empty for a bare id ref). An mm_/pl_/ULID id ref needs no
 // database at all.
 func Mastermind(deps Deps, ref string) (id, name string, err error) {
@@ -125,7 +125,7 @@ func Mastermind(deps Deps, ref string) (id, name string, err error) {
 
 // repoRootBestEffort resolves cwd's repository root without failing: any
 // git error -- including "not a repository" -- is ("", false), so a bare live
-// board still resolves outside a repository (R6/S2).
+// board still resolves outside a repository.
 func repoRootBestEffort(resolve func(string) (string, error), cwd string) (string, bool) {
 	root, err := resolve(cwd)
 	if err != nil {
@@ -134,7 +134,7 @@ func repoRootBestEffort(resolve func(string) (string, error), cwd string) (strin
 	return root, true
 }
 
-// ResolveScene resolves one `relevo board` invocation to a scene (S2).
+// ResolveScene resolves one `relevo board` invocation to a scene.
 // ref is the --mastermind value alone: an explicit path ignores
 // RELEVO_MASTERMIND, and a repo path ignores --mastermind.
 func ResolveScene(deps Deps, cwd, ref, boardName, arg string) (Resolved, error) {
@@ -143,8 +143,8 @@ func ResolveScene(deps Deps, cwd, ref, boardName, arg string) (Resolved, error) 
 		return Resolved{}, err
 	}
 	// The repository root is resolved best-effort once, so the disjointness
-	// rule (S5) is real whenever the invocation is inside a repository while a
-	// bare board still works outside one (R6).
+	// rule is real whenever the invocation is inside a repository while a
+	// bare board still works outside one.
 	repoRoot, repoKnown := repoRootBestEffort(deps.RepoRoot, cwd)
 
 	if arg != "" {

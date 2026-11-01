@@ -5,7 +5,7 @@ import (
 	"io/fs"
 )
 
-// shell is the embedded shell page: the no-token page the browser loads,
+// shellTree is the embedded shell page: the no-token page the browser loads,
 // and its script. It lives outside assets/ on purpose: assets/ is the built
 // page with an integrity manifest CI checks, and the shell is hand-written
 // with no build step.

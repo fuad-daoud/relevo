@@ -15,7 +15,8 @@ func Title(version string, e LastError, ok bool) string {
 	return fmt.Sprintf("relevo %s: %s in %s", version, e.Code, e.Verb)
 }
 
-// Doc is the bundle's JSON document: the same facts Markdown renders.
+// Doc is the bundle's JSON document: the same facts Markdown renders, as one
+// object. Its key paths are the contract a consumer reads.
 type Doc struct {
 	Title     string     `json:"title"`
 	Version   string     `json:"version"`
@@ -122,7 +123,8 @@ func writeTable(sb *strings.Builder, s Section) {
 	}
 }
 
-// cells makes every cell safe for one markdown table row.
+// cells makes every cell safe for one markdown table row: a newline would end
+// the row and a pipe would start a new column.
 func cells(cells []string) []string {
 	out := make([]string, 0, len(cells))
 	for _, c := range cells {
