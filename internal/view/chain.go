@@ -5,10 +5,9 @@ import (
 	"strings"
 )
 
-// ChainFacts is one chain's state as a status surface shows it: the state
-// machine's own words, the plan the chain holds, and the member it waits on.
-// They are plain strings and counts, so a chain row renders without view
-// importing the state machine that owns them.
+// ChainFacts is one chain's state as a status surface shows it: plain strings
+// and counts, so a chain row renders without view importing the state machine
+// that owns them.
 type ChainFacts struct {
 	Status      string `json:"status"` // running | halted | stopped | done
 	Phase       string `json:"phase"`
@@ -33,9 +32,8 @@ type ChainFacts struct {
 	PlanTotal int    `json:"plan_total,omitempty"`
 	Check     bool   `json:"check,omitempty"`
 	// PendingMembers names, in member order, the members holding a payload the
-	// MasterMind has not collected -- a report, a halt, a chain's end delivery.
-	// Empty when every member's payloads are collected, so a chain row with
-	// nothing stranded renders exactly as it did before this field existed.
+	// MasterMind has not collected. Empty when every member's payloads are
+	// collected.
 	//
 	// It is what makes a stranded member visible from the chain's own row: the
 	// roll-up replaces every member's row with one chain row, so a payload
@@ -47,18 +45,17 @@ type ChainFacts struct {
 	Parent string `json:"parent,omitempty"`
 	// Children are the parent chain's child chain names in key order, and
 	// ChildrenDone how many of them have ended. Both are empty on a chain with
-	// no fork, so its row renders exactly as it did before forks existed.
+	// no fork, so a row without a fork keeps the text it had.
 	Children     []string `json:"children,omitempty"`
 	ChildrenDone int      `json:"children_done,omitempty"`
 }
 
-// ChainPendingSegment is the segment a chain row shows after its plan segment:
-// "pending on x-rev", or every stranded member's name when more than one holds
-// an uncollected payload. A chain with nothing pending returns "", so a row
-// without a stranded member keeps the text it had.
+// ChainPendingSegment is the segment a chain row shows after its plan
+// segment, or "" when nothing is pending.
 //
-// The names are member bindings rather than roles on purpose: the reader has to
-// open one by name, and a chain row is the only place left that can say which.
+// The names are member bindings rather than roles on purpose: the reader has
+// to open one by name, and a chain row is the only place left that can say
+// which.
 func ChainPendingSegment(f ChainFacts) string {
 	switch len(f.PendingMembers) {
 	case 0:
@@ -85,9 +82,8 @@ func ChainForkSegment(f ChainFacts) string {
 // for example "plan 2/4 · reviewing · 1 correction". Zero corrections leaves
 // the segment off entirely; one takes the singular.
 //
-// A halted or stopped chain with a manual round running reads only that round
-// ("manual round 3 running"). A done or stopped chain omits the step: the work
-// is over, and the step word no longer describes anything happening; a halted
+// A halted or stopped chain with a manual round running reads only that
+// round. A done or stopped chain omits the step: the work is over; a halted
 // chain keeps it.
 func ChainSegment(f ChainFacts) string {
 	if f.ManualRound > 0 {
@@ -110,8 +106,8 @@ func ChainSegment(f ChainFacts) string {
 }
 
 // flowChainSegment is the text a workflow chain's row shows: the step its
-// engine is on with the round it awaits -- or the check run while a check is
-// awaited -- and its position in the plan input.
+// engine is on with the round (or check run) it awaits, and its position in
+// the plan input.
 func flowChainSegment(f ChainFacts) string {
 	s := ""
 	if f.Status != "done" && f.Status != "stopped" {
@@ -136,9 +132,7 @@ func flowChainSegment(f ChainFacts) string {
 	return s
 }
 
-// ChainDisplay maps a chain's status to the word a status surface shows: a
-// halted or stopped chain waits on a human, a done one is finished, and a
-// running one is working. It is the chain rows' counterpart of DisplayState.
+// ChainDisplay maps a chain's status to the word a status surface shows.
 //
 // A halted or stopped chain whose builder has a manual round running is not
 // waiting on a human: it reads as its own status word, so the row does not

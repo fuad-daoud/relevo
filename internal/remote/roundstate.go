@@ -5,15 +5,10 @@ import (
 )
 
 // RoundStateOf returns the execution state of an owned binding.
-// It is derived live from the binding and its entries, never stored.
 //
-// An un-acked close outranks the halt that follows it. A round with a done
-// marker closes whatever the earlier state was, so a binding that closed and
-// then halted again -- a reader over its artifact cap, a refused scope, a
-// resend whose admit failed -- still owes its owner that close. Reporting
-// needs_you instead would hide it: the client fetches a catch-up by this word,
-// and a needs_you view makes it skip the fetch, so the round would never
-// close.
+// An un-acked close outranks later state because the client fetches catch-up
+// by this word: a needs_you view makes the client skip the fetch, so the
+// round would never close.
 func RoundStateOf(b store.Binding, entries []store.LogEntry) RoundState {
 	if b.Serve != nil && b.Serve.ClosedRound > b.Serve.AckedRound {
 		return RoundClosed
@@ -43,22 +38,17 @@ func RoundStateOf(b store.Binding, entries []store.LogEntry) RoundState {
 	return RoundIdle
 }
 
-// BindingSwitchable is the one definition of "the daemon will bring a builder
-// back by itself", which is the only thing that excuses a broken binding from
-// owing its MasterMind an entry. It mirrors view.WaitingOn's own test, and the
-// two must agree: WaitingOn answers ok=false for a switchable broken binding
-// because the fault resolves itself, and queueBrokenHalt queues for every
-// binding WaitingOn does call waiting. view keeps its own deliberate
-// duplicate; the engine calls down to this one.
+// BindingSwitchable reports whether the daemon will bring a builder back by
+// itself, which is the only thing that excuses a broken binding from owing
+// its MasterMind an entry. It mirrors view.WaitingOn's own test, and the two
+// must agree: a switchable break is not waiting on a human.
 //
-// The PID clause is what makes that agreement reachable. A round's builder
-// candidate and RoundStartedAt survive the switch that failed to replace them,
-// so a mid-round switch whose spawn failed looks switchable while having no
-// process at all -- and no tick retries it (reconcileHeadless returns at the
-// PID == 0 branch without acting). That binding is waiting on a human, not on
-// the daemon, so with no process it is not switchable. The spawn_failed ledger
-// entry the failed resolve already recorded still gates the bad candidate, so
-// self-healing is preserved: the next human send picks a different one.
+// The PID clause is what makes that agreement reachable: a round's candidate
+// and RoundStartedAt survive the switch that failed to replace them, so a
+// mid-round switch whose spawn failed only looks switchable while having no
+// process at all. No tick retries it, so with no process it is not
+// switchable: the failed resolve already gated the bad candidate, so
+// self-healing holds.
 func BindingSwitchable(b store.Binding) bool {
 	return b.BuilderCandidate != "" && !b.RoundStartedAt.IsZero() && b.Builder.PID != 0
 }

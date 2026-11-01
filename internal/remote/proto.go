@@ -1,3 +1,5 @@
+// Package remote holds the client-server wire types both sides speak:
+// request shapes, binding and chain views, feature tokens and auth headers.
 package remote
 
 import (
@@ -12,24 +14,18 @@ import (
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
-// Version is the remote protocol version.
 const Version = 1
 
-// ContentTypeGitBundle is the MIME content type for git bundles.
 const ContentTypeGitBundle = "application/x-git-bundle"
 
-// HeaderClientVersion is the request header a client sets to its buildVersion.
 // It is informational -- the server logs it and never rejects a request on
 // it, and it is never part of the signature.
 const HeaderClientVersion = "Relevo-Client-Version"
 
-// HeaderFileSize is the file's total byte length on the server.
 const HeaderFileSize = "X-Relevo-Size"
 
-// HeaderFileFrom is the offset honoured by the server.
 const HeaderFileFrom = "X-Relevo-From"
 
-// FileRange describes the byte range honoured by a server for a round file route.
 // Honored is true only when both headers are present and parse as non-negative ints.
 type FileRange struct {
 	Honored bool
@@ -37,7 +33,6 @@ type FileRange struct {
 	Size    int64
 }
 
-// ParseFileRange extracts a FileRange from HTTP response headers.
 func ParseFileRange(h http.Header) FileRange {
 	fromStr := h.Get(HeaderFileFrom)
 	sizeStr := h.Get(HeaderFileSize)
@@ -56,7 +51,6 @@ func ParseFileRange(h http.Header) FileRange {
 	}
 }
 
-// RoundState represents the execution state of a round on the server.
 type RoundState string
 
 const (
@@ -73,7 +67,6 @@ const (
 	RoundBroken RoundState = "broken"
 )
 
-// WhoAmI represents the response to an authentication identity check.
 type WhoAmI struct {
 	ID            ClientID `json:"id"`
 	Label         string   `json:"label"`
@@ -99,16 +92,13 @@ type WhoAmI struct {
 	InstallationLabel string `json:"installation_label,omitempty"`
 }
 
-// GitIdentity is a client's git identity: the name and email its own
-// commits would use, which the server runs a binding's builders as. Both
-// values are required when the struct is present, 1-256 bytes with no
+// Both values are required when the struct is present, 1-256 bytes with no
 // newline, carriage return, NUL, < or >.
 type GitIdentity struct {
 	Name  string `json:"name"`
 	Email string `json:"email"`
 }
 
-// CreateBindingRequest holds the parameters for creating a new binding on the server.
 type CreateBindingRequest struct {
 	Name           string `json:"name"`        // required; store name rules apply on the server
 	RepoID         string `json:"repo_id"`     // required; RepoID()
@@ -118,75 +108,69 @@ type CreateBindingRequest struct {
 	RoundTimeoutMS int    `json:"round_timeout_ms,omitempty"`
 	Tier           string `json:"tier,omitempty"`  // "" = server's choice; else harness|read|edit|yolo
 	Role           string `json:"actor,omitempty"` // the actor the runner plays; resolved against the server's own actors
-	// Feature and Ticket are the client binding's labels. Both are
-	// additive: an old server ignores them, and a client setting either
-	// refuses a server that does not advertise remote.FeatureLabels.
+	// Feature and Ticket are the client binding's labels. New fields are
+	// additive: an old server ignores what it does not know, so each field
+	// below names only its own refusal or default. A client setting either
+	// label refuses a server that does not advertise remote.FeatureLabels.
 	Feature string `json:"feature,omitempty"`
 	Ticket  string `json:"ticket,omitempty"`
 
 	// Subdir is the inside-the-tree offset the round's processes run at,
-	// resolved on the client -- the server cannot know it. It is additive
-	// like the labels: an old server ignores it, and a client with a
+	// resolved on the client -- the server cannot know it. A client with a
 	// non-empty one refuses a server that does not advertise
 	// remote.FeatureSubdir rather than let the round land at the root.
 	Subdir string `json:"subdir,omitempty"`
 
 	// Trimpath is the client's effective trimpath setting: "" (absent) reads
-	// trimmed, and only "off" opts the served rounds out. It is additive: an
-	// old server ignores it and a dropped value degrades to trimmed, the
-	// intended default, so no side refuses on it.
+	// trimmed, and only "off" opts the served rounds out. A dropped value
+	// degrades to trimmed, the intended default, so no side refuses on it.
 	Trimpath string `json:"trimpath,omitempty"`
 
 	// Gate is the acceptance command this binding's rounds are checked with;
-	// "" means no check. It is additive: an old server ignores it.
+	// "" means no check.
 	Gate string `json:"gate,omitempty"`
 
 	// Regate is the binding's automatic repair-round budget, resolved by the
-	// client exactly as the local add resolves it. nil means an old client
-	// that sent none: the server then applies its own policy default. It is
-	// additive: an old server ignores it.
+	// client exactly as the local add resolves it. Nil means an old client
+	// that sent none: the server then applies its own policy default.
 	Regate *int `json:"regate,omitempty"`
 
 	// Author is the client's git identity; the server runs this binding's
-	// builders as it. nil means an old client that sent none.
+	// builders as it. Nil means an old client that sent none.
 	Author *GitIdentity `json:"author,omitempty"`
 
 	// ClientInstallation and ClientBindingID are the client's own installation
 	// id and the record id it pre-minted for this binding. The server stores
-	// them as its row's link to the client's copy. Both are additive: an old
-	// client sends none, and the server's row then carries no link.
+	// them as its row's link to the client's copy. An old client sends none,
+	// and the server's row then carries no link.
 	ClientInstallation string `json:"client_installation,omitempty"`
 	ClientBindingID    string `json:"client_binding_id,omitempty"`
 }
 
-// TagRef is one tag a client ships beside a round's bundle, so a server
-// worktree can `git describe --tags`. The wire field is the multipart
-// form value "tags" on POST /v1/bindings/{name}/rounds: a JSON array of
-// TagRef sorted by Name. Absent or empty = no tags.
+// One tag a client ships beside a round's bundle, so a server worktree can
+// `git describe --tags`. The wire field is the multipart form value "tags"
+// on POST /v1/bindings/{name}/rounds: a JSON array of TagRef sorted by Name.
 type TagRef struct {
 	Name string `json:"name"` // tag name without refs/tags/, e.g. "v0.4.0"; non-empty
 	SHA  string `json:"sha"`  // the COMMIT the tag points at (annotated tags peeled); 40 hex
 }
 
-// ArtifactFile is one file a closed reader round left on the server, as the
-// artifact listing reports it. Rel is relative to the round's artifact
-// directory, uses "/" separators, and never escapes it.
+// Rel is relative to the round's artifact directory, uses "/" separators,
+// and never escapes it.
 type ArtifactFile struct {
 	Rel   string    `json:"rel"`
 	Size  int64     `json:"size"`
 	MTime time.Time `json:"mtime"`
 }
 
-// ArtifactList is a closed reader round's artifact listing. Output is the
-// server's own relevo.OutputFile for the round (e.g. "findings.md"); Files are
-// sorted the way relevo.RoundArtifacts sorts them.
+// Output is the server's own relevo.OutputFile for the round (e.g.
+// "findings.md"); Files are sorted the way relevo.RoundArtifacts sorts them.
 type ArtifactList struct {
 	Actor  string         `json:"actor"`
 	Output string         `json:"output"`
 	Files  []ArtifactFile `json:"files"`
 }
 
-// BindingView is the server's wire representation of a binding's state.
 type BindingView struct {
 	Name          string     `json:"name"`
 	State         string     `json:"state"` // the store's State string
@@ -242,15 +226,13 @@ type BindingView struct {
 	Ticket  string `json:"ticket,omitempty"`
 
 	// Usage is the closed round's usage as the server recorded it on its
-	// report entry (usage.Usage is already JSON-tagged; it is the same
-	// struct store.LogEntry.Usage holds). nil from a pre-usage server, or
-	// when the closed round has no report entry.
+	// report entry. Nil from a pre-usage server, or when the closed round has
+	// no report entry.
 	Usage *usage.Usage `json:"usage,omitempty"`
 
-	// Rusage is the closed round's cgroup measurement as the server
-	// recorded it on its report entry. Nil from a server without scopes,
-	// a round that was not a scope, or when the closed round has
-	// no report entry.
+	// Rusage is the closed round's cgroup measurement as the server recorded
+	// it on its report entry. Nil from a server without scopes, a round that
+	// was not a scope, or when the closed round has no report entry.
 	Rusage *store.Rusage `json:"rusage,omitempty"`
 
 	// PriorTokens is the tokens the server's earlier builders in ClosedRound
@@ -258,8 +240,8 @@ type BindingView struct {
 	PriorTokens *usage.Tokens `json:"prior_tokens,omitempty"`
 
 	// StalledSince is the server's stall stamp for a live-but-quiet headless
-	// round, copied onto the client binding for a running round. Zero
-	// from a pre-stall server, and zero when the round is not stalled.
+	// round, copied onto the client binding for a running round. Zero from a
+	// pre-stall server, and zero when the round is not stalled.
 	StalledSince time.Time `json:"stalled_since,omitempty"`
 
 	// Queue is this round's place in the server's builder queue;
@@ -281,7 +263,6 @@ type BindingView struct {
 	KeptReason   string `json:"kept_reason,omitempty"`
 }
 
-// QueueView is a queued round's place in the server's queue.
 type QueueView struct {
 	Position int       `json:"position"` // 1-based
 	Ahead    int       `json:"ahead"`    // Position-1
@@ -290,14 +271,12 @@ type QueueView struct {
 	Since    time.Time `json:"since"`
 }
 
-// DiffStat is a round's diff stats across the wire.
 type DiffStat struct {
 	Files   int `json:"files"`
 	Added   int `json:"added"`
 	Removed int `json:"removed"`
 }
 
-// LiveView is the running round as the server's own status row sees it.
 // No field holds a server path.
 type LiveView struct {
 	At             time.Time    `json:"at"`
@@ -313,7 +292,6 @@ type LiveView struct {
 	GatingSince    time.Time    `json:"gating_since,omitzero"`
 }
 
-// BuildersView is the server's builder census.
 type BuildersView struct {
 	Running int    `json:"running"`
 	Queued  int    `json:"queued"`
@@ -328,7 +306,6 @@ type BuildersView struct {
 	Image string `json:"image,omitempty"`
 }
 
-// UnavailableRequest reports builder unavailability with a diagnostic reason.
 type UnavailableRequest struct {
 	Token  string `json:"token"`
 	Reason string `json:"reason"`
@@ -340,8 +317,6 @@ type AvailableRequest struct {
 	Subject string `json:"subject"`
 }
 
-// AvailableResponse reports what Available lifted: the provider it resolved
-// subject to, and how many rate-limit entries it removed.
 type AvailableResponse struct {
 	Provider string `json:"provider"`
 	Removed  int    `json:"removed"`
@@ -359,10 +334,9 @@ type CandidatesResponse struct {
 	Candidates []CandidateView `json:"candidates"`
 }
 
-// ActorView is the answer to GET /v1/actors/{actor}: what a create naming this
-// actor would answer. Accepted, Pick and Reason come from the same call a
-// create makes, so the probe cannot disagree with the create it precedes.
-// Candidates is never null. Field names are the wire contract.
+// Accepted, Pick and Reason come from the same call a create makes, so the
+// probe cannot disagree with the create it precedes. Candidates is never
+// null. Field names are the wire contract.
 type ActorView struct {
 	Actor      string          `json:"actor"`
 	Shape      string          `json:"shape"` // writer | reader
@@ -372,7 +346,6 @@ type ActorView struct {
 	Candidates []CandidateView `json:"candidates"`
 }
 
-// Code represents a structured error code returned by the remote protocol.
 type Code string
 
 const (

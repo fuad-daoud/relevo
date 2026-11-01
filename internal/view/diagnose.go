@@ -33,7 +33,7 @@ func DiagnoseBuilder(b store.Binding) BuilderDiagnosis {
 	}
 }
 
-// Detail renders the sentence `relevo status` shows beneath a broken binding.
+// Detail renders a broken binding's sentence for `relevo status`.
 //
 // round is the binding's current round. queueReport increments Round after
 // logging a report, so a closed round's report belongs to round-1 -- and a

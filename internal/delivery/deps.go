@@ -10,8 +10,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// Deps is the slice of the caller's runtime that delivery reads. A caller
-// builds it once so delivery stays unaware of the rest of the runtime.
+// Deps is the slice of the caller's runtime delivery reads, built once so
+// delivery stays unaware of the rest.
 type Deps struct {
 	Store       *store.Store
 	Now         func() time.Time

@@ -12,8 +12,7 @@ import (
 )
 
 // MembersOf is a chain's member binding names in the order a chain view
-// lists them: the builder first, then the reviewer, the planner and the
-// security member. A part the row leaves empty is skipped.
+// lists them. A part the row leaves empty is skipped.
 func MembersOf(c db.ChainRow) []string {
 	var out []string
 	for _, name := range []string{c.Builder, c.Reviewer, c.Planner, c.Security} {
@@ -26,7 +25,7 @@ func MembersOf(c db.ChainRow) []string {
 
 // ReadMembers names a chain's members for a read surface: the bindings its
 // engine recorded, in creation order, when the row carries a state; the legacy
-// part columns otherwise. A part the row leaves empty is skipped.
+// part columns otherwise.
 func ReadMembers(s *store.Store, c db.ChainRow) []string {
 	if len(c.WorkflowJSON) > 0 {
 		rows, err := s.ChainMembers(c.Name)
@@ -45,16 +44,13 @@ func ReadMembers(s *store.Store, c db.ChainRow) []string {
 }
 
 // PendingMembers names, in member order, the members of a chain that still
-// hold a payload the MasterMind has not collected: an unconfirmed to-mastermind
-// entry nobody has read back.
+// hold a payload the MasterMind has not collected.
 //
 // It reads each member's own log rather than the roll-up's: a chain row
-// replaces its members, so this is the only place that can still say which one
-// is holding something.
-//
-// A member whose record is gone answers nothing and is not named, and a log that
-// cannot be read names nothing: a chain row must not claim a member is stranded
-// on the strength of a read that failed.
+// replaces its members, so this is the only place that can still say which
+// one is holding something. A log that cannot be read names nothing: a chain
+// row must not claim a member is stranded on the strength of a read that
+// failed.
 func PendingMembers(s *store.Store, c db.ChainRow) []string {
 	var out []string
 	for _, member := range ReadMembers(s, c) {
@@ -82,10 +78,9 @@ func chainHoldsUncollected(entries []store.LogEntry) bool {
 }
 
 // EndMembers names the members a chain's end verbs walk: the bindings its
-// engine recorded in chain_member, in creation order, when the row carries a
-// workflow; the legacy part columns otherwise. A binding the row leaves empty
-// is skipped. A read failure keeps the legacy path, so an end verb on a legacy
-// row reads the same as ever.
+// engine recorded, in creation order, when the row carries a workflow; the
+// legacy part columns otherwise. A read failure keeps the legacy path, so an
+// end verb on a legacy row reads the same as ever.
 func EndMembers(m chain.MemberLister, c db.ChainRow) []string {
 	if len(c.WorkflowJSON) == 0 {
 		return MembersOf(c)
@@ -116,8 +111,7 @@ func FindingsOfState(c db.ChainRow) int {
 
 // FlowFindings is the finding count a state recorded: the newest step result
 // whose outcomes carry a `findings` count. Only a security run step declares
-// one, so this is that step's count; the round breaks a tie when a workflow
-// runs more than one.
+// one, so this is that step's count.
 func FlowFindings(st workflow.State) int {
 	steps := make([]string, 0, len(st.Results))
 	for step := range st.Results {
@@ -141,9 +135,7 @@ func FlowFindings(st workflow.State) int {
 	return findings
 }
 
-// StoredFacts is a chain's fixed-column facts as a read surface shows
-// them: the engine state's legacy projection when the row carries a state, the
-// stored columns otherwise.
+// StoredFacts is a chain's fixed-column facts as a read surface shows them.
 type StoredFacts struct {
 	Phase       string
 	Step        string
@@ -180,10 +172,9 @@ func StoredFactsOf(c db.ChainRow) StoredFacts {
 }
 
 // FactsOf is one chain row as the types of this package carry it. A halted or
-// stopped chain whose builder member has a round open -- a manual round a
-// human sent while the chain was down -- carries that round as ManualRound, so
-// the row reads the chain's own status word and names the round in flight
-// instead of claiming NEEDS YOU.
+// stopped chain whose builder member has a round open carries that round as
+// ManualRound, so the row reads the chain's own status word instead of
+// claiming NEEDS YOU.
 func FactsOf(s *store.Store, c db.ChainRow) ChainFacts {
 	lf := StoredFactsOf(c)
 	f := ChainFacts{
@@ -200,8 +191,8 @@ func FactsOf(s *store.Store, c db.ChainRow) ChainFacts {
 	if len(c.StateJSON) > 0 {
 		chainFlowFacts(&f, c)
 	}
-	// A parent's own children are the fork's progress; a child's row carries
-	// the parent instead, and its own children are none of its own rows' business.
+	// Only a parent carries fork progress; a child's row carries the parent
+	// instead.
 	if c.Parent == "" {
 		ChildFacts(s, &f, c)
 	}
@@ -221,8 +212,7 @@ func FactsOf(s *store.Store, c db.ChainRow) ChainFacts {
 	return f
 }
 
-// chainFlowFacts fills a workflow chain's own facts: the step its engine is
-// on, the round (or check run) it awaits, and its position in the plan input.
+// chainFlowFacts fills a workflow chain's facts from its engine state.
 func chainFlowFacts(f *ChainFacts, c db.ChainRow) {
 	st, err := chain.WorkflowState(c)
 	if err != nil {
@@ -257,9 +247,8 @@ func FlowPlanPos(st workflow.State) (pos, total int) {
 }
 
 // ChainStoreState maps a chain's status onto the stored binding state the
-// existing row rules read: a halted or stopped chain waits on a human, so its
-// row takes the state a human-facing row takes -- and a live chain never reads
-// as DONE, or the done-hiding rule would drop a chain that still has work.
+// existing row rules read. A live chain never reads as DONE, or the done-hiding
+// rule would drop a chain that still has work.
 func ChainStoreState(status string) store.State {
 	switch status {
 	case string(chain.StatusHalted), string(chain.StatusStopped):
@@ -271,10 +260,9 @@ func ChainStoreState(status string) store.State {
 	}
 }
 
-// ChainRow is the synthetic row that stands in for a chain: the
-// chain's name, the tree it works in, the display word every surface shares,
-// and the chain's own facts. It names the mastermind the chain belongs to, so
-// the mastermind filter and the attention sort read it like any other row.
+// ChainRow is the synthetic row that stands in for a chain. It names the
+// mastermind the chain belongs to, so the mastermind filter and the attention
+// sort read it like any other row.
 func ChainRow(s *store.Store, c db.ChainRow) BindingStatus {
 	f := FactsOf(s, c)
 	row := BindingStatus{
@@ -321,13 +309,11 @@ func ApplyChains(s *store.Store, rep Report, chains []db.ChainRow) Report {
 			rows = append(rows, b)
 			continue
 		}
-		// A fork's child is never a row of the top level: it prints under the
-		// parent that forked it, and only there (appendChainChildRows).
+		// A fork's child is never a top-level row (appendChainChildRows threads it
+		// under the parent that forked it).
 		if c.Parent != "" {
 			continue
 		}
-		// The chain row takes the place of the first of its members, and the
-		// other member rows go with it.
 		if !placed[c.Name] {
 			placed[c.Name] = true
 			rows = append(rows, chainTopRow(s, c))
@@ -345,26 +331,24 @@ func ApplyChains(s *store.Store, rep Report, chains []db.ChainRow) Report {
 		}
 	}
 	// The top-level rows sort first, so a chain that waits on a human rises to
-	// the top of the listing like any other NEEDS YOU row. Only then are a
-	// fork's children threaded in under the parent that forked them, in key
-	// order, each with its own step and status: a child is a chain, and a halted
-	// child says why. Inserting them last is what keeps the sort from pulling a
-	// halted child ahead of the still-running parent it belongs under.
+	// the top like any other NEEDS YOU row. A fork's children are threaded in
+	// last, in key order: inserting them last is what keeps the sort from
+	// pulling a halted child ahead of the still-running parent it belongs
+	// under.
 	rows = SortRows(rows, true)
 	rows = appendChainChildRows(s, rows, chains)
 	rep.Bindings = rows
 	return rep
 }
 
-// chainTopRow is the row a chain prints when it is not a fork's child.
 func chainTopRow(s *store.Store, c db.ChainRow) BindingStatus {
 	return ChainRow(s, c)
 }
 
-// appendChainChildRows inserts every fork child under the parent row it belongs
-// to, in key order. A child whose parent is not in the row set -- a parent that
-// is done, or a chain on another surface -- is skipped rather than printed at
-// the top level, because the child has no top level of its own.
+// appendChainChildRows inserts every fork child under the parent row it
+// belongs to, in key order. A child whose parent is not in the row set is
+// skipped rather than printed at the top level, because the child has no top
+// level of its own.
 func appendChainChildRows(s *store.Store, rows []BindingStatus, chains []db.ChainRow) []BindingStatus {
 	children := map[string][]db.ChainRow{}
 	for _, c := range chains {
@@ -394,9 +378,9 @@ func appendChainChildRows(s *store.Store, rows []BindingStatus, chains []db.Chai
 }
 
 // ChildRows is a chain's child chains in key order, with how many of them
-// have ended. The rows whose Parent names this chain are its children; the key
-// order is the order the engine named them in ("1".."N"), so the listing reads
-// in fork order rather than in whatever order the query returned.
+// have ended. The key order is the order the engine named them in, so the
+// listing reads in fork order rather than in whatever order the query
+// returned.
 func ChildRows(s *store.Store, c db.ChainRow) (children []db.ChainRow, done int) {
 	if s == nil {
 		return nil, 0
@@ -436,9 +420,8 @@ func sortChainRowsByKey(rows []db.ChainRow) {
 	})
 }
 
-// chainRowForkKey is a row's own fork key -- its name with its own
-// "<parent>." prefix trimmed -- as the integer the engine declared it with. ok
-// is false for a row whose key is not a number.
+// chainRowForkKey is a row's fork key as the integer the engine declared it
+// with; ok is false when the key is not a number.
 func chainRowForkKey(c db.ChainRow) (int, bool) {
 	n, err := strconv.Atoi(strings.TrimPrefix(c.Name, c.Parent+"."))
 	if err != nil {
@@ -447,8 +430,7 @@ func chainRowForkKey(c db.ChainRow) (int, bool) {
 	return n, true
 }
 
-// ChildFacts fills a chain's fork facts: the child chain names in key order
-// and how many of them are done.
+// ChildFacts fills a chain's fork facts.
 func ChildFacts(s *store.Store, f *ChainFacts, c db.ChainRow) {
 	children, done := ChildRows(s, c)
 	for _, ch := range children {
@@ -458,18 +440,15 @@ func ChildFacts(s *store.Store, f *ChainFacts, c db.ChainRow) {
 }
 
 // childRowOf is the row a child chain prints under its parent: the child's
-// own chain row, unchanged in every other way. The nesting itself is read from
-// the facts the parent the row names, so the status and the statusline cannot
-// disagree about which rows are nested. Its halt reason is already the row's
-// detail, exactly as any halted chain's is.
+// own chain row. The nesting itself is read from the facts the parent the
+// row names, so the status and the statusline cannot disagree about which
+// rows are nested.
 func childRowOf(s *store.Store, c db.ChainRow) BindingStatus {
 	return ChainRow(s, c)
 }
 
 // BuilderRoundOpen reports whether a chain's builder member has a round
-// open: a prompt entry for its current round with no report entry for it yet,
-// or a queued round that has not started. A builder record that is gone, or
-// unreadable, has no open round.
+// open. A builder record that is gone, or unreadable, has no open round.
 func BuilderRoundOpen(s *store.Store, c db.ChainRow) bool {
 	b, err := s.Load(c.Builder)
 	if err != nil {

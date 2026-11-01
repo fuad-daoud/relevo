@@ -52,9 +52,7 @@ func spoolCreateChain(req remote.CreateChainRequest, bundle io.Reader) (tmp *os.
 	return tmp, size, hasher.Sum(nil), mw.FormDataContentType(), nil
 }
 
-// CreateChain hands a whole chain to a server: a multipart POST /v1/chains
-// with the "chain" JSON field and, when bundle is non-nil, one "bundle" file
-// part. The body is spooled so a retry re-reads it.
+// CreateChain spools the body so a retry re-reads it.
 func (c *Client) CreateChain(ctx context.Context, server string, req remote.CreateChainRequest, bundle io.Reader) (remote.ChainView, error) {
 	tmp, size, bodySHA, contentType, err := spoolCreateChain(req, bundle)
 	if err != nil {
@@ -87,7 +85,6 @@ func (c *Client) createChainAttempt(ctx context.Context, server string, tmp *os.
 	return decodeJSON[remote.ChainView](resp, "decode chain view")
 }
 
-// GetChain reads a chain's view.
 func (c *Client) GetChain(ctx context.Context, server, name string) (remote.ChainView, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -95,7 +92,7 @@ func (c *Client) GetChain(ctx context.Context, server, name string) (remote.Chai
 	return getJSON[remote.ChainView](c, ctx, server, path, "decode chain view")
 }
 
-// ChainStop stops a chain; it does not retry, matching the binding Stop.
+// ChainStop does not retry, matching the binding Stop.
 func (c *Client) ChainStop(ctx context.Context, server, name string) (remote.ChainStopResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -107,8 +104,7 @@ func (c *Client) ChainStop(ctx context.Context, server, name string) (remote.Cha
 	return decodeJSON[remote.ChainStopResponse](resp, "decode chain stop")
 }
 
-// ChainResume applies a resume request to a chain; it does not retry, matching
-// the binding Resume.
+// ChainResume does not retry, matching the binding Resume.
 func (c *Client) ChainResume(ctx context.Context, server, name string, req remote.ChainResumeRequest) (remote.ChainView, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -125,7 +121,7 @@ func (c *Client) ChainResume(ctx context.Context, server, name string, req remot
 	return decodeJSON[remote.ChainView](resp, "decode chain view")
 }
 
-// ChainDone marks a chain done; it does not retry, matching the binding Done.
+// ChainDone does not retry, matching the binding Done.
 func (c *Client) ChainDone(ctx context.Context, server, name string) (remote.ChainView, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()

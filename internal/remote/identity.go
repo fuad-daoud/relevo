@@ -5,13 +5,13 @@ import (
 )
 
 // ErrNoGitIdentity is the client-side refusal for an add --server whose repo
-// has no effective git identity: a remote builder commits as the
-// client, so there is nobody to commit as. It is returned before anything
-// is created, on the server or locally.
+// has no effective git identity. A remote builder commits as the client, so
+// there is nobody to commit as. It is returned before anything is created, on
+// the server or locally.
 var ErrNoGitIdentity = errors.New("no git identity")
 
 // Is40Hex reports whether s is already a resolved commit sha, the form a base
-// takes after RefSHA so a create can send it without resolving it again.
+// takes after RefSHA, so a create can send it without resolving it again.
 func Is40Hex(s string) bool {
 	if len(s) != 40 {
 		return false

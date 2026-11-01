@@ -17,8 +17,8 @@ const nudgeNote = "nudge"
 // Waiting is what one binding is waiting on: a human decision it cannot make
 // progress without, and how long it has been waiting for it.
 type Waiting struct {
-	Name  string    `json:"name"`            // binding
-	Round int       `json:"round"`           // b.Round as stored
+	Name  string    `json:"name"`
+	Round int       `json:"round"`
 	Cause string    `json:"cause"`           // "blocked" | "halted" | "broken" | "needs you"
 	Line  string    `json:"line"`            // what it is waiting on, one line, <= 120 runes, never empty
 	Since time.Time `json:"since,omitempty"` // when it started waiting; zero when relevo does not know
@@ -38,7 +38,7 @@ func switchable(b store.Binding) bool {
 }
 
 // capLine returns the first non-blank line of s, trimmed, truncated to n
-// runes with a trailing "…" when longer.
+// runes.
 func capLine(s string, n int) string {
 	for _, line := range strings.Split(s, "\n") {
 		line = strings.TrimSpace(line)
@@ -54,8 +54,8 @@ func capLine(s string, n int) string {
 	return ""
 }
 
-// questionEntry returns the to_planner/question log entry for round, if one
-// exists. It returns the entry itself, because WaitingOn needs its TS and Path.
+// questionEntry is the to_planner/question log entry for round. It returns
+// the entry itself, because WaitingOn needs its TS and Path.
 func questionEntry(entries []store.LogEntry, round int) (store.LogEntry, bool) {
 	for _, e := range entries {
 		if e.Round == round && e.Direction == store.DirToMasterMind && e.Kind == store.KindQuestion && e.Note != nudgeNote {

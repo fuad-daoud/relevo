@@ -8,15 +8,12 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
-// FormatRoles renders the registry for `relevo config`: one block per role in
-// reg.Names() order, with a blank line between blocks --
+// FormatRoles renders the registry for `relevo config`: one block per role.
 //
 //	<name>  <writer|reader>[  check]  tier <tier or ->  (<reg.Source()>)
 //	  candidates  <tok>, <tok>      or   candidates  (none)
 //	  scope       <path>, <path> + comments                          (only when set)
 //	  <kind>  <agent>[ + <req> ...][  (custom)]
-//
-// It is pure and never fails: `relevo config` lists what is there.
 func FormatRoles(reg *roles.Registry) string {
 	blocks := make([]string, 0, len(reg.Names()))
 	for _, name := range reg.Names() {
@@ -53,8 +50,7 @@ func formatRole(reg *roles.Registry, role roles.Role) string {
 
 	// File mode lists the row's tokens as written. Legacy mode lists the
 	// resolved Ranked list instead, so a role served only by candidates no
-	// order names still shows them, marked (unlisted). Both print each
-	// candidate's short name.
+	// order names still shows them, marked (unlisted).
 	b.WriteString("\n  candidates  ")
 	if !reg.FileMode() {
 		b.WriteString(legacyCandidates(reg, role.Ranked))
@@ -80,10 +76,9 @@ func formatRole(reg *roles.Registry, role roles.Role) string {
 	return b.String()
 }
 
-// legacyCandidates renders a role's ranked list for the legacy candidates
-// line: each candidate's short name in order, a token whose Position is 0 --
-// listed by no order entry -- suffixed " (unlisted)", and "(none)" when the
-// list is empty.
+// legacyCandidates renders the legacy candidates line: each candidate's short
+// name in order, a token with Position 0 suffixed " (unlisted)", "(none)"
+// when empty.
 func legacyCandidates(reg *roles.Registry, ranked []roles.Ranked) string {
 	if len(ranked) == 0 {
 		return "(none)"
@@ -100,10 +95,9 @@ func legacyCandidates(reg *roles.Registry, ranked []roles.Ranked) string {
 	return strings.Join(names, ", ")
 }
 
-// fileCandidates renders a role's candidates as written: each entry the role
-// resolved prints its candidate's short name, and an entry that did not
-// resolve stays raw with " (unknown)", because that is the finding.
-// "(none)" when the list is empty.
+// fileCandidates renders each resolved entry as its candidate's short name; an
+// entry that did not resolve stays raw with " (unknown)", because that is the
+// finding. "(none)" when the list is empty.
 func fileCandidates(reg *roles.Registry, role roles.Role) string {
 	if len(role.Candidates) == 0 {
 		return "(none)"
@@ -123,8 +117,8 @@ func fileCandidates(reg *roles.Registry, role roles.Role) string {
 	return strings.Join(parts, ", ")
 }
 
-// sortedDefinitionKinds returns a role's resolved definition kinds, sorted, so
-// the block's kind lines never move between runs.
+// sortedDefinitionKinds sorts a role's definition kinds, so the block's kind
+// lines never move between runs.
 func sortedDefinitionKinds(defs map[string]roles.Definition) []string {
 	kinds := make([]string, 0, len(defs))
 	for kind := range defs {

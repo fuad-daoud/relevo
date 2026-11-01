@@ -12,18 +12,15 @@ import (
 	"strings"
 )
 
-// ErrKeyFormat indicates that key data is malformed or invalidly encoded.
 var ErrKeyFormat = errors.New("invalid key format")
 
-// ErrKeyType indicates that a key is not an ed25519 key.
 var ErrKeyType = errors.New("invalid key type; ed25519 required")
 
 const pemTypePrivate = "RELEVO ED25519 PRIVATE KEY"
 
-// legacyPEMTypePrivate is the private-key PEM type written before the relevo
-// rename. A key stored under it was never rewritten by the rename, and the
-// read-only paths (preflight, check) cannot rewrite it, so it stays readable.
-// Nothing writes it: MarshalPrivate emits the current label only.
+// legacyPEMTypePrivate is the private-key label from before the rename. Old
+// files still carry it, so it must keep parsing. Nothing writes it:
+// MarshalPrivate emits the current label only.
 const legacyPEMTypePrivate = "RELAY ED25519 PRIVATE KEY" // name-guard: legacy
 
 // IsLegacyPrivatePEM reports whether data holds a PEM block of the pre-rename
@@ -39,13 +36,11 @@ func IsLegacyPrivatePEM(data []byte) bool {
 // Same shape as ssh-keygen -l; 7 + 43 = 50 characters. Never empty.
 type ClientID string
 
-// Keypair contains an ed25519 private key and its corresponding public key.
 type Keypair struct {
 	Private ed25519.PrivateKey // 64 bytes
 	Public  ed25519.PublicKey  // 32 bytes
 }
 
-// Generate generates a fresh ed25519 keypair using crypto/rand.
 func Generate() (Keypair, error) {
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -57,7 +52,6 @@ func Generate() (Keypair, error) {
 	}, nil
 }
 
-// IDOf returns the ClientID for the given ed25519 public key.
 func IDOf(pub ed25519.PublicKey) ClientID {
 	sum := sha256.Sum256(pub)
 	return ClientID("SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:]))
@@ -101,7 +95,6 @@ func IDFromDir(dir string) (ClientID, bool) {
 	return ClientID("SHA256:" + base64.RawStdEncoding.EncodeToString(raw)), true
 }
 
-// MarshalPrivate encodes k's private key as a PEM block of type "RELEVO ED25519 PRIVATE KEY".
 func MarshalPrivate(k Keypair) ([]byte, error) {
 	if len(k.Private) != ed25519.PrivateKeySize {
 		return nil, ErrKeyFormat
@@ -112,11 +105,9 @@ func MarshalPrivate(k Keypair) ([]byte, error) {
 	}), nil
 }
 
-// ParsePrivate parses a PEM-encoded private key. The PEM block must be of type
-// "RELEVO ED25519 PRIVATE KEY" or of the pre-rename type held by
-// legacyPEMTypePrivate; any other type, or an invalid key length, returns an
-// error. The old label is read because a key stored before the rename was never
-// rewritten, and preflight, which cannot write, must parse the key it finds.
+// ParsePrivate parses a PEM-encoded private key, also reading the pre-rename
+// label because old files still carry it, and preflight, which cannot write,
+// must parse the key it finds.
 func ParsePrivate(data []byte) (Keypair, error) {
 	block, _ := pem.Decode(data)
 	if block == nil {
@@ -136,7 +127,6 @@ func ParsePrivate(data []byte) (Keypair, error) {
 	}, nil
 }
 
-// MarshalPublic formats an ed25519 public key as "ed25519 <base64>[ <comment>]".
 func MarshalPublic(pub ed25519.PublicKey, comment string) string {
 	b64 := base64.StdEncoding.EncodeToString(pub)
 	if comment != "" {
@@ -146,7 +136,6 @@ func MarshalPublic(pub ed25519.PublicKey, comment string) string {
 }
 
 // ParsePublic parses an enrollment line formatted as "ed25519 <base64>[ <comment>]".
-// If the format is invalid or the key length is not 32 bytes, ErrKeyFormat is returned.
 func ParsePublic(line string) (ed25519.PublicKey, error) {
 	line = strings.TrimRight(line, "\r\n")
 	if !strings.HasPrefix(line, "ed25519 ") {

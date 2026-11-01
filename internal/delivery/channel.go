@@ -13,15 +13,12 @@ import (
 // ClaimTTL is how stale a claim's SeenAt may be before it is treated as dead.
 const ClaimTTL = 10 * time.Second
 
-// claimKeyPrefix is the kv prefix every claim's row shares: one claim is one
-// `claim/<mastermind-id>` row holding exactly the JSON the file held.
+// claimKeyPrefix is the kv prefix of claim rows: one `claim/<mastermind-id>` row each.
 const claimKeyPrefix = "claim/"
 
-// claimKey is the row a claim's JSON lives under.
 func claimKey(mastermindID string) string { return claimKeyPrefix + mastermindID }
 
-// Claim is one relevo mcp process's hold on a mastermind's mailbox, keyed by
-// mastermind id.
+// Claim is one relevo mcp process's hold on a mastermind's mailbox.
 type Claim struct {
 	MasterMind    string    `json:"planner"`         // required; the relevo mastermind id, e.g. "pl_abc…"; json key is state already written
 	PID           int       `json:"pid"`             // required; > 0
@@ -33,47 +30,34 @@ type Claim struct {
 	Version       string    `json:"version"`         // relevo version that wrote it; informational
 }
 
-// ErrClaimHeld reports that a different live claim already exists for a
-// mastermind.
+// ErrClaimHeld reports a different live claim already exists for a mastermind.
 var ErrClaimHeld = errors.New("mastermind already has a live push claim")
 
-// ClaimStore is what the daemon and relevo mcp share. A nil ClaimStore on a
-// Runtime means "no claims exist"; DeliverPending's guard treats it that way.
+// ClaimStore is what the daemon and relevo mcp share; nil means "no claims exist".
 type ClaimStore interface {
-	// Live returns the claim for mastermind if it is live: parses, pid alive,
-	// now - SeenAt <= ClaimTTL. A row that exists but is not live is
-	// removed and (nil, nil) returned. Missing row -> (nil, nil). A name
-	// that is not a mastermind id is not a claim this version made: it is
-	// ignored (nil, nil) and never rewritten.
+	// Live returns the claim for mastermind if it is live; a stale or
+	// foreign-named row is removed or ignored and (nil, nil) returned.
 	Live(mastermind string, now time.Time) (*Claim, error)
-	// Write persists c. Returns ErrClaimHeld when a different live claim
-	// (other PID) exists for c.MasterMind.
+	// Write persists c, or ErrClaimHeld when a different live claim exists.
 	Write(c Claim, now time.Time) error
-	// Remove deletes the claim for mastermind if its PID equals pid. No error
-	// when absent.
+	// Remove deletes the claim for mastermind if its PID equals pid.
 	Remove(mastermind string, pid int) error
 }
 
-// ClaimBulk is the optional whole-namespace read a ClaimStore may also
-// implement: one pass over the claim rows instead of one read per mastermind.
-// A status report resolves every row's push route from the returned map; a
-// store that does not implement it is read one mastermind at a time.
+// ClaimBulk is the optional whole-namespace read: one pass over the claim
+// rows instead of one read per mastermind.
 type ClaimBulk interface {
-	// LiveAll returns every live claim keyed by mastermind id. A row that is
-	// stale or unparseable is removed, exactly as Live removes it, and is
-	// absent from the map.
+	// LiveAll returns every live claim keyed by mastermind id, removing stale
+	// rows exactly as Live does.
 	LiveAll(now time.Time) (map[string]*Claim, error)
 }
 
-// KVClaims is the ClaimStore over the store root database's kv rows: one
-// `claim/<mastermind-id>` row per mastermind.
+// KVClaims is the ClaimStore over the store root's kv rows.
 type KVClaims struct {
-	// KV is the kv handle the claims live in: the store root's database.
+	// KV is the kv handle the claims live in.
 	KV db.DBTxKV
 
-	// Alive reports whether pid names a live process. Nil uses the
-	// default: syscall.Kill(pid, 0) == nil || the error is EPERM (a
-	// process we cannot signal is still alive).
+	// Alive reports whether pid names a live process. Nil uses the default.
 	Alive func(pid int) bool
 }
 
@@ -88,7 +72,6 @@ func (c *KVClaims) alive(pid int) bool {
 	return defaultClaimAlive(pid)
 }
 
-// Live implements ClaimStore.
 func (c *KVClaims) Live(mastermindID string, now time.Time) (*Claim, error) {
 	if mastermindID == "" {
 		return nil, errors.New("empty mastermind")
@@ -102,8 +85,7 @@ func (c *KVClaims) Live(mastermindID string, now time.Time) (*Claim, error) {
 	return c.liveFrom(c.KV, mastermindID, now)
 }
 
-// liveFrom is Live's body over one kv handle: the *DB for a read, or the
-// transaction Write's check-then-write runs in.
+// liveFrom is Live's body over one kv handle.
 func (c *KVClaims) liveFrom(kv db.KVTx, mastermindID string, now time.Time) (*Claim, error) {
 	raw, ok, err := kv.KVGet(claimKey(mastermindID))
 	if err != nil {
@@ -124,15 +106,13 @@ func (c *KVClaims) liveFrom(kv db.KVTx, mastermindID string, now time.Time) (*Cl
 		return &existing, nil
 	}
 
-	// Stale: whoever reads it cleans it up. Removal failures are not worth
-	// failing the read over -- the caller already has its answer, "not live".
+	// Stale reads clean up after themselves; a failed cleanup keeps the
+	// caller's answer, "not live".
 	_ = kv.KVDelete(claimKey(mastermindID))
 	return nil, nil
 }
 
-// LiveAll implements ClaimBulk: every live claim keyed by mastermind id, with
-// each stale row removed exactly as Live removes it. A pane-keyed row from an
-// older version is skipped, never rewritten, exactly as Live skips it.
+// LiveAll implements ClaimBulk, skipping older-version rows exactly as Live does.
 func (c *KVClaims) LiveAll(now time.Time) (map[string]*Claim, error) {
 	keys, err := c.KV.KVKeys(claimKeyPrefix)
 	if err != nil {
@@ -155,13 +135,9 @@ func (c *KVClaims) LiveAll(now time.Time) (map[string]*Claim, error) {
 	return out, nil
 }
 
-// Write implements ClaimStore.
-//
-// Its check-then-write runs inside one DBTxKV.Tx, so the check and the write
-// are atomic: two relevo mcp processes starting together cannot both read "no
-// live claim" and both write, which a read followed by a separate write could.
-// The second writer sees the first's row and gets
-// ErrClaimHeld.
+// Write implements ClaimStore. Check-then-write runs in one Tx, so two
+// processes starting together cannot both read "no live claim" and both
+// write; the second sees the first's row and gets ErrClaimHeld.
 func (c *KVClaims) Write(claim Claim, now time.Time) error {
 	if claim.MasterMind == "" {
 		return errors.New("empty mastermind")
@@ -189,8 +165,7 @@ func (c *KVClaims) Write(claim Claim, now time.Time) error {
 	})
 }
 
-// Remove implements ClaimStore. A name that is not a mastermind id names no
-// claim this version wrote, so it is absent, not an error.
+// Remove implements ClaimStore; a foreign-named row is absent, not an error.
 func (c *KVClaims) Remove(mastermindID string, pid int) error {
 	if mastermindID == "" {
 		return errors.New("empty mastermind")
@@ -209,8 +184,7 @@ func (c *KVClaims) Remove(mastermindID string, pid int) error {
 
 	var existing Claim
 	if err := json.Unmarshal(raw, &existing); err != nil {
-		// Unparseable: not provably "present with pid == pid", so leave it
-		// for a reader's Live to clean up.
+		// Unparseable is not provably ours, so leave it for a reader's Live.
 		return nil
 	}
 	if existing.PID != pid {
@@ -220,10 +194,8 @@ func (c *KVClaims) Remove(mastermindID string, pid int) error {
 	return c.KV.KVDelete(claimKey(mastermindID))
 }
 
-// paneKeyedClaimDead is the pane-keyed claim rule, pure so it is
-// tested directly: a claim document is removed only when it parses and carries
-// a pid that is not alive. Anything else -- unparseable bytes, no pid, a live
-// pid -- is left.
+// paneKeyedClaimDead is the pane-keyed claim rule, pure for tests: remove
+// only when the document parses and its pid is not alive.
 func paneKeyedClaimDead(raw []byte, alive func(pid int) bool) bool {
 	var c struct {
 		PID int `json:"pid"`

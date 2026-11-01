@@ -41,6 +41,14 @@ func dialUDS(ctx context.Context, sock string) (net.Conn, error) {
   the name and the signature do not.
 - **Length.** A comment as long as the function it sits on is usually telling
   a story. Keep the reason and drop the story.
+- **Trimming.** Cut the restatement, not the definition. A doc comment that
+  stays begins with its name, and a field, option or constant whose name does
+  not say what it holds keeps the clause that does. Never leave a fragment
+  such as "It is also..." or "Nil when..." behind.
+- **Reasons hiding in a story.** These stay when a story is cut: two copies
+  that must agree, the consequence that makes a hazard a hazard, why a lock or
+  transaction is passed in, what `""`, nil or zero means for a parameter or
+  field of an exported API, and where a number or a file shape comes from.
 
 ## No history
 

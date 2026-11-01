@@ -25,25 +25,18 @@ const (
 	OpencodeConfirmPoll    = 250 * time.Millisecond
 	DefaultFallbackAfter   = 30 * time.Second
 
-	// OpencodePushHorizon is how long an opencode payload may keep being POSTed
-	// before Deliver gives up on it. It is opencode's own and it is long: an
-	// opencode mastermind has no collector on the pane path, so a give-up here
-	// hands the payload to nothing that would deliver it -- it only makes the
-	// entry visible to a human. Thirty minutes rides out a service restart or a
-	// closed laptop, and still bounds the wait.
+	// OpencodePushHorizon bounds POST retries. It is long on purpose: an opencode
+	// give-up hands the payload to nothing deliverable, only to human eyes, and
+	// thirty minutes rides out a restart or a closed laptop.
 	OpencodePushHorizon = 30 * time.Minute
 
-	// opencodeClockSkew tolerates opencode's clock reading slightly behind
-	// the releaser's when comparing a session row's timestamp against the
-	// entry's queuedAt. It is agy's value, so both routes tolerate the same
-	// drift and a row stamped a hair before the queue time still counts.
+	// opencodeClockSkew shares agy's value, so both routes tolerate the same drift.
 	opencodeClockSkew = agyClockSkew
 )
 
-// OpencodeDeliverer is the MasterMindDeliverer for opencode masterminds: it POSTs the
-// payload to opencode's own HTTP API and confirms delivery by reading the
-// session back out of opencode's sqlite db, because a 2xx from the wrong
-// server process is not evidence anything arrived.
+// OpencodeDeliverer is the MasterMindDeliverer for opencode masterminds: it POSTs
+// to opencode's HTTP API and confirms by reading the session back out of its
+// sqlite db -- a 2xx alone is not evidence anything arrived.
 type OpencodeDeliverer struct {
 	Client     *http.Client // nil -> &http.Client{Timeout: OpencodeRequestTimeout}
 	StateFiles []string     // candidate service.json files, tried in order
@@ -95,9 +88,8 @@ func (d *OpencodeDeliverer) client() *http.Client {
 	return &http.Client{Timeout: OpencodeRequestTimeout}
 }
 
-// fallbackAfter is the give-up horizon: opencode's own long one, because an
-// opencode give-up has nowhere to hand the payload but a human. The shared
-// 30s DefaultFallbackAfter stays where agy reads it.
+// fallbackAfter is opencode's own long horizon: a give-up here hands the
+// payload to a human, not to another route.
 func (d *OpencodeDeliverer) fallbackAfter() time.Duration {
 	if d.FallbackAfter > 0 {
 		return d.FallbackAfter
@@ -105,9 +97,8 @@ func (d *OpencodeDeliverer) fallbackAfter() time.Duration {
 	return OpencodePushHorizon
 }
 
-// AdmitHorizon reports opencode's own long horizon: an admitted payload whose
-// text never shows up in the session stops being an admit after this long, so
-// the entry is delivered again instead of blocking its binding's queue forever.
+// AdmitHorizon reports opencode's long horizon: a never-surfaced payload stops
+// being an admit after this long instead of blocking its queue forever.
 func (d *OpencodeDeliverer) AdmitHorizon() time.Duration {
 	return d.fallbackAfter()
 }
@@ -115,24 +106,12 @@ func (d *OpencodeDeliverer) AdmitHorizon() time.Duration {
 // Deliver implements MasterMindDeliverer's push half for opencode
 // masterminds.
 //
-// The step order is fixed and non-obvious: guards, origin, seen, pastFallback,
-// service resolution, the single POST. The read-back runs before the give-up
-// gate, so a payload whose text is already in the session is confirmed at any
-// age -- a late-admitted payload must not be failed by the horizon before it
-// is ever read. The gate stays above the service checks, so a dead service past
-// the window still gives up.
-//
-// The POST is single-shot per call: Deliver never sleeps between POSTs, because
-// the caller's lock is a global one over the whole state root and one tick
-// holds it across the send. An opencode that is down for a moment is therefore
-// ridden out across ticks, not within one: a refused POST reports
-// OutcomeUnavailable, which leaves the entry pending, and the next tick POSTs
-// again under the same horizon. Only the horizon ends the retries for good.
-//
-// A 2xx is admission, not delivery: Deliver returns OutcomeAdmitted without
-// reading the session back, and the caller records that admit before calling
-// Confirm. The entry's own AdmittedAt is the fact, so a restarted daemon and a
-// second process agree on it.
+// The step order is fixed: the read-back runs before the give-up gate, so a
+// payload already in the session confirms at any age, and the gate stays above
+// the service checks, so a dead service past the window still gives up. The
+// POST is single-shot per call -- the caller holds its global lock across the
+// send, so a down moment rides out across ticks, never within one -- and a 2xx
+// is admission, not delivery: the caller records the admit before Confirm.
 func (d *OpencodeDeliverer) Deliver(ctx context.Context, mastermind store.Endpoint, payload, path string, queuedAt time.Time) (Outcome, string, error) {
 	if mastermind.Kind != "opencode" {
 		return OutcomeNotMine, "", nil
@@ -146,11 +125,9 @@ func (d *OpencodeDeliverer) Deliver(ctx context.Context, mastermind store.Endpoi
 
 	origin := firstPayloadLine(payload)
 
-	// Already there? A previous tick may have delivered and crashed before
-	// confirming. Check before the give-up gate, so a payload admitted late is
-	// still confirmed, and so a retry never double-posts. The read-back is
-	// bounded by queuedAt, so it answers for this entry: a row an earlier
-	// entry left in the session is not this payload's.
+	// Already there? Check before the gate so a late-admitted payload still
+	// confirms and a retry never double-posts; the read-back is bounded by
+	// queuedAt, so an earlier entry's row cannot answer for this one.
 	alreadySeen, err := d.seen(ctx, mastermind.SessionID, origin, queuedAt)
 	if err != nil {
 		return OutcomeUnavailable, "sqlite3: " + firstErrorLine(err), nil
@@ -185,11 +162,9 @@ func (d *OpencodeDeliverer) Deliver(ctx context.Context, mastermind store.Endpoi
 	return d.post(ctx, svc, mastermind.SessionID, payload)
 }
 
-// Confirm implements MasterMindDeliverer's read-back half for opencode
-// masterminds: it polls the session for the payload's origin and never POSTs,
-// so a payload admitted by an earlier tick is confirmed rather than sent twice.
-// queuedAt bounds the poll the same way it bounds Deliver's read-back, so a
-// turn an earlier entry left in the session cannot confirm this one.
+// Confirm is the read-back half for opencode: it polls the session and never
+// POSTs, so an earlier tick's payload confirms rather than sends twice.
+// queuedAt bounds the poll, so an earlier entry's turn cannot confirm this one.
 func (d *OpencodeDeliverer) Confirm(ctx context.Context, mastermind store.Endpoint, payload string, queuedAt time.Time) (Outcome, string, error) {
 	if mastermind.Kind != "opencode" {
 		return OutcomeNotMine, "", nil
@@ -203,10 +178,8 @@ func (d *OpencodeDeliverer) Confirm(ctx context.Context, mastermind store.Endpoi
 	return d.confirm(ctx, mastermind.SessionID, firstPayloadLine(payload), queuedAt)
 }
 
-// ConfirmOnce is the read-back for a repeat tick: one look at the session, no
-// poll and never a POST. An origin the single query does not find leaves the
-// payload admitted for the next tick. It carries the entry's own queuedAt, so
-// the one read-back is bounded to the rows this entry could have written.
+// ConfirmOnce is the read-back for a repeat tick: one session look, no poll,
+// never a POST, bounded to this entry's queuedAt.
 func (d *OpencodeDeliverer) ConfirmOnce(ctx context.Context, mastermind store.Endpoint, payload string, queuedAt time.Time) (Outcome, string, error) {
 	if mastermind.Kind != "opencode" {
 		return OutcomeNotMine, "", nil
@@ -228,8 +201,8 @@ func (d *OpencodeDeliverer) ConfirmOnce(ctx context.Context, mastermind store.En
 	return OutcomeAdmitted, "posted; awaiting the session", nil
 }
 
-// pastFallback reports whether the payload has waited past the fallback
-// window, logging once per payload when it has.
+// pastFallback reports whether the payload waited past the fallback window,
+// logging once per payload.
 func (d *OpencodeDeliverer) pastFallback(sessionID, payload string, queuedAt time.Time) (Outcome, string, bool) {
 	if queuedAt.IsZero() || d.now().Sub(queuedAt) <= d.fallbackAfter() {
 		return OutcomeNotMine, "", false
@@ -242,31 +215,24 @@ func (d *OpencodeDeliverer) pastFallback(sessionID, payload string, queuedAt tim
 	return OutcomeNotMine, reason, true
 }
 
-// post POSTs the payload once and reports what the single attempt made of it.
-// It is the whole per-call send: there is no backoff and no wait between
-// attempts, so one Deliver can never hold the caller's global lock for the
-// horizon's sake.
-//
-// A refused POST is a reason, not a give-up: the payload stays pending, the
-// next tick POSTs it again under the same horizon, and only the horizon ends
-// the retries. A 2xx ends the call and the caller confirms it.
+// post POSTs the payload once: no backoff, no wait, so one Deliver never holds
+// the caller's global lock for the horizon's sake. A refused POST stays
+// pending for the next tick; only the horizon ends retries.
 func (d *OpencodeDeliverer) post(ctx context.Context, svc opencodeService, sessionID, payload string) (Outcome, string, error) {
 	took, reason, err := d.postOnce(ctx, svc, sessionID, payload)
 	if err != nil {
 		return OutcomeNotMine, "", err
 	}
 	if took {
-		// The 2xx only proves the service queued the prompt: the caller marks
-		// the entry admitted and reads the session back through Confirm, in this
-		// same tick.
+		// A 2xx only proves the service queued the prompt; the caller admits
+		// and reads back through Confirm in this same tick.
 		return OutcomeAdmitted, "posted; awaiting the session", nil
 	}
 	return OutcomeUnavailable, reason, nil
 }
 
-// postOnce POSTs the payload once. took reports whether the service took it; a
-// service that refused it is a reason string, because an opencode that is down
-// or busy is OutcomeUnavailable rather than a bug in relevo.
+// postOnce POSTs once; a refusal is a reason string, not a bug: a down or busy
+// opencode is OutcomeUnavailable.
 func (d *OpencodeDeliverer) postOnce(ctx context.Context, svc opencodeService, sessionID, payload string) (bool, string, error) {
 	req, err := d.buildRequest(ctx, svc, sessionID, payload)
 	if err != nil {
@@ -285,10 +251,8 @@ func (d *OpencodeDeliverer) postOnce(ctx context.Context, svc opencodeService, s
 	return true, "", nil
 }
 
-// confirm polls the session until the origin is seen in it, the confirm
-// window closes, or the context ends. A window that closes without the origin
-// is not a failed delivery: the payload is already admitted, so it reports
-// OutcomeAdmitted and the caller keeps the admit for a later read-back.
+// confirm polls the session for the origin. A close without it is not failure:
+// the payload is already admitted, so the admit stays for a later read-back.
 func (d *OpencodeDeliverer) confirm(ctx context.Context, sessionID, origin string, queuedAt time.Time) (Outcome, string, error) {
 	deadline := time.Now().Add(OpencodeConfirmWindow)
 	for {
@@ -311,7 +275,7 @@ func (d *OpencodeDeliverer) confirm(ctx context.Context, sessionID, origin strin
 	}
 }
 
-// readOpencodeService reads and parses $XDG_CONFIG_HOME/opencode/service.json.
+// readOpencodeService reads and parses the opencode service file.
 func readOpencodeService(path string) (opencodeService, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -324,10 +288,8 @@ func readOpencodeService(path string) (opencodeService, error) {
 	return svc, nil
 }
 
-// loopbackOpencodeURL reports whether raw is a http://127.0.0.1[:port] or
-// http://localhost[:port] origin. relevo refuses anything else outright: it
-// would be sending a mastermind's report, which can contain source, to
-// whatever host the file names.
+// loopbackOpencodeURL refuses anything but a loopback http origin: a report can
+// contain source, so it must never go to whatever host a file names.
 func loopbackOpencodeURL(raw string) bool {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "http" {
@@ -337,7 +299,7 @@ func loopbackOpencodeURL(raw string) bool {
 	return host == "127.0.0.1" || host == "localhost"
 }
 
-// buildRequest builds the POST that queues the prompt.
+// buildRequest builds the prompt-queuing POST.
 func (d *OpencodeDeliverer) buildRequest(ctx context.Context, svc opencodeService, sessionID, payload string) (*http.Request, error) {
 	body, err := json.Marshal(struct {
 		Text     string `json:"text"`
@@ -358,24 +320,20 @@ func (d *OpencodeDeliverer) buildRequest(ctx context.Context, svc opencodeServic
 	return req, nil
 }
 
-// firstPayloadLine returns payload's first line -- the origin marker
-// OriginLine wrote and PushText preserves. It is not recomputed with
-// OriginLine: Deliver does not have the entry's name/round/kind, and this
-// is exactly what Queue actually wrote.
+// firstPayloadLine returns payload's first line -- the origin marker Queue
+// wrote. Deliver lacks the entry's name/round/kind, so it reads what is there.
 func firstPayloadLine(payload string) string {
 	line, _, _ := strings.Cut(payload, "\n")
 	return line
 }
 
-// firstErrorLine is the first line of err's message, so a multi-line
-// sqlite3 or transport error does not blow up a one-line reason string.
+// firstErrorLine keeps a multi-line error to one reason-string line.
 func firstErrorLine(err error) string {
 	first, _, _ := strings.Cut(strings.TrimSpace(err.Error()), "\n")
 	return first
 }
 
-// tableSet reports which of OpenCode's tables the database has, so a database
-// that predates session_inbox does not turn into a failed query.
+// tableSet reports which tables the database has, so an older one is not a failed query.
 func (d *OpencodeDeliverer) tableSet(ctx context.Context) (map[string]bool, error) {
 	out, err := d.Exec.Run(ctx, "sqlite3", "-readonly", "-json", d.DBPath,
 		"select name from sqlite_master where type = 'table'")
@@ -401,19 +359,11 @@ func (d *OpencodeDeliverer) tableSet(ctx context.Context) (map[string]bool, erro
 	return tables, nil
 }
 
-// seen reports whether origin already appears in sessionID's messages as a
-// user turn or queued in session_inbox: the inbox table holds admitted
-// work and is consumed, so a user turn or a queued message is what proves the
-// session received it. OpenCode 2.0.14 keeps user turns in session_message,
-// while the part/message tables only hold pre-2.0 turns; any of them counts.
-//
-// The read-back answers for one entry: a row stamped before the entry's
-// queuedAt (less opencodeClockSkew) is another entry's turn and does not
-// count. Without that bound a second findings payload for a reused binding
-// name -- whose origin line names no round -- matches the first forever, and a
-// rebound round-1 report identical to the previous incarnation's matches too.
-// A zero queuedAt skips the bound. A failing sqlite3 is not seen and not a Go
-// error -- the call site turns it into OutcomeUnavailable.
+// seen reports whether origin already appears in the session as a user turn
+// or queued inbox message. The read-back answers for one entry only: a row
+// stamped before queuedAt (less opencodeClockSkew) is another entry's turn, or
+// a reused origin line would match forever. A zero queuedAt skips the bound; a
+// failing sqlite3 is unseen, and the call site reports it.
 func (d *OpencodeDeliverer) seen(ctx context.Context, sessionID, origin string, queuedAt time.Time) (bool, error) {
 	tables, err := d.tableSet(ctx)
 	if err != nil {
@@ -432,17 +382,13 @@ func (d *OpencodeDeliverer) seen(ctx context.Context, sessionID, origin string, 
 	return n > 0, nil
 }
 
-// opencodeConfirmQuery is the read-back that proves a session actually took
-// the turn: a user text part in the pre-2.0 part/message tables, a
-// user row in OpenCode 2.0's session_message, or a queued message in
-// session_inbox. The counts are summed, so any matching row confirms.
-// ' is doubled in all interpolated values, the SQL string-literal escape.
+// opencodeConfirmQuery is the read-back proving the session took the turn: a
+// pre-2.0 part/message user text, a 2.0 session_message user row, or a queued
+// inbox message; any match confirms. ' is doubled in interpolated values.
 //
-// A non-zero queuedAt bounds every counted row at queuedAt-opencodeClockSkew,
-// in the epoch milliseconds all three time_created columns hold. part carries
-// no clock, so the legacy pair's bound rides on the joined message row. A zero
-// queuedAt emits the unbounded query, so a caller with no queue time keeps
-// matching rows of any age.
+// A non-zero queuedAt bounds every row at queuedAt-opencodeClockSkew in epoch
+// milliseconds (the legacy pair's bound rides the joined message row, which
+// carries the clock); zero emits the unbounded query.
 func opencodeConfirmQuery(sessionID, origin string, hasInbox bool, queuedAt time.Time) string {
 	sid := strings.ReplaceAll(sessionID, "'", "''")
 	org := strings.ReplaceAll(origin, "'", "''")

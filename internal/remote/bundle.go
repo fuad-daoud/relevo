@@ -15,7 +15,6 @@ import (
 
 var _ TreeTransport = (*BundleTransport)(nil)
 
-// BundleTransport implements TreeTransport using git bundles.
 type BundleTransport struct {
 	git *git.Client
 	tmp string
@@ -27,12 +26,11 @@ type BundleTransport struct {
 	hasOwner bool
 }
 
-// BundleOption configures a BundleTransport.
 type BundleOption func(*BundleTransport)
 
-// WithOwnerTmp marks the transport user-mode: its temp bundle files are created
-// in dir and Lchown'ed to uid/gid before git touches them. A none-mode
-// transport takes no option and behaves exactly as before.
+// WithOwnerTmp makes the transport user-mode: its temp bundle files are
+// created in dir and Lchown'ed to uid/gid before git touches them. A
+// none-mode transport takes no option.
 func WithOwnerTmp(dir string, uid, gid uint32) BundleOption {
 	return func(t *BundleTransport) {
 		if dir != "" {
@@ -42,7 +40,6 @@ func WithOwnerTmp(dir string, uid, gid uint32) BundleOption {
 	}
 }
 
-// NewBundleTransport creates a new BundleTransport using g and tmpDir for temporary bundle files.
 // If tmpDir is "", the state root's tmp directory (<root>/tmp) is used, falling back to os.TempDir().
 func NewBundleTransport(g *git.Client, tmpDir string, opts ...BundleOption) *BundleTransport {
 	if tmpDir == "" {
@@ -86,7 +83,6 @@ func (f *fileRemover) Close() error {
 	return err
 }
 
-// Snapshot packages every ref in refs relative to since into a git bundle.
 func (t *BundleTransport) Snapshot(ctx context.Context, repo string, refs []string, since string) (Snapshot, error) {
 	f, err := os.CreateTemp(t.tmp, "relevo-bundle-*.bundle")
 	if err != nil {
@@ -131,7 +127,6 @@ func (t *BundleTransport) Snapshot(ctx context.Context, repo string, refs []stri
 	}, nil
 }
 
-// Absorb applies a bundle body to repo, updating the specified refs.
 func (t *BundleTransport) Absorb(ctx context.Context, repo, contentType string, body io.Reader, refs []string) (map[string]string, error) {
 	if contentType != ContentTypeGitBundle {
 		return nil, ErrUnsupportedType

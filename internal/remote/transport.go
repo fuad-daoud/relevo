@@ -6,7 +6,6 @@ import (
 	"io"
 )
 
-// Snapshot represents a point-in-time capture of git refs produced by TreeTransport.
 type Snapshot struct {
 	ContentType string
 	Body        io.ReadCloser     // nil when Empty; caller closes otherwise
@@ -16,9 +15,9 @@ type Snapshot struct {
 
 // TreeTransport defines the interface for moving git ref snapshots between repositories.
 type TreeTransport interface {
-	// Snapshot packages every ref in refs, as it stands in repo, relative to
-	// since. since "" means "everything reachable". since must be a commit
-	// that is an ancestor of every ref; otherwise ErrSinceUnknown.
+	// Snapshot packages every ref in refs relative to since: since "" means
+	// "everything reachable", and since must be a commit that is an ancestor
+	// of every ref; otherwise ErrSinceUnknown.
 	Snapshot(ctx context.Context, repo string, refs []string, since string) (Snapshot, error)
 
 	// Absorb applies a body of contentType to repo. Every ref the body
@@ -32,12 +31,9 @@ type TreeTransport interface {
 
 // Transport sentinels wrapped with context (%w). Callers inspect them with errors.Is.
 var (
-	// ErrUnsupportedType reports that contentType is not supported by the transport.
 	ErrUnsupportedType = errors.New("unsupported content type")
 
-	// ErrUnexpectedRef reports that the transport body carries a ref not listed in refs.
 	ErrUnexpectedRef = errors.New("unexpected ref in transport body")
 
-	// ErrSinceUnknown reports that since is not a commit in repo or not an ancestor of every ref.
 	ErrSinceUnknown = errors.New("since commit is unknown or not an ancestor")
 )
