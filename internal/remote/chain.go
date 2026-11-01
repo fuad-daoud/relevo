@@ -25,9 +25,8 @@ const CodeChainRunning Code = "chain_running"
 // round, so the answer is the one that names `relevo done`.
 const CodeChainHalted Code = "chain_halted"
 
-// ChainSettings is a chain create request's resolved configuration. It mirrors
-// chain.Settings; internal/remote does not import internal/chain, so the two
-// are converted at the edges.
+// It mirrors chain.Settings; internal/remote does not import internal/chain,
+// so the two are converted at the edges.
 type ChainSettings struct {
 	MaxCorrections int    `json:"max_corrections,omitempty"`
 	ReviewerActor  string `json:"reviewer_actor,omitempty"`
@@ -70,23 +69,17 @@ type ClosedRoundView struct {
 	DiffNote      string   `json:"diff_note,omitempty"`
 	DiffCommits   int      `json:"diff_commits,omitempty"`
 	DiffTree      string   `json:"diff_tree,omitempty"`
-	// DirtyCommit is the round's uncommitted work at
-	// refs/relevo/<name>/round-<Round>, "" when the round closed clean. The
-	// server retains it for the round it last closed only, so an older round
-	// ships "" rather than another round's commit.
+	// The server retains it for the round it last closed only, so an older
+	// round ships "" rather than another round's commit.
 	DirtyCommit string        `json:"dirty_commit,omitempty"`
 	Usage       *usage.Usage  `json:"usage,omitempty"`
 	Rusage      *store.Rusage `json:"rusage,omitempty"`
-	// PriorTokens is the tokens the server's earlier builders in this round
-	// used. Nil when zero, and nil from a server older than the field.
+	// Nil when zero, and nil from a server older than the field.
 	PriorTokens *usage.Tokens `json:"prior_tokens,omitempty"`
-	// RoundStartedAt is when the round's builder actually began on the server:
-	// the admit that spawned it, or the prompt handoff for a round that was
-	// never queued. The binding-level RoundStartedAt answers only for the
-	// binding's current round, so a per-round stamp is the only way a client
-	// learns when an older round of this member began. Zero from a server older
-	// than the field, and zero for a round the server never recorded a start
-	// for.
+	// The binding-level RoundStartedAt answers only for the binding's current
+	// round, so a per-round stamp is the only way a client learns when an
+	// older round of this member began. Zero from a server older than the
+	// field, and zero for a round the server never recorded a start for.
 	RoundStartedAt time.Time `json:"round_started_at,omitempty"`
 	// QueuedAt is when the server accepted this round into its builder queue,
 	// zero for a round that was handed straight to a builder. Paired with
@@ -95,9 +88,7 @@ type ClosedRoundView struct {
 	QueuedAt time.Time `json:"queued_at,omitempty"`
 }
 
-// ChainMemberView is one chain member: its part and binding name, the actor it
-// plays, its current binding view, and the closed rounds in
-// (acked_round, closed_round], ascending.
+// Rounds holds the closed rounds in (acked_round, closed_round], ascending.
 type ChainMemberView struct {
 	Part   string            `json:"part"`
 	Name   string            `json:"name"`
@@ -106,8 +97,6 @@ type ChainMemberView struct {
 	Rounds []ClosedRoundView `json:"rounds,omitempty"`
 }
 
-// ChainEventView is one chain_event trace row: the state before the event, the
-// round whose close it was, and the event and action JSON as stored.
 type ChainEventView struct {
 	Seq    int       `json:"seq"`
 	TS     time.Time `json:"ts"`
@@ -121,8 +110,6 @@ type ChainEventView struct {
 	Reason string    `json:"reason,omitempty"`
 }
 
-// ChainView is a chain's wire representation: its state, settings, member
-// views and trace.
 type ChainView struct {
 	Name            string            `json:"name"`
 	Status          string            `json:"status,omitempty"`
@@ -167,8 +154,6 @@ type ChainResumeRequest struct {
 	Params map[string]string `json:"params,omitempty"`
 }
 
-// ChainStopResponse is the answer to POST /v1/chains/{name}/stop: the round
-// that was stopped, the action taken, and the chain's view afterwards.
 type ChainStopResponse struct {
 	Round  int       `json:"round"`
 	Action string    `json:"action"`

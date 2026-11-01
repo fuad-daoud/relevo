@@ -9,8 +9,6 @@ import (
 	"strings"
 )
 
-// ServerEntry is one entry of the `servers` section: where a server lives and
-// how its TLS is trusted.
 type ServerEntry struct {
 	URL         string `json:"url"`
 	Fingerprint string `json:"fingerprint,omitempty"` // sha256:<hex>
@@ -18,8 +16,6 @@ type ServerEntry struct {
 	Insecure    bool   `json:"insecure,omitempty"`
 }
 
-// Servers is the `servers` section: one entry per server, keyed by the
-// server's short name.
 type Servers map[string]ServerEntry // key: the server's short name
 
 // ParseServers validates every entry, checking names in order so the first
@@ -50,10 +46,8 @@ func ParseServers(data []byte) (Servers, error) {
 	return s, nil
 }
 
-// HostAudience returns the audience for a connection whose host, not its
-// certificate, is what was verified: "host:" plus the lower-case hostname. The
-// port is dropped -- whoever runs a host controls all of its ports, and the
-// server cannot know which default port the client's scheme implied.
+// The port is dropped -- whoever runs a host controls all of its ports, and
+// the server cannot know which default port the client's scheme implied.
 func HostAudience(host string) string {
 	return "host:" + strings.ToLower(host)
 }
@@ -85,8 +79,6 @@ func AudienceOf(entry ServerEntry) (string, error) {
 	}
 }
 
-// ValidateEntry checks one server entry: a URL with a scheme and host, and a
-// trust setting that matches the scheme.
 func ValidateEntry(e ServerEntry) error {
 	u, err := url.Parse(e.URL)
 	if err != nil || u.Scheme == "" || u.Host == "" {

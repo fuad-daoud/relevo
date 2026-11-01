@@ -5,9 +5,7 @@ import (
 	"strings"
 )
 
-// MissingChainFeatures is the features a server must advertise to run a whole
-// chain for a client, in the order the refusal names them: it drives the chain
-// itself, and it runs reader members. Both are absent from a pre-chain server.
+// In the order the refusal names them.
 func MissingChainFeatures(who WhoAmI) []string {
 	var missing []string
 	if !HasFeature(who, FeatureChain) {
@@ -19,7 +17,6 @@ func MissingChainFeatures(who WhoAmI) []string {
 	return missing
 }
 
-// HasFeature reports whether the server advertises token.
 func HasFeature(who WhoAmI, token string) bool {
 	for _, f := range who.Features {
 		if f == token {
@@ -29,8 +26,6 @@ func HasFeature(who WhoAmI, token string) bool {
 	return false
 }
 
-// ChainFeatureList renders the missing features for the refusal's parenthetical:
-// one is a singular "feature", two or more a plural list.
 func ChainFeatureList(missing []string) string {
 	quoted := make([]string, len(missing))
 	for i, f := range missing {
