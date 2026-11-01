@@ -20,9 +20,8 @@ const replacementText = "\uFFFD"
 // compressed columns are BLOBs and may hold arbitrary bytes.
 type repairConn struct{ driver.Conn }
 
-// CheckNamedValue implements driver.NamedValueChecker. Only a string is repaired
-// here; every other value returns driver.ErrSkip so database/sql's own
-// conversion still runs.
+// CheckNamedValue repairs only a string here; every other value returns
+// driver.ErrSkip so database/sql's own conversion still runs.
 func (c repairConn) CheckNamedValue(nv *driver.NamedValue) error {
 	s, ok := nv.Value.(string)
 	if !ok {
@@ -37,7 +36,6 @@ func (c repairConn) CheckNamedValue(nv *driver.NamedValue) error {
 // so wrapping Connect is enough to cover Exec, Query and prepared statements.
 type repairConnector struct{ driver.Connector }
 
-// Connect opens one connection and interposes the repair on the way back.
 func (c repairConnector) Connect(ctx context.Context) (driver.Conn, error) {
 	conn, err := c.Connector.Connect(ctx)
 	if err != nil {
@@ -57,7 +55,7 @@ type ColumnRepair struct {
 // repairInvalidText rewrites every TEXT value that is not valid UTF-8 with the
 // replacement character, in one transaction, and returns the per-column count.
 // It runs under modernc, the only engine that can still read such a value: Turso
-// refuses to read a database that holds one. Round 2's one-time conversion must
+// refuses to read a database that holds one. The one-time conversion must
 // call this after its checkpoint and before Turso's first open, and log the
 // counts.
 func repairInvalidText(conn *sql.Conn) ([]ColumnRepair, error) {
@@ -172,9 +170,9 @@ func textColumnsOf(ctx context.Context, conn *sql.Conn, table string) ([]string,
 	return columns, nil
 }
 
-// repairColumn rewrites one column's invalid text and reports how many rows it
-// touched. Only a value whose storage class is text is considered, so a BLOB or
-// a number that happens to live in a TEXT-declared column is left as it is.
+// repairColumn rewrites one column's invalid text; only a value whose storage
+// class is text is considered, so a BLOB or a number that happens to live in
+// a TEXT-declared column is left as it is.
 func repairColumn(ctx context.Context, conn *sql.Conn, table, column string) (int, error) {
 	query := fmt.Sprintf(`SELECT rowid, typeof(%s), %s FROM %s`,
 		quoteIdent(column), quoteIdent(column), quoteIdent(table))

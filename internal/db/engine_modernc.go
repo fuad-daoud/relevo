@@ -31,9 +31,7 @@ func fileDSN(path, params string) string {
 	return (&url.URL{Scheme: "file", Path: path}).String() + "?" + params
 }
 
-// openPool opens a pool on path with the pragmas modernc expects. A read-only
-// pool opens mode=ro; a writable one switches to WAL, turns foreign keys on,
-// and caps the -wal.
+// openPool opens a pool on path with the pragmas modernc expects.
 func openPool(path string, busy time.Duration, readOnly bool) (*sql.DB, error) {
 	if readOnly {
 		return openModernc(fileDSN(path, "mode=ro&_pragma=busy_timeout(5000)"))
@@ -47,7 +45,7 @@ func openPool(path string, busy time.Duration, readOnly bool) (*sql.DB, error) {
 // openModernc builds the pool from this engine's connector rather than
 // sql.Open, so the connection wrapper can repair a string argument on the way
 // in: sql.Open offers no place to interpose, and the repair must hold under
-// modernc too, so a file written before a downgrade stays readable by Turso.
+// modernc too, so a file this engine wrote stays readable by Turso.
 func openModernc(dsn string) (*sql.DB, error) {
 	connector, err := sqlite.NewConnector(dsn)
 	if err != nil {
@@ -73,12 +71,12 @@ func vacuumIntoStmt(path string) (string, []any, error) {
 // prepareEngine is a no-op: modernc carries no external library to extract.
 func prepareEngine(string) error { return nil }
 
-// convertLegacy is a no-op under modernc: this engine reads the file an earlier
-// modernc build wrote, so there is nothing to convert.
+// convertLegacy is a no-op under modernc: this engine reads its own files, so
+// there is nothing to convert.
 func convertLegacy(string) error { return nil }
 
-// requireConverted is a no-op under modernc: this engine reads the files an
-// earlier modernc build wrote, so a read-only open has nothing to refuse.
+// requireConverted is a no-op under modernc: this engine reads its own files,
+// so a read-only open has nothing to refuse.
 func requireConverted(string) error { return nil }
 
 // engineStatus reports the modernc engine: it carries no external library, so

@@ -22,11 +22,9 @@ var ErrNewerSchema = errors.New("schema is newer than this relevo")
 // database through the owner instead of opening the file.
 var ErrLocked = errors.New("database is locked by another process")
 
-// ErrNotConverted reports a database whose header lacks the conversion marker:
-// it was written by a pre-Turso build, or by a build that never finished the
-// conversion. A read-only open cannot convert it (that is a write), so it
-// refuses and leaves the file for a writable open -- the daemon's -- to convert
-// and mark.
+// ErrNotConverted reports a database whose header lacks the conversion marker.
+// A read-only open cannot convert it (that is a write), so it refuses and
+// leaves the file for a writable open -- the daemon's -- to convert and mark.
 var ErrNotConverted = errors.New("relevo.db is not converted yet; start the daemon once")
 
 // ErrContended reports that a bounded step could not get what it needed because

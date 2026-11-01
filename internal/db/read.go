@@ -152,7 +152,6 @@ func bareTicketNumber(s string) (string, bool) {
 	return n, true
 }
 
-// ticketFilter adds the ticket clause when one is set.
 func ticketFilter(f Filter, add func(string, ...any)) {
 	if f.Ticket == "" {
 		return

@@ -8,12 +8,10 @@ import (
 	"time"
 )
 
-// chain_check records one check step's run for a chain: the command it runs,
-// where it got to, and its result. A run is identified by the chain and a run
-// number the caller allocates with ChainCheckNextRun, so a re-run never
-// overwrites an earlier row.
+// chain_check records one check step's run for a chain. A run is identified
+// by the chain and a run number the caller allocates with ChainCheckNextRun,
+// so a re-run never overwrites an earlier row.
 
-// ChainCheckRow is one chain_check row.
 type ChainCheckRow struct {
 	ChainID    string
 	Run        int
@@ -67,9 +65,8 @@ func (d *DB) ChainCheckGet(id string, run int) (ChainCheckRow, bool, error) {
 	return c, true, nil
 }
 
-// ChainCheckNextRun returns the next run number for chain id: one past the
-// highest already recorded. The count rises with every recorded run, so a
-// re-run never reuses a number.
+// ChainCheckNextRun returns the next run number for chain id. The count rises
+// with every recorded run, so a re-run never reuses a number.
 func (t *Tx) ChainCheckNextRun(id string) (int, error) {
 	var next int
 	if err := t.queryRow(`SELECT COALESCE(MAX(run), 0) + 1 FROM chain_check WHERE chain_id = ?`, id).Scan(&next); err != nil {

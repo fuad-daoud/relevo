@@ -7,10 +7,9 @@ import (
 	"fmt"
 )
 
-// The importer's side of the machine-local doc bookkeeping. The methods on Tx
-// run inside the local-file transaction that applies or parks a batch's doc
-// entries, so what a doc entry changed and what is remembered about it commit
-// together.
+// The methods on Tx run inside the local-file transaction that applies or
+// parks a batch's doc entries, so what a doc entry changed and what is
+// remembered about it commit together.
 
 // DocApplied is the newest (origin, stamp) applied for one key.
 type DocApplied struct {

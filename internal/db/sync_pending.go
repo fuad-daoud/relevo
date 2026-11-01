@@ -84,8 +84,8 @@ func (t *Tx) followParents(cache map[string][]fkParent, d DrainedEntry, tail int
 	return nil
 }
 
-// parentRefs returns tbl's references into shared tables, reading and caching
-// them per table so one drain reads each table's schema once.
+// parentRefs returns tbl's references into shared tables, cached per table so
+// one drain reads each table's schema once.
 func (t *Tx) parentRefs(cache map[string][]fkParent, tbl string) ([]fkParent, error) {
 	refs, ok := cache[tbl]
 	if ok {
@@ -174,8 +174,6 @@ func (t *Tx) outboxPast(tbl, pk string, seq int) (bool, error) {
 	return true, nil
 }
 
-// exchangeValue returns one column's value out of a row read, and whether the
-// row carries that column.
 func exchangeValue(row ExchangeRow, name string) (any, bool) {
 	for _, col := range row.Columns {
 		if col.Name == name {

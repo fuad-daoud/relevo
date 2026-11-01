@@ -18,7 +18,6 @@ import (
 // open never waits.
 var openLockWait = ReadOnlyHoldBudget + 3*time.Second
 
-// openLockPoll is the pause between two lock attempts.
 const openLockPoll = 50 * time.Millisecond
 
 // openLock is this process's flock on <path>.lock. It is held from the moment
@@ -55,7 +54,6 @@ func acquireOpenLock(path string, writable bool) (*openLock, error) {
 	}
 }
 
-// release drops the lock and closes the descriptor that carried it.
 func (l *openLock) release() {
 	if l == nil || l.f == nil {
 		return

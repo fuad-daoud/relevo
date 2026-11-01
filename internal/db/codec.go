@@ -32,7 +32,7 @@ var zstdEncoder, zstdDecoder = newColumnCodec()
 // default of GOMAXPROCS, a 22-thread laptop kept about 490 MB for the pool alone.
 const codecConcurrency = 2
 
-// newColumnCodec builds the shared pair. Its options are constants zstd always
+// newColumnCodec builds the shared pair; its options are constants zstd always
 // accepts, so neither constructor can fail.
 func newColumnCodec() (*zstd.Encoder, *zstd.Decoder) {
 	enc, _ := zstd.NewWriter(nil,
@@ -64,7 +64,6 @@ func encodeColumn(value []byte) ([]byte, int) {
 	return frame, codecZstd
 }
 
-// decodeColumn returns the plaintext a stored value and its codec describe.
 func decodeColumn(value []byte, codec int) ([]byte, error) {
 	switch codec {
 	case codecPlain:

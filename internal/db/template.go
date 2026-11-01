@@ -21,8 +21,8 @@ func SetFreshTemplate(path string) {
 
 // seedFromTemplate copies the template into path when path does not exist yet,
 // so a fresh test database inherits the schema without migrating. It is best
-// effort and silent: any failure leaves Open to create and migrate the file the
-// way it did before.
+// effort and silent: any failure leaves Open to create and migrate the file
+// itself.
 func seedFromTemplate(path string) {
 	tpl := freshTemplate
 	if tpl == "" {
@@ -56,7 +56,6 @@ func seedFromTemplate(path string) {
 	_ = os.Link(tmpName, path)
 }
 
-// copyBytes writes every byte of the file at src into dst.
 func copyBytes(dst *os.File, src string) error {
 	in, err := os.Open(src)
 	if err != nil {

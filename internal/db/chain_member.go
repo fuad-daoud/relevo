@@ -7,10 +7,9 @@ import (
 
 // chain_member names the binding that fills each actor's part in a chain, in
 // the order the chain created them. It is the lookup a member's close uses to
-// find its chain; the four legacy member columns stay readable for a chain
-// written before the table existed.
+// find its chain; the four legacy member columns stay readable for rows
+// written without the table.
 
-// ChainMemberRow is one chain_member row.
 type ChainMemberRow struct {
 	ChainID string
 	Binding string

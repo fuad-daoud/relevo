@@ -10,9 +10,9 @@ import (
 	"time"
 )
 
-// The schema-v2 key-value surface: one kv row holds one whole JSON document,
-// exactly as the small state file it replaces held it. Reads come on both *DB
-// and *Tx; writes are *Tx only, with *DB wrappers that open a transaction.
+// The schema-v2 key-value surface: one kv row holds one whole JSON document.
+// Reads come on both *DB and *Tx; writes are *Tx only, with *DB wrappers that
+// open a transaction.
 
 // KV is the minimal key-value surface the small stores share. Packages that
 // must not import internal/store take a db.KV instead.
@@ -25,7 +25,8 @@ type KV interface {
 var _ KV = (*DB)(nil)
 
 // KVGet returns the JSON document stored for key; ok is false when the row is
-// absent. A schema-1 database reports every key as absent rather than erroring.
+// absent. A database whose schema predates the kv table reports every key as
+// absent rather than erroring.
 func (d *DB) KVGet(key string) ([]byte, bool, error) {
 	return kvGet(context.Background(), d.sqlDB, key)
 }
@@ -45,8 +46,7 @@ func kvGet(ctx context.Context, q queryer, key string) ([]byte, bool, error) {
 }
 
 // KVPut upserts key's whole document in one short transaction. value must be
-// valid JSON, else ErrInvalid: the row's contract is the exact JSON document
-// the file held.
+// valid JSON, else ErrInvalid: the row's contract is one exact JSON document.
 func (d *DB) KVPut(key string, value []byte) error {
 	return d.Tx(func(t *Tx) error { return t.KVPut(key, value) })
 }
@@ -74,7 +74,7 @@ func (t *Tx) KVDelete(key string) error {
 }
 
 // KVKeys returns every key with the given prefix, sorted. A missing kv table
-// (schema < 2) is an empty list.
+// is an empty list.
 func (d *DB) KVKeys(prefix string) ([]string, error) {
 	return kvKeys(context.Background(), d.sqlDB, prefix)
 }
@@ -140,8 +140,7 @@ func (p PrefixKV) KVKeys(prefix string) ([]string, error) {
 	return out, nil
 }
 
-// KVTx is the kv surface inside one BEGIN IMMEDIATE transaction. *Tx and *DB
-// both implement it.
+// KVTx is the kv surface inside one BEGIN IMMEDIATE transaction.
 type KVTx interface {
 	KVGet(key string) ([]byte, bool, error)
 	KVPut(key string, value []byte) error
