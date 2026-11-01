@@ -18,9 +18,9 @@ var ErrKeyType = errors.New("invalid key type; ed25519 required")
 
 const pemTypePrivate = "RELEVO ED25519 PRIVATE KEY"
 
-// legacyPEMTypePrivate is the "RELAY ED25519 PRIVATE KEY" label written
-// before the relevo rename. Old files still carry it, so it must keep
-// parsing. Nothing writes it: MarshalPrivate emits the current label only.
+// legacyPEMTypePrivate is the pre-rename private-key label, spelled out on
+// the next line. Old files still carry it, so it must keep parsing. Nothing
+// writes it: MarshalPrivate emits the current label only.
 const legacyPEMTypePrivate = "RELAY ED25519 PRIVATE KEY" // name-guard: legacy
 
 // IsLegacyPrivatePEM reports whether data holds a PEM block of the pre-rename
@@ -105,9 +105,9 @@ func MarshalPrivate(k Keypair) ([]byte, error) {
 	}), nil
 }
 
-// ParsePrivate parses a PEM-encoded private key, also reading the old "RELAY
-// ED25519 PRIVATE KEY" label because old files still carry it, and preflight,
-// which cannot write, must parse the key it finds.
+// ParsePrivate parses a PEM-encoded private key, also reading the pre-rename
+// label because old files still carry it, and preflight, which cannot write,
+// must parse the key it finds.
 func ParsePrivate(data []byte) (Keypair, error) {
 	block, _ := pem.Decode(data)
 	if block == nil {
