@@ -29,7 +29,6 @@ type formBox struct {
 	onSubmit func(values []string) tea.Cmd
 }
 
-// keys is the form's footer: enter submits, tab moves, esc cancels.
 func (f formBox) keys() []widget.KeyHelp {
 	submit := f.submit
 	if submit == "" {
@@ -105,9 +104,6 @@ func (f formBox) view(width int) []string {
 	return rows
 }
 
-// modal renders the form box: the header, then per field its label
-// padded to 10 (accent when focused, faint otherwise), the input (focused on
-// the selection band), its hint, then the note, the error and the buttons.
 func (f formBox) modal(width int) (string, []string, int, bool) {
 	const want = 72
 	rows := append([]string(nil), f.header...)

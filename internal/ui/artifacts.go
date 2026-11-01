@@ -77,7 +77,6 @@ func artifactEditHint(c tabContent) string {
 	return "run relevo board " + target + " to edit"
 }
 
-// artifactsWord is the artifact count as prose: "1 artifact", "2 artifacts".
 func artifactsWord(n int) string {
 	if n == 1 {
 		return "1 artifact"
@@ -85,8 +84,6 @@ func artifactsWord(n int) string {
 	return strconv.Itoa(n) + " artifacts"
 }
 
-// artifactsBody renders the artifacts tab's whole body: the table with its
-// cursor band, then one faint line naming the selected file, then that file.
 func artifactsBody(c tabContent) string {
 	if !c.loaded {
 		return "loading…"
@@ -192,12 +189,10 @@ func artifactSizeOf(c tabContent) int64 {
 	return int64(len(c.artifactBody))
 }
 
-// artifactCount is the fetched list's length, for the tab label and the card.
 func artifactCount(c tabContent) int {
 	return len(c.artifacts)
 }
 
-// artifactTotalSize is the fetched list's total size in bytes.
 func artifactTotalSize(c tabContent) int64 {
 	var total int64
 	for _, f := range c.artifacts {

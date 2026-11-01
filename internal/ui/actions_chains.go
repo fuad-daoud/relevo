@@ -6,7 +6,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
-// Chains reads the read model of all chains off the update loop.
 func (a *mastermindActions) Chains(ctx context.Context) (relevo.ChainsDoc, error) {
 	return relevo.ReadChains(ctx, a.runtime())
 }

@@ -34,7 +34,6 @@ func ShortRepo(key string) string {
 	return key
 }
 
-// lineKind separates the grid's row shapes.
 type lineKind int
 
 const (
@@ -49,7 +48,6 @@ type dayRule struct {
 	tokens int64
 }
 
-// line is one visible grid row: a group, a day rule, or a round.
 type line struct {
 	kind  lineKind
 	group histq.GroupRow
@@ -65,7 +63,6 @@ type Summary struct {
 	MedianMS int64          // median of rows with DurationMS; 0 when none
 }
 
-// outcomeWord maps a round's outcome fields to its display word and style.
 func (m Model) outcomeWord(r db.RoundRow) (string, lipgloss.Style) {
 	switch r.Outcome {
 	case db.OutcomeOpen:
@@ -163,7 +160,6 @@ func (m Model) SummaryLine(maxWidth int) string {
 	return clip(joined, maxWidth)
 }
 
-// Problem returns Notice if set, else "query failed: " + fetchErr if set, else "".
 func (m Model) Problem() string {
 	if m.Notice != "" {
 		return m.Notice
@@ -174,12 +170,10 @@ func (m Model) Problem() string {
 	return ""
 }
 
-// FilterText returns stripBy(m.text).
 func (m Model) FilterText() string {
 	return stripBy(m.text)
 }
 
-// SortLabel returns the round sort key when ungrouped, group sort key when grouped.
 func (m Model) SortLabel() string {
 	key := m.roundSortKey()
 	if m.grouped() {
@@ -292,7 +286,6 @@ func (m Model) windowTop() int {
 	return top
 }
 
-// renderLine draws one grid row.
 func (m Model) renderLine(l line, cursor bool) string {
 	switch l.kind {
 	case lineGroup:
@@ -304,7 +297,6 @@ func (m Model) renderLine(l line, cursor bool) string {
 	}
 }
 
-// dayRuleLine renders one day rule line.
 func (m Model) dayRuleLine(d dayRule) string {
 	cw := m.width - 6
 	if cw < 0 {

@@ -9,11 +9,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
-// The formatting this view draws with, kept apart from the view that draws.
-// Every function here is pure: it takes the values a snapshot handed over and
-// turns one into the string a reader sees, and none of them can reach a handle,
-// a clock or a database. That is what makes the render path safe to assert on --
-// the reason a Body cannot touch the network is visible in these signatures.
+// Every function here is pure: it formats snapshot values and reaches no
+// handle, clock or database.
 
 // syncOr renders value, or fallback when it is empty, so an absent field reads
 // as a statement rather than as an empty cell.
@@ -109,10 +106,6 @@ var syncLockedTables = []string{
 	"this machine's own installation identity",
 }
 
-// confirmLines is the pre-on confirm, naming the database it would seed. It is
-// drawn rather than asked: an enable is the CLI's verb, and the only thing this
-// screen owes a user before they go and run it is which remote they are about
-
 // syncLine is one labelled row of the form or status block: a fixed-width label
 // and a value, so a reader can find a row by its label rather than by counting.
 // The three-space indent is the cockpit's body gutter, so these rows line up with
@@ -120,5 +113,3 @@ var syncLockedTables = []string{
 func syncLine(label, value string, style lipgloss.Style) string {
 	return "   " + widget.Pad(label, syncLabelW) + style.Render(value)
 }
-
-// preOnLines is the form for a machine that has not enabled sync: where the

@@ -12,7 +12,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// chainsDocMsg carries the read model of all chains off the update loop.
 type chainsDocMsg struct {
 	doc relevo.ChainsDoc
 	err error
@@ -29,13 +28,11 @@ type chainsView struct {
 	actions bool
 }
 
-// newChainsView builds ':chains' and the command that loads its doc.
 func newChainsView(env widget.Env) (widget.View, tea.Cmd) {
 	v := chainsView{actions: env.Actions != nil}
 	return v, chainsDocCmd(env)
 }
 
-// chainsDocCmd reads chains off the update loop.
 func chainsDocCmd(env widget.Env) tea.Cmd {
 	return func() tea.Msg {
 		if env.Actions == nil {
@@ -46,7 +43,6 @@ func chainsDocCmd(env widget.Env) tea.Cmd {
 	}
 }
 
-// chainCol is one fixed-width table column after NAME.
 type chainCol struct {
 	key  string
 	head string
@@ -123,8 +119,6 @@ func chainsLayout(width int, doc relevo.ChainsDoc) (int, []chainCol) {
 	return nameW, visible
 }
 
-// columnsWidth is the width a set of columns takes, with the two-cell gap
-// between each pair of them.
 func columnsWidth(cols []chainCol) int {
 	n := 0
 	for i, c := range cols {
@@ -136,8 +130,6 @@ func columnsWidth(cols []chainCol) int {
 	return n
 }
 
-// chainsNameWidth is the width NAME needs for the read model: the longest
-// displayed name, which is a chain's name under its nesting indent.
 func chainsNameWidth(doc relevo.ChainsDoc) int {
 	w := 0
 	for _, c := range doc.Chains {
@@ -151,8 +143,8 @@ func chainsNameWidth(doc relevo.ChainsDoc) int {
 	return w
 }
 
-// chainsWhereWidth is the width WHERE needs for the longest placement in the
-// read model, never less than the width it had when the column was fixed.
+// chainsWhereWidth is the width WHERE needs for the longest placement, never
+// less than the width it had when the column was fixed.
 func chainsWhereWidth(doc relevo.ChainsDoc) int {
 	w := 16
 	for _, c := range doc.Chains {
@@ -167,7 +159,6 @@ func chainsWhereWidth(doc relevo.ChainsDoc) int {
 	return w
 }
 
-// chainsHeaderLine renders the table header row.
 func chainsHeaderLine(nameW int, cols []chainCol, cw int) string {
 	style := widget.FaintStyle.Bold(true)
 	cells := []candCell{{text: widget.Pad("NAME", nameW), style: style}}
@@ -177,7 +168,6 @@ func chainsHeaderLine(nameW int, cols []chainCol, cw int) string {
 	return candLine(cells, false, cw)
 }
 
-// chainStatusText returns the status display text and style, marking stale server chains.
 func chainStatusText(c relevo.ChainEntry) (string, lipgloss.Style) {
 	if c.Stale != "" {
 		return "stale", widget.WarnStyle
@@ -200,7 +190,6 @@ func chainStatusText(c relevo.ChainEntry) (string, lipgloss.Style) {
 	}
 }
 
-// chainDataLine renders one chain's table row with indentation for depth.
 func chainDataLine(c relevo.ChainEntry, sel bool, nameW int, cols []chainCol, cw int) string {
 	nameStyle := widget.TextStyle
 	if sel {
@@ -241,7 +230,6 @@ func chainDataLine(c relevo.ChainEntry, sel bool, nameW int, cols []chainCol, cw
 	return candLine(cells, sel, cw)
 }
 
-// chainReasonLine renders a halted chain's reason on a dim second line.
 func chainReasonLine(c relevo.ChainEntry, sel bool, cw int) string {
 	indent := strings.Repeat("  ", c.Depth)
 	text := indent + "  " + sanitizeText(c.Reason)
@@ -249,7 +237,6 @@ func chainReasonLine(c relevo.ChainEntry, sel bool, cw int) string {
 	return candLine(cells, sel, cw)
 }
 
-// bodyLines builds all rendered table lines before viewport windowing.
 func (v chainsView) bodyLines(env widget.Env, width int) []string {
 	nameW, cols := chainsLayout(width, v.doc)
 	cw := width - 6
@@ -269,7 +256,6 @@ func (v chainsView) bodyLines(env widget.Env, width int) []string {
 	return lines
 }
 
-// follow scrolls the viewport to keep the selected chain visible.
 func (v *chainsView) follow(env widget.Env) {
 	if len(v.doc.Chains) == 0 {
 		v.top = 0
@@ -456,7 +442,6 @@ func (v chainsView) open(env widget.Env) (widget.View, tea.Cmd) {
 	return v, push(newChainStepsView(v.doc, c.Name), nil)
 }
 
-// openTrace pushes the cursor's chain's trace, read off the update loop.
 func (v chainsView) openTrace(env widget.Env) tea.Cmd {
 	c := v.doc.Chains[candClamp(v.cur, len(v.doc.Chains))]
 	if env.Actions == nil {

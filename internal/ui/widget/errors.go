@@ -9,9 +9,8 @@ import (
 // MaxErrorLines caps RenderError: a longer error ends with a trailing "…".
 const MaxErrorLines = 8
 
-// RenderError wraps err across the terminal width, preserving the newlines
-// the message already has, capped at MaxErrorLines with a trailing "…" when
-// it overflows.
+// RenderError wraps err to width, keeping the newlines it already has, capped at
+// MaxErrorLines with a trailing "…" when it overflows.
 func RenderError(err error, width int) string {
 	if err == nil {
 		return ""
@@ -41,7 +40,6 @@ func RenderError(err error, width int) string {
 	return strings.Join(wrapped, "\n")
 }
 
-// wrapLine word-wraps one line to width.
 func wrapLine(line string, width int) []string {
 	if width <= 0 {
 		width = 80

@@ -6,7 +6,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
-// renderMarkdown renders light markdown for prompt and report tabs.
 func renderMarkdown(body string) string {
 	if body == "" {
 		return ""
@@ -26,7 +25,6 @@ func renderMarkdown(body string) string {
 			continue
 		}
 
-		// Headings
 		if strings.HasPrefix(line, "#") {
 			n := 0
 			for n < len(line) && line[n] == '#' {
@@ -43,7 +41,6 @@ func renderMarkdown(body string) string {
 			}
 		}
 
-		// Bullets
 		trimmed := strings.TrimLeft(line, " \t")
 		if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") {
 			indent := line[:len(line)-len(trimmed)]
@@ -52,13 +49,11 @@ func renderMarkdown(body string) string {
 			continue
 		}
 
-		// Table
 		if strings.HasPrefix(line, "|") {
 			out[i] = widget.MutedStyle.Render(line)
 			continue
 		}
 
-		// Anything else
 		out[i] = renderInline(line)
 	}
 

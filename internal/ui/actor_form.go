@@ -14,7 +14,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
-// actorTierNames is the tier row's chip order.
 var actorTierNames = []string{"read", "edit", "yolo", "harness"}
 
 // actorAgents is the agents a form offers: for a builtin actor name, only
@@ -65,7 +64,6 @@ type actorForm struct {
 	focus   int // 0 agent, 1 tier, 2 check
 }
 
-// newActorForm builds the edit actor overlay.
 func newActorForm(env widget.Env, doc relevo.ConfigDoc, name string) actorForm {
 	a := doc.Actors[name]
 	_, builtin := harness.RoleByName(name)
@@ -90,7 +88,6 @@ func newActorForm(env widget.Env, doc relevo.ConfigDoc, name string) actorForm {
 	return f
 }
 
-// selectedAgent is the agent the agent row has selected.
 func (f actorForm) selectedAgent() string {
 	if f.asel < 0 || f.asel >= len(f.agents) {
 		return ""
@@ -112,7 +109,6 @@ func (f actorForm) checkSel() int {
 	return 1
 }
 
-// keys are the form's own keys, shown in the footer through overlayKeyer.
 func (f actorForm) keys() []widget.KeyHelp {
 	return []widget.KeyHelp{{Key: "enter", Help: "save"}, {Key: "tab", Help: "next field"}, {Key: "esc", Help: "cancel"}}
 }
@@ -153,8 +149,6 @@ func (f actorForm) prevFocus() actorForm {
 	return f.setFocus(1)
 }
 
-// moveSelection is left/right on the focused row: the agent and tier
-// chips wrap, the check row's selection moves between on and off.
 func (f actorForm) moveSelection(delta int) actorForm {
 	switch f.focus {
 	case 0:
@@ -177,8 +171,6 @@ func (f actorForm) moveSelection(delta int) actorForm {
 	return f
 }
 
-// update handles one key: esc cancels, tab moves focus, left/right move
-// the focused row's selection, enter submits.
 func (f actorForm) update(k tea.KeyMsg) (overlay, tea.Cmd, bool) {
 	switch k.String() {
 	case "esc":
@@ -226,8 +218,6 @@ func (f actorForm) view(width int) []string {
 	return rows
 }
 
-// modal draws the form box: title `edit <name>`, want 90, rows in the
-// listed order.
 func (f actorForm) modal(width int) (string, []string, int, bool) {
 	const want = 90
 	_ = modalInnerW(want, width)
@@ -251,8 +241,7 @@ func (f actorForm) modal(width int) (string, []string, int, bool) {
 	return "edit " + f.actor, rows, want, false
 }
 
-// addActorForm is the list's a key's overlay: the new actor's name
-// and agent.
+// addActorForm is the list's a key's overlay for a new actor.
 type addActorForm struct {
 	ctx     context.Context
 	actions widget.Actions
@@ -279,7 +268,6 @@ func newAddActorForm(env widget.Env, doc relevo.ConfigDoc) addActorForm {
 	}
 }
 
-// selectedAgent is the agent the agent row has selected.
 func (f addActorForm) selectedAgent() string {
 	if f.asel < 0 || f.asel >= len(f.agents) {
 		return ""
@@ -287,7 +275,6 @@ func (f addActorForm) selectedAgent() string {
 	return f.agents[f.asel]
 }
 
-// keys are the form's own keys, shown in the footer through overlayKeyer.
 func (f addActorForm) keys() []widget.KeyHelp {
 	return []widget.KeyHelp{{Key: "enter", Help: "add"}, {Key: "tab", Help: "next field"}, {Key: "esc", Help: "cancel"}}
 }
@@ -303,8 +290,6 @@ func (f addActorForm) setFocus(i int) addActorForm {
 	return f
 }
 
-// update handles one key: esc cancels, tab moves focus, the name row
-// takes every key, the agent row takes left/right, enter adds.
 func (f addActorForm) update(k tea.KeyMsg) (overlay, tea.Cmd, bool) {
 	switch k.String() {
 	case "esc":
@@ -352,8 +337,6 @@ func (f addActorForm) view(width int) []string {
 	return rows
 }
 
-// modal draws the form box: title `add actor`, want 90, the name row, the
-// agent chips, the error when there is one, and the keys.
 func (f addActorForm) modal(width int) (string, []string, int, bool) {
 	const want = 90
 	innerW := modalInnerW(want, width)

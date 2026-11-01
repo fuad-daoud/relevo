@@ -2,8 +2,6 @@ package ui
 
 import "strings"
 
-// shortVersion strips a trailing "-dirty" and a trailing "-g<7+ hex>" from v.
-// Anything else is returned unchanged.
 func shortVersion(v string) string {
 	if v == "" {
 		return ""

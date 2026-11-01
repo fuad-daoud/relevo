@@ -12,7 +12,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// fetchLog formats round's log entries with the cmdLog layout.
 func fetchLog(ctx context.Context, src widget.Source, key string, round int) tea.Cmd {
 	return func() tea.Msg {
 		rt, name, ok := src.Runtime(key)
@@ -83,8 +82,8 @@ func fetchLog(ctx context.Context, src widget.Source, key string, round int) tea
 	}
 }
 
-// fetchArtifacts reads a reader round's artifact directory for the artifacts
-// tab (round 5b): the file list RoundArtifacts orders, and the sel-th file's
+// fetchArtifacts reads the round's artifact directory for the artifacts
+// tab: the file list RoundArtifacts orders, and the sel-th file's
 // bytes through ReadArtifact. Both answer a live round's files on disk and a
 // sealed round's round_file rows, so the tab renders the same either way.
 func fetchArtifacts(ctx context.Context, src widget.Source, key string, round, sel int) tea.Cmd {

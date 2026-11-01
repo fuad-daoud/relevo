@@ -30,9 +30,9 @@ func (v statsView) sinceTerm() string {
 	return " since:" + v.window
 }
 
-// enter opens `:rounds` filtered to the focused panel's selected row
-// On the repos tab the cursor indexes the visible rows: every repo row,
-// plus the children of the expanded repos.
+// enter opens `:rounds` filtered to the focused panel's selected row. On
+// the repos tab the cursor indexes the visible rows: every repo row, plus the
+// children of the expanded repos.
 func (v statsView) enter(env widget.Env) (widget.View, tea.Cmd) {
 	if v.focus == 0 {
 		names := env.Src.Base().Candidates.NameOf
@@ -86,8 +86,7 @@ func (v statsView) enterRepoChild(env widget.Env, r repoTabRow, term string) (wi
 	return v.openRounds(env, query+` `+term+`:"`+r.group.Key+`"`+v.sinceTerm())
 }
 
-// enterOverview opens filtered rounds for the overview table's selected row:
-// the candidates table's token, or the repos table's key.
+// enterOverview opens filtered rounds for the overview table's selected row.
 func (v statsView) enterOverview(env widget.Env) (widget.View, tea.Cmd) {
 	if v.ovFocus == 0 {
 		names := env.Src.Base().Candidates.NameOf

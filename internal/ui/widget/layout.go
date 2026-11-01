@@ -33,7 +33,6 @@ func Pad(s string, width int) string {
 	return lipgloss.NewStyle().MaxWidth(width-1).Render(s) + "…"
 }
 
-// BlockLines renders raw prose lines fitted to width and padded to height.
 func BlockLines(raw []string, width, height int) []string {
 	out := make([]string, 0, height)
 	for _, l := range raw {
@@ -48,7 +47,6 @@ func BlockLines(raw []string, width, height int) []string {
 	return out
 }
 
-// FitLines pads lines to height, truncates the overflow and fits each to width.
 func FitLines(lines []string, width, height int) []string {
 	out := make([]string, 0, height)
 	for _, l := range lines {
@@ -63,7 +61,6 @@ func FitLines(lines []string, width, height int) []string {
 	return out
 }
 
-// Clamp keeps v inside [lo, hi].
 func Clamp(v, lo, hi int) int {
 	return min(max(v, lo), hi)
 }
@@ -78,7 +75,6 @@ func BodyHeight(env Env) int {
 	return h
 }
 
-// Centered centres one line in the body box.
 func Centered(text string, width, height int) []string {
 	out := FitLines(nil, width, height)
 	if height <= 0 {

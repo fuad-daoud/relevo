@@ -40,22 +40,19 @@ var commands = []command{
 	{"quit", "", "leave", false},
 }
 
-// cmdLine is the ':' command line: an open flag, its text input and the
-// index of the selected completion.
+// cmdLine is the ':' command line.
 type cmdLine struct {
 	open  bool
 	input textinput.Model
 	sel   int
 }
 
-// newCmdLine builds the command line with its ':' prompt.
 func newCmdLine() cmdLine {
 	in := newTextInput()
 	in.Prompt = ":"
 	return cmdLine{input: in}
 }
 
-// opened shows the command line, empty, with the cursor in the input.
 func (c cmdLine) opened() cmdLine {
 	c.open = true
 	c.sel = 0
@@ -65,7 +62,6 @@ func (c cmdLine) opened() cmdLine {
 	return c
 }
 
-// typed is the command line's current text.
 func (c cmdLine) typed() string { return strings.TrimSpace(c.input.Value()) }
 
 // matches is every completion candidate whose name has the typed text as a
@@ -79,16 +75,14 @@ func (c cmdLine) matches(env widget.Env) []command {
 	return out
 }
 
-// matchCount is how many completions match, before matches' cap of 8. It is
-// what the command modal's "+ N more match" row counts.
+// matchCount is how many completions match before matches' cap of 8: what the
+// command modal's "+ N more match" row counts.
 func (c cmdLine) matchCount(env widget.Env) int {
 	return len(c.allMatches(env))
 }
 
-// allMatches is every completion candidate whose name has the typed text as a
-// case-insensitive subsequence, ranked by prefix, then live before done, then
-// length, then alphabetical, before matches' cap of 8. Pure: the tests drive
-// it directly.
+// allMatches is matches before its cap of 8. Pure:
+// the tests drive it directly.
 func (c cmdLine) allMatches(env widget.Env) []command {
 	typed := strings.ToLower(c.typed())
 	cands := make([]command, 0, len(commands)+len(env.Report.Bindings)+len(env.Report.Gated))
@@ -135,9 +129,6 @@ func (c cmdLine) allMatches(env widget.Env) []command {
 	return out
 }
 
-// cmdSection names the modal section a completion belongs to: the
-// commands table's own entries are VIEWS, `round <key>` entries are BINDINGS
-// and `ungate …` entries are GATES.
 func cmdSection(c command) string {
 	switch {
 	case strings.HasPrefix(c.name, "round "):
@@ -149,7 +140,6 @@ func cmdSection(c command) string {
 	}
 }
 
-// subsequence reports whether sub's runes appear, in order, in s.
 func subsequence(sub, s string) bool {
 	if sub == "" {
 		return true
@@ -167,9 +157,6 @@ func subsequence(sub, s string) bool {
 	return false
 }
 
-// update handles one key while the command line is open: up/down move the
-// selection, tab completes, enter executes, esc closes, everything else goes
-// to the input.
 func (c cmdLine) update(k tea.KeyMsg, env widget.Env, p prefs) (cmdLine, tea.Cmd) {
 	ms := c.matches(env)
 	switch k.String() {

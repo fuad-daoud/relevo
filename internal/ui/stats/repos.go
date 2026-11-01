@@ -24,7 +24,6 @@ type statsRepoCol struct {
 	Drop int
 }
 
-// statsRepoCols is the repos table's column set, left to right.
 var statsRepoCols = []statsRepoCol{
 	{Head: "RNDS", W: 6},
 	{Head: "BINDINGS", W: 10},
@@ -54,8 +53,6 @@ func statsRepoVisible(width int) ([]statsRepoCol, int) {
 	return visible, statsRepoColNameW(width, visible)
 }
 
-// statsRepoColNameW is the repos table's name column: width - 6 less
-// the visible columns and the share cell.
 func statsRepoColNameW(width int, visible []statsRepoCol) int {
 	sum := 0
 	for _, c := range visible {
@@ -90,11 +87,9 @@ type repoTabRow struct {
 }
 
 // repoChildren is an expanded repo's child rows in display order: each
-// labelled feature by tokens desc with its labelled tickets nested under it by
-// tokens desc, then the (no feature) row with its tickets under the same rule.
-// The (no feature) row shows when the repo has featureless rounds and either a
-// labelled feature or a labelled ticket, so a featureless round's ticket stays
-// reachable; a repo with no labels at all has no children.
+// section by tokens desc. The (no feature) row shows when the repo has
+// featureless rounds and either a labelled feature or a labelled ticket, so a
+// featureless round's ticket stays reachable.
 func repoChildren(r datastats.RepoRow) []repoTabRow {
 	if len(r.Scratch) > 0 {
 		return scratchRepoChildren(r)
@@ -136,17 +131,15 @@ func repoNoFeatureShown(r datastats.RepoRow) bool {
 }
 
 // reposByTokens is the repos tab's per-section ordering: a copy of rows,
-// stable-sorted by tokens desc. A feature section and each feature's
-// ticket section both use it.
+// stable-sorted by tokens desc.
 func reposByTokens[Row any](rows []Row, tokens func(Row) int64) []Row {
 	out := append([]Row(nil), rows...)
 	sort.SliceStable(out, func(i, j int) bool { return tokens(out[i]) > tokens(out[j]) })
 	return out
 }
 
-// statsRepoHead is a repos-table header row: the name label clipped to
-// the name column, the visible column heads right-aligned, and % TOKENS
-// right-aligned over its cell, as the overview's repos table does.
+// statsRepoHead is a repos-table header row laid out as the overview's repos
+// table does.
 func statsRepoHead(label string, nameW int, visible []statsRepoCol) string {
 	head := datastats.FitKey(label, nameW, false)
 	for _, col := range visible {
@@ -159,8 +152,6 @@ func statsRepoHead(label string, nameW int, visible []statsRepoCol) string {
 	return "   " + widget.FaintStyle.Bold(true).Render(head)
 }
 
-// statsRepoCells is one repos-table row's numbers: each visible
-// column's value right-aligned in its cell.
 func statsRepoCells(g datastats.GroupRow, visible []statsRepoCol) string {
 	var b strings.Builder
 	for _, col := range visible {
@@ -169,7 +160,6 @@ func statsRepoCells(g datastats.GroupRow, visible []statsRepoCol) string {
 	return b.String()
 }
 
-// statsRepoCell is one repos-table cell's value.
 func statsRepoCell(g datastats.GroupRow, head string) string {
 	switch head {
 	case "RNDS":
@@ -227,11 +217,9 @@ func statsRepoRow(g datastats.GroupRow, kind repoKind, windowTotal int64, nameW 
 		statsShareCell(g.Tokens, windowTotal)
 }
 
-// reposTabLines is the repos tab: one REPO table over the visible rows --
-// every repo, plus the children of the expanded ones, each nesting level
-// indented two cells further inside the name column -- then two blank lines and
-// the selected row's detail block. sel is the selected row's line, so the page
-// follows the cursor.
+// reposTabLines is the repos tab: one REPO table over the visible rows, then
+// two blank lines and the selected row's detail block. sel is the selected
+// row's line, so the page follows the cursor.
 func (v statsView) reposTabLines(env widget.Env, width int) ([]string, int) {
 	rows := v.repoTabRows()
 	n := len(rows)
@@ -264,9 +252,8 @@ func (v statsView) reposTabLines(env widget.Env, width int) ([]string, int) {
 	return out, sel
 }
 
-// statsGroupDetail is the selected repos-tab row's detail block: the
-// name and its kind, the totals, the outcomes and the top candidates. Each
-// line starts with the three-cell gutter and is cut to width-6.
+// statsGroupDetail is the selected repos-tab row's detail block. Each line
+// starts with the three-cell gutter and is cut to width-6.
 func (v statsView) statsGroupDetail(env widget.Env, g datastats.GroupRow, kind repoKind, windowTotal int64) []string {
 	w := env.Width - 6
 	if w < 1 {

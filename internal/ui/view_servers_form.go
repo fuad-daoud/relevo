@@ -61,8 +61,6 @@ func serverNameField(doc relevo.ConfigDoc, fields []formField) error {
 	return err
 }
 
-// newAddServerForm builds the a key's overlay: the new server's name, url and
-// trust fields.
 func newAddServerForm(env widget.Env, doc relevo.ConfigDoc) formBox {
 	nameIn := newFormInput(true)
 	nameIn.Placeholder = "lowercase, e.g. zen"

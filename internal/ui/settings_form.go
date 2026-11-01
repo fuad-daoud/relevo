@@ -24,8 +24,6 @@ const settingsLabelWidth = 17
 // hint instead of stretching the input to the modal's edge.
 const settingsFieldWidth = 24
 
-// settingField is one field of a settingsForm: a chip row when chips
-// is non-nil, a text input otherwise.
 type settingField struct {
 	label        string                    // left column, e.g. "command", "max_switches"
 	path         string                    // the PolicySet path this field writes
@@ -39,8 +37,6 @@ type settingField struct {
 	disabled     func(f settingsForm) bool // nil = never; true = drawn faint, skipped by focus, validation and sets()
 }
 
-// settingsForm is the group form overlay: one form per group of plain
-// settings (rounds, check, timing, max_builders).
 type settingsForm struct {
 	title   string
 	fields  []settingField
@@ -52,8 +48,7 @@ type settingsForm struct {
 	note    string // one dim sentence row, may be ""
 }
 
-// settingByKey is the row named key from Settings(doc, cpus), or a zero
-// Setting when key is unknown.
+// settingByKey is the row named key, or a zero Setting when key is unknown.
 func settingByKey(doc relevo.ConfigDoc, cpus int, key string) relevo.Setting {
 	for _, s := range relevo.Settings(doc, cpus) {
 		if s.Key == key {
@@ -295,8 +290,6 @@ func (f settingsForm) setFocus(i int) settingsForm {
 	return f
 }
 
-// footerKeys is the form's keys: enter, tab, esc, plus ←→ choose when
-// any field is a chip row.
 func (f settingsForm) footerKeys() []widget.KeyHelp {
 	keys := []widget.KeyHelp{{Key: "enter", Help: "save"}, {Key: "tab", Help: "next field"}, {Key: "esc", Help: "cancel"}}
 	for _, fld := range f.fields {
@@ -307,10 +300,8 @@ func (f settingsForm) footerKeys() []widget.KeyHelp {
 	return keys
 }
 
-// keys is the form's own keys, shown in the footer through overlayKeyer.
 func (f settingsForm) keys() []widget.KeyHelp { return f.footerKeys() }
 
-// moveChip is left/right on a chip row.
 func (f settingsForm) moveChip(delta int) settingsForm {
 	fld := f.fields[f.focus]
 	if len(fld.chips) == 0 {
@@ -341,8 +332,6 @@ func (f settingsForm) nextFocusable(from, delta int) int {
 	return from
 }
 
-// update handles one key: esc cancels, tab moves focus, left/right
-// move a chip row's selection, typing edits a text field, enter submits.
 func (f settingsForm) update(k tea.KeyMsg) (overlay, tea.Cmd, bool) {
 	switch k.String() {
 	case "esc":
@@ -459,9 +448,8 @@ func (f settingsForm) scopeBlockPrune(out []relevo.PolicySet) []relevo.PolicySet
 // "_ms" suffix.
 func settingsMessageKey(path string) string { return strings.TrimSuffix(path, "_ms") }
 
-// message is the submit message: "set " then each changed field's
-// "<key> <new display value>", comma-joined; a cleared text field reads
-// "<key> default".
+// message is the submit message: "set " then each changed field,
+// comma-joined; a cleared text field reads "<key> default".
 func (f settingsForm) message() string {
 	var parts []string
 	for _, fld := range f.fields {
@@ -519,11 +507,9 @@ func (f settingsForm) view(width int) []string {
 	return rows
 }
 
-// modal draws the form box: title is the form's identifier
-// (rounds, check, timing or serve.max_builders); rows are a blank, then per
-// field the label, the input or chips and the hint, a per-field error when
-// touched or tried, and a blank; then the note, a form-level error from
-// EditPolicy, and the key row. The enter chip is faint while an error stands.
+// modal draws the form box: the title is the form's identifier, then per
+// field the label, input and hint, errors, the note and the key row. The
+// enter chip is faint while an error stands.
 func (f settingsForm) modal(width int) (string, []string, int, bool) {
 	const want = 90
 	innerW := modalInnerW(want, width)

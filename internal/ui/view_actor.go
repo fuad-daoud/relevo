@@ -157,7 +157,6 @@ func (v *actorView) follow(env widget.Env) {
 
 func (v actorView) Crumbs() []string { return []string{v.name} }
 
-// The view owns no text input of its own.
 func (v actorView) Capturing() bool { return false }
 
 // A placement entry has no on/off, so the placement pane offers no space key.

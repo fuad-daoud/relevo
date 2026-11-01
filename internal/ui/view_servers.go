@@ -17,8 +17,6 @@ import (
 // that fills it has not answered yet.
 const serverNoProbe = "—"
 
-// serversDocMsg is one servers load's reply: the doc, whose Servers map is the
-// table's rows.
 type serversDocMsg struct {
 	doc relevo.ConfigDoc
 	err error
@@ -30,9 +28,9 @@ type serversProbeMsg struct {
 	probes []relevo.ServerProbe
 }
 
-// serversView is ':servers': one row per configured server, its state from an
-// on-demand probe, and the a/e/d keys. The probe is network work, so it only
-// ever runs in a tea.Cmd, never while a frame is drawn.
+// serversView is ':servers': one row per configured server. The probe is
+// network work, so it only ever runs in a tea.Cmd, never while a frame is
+// drawn.
 type serversView struct {
 	doc     relevo.ConfigDoc
 	probes  map[string]relevo.ServerProbe // by server name; nil until a probe answers
@@ -64,7 +62,6 @@ func newServersView(env widget.Env) (widget.View, tea.Cmd) {
 	return v, serversDocCmd(env)
 }
 
-// serversDocCmd reads the stored config off the update loop.
 func serversDocCmd(env widget.Env) tea.Cmd {
 	return func() tea.Msg {
 		doc, err := env.Actions.ConfigDoc()
@@ -72,7 +69,6 @@ func serversDocCmd(env widget.Env) tea.Cmd {
 	}
 }
 
-// serversProbeCmd probes every configured server off the update loop.
 func serversProbeCmd(env widget.Env) tea.Cmd {
 	return func() tea.Msg {
 		if env.Actions == nil {
@@ -82,7 +78,6 @@ func serversProbeCmd(env widget.Env) tea.Cmd {
 	}
 }
 
-// serverNames is the servers section's names, sorted.
 func serverNames(servers map[string]remote.ServerEntry) []string {
 	names := make([]string, 0, len(servers))
 	for name := range servers {
@@ -92,8 +87,8 @@ func serverNames(servers map[string]remote.ServerEntry) []string {
 	return names
 }
 
-// serverRows is the table: one row per configured server, its state from the
-// probe carrying that name, or the placeholder before a probe answers.
+// serverRows is the table: one row per configured server, or the placeholder
+// before a probe answers.
 func serverRows(doc relevo.ConfigDoc, probes map[string]relevo.ServerProbe) []serverRow {
 	names := serverNames(doc.Servers)
 	out := make([]serverRow, 0, len(names))
@@ -146,7 +141,6 @@ func abbrevFingerprint(fp string) string {
 	return scheme + ":" + clipMiddle(hex, 8)
 }
 
-// clipMiddle trims s to n runes, marking that it was cut.
 func clipMiddle(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {
@@ -155,9 +149,6 @@ func clipMiddle(s string, n int) string {
 	return string(r[:n]) + "…"
 }
 
-// serverStateStyle colours one state word: green when the server is enrolled,
-// amber for the states the human can fix, red for a failure, faint for the
-// placeholder.
 func serverStateStyle(state string) lipgloss.Style {
 	switch {
 	case state == serverNoProbe:
@@ -209,7 +200,6 @@ func serverListLayout(width int) (int, []candCol) {
 	return nameW(visible), visible
 }
 
-// serverHeaderLine is the table's header row, in faint bold.
 func serverHeaderLine(nameW int, cols []candCol, cw int) string {
 	style := widget.FaintStyle.Bold(true)
 	cells := []candCell{{text: widget.Pad("SERVER", nameW), style: style}}
@@ -219,9 +209,6 @@ func serverHeaderLine(nameW int, cols []candCol, cw int) string {
 	return candLine(cells, false, cw)
 }
 
-// serverDataLine is one server's table row: the name (bold on the cursor row),
-// the url and the abbreviated fingerprint in muted, and the state in its own
-// colour.
 func serverDataLine(r serverRow, sel bool, nameW int, cols []candCol, cw int) string {
 	nameStyle := widget.TextStyle
 	if sel {
@@ -244,8 +231,7 @@ func serverDataLine(r serverRow, sel bool, nameW int, cols []candCol, cw int) st
 }
 
 // serverDetailLines is the cursor row's detail block: the full url and pin,
-// then the probe's own detail line (the enrollment line for "not enrolled",
-// the failure cause for "unreachable").
+// then the probe's own detail line.
 func serverDetailLines(r serverRow, width int) []string {
 	meta := r.url
 	if r.full != "" {
@@ -262,8 +248,6 @@ func serverDetailLines(r serverRow, width int) []string {
 	return out
 }
 
-// bodyLines is the whole body before it is windowed: a blank line under the
-// context row, the table, two blank lines and the cursor row's detail block.
 func (v serversView) bodyLines(env widget.Env, width int) []string {
 	rows := v.rows()
 	nameW, cols := serverListLayout(width)
@@ -284,10 +268,8 @@ func (v serversView) bodyLines(env widget.Env, width int) []string {
 	return append(lines, serverDetailLines(rows[cur], width)...)
 }
 
-// rows is the table for the newest load.
 func (v serversView) rows() []serverRow { return serverRows(v.doc, v.probes) }
 
-// follow scrolls the page so the cursor's table row stays visible.
 func (v *serversView) follow(env widget.Env) {
 	rows := v.rows()
 	if len(rows) == 0 {
@@ -304,11 +286,10 @@ func (v *serversView) follow(env widget.Env) {
 
 func (v serversView) Crumbs() []string { return []string{"servers"} }
 
-// Capturing is always false: the view owns no text input of its own.
 func (v serversView) Capturing() bool { return false }
 
-// Keys are the list's keys, shown only when the shell has an widget.Actions seam:
-// without one the probe and every edit are hidden.
+// Keys are the list's keys, shown only with a widget.Actions seam; without
+// one the probe and every edit stay hidden.
 func (v serversView) Keys() []widget.KeyHelp {
 	if !v.actions {
 		return nil
@@ -322,11 +303,8 @@ func (v serversView) Keys() []widget.KeyHelp {
 	}
 }
 
-// HelpKeys is the help overlay's key list: the same set.
 func (v serversView) HelpKeys() []widget.KeyHelp { return v.Keys() }
 
-// Context is the counts line on the left: the servers, and how many of them
-// answered as enrolled.
 func (v serversView) Context(env widget.Env) (string, string) {
 	rows := v.rows()
 	enrolled := 0
@@ -408,7 +386,6 @@ func (v serversView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) 
 	return v, nil
 }
 
-// updateKey is the list's own keys.
 func (v serversView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	rows := v.rows()
 	n := len(rows)
@@ -449,9 +426,9 @@ func (v serversView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.C
 	return v, nil
 }
 
-// deleteCmd is the list's d key: validate the delete, then confirm it as a
-// danger box. A refused delete (an actor places its rounds on the server) is a
-// notice naming the actor.
+// deleteCmd validates the delete, then confirms it as a danger box; a refused
+// delete (an actor places its rounds on the server) is a notice naming the
+// actor.
 func (v serversView) deleteCmd(env widget.Env, r serverRow) tea.Cmd {
 	edit, err := relevo.DeleteServer(v.doc, r.name)
 	if err != nil {

@@ -23,8 +23,8 @@ import (
 )
 
 // mastermindActions is the real Actions: a thin adapter over internal/relevo.
-// repo is os.Getwd() at start, or "" when not inside a git repo (round 2's
-// bind refuses then); you is the human mastermind's id, from ensureYou.
+// repo is os.Getwd() at start, or "" when not inside a git repo; you is the
+// human mastermind's id, from ensureYou.
 type mastermindActions struct {
 	live  *liveRuntime
 	repo  string
@@ -209,8 +209,6 @@ func (a *mastermindActions) Send(ctx context.Context, key, planFile string) widg
 	return widget.Result{Text: sendText(name, res), Refresh: true}
 }
 
-// sendText is what a send prints: the pick line, the drift line when there is
-// one, then `sent round <N> to <name>`.
 func sendText(name string, res relevo.SendResult) string {
 	var lines []string
 	if res.Pick != "" {
@@ -226,7 +224,7 @@ func sendText(name string, res relevo.SendResult) string {
 // Bind adds a binding of this repo for the human mastermind: the same
 // relevo.Add the `relevo bind` verb calls, with `you` as the owner. The text
 // is `added <name>: builder <candidate> on <tree>`, then the gated note and
-// the pick note, as runAdd prints them (cmd/relevo/main.go:1509-1604).
+// the pick note, as runAdd prints them.
 func (a *mastermindActions) Bind(ctx context.Context, in widget.BindInput) widget.Result {
 	if a.repo == "" {
 		return widget.Result{Err: errors.New("start relevo ui inside a git repository to bind")}
@@ -432,7 +430,6 @@ func (a *mastermindActions) AgentFiles(agent string) ([]harness.AgentFile, error
 // ResetAgentFile overwrites agent's definition file on kind with the copy
 // relevo renders or ships: a source custom agent resets through
 // relevo.ResetCustomAgentFile, everything else through harness.ResetAgentFile.
-// Its text is `reset <kind>'s <agent>`; Refresh re-reads the view's rows.
 func (a *mastermindActions) ResetAgentFile(ctx context.Context, kind, agent string) widget.Result {
 	env, err := relevo.AgentInstallEnv()
 	if err != nil {
@@ -453,29 +450,24 @@ func (a *mastermindActions) ResetAgentFile(ctx context.Context, kind, agent stri
 	return widget.Result{Text: "reset " + kind + "'s " + agent, Refresh: true}
 }
 
-// actionMsg is what an action's tea.Cmd returns.
 type actionMsg struct {
 	verb, key string
 	res       widget.Result
 }
 
-// stderrMsg carries one captured stderr/slog line.
 type stderrMsg struct{ line string }
 
 // workingMsg marks one action in flight, so the footer can show it until its
 // actionMsg arrives.
 type workingMsg struct{ verb, key string }
 
-// openOverlayMsg asks the shell to show an overlay.
 type openOverlayMsg struct{ ov overlay }
 
-// openOverlay returns the command a key returns to raise ov.
 func openOverlay(ov overlay) tea.Cmd {
 	return func() tea.Msg { return openOverlayMsg{ov: ov} }
 }
 
-// runAction is what a confirm's yes or a prompt's enter returns: mark the
-// action in flight, then run it off the update loop.
+// runAction marks the action in flight, then runs it off the update loop.
 func runAction(ctx context.Context, verb, key string, f func(context.Context) widget.Result) tea.Cmd {
 	return tea.Batch(
 		func() tea.Msg { return workingMsg{verb: verb, key: key} },

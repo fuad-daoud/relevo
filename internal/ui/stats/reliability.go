@@ -162,11 +162,9 @@ func statsGatesCols(width int) (nameW, reasonW int) {
 	return nameW, reasonW
 }
 
-// statsGatesLines is the reliability tab's gates table: the
-// header and one row per counted gate, in Active order, or one faint line
-// when none is. The table fills [3, width-3): CANDIDATE takes the room left
-// after PROVIDER, UNTIL, LEFT and the gap, and REASON is cut with statsCut
-// and padded to reasonW so every row ends at exactly width-3.
+// statsGatesLines is the reliability tab's gates table: the header and one
+// row per counted gate, in Active order, or one faint line when none is.
+// Every row ends at exactly width-3.
 func (v statsView) statsGatesLines(env widget.Env, width int) []string {
 	gates := v.statsReliableGates()
 	if len(gates) == 0 {
@@ -207,11 +205,10 @@ func statsHourCell(count, cellW int) string {
 	return strings.Repeat(" ", cellW-1) + widget.GridStyle.Render("·")
 }
 
-// statsHourLines is the reliability tab's limits-by-hour table:
-// the header names the hours 0-23, each right-aligned in cellW, then one row
-// per provider, or one faint line when no provider recorded a limit in the
-// window. cellW is (width-6-labelW)/24, at least 3, so the table fills
-// [3, width-3) with at most (width-6-labelW)%24 spare cells at the right.
+// statsHourLines is the reliability tab's limits-by-hour table, or one faint
+// line when no provider recorded a limit in the window. cellW is
+// (width-6-labelW)/24, at least 3, so the table fills [3, width-3) with at
+// most (width-6-labelW)%24 spare cells at the right.
 func (v statsView) statsHourLines(width int) []string {
 	rows := v.rep.Reliability.ByHour
 	if len(rows) == 0 {
@@ -237,8 +234,8 @@ func (v statsView) statsHourLines(width int) []string {
 }
 
 // reliabilityTabLines is the reliability tab: the four tiles, the gates
-// table and the limits-by-hour table, each pair separated by two blank lines.
-// The tab has no cursor and no detail block.
+// table and the limits-by-hour table. The tab has no cursor and no detail
+// block.
 func (v statsView) reliabilityTabLines(env widget.Env, width int) []string {
 	rel := v.rep.Reliability
 	tiles := [][3]string{

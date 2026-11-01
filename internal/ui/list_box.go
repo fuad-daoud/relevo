@@ -25,7 +25,6 @@ type listBox struct {
 	onPick       func(name string) tea.Cmd
 }
 
-// keys is the list's footer.
 func (l listBox) keys() []widget.KeyHelp {
 	submit := l.submit
 	if submit == "" {
@@ -84,9 +83,6 @@ func (l listBox) view(width int) []string {
 	return rows
 }
 
-// modal renders the list: the header, one row per item, the note and
-// the buttons. A row is the name (26 cells), the status (16 cells, in its
-// style) and the note in faint; a disabled row is faint throughout.
 func (l listBox) modal(width int) (string, []string, int, bool) {
 	const want = 72
 	innerW := modalInnerW(want, width)

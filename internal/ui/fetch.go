@@ -25,13 +25,13 @@ const (
 	tabCount
 )
 
-// tabTitles indexes by tab and is used by both the tab bar and the tests.
+// tabTitles is indexed by tab; the tab bar and the tests both read it.
 var tabTitles = [tabCount]string{"prompt", "report", "transcript", "diff", "log", "artifacts"}
 
-// writerTabs is the tab bar a writer round draws: today's tabs, unchanged.
+// writerTabs is the tab bar a writer round draws.
 var writerTabs = []tab{tabPrompt, tabReport, tabTerminal, tabDiff, tabLog}
 
-// readerTabs is the tab bar a reader round draws (round 5b): no report and
+// readerTabs is the tab bar a reader round draws: no report and
 // no diff, and the artifacts tab instead.
 var readerTabs = []tab{tabPrompt, tabArtifacts, tabLog, tabTerminal}
 
@@ -42,10 +42,10 @@ var readerTabs = []tab{tabPrompt, tabArtifacts, tabLog, tabTerminal}
 // legitimately nothing to show -- a state that must render as prose, never as
 // an error.
 type tabContent struct {
-	body   string    // rendered content, ready for the viewport
-	loaded bool      // false until the first fetch returns
-	err    error     // fetch failure, scoped to this tab alone
-	empty  string    // prose explaining expected emptiness
+	body   string
+	loaded bool  // false until the first fetch returns
+	err    error // fetch failure, scoped to this tab alone
+	empty  string
 	round  int       // the round the body belongs to (report, diff); 0 when not round-keyed
 	at     time.Time // the event time for prompt and report (zero when unknown), the read time for the others
 
@@ -57,7 +57,7 @@ type tabContent struct {
 	// capture.
 	logName string
 
-	// The artifacts tab (round 5b): the files RoundArtifacts listed for
+	// The artifacts tab: the files RoundArtifacts listed for
 	// the round, in its order; artifactRel the selected file, artifactBody
 	// its raw bytes, artifactActor the binding's actor and artifactOutput
 	// the actor's output rel (whose file, or summary.md, is the final
@@ -118,8 +118,7 @@ func unresolvedKey(key string) error {
 }
 
 // fetchStatus calls src.Status(ctx) and returns statusMsg{report, err}. It
-// never returns a partial report alongside a report-level error. The scope
-// argument and the relevo.Bindings call it carried are gone (X3).
+// never returns a partial report alongside a report-level error.
 func fetchStatus(ctx context.Context, src widget.Source) tea.Cmd {
 	return func() tea.Msg {
 		rep, err := src.Status(ctx)
@@ -259,10 +258,6 @@ func fetchShow(ctx context.Context, rt relevo.Runtime, name string, round int, s
 // its bare name (hist rows are mastermind-only; the server never has them),
 // read through src.Base(). sel is the artifacts tab's cursor, ignored by
 // every other tab.
-//
-// It takes explicit parameters rather than a Model: fetch.go is built in
-// Step 2 and Model does not exist until Step 3, so a Model parameter here
-// would not compile in the step that introduces it.
 func fetchFor(ctx context.Context, src widget.Source, t tab, key string, round, lines, sel int, live bool) tea.Cmd {
 	if !live {
 		return fetchShow(ctx, src.Base(), key, round, sectionForTab(t))

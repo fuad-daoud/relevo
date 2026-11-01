@@ -9,7 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
-// sep joins a pane head's parts with a faint middle dot (X2). Its only user
+// sep joins a pane head's parts with a faint middle dot. Its only user
 // is roundPane.paneHead.
 var sep = widget.FaintStyle.Render(" · ")
 

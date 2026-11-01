@@ -19,8 +19,7 @@ type webhooksDocMsg struct {
 	err error
 }
 
-// webhooksView is `settings › notify.webhooks`: the stored webhooks, the cursor
-// row's detail block, and the add, edit and delete keys behind them.
+// webhooksView is `settings › notify.webhooks`: the stored webhooks.
 type webhooksView struct {
 	doc     relevo.ConfigDoc
 	err     error // the last ConfigDoc error; shown centred like candidates' error state
@@ -37,7 +36,6 @@ func newWebhooksView(env widget.Env, doc relevo.ConfigDoc) (widget.View, tea.Cmd
 	return v, webhooksDocCmd(env)
 }
 
-// webhooksDocCmd reads the stored config off the update loop.
 func webhooksDocCmd(env widget.Env) tea.Cmd {
 	return func() tea.Msg {
 		doc, err := env.Actions.ConfigDoc()
@@ -71,7 +69,6 @@ func webhookEventsText(events []string) string {
 	return strings.Join(events, ", ")
 }
 
-// webhooksCount is the context line's label: "webhook" for one.
 func webhooksCount(n int) string {
 	if n == 1 {
 		return "webhook"
@@ -79,8 +76,9 @@ func webhooksCount(n int) string {
 	return "webhooks"
 }
 
-// webhooksLayout is the table's fixed columns after URL: FORMAT 8 cells and
-// EVENTS 34, URL taking the rest of width-6 cells.
+// webhooksLayout gives URL what width-6 leaves after FORMAT (8) and EVENTS
+// (34) and their 2-cell gaps; the header and data lines pad to the same 8 and
+// 34.
 func webhooksLayout(width int) (urlW, cw int) {
 	cw = width - 6
 	if cw < 0 {
@@ -93,7 +91,6 @@ func webhooksLayout(width int) (urlW, cw int) {
 	return urlW, cw
 }
 
-// webhooksHeaderLine is the table's header row, in faint bold.
 func webhooksHeaderLine(urlW, cw int) string {
 	style := widget.FaintStyle.Bold(true)
 	cells := []candCell{
@@ -104,8 +101,6 @@ func webhooksHeaderLine(urlW, cw int) string {
 	return candLine(cells, false, cw)
 }
 
-// webhooksDataLine is one webhook's row: the URL in the text colour, its format
-// and events muted, and the cursor row's URL bold on the selection band.
 func webhooksDataLine(h policy.Webhook, sel bool, urlW, cw int) string {
 	urlStyle := widget.TextStyle
 	if sel {
@@ -119,8 +114,6 @@ func webhooksDataLine(h policy.Webhook, sel bool, urlW, cw int) string {
 	return candLine(cells, sel, cw)
 }
 
-// webhooksDetailLines is the cursor row's detail block: the URL in faint bold,
-// then its format and events, dim.
 func webhooksDetailLines(h policy.Webhook, width int) []string {
 	first := "   " + widget.FaintStyle.Bold(true).Render(h.URL)
 	second := "   " + widget.MutedStyle.Render("format "+webhookFormatText(h.Format)+
@@ -128,9 +121,6 @@ func webhooksDetailLines(h policy.Webhook, width int) []string {
 	return []string{widget.Fit(first, width), widget.Fit(second, width)}
 }
 
-// bodyLines is the whole body before it is windowed: a blank line, the header,
-// the rows (or one dim line when there are none), then the cursor row's detail
-// block under one blank.
 func (v webhooksView) bodyLines(width int) []string {
 	hooks := webhooksOf(v.doc)
 	urlW, cw := webhooksLayout(width)
@@ -147,7 +137,6 @@ func (v webhooksView) bodyLines(width int) []string {
 	return append(lines, webhooksDetailLines(hooks[cur], width)...)
 }
 
-// follow scrolls the page so the cursor's row stays visible.
 func (v *webhooksView) follow(env widget.Env) {
 	avail := widget.BodyHeight(env)
 	if avail <= 0 {
@@ -167,7 +156,6 @@ func (v *webhooksView) follow(env widget.Env) {
 
 func (v webhooksView) Crumbs() []string { return []string{"notify.webhooks"} }
 
-// Capturing is always false: the view owns no text input of its own.
 func (v webhooksView) Capturing() bool { return false }
 
 // Keys are the list's action keys, shown only when the shell has an widget.Actions

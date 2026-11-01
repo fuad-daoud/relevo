@@ -22,13 +22,12 @@ type View interface {
 // KeyHelp is one key's footer hint. Key is as displayed.
 type KeyHelp struct{ Key, Help string }
 
-// HelpKeyer is optionally implemented by a view that provides an extended
-// key list for the help overlay.
+// HelpKeyer is optional: a view that has it gives the help overlay an
+// extended key list.
 type HelpKeyer interface{ HelpKeys() []KeyHelp }
 
-// OffKeyer is optionally implemented by a view that can name which of its
-// Keys do not apply right now: the footer draws those greyed out. A view
-// without it has no off keys.
+// OffKeyer names which of a view's Keys do not apply right now: the footer
+// draws those greyed out. A view without it has no off keys.
 type OffKeyer interface{ OffKeys(env Env) []string }
 
 // Env is what the shell lends a view on every call. Views never keep it.
@@ -54,7 +53,6 @@ type Env struct {
 	ActionLog []ActionEntry
 }
 
-// ActionEntry is one recorded cockpit action result for the session (:log).
 type ActionEntry struct {
 	At   time.Time // when the result arrived (the shell's clock)
 	Verb string    // the action's verb

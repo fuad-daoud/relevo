@@ -31,8 +31,6 @@ func newLiveRuntime(rt relevo.Runtime) *liveRuntime {
 	return l
 }
 
-// Get returns the current snapshot. Renders reach it through Base, so it only
-// takes the lock and never touches the store.
 func (l *liveRuntime) Get() relevo.Runtime {
 	l.mu.Lock()
 	defer l.mu.Unlock()

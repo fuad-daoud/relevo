@@ -11,8 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
-// ConfigLog is every stored revision, newest first. The rows carry no
-// snapshot: the list is a header list.
+// ConfigLog is every stored revision, newest first; the rows carry no snapshot.
 func (a *mastermindActions) ConfigLog() ([]db.RevisionRow, error) {
 	if a.runtime().Config == nil {
 		return nil, errors.New("no config store")
@@ -28,8 +27,8 @@ func (a *mastermindActions) ConfigChanges(rev int64) ([]relevo.ChangeLine, error
 	return relevo.RevisionChanges(a.runtime().Config, rev)
 }
 
-// RollbackPreview is what rolling back to rev would change, and a refusal when
-// the result would not pass the cockpit's own checks.
+// RollbackPreview is what rolling back to rev would change, or a refusal when
+// it would not pass the cockpit's own checks.
 func (a *mastermindActions) RollbackPreview(rev int64) ([]relevo.ChangeLine, error) {
 	if a.runtime().Config == nil {
 		return nil, errors.New("no config store")

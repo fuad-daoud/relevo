@@ -20,9 +20,8 @@ const statsOverviewWide = 96
 const statsOverviewTablesWide = 120
 
 // overviewLines is the overview tab: the four tiles, the token chart and the
-// candidates and busiest-repos tables. Each leaves three cells on the right
-// height is the room the overview may fill. sel is the visible line of
-// the focused table's selected row, or -1 when that table is empty.
+// candidates and busiest-repos tables. sel is the visible line of the focused
+// table's selected row, or -1 when that table is empty.
 func (v statsView) overviewLines(env widget.Env, width, height int) ([]string, int) {
 	t := v.rep.Totals
 	k := t.TokenKinds
@@ -124,8 +123,7 @@ func statsTilesLines(tiles [][3]string, width int) []string {
 	return out
 }
 
-// statsTileCell is one of a tile's three lines: its label faint bold, its
-// value text bold, its note faint. A longer line is cut to pitch - 2 with an
+// statsTileCell is one of a tile's three lines, cut to pitch - 2 with an
 // ellipsis before it is styled.
 func statsTileCell(tile [3]string, line, pitch int) string {
 	text := tile[2]
@@ -139,9 +137,8 @@ func statsTileCell(tile [3]string, line, pitch int) string {
 	return style.Render(statsCut(text, pitch-2))
 }
 
-// statsTokenChartLines is the overview's per-day token chart: the heading and
-// the timeline chart below it. rows is the plot's row count. With no tokens in
-// the window, one faint line in the gutter replaces the plot.
+// statsTokenChartLines is the overview's per-day token chart. With no tokens
+// in the window, one faint line in the gutter replaces the plot.
 func (v statsView) statsTokenChartLines(width, rows int) []string {
 	out := []string{"   " + widget.FaintStyle.Bold(true).Render("TOKENS")}
 	days := v.rep.Spend.Days
@@ -192,11 +189,10 @@ func (v statsView) overviewCandRows(names func(string) string) []statsOverviewCa
 	return append(rows, idle...)
 }
 
-// statsOverviewCandidates is the overview's CANDIDATES table: a header
-// row and the visible slice of every scorecard row, under-5 rows dimmed. When
-// the table overflows, the `a–b of n` count rides in the header's name column.
-// cellW is the table's width and rows its viewport. sel is the selected row's
-// visible offset, or -1 when the table has no rows.
+// statsOverviewCandidates is the overview's CANDIDATES table. Under-5 rows
+// dim; when the table overflows, the `a–b of n` count rides in the header's
+// name column. sel is the selected row's visible offset, or -1 when the table
+// has no rows.
 func (v statsView) statsOverviewCandidates(env widget.Env, cellW, rows int) ([]string, int) {
 	nameW := statsCandidateNameW(cellW)
 	names := env.Src.Base().Candidates.NameOf
@@ -242,7 +238,7 @@ func (v statsView) statsOverviewCandidates(env widget.Env, cellW, rows int) ([]s
 	return out, sel
 }
 
-// statsOverviewCandidateCells is one CANDIDATES row as its two parts, name and
+// statsOverviewCandidateCells is one CANDIDATES row's two parts, name and
 // numbers, so a selected row can also be rebuilt as plain text. IN/RND
 // is (In+Cache)/Measured, OUT/RND is Out/Measured, both via ShortTokens; a
 // lane with nothing measured shows "·".
@@ -265,9 +261,8 @@ func statsOverviewCandidateCells(name string, s datastats.ScoreRow, nameW int) (
 			s.Rounds, datastats.PctText(s.DonePct, s.Closed), inRound, outRound, cache)
 }
 
-// statsOverviewCandidateRow is one CANDIDATES row: the name in the name column,
-// then rounds, done %, input per round, output per round and the cache share,
-// the numbers in muted. A few-round lane's name and numbers are both faint
+// statsOverviewCandidateRow is one CANDIDATES row, the numbers in muted. A
+// few-round lane's name and numbers are both faint
 func statsOverviewCandidateRow(name string, s datastats.ScoreRow, nameW int, few bool) string {
 	key, nums := statsOverviewCandidateCells(name, s, nameW)
 	if few {
@@ -276,12 +271,10 @@ func statsOverviewCandidateRow(name string, s datastats.ScoreRow, nameW int, few
 	return widget.TextStyle.Render(key) + widget.MutedStyle.Render(nums)
 }
 
-// statsOverviewRepos is the overview's BUSIEST REPOS table: a header row
-// and the visible slice of every repo by tokens, each with an accent share bar
-// and its share of the window's tokens. When the table overflows, the `a–b of
-// n` count rides in the header's name column. cellW is the table's width and
-// rows its viewport. sel is the selected row's visible offset, or -1 when the
-// table has no rows.
+// statsOverviewRepos is the overview's BUSIEST REPOS table: the visible slice
+// of every repo by tokens with its share of the window's tokens. When the
+// table overflows, the `a–b of n` count rides in the header's name column.
+// sel is the selected row's visible offset, or -1 when the table has no rows.
 func (v statsView) statsOverviewRepos(cellW, rows int) ([]string, int) {
 	nameW := statsRepoNameW(cellW)
 	all := v.overviewRepoRows()

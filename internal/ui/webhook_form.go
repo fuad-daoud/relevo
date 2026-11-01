@@ -17,8 +17,7 @@ import (
 // default and, like the stored policy, is written as "".
 var webhookFormats = []string{"json", "slack", "discord"}
 
-// webhookForm is the add/edit webhook modal: the url, the format chips, the
-// events filter, and the two dim reference rows under them.
+// webhookForm is the add/edit webhook modal.
 type webhookForm struct {
 	title   string
 	editing int // the stored index an edit replaces, -1 when adding
@@ -139,8 +138,6 @@ func (f webhookForm) setFocus(i int) webhookForm {
 	return f
 }
 
-// nextFocusable is the next field index in direction delta, wrapping once
-// through every field.
 func (f webhookForm) nextFocusable(from, delta int) int {
 	n := len(f.fields)
 	if n == 0 {
@@ -156,7 +153,6 @@ func (f webhookForm) nextFocusable(from, delta int) int {
 	return from
 }
 
-// moveChip is left/right on the format row.
 func (f webhookForm) moveChip(delta int) webhookForm {
 	fld := f.fields[f.focus]
 	if len(fld.chips) == 0 {
@@ -213,16 +209,12 @@ func (f webhookForm) hooks() ([]policy.Webhook, bool) {
 	return next, true
 }
 
-// footerKeys is the form's keys: enter, tab, the format row's ←→, esc.
 func (f webhookForm) footerKeys() []widget.KeyHelp {
 	return []widget.KeyHelp{{Key: "enter", Help: "save"}, {Key: "tab", Help: "next field"}, {Key: "←→", Help: "choose"}, {Key: "esc", Help: "cancel"}}
 }
 
-// keys is the form's own keys, shown in the footer through overlayKeyer.
 func (f webhookForm) keys() []widget.KeyHelp { return f.footerKeys() }
 
-// update handles one key: esc cancels, tab moves focus, left/right move the
-// format row, typing edits a text field, enter submits.
 func (f webhookForm) update(k tea.KeyMsg) (overlay, tea.Cmd, bool) {
 	switch k.String() {
 	case "esc":
@@ -273,7 +265,6 @@ func (f webhookForm) submit() (overlay, tea.Cmd, bool) {
 	return f, nil, false
 }
 
-// message is the submit message: "add webhook <url>" or "edit webhook <url>".
 func (f webhookForm) message(h policy.Webhook) string {
 	verb := "add"
 	if f.editing >= 0 {
@@ -287,10 +278,6 @@ func (f webhookForm) view(width int) []string {
 	return rows
 }
 
-// modal draws the form box in the settings forms' spacing: a blank, then per
-// field the label, the input or chips and the hint, a per-field error when
-// touched or tried, and a blank; then the two reference rows, a form-level
-// error, and the key row. The enter chip is faint while an error stands.
 func (f webhookForm) modal(width int) (string, []string, int, bool) {
 	const want = 90
 	innerW := modalInnerW(want, width)
@@ -346,8 +333,6 @@ func (f webhookForm) modal(width int) (string, []string, int, bool) {
 	return f.title, rows, want, false
 }
 
-// webhookRefRows are the two dim reference rows under the fields: the known
-// event names, and the state_changed suffix that narrows it.
 func webhookRefRows() []string {
 	return []string{
 		"   events: " + strings.Join(policy.WebhookEvents, "  "),

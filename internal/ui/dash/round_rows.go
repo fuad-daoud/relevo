@@ -54,7 +54,6 @@ func (m Model) roundLayout(indented bool) roundColLayout {
 	return layout
 }
 
-// roundLine is one round row.
 func (m Model) roundLine(r db.RoundRow, cursor, indented bool) string {
 	cw := m.width - 6
 	if cw < 0 {
@@ -104,12 +103,10 @@ func (m Model) roundLine(r db.RoundRow, cursor, indented bool) string {
 	return "   " + content + "   "
 }
 
-// STARTED: StartedAt.In(loc).Format("15:04"), Dim, width 7
 func (m Model) appendRoundStarted(parts []string, r db.RoundRow, cursor bool) []string {
 	return append(parts, m.cell(r.StartedAt.In(m.loc).Format("15:04"), 7, false, m.styles.Dim, cursor))
 }
 
-// BINDING: binding name, Fg (Strong on cursor row), width layout.bindWidth
 func (m Model) appendRoundBinding(parts []string, r db.RoundRow, layout roundColLayout, cursor bool) []string {
 	bStyle := m.styles.Fg
 	if cursor {
@@ -118,12 +115,10 @@ func (m Model) appendRoundBinding(parts []string, r db.RoundRow, layout roundCol
 	return append(parts, m.cell(r.BindingName, layout.bindWidth, false, bStyle, cursor))
 }
 
-// RND: r<n>, Dim, width 4
 func (m Model) appendRoundNumber(parts []string, r db.RoundRow, cursor bool) []string {
 	return append(parts, m.cell(fmt.Sprintf("r%d", r.Number), 4, false, m.styles.Dim, cursor))
 }
 
-// CANDIDATE: nameOf(Candidate), · when nil, Dim, width 21
 func (m Model) appendRoundCandidate(parts []string, r db.RoundRow, cursor bool) []string {
 	candText := "·"
 	if r.Candidate != nil {
@@ -132,7 +127,6 @@ func (m Model) appendRoundCandidate(parts []string, r db.RoundRow, cursor bool) 
 	return append(parts, m.cell(candText, 21, false, m.styles.Dim, cursor))
 }
 
-// REPO: ShortRepo(*Repo), (no repo) when nil, Dim, width 22
 func (m Model) appendRoundRepo(parts []string, r db.RoundRow, cursor bool) []string {
 	repoText := "(no repo)"
 	if r.Repo != nil {
@@ -141,13 +135,11 @@ func (m Model) appendRoundRepo(parts []string, r db.RoundRow, cursor bool) []str
 	return append(parts, m.cell(repoText, 22, false, m.styles.Dim, cursor))
 }
 
-// OUTCOME: outcomeWord, outcomeStyle, width 10
 func (m Model) appendRoundOutcome(parts []string, r db.RoundRow, cursor bool) ([]string, string) {
 	outWord, outStyle := m.outcomeWord(r)
 	return append(parts, m.cell(outWord, 10, false, outStyle, cursor)), outWord
 }
 
-// COMMITS & TREE
 func (m Model) appendRoundTree(parts []string, r db.RoundRow, cursor bool) []string {
 	if r.Commits != nil {
 		cStyle := m.styles.Fg
@@ -171,7 +163,6 @@ func (m Model) appendRoundTree(parts []string, r db.RoundRow, cursor bool) []str
 	return parts
 }
 
-// TOKENS: shortTokens(sum); · when all four token columns are nil, Fg, width 7
 func (m Model) appendRoundTokens(parts []string, r db.RoundRow, cursor bool) []string {
 	if r.InTokens == nil && r.CacheTokens == nil && r.WriteTokens == nil && r.OutTokens == nil {
 		return append(parts, m.cell("·", 7, true, m.styles.Fg, cursor))
@@ -179,7 +170,6 @@ func (m Model) appendRoundTokens(parts []string, r db.RoundRow, cursor bool) []s
 	return append(parts, m.cell(shortTokens(histq.RowTokens(r)), 7, true, m.styles.Fg, cursor))
 }
 
-// TOOK: shortDuration; for running round now-StartedAt; for nil DurationMS it is ·, Dim, width 5
 func (m Model) appendRoundTook(parts []string, r db.RoundRow, outWord string, cursor bool) []string {
 	tookText := "·"
 	if outWord == "running" {
@@ -191,7 +181,6 @@ func (m Model) appendRoundTook(parts []string, r db.RoundRow, outWord string, cu
 	return append(parts, m.cell(tookText, 5, true, m.styles.Dim, cursor))
 }
 
-// roundHeader labels the round grid's columns.
 func (m Model) roundHeader() string {
 	cw := m.width - 6
 	if cw < 0 {

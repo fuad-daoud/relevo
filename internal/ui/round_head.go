@@ -16,7 +16,7 @@ import (
 
 // This file holds the round pane's head -- the tokens line and the tab bar --
 // and the reader round's artifacts cursor and open action, which belong to
-// the artifacts tab (round 5b).
+// the artifacts tab.
 
 // tokensLine renders the tokens and facts row at the top of the body.
 func (p roundPane) tokensLine(b *view.BindingStatus) string {

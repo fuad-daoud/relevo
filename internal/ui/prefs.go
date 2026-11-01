@@ -8,14 +8,11 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// prefs is what the ui's preference document holds (reduced in round
-// 2): the sort order, and the dashboard's applied query and sort column. It
-// lives in the machine database's kv row "ui" (or "serve.ui" for the server
-// ui) -- the file ui.json before an earlier round -- written by the ui alone
-// and read by nothing else.
-//
-// compact, rail_cols and scope are gone (X1–X3): encoding/json ignores the
-// unknown fields of an older document, so an old prefs JSON still loads.
+// prefs is what the ui's preference document holds: the sort order, and
+// the dashboard's applied query and sort column. It lives in the machine
+// database's kv row "ui" (or "serve.ui" for the server ui) -- written by
+// the ui alone and read by nothing else. An older document's extra fields are
+// ignored by encoding/json, so it still loads.
 type prefs struct {
 	Sort string `json:"sort"` // "attention" | "name"
 	// Dashboard is the :rounds view's applied query text and its sort

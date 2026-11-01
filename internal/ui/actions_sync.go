@@ -44,17 +44,14 @@ func syncCtx(ctx context.Context) (context.Context, context.CancelFunc) {
 }
 
 // syncVerb sends one sync verb to the daemon that owns this machine's database
-// and answers with what it did. It is the one route every cockpit sync action
-// takes: the daemon holds the shared file under its lock and runs the verb with
-// the handles it already has, so the cockpit never builds a worker, never opens
-// relevo-sync.db and never starts a second sync engine on the file the daemon's
-// own worker holds.
+// and answers with what it did: the one route every cockpit sync action takes.
+// The daemon holds the shared file under its lock, so the cockpit never opens
+// relevo-sync.db itself: a direct open would be the lock conflict this route
+// exists to remove, and a cockpit that ran the verb locally would import into
+// relevo.db and delete the replica out from under the daemon's worker.
 //
 // The call rides the owner socket, exactly as `relevo db sync` sends one. A
-// handle that did not dial an owner refuses rather than opening the file itself:
-// a direct open would be the lock conflict this route exists to remove, and a
-// cockpit that ran the verb locally would import into relevo.db and delete the
-// replica out from under the daemon's worker.
+// handle that did not dial an owner refuses rather than opening the file itself.
 func (a *mastermindActions) syncVerb(ctx context.Context, verb string) (*wire.SyncResult, error) {
 	if err := a.ready(); err != nil {
 		return nil, err
@@ -74,8 +71,8 @@ func (a *mastermindActions) syncVerb(ctx context.Context, verb string) (*wire.Sy
 	return res, nil
 }
 
-// SyncPush sends this machine's local change set. The result re-reads, so the
-// view shows what the remote measured rather than what the push assumed.
+// SyncPush sends this machine's local change set; its result asks for a
+// re-read, so the view shows what the remote measured rather than what the push assumed.
 func (a *mastermindActions) SyncPush(ctx context.Context) widget.Result {
 	if _, err := a.syncVerb(ctx, wire.SyncVerbPush); err != nil {
 		return syncErrResult("push", err)
@@ -100,10 +97,8 @@ func (a *mastermindActions) SyncPull(ctx context.Context) widget.Result {
 // SyncTest asks the remote whether it is there. It changes no byte here, so a
 // test is safe against a remote a user only wants to ask about: it opens the
 // same worker a verb does and asks it for the log's stats, which is a read.
-//
 // It runs through the same executor the other actions do, so the worker it
-// builds is the one a later push or pull reuses, and there is one set of
-// verbs' semantics in the tree.
+// builds is the one a later push or pull reuses.
 func (a *mastermindActions) SyncTest(ctx context.Context) widget.Result {
 	if _, err := a.syncVerb(ctx, wire.SyncVerbProbe); err != nil {
 		return syncErrResult("test connection", err)
@@ -127,7 +122,7 @@ func (a *mastermindActions) SyncDisable(ctx context.Context) widget.Result {
 	return widget.Result{Text: text, Refresh: true}
 }
 
-// widget.SyncSnapshot assembles the view's whole read side, off the update loop and
+// SyncSnapshot assembles the view's whole read side, off the update loop and
 // with no handle in reach. A machine with no local file, no remote or no
 // measurement answers with the fields it does have rather than an error, so the
 // pre-on form renders on a machine that has never enabled sync.

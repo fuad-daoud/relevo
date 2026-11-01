@@ -42,7 +42,6 @@ func newChainTraceView(env widget.Env, name string, crumbs ...string) widget.Vie
 	return v
 }
 
-// maxInt is the larger of two ints.
 func maxInt(a, b int) int {
 	if a > b {
 		return a
@@ -50,7 +49,6 @@ func maxInt(a, b int) int {
 	return b
 }
 
-// chainTraceCmd reads the trace off the update loop.
 func chainTraceCmd(env widget.Env, name string) tea.Cmd {
 	return func() tea.Msg {
 		if env.Actions == nil {
@@ -81,8 +79,6 @@ func (v chainTraceView) Keys() []widget.KeyHelp {
 
 func (v chainTraceView) HelpKeys() []widget.KeyHelp { return v.Keys() }
 
-// Context is the trace context row: how many events the trace holds, or the
-// reason it holds none.
 func (v chainTraceView) Context(env widget.Env) (string, string) {
 	if v.err != nil && !v.loaded {
 		return "   " + widget.ErrorStyle.Render(sanitizeText(v.err.Error())), ""

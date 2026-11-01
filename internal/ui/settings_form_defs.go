@@ -24,8 +24,6 @@ func scopeBlockFor(doc relevo.ConfigDoc, form string) *policy.ScopePolicy {
 	return doc.Policy.Scope
 }
 
-// newScopeFields builds the scope or serve.scope form's fields: an
-// enabled chip, then the seven scope limits, every path prefixed with form.
 func newScopeFields(doc relevo.ConfigDoc, form string) ([]settingField, string, string) {
 	sc := scopeBlockFor(doc, form)
 
@@ -89,9 +87,6 @@ func newScopeFields(doc relevo.ConfigDoc, form string) ([]settingField, string, 
 	return fields, "every round this machine starts runs in this scope", "scope"
 }
 
-// newClassifyFields builds the classify form's fields: the provider
-// chip, then model, threshold and timeout, disabled while the provider is
-// off.
 func newClassifyFields(doc relevo.ConfigDoc) ([]settingField, string, string) {
 	cl := doc.Policy.Classify
 
@@ -145,8 +140,6 @@ func newClassifyFields(doc relevo.ConfigDoc) ([]settingField, string, string) {
 	return fields, "scores each builder line for prompt injection, beside the pattern scan", "classify"
 }
 
-// newChainFields builds the chain form's fields: the security chip, then the
-// correction budget and the reviewer, planner and security actors.
 func newChainFields(doc relevo.ConfigDoc) ([]settingField, string, string) {
 	ch := doc.Policy.Chain
 

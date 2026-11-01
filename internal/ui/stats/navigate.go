@@ -158,8 +158,8 @@ func (v statsView) updatePageKey(key string, env widget.Env) (widget.View, tea.C
 	return v, nil
 }
 
-// setFocus points the focusable panels' cursor at the tab's panel: candidates
-// is focus 0, repos focus 1, and the other tabs leave focus alone.
+// setFocus points the focusable panels' cursor at the tab's panel; the other
+// tabs leave focus alone.
 func (v *statsView) setFocus() {
 	switch statsTabs[v.tab] {
 	case "candidates":

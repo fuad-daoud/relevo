@@ -43,18 +43,15 @@ type Actions interface {
 	// server list` runs. No config store, or a nil adapter, is an empty
 	// answer rather than a failure.
 	ServerProbes(ctx context.Context) []relevo.ServerProbe
-	// The audit view: every revision, one revision's changes in
-	// human words, the same for a roll back's preview, and the roll back
-	// itself.
+	// The audit view: revisions, their changes in human words, and the roll back.
 	ConfigLog() ([]db.RevisionRow, error)                 // every revision, newest first, no snapshots
 	ConfigChanges(rev int64) ([]relevo.ChangeLine, error) // one revision's changes, in human words
 	RollbackPreview(rev int64) ([]relevo.ChangeLine, error)
 	Rollback(ctx context.Context, rev int64) Result
 	Probe(ctx context.Context, name string) Result // probe one candidate (spawns its harness)
 
-	// The agents view: one agent's definition files across the
-	// harnesses that carry it, one file reset to the copy relevo ships,
-	// and the user's editor for one file.
+	// The agents view: definition files, one reset to the copy relevo ships,
+	// and the editor.
 	AgentFiles(agent string) ([]harness.AgentFile, error)          // the dry-run install state of one agent
 	ResetAgentFile(ctx context.Context, kind, agent string) Result // overwrite one definition file
 	AgentEditor(path string) (*exec.Cmd, error)                    // the user's editor on one file
@@ -84,10 +81,8 @@ type Actions interface {
 	WorkflowSave(ctx context.Context, name, source string, def workflow.Definition) Result
 
 	// The sync view (S5). SyncSnapshot is every value the view renders that no
-	// key changes: the machine-local state and its token, the settings, the
-	// snapshot the last measured tick recorded, the installation directory and
-	// the remote bindings that carry no link. It is read off the update loop
-	// and holds no handle, so the view can draw it with the network blackholed.
+	// key changes. It is read off the update loop and holds no handle, so the
+	// view can draw it with the network blackholed.
 	//
 	// The token is reported only as present or absent. Its value never leaves
 	// the function that read it: a snapshot that could render a credential is a

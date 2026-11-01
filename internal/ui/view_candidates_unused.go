@@ -27,7 +27,6 @@ func unusedCols(width, nameW int) (reasonW, setByW int) {
 	return reasonW, setByW
 }
 
-// unusedHeaderLine is the unused table's header row, in faint bold.
 func unusedHeaderLine(nameW, reasonW, setByW, cw int) string {
 	style := widget.FaintStyle.Bold(true)
 	cells := []candCell{
@@ -41,9 +40,6 @@ func unusedHeaderLine(nameW, reasonW, setByW, cw int) string {
 	return candLine(cells, false, cw)
 }
 
-// unusedDataLine is one unused provider's table row. The name is bold on
-// the cursor row, the reason is the gate note's readable lead, SET BY names
-// the recorder, and STATUS is the time left in red.
 func unusedDataLine(g view.ProviderGate, sel bool, nameW, reasonW, setByW, cw int, now time.Time) string {
 	nameStyle := widget.TextStyle
 	if sel {
@@ -77,8 +73,6 @@ func asGate(g view.ProviderGate) availability.Gate {
 	}
 }
 
-// unusedDetailLines is the unused row's detail block: whose gate it is,
-// the gate itself, and how to clear it.
 func unusedDetailLines(g view.ProviderGate, now time.Time, width int) []string {
 	p := g.Provider
 	first := "   " + widget.FaintStyle.Bold(true).Render(p) + "   " + widget.MutedStyle.Render("a provider no candidate uses")

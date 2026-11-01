@@ -62,7 +62,6 @@ func firstRow(rows []view.BindingStatus) *view.BindingStatus {
 	return &rows[0]
 }
 
-// Keys() shows the action keys exactly when one exists.
 func (f fleetView) withActions(a bool) fleetView {
 	f.actions = a
 	return f
@@ -148,7 +147,6 @@ func fleetRowMatches(b view.BindingStatus, text string) bool {
 
 func (f fleetView) Crumbs() []string { return []string{"fleet"} }
 
-// The shell forwards ':', '?', 'q' and 'esc' to the input while it is open.
 func (f fleetView) Capturing() bool { return f.filtering }
 
 func (f fleetView) Keys() []widget.KeyHelp {
