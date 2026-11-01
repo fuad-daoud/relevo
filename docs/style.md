@@ -106,16 +106,19 @@ call it, or move it down to a package both callers can import.
 | `golangci-lint` (`.golangci.yml`) | a function over 70 lines (`funlen`), cognitive complexity over 30 (`gocognit`), and the findings of `errcheck`, `errorlint`, `unused`, `govet`, `staticcheck` and `ineffassign` | `funlen` and `gocognit` in `_test.go` files |
 | `scripts/check-comments.sh` | a `//` comment containing `#` followed by a digit, or `§` | the files in `scripts/check-comments.allow` |
 | `scripts/check-filesize.sh` | a non-test `.go` file over 600 lines | the files in `scripts/check-filesize.allow` |
+| `scripts/check-layers.sh` | a package in no band of the Layers table in `docs/architecture.md`, an import of a higher band, or a Foundations package importing any relevo package | test files |
 
 The allow-lists hold only the scripts' own test fixtures. Nothing is ever
-added to them, or to the exclusions in `.golangci.yml`, to get a change green. The comment check is a text match, so it
-cannot see "used to" or "round N": those are for the author and the reviewer.
+added to them, or to the exclusions in `.golangci.yml`, to get a change green.
+The comment check is a text match, so it cannot see "used to" or "round N":
+those are for the author and the reviewer.
 
-Run the two scripts on their own from the repository root:
+Run the scripts on their own from the repository root:
 
 ```sh
 sh scripts/check-comments.sh
 sh scripts/check-filesize.sh
+sh scripts/check-layers.sh
 ```
 
 ## Coverage
@@ -132,3 +135,8 @@ only CI's job enforces it (`RELEVO_REQUIRE_COVERAGE=1`); elsewhere `make check`
 prints `skipped`, because another build of the same Go minor can measure a
 package several points apart. Set `RELEVO_REQUIRE_COVERAGE=1` to compare
 locally. A Go upgrade on CI's go-stable leg means regenerating the baseline.
+
+Off CI, `make check-affected` holds a change to its own packages' coverage
+another way: `scripts/check-coverage-delta.sh` measures each package whose own
+files changed again at the base commit, with the same build, and fails a drop
+of more than one point.

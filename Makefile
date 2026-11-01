@@ -41,6 +41,7 @@ check-static:
 	$(MAKE) lint
 	sh scripts/check-comments.sh
 	sh scripts/check-filesize.sh
+	sh scripts/check-layers.sh
 	@cp go.mod go.mod.check && cp go.sum go.sum.check && \
 	if ! go mod tidy || ! cmp -s go.mod go.mod.check || ! cmp -s go.sum go.sum.check; then \
 		mv go.mod.check go.mod && mv go.sum.check go.sum; \
