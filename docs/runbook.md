@@ -113,7 +113,8 @@ This is an ops step, not code.
 
 ## Running chains
 
-- Build big slices as `relevo chain --server zen`.
+- Build big slices as `relevo chain --server zen`, on this repository's agents
+  (CONTRIBUTING.md, "Developing relevo with relevo").
 - Gate each chain round with `relevo chain --gate 'make check-affected'`, and
   a single binding with the same `--gate` flag. relevo exports
   `RELEVO_BASE` (the bind's base) to a round and to its gate, so

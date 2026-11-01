@@ -221,6 +221,11 @@ touch scripts/check-comments.allow scripts/check-filesize.allow
 assert_stdout "lint config and allow-lists give empty output" ""
 
 reset_fixture
+mkdir -p dev/agents
+echo "agent" > dev/agents/x.md
+assert_stdout "a development agent source gives empty output" ""
+
+reset_fixture
 mkdir -p .github
 touch .github/x.yml
 assert_stdout ".github/x.yml gives all" "./..."

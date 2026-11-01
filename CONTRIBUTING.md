@@ -51,6 +51,27 @@ the Go 1.22 floor and current stable, plus a cross-compile sweep. If
 - **Run `gofmt`.** CI fails on unformatted files.
 - **One change per PR.** It makes review, and reverting, far easier.
 
+## Developing relevo with relevo
+
+relevo is built with relevo, on four agents of its own in `dev/agents`:
+`relevo-planner` designs a larger change and splits it into lanes,
+`relevo-lite-planner` plans one lane, `relevo-builder` executes a plan, and
+`relevo-reviewer` reviews a round. They carry this repository's rules and the
+defects past rounds shipped, so they fit this repository only.
+
+Install them with `sh scripts/dev-agents.sh` (it needs `relevo` and `jq`) on
+your machine and on any server that runs your chains, and again after you edit
+a file under `dev/agents`. A server loads the new actors when `relevo serve`
+restarts. A chain runs on them with:
+
+```
+relevo chain ... --param builder=relevo-builder \
+  --planner-actor relevo-lite-planner --reviewer-actor relevo-reviewer
+```
+
+The generic agents stay the configured defaults, because a chain default applies
+to every repository on the machine.
+
 ## Platform support
 
 relevo targets Linux and macOS. State locking is behind a build tag
