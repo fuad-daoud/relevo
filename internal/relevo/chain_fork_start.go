@@ -11,8 +11,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
-// childCreated records what one successfully started child created, so a
-// later failure can unwind it.
+// childCreated records what one started child created, so a later failure
+// can unwind it.
 type childCreated struct {
 	name     string
 	worktree string
@@ -20,8 +20,8 @@ type childCreated struct {
 	members  []string
 }
 
-// chainStartChild prepares and starts one child workflow chain inside the
-// caller's transaction, cutting its branch from the parent writer's tip.
+// chainStartChild starts one child chain in the caller's transaction, cutting
+// its branch from the parent writer's tip.
 func chainStartChild(ctx context.Context, rt Runtime, tx *store.Tx, parent db.ChainRow, spec workflow.ChildSpec) (childCreated, error) {
 	childName := parent.Name + "." + spec.Key
 	childDef, _, err := resolve.ResolveWorkflow(rt.Config, spec.Workflow)
@@ -74,9 +74,8 @@ func chainStartChild(ctx context.Context, rt Runtime, tx *store.Tx, parent db.Ch
 	for i := range bodies {
 		items[i] = rt.Store.ChainPlanPath(childName, i+1)
 	}
-	// The child's repository is the parent's: the child's branch is cut from
-	// the parent's branch, so the settings that name a gate read the same
-	// tree's own settings the parent's start read.
+	// The child's repository is the parent's, so the settings that name a gate
+	// read the same tree's settings the parent's start read.
 	childRepoSet, err := RepoSettingsFor(ctx, rt, parent.Repo)
 	if err != nil {
 		return childCreated{}, err
@@ -98,9 +97,7 @@ func chainStartChild(ctx context.Context, rt Runtime, tx *store.Tx, parent db.Ch
 		childPlan.mastermind = recordEndpoint(rec)
 	}
 	// The child's members are built beside the parent's builder member, so
-	// they inherit its subdirectory rather than re-resolving one: the fork
-	// cuts from parent.Repo, the root checkout, whose own prefix names an
-	// offset nothing here started a shell in.
+	// they inherit its subdirectory rather than re-resolving one.
 	if parentBuilder, lerr := tx.Load(parent.Builder); lerr == nil {
 		childPlan.subdir = parentBuilder.Subdir
 	}

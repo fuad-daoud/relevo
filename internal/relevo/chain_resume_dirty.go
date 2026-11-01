@@ -9,12 +9,12 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
-// chainResumeDirtyRecovery re-evaluates the close of a round the chain halted
-// on for leaving work uncommitted. Re-entering the step would re-send the
-// plan over work that is already done, so once the cause is gone the round's
-// own close is fed back and the chain advances; while it is not, the resume
-// refuses with the halt's own advice. The git seam cannot test ancestry, so a
-// commit is told by HEAD having moved off the round's baseline.
+// chainResumeDirtyRecovery re-evaluates the close of a round halted over
+// uncommitted work. Re-entering the step would re-send the plan over done
+// work, so once the cause is gone the round's own close is fed back and the
+// chain advances; while it is not, the resume refuses with the halt's advice.
+// The git seam cannot test ancestry, so a commit reads as HEAD moved off the
+// round's baseline.
 func chainResumeDirtyRecovery(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, st workflow.State) (*workflow.Event, error) {
 	if st.Status != workflow.StatusHalted || st.Awaiting.Member == "" || st.Awaiting.Round <= 0 || st.Awaiting.Step != st.At {
 		return nil, nil

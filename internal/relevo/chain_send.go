@@ -17,32 +17,30 @@ import (
 
 // RoundOpenError is returned when a chain member's round is still open: its
 // prompt entry exists with no report entry, so a new round would overwrite the
-// one in flight. It carries the member the caller must stop, so the CLI can
-// name `relevo stop <member>` as the next command instead of an internal
-// failure.
+// one in flight. It carries the member to stop, so the CLI names
+// `relevo stop <member>` instead of an internal failure.
 type RoundOpenError struct {
 	Member string
 	Round  int
 }
 
-// Error renders today's message, unchanged: the round number and the stop
-// command the member's own name completes.
+// Error renders the message: the round number and the stop command the
+// member's own name completes.
 func (e *RoundOpenError) Error() string {
 	return fmt.Sprintf("%s: round %d is still open; relevo stop %s ends it", e.Member, e.Round, e.Member)
 }
 
-// sendChainRound starts one round for a chain member. It is Send's in-lock core
-// as a reusable helper: the caller holds the state lock and passes its tx, and
-// the member's new binding and its prompt entry are written in the same
-// critical section as the chain row that named it.
+// sendChainRound starts one round for a chain member. It is Send's in-lock
+// core as a reusable helper: the caller holds the state lock and passes its
+// tx, and the member's new binding and prompt entry are written in the same
+// critical section as the naming chain row.
 //
-// It requests no verify: a chain member round is always verify-free, whatever
-// policy.verify.default says, because the chain's own reviewer replaces the
-// verify consult.
+// It requests no verify: a chain member round is always verify-free, because
+// the chain's own reviewer replaces the verify consult.
 //
-// A startRound failure leaves the member NEEDS YOU, exactly as Send's spawn
-// failure does, and the error is returned wrapped with the member's name; the
-// caller (the chain wiring) then halts the chain in the same critical section.
+// A startRound failure leaves the member NEEDS YOU, as Send's spawn failure
+// does, and the error returns wrapped with the member's name; the caller then
+// halts the chain in the same critical section.
 func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, text string) (store.Binding, error) {
 	name := b.Name
 	cur, err := tx.Load(name)
@@ -93,15 +91,15 @@ func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 		pending = append(pending, resolve.PickEntry(rt.Now().UTC(), cur.Round, cur.WriterRole(), *res))
 	}
 
-	// A served member (a chain member on a server) never starts its round
-	// here: like Send(Defer) it records the round as queued and lets the
-	// server's admit start it, so serve.max_builders and the tier cap decide.
-	// That also defers the reader's scratch worktree, which Admit builds.
+	// A served member never starts its round here: like Send(Defer) it records
+	// the round as queued and lets the server's admit start it, so
+	// serve.max_builders and the tier cap decide. That also defers the
+	// reader's scratch worktree, which Admit builds.
 	served := cur.Owner != ""
 	if !served {
 		// A reader round runs in a throwaway scratch worktree, never in b.CWD:
-		// create it from the round's captured baseline before anything is
-		// spawned, exactly as Send does.
+		// create it from the round's captured baseline before spawning, as
+		// Send does.
 		if cur.Shape == store.ShapeReader {
 			if _, err := housekeep.CreateScratchFrom(ctx, HousekeepDeps(rt), cur, cur.Round, baselineHead, baseline); err != nil {
 				return b, fmt.Errorf("%s: %w", name, err)
@@ -111,7 +109,7 @@ func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 		started, err := startRound(ctx, rt, tx, cur, prompt, false)
 		if err != nil {
 			// The plan is staged and the round is open; nothing was started.
-			// NEEDS YOU says so in status, exactly as Send's spawn failure does.
+			// NEEDS YOU says so in status, as Send's spawn failure does.
 			cur.State = store.StateNeedsYou
 			cur.Halt = spawnHaltText(err)
 			cur.HaltAt = rt.Now().UTC()
@@ -142,8 +140,8 @@ func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 	}
 	cur.FinishPending = true
 	cur.State = store.StateActive
-	// Verify off, whatever policy.verify.default says: the chain's reviewer
-	// replaces the verify consult on every member round.
+	// Verify off: the chain's reviewer replaces the verify consult on every
+	// member round.
 	cur.RoundVerify = false
 	if err := tx.SaveWithLog(cur, pending...); err != nil {
 		return b, fmt.Errorf("%s: %w", name, err)
@@ -152,7 +150,7 @@ func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 }
 
 // chainMemberBlock is the block a chain member's final message must end with
-// and the chain parses, generated from the member's actor outcomes.
+// for the chain to parse, generated from the member's actor outcomes.
 func chainMemberBlock(rt Runtime, tx *store.Tx, b store.Binding) (string, bool) {
 	if tx != nil {
 		if _, err := tx.ChainByMember(b.Name); err != nil {

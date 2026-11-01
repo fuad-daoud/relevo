@@ -14,10 +14,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// ResumeOptions is what one `relevo chain --resume` was asked for: the chain to
-// continue and the settings the flags override. A flag that was not given
-// keeps the chain's stored setting, so a nil pointer and an empty actor name
-// both read as "not given", the same rule bind's own resume uses.
+// ResumeOptions is what one `relevo chain --resume` was asked for: the chain
+// and the overriding flag settings. An ungiven flag keeps the stored setting,
+// so a nil pointer and an empty actor name both read as "not given", the same
+// rule bind's own resume uses.
 type ResumeOptions struct {
 	// Name is the chain to resume. A missing chain is refused.
 	Name string
@@ -26,13 +26,11 @@ type ResumeOptions struct {
 	// ReviewerActor, PlannerActor and SecurityActor override the stored actor
 	// each part runs; "" keeps it.
 	ReviewerActor, PlannerActor, SecurityActor string
-	// Security overrides the stored chain.security; nil keeps it. Turning it on
-	// for a chain that was started without the phase creates the security
-	// member now.
+	// Security overrides the stored chain.security; nil keeps it, and turning
+	// it on for a chain started without the phase creates the member now.
 	Security *bool
-	// Gate is the builder member's new acceptance command; "" keeps the stored
-	// one unless NoGate is set. NoGate clears it, winning over Gate exactly as
-	// bind's --no-gate does.
+	// Gate is the builder's new acceptance command; "" keeps the stored one
+	// unless NoGate clears it, winning over Gate as bind's --no-gate does.
 	Gate   string
 	NoGate bool
 	// Regate is the builder member's new repair-round budget after a failing
@@ -44,17 +42,14 @@ type ResumeOptions struct {
 	Params map[string]string
 }
 
-// ChainResume continues a chain a human has looked at: `relevo chain --resume
-// --name <n>`. The flags override the chain's stored settings (a flag that was
-// not given keeps its setting), and the chain re-enters the step its engine is
-// on -- or the one --from names -- or reviews a builder round that closed after
-// the chain last heard from it, which is a manual round sent while the chain
-// was down.
+// ChainResume continues a chain a human has looked at. The flags override the
+// stored settings, and the chain re-enters its engine step -- or the one
+// --from names -- or reviews a builder round that closed while the chain was
+// down, a manual round sent in the meantime.
 //
-// It refuses a missing chain, a chain that is still running, and a chain that is
-// done; a halted or stopped chain is what it is for. A resume whose target
-// member is remote has only staged its round: the unlocked step ships it now,
-// outside the state lock.
+// It refuses a missing, running, or done chain; a halted or stopped chain is
+// what it is for. A resume targeting a remote member has only staged its
+// round: the unlocked step ships it now, outside the state lock.
 func ChainResume(ctx context.Context, rt Runtime, opts ResumeOptions) (ChainResult, error) {
 	c, err := rt.Store.Chain(opts.Name)
 	if errors.Is(err, store.ErrNotFound) {
@@ -76,11 +71,10 @@ func ChainResume(ctx context.Context, rt Runtime, opts ResumeOptions) (ChainResu
 	return out, nil
 }
 
-// resumeRefusal is the one refusal a resume makes on its own chain: running and
-// done are both terminal for this verb, and the wording is the chain's own.
-// Both are typed so the CLI maps them to conflicts -- a script can tell a
-// settled chain from an internal failure -- exactly as the server's own
-// answers are rebuilt.
+// resumeRefusal is the one refusal a resume makes on its own chain: running
+// and done are both terminal for this verb. Both are typed so the CLI maps
+// them to conflicts -- a script tells a settled chain from an internal
+// failure -- exactly as the server's own answers are rebuilt.
 func resumeRefusal(c db.ChainRow) error {
 	switch chain.Status(c.Status) {
 	case chain.StatusRunning:
@@ -91,12 +85,12 @@ func resumeRefusal(c db.ChainRow) error {
 	return nil
 }
 
-// resumeSettings applies the resume's flags to the chain's stored settings: a
-// flag that was given replaces the stored value, one that was not keeps it. The
-// settings come off the chain row, never from today's policy: the row is what
-// the chain has been running under. The gate flags are the exception: an
-// explicit --gate or --no-gate resolves against today's policy exactly as a
-// start would, because the human is naming the command now.
+// resumeSettings applies the resume's flags to the stored settings: a given
+// flag replaces the stored value, an ungiven one keeps it. The settings come
+// off the chain row, never today's policy: the row is what the chain has run
+// under. The gate flags are the exception: an explicit --gate or --no-gate
+// resolves against today's policy as a start would, because the human names
+// the command now.
 func resumeSettings(rt Runtime, c db.ChainRow, opts ResumeOptions) (chain.Settings, error) {
 	var set chain.Settings
 	if len(c.SettingsJSON) > 0 {
@@ -108,9 +102,9 @@ func resumeSettings(rt Runtime, c db.ChainRow, opts ResumeOptions) (chain.Settin
 		set.MaxCorrections = *opts.MaxCorrections
 	}
 	if opts.Gate != "" || opts.NoGate {
-		// The gate flags are the one tier a resume reads fresh, and the one
-		// tier that never falls back: the flag wins over every lower tier, so
-		// a resume reads no repository's settings here.
+		// The gate flags are the one tier read fresh, never falling back: the
+		// flag wins over every lower tier, so no repository's settings are
+		// read here.
 		set.Gate = resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, resolve.RoleChecks(rt.RoleRegistry(), "builder"), RepoSettings{}).Command
 	}
 	if opts.Regate != nil {
@@ -142,19 +136,17 @@ func chainResumeChangesGate(opts ResumeOptions) bool {
 	return ok
 }
 
-// resumeRemoteGateRefusal refuses a resume's gate change on a chain whose
-// writer member is placed remotely, when the server cannot take it. That
-// binding runs its own check on the server, so a gate the client only wrote to
-// the chain row would be silently ignored there: with the server's check
-// feature the change is deliverable through the gate route, without it the
-// change cannot be delivered at all, so the resume is refused and the refusal
-// names the server and the feature it lacks. A missing writer record is left to
-// the resume's own failure, exactly as the base refusal left it.
+// resumeRemoteGateRefusal refuses a resume's gate change on a remotely placed
+// writer when the server cannot take it. That binding runs its own check on
+// the server, so a client-written gate would be silently ignored there: with
+// the check feature the change goes through the gate route, without it the
+// change cannot be delivered at all, and the refusal names the server and the
+// feature it lacks. A missing writer record is left to the resume's own
+// failure.
 //
-// This is the feature probe alone: the route call that delivers the change
-// waits for every other resume refusal to clear, in resumeRemoteGatePush, so a
-// resume this function lets through cannot leave the server ahead of a resume
-// that then aborts.
+// This is the feature probe alone: the delivering route call waits for every
+// other refusal to clear, so a resume let through here cannot leave the server
+// ahead of a resume that then aborts.
 func resumeRemoteGateRefusal(ctx context.Context, rt Runtime, c db.ChainRow) error {
 	member := c.Builder
 	if member == "" {
@@ -182,18 +174,16 @@ func resumeRemoteGateRefusal(ctx context.Context, rt Runtime, c db.ChainRow) err
 	return nil
 }
 
-// resumeRemoteGatePush delivers a resume's gate change to the server that runs
-// a placed writer's binding, through the gate route: the binding's new gate and,
-// when the resume also changed it, its repair budget. It resolves the same
-// writer member resumeRemoteGateRefusal refused over, and is a no-op for a
-// binding that runs on this machine.
+// resumeRemoteGatePush delivers a resume's gate change to the server running
+// a placed writer, through the gate route: the binding's new gate and, when
+// also changed, its repair budget. It resolves the same writer member the
+// refusal probed, and is a no-op for a binding on this machine.
 //
-// The call sits here, after the resume's transaction has committed and after
-// every other refusal has cleared, because it is the one part of the resume
-// the server cannot take back: a push made earlier would leave the server
-// running the next check under a gate the chain's own settings never took. A
-// binding with no gate of its own has nothing for the route to update, so the
-// check travelling in the check request is the whole of the answer.
+// The call sits after the commit and every other refusal, because it is the
+// one part of the resume the server cannot take back: an earlier push would
+// leave the server checking under a gate the chain's settings never took. A
+// binding with no gate has nothing for the route to update, so the check
+// travelling in the check request is the whole answer.
 func resumeRemoteGatePush(ctx context.Context, rt Runtime, c db.ChainRow, opts ResumeOptions) error {
 	member := c.Builder
 	if member == "" {
@@ -225,12 +215,10 @@ func resumeRemoteGatePush(ctx context.Context, rt Runtime, c db.ChainRow, opts R
 }
 
 // resumeOpenRoundRefusal refuses a resume whose target member's current round
-// is still open: the round a resume would start would overwrite the one in
-// flight, and the human must stop it first. It returns the send path's
-// RoundOpenError, whose wording and CLI conflict mapping name `relevo stop
-// <member>`. A member
-// record that is missing or unreadable has no open round it can prove, and is
-// left to the send's own failure.
+// is still open: the started round would overwrite the one in flight, so the
+// human must stop it first. It returns the send path's RoundOpenError, naming
+// `relevo stop <member>`. A missing or unreadable member record proves no open
+// round, and is left to the send's own failure.
 func resumeOpenRoundRefusal(tx *store.Tx, c db.ChainRow, memberName string) error {
 	member, err := tx.Load(memberName)
 	if err != nil {

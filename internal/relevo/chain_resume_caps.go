@@ -8,9 +8,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// chainResumeRaiseCaps lifts each local member's round cap to the one the
-// resumed settings imply. A cap is never lowered, so a hand-set higher one
-// survives. Served and remote members keep the cap fixed at create.
+// chainResumeRaiseCaps lifts each local member's round cap to the resumed
+// settings' implication. A cap is never lowered, so a hand-set higher one
+// survives. Served and remote members keep the create-time cap.
 func chainResumeRaiseCaps(tx *store.Tx, c db.ChainRow, plans int, set chain.Settings) error {
 	rows, err := chainFlowMembers(tx, c)
 	if err != nil {

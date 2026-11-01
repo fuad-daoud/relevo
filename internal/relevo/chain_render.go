@@ -15,9 +15,9 @@ import (
 
 // chainRenderSeed renders one step's seed into the prompt a runner gets. Every
 // reference becomes a path through chainSeedInput, or the path-free miss clause
-// when it cannot be produced; a task, a param, the chain's base and branch and
-// the chain's own diff render inline. A seed that is exactly one file reference
-// hands that file over as bytes, the way a plan is handed over today.
+// when unproducible; a task, a param, the base and branch, and the chain's own
+// diff render inline. A seed that is exactly one file reference hands that
+// file over as bytes, the way a plan is handed over.
 func chainRenderSeed(rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, st workflow.State, seed string) (string, error) {
 	if name, ok := strings.CutPrefix(seed, "shipped:"); ok {
 		return chainRenderShippedSeed(rt, tx, c, def, st, name)
@@ -65,8 +65,8 @@ func chainRenderSeed(rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Defin
 	return b.String(), nil
 }
 
-// chainSeedRef resolves one reference to the text a seed names. isFile is true
-// when the text is a path whose bytes a single-reference seed hands over.
+// chainSeedRef resolves one reference to the text a seed names; isFile is
+// true when the text is a path a single-reference seed hands over as bytes.
 func chainSeedRef(rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, st workflow.State, ref workflow.Ref) (string, bool, error) {
 	switch ref.Root {
 	case "task":
@@ -96,8 +96,8 @@ func chainSeedRef(rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definiti
 	}
 }
 
-// chainChainRef resolves a chain reference: the base and the branch render
-// inline, and the whole-branch diff is captured and named as a copy.
+// chainChainRef resolves a chain reference: base and branch render inline,
+// and the whole-branch diff is captured and named as a copy.
 func chainChainRef(rt Runtime, tx *store.Tx, c db.ChainRow, ref workflow.Ref) (string, bool, error) {
 	switch ref.Attr {
 	case "base":
@@ -114,8 +114,8 @@ func chainChainRef(rt Runtime, tx *store.Tx, c db.ChainRow, ref workflow.Ref) (s
 	return "", false, fmt.Errorf("chain.%s is not chain state", ref.Attr)
 }
 
-// chainSeedListFile writes every path a list reference names under the chain's
-// input directory and returns that file's path, so a seed names one openable
+// chainSeedListFile writes every path a list reference names under the
+// chain's inputs and returns that file's path, so a seed names one openable
 // file rather than an inline list.
 func chainSeedListFile(rt Runtime, c db.ChainRow, ref workflow.Ref, items []string) (string, error) {
 	dir := rt.Store.ChainInputDir(c.Name)
@@ -129,8 +129,8 @@ func chainSeedListFile(rt Runtime, c db.ChainRow, ref workflow.Ref, items []stri
 	return path, nil
 }
 
-// shippedSeedKinds names the shipped seed templates that render from a
-// member-round view, keyed by the name a workflow's "shipped:<name>" names.
+// shippedSeedKinds names the shipped seed templates rendering from a
+// member-round view, keyed by a workflow's "shipped:<name>".
 var shippedSeedKinds = map[string]chain.SeedKind{
 	"review":  chain.SeedReviewer,
 	"correct": chain.SeedCorrection,
@@ -138,11 +138,11 @@ var shippedSeedKinds = map[string]chain.SeedKind{
 	"fix":     chain.SeedFixes,
 }
 
-// chainRenderShippedSeed renders one of the shipped seed templates for an
-// engine send. The member-round seeds render from the same view the fixed state
-// machine builds, so the shipped default hands a member the same prompt
-// whichever engine drives the chain. The repair seed renders from the failed
-// check's own record.
+// chainRenderShippedSeed renders one shipped seed template for an engine
+// send. The member-round seeds render from the same view the fixed state
+// machine builds, so the shipped default hands the same prompt whichever
+// engine drives the chain. The repair seed renders from the failed check's
+// own record.
 func chainRenderShippedSeed(rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, st workflow.State, name string) (string, error) {
 	if name == "repair" {
 		return chainRenderRepairSeed(rt, tx, c, def, st)
@@ -166,9 +166,9 @@ func chainRenderShippedSeed(rt Runtime, tx *store.Tx, c db.ChainRow, def workflo
 	if err != nil {
 		return "", err
 	}
-	// An engine chain runs its checks as steps, so the check the seed names
-	// is the engine's recorded result; a member-gate record is the fallback
-	// for a chain whose engine ran no check.
+	// An engine chain runs its checks as steps, so the named check is the
+	// engine's recorded result; a member-gate record is the fallback for a
+	// chain whose engine ran no check.
 	if result, log := flowCheckResult(st); log != "" {
 		v.GateResult = result
 		v.GateLogPath = chainSeedInput(rt, c, log)
@@ -176,9 +176,9 @@ func chainRenderShippedSeed(rt Runtime, tx *store.Tx, c db.ChainRow, def workflo
 	return workflow.RenderShipped(name, v)
 }
 
-// flowCheckResult names the newest check the engine recorded: the result word
-// and the sealed log a seed can name. Nothing is returned when the engine ran
-// no check, which the seed words as "No check ran".
+// flowCheckResult names the newest check the engine recorded: result word and
+// sealed log. Nothing is returned when the engine ran no check, which the
+// seed words as "No check ran".
 func flowCheckResult(st workflow.State) (string, string) {
 	result, log, round := "", "", -1
 	for _, r := range st.Results {
@@ -196,12 +196,11 @@ func flowCheckResult(st workflow.State) (string, string) {
 	return result, log
 }
 
-// chainRenderRepairSeed renders the repair seed a workflow's repair step hands
-// its writer: the round the send opens, the round whose check failed, the check
-// command, the failed round's own prompt and the tail of the failed check's log.
-// An engine chain runs its checks as steps, so the log comes from the engine's
-// recorded result -- the newest check flowCheckResult names -- not from a
-// member-gate record a chain writer no longer carries.
+// chainRenderRepairSeed renders the repair seed a workflow's repair step
+// hands its writer: the opened round, the failed round, the check command,
+// the failed round's own prompt, and the failed check log's tail. An engine
+// chain runs its checks as steps, so the log comes from the engine's recorded
+// result, not from a member-gate record a chain writer no longer carries.
 func chainRenderRepairSeed(rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, st workflow.State) (string, error) {
 	failedRound := chain.NewestClosedRound(tx, c.Builder)
 	b, err := tx.Load(c.Builder)

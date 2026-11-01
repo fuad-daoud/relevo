@@ -11,18 +11,17 @@ import (
 )
 
 // chainSendMember sends one round to a chain member, the one start-or-stage
-// helper every send to a member goes through. A local member starts its round
-// through sendChainRound, exactly as before; a remote member is staged -- its
-// prompt file is written at PromptPath(member, member.Round) and the member is
-// returned unchanged, with no prompt entry and no binding write. The unlocked
-// chainSendPending step ships the staged file.
+// helper every member send goes through. A local member starts through
+// sendChainRound; a remote member is staged -- its prompt file is written and
+// the member returned unchanged, with no prompt entry and no binding write.
+// The unlocked chainSendPending step ships the staged file.
 //
-// The caller holds the state lock: a local start and the chain row that named
-// it are written in the same critical section. A remote stage only writes the
+// The caller holds the state lock: a local start and the naming chain row
+// are written in the same critical section. A remote stage only writes the
 // round's file; the step's own short lock does the recording.
 func chainSendMember(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, text string) (store.Binding, error) {
-	// The cap is checked before the remote/local split so a member with no
-	// round left leaves no staged file, no prompt entry and no process behind.
+	// The cap is checked before the split, so an exhausted member leaves no
+	// staged file, no prompt entry, and no process behind.
 	if b.RoundCap > 0 && b.Round > b.RoundCap {
 		return b, roundCapRefusal(b.Name, b.RoundCap)
 	}
@@ -33,12 +32,11 @@ func chainSendMember(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 }
 
 // chainStageRemote writes a remote member's staged round the one way every
-// staging goes: the text lands at the member's own round path, RoundBaselineHead
-// is the head of the branch the ship publishes as refs/relevo/<name>/out -- the
-// commit the plan starts at and the server's next round is cut from -- and the
-// previous round's closed tree is cleared, exactly the three writes a local
-// sendChainRound makes for the same round. A missing or unreadable directory is
-// the stage failure the resume's halt names.
+// staging goes: the text lands at the member's round path, RoundBaselineHead
+// is the head of the ship-published branch -- the plan-start commit the
+// server's next round is cut from -- and the closed tree is cleared, the three
+// writes a local sendChainRound makes for the same round. A missing or
+// unreadable directory is the stage failure the resume's halt names.
 func chainStageRemote(ctx context.Context, rt Runtime, b store.Binding, text string) (store.Binding, error) {
 	path := rt.Store.PromptPath(b.Name, b.Round)
 	if err := StagePlan(path, []byte(text)); err != nil {
@@ -53,11 +51,11 @@ func chainStageRemote(ctx context.Context, rt Runtime, b store.Binding, text str
 	return b, nil
 }
 
-// chainBranchHead resolves the head of the branch the member's ship publishes
-// as refs/relevo/<name>/out: the commit the server's next round is cut from and
-// the plan-start commit a plan that begins here records. It is a local ref
-// lookup, never a network call. A repo with no git configured leaves the head
-// empty rather than failing the stage; a repo that refuses the lookup does not.
+// chainBranchHead resolves the head of the member's ship-published branch: the
+// commit the server's next round is cut from, and the recorded plan-start
+// commit. It is a local ref lookup, never a network call. A repo with no git
+// leaves the head empty rather than failing the stage; a refused lookup does
+// not.
 func chainBranchHead(ctx context.Context, rt Runtime, b store.Binding) (string, error) {
 	if rt.Git == nil {
 		return "", nil
@@ -76,16 +74,15 @@ func chainBranchHead(ctx context.Context, rt Runtime, b store.Binding) (string, 
 	return sha, nil
 }
 
-// chainSendPending is the unlocked step that ships the rounds a chain has
-// staged for a remote member: plan 1, every later plan, corrections and
-// repairs alike. It walks the running chains and, for one whose awaiting
-// member is remote, has no prompt entry for that round and has a staged prompt
-// file, ships the file through the Ship hook and then records the member's
-// round under a short lock.
+// chainSendPending is the unlocked step shipping a chain's staged rounds for
+// a remote member: plan 1, later plans, corrections, and repairs alike. It
+// walks the running chains and, for one whose awaited member is remote, has
+// no prompt entry for the round, and has a staged prompt file, ships the file
+// through the Ship hook and records the round under a short lock.
 //
-// A member in NEEDS YOU, a missing staged file and a non-remote member are
-// skipped silently. A second concurrent or repeated run is a no-op (the entry
-// now exists) or an identical-plan retry the server dedupes.
+// A NEEDS YOU member, a missing staged file, and a non-remote member are
+// skipped silently. A concurrent or repeated run is a no-op, or an
+// identical-plan retry the server dedupes.
 func chainSendPending(ctx context.Context, rt Runtime) error {
 	if rt.Remote == nil {
 		return nil
@@ -99,7 +96,7 @@ func chainSendPending(ctx context.Context, rt Runtime) error {
 			continue
 		}
 		// The server drives a server chain's sends and the chain pull collects
-		// them, so the pending-send step leaves it alone.
+		// them, so the pending-send step leaves those alone.
 		if chain.OnServer(c) {
 			continue
 		}
@@ -141,8 +138,8 @@ func chainSendPending(ctx context.Context, rt Runtime) error {
 
 // chainRemoteSend ships one staged round to a chain's remote member: the Ship
 // half outside any lock, then the chain-aware record half under a short lock
-// that re-checks the state (the chain is still running and still awaiting this
-// round, and no prompt entry exists yet). A re-check that fails is a no-op.
+// re-checking the state -- still running, still awaiting this round, no prompt
+// entry yet. A failed re-check is a no-op.
 func chainRemoteSend(ctx context.Context, rt Runtime, b store.Binding, round int, body []byte) error {
 	verify := false
 	view, outRef, heads, err := rt.RemoteSend.Ship(ctx, rt, b, body, "", "", false, &verify)
@@ -176,12 +173,10 @@ func chainRemoteSend(ctx context.Context, rt Runtime, b store.Binding, round int
 	})
 }
 
-// chainRemoteSendFailed records a failed ship the way the plan pins it: the
-// member goes NEEDS YOU with the "builder send failed" halt, and the chain ends
-// through the engine -- the state's status and reason, its projected columns
-// and one workflow trace row -- with the reason "member <name> could not
-// start". The outcome is recorded, not returned; only a store write failure is
-// returned.
+// chainRemoteSendFailed records a failed ship: the member goes NEEDS YOU with
+// the "builder send failed" halt, and the chain ends through the engine with
+// "member <name> could not start". The outcome is recorded, not returned; only
+// a store write failure is returned.
 func chainRemoteSendFailed(ctx context.Context, rt Runtime, b store.Binding, sendErr error) error {
 	return rt.Store.WithLock(func(tx *store.Tx) error {
 		c, err := tx.ChainByMember(b.Name)

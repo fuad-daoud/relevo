@@ -10,14 +10,13 @@ import (
 )
 
 // chainPullQueueEntry records the queue wait a pulled round had on its server,
-// so the mirror's own history shows it rather than only the server's.
+// so the mirror's own history shows it.
 //
-// A round the server never queued -- handed straight to a builder -- ships no
-// queue stamp and writes nothing: there was no wait to record, and an entry
-// saying so would be a fact the server never stated.
+// A round the server never queued ships no stamp and writes nothing: no wait
+// to record, and an entry saying so would state a fact the server never gave.
 //
 // The round's prompt entry is written first, so this runs after it: a queue
-// record with no prompt beside it reads as a round nobody was ever handed.
+// record with no prompt beside it reads as a round nobody was handed.
 func chainPullQueueEntry(rt Runtime, tx *store.Tx, b store.Binding, r int, facts remote.ClosedRoundView) error {
 	if facts.QueuedAt.IsZero() || facts.RoundStartedAt.IsZero() {
 		return nil

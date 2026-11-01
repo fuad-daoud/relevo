@@ -20,10 +20,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// chainAppendPickNotes writes the pick log entry for every member whose actor's
-// own placement list was walked: the same pickEntry a local bind writes, with
-// the placement and every skip. A member whose actor named no placement writes
-// none, so its log stays exactly as it was before placement existed.
+// chainAppendPickNotes writes the pick log entry for every member whose
+// actor's placement list was walked, with the placement and every skip. A
+// member whose actor named no placement writes none, so its log stays as it
+// was before placement existed.
 func chainAppendPickNotes(tx *store.Tx, rt Runtime, members []chainMember, resolutions map[string]resolve.Resolution) error {
 	for _, m := range members {
 		res := resolutions[m.part]
@@ -38,9 +38,9 @@ func chainAppendPickNotes(tx *store.Tx, rt Runtime, members []chainMember, resol
 	return nil
 }
 
-// chainRemotePlan is what a remote builder's read-only preflight resolved, so
-// the create the start later performs cannot fail on anything that could have
-// been answered before the server was asked to create.
+// chainRemotePlan is what a remote builder's read-only preflight resolved,
+// so the later create cannot fail on anything answerable before the server
+// was asked.
 type chainRemotePlan struct {
 	server      string
 	base        string
@@ -51,18 +51,17 @@ type chainRemotePlan struct {
 	candidate   string
 	role        string
 	// subdir is the prefix the create carries: the server cuts its own
-	// worktree at its root, so the round's offset travels on the wire.
+	// worktree at its root, so the offset travels on the wire.
 	subdir string
 	who    remote.WhoAmI
 }
 
 // chainResolvePlacements resolves every member's placement, read-only and
 // before anything exists. The builder's list is walked exactly as `bind
-// --actor` does: the chain verb has no --server, so the actor's list decides,
-// and a server that cannot carry a chain member is a skip with its reason. A
-// reader member's list is walked with every server entry skipped unprobed; a
-// list with no local entry refuses the start with placementError's one line.
-// The builder is resolved first, so a refusal names it before any reader.
+// --actor` does: the chain verb has no --server, so the list decides, and an
+// uncarrying server is a skip with its reason. A reader's list is walked with
+// every server entry skipped unprobed; a list with no local entry refuses the
+// start. The builder resolves first, so a refusal names it before any reader.
 func chainResolvePlacements(ctx context.Context, rt Runtime, opts ChainOptions, plan chainStartPlan) (map[string]resolve.PlacementResolution, error) {
 	out := make(map[string]resolve.PlacementResolution, len(plan.members))
 	for _, m := range plan.members {
@@ -79,11 +78,10 @@ func chainResolvePlacements(ctx context.Context, rt Runtime, opts ChainOptions, 
 	return out, nil
 }
 
-// chainRemotePreflight resolves everything a remote builder's create needs, all
-// read-only: the base commit, the repo id, the git identity, the tier and the
-// server's candidate token. It runs before anything is created, so every
-// refusal -- a missing identity, a candidate the server does not list, a tier
-// above the client's cap -- fires with nothing on the server and nothing local.
+// chainRemotePreflight resolves everything a remote builder's create needs,
+// all read-only: base commit, repo id, git identity, tier, and the server's
+// candidate token. It runs before anything is created, so every refusal fires
+// with nothing on the server and nothing local.
 func chainRemotePreflight(ctx context.Context, rt Runtime, opts ChainOptions, plan chainStartPlan, p resolve.PlacementResolution) (*chainRemotePlan, error) {
 	if rt.Remote == nil {
 		return nil, ErrRemoteUnavailable
@@ -120,8 +118,8 @@ func chainRemotePreflight(ctx context.Context, rt Runtime, opts ChainOptions, pl
 		return nil, err
 	}
 	// The prefix needs a server that stores it, exactly as a lone bind does:
-	// a server that silently dropped it would run the chain's rounds at the
-	// bare repo's root, not the subdirectory the mastermind's shell was in.
+	// a server silently dropping it would run the rounds at the bare repo's
+	// root, not the subdirectory the mastermind's shell was in.
 	subdir := housekeep.ResolveSubdir(ctx, rt.Git, repo)
 	if subdir != "" && !remote.HasFeature(who, remote.FeatureSubdir) {
 		return nil, refusal.New("server %s does not carry binding subdirectories (pre-subdir server); upgrade it or start the chain at the repository root", server)
@@ -136,11 +134,9 @@ func chainRemotePreflight(ctx context.Context, rt Runtime, opts ChainOptions, pl
 	}, nil
 }
 
-// chainRemoteFacts resolves the base commit, the repository id and the git
-// identity a remote create needs. It is read-only, so a placed builder's
-// preflight and a whole-chain start both answer every refusal it can before
-// the server is asked to create anything. base is the caller's --base value,
-// "" meaning HEAD.
+// chainRemoteFacts resolves the base commit, repository id and git identity a
+// remote create needs, read-only, so every refusal it can answer fires before
+// the server is asked. base is the caller's --base value, "" meaning HEAD.
 func chainRemoteFacts(ctx context.Context, rt Runtime, repo, base string) (resolved, repoID, authorName, authorEmail string, err error) {
 	if rt.Git == nil {
 		return "", "", "", "", ErrGitRequired
@@ -162,10 +158,10 @@ func chainRemoteFacts(ctx context.Context, rt Runtime, repo, base string) (resol
 		resolved = sha
 	}
 
-	// The repository's identity, through the one helper the repo settings
-	// read: a tree git cannot identify (no commits, not a repository, no git)
-	// has no settings and no id, and a remote create needs the id, so that
-	// case is refused here rather than sent as "".
+	// The repository's identity, through the one helper the repo settings read:
+	// a tree git cannot identify has no settings and no id, and a remote
+	// create needs the id, so that case is refused here rather than sent as
+	// "".
 	var ok bool
 	repoID, ok, err = RepoKey(ctx, rt.Git, repo)
 	if err != nil {
@@ -184,15 +180,14 @@ func chainRemoteFacts(ctx context.Context, rt Runtime, repo, base string) (resol
 	return resolved, repoID, authorName, authorEmail, nil
 }
 
-// chainBuildRemoteBuilder is `addRemote`'s create half, for a chain's builder
-// member: the server create (carrying the chain's own resolved gate), then the
-// local branch `relevo/<name>` cut at base, then the client binding. It returns
-// an unwind that removes what it made -- server Unbind first, then the branch
-// -- for a later failure in the start.
+// chainBuildRemoteBuilder is `addRemote`'s create half for a chain's builder
+// member: the server create carrying the chain's resolved gate, then the local
+// branch `relevo/<name>` cut at base, then the client binding. It returns an
+// unwind removing what it made -- server Unbind first, then the branch -- for
+// a later start failure.
 //
-// A failure of its own is all-or-none here: a create that succeeded but a
-// branch that did not unbinds the server binding before returning; a create
-// that never succeeded has nothing local to undo.
+// A failure of its own is all-or-none: a create that succeeded but a branch
+// that did not unbinds the server binding before returning.
 func chainBuildRemoteBuilder(ctx context.Context, rt Runtime, opts ChainOptions, plan chainStartPlan) (b store.Binding, unwind func(), err error) {
 	name := opts.Name
 	rp := plan.remote
@@ -207,7 +202,7 @@ func chainBuildRemoteBuilder(ctx context.Context, rt Runtime, opts ChainOptions,
 		return store.Binding{}, nil, ErrGitRequired
 	}
 
-	// FeatureOrigin decides whether the two link ids travel, exactly as addRemote's.
+	// FeatureOrigin decides whether the two link ids travel, as in addRemote's.
 	who := rp.who
 	clientInstallation := ""
 	clientBindingID := ""
@@ -253,10 +248,9 @@ func chainBuildRemoteBuilder(ctx context.Context, rt Runtime, opts ChainOptions,
 	}
 
 	// From here the server has a binding this client does not. Every later
-	// failure in this function, or in the start that follows, unbinds it on the
-	// server first and then removes the local branch. armed guards a double
-	// unwind: the deferred call for a failure here, and the caller's call for a
-	// failure in the start, run the same closure.
+	// failure unbinds it on the server first, then removes the local branch.
+	// armed guards a double unwind: the deferred call here and the caller's
+	// call for a start failure run the same closure.
 	armed := true
 	branchCreated := false
 	unbind := func() {
@@ -320,7 +314,7 @@ func chainBuildRemoteBuilder(ctx context.Context, rt Runtime, opts ChainOptions,
 }
 
 // chainWireRole is the actor name the create request carries: the same
-// "builder" default addRemote sends when the client's role normalises to "".
+// "builder" default addRemote sends when the client's role is "".
 func chainWireRole(role string) string {
 	if role == "" {
 		return "builder"
