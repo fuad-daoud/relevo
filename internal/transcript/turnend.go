@@ -81,8 +81,8 @@ func TurnEndState(kind string, stream []byte) TurnEnd {
 	return verdict
 }
 
-// markedEvent is the key a kind's events are marked by: type, except the event
-// field agy keys every event by.
+// markedEvent is the key a kind's events are marked by: type, except agy's
+// event field and muse's payload_type.
 func markedEvent(kind string, obj map[string]any) string {
 	if kind == "agy" {
 		return str(obj["event"])

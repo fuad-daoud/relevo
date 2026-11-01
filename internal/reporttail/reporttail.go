@@ -233,6 +233,8 @@ func textAfter(lines []string, closeIdx int) bool {
 	return false
 }
 
+// RelevoBlock is one block's opening-fence index and its closing-fence index,
+// len(lines) when unclosed.
 type RelevoBlock struct{ Open, Close int }
 
 // RelevoBlocks returns every fenced relevo block in lines, in file order, each

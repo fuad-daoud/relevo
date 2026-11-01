@@ -39,8 +39,9 @@ func FinalText(kind string, stream []byte) string {
 }
 
 // Texts returns every message text FinalText's decoding recognises, in stream
-// order, the last preferred over the fallback when non-empty. It lets a caller
-// rescan a stream for something earlier than FinalText's last message.
+// order: per JSON line, finalCandidates' last preferred over its fallback when
+// non-empty, skipping empty texts. It lets a caller rescan a stream for
+// something earlier than FinalText's last message.
 func Texts(kind string, stream []byte) []string {
 	var out []string
 	for _, line := range bytes.Split(stream, []byte{'\n'}) {

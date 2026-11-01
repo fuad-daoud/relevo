@@ -1,7 +1,6 @@
 // Package sanitize makes untrusted text safe to draw or store: one pass keeping
-// newlines, turning tabs into spaces, and replacing every other control rune and
-// invalid UTF-8 with U+FFFD. It owns one secret placeholder too. It imports
-// nothing, so callers that must not risk a cycle share one rule.
+// newlines, turning tabs into spaces, and replacing other controls, invalid
+// UTF-8 and secrets. It imports nothing, so cycle-shy callers share one rule.
 package sanitize
 
 import (

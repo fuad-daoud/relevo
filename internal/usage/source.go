@@ -69,12 +69,12 @@ func (r reader) Peek(ctx context.Context, src Source) ([]Sample, string) {
 	return nil, "no reader for mode " + string(src.Mode)
 }
 
-const trailerPoll = 200 * time.Millisecond
+const trailerPoll = 200 * time.Millisecond // how often a still-open stream is re-checked
 
-const tailProbe = 256
+const tailProbe = 256 // bytes of the file's end read to find the last line
 
 // streamClosed reports whether path's last non-empty line is the exit trailer,
-// which is how a harness says it exited.
+// which the supervisor appends once the harness has exited.
 func streamClosed(path string) bool {
 	f, err := os.Open(path)
 	if err != nil {

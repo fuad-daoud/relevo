@@ -123,8 +123,11 @@ type ProcHandle struct {
 // Runner starts, observes and stops one process on behalf of a binding. Start
 // returns as soon as the pid exists; the caller never waits on it. Alive is
 // true iff a process with the handle's pid exists AND its start time matches
-// within one second. ExitCode reports the code the supervisor left as the
-// stream's last line, ok false when there is none. Kill stops the process
+// within one second: not a zombie, a reused pid is false, and a missing pid
+// is (false, nil), not an error. ExitCode reports the code the supervisor
+// left as the stream's last line -- its path is the stream the trailer is
+// appended to, not the log, despite the parameter's name -- ok false when
+// there is none. Kill stops the process
 // group, escalating after a grace; not alive is nil. A kill is recorded
 // against the stream so a trailer written after the signal is never read as
 // that process's code.

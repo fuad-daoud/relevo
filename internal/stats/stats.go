@@ -73,9 +73,9 @@ func (c TokenCounts) PerRound(n int64) (int64, bool) {
 
 type Totals struct {
 	Rounds, Bindings int
-	// Candidates is the number of distinct non-nil Candidate tokens, Unrecorded
-	// never getting a scorecard row.
-	Candidates  int
+	// Candidates is the number of distinct non-nil Candidate tokens.
+	Candidates int
+	// Unrecorded never gets a scorecard row.
 	Unrecorded  int
 	CostUSD     float64 // known basis, non-plan
 	PlanRounds  int

@@ -222,7 +222,7 @@ func (r *Runner) Start(ctx context.Context, spec spawn.ProcSpec) (spawn.ProcHand
 }
 
 // checkSpawnSpec validates spec before either file is created, so a refused
-// Start leaves nothing.
+// Start leaves nothing, and returns the resolved binary Start will exec.
 func checkSpawnSpec(spec spawn.ProcSpec) (string, error) {
 	if len(spec.Argv) == 0 {
 		return "", errors.New("proc: empty argv")
@@ -262,8 +262,11 @@ func openSpawnFiles(spec spawn.ProcSpec) (logf, streamf *os.File, err error) {
 const oNoFollow = syscall.O_NOFOLLOW
 
 // openRegular opens path with the given flags, refusing anything that is not a
-// regular file: the Lstat is the refusal and O_NOFOLLOW the race backstop, so a
-// planted symlink is never followed, and a planted fifo never blocks the open.
+// regular file. The state directory holding a round's log, stream and kill
+// record is runner-writable, so a planted symlink must never be followed out
+// of it: the Lstat is the refusal and O_NOFOLLOW the race backstop, so a link
+// swapped in after the check cannot be followed, and a planted fifo never
+// blocks the open.
 func openRegular(path string, flags int) (*os.File, error) {
 	if fi, err := os.Lstat(path); err == nil {
 		if !fi.Mode().IsRegular() {
@@ -296,8 +299,10 @@ func (r *Runner) requireScope(ctx context.Context, spec spawn.ProcSpec) error {
 }
 
 // resolveScope applies the lazy probes and their fallbacks: a scope whose probe
-// fails is dropped, the switch is set when taken, and a refused AllowedCPUs is
-// cleared while the scope and its quota stay.
+// fails is dropped, a systemd-run that takes --expand-environment=no gets
+// NoExpand, and a refused AllowedCPUs is cleared while the scope and its quota
+// stay. Both fallbacks copy the ScopeSpec first: spec came by value but Scope
+// is a pointer the caller still holds.
 func (r *Runner) resolveScope(ctx context.Context, spec spawn.ProcSpec) spawn.ProcSpec {
 	if spec.Scope == nil {
 		return spec
@@ -331,8 +336,9 @@ func (r *Runner) resolveScope(ctx context.Context, spec spawn.ProcSpec) spawn.Pr
 }
 
 // spawnEnv adds the GOMAXPROCS, temp-dir and fsmonitor entries and filters the
-// parent so the child sees exactly one of each; the full-slice expressions copy,
-// so the caller's slices are never written in place.
+// parent so the child sees exactly one of each; the full-slice expressions
+// copy, so extra, the package's DeniedEnv and the spec's DenyEnv are never
+// written in place.
 func spawnEnv(parent, extra []string, scope *spawn.ScopeSpec, specDeny []string, specDir, runnerDir string) []string {
 	add := goMaxProcsEnv(parent, extra, scope)
 	tmpAdd, tmpDeny := tmpDirEnv(parent, extra, specDir, runnerDir)
@@ -382,9 +388,10 @@ func (r *Runner) ExitCode(_ context.Context, h spawn.ProcHandle, logPath string)
 
 // Kill sends SIGTERM to the supervisor's process group, waits up to the grace
 // for Alive to turn false, then SIGKILLs. Alive's start-time check runs first,
-// so a reused pid is never signalled. The record precedes the signal, so it is
-// in place before the process could die. A record that cannot be written is
-// warned about, never a reason to leave a process alive.
+// so a reused pid is never signalled. The record precedes the signal because
+// a reader only ever reads a dead handle, so the record is in place before
+// the process could die. A record that cannot be written is warned about,
+// never a reason to leave a process alive.
 func (r *Runner) Kill(ctx context.Context, h spawn.ProcHandle, streamPath string) error {
 	alive, err := r.Alive(ctx, h)
 	if err != nil {

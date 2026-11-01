@@ -4,7 +4,8 @@ import "strings"
 
 // BlockValue returns the value of key from the last fenced relevo block carrying
 // it; prose after the closing fence does not hide the keys. A missing block, an
-// unreadable tail or a missing key returns ok == false. A body with no fenced
+// unreadable tail or a missing key returns ok == false, the same way the
+// builder report tail treats them. A body with no fenced
 // block falls back to a closing block whose fences were lost. The fallback never
 // changes validation: it extracts a value, the caller decides admissibility.
 func BlockValue(body []byte, key string) (string, bool) {

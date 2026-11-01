@@ -221,7 +221,8 @@ func (x *lexer) interpOpenAt(j int) int {
 
 // skipInterp skips an interpolation opening at j, e bytes long, to just past its
 // closing bracket, tracking nesting and skipping nested strings whole: a quote
-// inside does not close the string around it. -1 refuses the string around it.
+// inside does not close the string around it. -1 when the bracket or a nested
+// string never closes, which refuses the string around it too.
 func (x *lexer) skipInterp(j, e int) int {
 	open, close := byte('{'), byte('}')
 	if x.l.interpParen {

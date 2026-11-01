@@ -60,9 +60,11 @@ func goMaxProcsEnv(parent, extra []string, scope *spawn.ScopeSpec) []string {
 
 // tmpDirEnv returns the temp-dir entries a child needs and the names those
 // entries replace in the parent. Each name is decided on its own: an extra
-// entry wins, then the spec's own directory, then a non-empty inherited value,
-// and only a name none of these sets takes runnerDir. An empty spec and runner
-// default nothing, so a caller that names neither keeps its children untouched.
+// entry wins, then the spec's own directory, chosen for this process alone so
+// it outranks the environment the process was launched in, then a non-empty
+// inherited value, and only a name none of these sets takes runnerDir. An
+// empty spec and runner default nothing, so a caller that names neither keeps
+// its children untouched.
 //
 // The entry is appended after the parent's and the name is denied there, so the
 // child's only copy is the default: a parent carrying an empty "TMPDIR=" would

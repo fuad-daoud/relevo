@@ -57,6 +57,6 @@ fi
 printf '\nrelevo-exit:%s\n' "$rc"`
 
 // ContainerSupervisorScript is SupervisorScript with one added line: it exits
-// with the builder's own code, so podman's trailer carries the builder's code
-// rather than sh's zero.
+// with the builder's own code, so `podman run` returns it and the outer
+// supervisor's trailer carries it rather than sh's zero.
 const ContainerSupervisorScript = SupervisorScript + "\nexit \"$rc\""

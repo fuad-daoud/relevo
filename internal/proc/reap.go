@@ -20,7 +20,8 @@ type InheritedReaper struct {
 }
 
 // NewInheritedReaper scans procRoot once for processes whose parent is self; it
-// must be constructed before this image starts any child.
+// must be constructed before this image starts any child. An empty or
+// unreadable root falls back to `ps -A -o pid=,ppid=`.
 func NewInheritedReaper(self int, procRoot string) *InheritedReaper {
 	return &InheritedReaper{pids: scanChildren(self, procRoot)}
 }

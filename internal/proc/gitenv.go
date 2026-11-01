@@ -7,8 +7,9 @@ import (
 
 // gitNoFsmonitorEnv returns the entries that disable git's fsmonitor for a
 // spawn, so a builder's git commands never leave a daemon behind to keep its
-// round's scope alive. n continues the count the child would otherwise have,
-// so git's existing entries stay valid; a non-numeric count is 0, and the
+// round's scope alive. n continues the count the child would otherwise have:
+// extra first, else parent, else 0. The caller denies the parent's
+// GIT_CONFIG_COUNT, so this one wins; a non-numeric count is 0, and the
 // inputs are never mutated.
 func gitNoFsmonitorEnv(parent, extra []string) []string {
 	n := 0
