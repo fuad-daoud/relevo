@@ -36,7 +36,11 @@ func outboxPerTable(t *testing.T, raw *sql.DB) map[string]int {
 	if err != nil {
 		t.Fatalf("count sync_outbox: %v", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			t.Errorf("close sync_outbox rows: %v", err)
+		}
+	}()
 	out := map[string]int{}
 	for rows.Next() {
 		var tbl string

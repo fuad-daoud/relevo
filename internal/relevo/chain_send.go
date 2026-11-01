@@ -42,6 +42,27 @@ func (e *RoundOpenError) Error() string {
 // does, and the error returns wrapped with the member's name; the caller then
 // halts the chain in the same critical section.
 func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, text string) (store.Binding, error) {
+	cur, err := guardSendChainRound(ctx, rt, tx, b)
+	if err != nil {
+		return b, err
+	}
+	var prompt, baseline, baselineHead, repoBaseline string
+	var pending []store.LogEntry
+	cur, prompt, baseline, baselineHead, repoBaseline, pending, err = stageSendChainPlan(ctx, rt, tx, cur, text)
+	if err != nil {
+		return b, err
+	}
+	cur, err = startOrQueueSendChainRound(ctx, rt, tx, b, cur, prompt, baseline, baselineHead, repoBaseline, pending)
+	if err != nil {
+		return b, err
+	}
+	return cur, nil
+}
+
+// guardSendChainRound checks the member can open its round: the binding
+// loads, no round is open, no report is pending, and no previous process is
+// still alive.
+func guardSendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, error) {
 	name := b.Name
 	cur, err := tx.Load(name)
 	if err != nil {
@@ -70,12 +91,19 @@ func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 			return b, fmt.Errorf("%s (pid %d): %w", name, cur.Builder.PID, ErrBuilderBusy)
 		}
 	}
+	return cur, nil
+}
 
+// stageSendChainPlan stages the round's plan file and captures its baselines:
+// the worktree tree, its head, and the repository baseline the round diffs
+// against.
+func stageSendChainPlan(ctx context.Context, rt Runtime, tx *store.Tx, cur store.Binding, text string) (store.Binding, string, string, string, string, []store.LogEntry, error) {
+	name := cur.Name
 	planPath := rt.Store.PromptPath(name, cur.Round)
 	reportPath := rt.Store.ReportPath(name, cur.Round)
 	donePath := rt.Store.DonePath(name, cur.Round)
 	if err := StagePlan(planPath, []byte(text)); err != nil {
-		return b, fmt.Errorf("%s: stage plan at %s: %w", name, planPath, err)
+		return cur, "", "", "", "", nil, fmt.Errorf("%s: stage plan at %s: %w", name, planPath, err)
 	}
 
 	baseline, baselineHead := capture.Baseline(ctx, captureDeps(rt), cur)
@@ -83,18 +111,22 @@ func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 	prompt := roundPrompt(rt, tx, cur, planPath, reportPath, donePath)
 
 	var pending []store.LogEntry
-	cur, res, _, err := repickForRound(rt, cur, false, false)
+	next, res, _, err := repickForRound(rt, cur, false, false)
 	if err != nil {
-		return b, fmt.Errorf("%s: %w", name, err)
+		return cur, "", "", "", "", nil, fmt.Errorf("%s: %w", name, err)
 	}
 	if res != nil {
-		pending = append(pending, resolve.PickEntry(rt.Now().UTC(), cur.Round, cur.WriterRole(), *res))
+		pending = append(pending, resolve.PickEntry(rt.Now().UTC(), next.Round, next.WriterRole(), *res))
 	}
+	return next, prompt, baseline, baselineHead, repoBaseline, pending, nil
+}
 
-	// A served member never starts its round here: like Send(Defer) it records
-	// the round as queued and lets the server's admit start it, so
-	// serve.max_builders and the tier cap decide. That also defers the
-	// reader's scratch worktree, which Admit builds.
+// startOrQueueSendChainRound starts the staged round, or queues it when the
+// member is served: like Send(Defer) it records the round as queued and lets
+// the server's admit start it, so serve.max_builders and the tier cap decide.
+func startOrQueueSendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, cur store.Binding, prompt, baseline, baselineHead, repoBaseline string, pending []store.LogEntry) (store.Binding, error) {
+	name := b.Name
+	planPath := rt.Store.PromptPath(cur.Name, cur.Round)
 	served := cur.Owner != ""
 	if !served {
 		// A reader round runs in a throwaway scratch worktree, never in b.CWD:
@@ -114,7 +146,7 @@ func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 			cur.Halt = spawnHaltText(err)
 			cur.HaltAt = rt.Now().UTC()
 			if saveErr := tx.SaveWithLog(cur, pending...); saveErr != nil {
-				return b, fmt.Errorf("%s: %v; saving NEEDS YOU failed: %w", name, err, saveErr)
+				return b, fmt.Errorf("%s: %w; saving NEEDS YOU failed: %w", name, err, saveErr)
 			}
 			return b, fmt.Errorf("%s: %w", name, err)
 		}
@@ -126,7 +158,7 @@ func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 		Direction: store.DirToBuilder, Kind: store.KindPrompt,
 		Path: planPath, Confirmed: true,
 		Tier: string(resolve.EffectiveTier(cur)),
-		Note: chain.StepNote(tx, name),
+		Note: chain.StepNote(tx, cur.Name),
 	})
 
 	cur.RoundBaselineTree = baseline

@@ -127,7 +127,6 @@ type chainStartPlan struct {
 	bodies       [][]byte
 	members      []chainMember
 	resolutions  map[string]resolve.Resolution
-	placements   map[string]resolve.PlacementResolution
 	remote       *chainRemotePlan
 	mastermind   store.Endpoint
 	mastermindID string
