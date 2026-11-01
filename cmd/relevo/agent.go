@@ -13,9 +13,8 @@ import (
 )
 
 // installAccountHomes installs each configured claude and codex account's role
-// definitions into that account's own home, which is where a round pinned to
-// the account reads them. opts.Kind, when set, limits the walk to that kind; an
-// account of another kind (opencode) has no per-process home and is skipped.
+// definitions into that account's own home. opts.Kind limits the walk when set;
+// an account of another kind has no per-process home and is skipped.
 func installAccountHomes(env harness.InstallEnv, accounts account.Set, opts harness.InstallOptions) ([]harness.InstallResult, error) {
 	var out []harness.InstallResult
 	for _, a := range accounts {
@@ -41,17 +40,12 @@ func installAccountHomes(env harness.InstallEnv, accounts account.Set, opts harn
 	return out, nil
 }
 
-// agentInstallEnv is the SetupEnv `relevo config agents`, `relevo config init`
-// and the daemon's once-per-image role refresh share: the OS-backed env with
-// the runner seat the probe reads through, over relevo.AgentInstallEnv. See
-// relevo.AgentInstallEnv for where the role manifest lives.
+// agentInstallEnv is the SetupEnv `relevo config agents` and the daemon's
+// role refresh share: the OS-backed env over relevo.AgentInstallEnv.
 func agentInstallEnv() (setup.SetupEnv, error) {
 	return setup.OSEnv()
 }
 
-// agentFlagValues holds the pointers `relevo config agents`' flags parse into.
-// agentFlagSet defines them on fs; cmdAgentInstall and TestRemovedFlagsAreUnknown
-// read the same surface.
 type agentFlagValues struct {
 	kind   *string
 	agent  *string
@@ -60,9 +54,8 @@ type agentFlagValues struct {
 	asJSON *bool
 }
 
-// agentFlagSet defines `relevo config agents`' flags on fs and returns the
-// values they parse into, so a test can inspect the flag surface without
-// installing anything.
+// agentFlagSet exists so a test can inspect the flag surface without installing
+// anything.
 func agentFlagSet(fs *flag.FlagSet) *agentFlagValues {
 	v := &agentFlagValues{}
 	v.kind = fs.String("kind", "", "harness kind")
@@ -78,7 +71,6 @@ func agentFlagSet(fs *flag.FlagSet) *agentFlagValues {
 	return v
 }
 
-// cmdAgentInstall installs embedded agent definitions.
 func cmdAgentInstall(args []string) error {
 	return outcomeError(cmdAgentInstallRun(args))
 }
@@ -107,10 +99,8 @@ func cmdAgentInstallRun(args []string) error {
 		return err
 	}
 
-	// The custom agents live in the machine config, which may be unreadable;
-	// that must not stop the shipped install, so a config failure is one
-	// warning on stderr and nothing more. The same read supplies the account
-	// pools a per-account home install walks.
+	// The custom agents live in the machine config, which may be unreadable; a
+	// config failure is one warning on stderr and nothing more.
 	cfg, cfgErr := relevo.MachineConfig()
 	var loaded config.Loaded
 	sourceRole := false
@@ -126,8 +116,8 @@ func cmdAgentInstallRun(args []string) error {
 
 	var results []harness.InstallResult
 	if sourceRole {
-		// harness.Install refuses a name it does not ship, so a source agent
-		// is installed by the custom path alone.
+		// Harness.Install refuses a name it does not ship, so a source agent goes
+		// by the custom path alone.
 		custom, cerr := relevo.InstallCustomAgents(cfg, env, opts)
 		if cerr != nil {
 			fmt.Fprintf(os.Stderr, "relevo: custom agents not installed: %v\n", cerr)
@@ -141,8 +131,7 @@ func cmdAgentInstallRun(args []string) error {
 		results = append(results, shipped...)
 		if cfgErr == nil && *agent == "" {
 			// An --agent names exactly the one agent to install, so the custom
-			// walk runs only with no agent: it then installs every custom
-			// agent the kind and force flags select.
+			// walk runs only with no agent.
 			customOpts := opts
 			customOpts.Role = ""
 			custom, cerr := relevo.InstallCustomAgents(cfg, env, customOpts)
@@ -154,8 +143,7 @@ func cmdAgentInstallRun(args []string) error {
 	}
 	if cfgErr == nil {
 		// Every configured claude and codex account reads its own home, so the
-		// definitions land there too; a failure is reported once, like the
-		// custom walk, and never fails the default install.
+		// definitions land there too; a failure never fails the default install.
 		acct, aerr := installAccountHomes(env, loaded.Accounts, opts)
 		if aerr != nil {
 			fmt.Fprintf(os.Stderr, "relevo: account homes not installed: %v\n", aerr)
@@ -163,8 +151,8 @@ func cmdAgentInstallRun(args []string) error {
 		results = append(results, acct...)
 	}
 
-	// The human lines keep stdout in the default mode and move to stderr under
-	// --json, where stdout carries the document alone.
+	// Human lines move to stderr under --json, where stdout carries the document
+	// alone.
 	w := noticeWriter(*asJSON)
 
 	if len(results) == 0 {

@@ -15,9 +15,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
-// relevo mcp starts beside the plugin's SessionStart hook, which may
-// still be running when the server comes up, so ErrNoMasterMind is retried for
-// up to mcpResolveTimeout before the server falls back to tools-only.
+// relevo mcp starts beside the plugin's SessionStart hook, so ErrNoMasterMind is
+// retried for up to mcpResolveTimeout before the server falls back to tools-only.
 const (
 	mcpResolveTimeout = 10 * time.Second
 	mcpResolveRetry   = 500 * time.Millisecond
@@ -35,10 +34,8 @@ func mcpFlagSet(fs *flag.FlagSet) *mcpFlagValues {
 	return v
 }
 
-// cmdMCP runs relevo mcp: an MCP server over stdio a Claude Code mastermind
-// spawns from its plugin manifest, serving the verbs as tools. A separate
-// `relevo push` holder writes reports into the session; this server pushes
-// nothing itself.
+// cmdMCP runs relevo mcp: an MCP server over stdio serving the verbs as tools.
+// This server pushes nothing itself.
 func cmdMCP(args []string) error {
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
 	v := mcpFlagSet(fs)
@@ -58,10 +55,9 @@ func cmdMCP(args []string) error {
 		return err
 	}
 
-	// Resolve this mastermind, retrying while the hook may still be running.
-	// A bad --mastermind value is not a race: it is reported at once.
-	// An opencode server has no identity to resolve here: its calls name their
-	// session, and each tool call resolves then.
+	// Resolve this mastermind, retrying while the hook may still be running. An
+	// opencode server has no identity to resolve here: each tool call resolves
+	// then.
 	var (
 		rec     mastermind.Record
 		haveRec bool
@@ -109,10 +105,9 @@ func cmdMCP(args []string) error {
 		Mode:    mcp.ModeTools,
 		Kind:    kind,
 		Log:     os.Stderr,
-		// This server runs for the session's whole life, so when the daemon
-		// has re-exec'd onto a newer relevo it says so on every tool result
-		// and the mastermind reconnects (/mcp). The read is cached for 30 s
-		// and a read error is no notice at all.
+		// The daemon may re-exec onto a newer relevo mid-session, so every tool
+		// result carries the notice; the read is cached and a read error is no
+		// notice at all.
 		Notice: cachedString(mcpNoticeTTL, time.Now, func() string {
 			info, ok, err := rt.Store.ReadDaemonInfo()
 			if err != nil {
@@ -133,8 +128,7 @@ func cmdMCP(args []string) error {
 	return nil
 }
 
-// resolveMCPMasterMind is mastermind.Resolve as relevo mcp calls it: --mastermind,
-// $RELEVO_MASTERMIND, the parent Claude process, then the session.
+// resolveMCPMasterMind is mastermind.Resolve as relevo mcp calls it.
 func resolveMCPMasterMind(rt relevo.Runtime, flagVal string) (mastermind.Record, mastermind.Resolution, error) {
 	var now time.Time
 	if rt.Now != nil {
@@ -151,8 +145,8 @@ func resolveMCPMasterMind(rt relevo.Runtime, flagVal string) (mastermind.Record,
 	})
 }
 
-// mcpResolveKind validates --kind: the empty kind is Claude Code, resolved once
-// at startup; opencode resolves each tool call from its session.
+// mcpResolveKind validates --kind: empty is Claude Code, resolved once at
+// startup; opencode resolves each tool call from its session.
 func mcpResolveKind(kind string) (string, error) {
 	switch kind {
 	case "", "opencode":
@@ -162,10 +156,8 @@ func mcpResolveKind(kind string) (string, error) {
 	}
 }
 
-// mcpVerbs builds the tool verbs: an opencode server resolves the calling
-// session per call, a Claude one uses the mastermind resolved at startup. An
-// opencode server with no mastermind registry is refused rather than served
-// with a resolver that could never resolve a session.
+// mcpVerbs builds the tool verbs. An opencode server with no mastermind registry
+// is refused rather than served with a resolver that could never resolve.
 func mcpVerbs(rt relevo.Runtime, kind, masterMindID string) (*mcp.RelevoVerbs, error) {
 	v := &mcp.RelevoVerbs{RT: rt, MasterMind: masterMindID}
 	if kind == "opencode" {
@@ -179,10 +171,8 @@ func mcpVerbs(rt relevo.Runtime, kind, masterMindID string) (*mcp.RelevoVerbs, e
 }
 
 // opencodeSessionMasterMind maps one tool call's session to the record the
-// plugin created for it. The not-found text is actionable: an unanswered
-// repository is the reason a tool call usually arrives without a record. A nil
-// registry is an error: the server cannot resolve any session, so it must not
-// start.
+// plugin created for it. A nil registry is an error: the server must not start
+// when it cannot resolve any session.
 func opencodeSessionMasterMind(rt relevo.Runtime) (func(session string) (string, error), error) {
 	if rt.MasterMinds == nil {
 		return nil, errors.New("opencode tools server has no mastermind registry; cannot resolve tool-call sessions")

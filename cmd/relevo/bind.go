@@ -17,8 +17,6 @@ import (
 )
 
 // bindFlags is the union of the flags bind and add each accept.
-// bindRouteFor chooses which of the two bodies runs; keeping the flag set in
-// one place is what lets each flag keep its name, default and help text.
 type bindFlags struct {
 	name       string
 	candidate  string
@@ -43,17 +41,14 @@ type bindFlags struct {
 	server   string
 	base     string
 
-	// local runs the builder on this machine whatever the actor's placement
-	// says. It is not a route flag: a plain `bind --local` stays bind, and
-	// --server with --local is refused below.
+	// local runs the builder on this machine whatever the actor's placement says.
+	// It is not a route flag.
 	local bool
 
-	// asJSON selects the result document instead of the human lines; stdout
-	// then carries the document alone and the notices move to stderr.
+	// asJSON selects the result document instead of the human lines.
 	asJSON bool
 }
 
-// bindRoute names which of the two paths cmdBind runs.
 type bindRoute int
 
 const (
@@ -61,15 +56,13 @@ const (
 	routeAdd
 )
 
-// bindRouteFor chooses the path from the parsed flags and refuses the
-// forbidden combinations. It is a pure function, so the rules are table
-// tested without a runtime, a state directory or a harness.
+// bindRouteFor chooses the path from the parsed flags and refuses the forbidden
+// combinations. It is pure, so the rules are table tested without a runtime.
 func bindRouteFor(f bindFlags) (bindRoute, error) {
 	placement := f.worktree || f.cwd != "" || f.branch != "" || f.server != "" || f.base != ""
 	switch {
 	case f.server != "" && f.local:
-		// --server and --local name two different machines; the two together
-		// are refused on one line like every other route conflict.
+		// --server and --local name two different machines.
 		return routeBind, errors.New("--server and --local are exclusive: --server runs the builder on that server, --local on this machine")
 	case f.resume || f.rebind:
 		// --resume and --rebind are bind's alone.
@@ -85,11 +78,7 @@ func bindRouteFor(f bindFlags) (bindRoute, error) {
 }
 
 // cmdBind binds a mastermind to a builder: the flags choose which of the two
-// bodies runs, and each body stays an unexported helper so none of its logic
-// is duplicated.
-// bindFlagValues holds the pointers bind's flags parse into. bindFlagSet
-// defines them on fs; cmdBind and TestBindFlagsHaveActorNotRole read the same
-// surface, so the flag names can never drift from what a test pins.
+// bodies runs.
 type bindFlagValues struct {
 	name           *string
 	candidate      *string
@@ -115,8 +104,7 @@ type bindFlagValues struct {
 	asJSON         *bool
 }
 
-// bindFlagSet defines bind's flags on fs and returns the values they parse
-// into. It is separate from cmdBind so a test can inspect the flag surface
+// bindFlagSet is separate from cmdBind so a test can inspect the flag surface
 // without running a bind.
 func bindFlagSet(fs *flag.FlagSet) *bindFlagValues {
 	v := &bindFlagValues{}
@@ -153,9 +141,8 @@ func cmdBind(args []string) error {
 		return err
 	}
 
-	// The label rules are CLI rules, refused on one line with exit 2 before
-	// any runtime, state, worktree or network work -- the same shape as the
-	// route refusal below.
+	// The label rules are refused on one line with exit 2 before any runtime,
+	// state, worktree or network work.
 	if err := relevo.RequireFeatureChoice(*v.feature, *v.noFeature, *v.resume); err != nil {
 		return refuseFlag(err)
 	}
@@ -188,7 +175,6 @@ func cmdBind(args []string) error {
 
 	route, rerr := bindRouteFor(f)
 	if rerr != nil {
-		// One line, exit 2, before any runtime is built.
 		return refuseFlag(rerr)
 	}
 
@@ -200,18 +186,13 @@ func cmdBind(args []string) error {
 	}
 }
 
-// refuseFlag is the one-line refusal the label rules and the route check
-// share: a refused code, which the frame renders with exit 2 and no next hint.
-// The message is part of the error, so --json stderr carries it once instead
-// of a stray human line plus an envelope.
+// refuseFlag is the one-line refusal the label rules and the route check share.
 func refuseFlag(err error) error {
 	return fail(codeRefused, "%v", err)
 }
 
-// boundLine is the one line a successful bind prints. A remote builder names the
-// server it runs on, appending the placement clause only when the actor's own
-// placement list chose that server. It is pure, so the wording is pinned without
-// a live server.
+// boundLine is the one line a successful bind prints. It is pure, so the wording
+// is pinned without a live server.
 func boundLine(b store.Binding, mastermind, candidate string, placement resolve.PlacementResolution) string {
 	if b.Builder.Remote() {
 		return fmt.Sprintf("bound %s: mastermind %s -> builder %s on %s, round %d%s",
@@ -224,8 +205,7 @@ func boundLine(b store.Binding, mastermind, candidate string, placement resolve.
 // runBind is bind's own body after parsing: bind the current tree, or resume
 // or rebind an existing binding.
 func runBind(f bindFlags) error {
-	// --resume takes the name from --name, so a positional one is dropped on
-	// the floor and the binding lookup then fails on the empty name.
+	// --resume takes the name from --name, so a positional name is ignored.
 	if f.resume && f.name == "" {
 		return fail(codeUsage, "relevo bind --resume needs --name NAME (a positional name is ignored)")
 	}
@@ -273,9 +253,8 @@ func runBind(f bindFlags) error {
 	switch {
 	case f.rebind:
 		// A rebind replaces the builder of an existing binding, so the
-		// definitions come from the stored binding's actor -- --actor is
-		// refused with --resume, so roleName is "builder" here.
-		// If the load fails, roleName stands as the fallback.
+		// definitions come from the stored binding's actor. If the load fails,
+		// roleName stands as the fallback.
 		if f.name != "" {
 			if existing, err := rt.Store.Load(f.name); err == nil {
 				specRole = existing.WriterRole()
@@ -293,14 +272,11 @@ func runBind(f bindFlags) error {
 		kind = resolve.CandidateKindFor(relevo.ResolveDeps(rt), opts.Candidate, roleName)
 	}
 
-	// Preflight is advisory only: it never blocks the bind, and any probe
-	// failure is dropped rather than printed. See bindPreflight.
+	// Preflight is advisory only: it never blocks the bind.
 	if kind != "" {
 		env := doctor.NewEnv(rt.Store)
-		// The binding's role's definitions for this kind come from the
-		// registry, so a config roles entry naming a custom builder executor
-		// preflights that file. A Spec error is data: defs stays
-		// nil and the preflight falls back to the shipped builder definitions.
+		// A Spec error is data: defs stays nil and the preflight falls back to
+		// the shipped builder definitions.
 		var defs []string
 		if spec, err := rt.RoleRegistry().Spec(specRole, kind); err == nil {
 			defs = spec.Definitions
@@ -316,13 +292,9 @@ func runBind(f bindFlags) error {
 	}
 	// A resume keeps the binding's stored role, so the pick note names it.
 	roleName = b.WriterRole()
-	// Every supplementary line goes to the human default's stdout, or to
-	// stderr under --json, where stdout must carry the document alone.
 	notices := noticeWriter(f.asJSON)
-	// The gate line names the command the binding resolved and the tier that
-	// supplied it: the flag, the repository's own setting or the policy
-	// default on a create, and the stored command on a resume, whose binding
-	// carries no fresh resolution to name a tier from.
+	// A resume's binding carries no fresh resolution, so the gate line names the
+	// stored command.
 	gateCmd, gateSource := res.Gate.Command, res.Gate.Source
 	if f.resume {
 		gateCmd, gateSource = b.Gate, resolve.GateSourceBinding
@@ -378,9 +350,6 @@ func runAdd(f bindFlags) error {
 	name := f.name
 	branch := f.branch
 	cwd := f.cwd
-
-	// Before newRuntime, in this order: the flag pair, then a name that is
-	// either given or derivable from the branch.
 	if branch != "" && cwd != "" {
 		return fail(codeRefused, "relevo bind --branch and --cwd are exclusive")
 	}
@@ -445,8 +414,6 @@ func runAdd(f bindFlags) error {
 				res.Binding.Name, rt.Candidates.NameOf(res.Binding.BuilderCandidate), builderWhere(res.Binding.Builder))
 		}
 	}
-	// The gate line names the command the add resolved and the tier that
-	// supplied it, through the same notice writer the other lines use.
 	fmt.Fprintln(notices, relevo.GateLine(res.Resolution.Gate.Command, res.Resolution.Gate.Source))
 	noteRegateNoGate(notices, res.Binding)
 	if n := availability.GatedNote(relevo.AvailabilityDeps(rt), res.Binding.BuilderCandidate); n != "" {
@@ -468,10 +435,7 @@ func runAdd(f bindFlags) error {
 	return nil
 }
 
-// addedTreeLines is runAdd's own round-directory lines: the branch or tree
-// the add provisioned, and, when the bind was started below the tree root,
-// the directory the round actually runs in. An empty line is never printed,
-// and every caller renders one add's worth of output only.
+// addedTreeLines is runAdd's own round-directory lines.
 func addedTreeLines(res relevo.AddResult) []string {
 	var lines []string
 	switch {
@@ -486,9 +450,7 @@ func addedTreeLines(res relevo.AddResult) []string {
 	default:
 		lines = append(lines, fmt.Sprintf("  tree %s", res.Binding.CWD))
 	}
-	// A remote binding's mirror already sits in the subdirectory (its CWD is
-	// the checkout the bind ran in), so only a provisioned tree can differ
-	// from where the round runs.
+	// Only a provisioned tree can differ from where the round runs.
 	if res.Binding.Subdir != "" {
 		lines = append(lines, fmt.Sprintf("  round runs in %s", housekeep.RoundDir(res.Binding)))
 	}

@@ -16,8 +16,7 @@ import (
 
 // mastermindOpenTimed opens relevo.db on a goroutine and gives up after
 // mastermindPriorIDTimeout, so a hook never waits on sqlite. The caller must
-// call the returned close function; a nil *db.DB means the open did not finish
-// in time, and the safe answers (no prior id, unset consent) follow from it.
+// call the returned close function; a nil *db.DB reads as the safe answers.
 func mastermindOpenTimed(path string) (*db.DB, func()) {
 	opened := make(chan *db.DB, 1)
 	go func() {
@@ -47,8 +46,8 @@ func mastermindOpenTimed(path string) (*db.DB, func()) {
 	}
 }
 
-// mastermindPriorIDFunc reuses a database row's id for (kind, session). A nil
-// handle means "no prior id" and Init mints one.
+// mastermindPriorIDFunc reuses a database row's id for (kind, session); a nil
+// handle means "no prior id".
 func mastermindPriorIDFunc(d *db.DB) func(kind, session string) (string, bool) {
 	if d == nil {
 		return nil
@@ -62,14 +61,13 @@ func mastermindPriorIDFunc(d *db.DB) func(kind, session string) (string, bool) {
 	}
 }
 
-// mastermindRepoKnown reports whether ref names a repository at all.
 func mastermindRepoKnown(ref db.Repo) bool {
 	return ref.OriginURL != nil || ref.CommonDir != nil
 }
 
 // mastermindCaller fills the calling session's identity: an explicit
-// --kind/--session pair wins, else detection. An opencode session carries no
-// id in the environment, so detection fills it from opencode's own database.
+// --kind/--session pair wins, else detection. An opencode session carries no id
+// in the environment, so detection fills it from opencode's own database.
 func mastermindCaller(rt relevo.Runtime, cwd, kindFlag, sessionFlag string) (mastermind.InitInput, error) {
 	if kindFlag != "" || sessionFlag != "" {
 		if kindFlag == "" || sessionFlag == "" {
@@ -112,8 +110,6 @@ func mastermindCaller(rt relevo.Runtime, cwd, kindFlag, sessionFlag string) (mas
 	return in, nil
 }
 
-// mastermindEnableFlagValues holds the pointers `mastermind enable` parses
-// into.
 type mastermindEnableFlagValues struct {
 	repo    *bool
 	kind    *string
@@ -121,8 +117,6 @@ type mastermindEnableFlagValues struct {
 	asJSON  *bool
 }
 
-// mastermindEnableFlagSet defines those flags on fs and returns what they
-// parse into.
 func mastermindEnableFlagSet(fs *flag.FlagSet) *mastermindEnableFlagValues {
 	v := &mastermindEnableFlagValues{}
 	v.repo = fs.Bool("repo", false, "remember yes for this repository, not just this session")
@@ -166,9 +160,8 @@ func cmdMasterMindEnableRun(args []string) error {
 	caller.CWD = cwd
 	caller.Now = rt.Now()
 
-	// The answer is the session's own, unless --repo answered for the
-	// repository: then the session's earlier "this session only" is cleared so
-	// the repository's answer governs the session.
+	// With --repo the session's earlier "this session only" is cleared, so the
+	// repository's answer governs the session.
 	answer := db.ConsentYes
 	if *repo {
 		answer = db.ConsentUnset
@@ -190,8 +183,8 @@ func cmdMasterMindEnableRun(args []string) error {
 		return err
 	}
 
-	// The env-file append is a side effect both modes keep; only the stdout
-	// export line is a notice that moves off stdout under --json.
+	// The env-file append stays in both modes; only the stdout export line moves
+	// off stdout under --json.
 	exported := false
 	if envFile := os.Getenv("CLAUDE_ENV_FILE"); envFile != "" {
 		if err := appendEnvLine(envFile, mastermind.EnvLine(rec.ID)); err != nil {
@@ -224,11 +217,8 @@ func cmdMasterMindEnableRun(args []string) error {
 	return nil
 }
 
-// cmdMasterMindDisable answers no for the repository, or for this session: the
-// session's own answer is written whether or not it has a record, and an
-// existing record is forgotten.
-// mastermindDisableFlagValues holds the pointers `mastermind disable` parses
-// into.
+// cmdMasterMindDisable answers no for the repository, or for this session, and
+// forgets an existing record.
 type mastermindDisableFlagValues struct {
 	repo    *bool
 	kind    *string
@@ -236,8 +226,6 @@ type mastermindDisableFlagValues struct {
 	asJSON  *bool
 }
 
-// mastermindDisableFlagSet defines those flags on fs and returns what they
-// parse into.
 func mastermindDisableFlagSet(fs *flag.FlagSet) *mastermindDisableFlagValues {
 	v := &mastermindDisableFlagValues{}
 	v.repo = fs.Bool("repo", false, "remember no for this repository; without it, answer no for this session")
@@ -272,10 +260,8 @@ func cmdMasterMindDisableRun(args []string) error {
 		if err := mastermindWriteConsent(rt, cwd, db.ConsentNo); err != nil {
 			return err
 		}
-		// A session's own yes would outrank the repository's no, so the
-		// caller's answer is cleared when the caller is known. A caller relevo
-		// cannot detect (a human in a plain terminal) is left alone; a
-		// half-given explicit pair is still an error.
+		// A session's own yes would outrank the repository's no, so the caller's
+		// answer is cleared when the caller is known.
 		if caller, err := mastermindCaller(rt, cwd, *kind, *session); err == nil {
 			if err := mastermindWriteSessionConsent(rt, caller.Kind, caller.SessionID, db.ConsentUnset); err != nil {
 				return err
@@ -291,7 +277,7 @@ func cmdMasterMindDisableRun(args []string) error {
 	}
 
 	// An explicit (kind, session) names the session a harness cannot detect
-	// itself; a plugin passes it, and the rest falls back to detection.
+	// itself; the rest falls back to detection.
 	var kindV, sessionV string
 	if *kind != "" || *session != "" {
 		caller, err := mastermindCaller(rt, cwd, *kind, *session)
@@ -307,8 +293,7 @@ func cmdMasterMindDisableRun(args []string) error {
 		kindV, sessionV = rec.HarnessKind, rec.SessionID
 	}
 
-	// The answer takes effect whether or not a record exists: a session that
-	// never registered can still answer no.
+	// The answer takes effect whether or not a record exists.
 	if err := mastermindWriteSessionConsent(rt, kindV, sessionV, db.ConsentNo); err != nil {
 		return err
 	}
@@ -339,17 +324,13 @@ func cmdMasterMindDisableRun(args []string) error {
 }
 
 // cmdMasterMindReset clears the current repository's answer and the calling
-// session's own answer and told baseline, so the next session -- or the next
-// prompt -- asks the consent question again.
-// mastermindResetFlagValues holds the pointers `mastermind reset` parses into.
+// session's own answer and told baseline, so the consent question is asked again.
 type mastermindResetFlagValues struct {
 	kind    *string
 	session *string
 	asJSON  *bool
 }
 
-// mastermindResetFlagSet defines those flags on fs and returns what they parse
-// into.
 func mastermindResetFlagSet(fs *flag.FlagSet) *mastermindResetFlagValues {
 	v := &mastermindResetFlagValues{}
 	v.kind = fs.String("kind", "", "harness kind for an explicit session (with --session)")
@@ -421,10 +402,7 @@ func cmdMasterMindResetRun(args []string) error {
 
 // cmdMasterMindGuide renders the model-facing text for a location's consent
 // answer: the guide when the repository answered yes, the ask-note when it has
-// not, and nothing when it answered no or is not a repository. The opencode
-// plugin calls it once per session and pushes the text into the session's
-// system instructions.
-// mastermindGuideFlagValues holds the pointers `mastermind guide` parses into.
+// not, and nothing when it answered no or is not a repository.
 type mastermindGuideFlagValues struct {
 	cwd     *string
 	kind    *string
@@ -432,8 +410,6 @@ type mastermindGuideFlagValues struct {
 	asJSON  *bool
 }
 
-// mastermindGuideFlagSet defines those flags on fs and returns what they parse
-// into.
 func mastermindGuideFlagSet(fs *flag.FlagSet) *mastermindGuideFlagValues {
 	v := &mastermindGuideFlagValues{}
 	v.cwd = fs.String("cwd", "", "the session's working directory (default: the process cwd)")
@@ -451,11 +427,8 @@ func cmdMasterMindGuide(args []string) error {
 		return err
 	}
 
-	// A process relevo started for a round is a runner, not a MasterMind
-	// session: it is never asked, briefed or registered, so the guide answers
-	// and returns before anything opens the database or reads a repository.
-	// The disabled state is the existing non-repository answer, which the
-	// plugin is already silent on.
+	// A process relevo started for a round is a runner, never asked, briefed or
+	// registered, so the guide answers before anything opens the database.
 	if isRunnerHost() {
 		if *asJSON {
 			fmt.Println(`{"state":"disabled","text":""}`)
@@ -468,9 +441,8 @@ func cmdMasterMindGuide(args []string) error {
 		return fail(codeInternal, "%v", err)
 	}
 
-	// The plugin knows the session but not its repository, so an opencode
-	// session id resolves the directory opencode recorded. An explicit --cwd,
-	// or anything else, falls back to the process's own directory.
+	// An opencode session id resolves the directory opencode recorded; an
+	// explicit --cwd, or anything else, falls back to the process's directory.
 	cwd := *cwdFlag
 	if cwd == "" && *kind == "opencode" && *session != "" && rt.OpencodeSessionDir != nil {
 		if dir, derr := rt.OpencodeSessionDir(*session); derr == nil {
@@ -483,8 +455,7 @@ func cmdMasterMindGuide(args []string) error {
 		}
 	}
 
-	// No repository means no answer to give and none to ask for; the hook
-	// reads the same rule.
+	// No repository means no answer to give and none to ask for.
 	repoState := db.ConsentNo
 	repoLabel := ""
 	ref := mastermindRepoOf(context.Background(), rt, cwd)
@@ -503,9 +474,7 @@ func cmdMasterMindGuide(args []string) error {
 		}
 	}
 
-	// The session's own answer outranks the repository's: a session `no` stays
-	// disabled inside a `yes` repository, and a session `yes` enables even
-	// where the repository is unset or says no.
+	// The session's own answer outranks the repository's.
 	sessionState := db.ConsentUnset
 	if *kind != "" && *session != "" && d != nil {
 		if c, err := d.SessionConsent(*kind, *session); err == nil {
@@ -514,13 +483,8 @@ func cmdMasterMindGuide(args []string) error {
 	}
 	state := mastermind.EffectiveConsent(sessionState, repoState)
 
-	// The session's own record, when it has one, is reported for every state
-	// but no: a session that answered for itself (`relevo mastermind enable`)
-	// is briefed whatever the repository says, and one that answered no is not
-	// briefed at all. An enabled session creates the record here, so the
-	// identity sentence names the MasterMind the TUI shows; a registration
-	// failure leaves the text without the sentence rather than failing the
-	// session.
+	// An enabled session creates its record here; a registration failure leaves
+	// the text without the identity sentence rather than failing the session.
 	var rec *mastermind.Record
 	if *kind != "" && *session != "" && state != db.ConsentNo {
 		if reg, err := mastermindRegistry(rt); err == nil {

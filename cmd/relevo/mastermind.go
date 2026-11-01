@@ -24,18 +24,15 @@ import (
 )
 
 // mastermindPriorIDTimeout bounds how long `relevo mastermind init` waits for the
-// database to open before giving up on reusing a row's id. A
-// SessionStart hook must never block a session on sqlite.
+// database to open: a SessionStart hook must never block a session on sqlite.
 const mastermindPriorIDTimeout = 2 * time.Second
 
-// mastermindFlagSet declares the bare `mastermind` dispatcher's flags: none
-// today. It exists so the registry's parity test finds exactly one installer
-// per verb.
+// mastermindFlagSet exists so the registry's parity test finds exactly one
+// installer per verb.
 func mastermindFlagSet(*flag.FlagSet) {}
 
 // cmdMasterMind dispatches `relevo mastermind init|notice|enable|disable|guide|list|rename|forget`.
-// It touches no harness:
-// a mastermind record is relevo's own identity, not a pane.
+// It touches no harness: a mastermind record is relevo's own identity, not a pane.
 func cmdMasterMind(args []string) error {
 	const usage = `usage: relevo mastermind init [--name N] [--kind K --session S] [--hook claude|muse]
        relevo mastermind notice --hook claude|muse
@@ -84,9 +81,7 @@ func cmdMasterMind(args []string) error {
 }
 
 // mastermindRegistry is the registry over the store root's machine-local file:
-// a record is a pid, a cwd and a host on this machine, so it binds the local
-// file the way every other machine-local surface does. A store whose database
-// cannot be opened is fatal for the verb.
+// records are this machine's own, so they bind the local file.
 func mastermindRegistry(rt relevo.Runtime) (*mastermind.DBRegistry, error) {
 	d, err := rt.Store.DB()
 	if err != nil {
@@ -179,8 +174,7 @@ func cmdMasterMindInitRun(args []string) error {
 }
 
 // mastermindRepoLabel is the repository label a mastermind document names: the
-// normalised origin URL, else the canonical common dir, else "" when cwd is
-// not inside a repository.
+// origin URL, else the common dir, else "" outside a repository.
 func mastermindRepoLabel(rt relevo.Runtime, cwd string) string {
 	ref := mastermindRepoOf(context.Background(), rt, cwd)
 	if ref.OriginURL != nil {
@@ -194,8 +188,7 @@ func mastermindRepoLabel(rt relevo.Runtime, cwd string) string {
 
 // mastermindHostStart reads a host process's start time in Unix seconds, the
 // pid-reuse defence behind host_started_at. A failure reports 0 rather than
-// failing the caller: the record is still useful, and the session step
-// resolves the mastermind when the host cannot be matched.
+// failing the caller: the record is still useful without it.
 func mastermindHostStart(pid int) int64 {
 	if pid <= 0 {
 		return 0
@@ -221,8 +214,7 @@ func appendEnvLine(path, line string) error {
 }
 
 // cmdMasterMindEnable answers yes for this session, and with --repo for the
-// repository, then registers the calling session so the answer takes effect
-// without a restart.
+// repository, then registers the calling session.
 type mastermindListFlagValues struct {
 	asJSON *bool
 }
@@ -246,8 +238,7 @@ func cmdMasterMindList(args []string) error {
 		return err
 	}
 
-	// DBRegistry.List sorts by name, which is the order `relevo mastermind list`
-	// documents.
+	// DBRegistry.List sorts by name, which is the order the list documents.
 	reg, err := mastermindRegistry(rt)
 	if err != nil {
 		return fail(codeInternal, "%v", err)
@@ -257,18 +248,15 @@ func cmdMasterMindList(args []string) error {
 		return fail(codeInternal, "%v", err)
 	}
 
-	// The count of non-DONE bindings naming each mastermind, from the same store
-	// walk forget's guard uses. Both it and the state column are derived here,
-	// not stored on the record: the file is identity, and this is the
-	// machine's present answer about it.
+	// The count of non-DONE bindings naming each mastermind, derived here rather
+	// than stored on the record.
 	counts, err := mastermindBindingCounts(rt)
 	if err != nil {
 		return fail(codeInternal, "%v", err)
 	}
 
-	// The chat column: what the harness itself calls each session, read from
-	// the harness's own files when the command runs and never stored on the
-	// record.
+	// The chat column is read from the harness's own files when the command
+	// runs, never stored on the record.
 	res := chatResolver()
 	labels := make([]chatlabel.Label, len(records))
 	for i, rec := range records {
@@ -291,8 +279,8 @@ func cmdMasterMindList(args []string) error {
 		return enc.Encode(views)
 	}
 
-	// tabwriter, not fixed widths: a 36-character session id or a long cwd
-	// would overflow its cell and shift every column after it.
+	// Tabwriter, not fixed widths: a long session id or cwd would shift every
+	// column after it.
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "name\tchat\tid\tkind\tsession\thost pid\tstate\tbindings\tcwd\tseen")
 	for i, rec := range records {
@@ -308,22 +296,19 @@ func cmdMasterMindList(args []string) error {
 	return w.Flush()
 }
 
-// mastermindListView is one record as `relevo mastermind list --json` renders it: the
-// record's own fields, flattened by the embedded struct, plus the two derived
-// columns the table shows.
+// mastermindListView is one record as `relevo mastermind list --json` renders it,
+// plus the two derived columns the table shows.
 type mastermindListView struct {
 	mastermind.Record
 	State    string `json:"state"`
 	Bindings int    `json:"bindings"`
-	// ChatLabel and ChatLink are the harness's own name for the session, read
-	// when the command runs and never stored.
+	// ChatLabel and ChatLink are the harness's own name for the session.
 	ChatLabel string `json:"chat_label,omitempty"`
 	ChatLink  string `json:"chat_link,omitempty"`
 }
 
-// chatResolver is the label reader `relevo mastermind list` uses: an
-// opencode session title is read through the sqlite3 shell-out, which is wired
-// only when sqlite3 is on PATH.
+// chatResolver is the label reader `relevo mastermind list` uses; the opencode
+// title shell-out is wired only when sqlite3 is on PATH.
 func chatResolver() chatlabel.Resolver {
 	if _, err := exec.LookPath("sqlite3"); err != nil {
 		return chatlabel.Resolver{}
@@ -331,13 +316,10 @@ func chatResolver() chatlabel.Resolver {
 	return chatlabel.Resolver{Exec: binExec{}, OpencodeDB: opencodeDBPath()}
 }
 
-// annotateMasterMindChat fills each binding row's MasterMindChatLabel and
-// MasterMindChatLink from the mastermind record the row names. It runs only
-// from cmd/relevo, inside the command a person ran, and fills only fields that
-// are printed: internal/relevo.Status itself never computes a label, because it
-// also serves relevo serve. The label is resolved at most once per mastermind id,
-// every lookup failure ends in the empty label, and the function never returns
-// an error and never prints.
+// annotateMasterMindChat fills each binding row's chat label and link from the
+// mastermind record the row names. It fills only fields that are printed, at
+// most once per mastermind id; every lookup failure ends in the empty label,
+// and the function never returns an error and never prints.
 func annotateMasterMindChat(rt relevo.Runtime, rep *view.Report, res chatlabel.Resolver) {
 	if rt.MasterMinds == nil {
 		return
@@ -467,8 +449,8 @@ func cmdMasterMindForgetRun(args []string) error {
 	return nil
 }
 
-// mastermindLookup resolves one <id|name> argument the way Resolve resolves a
-// --mastermind value: by id when it has the id shape, else by name.
+// mastermindLookup resolves one <id|name> argument: by id when it has the id
+// shape, else by name.
 func mastermindLookup(reg mastermind.Registry, ref string) (mastermind.Record, error) {
 	if mastermind.ValidID(ref) == nil {
 		rec, err := reg.Get(ref)
@@ -493,16 +475,14 @@ func mastermindLookup(reg mastermind.Registry, ref string) (mastermind.Record, e
 	}
 }
 
-// errGCUsage is gcScope's usage-error shape: a message cmdUnbind/runGC print
-// to stderr verbatim before exiting 2.
+// errGCUsage is gcScope's usage-error shape, printed to stderr verbatim.
 type errGCUsage string
 
 func (e errGCUsage) Error() string { return string(e) }
 
 // gcScope turns unbind --done's --mastermind/--all-masterminds flags into a GC
-// scope, with no fallback to "everything". resolve is injected so the
-// function stays pure and needs no registry to test; in production it closes
-// over a Runtime and calls mastermind.Resolve.
+// scope, with no fallback to "everything". resolve is injected so the function
+// stays pure and needs no registry to test.
 func gcScope(mastermindFlag string, all bool, resolve func(ref string) (mastermind.Record, error)) (housekeep.GCOptions, error) {
 	switch {
 	case all && mastermindFlag != "":
@@ -519,12 +499,9 @@ func gcScope(mastermindFlag string, all bool, resolve func(ref string) (mastermi
 	return housekeep.GCOptions{MasterMindID: rec.ID}, nil
 }
 
-// mastermindInUse is Forget's guard: a record any binding that is not DONE
-// still names is in use, and forgetting it would strand that binding's
-// history. It walks the same store listing `relevo status --all` reads.
-//
-// An unreadable store refuses the forget: deleting a record a live binding may
-// name is worse than making the human retry.
+// mastermindInUse is Forget's guard: a record any binding that is not DONE still
+// names is in use. An unreadable store refuses the forget: deleting a record a
+// live binding may name is worse than making the human retry.
 func mastermindInUse(rt relevo.Runtime) func(id string) bool {
 	return func(id string) bool {
 		counts, err := mastermindBindingCounts(rt)
@@ -536,9 +513,8 @@ func mastermindInUse(rt relevo.Runtime) func(id string) bool {
 }
 
 // mastermindBindingCounts counts, per mastermind id, the bindings that are not DONE
-// and name that mastermind -- the store listing Forget's in-use guard walks. An
-// unreadable store is an error, never an empty map: "no bindings" would let
-// the daemon's hourly prune delete a record a binding still names.
+// and name that mastermind. An unreadable store is an error, never an empty map:
+// "no bindings" would let the hourly prune delete a record a binding still names.
 func mastermindBindingCounts(rt relevo.Runtime) (map[string]int, error) {
 	bindings, err := rt.Store.List()
 	if err != nil {

@@ -9,9 +9,8 @@ import (
 )
 
 // mastermindRepoOf reads cwd's repository identity through the runtime's git
-// client, in the same shape internal/ingest stores: the origin URL normalised,
-// the common dir canonical. A Runtime with no git client, or a cwd outside a
-// repository, yields an empty ref.
+// client. A Runtime with no git client, or a cwd outside a repository, yields
+// an empty ref.
 func mastermindRepoOf(ctx context.Context, rt relevo.Runtime, cwd string) db.Repo {
 	if rt.Git == nil {
 		return db.Repo{}
@@ -32,8 +31,7 @@ func mastermindRepoOf(ctx context.Context, rt relevo.Runtime, cwd string) db.Rep
 }
 
 // mastermindWriteSessionConsent writes one answer for a session. Unlike the
-// repository answer it needs no git repository: "this session only" is an
-// answer about the session, whatever the cwd is.
+// repository answer it needs no git repository.
 func mastermindWriteSessionConsent(rt relevo.Runtime, kind, session string, c db.Consent) error {
 	if kind == "" || session == "" {
 		return fail(codeUsage, "relevo mastermind: needs both --kind and --session, or neither")
@@ -45,8 +43,7 @@ func mastermindWriteSessionConsent(rt relevo.Runtime, kind, session string, c db
 	return d.SetSessionConsent(kind, session, c, rt.Now())
 }
 
-// mastermindClearSessionConsent forgets a session's own answer and its told
-// baseline in one write.
+// mastermindClearSessionConsent forgets a session's answer and its told baseline.
 func mastermindClearSessionConsent(rt relevo.Runtime, kind, session string) error {
 	if kind == "" || session == "" {
 		return nil
@@ -58,8 +55,8 @@ func mastermindClearSessionConsent(rt relevo.Runtime, kind, session string) erro
 	return d.ClearSessionConsent(kind, session)
 }
 
-// mastermindWriteConsent writes one answer for cwd's repository. A cwd outside
-// a git repository has nothing to remember, so the answer commands refuse.
+// mastermindWriteConsent writes one answer for cwd's repository. Outside a git
+// repository there is nothing to remember, so the answer commands refuse.
 func mastermindWriteConsent(rt relevo.Runtime, cwd string, c db.Consent) error {
 	ref := mastermindRepoOf(context.Background(), rt, cwd)
 	if !mastermindRepoKnown(ref) {
