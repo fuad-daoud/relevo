@@ -56,9 +56,9 @@ func (a *catchUpAck) matches(b store.Binding) bool {
 		store.KnownState(b.State)
 }
 
-// ackCatchUp acks a collected round outside the state lock. A failure is the
-// same retry as before: warned here, no report queued, the still-closed round
-// re-collected by the next pass.
+// ackCatchUp acks a collected round outside the state lock. A failure warns
+// here with no report queued; the still-closed round is re-collected by the
+// next pass.
 func ackCatchUp(ctx context.Context, rt Runtime, a *catchUpAck) error {
 	if _, err := rt.Remote.Ack(ctx, a.Server, a.Name, a.Round); err != nil {
 		slog.Warn("ack failed", "server", a.Server, "name", a.Name, "round", a.Round, "err", err)
@@ -68,7 +68,7 @@ func ackCatchUp(ctx context.Context, rt Runtime, a *catchUpAck) error {
 }
 
 // settleCatchUpInline finishes a catch-up for a caller that still holds the
-// lock: today's one-pass behaviour, for the inline paths.
+// lock, for the inline paths.
 func settleCatchUpInline(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a *catchUpAck) (store.Binding, error) {
 	if err := ackCatchUp(ctx, rt, a); err != nil {
 		return b, nil
@@ -77,8 +77,8 @@ func settleCatchUpInline(ctx context.Context, rt Runtime, tx *store.Tx, b store.
 }
 
 // applyCatchUpFiles renames the fetched report, log and stream temps into
-// place and stores the diff and DB-form log under tx. A failure anywhere logs
-// as the inline write did and leaves the binding for the next tick.
+// place and stores the diff and DB-form log under tx. A failure anywhere warns
+// and leaves the binding for the next tick.
 func applyCatchUpFiles(rt Runtime, tx *store.Tx, b store.Binding, view remote.BindingView, cf *catchUpFetch) bool {
 	// A reader has no report or diff: its downloaded artifacts are renamed
 	// into place instead, the output at the path reportPathFor recorded.
@@ -240,7 +240,7 @@ func remoteGateRecord(a *catchUpAck) *store.GateRecord {
 
 // applyCatchUpReport queues the round's report entry: the client's own diff
 // entry from the server's facts first, then the payload, the stop entry and
-// the idle status, in the order the inline catch-up used.
+// the idle status, matching the inline path's order.
 func applyCatchUpReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a *catchUpAck) (store.Binding, error) {
 	n := a.View.ClosedRound
 	name := b.Name

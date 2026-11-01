@@ -42,18 +42,14 @@ func joinNotes(a, b string) string {
 // (Store.DonePath) exists. It is the one place the round decides "the builder
 // says it is finished".
 //
-// With a gate configured it first runs the gate across ticks: gating
-// is true while the gate is running and the round must be left alone --
-// both callers return early without acting on the builder in any way (no
-// nudge, no "exited without a report" switch, no timeout halt). closed is
-// true when the round was closed this tick. closed and gating are never
-// both true.
+// With a gate configured it first runs the gate across ticks: gating is true
+// while the gate runs and the round is left alone; closed is true when the
+// round was closed this tick; the two are never both true.
 //
 // extraNote is appended (via joinNotes) to whichever note this close would
-// otherwise write -- "" for the pane path, and the escape annotation
-// computed by the headless path from escapeCheck before this call, since
-// queueReport clears RoundBaselineTree and the comparison must happen while
-// it is still on the binding.
+// otherwise write, computed before this call since queueReport clears
+// RoundBaselineTree and the comparison must happen while it is still on the
+// binding.
 //
 // Preconditions: the round is open -- a plan was sent for b.Round and no
 // report has been queued for it.
@@ -271,9 +267,8 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	}
 
 	if outcome != reporttail.OutcomeDone && outcome != reporttail.OutcomeUnstructured {
-		// The prefix match accepts the current words and the pre-rename ones,
-		// so a payload carrying either is annotated in place; anything else
-		// gets the outcome appended.
+		// The prefix match accepts either wording, so a payload carrying
+		// either is annotated in place; anything else gets the outcome appended.
 		prefix := fmt.Sprintf("The runner finished round %d", b.Round)
 		legacyPrefix := fmt.Sprintf("Builder finished round %d", b.Round)
 		matched := ""
@@ -347,8 +342,8 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// the usage the entry carries. A switch is status, not a delivery: nothing
 	// is queued for one, so this line is the only trace of it the mastermind
 	// gets, and it rides the report that would have been delivered anyway.
-	// A round that never switched appends nothing, so its payload is exactly
-	// what it was before this existed.
+	// A round that never switched appends nothing, so its payload is unchanged
+	// by this.
 	for _, line := range switchLines(entries, closedRound, payloadNamesSwitches(payload)) {
 		payload = payload + "\n" + line
 	}
@@ -475,8 +470,8 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	b.RoundRepoBaselineTree = ""
 	// A remote member's closed tree is the pulled result commit the catch-up
 	// recorded -- there is no local worktree to snapshot -- so it keeps that
-	// value across the advance. Every non-remote binding keeps today's exact
-	// assignment.
+	// value across the advance. Every non-remote binding takes the assignment
+	// below.
 	if !b.Builder.Remote() {
 		b.RoundClosedTree = closed
 	}

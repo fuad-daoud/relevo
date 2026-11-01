@@ -123,9 +123,6 @@ func stampStale(rt Runtime, tx *store.Tx, b store.Binding) store.Binding {
 // one binding carry both a newer-format and an unknown-state warning.
 var stateWarned sync.Map
 
-// warnOnce logs msg at Warn the first time binding+reason is seen in this
-// process. The variadic args are structured attributes, as every other slog
-// call in the package uses.
 func warnOnce(binding, reason, msg string, args ...any) {
 	if _, seen := stateWarned.LoadOrStore(binding+"\x00"+reason, struct{}{}); seen {
 		return
@@ -145,7 +142,7 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (
 }
 
 // reconcileWith is Reconcile with an optional prefetched remote view: a nil
-// pre makes a remote binding fetch inline, as Reconcile always did.
+// pre makes a remote binding fetch inline.
 func reconcileWith(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, pre *remoteFetch) (out store.Binding, err error) {
 	// An unknown State is one a newer relevo wrote. Reconciling it
 	// as live would drive a builder the newer relevo is already driving, so

@@ -138,8 +138,6 @@ func stepCPU(p *store.Progress, s signals, now time.Time) {
 // since a 3 h round polled for 188 min.
 const resumedIdleAfter = 10 * time.Minute
 
-// exploreThreshold is how long the tree may sit still while output moves
-// before the exploring label is set.
 func exploreThreshold(rt Runtime, p *store.Progress) time.Duration {
 	if p.ResumedAt.IsZero() {
 		return rt.Policy.ExploreAfter()

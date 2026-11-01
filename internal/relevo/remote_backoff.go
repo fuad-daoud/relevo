@@ -46,8 +46,6 @@ func (r *remoteBackoff) skip(server string) bool {
 	return r.clock().Before(r.until[server])
 }
 
-// record notes the outcome of a prefetch that was dialled. A failure arms the
-// backoff; a success ends it.
 func (r *remoteBackoff) record(server string, failed bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -84,8 +82,6 @@ func skippedFetch(b store.Binding) *remoteFetch {
 	}
 }
 
-// boundedWait returns ctx with a deadline of d, or ctx itself when d is not
-// positive.
 func boundedWait(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
 	if d <= 0 {
 		return ctx, func() {}
