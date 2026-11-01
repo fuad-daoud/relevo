@@ -171,6 +171,9 @@ func TestCheckMigrateRefusesANewerSchema(t *testing.T) {
 // TestConcurrentOpenAppliesEachMigrationOnce pins the migration guard: the
 // in-transaction re-check is what makes one row per migration hold.
 func TestConcurrentOpenAppliesEachMigrationOnce(t *testing.T) {
+	// A file seeded from the template arrives migrated, so the guard this pins
+	// would never run: every Open here migrates for real.
+	swapFreshTemplate(t, "")
 	for i := 0; i < 20; i++ {
 		path := filepath.Join(t.TempDir(), "relevo.db")
 
