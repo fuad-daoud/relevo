@@ -5,9 +5,7 @@ import (
 	"strings"
 )
 
-// effortWords are the effort names the harnesses spell, lightest first: the
-// order an agy group lists its efforts in, and the suffixes agy names each
-// effort's model with.
+// effortWords are the effort names the harnesses spell, lightest first.
 var effortWords = []string{"minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
 
 var effortWhy = map[string]string{
@@ -20,12 +18,9 @@ var effortWhy = map[string]string{
 	"ultra":   "deepest reasoning plus automatic task delegation",
 }
 
-// claudeEfforts is what `claude --effort` takes, for each of its aliases.
 var claudeEfforts = []string{"low", "medium", "high", "xhigh", "max"}
 
-// harnessChoices are one harness's models as the candidate questions list
-// them: one choice per model, its efforts carried on the choice rather than
-// listed as models of their own.
+// harnessChoices are one harness's models as the candidate questions list them.
 func harnessChoices(s HarnessStatus) []Choice {
 	why := "on " + s.Harness + " (" + providerFor(s.Harness) + ")"
 	var out []Choice
@@ -54,10 +49,8 @@ func harnessChoices(s HarnessStatus) []Choice {
 	return out
 }
 
-// agyChoices groups agy's models by the effort its names end in, because
-// agy lists each effort as a model of its own: gemini-3.8-flash-high and
-// gemini-3.8-flash-low are one choice at two efforts. A model with no effort
-// suffix stands as itself.
+// agyChoices groups agy's models by the effort their names end in: agy lists
+// each effort as a model of its own.
 func agyChoices(models []string) []Choice {
 	var out []Choice
 	at := map[string]int{}
@@ -92,8 +85,7 @@ func splitAgyEffort(model string) (base, effort string) {
 	return model[:i], model[i+1:]
 }
 
-// preferredEffort is the effort an agy group runs at when none is picked:
-// medium where it is offered, else the lightest.
+// preferredEffort is the effort an agy group runs at when none is picked.
 func preferredEffort(efforts []string) string {
 	if slices.Contains(efforts, "medium") || len(efforts) == 0 {
 		return "medium"
@@ -101,8 +93,7 @@ func preferredEffort(efforts []string) string {
 	return efforts[0]
 }
 
-// valueAt is a choice's answer value at one effort; no effort leaves a model
-// that runs bare as it is, and gives an agy group its default.
+// valueAt is a choice's answer value at one effort.
 func valueAt(c Choice, effort string) string {
 	if effort == "" {
 		if c.bare || c.sep == "" {
@@ -114,8 +105,7 @@ func valueAt(c Choice, effort string) string {
 }
 
 // atEffort is a choice's value at a wanted effort when the choice runs at
-// it, else at its own default: the recommendations ask for one effort across
-// harnesses that do not all offer it.
+// it, else at its own default.
 func atEffort(c Choice, want string) string {
 	if slices.Contains(c.Efforts, want) || c.open {
 		return valueAt(c, want)
@@ -123,9 +113,7 @@ func atEffort(c Choice, want string) string {
 	return valueAt(c, "")
 }
 
-// choiceAndEffort finds the choice a value names and the effort it carries:
-// the choice value itself, or the value plus an effort after ":" -- or after
-// "-", where agy spells it in the model name.
+// choiceAndEffort finds the choice a value names and the effort it carries.
 func choiceAndEffort(q Question, value string) (Choice, string, bool) {
 	all := append(append([]Choice{}, q.Choices...), q.more...)
 	for _, c := range all {
@@ -150,8 +138,7 @@ func choiceAndEffort(q Question, value string) (Choice, string, bool) {
 	return Choice{}, "", false
 }
 
-// ChoiceFor is the choice one answer value picks, whatever effort it
-// carries.
+// ChoiceFor is the choice one answer value picks.
 func ChoiceFor(q Question, value string) (Choice, bool) {
 	c, _, ok := choiceAndEffort(q, value)
 	return c, ok
@@ -165,7 +152,6 @@ const (
 	plannerEffort = "high"
 )
 
-// effortFor is the effort one candidate question recommends.
 func effortFor(q Question) string {
 	if q.ID == "planner" {
 		return plannerEffort
@@ -174,9 +160,7 @@ func effortFor(q Question) string {
 }
 
 // EffortQuestion is the follow-up a picked model gets when it runs at more
-// than one effort: which one, recommending the effort the pick already
-// carries, else the one a recommendation of the same model carries, else
-// the question's own effort, else the model's default.
+// than one effort.
 func EffortQuestion(q Question, picked string) (Question, bool) {
 	c, effort, ok := choiceAndEffort(q, picked)
 	if !ok || len(c.Efforts) < 2 {
@@ -212,7 +196,6 @@ func recommendedEffort(q Question, c Choice) string {
 	return c.effort
 }
 
-// WithEffort is a picked value moved to one effort.
 func WithEffort(q Question, picked, effort string) string {
 	c, _, ok := choiceAndEffort(q, picked)
 	if !ok {

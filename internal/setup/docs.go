@@ -1,8 +1,7 @@
 package setup
 
-// docs.go holds the setup documents (the questions contract and the result
-// contract) and the numbered TTY prompts. Both are pure over the engine's
-// facts, so a test pins their shape without a harness.
+// docs.go holds the setup documents and the numbered TTY prompts, pure over
+// the engine's facts, so a test pins their shape without a harness.
 
 import (
 	"bufio"
@@ -15,9 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/text"
 )
 
-// SetupQuestionsDoc is the machine shape of "questions are still open": the
-// probed inventory, every standing note, the questions left, and the command
-// that hands the answers back.
+// SetupQuestionsDoc is the machine shape of "questions are still open".
 type SetupQuestionsDoc struct {
 	Inventory []SetupInventoryEntry `json:"inventory"`
 	Notes     []string              `json:"notes,omitempty"`
@@ -25,9 +22,8 @@ type SetupQuestionsDoc struct {
 	Next      string                `json:"next"`
 }
 
-// SetupInventoryEntry is one probed harness row: on_path is always true (a
-// binary not on PATH gets no row), and login names the way in only where it
-// is missing.
+// SetupInventoryEntry is one probed harness row; on_path is always true, and
+// login names the way in only where it is missing.
 type SetupInventoryEntry struct {
 	Harness  string   `json:"harness"`
 	OnPath   bool     `json:"on_path"`
@@ -39,8 +35,7 @@ type SetupInventoryEntry struct {
 	Providers map[string]int `json:"providers,omitempty"`
 }
 
-// SetupQuestionDoc is one open question: its prompt, whether several values
-// may be picked in order, the recommended ones, and the choices to name.
+// SetupQuestionDoc is one open question.
 type SetupQuestionDoc struct {
 	ID          string           `json:"id"`
 	Prompt      string           `json:"prompt"`
@@ -50,9 +45,8 @@ type SetupQuestionDoc struct {
 	Choices     []SetupChoiceDoc `json:"choices"`
 }
 
-// SetupChoiceDoc is one choice: the value an --answer flag takes, a short
-// label, the one-line why, and for a model the efforts an answer may append
-// as value:effort.
+// SetupChoiceDoc is one choice: the value an --answer flag takes and, for a
+// model, the efforts an answer may append as value:effort.
 type SetupChoiceDoc struct {
 	Value   string   `json:"value"`
 	Label   string   `json:"label"`
@@ -60,14 +54,12 @@ type SetupChoiceDoc struct {
 	Efforts []string `json:"efforts,omitempty"`
 }
 
-// SetupResultDoc is the machine shape of an applied run: one row per step,
-// the failing ones naming their own fix.
+// SetupResultDoc is the machine shape of an applied run: one row per step.
 type SetupResultDoc struct {
 	Steps []SetupStepDoc `json:"steps"`
 }
 
-// SetupStepDoc is one applied step: success or failure, the failure's reason
-// and the command that fixes it.
+// SetupStepDoc is one applied step.
 type SetupStepDoc struct {
 	Step   string `json:"step"`
 	OK     bool   `json:"ok"`
@@ -80,7 +72,6 @@ func setupQuestionsDocOf(inv Inventory, questions []Question) SetupQuestionsDoc 
 	for _, s := range inv.Harnesses {
 		login := s.Login
 		if s.LoggedIn {
-			// Logged in needs no way in: an empty login omits the field's key.
 			login = ""
 		}
 		entry := SetupInventoryEntry{
@@ -126,8 +117,7 @@ func setupQuestionDocs(qs []Question) []SetupQuestionDoc {
 	return docs
 }
 
-// setupQuestionsNext names the answers still owed; a role question may be
-// left out, so it is not named.
+// setupQuestionsNext names the answers still owed; a role question is not named.
 func setupQuestionsNext(qs []Question) string {
 	parts := make([]string, 0, len(qs))
 	for _, q := range qs {
@@ -139,8 +129,6 @@ func setupQuestionsNext(qs []Question) string {
 	return strings.Join(append([]string{"relevo setup"}, parts...), " ")
 }
 
-// setupQuestionPlaceholder is the value placeholder a yes/no question's
-// answer spells with both picks, the ordered questions' with the general one.
 func setupQuestionPlaceholder(q Question) string {
 	if len(q.Choices) == 2 && q.Choices[0].Value == "yes" && q.Choices[1].Value == "no" {
 		return "<yes|no>"
@@ -153,7 +141,7 @@ func setupResultDocOf(steps []SetupStepDoc) SetupResultDoc {
 }
 
 // setupPrintQuestions prints the questions document and returns the exit
-// the caller takes silently: the document itself sits on stdout.
+// the caller takes silently.
 func setupPrintQuestions(printDoc func(v any) error, doc SetupQuestionsDoc) error {
 	if err := printDoc(doc); err != nil {
 		return err
@@ -161,9 +149,7 @@ func setupPrintQuestions(printDoc func(v any) error, doc SetupQuestionsDoc) erro
 	return ErrQuestionsOpen
 }
 
-// setupStepDocOf turns a shaped failure into its result row: the step's own
-// message and the next it carried, or the failure's first line when it never
-// reached a step shape.
+// setupStepDocOf turns a shaped failure into its result row.
 func setupStepDocOf(step string, err error) SetupStepDoc {
 	var se *StepError
 	if errors.As(err, &se) {
@@ -185,12 +171,9 @@ func setupStepDocOf(step string, err error) SetupStepDoc {
 }
 
 // askSetupQuestions walks the open questions in order, reading one answer
-// line per question, then one per picked model that runs at several efforts,
-// and echoes what each answer picked. The role questions are asked only
-// when the reader chooses to customize the roles their picks imply; given
-// carries the answers flags already gave, which those roles follow too.
-// rebuild, when set, is how the questions after opencode's are asked again
-// once its answer narrows the models they offer.
+// line per question plus one per picked model that runs at several efforts.
+// rebuild, when set, re-asks the questions after opencode's once its answer
+// narrows the models they offer.
 func askSetupQuestions(w io.Writer, r io.Reader, qs []Question, given Answers, rebuild func(Answers) []Question) (Answers, error) {
 	sc := bufio.NewScanner(r)
 	out := make(Answers, len(qs))
@@ -241,8 +224,6 @@ func askSetupQuestions(w io.Writer, r io.Reader, qs []Question, given Answers, r
 	return out, nil
 }
 
-// refreshedQuestions are the questions still to ask, each replaced by its
-// rebuilt shape.
 func refreshedQuestions(rest, rebuilt []Question) []Question {
 	out := make([]Question, len(rest))
 	for i, q := range rest {
@@ -256,8 +237,6 @@ func refreshedQuestions(rest, rebuilt []Question) []Question {
 	return out
 }
 
-// askSetupAnswer asks one question and its effort follow-ups, then echoes
-// the result.
 func askSetupAnswer(w io.Writer, sc *bufio.Scanner, q Question) ([]string, error) {
 	vals, spelled, err := askOneSetupQuestion(w, sc, q)
 	if err != nil {
@@ -281,7 +260,7 @@ func describeSetupAnswer(q Question, vals []string) string {
 }
 
 // askSetupRoles shows what the other roles get from the answers so far and
-// asks whether to keep that or pick each role.
+// asks whether to keep that.
 func askSetupRoles(w io.Writer, sc *bufio.Scanner, qs []Question, answers Answers) (bool, error) {
 	derived := DerivedRoles(qs, answers)
 	var lines []string
@@ -307,8 +286,7 @@ func askSetupRoles(w io.Writer, sc *bufio.Scanner, qs []Question, answers Answer
 	return vals[0] == "customize", nil
 }
 
-// askSetupEfforts asks each picked model's effort, in pick order. A model
-// with one effort or none is kept as picked.
+// askSetupEfforts asks each picked model's effort, in pick order.
 func askSetupEfforts(w io.Writer, sc *bufio.Scanner, q Question, vals []string) ([]string, error) {
 	out := make([]string, 0, len(vals))
 	for _, v := range vals {
@@ -327,9 +305,8 @@ func askSetupEfforts(w io.Writer, sc *bufio.Scanner, q Question, vals []string) 
 }
 
 // askOneSetupQuestion renders one prompt and reads an answer, re-asking up
-// to three times when a line is unusable; an empty line takes the
-// recommendation. spelled reports an answer typed out as values rather than
-// picked by number or Enter: it already says its effort, so none is asked.
+// to three times; an empty line takes the recommendation. spelled reports an
+// answer typed out as values: it already says its effort, so none is asked.
 func askOneSetupQuestion(w io.Writer, sc *bufio.Scanner, q Question) (vals []string, spelled bool, err error) {
 	for tries := 0; tries < 3; tries++ {
 		writeSetupPrompt(w, q)
@@ -350,8 +327,7 @@ func askOneSetupQuestion(w io.Writer, sc *bufio.Scanner, q Question) (vals []str
 }
 
 // writeSetupPrompt renders one question: the prompt, every choice with the
-// recommended ones marked -- numbered by order on a multi, where order is
-// the answer -- then the answer line.
+// recommended ones marked, then the answer line.
 func writeSetupPrompt(w io.Writer, q Question) {
 	fmt.Fprintf(w, "\n%s\n", q.Prompt)
 	for i, c := range q.Choices {
@@ -380,8 +356,7 @@ func recommendedMark(q Question, c Choice) string {
 	return ""
 }
 
-// setupChoiceText carries a choice's label beside its value when the label
-// differs; the wizard's yes/nos carry none.
+// setupChoiceText carries a choice's label beside its value when the label differs.
 func setupChoiceText(c Choice) string {
 	if c.Label != "" && c.Label != c.Value {
 		return c.Label + " (" + c.Value + ")"
@@ -390,8 +365,8 @@ func setupChoiceText(c Choice) string {
 }
 
 // promptAnswerLine turns one typed line into an answer: a comma list of
-// numbers picks choices in the order typed, and anything else is parsed as
-// the flag rule would and reports itself spelled.
+// numbers picks choices in the order typed, and anything else parses as an
+// --answer flag would.
 func promptAnswerLine(q Question, line string) ([]string, bool, error) {
 	tokens := strings.Split(line, ",")
 	if order, ok := numericTokens(tokens); ok {
@@ -409,9 +384,7 @@ func promptAnswerLine(q Question, line string) ([]string, bool, error) {
 	return vals, true, err
 }
 
-// numericTokens reports a comma list of natural numbers, keeping the order
-// typed; anything else means the line is an answer as an --answer flag
-// carries it.
+// numericTokens reports a comma list of natural numbers, keeping the order typed.
 func numericTokens(tokens []string) ([]int, bool) {
 	order := make([]int, 0, len(tokens))
 	for _, t := range tokens {
