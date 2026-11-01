@@ -63,35 +63,16 @@ func cmdMCP(args []string) error {
 		haveRec bool
 	)
 	if kind != "opencode" {
-		deadline := time.Now().Add(mcpResolveTimeout)
-		for {
-			r, _, rerr := resolveMCPMasterMind(rt, *mastermindFlag)
-			if rerr == nil {
-				rec, haveRec = r, true
-				break
-			}
-			if !errors.Is(rerr, mastermind.ErrNoMasterMind) {
-				fmt.Fprintf(os.Stderr, "relevo mcp: %v\n", rerr)
-				return exitCodeErr{code: 2}
-			}
-			if !time.Now().Before(deadline) {
-				break
-			}
-			time.Sleep(mcpResolveRetry)
+		r, ok, rerr := awaitMCPMasterMind(rt, *mastermindFlag)
+		if rerr != nil {
+			fmt.Fprintf(os.Stderr, "relevo mcp: %v\n", rerr)
+			return exitCodeErr{code: 2}
 		}
+		rec, haveRec = r, ok
 	}
 
 	version := buildVersion()
-	switch {
-	case haveRec:
-		fmt.Fprintf(os.Stderr, "relevo mcp: mastermind %s (%s) tools\n", rec.Name, rec.ID)
-	case kind == "opencode":
-		fmt.Fprintln(os.Stderr, "relevo mcp: opencode tools server; each tool call resolves its MasterMind")
-	default:
-		// No registration and no host match: the verbs still serve, so a
-		// mastermind whose hook never ran can still use the tools.
-		fmt.Fprintln(os.Stderr, `relevo mcp: no relevo mastermind for this session; tools-only (run "relevo mastermind init")`)
-	}
+	reportMCPMode(haveRec, kind, rec)
 
 	verbs, err := mcpVerbs(rt, kind, rec.ID)
 	if err != nil {
@@ -126,6 +107,40 @@ func cmdMCP(args []string) error {
 		return serveErr
 	}
 	return nil
+}
+
+// awaitMCPMasterMind resolves this session's record, retrying while the hook
+// may still be registering it. A refusal to resolve is returned; giving up
+// reports no record, and the verbs still serve.
+func awaitMCPMasterMind(rt relevo.Runtime, flagVal string) (rec mastermind.Record, ok bool, err error) {
+	deadline := time.Now().Add(mcpResolveTimeout)
+	for {
+		r, _, rerr := resolveMCPMasterMind(rt, flagVal)
+		if rerr == nil {
+			return r, true, nil
+		}
+		if !errors.Is(rerr, mastermind.ErrNoMasterMind) {
+			return mastermind.Record{}, false, rerr
+		}
+		if !time.Now().Before(deadline) {
+			return mastermind.Record{}, false, nil
+		}
+		time.Sleep(mcpResolveRetry)
+	}
+}
+
+// reportMCPMode names on stderr whose mastermind the server resolves for.
+func reportMCPMode(haveRec bool, kind string, rec mastermind.Record) {
+	switch {
+	case haveRec:
+		fmt.Fprintf(os.Stderr, "relevo mcp: mastermind %s (%s) tools\n", rec.Name, rec.ID)
+	case kind == "opencode":
+		fmt.Fprintln(os.Stderr, "relevo mcp: opencode tools server; each tool call resolves its MasterMind")
+	default:
+		// No registration and no host match: the verbs still serve, so a
+		// mastermind whose hook never ran can still use the tools.
+		fmt.Fprintln(os.Stderr, `relevo mcp: no relevo mastermind for this session; tools-only (run "relevo mastermind init")`)
+	}
 }
 
 // resolveMCPMasterMind is mastermind.Resolve as relevo mcp calls it.

@@ -5,11 +5,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/setup"
 )
@@ -66,20 +68,8 @@ func cmdInitRun(args []string) error {
 		tier = t[0]
 	}
 
-	hasCandidates, err := rt.Config.Has(config.Candidates)
-	if err != nil {
+	if err := checkInitOverwrite(rt, *force); err != nil {
 		return err
-	}
-	hasPolicy, err := rt.Config.Has(config.Policy)
-	if err != nil {
-		return err
-	}
-	hasActors, err := rt.Config.Has(config.Actors)
-	if err != nil {
-		return err
-	}
-	if !*force && (hasCandidates || hasPolicy || hasActors) {
-		return fail(codeConflict, "candidates, policy or actors already configured; pass --force to overwrite")
 	}
 
 	// One PutDoc writes all three sections as one revision.
@@ -95,17 +85,59 @@ func cmdInitRun(args []string) error {
 
 	// Human lines move to stderr under --json, where stdout carries the document
 	// alone.
-	w := noticeWriter(*asJSON)
+	if err := printInitSummary(noticeWriter(*asJSON), files, tier, *noAgents, env); err != nil {
+		return err
+	}
 
-	fmt.Fprintf(w, "wrote candidates (%d: %s)\n", len(files.CandidateNames), strings.Join(files.CandidateNames, ", "))
+	if *asJSON {
+		version, err := rt.Config.Version()
+		if err != nil {
+			return err
+		}
+		return printDoc(configImportDocOf(importSections(doc), warnings, version))
+	}
+	return nil
+}
+
+// checkInitOverwrite refuses to seed over configured sections without --force;
+// an untouched machine has nothing to overwrite.
+func checkInitOverwrite(rt relevo.Runtime, force bool) error {
+	hasCandidates, err := rt.Config.Has(config.Candidates)
+	if err != nil {
+		return err
+	}
+	hasPolicy, err := rt.Config.Has(config.Policy)
+	if err != nil {
+		return err
+	}
+	hasActors, err := rt.Config.Has(config.Actors)
+	if err != nil {
+		return err
+	}
+	if !force && (hasCandidates || hasPolicy || hasActors) {
+		return fail(codeConflict, "candidates, policy or actors already configured; pass --force to overwrite")
+	}
+	return nil
+}
+
+// printInitSummary reports the seeded sections and installs the agent
+// definitions; a failed write fails the command like any other output error.
+func printInitSummary(w io.Writer, files setup.Files, tier string, noAgents bool, env harness.InstallEnv) error {
+	if _, err := fmt.Fprintf(w, "wrote candidates (%d: %s)\n", len(files.CandidateNames), strings.Join(files.CandidateNames, ", ")); err != nil {
+		return fmt.Errorf("write init summary: %w", err)
+	}
 	summary, err := actorSummary(files.Actors, files.ActorOrder)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(w, "wrote actors (%s)\n", summary)
-	fmt.Fprintln(w, tierLine(tier))
+	if _, err := fmt.Fprintf(w, "wrote actors (%s)\n", summary); err != nil {
+		return fmt.Errorf("write init summary: %w", err)
+	}
+	if _, err := fmt.Fprintln(w, tierLine(tier)); err != nil {
+		return fmt.Errorf("write init summary: %w", err)
+	}
 
-	if !*noAgents {
+	if !noAgents {
 		failed := false
 		for _, kind := range files.Kinds {
 			results, err := harness.Install(env, harness.InstallOptions{Kind: kind})
@@ -113,7 +145,9 @@ func cmdInitRun(args []string) error {
 				return err
 			}
 			for _, r := range results {
-				fmt.Fprintln(w, r.Line())
+				if _, err := fmt.Fprintln(w, r.Line()); err != nil {
+					return fmt.Errorf("write init summary: %w", err)
+				}
 				if r.Outcome == harness.OutcomeError {
 					failed = true
 				}
@@ -124,14 +158,8 @@ func cmdInitRun(args []string) error {
 		}
 	}
 
-	fmt.Fprintf(w, "next: edit the model names, then run: relevo doctor\n")
-
-	if *asJSON {
-		version, err := rt.Config.Version()
-		if err != nil {
-			return err
-		}
-		return printDoc(configImportDocOf(importSections(doc), warnings, version))
+	if _, err := fmt.Fprintln(w, "next: edit the model names, then run: relevo doctor"); err != nil {
+		return fmt.Errorf("write init summary: %w", err)
 	}
 	return nil
 }

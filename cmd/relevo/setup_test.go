@@ -393,7 +393,7 @@ func TestSetupClassifiedTransportKeepsItsExit(t *testing.T) {
 	}
 
 	t.Run("unclassified crosses raw and exits internal", func(t *testing.T) {
-		if got := classifySetupTransport(raw); got != raw {
+		if got := classifySetupTransport(raw); !errors.Is(got, raw) {
 			t.Fatalf("hook = %v, want the raw error back", got)
 		}
 		out := setupExitOf(&setup.StepError{Message: "boom", Next: "relevo doctor"})

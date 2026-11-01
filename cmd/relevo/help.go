@@ -27,7 +27,7 @@ func cmdHelp(args []string) error {
 	fs.SetOutput(os.Stderr)
 	v := helpFlagSet(fs)
 	// -h on help itself still prints the text a human asked for.
-	fs.Usage = func() { fmt.Fprint(fs.Output(), usage) }
+	fs.Usage = func() { _, _ = fmt.Fprint(fs.Output(), usage) }
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}

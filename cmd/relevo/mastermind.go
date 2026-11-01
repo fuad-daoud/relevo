@@ -205,9 +205,11 @@ func appendEnvLine(path, line string) error {
 	if err != nil {
 		return fmt.Errorf("append %s: %w", path, err)
 	}
-	defer f.Close()
-
 	if _, err := io.WriteString(f, line); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("append %s: %w", path, err)
+	}
+	if err := f.Close(); err != nil {
 		return fmt.Errorf("append %s: %w", path, err)
 	}
 	return nil
@@ -280,18 +282,31 @@ func cmdMasterMindList(args []string) error {
 	// Tabwriter, not fixed widths: a long session id or cwd would shift every
 	// column after it.
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "name\tchat\tid\tkind\tsession\thost pid\tstate\tbindings\tcwd\tseen")
+	if err := printMastermindTable(w, records, labels, counts, rt.ProcStart); err != nil {
+		return err
+	}
+	return w.Flush()
+}
+
+// printMastermindTable renders the list table; a failed write fails the
+// command like any other output error.
+func printMastermindTable(w *tabwriter.Writer, records []mastermind.Record, labels []chatlabel.Label, counts map[string]int, procStart func(pid int) (int64, error)) error {
+	if _, err := fmt.Fprintln(w, "name\tchat\tid\tkind\tsession\thost pid\tstate\tbindings\tcwd\tseen"); err != nil {
+		return fmt.Errorf("write mastermind list: %w", err)
+	}
 	for i, rec := range records {
 		host := "-"
 		if rec.HostPID > 0 {
 			host = strconv.Itoa(rec.HostPID)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
 			rec.Name, labels[i].String(), rec.ID, rec.HarnessKind, rec.SessionID, host,
-			mastermind.RecordState(rec, rt.ProcStart), counts[rec.ID], rec.CWD,
-			rec.SeenAt.UTC().Format(time.RFC3339))
+			mastermind.RecordState(rec, procStart), counts[rec.ID], rec.CWD,
+			rec.SeenAt.UTC().Format(time.RFC3339)); err != nil {
+			return fmt.Errorf("write mastermind list: %w", err)
+		}
 	}
-	return w.Flush()
+	return nil
 }
 
 // mastermindListView is one record as `relevo mastermind list --json` renders it,

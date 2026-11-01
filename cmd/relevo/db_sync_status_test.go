@@ -582,7 +582,9 @@ func TestDBSyncStatusDaemonChild(t *testing.T) {
 
 	// The listener is bound, so a dial from the parent will connect; the handshake
 	// is answered on accept, which Serve is already doing.
-	fmt.Fprintln(os.Stdout, syncStatusDaemonReady)
+	if _, err := fmt.Fprintln(os.Stdout, syncStatusDaemonReady); err != nil {
+		t.Fatalf("signal daemon readiness: %v", err)
+	}
 	for {
 		time.Sleep(time.Hour)
 	}

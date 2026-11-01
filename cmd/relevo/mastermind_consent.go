@@ -150,29 +150,10 @@ func cmdMasterMindEnableRun(args []string) error {
 		return fmt.Errorf("resolve working directory: %w", err)
 	}
 
-	if *repo {
-		if err := mastermindWriteConsent(rt, cwd, db.ConsentYes); err != nil {
-			return err
-		}
-	}
-
-	caller, err := mastermindCaller(rt, cwd, *kind, *session)
+	caller, err := prepareMasterMindEnable(rt, cwd, kind, session, *repo)
 	if err != nil {
 		return err
 	}
-	caller.CWD = cwd
-	caller.Now = rt.Now()
-
-	// With --repo the session's earlier "this session only" is cleared, so the
-	// repository's answer governs the session.
-	answer := db.ConsentYes
-	if *repo {
-		answer = db.ConsentUnset
-	}
-	if err := mastermindWriteSessionConsent(rt, caller.Kind, caller.SessionID, answer); err != nil {
-		return err
-	}
-
 	d, closeDB := mastermindOpenTimed(rt.Store.DBPath())
 	defer closeDB()
 	caller.PriorID = mastermindPriorIDFunc(d)
@@ -236,10 +217,83 @@ func mastermindDisableFlagSet(fs *flag.FlagSet) *mastermindDisableFlagValues {
 	return v
 }
 
+// prepareMasterMindEnable records the consent answers and resolves the calling
+// session's identity: the input mastermind.Init registers.
+func prepareMasterMindEnable(rt relevo.Runtime, cwd string, kind, session *string, repo bool) (mastermind.InitInput, error) {
+	var caller mastermind.InitInput
+	if repo {
+		if err := mastermindWriteConsent(rt, cwd, db.ConsentYes); err != nil {
+			return caller, err
+		}
+	}
+	c, err := mastermindCaller(rt, cwd, *kind, *session)
+	if err != nil {
+		return caller, err
+	}
+	c.CWD = cwd
+	c.Now = rt.Now()
+
+	// With --repo the session's earlier "this session only" is cleared, so the
+	// repository's answer governs the session.
+	answer := db.ConsentYes
+	if repo {
+		answer = db.ConsentUnset
+	}
+	if err := mastermindWriteSessionConsent(rt, c.Kind, c.SessionID, answer); err != nil {
+		return caller, err
+	}
+	return c, nil
+}
+
 // cmdMasterMindDisable answers no for the repository, or for this session, and
 // forgets an existing record.
 func cmdMasterMindDisable(args []string) error {
 	return outcomeError(cmdMasterMindDisableRun(args))
+}
+
+// disableMasterMindRepo answers no for the repository and clears the caller's
+// own yes so the repository's answer governs; it reports whether it handled
+// the invocation.
+func disableMasterMindRepo(rt relevo.Runtime, cwd string, kind, session *string, repo, asJSON bool) (bool, error) {
+	if !repo {
+		return false, nil
+	}
+	if err := mastermindWriteConsent(rt, cwd, db.ConsentNo); err != nil {
+		return true, err
+	}
+	// A session's own yes would outrank the repository's no, so the caller's
+	// answer is cleared when the caller is known.
+	if caller, err := mastermindCaller(rt, cwd, *kind, *session); err == nil {
+		if err := mastermindWriteSessionConsent(rt, caller.Kind, caller.SessionID, db.ConsentUnset); err != nil {
+			return true, err
+		}
+	} else if *kind != "" || *session != "" {
+		return true, err
+	}
+	if asJSON {
+		return true, printDoc(mastermindDocOf("", "", "disabled", mastermindRepoLabel(rt, cwd)))
+	}
+	fmt.Println("relevo will not register this repository's sessions (relevo mastermind enable --repo to change)")
+	return true, nil
+}
+
+// resolveMasterMindDisableTarget names the session the disable answers for:
+// the explicit pair when given, else the calling session's own record.
+func resolveMasterMindDisableTarget(rt relevo.Runtime, cwd string, kind, session *string) (kindV, sessionV string, err error) {
+	// An explicit (kind, session) names the session a harness cannot detect
+	// itself; the rest falls back to detection.
+	if *kind != "" || *session != "" {
+		caller, err := mastermindCaller(rt, cwd, *kind, *session)
+		if err != nil {
+			return "", "", err
+		}
+		return caller.Kind, caller.SessionID, nil
+	}
+	rec, err := gcResolver(rt)("")
+	if err != nil {
+		return "", "", fail(codeRefused, "not in a detectable mastermind session: pass --repo to answer for the repository, --kind/--session to name one, or run relevo mastermind forget <id|name>")
+	}
+	return rec.HarnessKind, rec.SessionID, nil
 }
 
 func cmdMasterMindDisableRun(args []string) error {
@@ -259,41 +313,17 @@ func cmdMasterMindDisableRun(args []string) error {
 		return fmt.Errorf("resolve working directory: %w", err)
 	}
 
-	if *repo {
-		if err := mastermindWriteConsent(rt, cwd, db.ConsentNo); err != nil {
-			return err
-		}
-		// A session's own yes would outrank the repository's no, so the caller's
-		// answer is cleared when the caller is known.
-		if caller, err := mastermindCaller(rt, cwd, *kind, *session); err == nil {
-			if err := mastermindWriteSessionConsent(rt, caller.Kind, caller.SessionID, db.ConsentUnset); err != nil {
-				return err
-			}
-		} else if *kind != "" || *session != "" {
-			return err
-		}
-		if *asJSON {
-			return printDoc(mastermindDocOf("", "", "disabled", mastermindRepoLabel(rt, cwd)))
-		}
-		fmt.Println("relevo will not register this repository's sessions (relevo mastermind enable --repo to change)")
+	handled, err := disableMasterMindRepo(rt, cwd, kind, session, *repo, *asJSON)
+	if err != nil {
+		return err
+	}
+	if handled {
 		return nil
 	}
 
-	// An explicit (kind, session) names the session a harness cannot detect
-	// itself; the rest falls back to detection.
-	var kindV, sessionV string
-	if *kind != "" || *session != "" {
-		caller, err := mastermindCaller(rt, cwd, *kind, *session)
-		if err != nil {
-			return err
-		}
-		kindV, sessionV = caller.Kind, caller.SessionID
-	} else {
-		rec, err := gcResolver(rt)("")
-		if err != nil {
-			return fail(codeRefused, "not in a detectable mastermind session: pass --repo to answer for the repository, --kind/--session to name one, or run relevo mastermind forget <id|name>")
-		}
-		kindV, sessionV = rec.HarnessKind, rec.SessionID
+	kindV, sessionV, err := resolveMasterMindDisableTarget(rt, cwd, kind, session)
+	if err != nil {
+		return err
 	}
 
 	// The answer takes effect whether or not a record exists.
@@ -446,39 +476,13 @@ func cmdMasterMindGuide(args []string) error {
 		return fail(codeInternal, "%v", err)
 	}
 
-	// An opencode session id resolves the directory opencode recorded; an
-	// explicit --cwd, or anything else, falls back to the process's directory.
-	cwd := *cwdFlag
-	if cwd == "" && *kind == "opencode" && *session != "" && rt.OpencodeSessionDir != nil {
-		if dir, derr := rt.OpencodeSessionDir(*session); derr == nil {
-			cwd = dir
-		}
-	}
-	if cwd == "" {
-		if cwd, err = os.Getwd(); err != nil {
-			return fail(codeInternal, "resolve working directory: %v", err)
-		}
+	cwd, err := guideCWD(rt, *cwdFlag, *kind, *session)
+	if err != nil {
+		return err
 	}
 
-	// No repository means no answer to give and none to ask for; the init and
-	// notice hooks apply the same rule.
-	repoState := db.ConsentNo
-	repoLabel := ""
-	ref := mastermindRepoOf(context.Background(), rt, cwd)
 	d, _ := rt.Store.DB()
-	if mastermindRepoKnown(ref) {
-		if ref.OriginURL != nil {
-			repoLabel = *ref.OriginURL
-		} else {
-			repoLabel = *ref.CommonDir
-		}
-		repoState = db.ConsentUnset
-		if d != nil {
-			if c, err := d.RepoConsent(ref); err == nil {
-				repoState = c
-			}
-		}
-	}
+	repoState, repoLabel := guideRepoAnswer(rt, cwd, d)
 
 	// The session's own answer outranks the repository's.
 	sessionState := db.ConsentUnset
@@ -489,25 +493,7 @@ func cmdMasterMindGuide(args []string) error {
 	}
 	state := mastermind.EffectiveConsent(sessionState, repoState)
 
-	// An enabled session creates its record here; a registration failure leaves
-	// the text without the identity sentence rather than failing the session.
-	var rec *mastermind.Record
-	if *kind != "" && *session != "" && state != db.ConsentNo {
-		if reg, err := mastermindRegistry(rt); err == nil {
-			if r, err := reg.BySession(*kind, *session); err == nil {
-				rec = &r
-			}
-			if state == db.ConsentYes && rec == nil {
-				in := mastermind.InitInput{Kind: *kind, SessionID: *session, CWD: cwd, Now: rt.Now()}
-				in.PriorID = mastermindPriorIDFunc(d)
-				if r, _, err := mastermind.Init(reg, in); err == nil {
-					rec = &r
-				} else {
-					fmt.Fprintf(os.Stderr, "relevo mastermind guide: register %s: %v\n", *session, err)
-				}
-			}
-		}
-	}
+	rec := guideRecord(rt, cwd, *kind, *session, state, d)
 
 	text := mastermind.ConsentText(state, rec)
 	if !*asJSON {
@@ -540,4 +526,74 @@ func cmdMasterMindGuide(args []string) error {
 	}
 	fmt.Println(string(raw))
 	return nil
+}
+
+// guideCWD resolves the directory the guide answers for: an explicit --cwd,
+// else the directory opencode recorded for the session, else the process's
+// directory.
+func guideCWD(rt relevo.Runtime, cwdFlag, kind, session string) (string, error) {
+	cwd := cwdFlag
+	if cwd == "" && kind == "opencode" && session != "" && rt.OpencodeSessionDir != nil {
+		if dir, derr := rt.OpencodeSessionDir(session); derr == nil {
+			cwd = dir
+		}
+	}
+	if cwd == "" {
+		dir, err := os.Getwd()
+		if err != nil {
+			return "", fail(codeInternal, "resolve working directory: %v", err)
+		}
+		return dir, nil
+	}
+	return cwd, nil
+}
+
+// guideRepoAnswer reads the repository's consent answer for cwd: no repository
+// means no answer to give and none to ask for, which the guide renders as
+// disabled.
+func guideRepoAnswer(rt relevo.Runtime, cwd string, d *db.DB) (db.Consent, string) {
+	ref := mastermindRepoOf(context.Background(), rt, cwd)
+	if !mastermindRepoKnown(ref) {
+		return db.ConsentNo, ""
+	}
+	label := ""
+	if ref.OriginURL != nil {
+		label = *ref.OriginURL
+	} else {
+		label = *ref.CommonDir
+	}
+	state := db.ConsentUnset
+	if d != nil {
+		if c, err := d.RepoConsent(ref); err == nil {
+			state = c
+		}
+	}
+	return state, label
+}
+
+// guideRecord returns the enabled session's record, registering it when the
+// answer is yes; a registration failure leaves the text without the identity
+// sentence rather than failing the session.
+func guideRecord(rt relevo.Runtime, cwd, kind, session string, state db.Consent, d *db.DB) *mastermind.Record {
+	if kind == "" || session == "" || state == db.ConsentNo {
+		return nil
+	}
+	reg, err := mastermindRegistry(rt)
+	if err != nil {
+		return nil
+	}
+	if r, err := reg.BySession(kind, session); err == nil {
+		return &r
+	}
+	if state != db.ConsentYes {
+		return nil
+	}
+	in := mastermind.InitInput{Kind: kind, SessionID: session, CWD: cwd, Now: rt.Now()}
+	in.PriorID = mastermindPriorIDFunc(d)
+	r, _, err := mastermind.Init(reg, in)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "relevo mastermind guide: register %s: %v\n", session, err)
+		return nil
+	}
+	return &r
 }

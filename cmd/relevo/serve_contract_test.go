@@ -55,7 +55,7 @@ func seedSecondOwner(t *testing.T, root, label string) (*store.Store, remote.Cli
 	if err != nil {
 		t.Fatalf("openDB: %v", err)
 	}
-	defer d.Close()
+	defer func() { _ = d.Close() }()
 
 	clients, err := serve.LoadClients(d.LocalOrSelf())
 	if err != nil {
@@ -87,7 +87,7 @@ func TestServeContractStatusJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("openDB: %v", err)
 	}
-	defer d.Close()
+	defer func() { _ = d.Close() }()
 
 	clients, err := serve.LoadClients(d.LocalOrSelf())
 	if err != nil {

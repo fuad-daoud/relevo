@@ -427,7 +427,7 @@ func TestContractDocsErrorCodes(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			stdout, _, runErr := captureOutput(t, func() error { return run(c.args) })
-			requireCLIError(t, runErr, c.code, c.next)
+			_ = requireCLIError(t, runErr, c.code, c.next)
 
 			var ec exitCodeErr
 			if !errors.As(runErr, &ec) || ec.code != catalogExit(c.code) {
@@ -452,7 +452,7 @@ func TestContractDocsErrorCodes(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			stdout, _, runErr := captureOutput(t, func() error { return run(c.args) })
-			requireCLIError(t, runErr, codeNotAvailable, "relevo serve init")
+			_ = requireCLIError(t, runErr, codeNotAvailable, "relevo serve init")
 			if len(stdout) != 0 {
 				t.Errorf("stdout = %q, want empty before report", stdout)
 			}
@@ -479,7 +479,7 @@ func TestContractDocsInternalSites(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			stdout, _, runErr := captureOutput(t, func() error { return run(c.args) })
-			requireCLIError(t, runErr, codeInternal, "")
+			_ = requireCLIError(t, runErr, codeInternal, "")
 			if len(stdout) != 0 {
 				t.Errorf("stdout = %q, want empty before report", stdout)
 			}
