@@ -135,7 +135,8 @@ func TestSyncWritersNeverReturnConflict(t *testing.T) {
 			if err == nil {
 				t.Fatalf("%s with no owner serving: want a refusal", verb.name)
 			}
-			if ce, ok := err.(*cliError); ok && ce.code == codeConflict {
+			var ce *cliError
+			if errors.As(err, &ce) && ce.code == codeConflict {
 				t.Fatalf("%s returned codeConflict, which no sync writer may return any more", verb.name)
 			}
 		})

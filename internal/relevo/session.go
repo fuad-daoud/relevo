@@ -14,18 +14,3 @@ func builderSessionOf(b store.Binding) *store.BuilderSession {
 	}
 	return &store.BuilderSession{Kind: b.Builder.Kind, ID: b.Builder.StreamSessionID}
 }
-
-// roundSession names the harness session that built a closed round, read off
-// the round's own report entry: the newest KindReport entry
-// for that round carrying a BuilderSession. ok is false when the round has no
-// report entry at all, or when its report names no session -- relevo never
-// guesses, and a resumed session must be the one that built the round.
-func roundSession(entries []store.LogEntry, round int) (*store.BuilderSession, bool) {
-	for i := len(entries) - 1; i >= 0; i-- {
-		e := entries[i]
-		if e.Round == round && e.Kind == store.KindReport && e.BuilderSession != nil {
-			return e.BuilderSession, true
-		}
-	}
-	return nil, false
-}

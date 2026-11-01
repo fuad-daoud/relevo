@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -15,7 +14,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
-	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/installation"
 	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -84,104 +82,19 @@ func chainStartServer(ctx context.Context, rt Runtime, opts ChainOptions) (Chain
 // touching the server's state. It reads git and the server; it creates
 // nothing.
 func chainServerResolve(ctx context.Context, rt Runtime, opts ChainOptions) (chainServerPlan, error) {
-	if rt.Remote == nil {
-		return chainServerPlan{}, ErrRemoteUnavailable
-	}
-	if rt.Transport == nil {
-		return chainServerPlan{}, errors.New("no remote transport configured")
-	}
-	def, origin, err := resolve.ResolveWorkflow(rt.Config, opts.Workflow)
+	def, origin, repo, repoSet, err := chainServerResolveLocal(ctx, rt, opts)
 	if err != nil {
 		return chainServerPlan{}, err
 	}
-	// The chain's repository is resolved before the params are computed: the
-	// gate param and the chain settings both read the repository's own
-	// settings.
-	repo, err := os.Getwd()
-	if err != nil {
-		return chainServerPlan{}, fmt.Errorf("resolve working directory: %w", err)
-	}
-	repoSet, err := RepoSettingsFor(ctx, rt, repo)
+	plan, err := chainServerResolveBodies(ctx, rt, opts, def, origin, repo, repoSet)
 	if err != nil {
 		return chainServerPlan{}, err
 	}
-	values, err := chainParamsFor(def, rt.Policy, opts, repoSet)
-	if err != nil {
+	var who remote.WhoAmI
+	if plan, who, err = chainServerResolveGates(ctx, rt, opts, plan, origin); err != nil {
 		return chainServerPlan{}, err
 	}
-	if def, err = workflow.WithParams(def, values); err != nil {
-		return chainServerPlan{}, refusal.New("%v", err)
-	}
-	checks := resolve.RoleChecks(rt.RoleRegistry(), "builder")
-	plan := chainServerPlan{
-		def:      def,
-		settings: chainSettings(rt.Policy, opts, checks, repoSet),
-		gateRes:  resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, checks, repoSet),
-		server:   opts.Server,
-	}
-	plan.repo = repo
-	// From the same repository value, not a second working-directory probe.
-	plan.subdir = housekeep.ResolveSubdir(ctx, rt.Git, repo)
-	plan.trimpath = repoSet.Trimpath
-	isCustom := origin != "shipped"
-	if isCustom {
-		if err := chainValidateWorkflowOpts(opts); err != nil {
-			return chainServerPlan{}, err
-		}
-		if plan.bodies, err = chainPlanBodiesFor(opts); err != nil {
-			return chainServerPlan{}, err
-		}
-	} else {
-		if err := chainValidate(opts); err != nil {
-			return chainServerPlan{}, err
-		}
-		if plan.bodies, err = chainPlanBodies(opts.Plans); err != nil {
-			return chainServerPlan{}, err
-		}
-	}
-	if plan.ticket, err = chainTicket(ctx, rt, opts.Ticket, repo); err != nil {
-		return chainServerPlan{}, err
-	}
-	if err := chainServerBranchFree(ctx, rt, repo, opts.Name); err != nil {
-		return chainServerPlan{}, err
-	}
-	if plan.mastermind, plan.mastermindID, err = chainServerMasterMind(rt, opts.MasterMindID); err != nil {
-		return chainServerPlan{}, err
-	}
-	who, err := rt.Remote.WhoAmI(ctx, opts.Server)
-	if err != nil {
-		return chainServerPlan{}, err
-	}
-	if missing := remote.MissingChainFeatures(who); len(missing) > 0 {
-		return chainServerPlan{}, fmt.Errorf("server %s cannot run a chain (missing the %s); upgrade it, or start the chain without --server",
-			opts.Server, remote.ChainFeatureList(missing))
-	}
-	// The same negative applies to a prefix: the server must store the
-	// subdirectory it is to join into every member's rounds, and a server
-	// without the feature would drop it silently.
-	if plan.subdir != "" && !remote.HasFeature(who, remote.FeatureSubdir) {
-		return chainServerPlan{}, fmt.Errorf("server %s does not carry binding subdirectories (pre-subdir server); upgrade it or start the chain at the repository root", opts.Server)
-	}
-	hasWorkflow := remote.HasFeature(who, remote.FeatureWorkflow)
-	if isCustom && !hasWorkflow {
-		return chainServerPlan{}, fmt.Errorf("server %s cannot run workflow %s (missing the %s)",
-			opts.Server, opts.Workflow, remote.ChainFeatureList([]string{remote.FeatureWorkflow}))
-	}
-	plan.hasWorkflow = hasWorkflow
-	if len(opts.Params) > 0 && !hasWorkflow {
-		return chainServerPlan{}, fmt.Errorf("server %s does not take --param: the server's workflow feature is not available yet; upgrade it, or start the chain without --server", opts.Server)
-	}
-	if !hasWorkflow {
-		plan.members = chainMembersFor(opts, plan.settings)
-		if err := chainFreeNames(rt, plan.members); err != nil {
-			return chainServerPlan{}, err
-		}
-	}
-	plan.origin = remote.HasFeature(who, remote.FeatureOrigin)
-	if plan.base, plan.repoID, plan.authorName, plan.authorEmail, err = chainRemoteFacts(ctx, rt, repo, opts.Base); err != nil {
-		return chainServerPlan{}, err
-	}
-	return plan, nil
+	return chainServerResolveFacts(ctx, rt, opts, plan, who)
 }
 
 // chainServerBranchFree refuses a start whose branch relevo/<name> already

@@ -431,7 +431,7 @@ func TestWorkflowsListDescriptionSanitizes(t *testing.T) {
 	list := workflowsFixtureList()
 	// The description carries control bytes the way a hand-written document can:
 	// a quoted YAML scalar keeps a carriage return and an escape verbatim.
-	list[2].Description = "build once,\rthen check\x1b[2J"
+	list[2].Description = "build once,\rthen check\x1b[2J\a"
 
 	m := goldenActionModel(t, 132, 34, &fakeActions{workflows: list}, view.Report{})
 	m = drain(t, m, execLine("workflows", m.env(), m.prefs))
@@ -478,7 +478,7 @@ func TestWorkflowGraphSanitizesSuppliedText(t *testing.T) {
 	for name := range graphs {
 		for i := range graphs[name] {
 			graphs[name][i].Kind = "run\ving"
-			graphs[name][i].Actors = "builder\ractor"
+			graphs[name][i].Actors = "builder\ractor\a"
 			graphs[name][i].EdgeText = "on done \x1b[2J → check"
 		}
 	}

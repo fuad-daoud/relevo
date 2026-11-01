@@ -400,7 +400,7 @@ func TestComposePromptNamesPlanReportAndMarkerInOrder(t *testing.T) {
 	plan := strings.Index(got, "/s/003-plan.md")
 	report := strings.Index(got, "/s/003-report.md")
 	done := strings.Index(got, "/s/003-done")
-	if plan < 0 || report < 0 || done < 0 || !(plan < report && report < done) {
+	if plan < 0 || report < 0 || done < 0 || plan >= report || report >= done {
 		t.Fatalf("paths must appear plan < report < marker, got:\n%s", got)
 	}
 	if !strings.Contains(got, "as the very last thing you do") {
@@ -445,7 +445,7 @@ func TestComposePromptReaderNamesTheOutputFile(t *testing.T) {
 	writeAt := strings.Index(got, writeOrder)
 	closeAt := strings.Index(got, "only the short close")
 	blockAt := strings.Index(got, "it ends with this block")
-	if !(writeAt < closeAt && closeAt < blockAt) {
+	if writeAt >= closeAt || closeAt >= blockAt {
 		t.Errorf("reader prompt order is write(%d) then close(%d) then block(%d):\n%s",
 			writeAt, closeAt, blockAt, got)
 	}
@@ -504,7 +504,7 @@ func TestChainReaderPromptNamesTheOutputFile(t *testing.T) {
 	writeAt := strings.Index(got, writeOrder)
 	markerAt := strings.Index(got, "create this empty file")
 	blockAt := strings.Index(got, "It must end with this block")
-	if !(writeAt < markerAt && markerAt < blockAt) {
+	if writeAt >= markerAt || markerAt >= blockAt {
 		t.Errorf("chain reader prompt order is write(%d) then marker(%d) then block(%d):\n%s",
 			writeAt, markerAt, blockAt, got)
 	}

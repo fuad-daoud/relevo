@@ -809,7 +809,7 @@ func TestStatusRowsAreAttentionOrdered(t *testing.T) {
 		t.Fatalf("Marshal: %v", err)
 	}
 	ia, ib, ic := strings.Index(string(data), `"name":"a"`), strings.Index(string(data), `"name":"b"`), strings.Index(string(data), `"name":"c"`)
-	if !(ib < ia && ia < ic) {
+	if ib >= ia || ia >= ic {
 		t.Errorf("status --json order wrong: b@%d a@%d c@%d", ib, ia, ic)
 	}
 }

@@ -17,57 +17,81 @@ import (
 // same; a view the server sent no name for with the same harness and model, a
 // provider renamed between the two machines. Pure.
 func serverCandidate(views []remote.CandidateView, token, name string) (string, bool) {
+	if srv, ok := matchSameToken(views, token); ok {
+		return srv, true
+	}
+	ref, rerr := candidate.ParseRef(token)
+	if rerr == nil {
+		if srv, ok := matchSameProvider(views, ref); ok {
+			return srv, true
+		}
+	}
+	if name != "" {
+		if srv, ok := matchSameName(views, name); ok {
+			return srv, true
+		}
+	}
+	if rerr == nil {
+		if srv, ok := matchUnnamedHarnessModel(views, ref); ok {
+			return srv, true
+		}
+	}
+	return "", false
+}
+
+func matchSameToken(views []remote.CandidateView, token string) (string, bool) {
 	for _, v := range views {
 		if v.Token == token {
 			return v.Token, true
 		}
 	}
+	return "", false
+}
 
-	ref, rerr := candidate.ParseRef(token)
-	if rerr == nil {
-		for _, v := range views {
-			vref, err := candidate.ParseRef(v.Token)
-			if err != nil {
-				continue
-			}
-			if vref.Provider == ref.Provider && vref.Model == ref.Model {
-				return v.Token, true
-			}
+func matchSameProvider(views []remote.CandidateView, ref candidate.Ref) (string, bool) {
+	for _, v := range views {
+		vref, err := candidate.ParseRef(v.Token)
+		if err != nil {
+			continue
 		}
-		for _, v := range views {
-			vref, err := candidate.ParseRef(v.Token)
-			if err != nil {
-				continue
-			}
-			if vref.Provider == ref.Provider {
-				return v.Token, true
-			}
+		if vref.Provider == ref.Provider && vref.Model == ref.Model {
+			return v.Token, true
 		}
 	}
-
-	if name != "" {
-		for _, v := range views {
-			if v.Name == name {
-				return v.Token, true
-			}
+	for _, v := range views {
+		vref, err := candidate.ParseRef(v.Token)
+		if err != nil {
+			continue
+		}
+		if vref.Provider == ref.Provider {
+			return v.Token, true
 		}
 	}
+	return "", false
+}
 
-	if rerr == nil {
-		for _, v := range views {
-			if v.Name != "" {
-				continue
-			}
-			vref, err := candidate.ParseRef(v.Token)
-			if err != nil {
-				continue
-			}
-			if vref.Harness == ref.Harness && vref.Model == ref.Model {
-				return v.Token, true
-			}
+func matchSameName(views []remote.CandidateView, name string) (string, bool) {
+	for _, v := range views {
+		if v.Name == name {
+			return v.Token, true
 		}
 	}
+	return "", false
+}
 
+func matchUnnamedHarnessModel(views []remote.CandidateView, ref candidate.Ref) (string, bool) {
+	for _, v := range views {
+		if v.Name != "" {
+			continue
+		}
+		vref, err := candidate.ParseRef(v.Token)
+		if err != nil {
+			continue
+		}
+		if vref.Harness == ref.Harness && vref.Model == ref.Model {
+			return v.Token, true
+		}
+	}
 	return "", false
 }
 

@@ -46,7 +46,9 @@ func writeTempAndRename(root, dest string, r io.Reader) error {
 		return err
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
+	// Best-effort cleanup: after a successful Rename the temp name is gone,
+	// so this Remove fails on the success path by design.
+	defer func() { _ = os.Remove(tmpName) }()
 
 	if _, err := io.Copy(tmp, r); err != nil {
 		_ = tmp.Close()
@@ -64,12 +66,6 @@ func writeTempAndRename(root, dest string, r io.Reader) error {
 const maxMirrorBytes = 16 << 20
 
 var mirrorDriftAttempts sync.Map // "name/round" -> struct{}
-
-// mirrorDriftOnce is the inline fetch-then-apply form of the drift mirror,
-// kept for callers that hold their own lock across a one-off observation.
-func mirrorDriftOnce(ctx context.Context, rt Runtime, tx *store.Tx, server, name string, round int) {
-	applyDrift(rt, tx, name, round, fetchDrift(ctx, rt, server, name, round))
-}
 
 func liveFactsOf(v *remote.LiveView) *store.LiveFacts {
 	if v == nil {
@@ -215,25 +211,9 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 	b.Builder.RemoteQueue = nil
 	b.Builder.RemoteLive = nil
 
-	// A server-side switch: the candidate that actually ran differs from what
-	// this binding last recorded. Refresh the token and the harness kind, and
-	// log it the same way a local mid-round switch does, so usage and status
-	// name the builder that actually ran.
-	if view.Candidate != "" && view.Candidate != b.BuilderCandidate {
-		prev := b.BuilderCandidate
-		b.BuilderCandidate = view.Candidate
-		kind := ""
-		if ref, err := candidate.ParseRef(view.Candidate); err == nil {
-			kind = ref.Harness
-		}
-		b.Builder.Kind = kind
-		if err := tx.AppendLog(name, store.LogEntry{
-			TS: now, Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindSwitch,
-			Note:      fmt.Sprintf("%s%s: %s -> %s", pollSwitchNotePrefix, server, prev, view.Candidate),
-			Confirmed: true,
-		}); err != nil {
-			return b, false, err
-		}
+	var err error
+	if b, err = refreshCandidateSwitch(tx, b, view, server, name, now); err != nil {
+		return b, false, err
 	}
 
 	// A view that came back answers the only question the unreachable halt asked,
@@ -251,10 +231,50 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 	}
 
 	switch view.RoundState {
-	case remote.RoundQueued:
-		// A queued round has no process and no clocks: it behaves like
-		// RoundRunning minus the stall copy -- no halt, no catch-up; a
-		// stall stamp from an earlier running round does not apply.
+	case remote.RoundQueued, remote.RoundRunning:
+		return mirrorQueuedRunning(rt, tx, b, view, f)
+	case remote.RoundNeedsYou, remote.RoundBroken:
+		return settleNeedsYouBroken(ctx, rt, tx, b, view, f)
+	case remote.RoundClosed, remote.RoundIdle:
+		return settleClosedIdle(ctx, rt, tx, b, view, f)
+	default:
+		return b, true, nil
+	}
+}
+
+// refreshCandidateSwitch records a server-side switch: the candidate that
+// actually ran differs from what this binding last recorded. It refreshes the
+// token and the harness kind, and logs it the same way a local mid-round
+// switch does, so usage and status name the builder that actually ran.
+func refreshCandidateSwitch(tx *store.Tx, b store.Binding, view remote.BindingView, server, name string, now time.Time) (store.Binding, error) {
+	if view.Candidate == "" || view.Candidate == b.BuilderCandidate {
+		return b, nil
+	}
+	prev := b.BuilderCandidate
+	b.BuilderCandidate = view.Candidate
+	kind := ""
+	if ref, err := candidate.ParseRef(view.Candidate); err == nil {
+		kind = ref.Harness
+	}
+	b.Builder.Kind = kind
+	if err := tx.AppendLog(name, store.LogEntry{
+		TS: now, Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindSwitch,
+		Note:      fmt.Sprintf("%s%s: %s -> %s", pollSwitchNotePrefix, server, prev, view.Candidate),
+		Confirmed: true,
+	}); err != nil {
+		return b, err
+	}
+	return b, nil
+}
+
+// mirrorQueuedRunning mirrors the queued and running states: a queued round
+// has no process and no clocks, so it behaves like RoundRunning minus the
+// stall copy -- no halt, no catch-up -- while a running round carries its
+// stall stamp across so the client shows the same "stalled <age>".
+func mirrorQueuedRunning(rt Runtime, tx *store.Tx, b store.Binding, view remote.BindingView, f *remoteFetch) (store.Binding, bool, error) {
+	name := b.Name
+	if view.RoundState == remote.RoundQueued {
+		// A stall stamp from an earlier running round does not apply.
 		b.StalledSince = time.Time{}
 		if view.Queue != nil {
 			b.Builder.RemoteQueue = &store.QueueFacts{
@@ -266,53 +286,58 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 			}
 		}
 		return b, false, nil
+	}
+	// The server is the only place that can see the builder's stream.
+	b.StalledSince = view.StalledSince
+	b.Builder.RemoteLive = liveFactsOf(view.Live)
+	applyLogMirror(rt, name, b.Round, f.Log)
+	applyDrift(rt, tx, name, b.Round, f.Drift)
+	return b, false, nil
+}
 
-	case remote.RoundRunning:
-		// The server is the only place that can see the builder's stream; a
-		// running round carries its stall stamp across so the client shows
-		// the same "stalled <age>".
-		b.StalledSince = view.StalledSince
-		b.Builder.RemoteLive = liveFactsOf(view.Live)
-		applyLogMirror(rt, name, b.Round, f.Log)
-		applyDrift(rt, tx, name, b.Round, f.Drift)
-		return b, false, nil
-
-	// A broken round shares this arm: no builder behind it means a human is what
-	// it waits on, and a close outranks a break, so it owes no catch-up here.
-	case remote.RoundNeedsYou, remote.RoundBroken:
-		b.StalledSince = view.StalledSince
-		// Catch-up first, halt second. A halt and a close are not exclusive on
-		// the wire: a round that closed and then halted again reports both, and
-		// the close is the one that advances the round. Halting here without
-		// collecting it strands the round behind the halt word forever -- the
-		// close is never collected, so `wait` keeps answering needs_you on a
-		// round that is finished.
-		if view.ClosedRound >= b.Round {
-			if f.CatchUp != nil && f.CatchUp.Round == view.ClosedRound {
-				next, a, err := applyCatchUp(ctx, rt, tx, b, view, f.CatchUp)
-				f.Settle = a
-				// The catch-up owns the tick's outcome whenever it ran,
-				// settled or not. Falling through to the halt below would discard
-				// `next` and halt the stale `b` with view.Halt: the deciding
-				// reason clobbered, a second entry for a round already
-				// notified, a second delivery, and the failure counters
-				// dropped so the budget never accumulates here. The
-				// retry-no-halt outcomes stop here too -- they owe no halt.
-				return next, true, err
-			} else {
-				next, err := catchUp(ctx, rt, tx, b, view)
-				if err != nil {
-					return next, true, err
-				}
-				// The catch-up advanced the round; there is nothing left to
-				// halt the advanced round for.
-				return next, true, nil
-			}
+// settleNeedsYouBroken settles a round waiting on a human: a close outranks
+// the wait, so catch-up comes first and the halt second. A halt and a close
+// are not exclusive on the wire -- a round that closed and then halted again
+// reports both, and the close is the one that advances the round -- so halting
+// without collecting it would strand the round behind the halt word forever.
+// A broken round shares this arm: no builder behind it means a human is what
+// it waits on, and a close outranks a break, so it owes no catch-up here.
+func settleNeedsYouBroken(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, view remote.BindingView, f *remoteFetch) (store.Binding, bool, error) {
+	name := b.Name
+	b.StalledSince = view.StalledSince
+	if view.ClosedRound >= b.Round {
+		if f.CatchUp != nil && f.CatchUp.Round == view.ClosedRound {
+			next, a, err := applyCatchUp(ctx, rt, tx, b, view, f.CatchUp)
+			f.Settle = a
+			// The catch-up owns the tick's outcome whenever it ran,
+			// settled or not. Falling through to the halt below would discard
+			// `next` and halt the stale `b` with view.Halt: the deciding
+			// reason clobbered, a second entry for a round already
+			// notified, a second delivery, and the failure counters
+			// dropped so the budget never accumulates here. The
+			// retry-no-halt outcomes stop here too -- they owe no halt.
+			return next, true, err
 		}
-		b, err := haltAndSettleKind(ctx, rt, tx, b, name+": "+remoteHaltText(view.RoundState, view.Halt), haltKindFor(view.RoundState))
-		return b, false, err
+		next, err := catchUp(ctx, rt, tx, b, view)
+		if err != nil {
+			return next, true, err
+		}
+		// The catch-up advanced the round; there is nothing left to
+		// halt the advanced round for.
+		return next, true, nil
+	}
+	b, err := haltAndSettleKind(ctx, rt, tx, b, name+": "+remoteHaltText(view.RoundState, view.Halt), haltKindFor(view.RoundState))
+	return b, false, err
+}
 
-	case remote.RoundClosed:
+// settleClosedIdle settles a closed or idle round: either collects the close
+// the server named, or reports the round collected with nothing left to do.
+// A lost reply to /ack leaves the server Idle with this round closed while the
+// client never recorded the report, so the idle arm re-collects -- a repeat
+// ack is idempotent on the server, so catching up again is safe.
+func settleClosedIdle(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, view remote.BindingView, f *remoteFetch) (store.Binding, bool, error) {
+	name := b.Name
+	if view.RoundState == remote.RoundClosed {
 		if view.ClosedRound >= b.Round {
 			if f.CatchUp != nil && f.CatchUp.Round == view.ClosedRound {
 				next, a, err := applyCatchUp(ctx, rt, tx, b, view, f.CatchUp)
@@ -322,31 +347,23 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 			next, err := catchUp(ctx, rt, tx, b, view)
 			return next, true, err
 		}
-		return b, true, nil
-
-	case remote.RoundIdle:
-		if b.State == store.StateBroken {
-			b.State = store.StateActive
-		}
-		// A lost reply to /ack leaves the server Idle with this round closed
-		// while the client never recorded the report. A repeat ack is
-		// idempotent on the server, so catching up again is safe.
-		entries, rerr := tx.ReadLog(name)
-		if rerr == nil && view.ClosedRound >= b.Round &&
-			!HasEntry(entries, b.Round, store.DirToMasterMind, store.KindReport) {
-			if f.CatchUp != nil && f.CatchUp.Round == view.ClosedRound {
-				next, a, err := applyCatchUp(ctx, rt, tx, b, view, f.CatchUp)
-				f.Settle = a
-				return next, true, err
-			}
-			next, err := catchUp(ctx, rt, tx, b, view)
-			return next, true, err
-		}
-		return b, true, nil
-
-	default:
 		return b, true, nil
 	}
+	if b.State == store.StateBroken {
+		b.State = store.StateActive
+	}
+	entries, rerr := tx.ReadLog(name)
+	if rerr == nil && view.ClosedRound >= b.Round &&
+		!HasEntry(entries, b.Round, store.DirToMasterMind, store.KindReport) {
+		if f.CatchUp != nil && f.CatchUp.Round == view.ClosedRound {
+			next, a, err := applyCatchUp(ctx, rt, tx, b, view, f.CatchUp)
+			f.Settle = a
+			return next, true, err
+		}
+		next, err := catchUp(ctx, rt, tx, b, view)
+		return next, true, err
+	}
+	return b, true, nil
 }
 
 // observeRemote fetches for b and applies the result inline, under whatever
@@ -472,57 +489,79 @@ func SyncRemote(ctx context.Context, rt Runtime) (int, error) {
 		}
 		name := b.Name
 		f := fetchRemote(ctx, rt, b)
-		err := rt.Store.WithLock(func(tx *store.Tx) error {
-			fresh, err := tx.Load(name)
-			if errors.Is(err, store.ErrNotFound) {
-				return nil
-			}
-			if err != nil {
-				return err
-			}
-			if !f.matches(fresh) {
-				return nil
-			}
-			next, _, err := applyRemote(ctx, rt, tx, fresh, &f)
-			if err != nil {
-				return err
-			}
-			// synced counts bindings whose synced state actually changed:
-			// a pass that moved only live fields persists its overlay and
-			// counts nothing.
-			changed, err := tx.SaveWithOverlay(next)
-			if err != nil {
-				return err
-			}
-			if changed {
-				synced++
-			}
-			return nil
-		})
-		f.release()
-		if err == nil && f.Settle != nil {
-			err = settleCatchUp(ctx, rt, f.Settle, false)
+		changed, err := observeAndSaveBinding(ctx, rt, name, &f)
+		if changed {
+			synced++
 		}
-		if err != nil {
+		if err = settleBindingCatchUp(ctx, rt, &f, err); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 		}
 	}
 
-	// A server chain is moved by the chain pull, never by the per-binding pass
-	// above: the pull reads the server's view, installs every member's missing
-	// closed rounds and queues the chain's one end delivery.
-	if err := chainPullServers(ctx, rt); err != nil {
-		errs = append(errs, err)
-	}
-
-	// The chain's own staged rounds ship here, after the per-binding loop: a
-	// remote member's round is staged wherever a local send would start it, and
-	// this pass is what collects and ships it when no daemon is running.
-	if err := chainSendPending(ctx, rt); err != nil {
+	if err := pullAndSendChains(ctx, rt); err != nil {
 		errs = append(errs, err)
 	}
 
 	return synced, errors.Join(errs...)
+}
+
+// observeAndSaveBinding applies one binding's prefetched view under the lock
+// and saves: synced counts bindings whose synced state actually changed, so a
+// pass that moved only live fields persists its overlay and counts nothing.
+func observeAndSaveBinding(ctx context.Context, rt Runtime, name string, f *remoteFetch) (bool, error) {
+	changed := false
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		fresh, err := tx.Load(name)
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !f.matches(fresh) {
+			return nil
+		}
+		next, _, err := applyRemote(ctx, rt, tx, fresh, f)
+		if err != nil {
+			return err
+		}
+		ok, err := tx.SaveWithOverlay(next)
+		if err != nil {
+			return err
+		}
+		changed = ok
+		return nil
+	})
+	return changed, err
+}
+
+// settleBindingCatchUp releases the fetch's temps and settles a catch-up the
+// apply installed: the ack runs outside the lock, unblocking the report the
+// pass collected.
+func settleBindingCatchUp(ctx context.Context, rt Runtime, f *remoteFetch, err error) error {
+	f.release()
+	if err == nil && f.Settle != nil {
+		return settleCatchUp(ctx, rt, f.Settle, false)
+	}
+	return err
+}
+
+// pullAndSendChains moves server chains and ships their staged rounds: a
+// server chain is moved by the chain pull, never by the per-binding pass
+// above, which reads the server's view, installs every member's missing closed
+// rounds and queues the chain's one end delivery. The chain's own staged
+// rounds ship after the per-binding loop -- a remote member's round is staged
+// wherever a local send would start it, and this pass is what collects and
+// ships it when no daemon is running. It delivers nothing itself.
+func pullAndSendChains(ctx context.Context, rt Runtime) error {
+	var errs []error
+	if err := chainPullServers(ctx, rt); err != nil {
+		errs = append(errs, err)
+	}
+	if err := chainSendPending(ctx, rt); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 // SyncRemoteUnlessDaemon is SyncRemote for the read verbs (`relevo status`,

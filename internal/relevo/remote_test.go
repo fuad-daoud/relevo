@@ -1424,6 +1424,80 @@ func TestAddRemoteServerConflict(t *testing.T) {
 	}
 }
 
+// TestAddRemoteCreateFailurePerformsNoCleanup pins the create-failure boundary:
+// when CreateBinding itself fails the server holds no binding, so addRemote
+// returns the create error alone: no Unbind call and no local branch delete.
+// Mutation target: arm the unbind/delete-branch cleanup before CreateBinding
+// succeeds and the Unbind assertion fails.
+func TestAddRemoteCreateFailurePerformsNoCleanup(t *testing.T) {
+	// No t.Parallel: addRemoteMasterMind sets env, like TestAddRemoteServerConflict.
+	ctx := context.Background()
+
+	newRuntime := func(t *testing.T, createErr error) (Runtime, *fakeGit, *fakeRemote) {
+		t.Helper()
+		st := store.New(t.TempDir())
+		fg := &fakeGit{
+			headCommitID:  "1111111111111111111111111111111111111111",
+			rootCommitSHA: "2222222222222222222222222222222222222222",
+		}
+		fr := &fakeRemote{createBindingErr: createErr}
+		rt := Runtime{
+			Store:       st,
+			MasterMinds: addRemoteMasterMind(t),
+			Git:         fg,
+			Remote:      fr,
+			Now:         time.Now,
+		}
+		return rt, fg, fr
+	}
+	opts := AddOptions{
+		Name:   "api",
+		Server: "zen",
+		Repo:   "/fake/repo",
+	}
+
+	t.Run("conflict", func(t *testing.T) {
+		rt, fg, fr := newRuntime(t, &client.HTTPError{
+			Status: 409,
+			Body: remote.ErrorBody{
+				Code:    "conflict",
+				Message: "already exists",
+			},
+		})
+
+		_, err := Add(ctx, rt, opts)
+		if err == nil || !strings.Contains(err.Error(), "binding api already exists on zen for this client but not here") {
+			t.Fatalf("got err %v, want the 409 conflict message", err)
+		}
+		// The 409 names the pre-existing server binding; a cleanup would
+		// unbind exactly the binding the error told the user to remove by hand.
+		if strings.Contains(err.Error(), "could not be removed") {
+			t.Errorf("err = %v, want the create error alone", err)
+		}
+		if slices.Contains(fr.calls, "Unbind:zen:api") {
+			t.Errorf("calls = %v, want no Unbind when the create itself failed", fr.calls)
+		}
+		if len(fg.deleteBranchCalls) != 0 {
+			t.Errorf("DeleteBranch calls = %v, want none when the create itself failed", fg.deleteBranchCalls)
+		}
+	})
+
+	t.Run("generic", func(t *testing.T) {
+		rt, fg, fr := newRuntime(t, errors.New("boom"))
+
+		_, err := Add(ctx, rt, opts)
+		if err == nil || err.Error() != "boom" {
+			t.Fatalf("got err %v, want the create failure alone", err)
+		}
+		if slices.Contains(fr.calls, "Unbind:zen:api") {
+			t.Errorf("calls = %v, want no Unbind when the create itself failed", fr.calls)
+		}
+		if len(fg.deleteBranchCalls) != 0 {
+			t.Errorf("DeleteBranch calls = %v, want none when the create itself failed", fg.deleteBranchCalls)
+		}
+	})
+}
+
 // TestAddRemoteCleansUpServerOnSaveFailure pins the server cleanup: any
 // CreateBinding succeeds -- not just ErrBranchExists -- unbinds the server
 // binding it just created, best-effort, before addRemote returns. A

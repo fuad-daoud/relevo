@@ -94,20 +94,13 @@ func streamRenderer() lineRenderer {
 	return func(kind string, line []byte) []string { return r.Render(kind, line) }
 }
 
-// scanTail is streamTail's sibling for a limit scan: the same bytes, read the
-// same way, but each line is rendered with transcript.LimitLines, so only the
-// lines the harness itself wrote reach the patterns -- and the reset time is
-// parsed from that same text, so model text, tool output and thinking can
-// never gate a provider.
-func scanTail(path string, read func(string) ([]byte, error), segs []store.StreamSegment, fallback string, n int, from int64) string {
-	text, _ := scanTailBoth(path, read, segs, fallback, n, from)
-	return text
-}
-
-// scanTailBoth is scanTail paired with the structured reset the same bytes
-// carry: one pass, no new I/O. The render closure keeps the last quota and
-// allowance instants from the lines the scan already reads; the failure's own
-// instant wins over the window's.
+// scanTailBoth is a limit scan paired with the structured reset the same
+// bytes carry: one pass, no new I/O. Each line is rendered with
+// transcript.LimitLines, so only the lines the harness itself wrote reach the
+// patterns -- and the reset time is parsed from that same text, so model text,
+// tool output and thinking can never gate a provider. The render closure keeps
+// the last quota and allowance instants from the lines the scan already reads;
+// the failure's own instant wins over the window's.
 func scanTailBoth(path string, read func(string) ([]byte, error), segs []store.StreamSegment, fallback string, n int, from int64) (string, int64) {
 	var quotaMS, allowMS int64
 	render := func(kind string, line []byte) []string {
@@ -159,7 +152,11 @@ func diskStreamTail(path string, segs []store.StreamSegment, fallback string, n 
 	if err != nil {
 		return "", false
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			slog.Warn("close stream failed", "path", path, "err", cerr)
+		}
+	}()
 	fi, err := f.Stat()
 	if err != nil {
 		return "", false
@@ -222,18 +219,12 @@ func currentBuilderTail(rt Runtime, b store.Binding, n int) string {
 	return streamTail(rt.Store.StreamPath(b.Name, b.Round), rt.Store.ReadFile, b.Builder.StreamSegments, b.Builder.Kind, n, from)
 }
 
-// currentBuilderScanText reads currentBuilderTail's bytes for a limit scan,
+// currentBuilderScan reads currentBuilderTail's bytes for a limit scan,
 // rendering each stream line with transcript.LimitLines so only the lines the
 // harness itself wrote can gate; the legacy log is scanned as rendered tail,
 // because such a round writes its stderr to the log and the rendered text is
-// what the patterns match.
-func currentBuilderScanText(rt Runtime, b store.Binding, n int) string {
-	text, _ := currentBuilderScan(rt, b, n)
-	return text
-}
-
-// currentBuilderScan pairs currentBuilderScanText with the structured reset
-// the same bytes carry: one pass, no new I/O. A legacy round's log is
+// what the patterns match. It pairs the text with the structured reset the
+// same bytes carry: one pass, no new I/O. A legacy round's log is
 // rendered text with no JSON beside it, so it never carries one.
 func currentBuilderScan(rt Runtime, b store.Binding, n int) (string, int64) {
 	if b.Builder.LogPath != "" && b.Builder.LogPath == rt.Store.BuilderLogPath(b.Name, b.Round) {
@@ -246,7 +237,7 @@ func currentBuilderScan(rt Runtime, b store.Binding, n int) (string, int64) {
 	return scanTailBoth(rt.Store.StreamPath(b.Name, b.Round), rt.Store.ReadFile, b.Builder.StreamSegments, b.Builder.Kind, n, from)
 }
 
-// currentBuilderTransportText is currentBuilderScanText with
+// currentBuilderTransportText is currentBuilderScan with
 // transcript.TransportLines as the renderer: the same bytes and the same cut.
 func currentBuilderTransportText(rt Runtime, b store.Binding, n int) string {
 	if b.Builder.LogPath != "" && b.Builder.LogPath == rt.Store.BuilderLogPath(b.Name, b.Round) {

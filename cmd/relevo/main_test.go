@@ -76,7 +76,7 @@ func TestMain(m *testing.M) {
 	}
 	code := m.Run()
 	cleanup()
-	os.RemoveAll(root)
+	_ = os.RemoveAll(root)
 	os.Exit(code)
 }
 
@@ -92,13 +92,13 @@ func isolateTestEnv(root string) {
 	for _, entry := range os.Environ() {
 		name, _, _ := strings.Cut(entry, "=")
 		if matchesUnsetRule(name) {
-			os.Unsetenv(name)
+			_ = os.Unsetenv(name)
 		}
 	}
-	os.Setenv("HOME", root)
-	os.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
-	os.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
-	os.Setenv("XDG_DATA_HOME", filepath.Join(root, "data"))
+	_ = os.Setenv("HOME", root)
+	_ = os.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+	_ = os.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	_ = os.Setenv("XDG_DATA_HOME", filepath.Join(root, "data"))
 }
 
 // matchesUnsetRule reports whether isolateTestEnv unsets the named variable.
@@ -417,7 +417,9 @@ func TestDiffCommand(t *testing.T) {
 
 	runErr := run([]string{"show", "webshop", "--diff"})
 
-	w.Close()
+	if err := w.Close(); err != nil {
+		t.Fatalf("close stdout pipe: %v", err)
+	}
 	os.Stdout = origStdout
 	out, err := io.ReadAll(r)
 	if err != nil {
@@ -448,7 +450,9 @@ func TestDiffCommand(t *testing.T) {
 	r2, w2, _ := os.Pipe()
 	os.Stdout = w2
 	runErr = run([]string{"show", "webshop", "--diff", "--stat"})
-	w2.Close()
+	if err := w2.Close(); err != nil {
+		t.Fatalf("close stdout pipe: %v", err)
+	}
 	os.Stdout = origStdout
 	outStat, _ := io.ReadAll(r2)
 	if runErr != nil {
@@ -581,7 +585,9 @@ func TestDiffDriftCommand(t *testing.T) {
 
 	runErr := run([]string{"show", "webshop", "--drift"})
 
-	w.Close()
+	if err := w.Close(); err != nil {
+		t.Fatalf("close stdout pipe: %v", err)
+	}
 	os.Stdout = origStdout
 	out, err := io.ReadAll(r)
 	if err != nil {
@@ -598,7 +604,9 @@ func TestDiffDriftCommand(t *testing.T) {
 	rRound, wRound, _ := os.Pipe()
 	os.Stdout = wRound
 	runErr = run([]string{"show", "webshop", "--drift", "--round", "1"})
-	wRound.Close()
+	if err := wRound.Close(); err != nil {
+		t.Fatalf("close stdout pipe: %v", err)
+	}
 	os.Stdout = origStdout
 	outRound, _ := io.ReadAll(rRound)
 	if runErr != nil {
@@ -612,7 +620,9 @@ func TestDiffDriftCommand(t *testing.T) {
 	rStat, wStat, _ := os.Pipe()
 	os.Stdout = wStat
 	runErr = run([]string{"show", "webshop", "--drift", "--stat"})
-	wStat.Close()
+	if err := wStat.Close(); err != nil {
+		t.Fatalf("close stdout pipe: %v", err)
+	}
 	os.Stdout = origStdout
 	outStat, _ := io.ReadAll(rStat)
 	if runErr != nil {
@@ -1851,7 +1861,7 @@ func TestStatusLineFlags(t *testing.T) {
 				t.Errorf("run(%v) = nil, want a refusal", args)
 				continue
 			}
-			requireCLIError(t, err, codeUsage, "relevo mastermind list")
+			_ = requireCLIError(t, err, codeUsage, "relevo mastermind list")
 			var ec exitCodeErr
 			if !errors.As(err, &ec) || ec.code != catalogExit(codeUsage) {
 				t.Errorf("run(%v): exit = %v, want %d", args, err, catalogExit(codeUsage))

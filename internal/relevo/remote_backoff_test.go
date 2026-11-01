@@ -24,7 +24,7 @@ type silentRemote struct {
 func (s *silentRemote) GetBinding(ctx context.Context, server, name string) (remote.BindingView, error) {
 	s.gets.Add(1)
 	<-ctx.Done()
-	return remote.BindingView{}, fmt.Errorf("%w: %v", client.ErrUnreachable, ctx.Err())
+	return remote.BindingView{}, fmt.Errorf("%w: %w", client.ErrUnreachable, ctx.Err())
 }
 
 func shortenPrefetchDeadline(t *testing.T, d time.Duration) {

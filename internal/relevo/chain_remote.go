@@ -203,6 +203,36 @@ func chainBuildRemoteBuilder(ctx context.Context, rt Runtime, opts ChainOptions,
 		return store.Binding{}, nil, ErrGitRequired
 	}
 
+	view, clientBindingID, err := chainRemoteCreateBinding(ctx, rt, opts, plan)
+	if err != nil {
+		return store.Binding{}, nil, err
+	}
+
+	// From here the server has a binding this client does not. Every later
+	// failure unbinds it on the server first, then removes the local branch.
+	unbind, markBranch := chainRemoteUnwindGuard(ctx, rt, server, name, branch, plan.repo, &err)
+	defer func() {
+		if err != nil {
+			unbind()
+		}
+	}()
+
+	b, err = chainRemoteLocalBinding(ctx, rt, opts, plan, name, branch, base, view, clientBindingID, markBranch)
+	if err != nil {
+		return store.Binding{}, nil, err
+	}
+	return b, unbind, nil
+}
+
+// chainRemoteCreateBinding posts the server create carrying the chain's
+// resolved gate, mapping the server's answer the way addRemote does. It
+// returns the server's view with the client binding id the create carried.
+func chainRemoteCreateBinding(ctx context.Context, rt Runtime, opts ChainOptions, plan chainStartPlan) (remote.BindingView, string, error) {
+	name := opts.Name
+	rp := plan.remote
+	server := rp.server
+	base := rp.base
+
 	// FeatureOrigin decides whether the two link ids travel, as in addRemote's.
 	who := rp.who
 	clientInstallation := ""
@@ -210,7 +240,7 @@ func chainBuildRemoteBuilder(ctx context.Context, rt Runtime, opts ChainOptions,
 	if slices.Contains(who.Features, remote.FeatureOrigin) {
 		inst, ierr := installation.Load(filepath.Dir(rt.Store.DBPath()))
 		if ierr != nil {
-			return store.Binding{}, nil, ierr
+			return remote.BindingView{}, "", ierr
 		}
 		clientInstallation = inst.ID
 		clientBindingID = db.NewID()
@@ -237,50 +267,58 @@ func chainBuildRemoteBuilder(ctx context.Context, rt Runtime, opts ChainOptions,
 	if err != nil {
 		var httpErr *client.HTTPError
 		if errors.As(err, &httpErr) && httpErr.Status == 409 {
-			return store.Binding{}, nil, fmt.Errorf("binding %s already exists on %s for this client but not here; relevo serve unbind --owner <your label> %s on the server, or choose another name", name, server, name)
+			return remote.BindingView{}, "", fmt.Errorf("binding %s already exists on %s for this client but not here; relevo serve unbind --owner <your label> %s on the server, or choose another name", name, server, name)
 		}
 		if errors.As(err, &httpErr) && httpErr.Status == 422 && httpErr.Body.Code == remote.CodeTierAboveMax {
-			return store.Binding{}, nil, fmt.Errorf("%w: %s", resolve.ErrTierAboveMax, httpErr.Body.Message)
+			return remote.BindingView{}, "", fmt.Errorf("%w: %s", resolve.ErrTierAboveMax, httpErr.Body.Message)
 		}
 		if errors.As(err, &httpErr) && httpErr.Status == 422 && httpErr.Body.Code == remote.CodeInvalid && resolve.TierUnsupportedMessage(httpErr.Body.Message) {
-			return store.Binding{}, nil, resolve.TierUnsupportedFromWire(httpErr.Body.Message)
+			return remote.BindingView{}, "", resolve.TierUnsupportedFromWire(httpErr.Body.Message)
 		}
-		return store.Binding{}, nil, pickRefusalFromWire(err)
+		return remote.BindingView{}, "", pickRefusalFromWire(err)
 	}
+	return view, clientBindingID, nil
+}
 
-	// From here the server has a binding this client does not. Every later
-	// failure unbinds it on the server first, then removes the local branch.
-	// armed guards a double unwind: the deferred call here and the caller's
-	// call for a start failure run the same closure.
+// chainRemoteUnwindGuard arms the all-or-none unwind for a created server
+// binding: server Unbind first, then the local branch. armed guards a double
+// unwind: the deferred call for an own failure and the caller's call for a
+// later start failure run the same closure. markBranch records the branch
+// once cut, so the unwind removes only what exists.
+func chainRemoteUnwindGuard(ctx context.Context, rt Runtime, server, name, branch, repo string, err *error) (unbind func(), markBranch func()) {
 	armed := true
-	branchCreated := false
-	unbind := func() {
+	created := false
+	unbind = func() {
 		if !armed {
 			return
 		}
 		armed = false
 		if uerr := rt.Remote.Unbind(ctx, server, name, true); uerr != nil {
-			err = fmt.Errorf("%w; server binding %s on %s could not be removed: %v", err, name, server, uerr)
+			*err = fmt.Errorf("%w; server binding %s on %s could not be removed: %w", *err, name, server, uerr)
 		}
-		if branchCreated {
-			if derr := rt.Git.DeleteBranch(ctx, plan.repo, branch); derr != nil {
-				err = fmt.Errorf("%w; local branch %s could not be removed: %v", err, branch, derr)
+		if created {
+			if derr := rt.Git.DeleteBranch(ctx, repo, branch); derr != nil {
+				*err = fmt.Errorf("%w; local branch %s could not be removed: %w", *err, branch, derr)
 			}
 		}
 	}
-	defer func() {
-		if err != nil {
-			unbind()
-		}
-	}()
+	markBranch = func() { created = true }
+	return unbind, markBranch
+}
 
-	if err = rt.Git.CreateBranch(ctx, plan.repo, branch, base); err != nil {
+// chainRemoteLocalBinding cuts the local branch at base and builds the client
+// binding from the server's view, the mirror addRemote's create leaves
+// behind.
+func chainRemoteLocalBinding(ctx context.Context, rt Runtime, opts ChainOptions, plan chainStartPlan, name, branch, base string, view remote.BindingView, clientBindingID string, markBranch func()) (store.Binding, error) {
+	rp := plan.remote
+	server := rp.server
+	if err := rt.Git.CreateBranch(ctx, plan.repo, branch, base); err != nil {
 		if errors.Is(err, git.ErrBranchExists) {
-			return store.Binding{}, nil, fmt.Errorf("branch relevo/%s exists; delete it or pick another name", name)
+			return store.Binding{}, fmt.Errorf("branch relevo/%s exists; delete it or pick another name", name)
 		}
-		return store.Binding{}, nil, err
+		return store.Binding{}, err
 	}
-	branchCreated = true
+	markBranch()
 
 	builderKind := ""
 	if view.Candidate != "" {
@@ -288,7 +326,7 @@ func chainBuildRemoteBuilder(ctx context.Context, rt Runtime, opts ChainOptions,
 			builderKind = ref.Harness
 		}
 	}
-	b = store.Binding{
+	return store.Binding{
 		Name:             name,
 		CWD:              plan.repo,
 		Repo:             plan.repo,
@@ -310,8 +348,7 @@ func chainBuildRemoteBuilder(ctx context.Context, rt Runtime, opts ChainOptions,
 		RecordID:         clientBindingID,
 		Gate:             plan.settings.Gate,
 		Regate:           plan.settings.Regate,
-	}
-	return b, unbind, nil
+	}, nil
 }
 
 // chainWireRole is the actor name the create request carries: the same

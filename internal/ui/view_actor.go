@@ -286,26 +286,35 @@ func (v actorView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd
 	if v.placementFocus() {
 		return v.updatePlacementKey(k, env)
 	}
+	if next, cmd, ok := v.navKey(k, env, n); ok {
+		return next, cmd
+	}
+	return v.editKey(k, env, entries, n)
+}
 
+func (v actorView) navKey(k tea.KeyMsg, env widget.Env, n int) (widget.View, tea.Cmd, bool) {
 	switch k.String() {
 	case "up":
 		v.cur = candClamp(v.cur-1, n)
-		v.follow(env)
 	case "down":
 		v.cur = candClamp(v.cur+1, n)
-		v.follow(env)
 	case "home":
 		v.cur = 0
-		v.follow(env)
 	case "end":
 		v.cur = candClamp(n-1, n)
-		v.follow(env)
 	case "pgup":
 		v.cur = candClamp(v.cur-widget.BodyHeight(env), n)
-		v.follow(env)
 	case "pgdown":
 		v.cur = candClamp(v.cur+widget.BodyHeight(env), n)
-		v.follow(env)
+	default:
+		return v, nil, false
+	}
+	v.follow(env)
+	return v, nil, true
+}
+
+func (v actorView) editKey(k tea.KeyMsg, env widget.Env, entries []roles.Entry, n int) (widget.View, tea.Cmd) {
+	switch k.String() {
 	case "shift+up":
 		if n < 2 || v.cur <= 0 {
 			return v, nil

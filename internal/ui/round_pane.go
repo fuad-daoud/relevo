@@ -459,72 +459,88 @@ func (p roundPane) sourceLine() string {
 	var s string
 	switch p.detail.active {
 	case tabPrompt:
-		if c.at.IsZero() {
-			s = fmt.Sprintf("prompt r%d", c.round)
-		} else {
-			s = fmt.Sprintf("prompt r%d · %s", c.round, c.at.Local().Format("15:04"))
-		}
+		s = stampedSource("prompt", c)
 	case tabReport:
-		if c.at.IsZero() {
-			s = fmt.Sprintf("report r%d", c.round)
-		} else {
-			s = fmt.Sprintf("report r%d · %s", c.round, c.at.Local().Format("15:04"))
-		}
+		s = stampedSource("report", c)
 	case tabTerminal:
-		n := strings.Count(strings.TrimRight(c.body, "\n"), "\n") + 1
-		r := row(p.report, p.detail.name)
-		if c.transcript {
-			src := "pane"
-			if p.detail.headless {
-				src = "headless"
-				if r != nil && r.Server != "" {
-					src = "remote"
-				}
-			}
-			if c.logName != "" {
-				src += " · " + c.logName
-			}
-			mode := "following"
-			if !p.detail.follow {
-				mode = "scrolled"
-			}
-			s = fmt.Sprintf("%s · %d lines · %s", src, n, mode)
-		} else {
-			pane := ""
-			if r != nil {
-				pane = "remote"
-				if r.Headless != nil {
-					pane = r.ProcessWord()
-				}
-			}
-			s = fmt.Sprintf("%s · captured %s ago · %d lines", pane, ago(c.at, p.now()), n)
-		}
+		s = terminalSource(c, row(p.report, p.detail.name), p.detail.headless, p.detail.follow, p.now)
 	case tabDiff:
-		files, add, del := diffStat(c.body)
-		unit := "files"
-		if files == 1 {
-			unit = "file"
-		}
-		s = fmt.Sprintf("round %d · %d %s · +%d −%d", p.detail.round, files, unit, add, del)
+		s = diffSource(c, p.detail.round)
 	case tabLog:
-		n := strings.Count(strings.TrimRight(c.body, "\n"), "\n") + 1
-		s = fmt.Sprintf("%d entries", n)
+		s = logSource(c)
 	}
 	if c.err != nil || c.empty != "" {
 		// The viewport carries the prose; the source line says only where
 		// it looked.
-		switch p.detail.active {
-		case tabPrompt:
-			s = fmt.Sprintf("round %d", p.detail.round)
-		case tabReport:
-			s = "report"
-		case tabDiff:
-			s = fmt.Sprintf("round %d", p.detail.round)
-		case tabLog:
-			s = "log"
+		if override, ok := sourceOverride(p.detail.active, p.detail.round); ok {
+			s = override
 		}
 	}
 	return widget.FaintStyle.Render(s)
+}
+
+func stampedSource(label string, c tabContent) string {
+	if c.at.IsZero() {
+		return fmt.Sprintf("%s r%d", label, c.round)
+	}
+	return fmt.Sprintf("%s r%d · %s", label, c.round, c.at.Local().Format("15:04"))
+}
+
+func terminalSource(c tabContent, r *view.BindingStatus, headless, follow bool, now func() time.Time) string {
+	n := strings.Count(strings.TrimRight(c.body, "\n"), "\n") + 1
+	if c.transcript {
+		src := "pane"
+		if headless {
+			src = "headless"
+			if r != nil && r.Server != "" {
+				src = "remote"
+			}
+		}
+		if c.logName != "" {
+			src += " · " + c.logName
+		}
+		mode := "following"
+		if !follow {
+			mode = "scrolled"
+		}
+		return fmt.Sprintf("%s · %d lines · %s", src, n, mode)
+	}
+	pane := ""
+	if r != nil {
+		pane = "remote"
+		if r.Headless != nil {
+			pane = r.ProcessWord()
+		}
+	}
+	return fmt.Sprintf("%s · captured %s ago · %d lines", pane, ago(c.at, now()), n)
+}
+
+func diffSource(c tabContent, round int) string {
+	files, add, del := diffStat(c.body)
+	unit := "files"
+	if files == 1 {
+		unit = "file"
+	}
+	return fmt.Sprintf("round %d · %d %s · +%d −%d", round, files, unit, add, del)
+}
+
+func logSource(c tabContent) string {
+	n := strings.Count(strings.TrimRight(c.body, "\n"), "\n") + 1
+	return fmt.Sprintf("%d entries", n)
+}
+
+func sourceOverride(active tab, round int) (string, bool) {
+	switch active {
+	case tabPrompt:
+		return fmt.Sprintf("round %d", round), true
+	case tabReport:
+		return "report", true
+	case tabDiff:
+		return fmt.Sprintf("round %d", round), true
+	case tabLog:
+		return "log", true
+	}
+	return "", false
 }
 
 // hintLine is the one rendered line under a blocked builder's dialog on

@@ -165,7 +165,7 @@ func TestAuditChangesRequestedOncePerRevision(t *testing.T) {
 		t.Error("moving to a cached revision must request nothing")
 	}
 	res, cmd = m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	m = drain(t, res.(Model), cmd)
+	drain(t, res.(Model), cmd)
 	if cmd != nil {
 		t.Error("moving back to a cached revision must request nothing")
 	}

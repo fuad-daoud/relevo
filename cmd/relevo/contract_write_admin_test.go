@@ -544,7 +544,7 @@ func TestContractWriteAdminStateFailures(t *testing.T) {
 			t.Fatalf("first config init: %v (stderr: %s)", err, stderr)
 		}
 		stdout, _, runErr := captureOutput(t, func() error { return run([]string{"config", "init", "--json"}) })
-		requireCLIError(t, runErr, codeConflict, "")
+		_ = requireCLIError(t, runErr, codeConflict, "")
 		if len(stdout) != 0 {
 			t.Errorf("stdout = %q, want empty before report", stdout)
 		}
@@ -559,7 +559,7 @@ func TestContractWriteAdminStateFailures(t *testing.T) {
 		stdout, _, runErr := captureOutput(t, func() error {
 			return run([]string{"serve", "revoke", "SHA256:nosuch", "--state", state})
 		})
-		requireCLIError(t, runErr, codeClientNotFound, "relevo serve clients")
+		_ = requireCLIError(t, runErr, codeClientNotFound, "relevo serve clients")
 		if len(stdout) != 0 {
 			t.Errorf("stdout = %q, want empty before report", stdout)
 		}
@@ -574,7 +574,7 @@ func TestContractWriteAdminStateFailures(t *testing.T) {
 		stdout, _, runErr := captureOutput(t, func() error {
 			return run([]string{"serve", "unbind", "--owner", "nosuch", "webshop", "--state", state})
 		})
-		requireCLIError(t, runErr, codeClientNotFound, "relevo serve clients")
+		_ = requireCLIError(t, runErr, codeClientNotFound, "relevo serve clients")
 		if len(stdout) != 0 {
 			t.Errorf("stdout = %q, want empty before report", stdout)
 		}
@@ -593,7 +593,7 @@ func TestContractWriteAdminStateFailures(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			args := append(append([]string{}, c.args...), "--state", t.TempDir())
 			stdout, _, runErr := captureOutput(t, func() error { return run(args) })
-			requireCLIError(t, runErr, codeNotAvailable, "relevo serve init")
+			_ = requireCLIError(t, runErr, codeNotAvailable, "relevo serve init")
 			if len(stdout) != 0 {
 				t.Errorf("stdout = %q, want empty before report", stdout)
 			}

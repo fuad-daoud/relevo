@@ -184,7 +184,7 @@ func stdinFile(t *testing.T, payload string) *os.File {
 	if err != nil {
 		t.Fatalf("CreateTemp: %v", err)
 	}
-	t.Cleanup(func() { f.Close() })
+	t.Cleanup(func() { _ = f.Close() })
 
 	if _, err := f.WriteString(payload); err != nil {
 		t.Fatalf("write payload: %v", err)

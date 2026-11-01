@@ -107,7 +107,11 @@ func resetRoundBase(ctx context.Context, rt Runtime, b store.Binding, serverRef 
 // server's own ref through Absorb, then the adopted branch fast-forwarded onto
 // the result. rcBundle's caller owns the request; this consumes the stream.
 func absorbCatchUpBundle(ctx context.Context, rt Runtime, b store.Binding, view remote.BindingView, cf *catchUpFetch, rcBundle io.ReadCloser) {
-	defer rcBundle.Close()
+	defer func() {
+		if cerr := rcBundle.Close(); cerr != nil {
+			slog.Warn("close round bundle failed", "server", b.Builder.Server, "name", b.Name, "round", view.ClosedRound, "err", cerr)
+		}
+	}()
 	n := view.ClosedRound
 	server, name := b.Builder.Server, b.Name
 

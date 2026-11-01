@@ -122,9 +122,10 @@ func (m Model) appendGroupOutcomes(parts []string, g histq.GroupRow, cursor bool
 	haltCnt := 0
 	for _, r := range g.Rows {
 		w, _ := m.outcomeWord(r)
-		if w == "done" {
+		switch w {
+		case "done":
 			doneCnt++
-		} else if w == "halted" {
+		case "halted":
 			haltCnt++
 		}
 	}

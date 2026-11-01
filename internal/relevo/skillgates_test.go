@@ -41,10 +41,6 @@ func skillRuntime(t *testing.T, onDisk ...string) Runtime {
 	return rt
 }
 
-func skillGatesFor(rt Runtime, dir string) []availability.Gate {
-	return resolve.WithSkillGates(ResolveDeps(rt), nil, dir, nil)
-}
-
 const skillBlindNote = "skill design-runbooks not found for designer on claude"
 
 func designerBindOpts(candidate string) BindOptions {

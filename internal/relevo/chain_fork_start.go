@@ -23,37 +23,57 @@ type childCreated struct {
 // chainStartChild starts one child chain in the caller's transaction, cutting
 // its branch from the parent writer's tip.
 func chainStartChild(ctx context.Context, rt Runtime, tx *store.Tx, parent db.ChainRow, spec workflow.ChildSpec) (childCreated, error) {
+	childName, childDef, planned, bodies, err := chainStartChildResolve(rt, parent, spec)
+	if err != nil {
+		return childCreated{}, err
+	}
+	childOpts, childPlan, members, err := chainStartChildPlan(ctx, rt, tx, parent, spec, childName, childDef, planned, bodies)
+	if err != nil {
+		return childCreated{}, err
+	}
+	return chainStartChildPersist(ctx, rt, tx, parent, childName, childOpts, childPlan, members)
+}
+
+// chainStartChildResolve validates the child's workflow and plans read-only:
+// the definition, its members, the name cap, and the plan bodies.
+func chainStartChildResolve(rt Runtime, parent db.ChainRow, spec workflow.ChildSpec) (string, workflow.Definition, []chain.PlannedMember, [][]byte, error) {
 	childName := parent.Name + "." + spec.Key
 	childDef, _, err := resolve.ResolveWorkflow(rt.Config, spec.Workflow)
 	if err != nil {
-		return childCreated{}, err
+		return "", workflow.Definition{}, nil, nil, err
 	}
 	actors := rt.RoleRegistry().WorkflowActors()
 	planned, err := chain.MemberNames(childName, childDef, actors)
 	if err != nil {
-		return childCreated{}, err
+		return "", workflow.Definition{}, nil, nil, err
 	}
 	if cap := chain.NameCap(childName, planned); len(childName) > cap {
-		return childCreated{}, refusal.New("chain name %q exceeds %d characters (the longest member suffix is %s)", childName, cap, chain.LongestMemberSuffix(childName, planned))
+		return "", workflow.Definition{}, nil, nil, refusal.New("chain name %q exceeds %d characters (the longest member suffix is %s)", childName, cap, chain.LongestMemberSuffix(childName, planned))
 	}
 
 	bodies, err := chainPlanBodiesFor(ChainOptions{Plans: spec.Plans})
 	if err != nil {
-		return childCreated{}, err
+		return "", workflow.Definition{}, nil, nil, err
 	}
 	given := workflow.Given{Plans: len(bodies) > 0, Task: spec.Task != ""}
 	if err := chainValidateWorkflow(rt, childDef, given); err != nil {
-		return childCreated{}, err
+		return "", workflow.Definition{}, nil, nil, err
 	}
+	return childName, childDef, planned, bodies, nil
+}
 
+// chainStartChildPlan builds the child's start plan: its members, their
+// actors, and the workflow start carrying the parent's repository and labels.
+func chainStartChildPlan(ctx context.Context, rt Runtime, tx *store.Tx, parent db.ChainRow, spec workflow.ChildSpec, childName string, childDef workflow.Definition, planned []chain.PlannedMember, bodies [][]byte) (ChainOptions, chainWFStart, []chainMember, error) {
+	actors := rt.RoleRegistry().WorkflowActors()
 	keeper := chain.WriterKeeper(childDef, workflow.UsedActors(childDef), actors)
 	members := chainWorkflowMembers(childDef, planned, keeper)
 	if err := chainFreeNames(rt, members); err != nil {
-		return childCreated{}, err
+		return ChainOptions{}, chainWFStart{}, nil, err
 	}
 	resolutions, err := chainResolveActors(rt, members)
 	if err != nil {
-		return childCreated{}, err
+		return ChainOptions{}, chainWFStart{}, nil, err
 	}
 
 	childOpts := ChainOptions{
@@ -78,7 +98,7 @@ func chainStartChild(ctx context.Context, rt Runtime, tx *store.Tx, parent db.Ch
 	// read the same tree's settings the parent's start read.
 	childRepoSet, err := RepoSettingsFor(ctx, rt, parent.Repo)
 	if err != nil {
-		return childCreated{}, err
+		return ChainOptions{}, chainWFStart{}, nil, err
 	}
 	childPlan := chainWFStart{
 		def:          childDef,
@@ -103,7 +123,13 @@ func chainStartChild(ctx context.Context, rt Runtime, tx *store.Tx, parent db.Ch
 	if parentBuilder, lerr := tx.Load(parent.Builder); lerr == nil {
 		childPlan.subdir = parentBuilder.Subdir
 	}
+	return childOpts, childPlan, members, nil
+}
 
+// chainStartChildPersist prepares and persists the child inside the caller's
+// transaction: it never leaves the lock, so the caller keeps its critical
+// section.
+func chainStartChildPersist(ctx context.Context, rt Runtime, tx *store.Tx, parent db.ChainRow, childName string, childOpts ChainOptions, childPlan chainWFStart, members []chainMember) (childCreated, error) {
 	prep, err := chainPrepareWorkflow(ctx, rt, childOpts, childPlan)
 	if err != nil {
 		return childCreated{}, err

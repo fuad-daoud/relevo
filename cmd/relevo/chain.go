@@ -172,11 +172,11 @@ func cmdChain(args []string) error {
 	return nil
 }
 
-// chainOptions turns the parsed flags into a start request, refusing the
-// combinations the verb's contract makes invalid. A dry run skips the
-// start-input requirements, because the workflow's own inputs decide what it
-// needs and the dry run validates them.
-func chainOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ChainOptions, error) {
+// chainStartOptions turns the parsed flags into a start request, refusing the
+// combinations the verb's contract makes invalid. Label and plan requirements
+// stay with the caller, because a dry run skips them: the workflow's own
+// inputs decide what it needs and the dry run validates them.
+func chainStartOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ChainOptions, error) {
 	if *v.name == "" {
 		return relevo.ChainOptions{}, fail(codeUsage, "relevo chain needs --name NAME")
 	}
@@ -234,6 +234,18 @@ func chainOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ChainOptions, er
 	// value is whichever flag was given; neither leaves the policy's own.
 	if flagGiven(fs, "security") || flagGiven(fs, "no-security") {
 		opts.Security = v.security
+	}
+	return opts, nil
+}
+
+// chainOptions turns the parsed flags into a start request, refusing the
+// combinations the verb's contract makes invalid. A dry run skips the
+// start-input requirements, because the workflow's own inputs decide what it
+// needs and the dry run validates them.
+func chainOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ChainOptions, error) {
+	opts, err := chainStartOptions(fs, v)
+	if err != nil {
+		return relevo.ChainOptions{}, err
 	}
 	if opts.DryRun {
 		return opts, nil

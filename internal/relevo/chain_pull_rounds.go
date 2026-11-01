@@ -62,7 +62,11 @@ func chainPullPrompt(ctx context.Context, rt Runtime, b store.Binding, r int) ([
 		}
 		return nil, false
 	}
-	defer rc.Close()
+	defer func() {
+		if cerr := rc.Close(); cerr != nil {
+			slog.Warn("chain prompt close failed", "server", b.Builder.Server, "name", b.Name, "round", r, "err", cerr)
+		}
+	}()
 	body, rerr := io.ReadAll(io.LimitReader(rc, chainPullMaxPlanBytes+1))
 	if rerr != nil || len(body) > chainPullMaxPlanBytes {
 		slog.Warn("chain prompt over cap; not stored", "server", b.Builder.Server, "name", b.Name, "round", r)

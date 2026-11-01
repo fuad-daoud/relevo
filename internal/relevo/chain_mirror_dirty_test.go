@@ -32,14 +32,16 @@ func mirrorDirtyFixture(t *testing.T) (Runtime, store.Binding) {
 	t.Helper()
 	rt, _ := chainRuntime(t)
 	startFlowChain(t, rt, flowReviewWorkflow)
-	rt.Store.WithLock(func(tx *store.Tx) error {
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
 		b, err := tx.Load("shop")
 		if err != nil {
 			return err
 		}
 		b.Builder = store.Endpoint{Mode: store.ModeRemote, Server: "zen", Kind: "claude", AgentName: "shop"}
 		return tx.Save(b)
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	return rt, chainBinding(t, rt, "shop")
 }
 
@@ -90,7 +92,7 @@ func mirrorCatchUp(t *testing.T, rt Runtime, b store.Binding, dirtyCommit string
 		View:       remoteDoneViewOf(b, dirtyCommit),
 		HaveReport: true, HaveDiff: true,
 	}
-	rt.Store.WithLock(func(tx *store.Tx) error {
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
 		cur, err := tx.Load(b.Name)
 		if err != nil {
 			return err
@@ -100,7 +102,9 @@ func mirrorCatchUp(t *testing.T, rt Runtime, b store.Binding, dirtyCommit string
 			return err
 		}
 		return tx.Save(next)
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // TestMirrorDirtyDoneCloseHaltsTheChain runs the real catch-up close: a placed
@@ -157,16 +161,18 @@ func TestPulledDirtyRoundHaltsOncePerRound(t *testing.T) {
 	t.Parallel()
 
 	rt, b := mirrorDirtyFixture(t)
-	rt.Store.WithLock(func(tx *store.Tx) error {
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
 		c, err := tx.Chain("shop")
 		if err != nil {
 			return err
 		}
 		c.Server = "zen"
 		return tx.ChainPut(c)
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
-	rt.Store.WithLock(func(tx *store.Tx) error {
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
 		cur, err := tx.Load(b.Name)
 		if err != nil {
 			return err
@@ -181,7 +187,9 @@ func TestPulledDirtyRoundHaltsOncePerRound(t *testing.T) {
 			t.Errorf("the copy was halted a second time: halt %q state %s", got.Halt, got.State)
 		}
 		return tx.Save(got)
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	c := flowChainRow(t, rt)
 	if c.Status != string(workflow.StatusRunning) || c.Reason != "" {

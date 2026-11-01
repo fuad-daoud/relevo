@@ -89,7 +89,10 @@ func workflowErrorf(class error, name, format string, args ...any) error {
 // to split the joined text.
 func workflowProblemsf(name string, problems []string) error {
 	err := workflowErrorf(ErrWorkflowInvalid, name, "%s", joinProblems(problems))
-	we := err.(*WorkflowError)
+	var we *WorkflowError
+	if !errors.As(err, &we) {
+		return err
+	}
 	we.problems = append([]string(nil), problems...)
 	return we
 }

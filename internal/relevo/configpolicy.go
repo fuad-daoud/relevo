@@ -84,137 +84,73 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 
 	var rows [25]Setting
 
+	roundsSettingsRows(p, rows[:])
+	// 9-14: timing rows
+	copy(rows[8:14], timingSettings(p))
+	processesSettingsRows(p, rows[:], defMaxBuilders)
+	scanNotifyChainSettingsRows(p, rows[:])
+
+	return rows[:]
+}
+
+func roundsSettingsRows(p policy.Policy, rows []Setting) {
 	// 1: rounds / max_switches
-	rows[0] = Setting{
-		Group:   "rounds",
-		Key:     "max_switches",
-		Value:   strconv.Itoa(p.SwitchLimit()),
-		Default: strconv.Itoa(policy.DefaultMaxSwitches),
-		Set:     p.MaxSwitches != nil,
-		Form:    "rounds",
-	}
-
+	rows[0] = Setting{Group: "rounds", Key: "max_switches", Value: strconv.Itoa(p.SwitchLimit()),
+		Default: strconv.Itoa(policy.DefaultMaxSwitches), Set: p.MaxSwitches != nil, Form: "rounds"}
 	// 2: rounds / max_tier
-	rows[1] = Setting{
-		Group:   "rounds",
-		Key:     "max_tier",
-		Value:   string(p.MaxTierOrDefault()),
-		Default: string(policy.DefaultMaxTier),
-		Set:     p.MaxTier != "",
-		Form:    "rounds",
-	}
-
+	rows[1] = Setting{Group: "rounds", Key: "max_tier", Value: string(p.MaxTierOrDefault()),
+		Default: string(policy.DefaultMaxTier), Set: p.MaxTier != "", Form: "rounds"}
 	// 3: rounds / verify.default
 	vVal := "off"
 	if p.VerifyDefault() {
 		vVal = "on"
 	}
-	rows[2] = Setting{
-		Group:   "rounds",
-		Key:     "verify.default",
-		Value:   vVal,
-		Default: "off",
-		Set:     p.Verify != nil,
-		Form:    "rounds",
-	}
-
+	rows[2] = Setting{Group: "rounds", Key: "verify.default", Value: vVal,
+		Default: "off", Set: p.Verify != nil, Form: "rounds"}
 	// 4: rounds / artifact_max_mb
-	rows[3] = Setting{
-		Group:   "rounds",
-		Key:     "artifact_max_mb",
-		Value:   strconv.Itoa(int(p.ArtifactMaxBytes() / (1 << 20))),
-		Default: strconv.Itoa(policy.DefaultArtifactMaxMB),
-		Set:     p.ArtifactMaxMB != nil,
-		Form:    "rounds",
-	}
-
+	rows[3] = Setting{Group: "rounds", Key: "artifact_max_mb", Value: strconv.Itoa(int(p.ArtifactMaxBytes() / (1 << 20))),
+		Default: strconv.Itoa(policy.DefaultArtifactMaxMB), Set: p.ArtifactMaxMB != nil, Form: "rounds"}
 	// 5: rounds / disk_min_free_gb
-	rows[4] = Setting{
-		Group:   "rounds",
-		Key:     "disk_min_free_gb",
-		Value:   strconv.Itoa(int(p.DiskMinFreeBytes() / (1 << 30))),
-		Default: strconv.Itoa(policy.DefaultDiskMinFreeGB),
-		Set:     p.DiskMinFreeGB != nil,
-		Form:    "rounds",
-	}
-
+	rows[4] = Setting{Group: "rounds", Key: "disk_min_free_gb", Value: strconv.Itoa(int(p.DiskMinFreeBytes() / (1 << 30))),
+		Default: strconv.Itoa(policy.DefaultDiskMinFreeGB), Set: p.DiskMinFreeGB != nil, Form: "rounds"}
 	// 6: check / gate.default
 	gDef := "none"
 	if p.GateDefault() != "" {
 		gDef = p.GateDefault()
 	}
-	rows[5] = Setting{
-		Group:   "check",
-		Key:     "gate.default",
-		Value:   gDef,
-		Default: "none",
-		Set:     p.Gate != nil && p.Gate.Default != "",
-		Form:    "check",
-	}
-
+	rows[5] = Setting{Group: "check", Key: "gate.default", Value: gDef,
+		Default: "none", Set: p.Gate != nil && p.Gate.Default != "", Form: "check"}
 	// 7: check / gate.timeout
-	rows[6] = Setting{
-		Group:   "check",
-		Key:     "gate.timeout",
-		Value:   FormatDuration(p.GateTimeout()),
-		Default: FormatDuration(policy.DefaultGateTimeout),
-		Set:     p.Gate != nil && p.Gate.TimeoutMS != nil,
-		Form:    "check",
-	}
-
+	rows[6] = Setting{Group: "check", Key: "gate.timeout", Value: FormatDuration(p.GateTimeout()),
+		Default: FormatDuration(policy.DefaultGateTimeout), Set: p.Gate != nil && p.Gate.TimeoutMS != nil, Form: "check"}
 	// 8: check / gate.regate
-	rows[7] = Setting{
-		Group:   "check",
-		Key:     "gate.regate",
-		Value:   strconv.Itoa(p.GateRegate()),
-		Default: "0",
-		Set:     p.Gate != nil && p.Gate.Regate != nil,
-		Form:    "check",
-	}
+	rows[7] = Setting{Group: "check", Key: "gate.regate", Value: strconv.Itoa(p.GateRegate()),
+		Default: "0", Set: p.Gate != nil && p.Gate.Regate != nil, Form: "check"}
+}
 
-	// 9-14: timing rows
-	copy(rows[8:14], timingSettings(p))
-
+func processesSettingsRows(p policy.Policy, rows []Setting, defMaxBuilders int) {
 	// 15: processes / scope
-	rows[14] = Setting{
-		Group:   "processes",
-		Key:     "scope",
-		Value:   formatScope(p.Scope, "on · no limits"),
-		Default: "on · no limits",
-		Set:     p.Scope != nil,
-		Form:    "scope",
-	}
-
+	rows[14] = Setting{Group: "processes", Key: "scope", Value: formatScope(p.Scope, "on · no limits"),
+		Default: "on · no limits", Set: p.Scope != nil, Form: "scope"}
 	// 16: processes / serve.max_builders
 	smbVal := defMaxBuilders
 	if p.Serve != nil && p.Serve.MaxBuilders != nil {
 		smbVal = *p.Serve.MaxBuilders
 	}
-	rows[15] = Setting{
-		Group:   "processes",
-		Key:     "serve.max_builders",
-		Value:   strconv.Itoa(smbVal),
-		Default: strconv.Itoa(defMaxBuilders),
-		Set:     p.Serve != nil && p.Serve.MaxBuilders != nil,
-		Form:    "max_builders",
-	}
-
+	rows[15] = Setting{Group: "processes", Key: "serve.max_builders", Value: strconv.Itoa(smbVal),
+		Default: strconv.Itoa(defMaxBuilders), Set: p.Serve != nil && p.Serve.MaxBuilders != nil, Form: "max_builders"}
 	// 17: processes / serve.scope
 	ssVal := "as scope"
 	if p.Serve != nil && p.Serve.Scope != nil {
 		ssVal = formatScope(p.Serve.Scope, "as scope")
 	}
-	rows[16] = Setting{
-		Group:   "processes",
-		Key:     "serve.scope",
-		Value:   ssVal,
-		Default: "as scope",
-		Set:     p.Serve != nil && p.Serve.Scope != nil,
-		Form:    "serve.scope",
-	}
+	rows[16] = Setting{Group: "processes", Key: "serve.scope", Value: ssVal,
+		Default: "as scope", Set: p.Serve != nil && p.Serve.Scope != nil, Form: "serve.scope"}
+}
 
+func scanNotifyChainSettingsRows(p policy.Policy, rows []Setting) {
 	// 18: scan / scan_patterns
-	spVal := "none"
+	var spVal string
 	switch len(p.ScanPatterns) {
 	case 0:
 		spVal = "none"
@@ -223,31 +159,17 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 	default:
 		spVal = fmt.Sprintf("%d patterns", len(p.ScanPatterns))
 	}
-	rows[17] = Setting{
-		Group:   "scan",
-		Key:     "scan_patterns",
-		Value:   spVal,
-		Default: "none",
-		Set:     len(p.ScanPatterns) > 0,
-		Form:    "scan_patterns",
-	}
-
+	rows[17] = Setting{Group: "scan", Key: "scan_patterns", Value: spVal,
+		Default: "none", Set: len(p.ScanPatterns) > 0, Form: "scan_patterns"}
 	// 19: scan / classify
 	clVal := "off"
 	if p.Classify != nil && p.Classify.Provider != "" {
 		clVal = p.Classify.Provider
 	}
-	rows[18] = Setting{
-		Group:   "scan",
-		Key:     "classify",
-		Value:   clVal,
-		Default: "off",
-		Set:     p.Classify != nil,
-		Form:    "classify",
-	}
-
+	rows[18] = Setting{Group: "scan", Key: "classify", Value: clVal,
+		Default: "off", Set: p.Classify != nil, Form: "classify"}
 	// 20: notify / notify.webhooks
-	nwVal := "none"
+	var nwVal string
 	var nwCount int
 	if p.Notify != nil {
 		nwCount = len(p.Notify.Webhooks)
@@ -260,70 +182,27 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 	default:
 		nwVal = fmt.Sprintf("%d webhooks", nwCount)
 	}
-	rows[19] = Setting{
-		Group:   "notify",
-		Key:     "notify.webhooks",
-		Value:   nwVal,
-		Default: "none",
-		Set:     p.Notify != nil && len(p.Notify.Webhooks) > 0,
-		Form:    "webhooks",
-	}
-
+	rows[19] = Setting{Group: "notify", Key: "notify.webhooks", Value: nwVal,
+		Default: "none", Set: p.Notify != nil && len(p.Notify.Webhooks) > 0, Form: "webhooks"}
 	// 21: chain / chain.max_corrections
-	rows[20] = Setting{
-		Group:   "chain",
-		Key:     "chain.max_corrections",
-		Value:   strconv.Itoa(p.ChainMaxCorrections()),
-		Default: strconv.Itoa(policy.DefaultChainMaxCorrections),
-		Set:     p.Chain != nil && p.Chain.MaxCorrections != nil,
-		Form:    "chain",
-	}
-
+	rows[20] = Setting{Group: "chain", Key: "chain.max_corrections", Value: strconv.Itoa(p.ChainMaxCorrections()),
+		Default: strconv.Itoa(policy.DefaultChainMaxCorrections), Set: p.Chain != nil && p.Chain.MaxCorrections != nil, Form: "chain"}
 	// 22: chain / chain.reviewer_actor
-	rows[21] = Setting{
-		Group:   "chain",
-		Key:     "chain.reviewer_actor",
-		Value:   p.ChainReviewerActor(),
-		Default: policy.DefaultChainReviewerActor,
-		Set:     p.Chain != nil && p.Chain.ReviewerActor != "",
-		Form:    "chain",
-	}
-
+	rows[21] = Setting{Group: "chain", Key: "chain.reviewer_actor", Value: p.ChainReviewerActor(),
+		Default: policy.DefaultChainReviewerActor, Set: p.Chain != nil && p.Chain.ReviewerActor != "", Form: "chain"}
 	// 23: chain / chain.planner_actor
-	rows[22] = Setting{
-		Group:   "chain",
-		Key:     "chain.planner_actor",
-		Value:   p.ChainPlannerActor(),
-		Default: policy.DefaultChainPlannerActor,
-		Set:     p.Chain != nil && p.Chain.PlannerActor != "",
-		Form:    "chain",
-	}
-
+	rows[22] = Setting{Group: "chain", Key: "chain.planner_actor", Value: p.ChainPlannerActor(),
+		Default: policy.DefaultChainPlannerActor, Set: p.Chain != nil && p.Chain.PlannerActor != "", Form: "chain"}
 	// 24: chain / chain.security_actor
-	rows[23] = Setting{
-		Group:   "chain",
-		Key:     "chain.security_actor",
-		Value:   p.ChainSecurityActor(),
-		Default: policy.DefaultChainSecurityActor,
-		Set:     p.Chain != nil && p.Chain.SecurityActor != "",
-		Form:    "chain",
-	}
-
+	rows[23] = Setting{Group: "chain", Key: "chain.security_actor", Value: p.ChainSecurityActor(),
+		Default: policy.DefaultChainSecurityActor, Set: p.Chain != nil && p.Chain.SecurityActor != "", Form: "chain"}
 	// 25: chain / chain.security
 	csVal := "off"
 	if p.ChainSecurityOn() {
 		csVal = "on"
 	}
-	rows[24] = Setting{
-		Group:   "chain",
-		Key:     "chain.security",
-		Value:   csVal,
-		Default: "off",
-		Set:     p.Chain != nil && p.Chain.Security != nil,
-		Form:    "chain",
-	}
-
-	return rows[:]
+	rows[24] = Setting{Group: "chain", Key: "chain.security", Value: csVal,
+		Default: "off", Set: p.Chain != nil && p.Chain.Security != nil, Form: "chain"}
 }
 
 // SettingPaths returns the JSON paths cleared by reset for key, or nil for an unknown key.
@@ -374,6 +253,17 @@ func SettingPaths(key string) []string {
 
 // EditPolicy validates sets against d.PolicyRaw and returns the ConfigEdit.
 func EditPolicy(d ConfigDoc, sets []PolicySet, message string) (ConfigEdit, error) {
+	m, origMap, err := decodePolicyMaps(d)
+	if err != nil {
+		return ConfigEdit{}, err
+	}
+	if err := applyPolicySets(m, sets); err != nil {
+		return ConfigEdit{}, err
+	}
+	return encodePolicyBody(d, m, origMap, message)
+}
+
+func decodePolicyMaps(d ConfigDoc) (map[string]any, map[string]any, error) {
 	var m map[string]any
 	var origMap map[string]any
 
@@ -381,7 +271,7 @@ func EditPolicy(d ConfigDoc, sets []PolicySet, message string) (ConfigEdit, erro
 		dec := json.NewDecoder(bytes.NewReader(d.PolicyRaw))
 		dec.UseNumber()
 		if err := dec.Decode(&m); err != nil {
-			return ConfigEdit{}, &FieldError{"", err.Error()}
+			return nil, nil, &FieldError{"", err.Error()}
 		}
 		dec2 := json.NewDecoder(bytes.NewReader(d.PolicyRaw))
 		dec2.UseNumber()
@@ -393,66 +283,60 @@ func EditPolicy(d ConfigDoc, sets []PolicySet, message string) (ConfigEdit, erro
 	if origMap == nil {
 		origMap = map[string]any{}
 	}
+	return m, origMap, nil
+}
 
+func applyPolicySets(m map[string]any, sets []PolicySet) error {
+	type parentEntry struct {
+		m   map[string]any
+		key string
+	}
 	for _, set := range sets {
 		parts := strings.Split(set.Path, ".")
 		if len(parts) == 0 {
 			continue
 		}
-		if set.Value != nil {
-			curr := m
-			for i := 0; i < len(parts)-1; i++ {
-				p := parts[i]
-				val, exists := curr[p]
-				if !exists {
-					next := map[string]any{}
-					curr[p] = next
-					curr = next
-				} else {
-					next, ok := val.(map[string]any)
-					if !ok {
-						return ConfigEdit{}, &FieldError{"", set.Path + ": not an object"}
-					}
-					curr = next
-				}
-			}
-			curr[parts[len(parts)-1]] = set.Value
-		} else {
-			type parentEntry struct {
-				m   map[string]any
-				key string
-			}
-			var parents []parentEntry
-			curr := m
-			found := true
-			for i := 0; i < len(parts)-1; i++ {
-				p := parts[i]
-				val, exists := curr[p]
-				if !exists {
-					found = false
+		curr := m
+		var parents []parentEntry
+		ready := true
+		for i := 0; i < len(parts)-1; i++ {
+			p := parts[i]
+			val, exists := curr[p]
+			if !exists {
+				if set.Value == nil {
+					ready = false
 					break
 				}
-				next, ok := val.(map[string]any)
-				if !ok {
-					return ConfigEdit{}, &FieldError{"", set.Path + ": not an object"}
-				}
-				parents = append(parents, parentEntry{m: curr, key: p})
-				curr = next
+				val = map[string]any{}
+				curr[p] = val
 			}
-			if found {
-				delete(curr, parts[len(parts)-1])
-				for i := len(parents) - 1; i >= 0; i-- {
-					if len(curr) == 0 {
-						delete(parents[i].m, parents[i].key)
-						curr = parents[i].m
-					} else {
-						break
-					}
-				}
+			next, ok := val.(map[string]any)
+			if !ok {
+				return &FieldError{"", set.Path + ": not an object"}
 			}
+			parents = append(parents, parentEntry{m: curr, key: p})
+			curr = next
+		}
+		if !ready {
+			continue
+		}
+		if set.Value != nil {
+			curr[parts[len(parts)-1]] = set.Value
+			continue
+		}
+		delete(curr, parts[len(parts)-1])
+		for i := len(parents) - 1; i >= 0; i-- {
+			if len(curr) != 0 {
+				break
+			}
+			delete(parents[i].m, parents[i].key)
+			curr = parents[i].m
 		}
 	}
+	return nil
+}
 
+func encodePolicyBody(d ConfigDoc, m, origMap map[string]any, message string) (ConfigEdit, error) {
 	origCompact, _ := json.Marshal(origMap)
 	nextCompact, _ := json.Marshal(m)
 	if bytes.Equal(origCompact, nextCompact) {

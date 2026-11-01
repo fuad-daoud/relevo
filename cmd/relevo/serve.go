@@ -1,14 +1,11 @@
 package main
 
 import (
-	"context"
-	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -18,15 +15,11 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/git"
-	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/installation"
 	"github.com/fuad-daoud/relevo/internal/isolate"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/proc"
 	"github.com/fuad-daoud/relevo/internal/relevo"
-	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/serve"
 	"github.com/fuad-daoud/relevo/internal/spawn"
@@ -367,34 +360,19 @@ func cmdServeRun(args []string) error {
 		return err
 	}
 
-	root, err := serveRoot(fs)
+	st, err := loadServeRunState(fs)
 	if err != nil {
 		return err
 	}
-
-	L, d, stateRoot, err := loadServeConfig()
-	if err != nil {
-		return err
-	}
+	root, stateRoot, L, d, reloader := st.root, st.stateRoot, st.loaded, st.d, st.reloader
 	defer func() { _ = d.Close() }()
 
-	// The tick's reload source, over the database and dir just loaded.
-	reloader, err := serveConfigReloader(d, "")
+	runner, isoMode, root, err := resolveServeRunIsolation(fs, L.Policy.ServeIsolation(), os.Geteuid(), stateRoot, root)
 	if err != nil {
 		return err
-	}
-
-	runner, isoMode, err := resolveIsolation(L.Policy.ServeIsolation(), os.Geteuid(), stateRoot)
-	if err != nil {
-		return fail(codeNotAvailable, "%v", err)
 	}
 	userMode := isoMode == isolate.ModeUser
 	containerMode := isoMode == isolate.ModeContainer
-	// A user-mode server keeps its state in one fixed root-owned place when --state
-	// is unset, so the daemon and its tenants agree on it.
-	if userMode && fs.Lookup("state").Value.String() == "" {
-		root = serve.UserModeRoot
-	}
 
 	// The server's own installation: its rows carry its id as their origin, which
 	// WhoAmI advertises so a client can link its row to this server's copy.
@@ -405,162 +383,46 @@ func cmdServeRun(args []string) error {
 
 	candidates, pol, reg := L.Candidates, L.Policy, L.Registry
 
-	builderTierRT := serveTierRuntime(candidates, pol, reg, root, d)
-	if builderTier := relevo.ServedBuilderTier(builderTierRT); builderTier == harness.TierHarness {
-		slog.Warn(relevo.ServerTierWarning(relevo.ServerProbe{TierAware: true, BuilderTier: string(builderTier)}))
-	} else {
-		slog.Info("builder tier", "tier", builderTier)
-	}
-
-	// Log each candidate harness's role-file coverage once at startup: a kind
-	// missing role files is gated on every pick, and this line is the only notice.
-	roles := harness.OSRoleChecker()
-	seenKinds := map[string]bool{}
-	for _, ref := range candidates.Refs() {
-		r, err := candidate.ParseRef(ref)
-		if err != nil || seenKinds[r.Harness] {
-			continue
-		}
-		seenKinds[r.Harness] = true
-		// The gate checks the builder's resolved definitions: a custom name may be
-		// what the row launches.
-		spec, err := reg.Spec("builder", r.Harness)
-		if err != nil {
-			continue
-		}
-		if missing := roles.Missing(r.Harness, spec.Definitions); len(missing) > 0 {
-			slog.Warn("candidate agent definitions missing; those candidates will be skipped", "harness", r.Harness, "missing", missing, "fix", "relevo config agents --kind "+r.Harness)
-		} else {
-			slog.Info("agent definitions present", "harness", r.Harness)
-		}
-	}
+	logServeBuilderTier(candidates, pol, reg, root, d)
+	roles := serveCandidateRoles(candidates, reg)
 
 	reader, prices := newUsageReader(L.Prices)
 
-	// The hooks dispatcher runs on the machine database's run log, the same kv the
-	// daemon writes, so a served round's hook runs are visible beside the local ones.
-	hooksCfg, err := resolveHooksConfig(L.Hooks, hooks.NewKVLog(db.TxKV{DB: d}))
+	dispatcher, err := serveHooksDispatcher(L, pol, d)
 	if err != nil {
 		return err
 	}
-	dispatcher := newHooksDispatcher(hooksCfg, pol)
 
-	// Scopes are enabled by policy and confirmed by a startup probe; if
-	// systemd-run is missing or the user manager refuses, scopes stay off for
-	// the daemon's lifetime.
-	scopesStatus := "off"
-	scope := scopeFromPolicy(pol.ScopeFor(true))
-	if userMode {
-		// User mode runs scopes off: systemd-run --user would target root's own user
-		// manager, not the tenant's. The cap still applies.
-		scope = nil
-		scopesStatus = "off (isolation=user)"
-	} else if containerMode {
-		// Container mode runs no systemd scope: bounds travel on the podman command,
-		// and the scope here only carries those bounds. The cap still applies.
-		scopesStatus = "off (isolation=container)"
-	} else if scope != nil {
-		if err := proc.ProbeScopes(context.Background(), scope.Slice); err != nil {
-			slog.Warn("scopes unavailable; builders will run in the daemon's cgroup", "err", err)
-			scope = nil
-			scopesStatus = "unavailable"
-		} else {
-			scopesStatus = scopeStatusText(scope)
-		}
-	}
+	scope, scopesStatus := resolveServeRunScope(userMode, containerMode, pol)
 
 	audiences, err := serve.Audiences(serve.SecretStore{DB: d}, sf.publicHosts)
 	if err != nil {
 		return err
 	}
 
-	cfg := serve.Config{
-		Root:           root,
-		DB:             d,
-		Candidates:     candidates,
-		Accounts:       L.Accounts,
-		Policy:         pol,
-		Runner:         runner,
-		Git:            git.NewClient("git", 0, 0),
-		Now:            time.Now,
-		Interval:       sf.interval,
-		MaxBundleBytes: sf.maxBundleBytes,
-		Usage:          reader,
-		Prices:         prices,
-		StartedAt:      time.Now(),
-		Roles:          roles,
-		Registry:       reg,
-		MaxBuilders:    sf.maxBuilders,
-		Reloader:       reloader,
-		Hooks:          dispatcher,
-		Scope:          scope,
-		Isolation:      isoMode,
-		IsolationImage: L.Policy.ServeIsolationImage(),
-		SessionReaper:  relevo.NewSessionReaper(binExec{}),
-		LookupUser:     lookupUnixUser,
-		SharedLogins:   L.Policy.ServeIsolationSharedLogins(),
-		ReaperFor:      userReaperFor(L.Policy.ServeIsolationSharedLogins()),
-		Installation:   inst,
-		Audiences:      audiences,
-	}
-
-	srv, err := serve.New(cfg)
+	srv, err := serve.New(buildServeConfig(serveRunWiring{
+		root: root, d: d, loaded: L, runner: runner, reloader: reloader,
+		dispatcher: dispatcher, scope: scope, isoMode: isoMode, sf: sf,
+		audiences: audiences, inst: inst, reader: reader, prices: prices,
+		roles: roles,
+	}))
 	if err != nil {
 		return err
 	}
 
-	maxBuilders := cfg.MaxBuilders
-	if maxBuilders <= 0 {
-		maxBuilders = pol.MaxBuildersOrDefault()
-	}
+	maxBuilders := serveBuilderCap(sf.maxBuilders, pol)
 	slog.Info(fmt.Sprintf("builders cap=%d scopes=%s isolation=%s", maxBuilders, scopesStatus, isoMode))
 	slog.Info("accepted audiences", "audiences", strings.Join(audiences, ", "))
 
-	root, err = filepath.Abs(root)
-	if err != nil {
+	if err := recordServeDaemonPointer(d, root, sf.listen); err != nil {
 		return err
-	}
-	if err := db.WriteDaemonPointer(d, db.DaemonPointer{
-		Root:      root,
-		PID:       os.Getpid(),
-		Listen:    sf.listen,
-		StartedAt: time.Now(),
-	}); err != nil {
-		slog.Warn("daemon pointer not written", "err", err)
 	}
 	defer func() { _ = db.RemoveDaemonPointer(d) }()
 
-	var cert *tls.Certificate
-	var fp string
-	if !sf.insecureHTTP {
-		c, err := serve.LoadTLS(serve.SecretStore{DB: d})
-		if err != nil {
-			return err
-		}
-		cert = &c
-		fp = client.FingerprintOf(c.Leaf.Raw)
+	cert, fp, err := serveListenerTLS(d, sf.insecureHTTP)
+	if err != nil {
+		return err
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-
-	go func() {
-		for i := 0; i < 100; i++ {
-			if addr := srv.Addr(); addr != nil {
-				if sf.insecureHTTP {
-					fmt.Printf("relevo serve listening on %s (INSECURE http)\n", addr)
-				} else {
-					fmt.Printf("relevo serve listening on %s (tls %s)\n", addr, fp)
-				}
-				return
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-	}()
-
-	return srv.ListenAndServe(ctx, serve.ListenConfig{
-		Addr:         sf.listen,
-		TLS:          cert,
-		InsecureHTTP: sf.insecureHTTP,
-	})
+	return serveUntilSignal(srv, sf, cert, fp)
 }

@@ -37,7 +37,7 @@ func TestFleetGroupsOrderAndOmission(t *testing.T) {
 	if idxNeed < 0 || idxWork < 0 || idxIdle < 0 || idxHeld < 0 {
 		t.Fatalf("expected all groups present: need=%d work=%d idle=%d held=%d", idxNeed, idxWork, idxIdle, idxHeld)
 	}
-	if !(idxNeed < idxWork && idxWork < idxIdle && idxIdle < idxHeld) {
+	if idxNeed >= idxWork || idxWork >= idxIdle || idxIdle >= idxHeld {
 		t.Errorf("groups not in order: need=%d work=%d idle=%d held=%d", idxNeed, idxWork, idxIdle, idxHeld)
 	}
 
@@ -282,7 +282,7 @@ func TestFleetCardAboveList(t *testing.T) {
 
 	cardIdx := -1
 	needsYouIdx := -1
-	var lastNonBlankIdx int = -1
+	var lastNonBlankIdx = -1
 	var lastNonBlankLine string
 
 	for i, l := range lines {

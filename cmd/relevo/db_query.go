@@ -144,47 +144,9 @@ func cmdDBQuery(args []string) error {
 		}
 	}()
 
-	var (
-		columns   []string
-		rows      [][]any
-		rowsCut   bool
-		bytesCut  bool
-		bytesHeld int
-	)
-	onRow := func(cols []string, values []any) error {
-		columns = cols
-		if len(rows) >= *v.limit {
-			// One extra row proves another follows, so the cut is real.
-			rowsCut = true
-			return errQueryLimitReached
-		}
-		add := dbQueryRowBytes(values)
-		if bytesHeld+add > *v.maxBytes {
-			// The row that would pass the budget is not appended at all.
-			bytesCut = true
-			return errQueryLimitReached
-		}
-		bytesHeld += add
-		rows = append(rows, values)
-		return nil
-	}
-
-	// The read runs on its own goroutine so the deadline ends the command even
-	// when the engine ignores ctx inside a step. main's os.Exit then ends the
-	// process, and with it the direct flock the abandoned read still holds.
-	readErr := make(chan error, 1)
-	go func() { readErr <- dbQueryRead(ctx, d, positional[0], onRow) }()
-
-	select {
-	case rerr := <-readErr:
-		if rerr != nil && !errors.Is(rerr, errQueryLimitReached) {
-			if ctx.Err() != nil {
-				return dbQueryTimeout(*v.timeout)
-			}
-			return classifyDBQuery(rerr)
-		}
-	case <-ctx.Done():
-		return dbQueryTimeout(*v.timeout)
+	columns, rows, rowsCut, bytesCut, err := readDBQueryRows(ctx, d, positional[0], *v.limit, *v.maxBytes, *v.timeout)
+	if err != nil {
+		return err
 	}
 
 	// Release the file before the rows go out: a stalled stdout must not hold
@@ -207,6 +169,49 @@ func cmdDBQuery(args []string) error {
 		return writeDBQueryJSON(out, columns, rows)
 	}
 	return writeDBQueryTable(out, columns, rows)
+}
+
+// readDBQueryRows runs the statement and collects its rows up to the row cap
+// and the byte cap; hitting either is truncation, not a failure. A read that
+// fails, or a deadline that passes first, is the mapped refusal.
+func readDBQueryRows(ctx context.Context, d *db.DB, stmt string, limit, maxBytes int, timeout time.Duration) (columns []string, rows [][]any, rowsCut, bytesCut bool, err error) {
+	var bytesHeld int
+	onRow := func(cols []string, values []any) error {
+		columns = cols
+		if len(rows) >= limit {
+			// One extra row proves another follows, so the cut is real.
+			rowsCut = true
+			return errQueryLimitReached
+		}
+		add := dbQueryRowBytes(values)
+		if bytesHeld+add > maxBytes {
+			// The row that would pass the budget is not appended at all.
+			bytesCut = true
+			return errQueryLimitReached
+		}
+		bytesHeld += add
+		rows = append(rows, values)
+		return nil
+	}
+
+	// The read runs on its own goroutine so the deadline ends the command even
+	// when the engine ignores ctx inside a step. main's os.Exit then ends the
+	// process, and with it the direct flock the abandoned read still holds.
+	readErr := make(chan error, 1)
+	go func() { readErr <- dbQueryRead(ctx, d, stmt, onRow) }()
+
+	select {
+	case rerr := <-readErr:
+		if rerr != nil && !errors.Is(rerr, errQueryLimitReached) {
+			if ctx.Err() != nil {
+				return nil, nil, false, false, dbQueryTimeout(timeout)
+			}
+			return nil, nil, false, false, classifyDBQuery(rerr)
+		}
+	case <-ctx.Done():
+		return nil, nil, false, false, dbQueryTimeout(timeout)
+	}
+	return columns, rows, rowsCut, bytesCut, nil
 }
 
 // checkDBQueryBounds refuses a limit or byte cap below one and a timeout that
@@ -333,14 +338,18 @@ func writeDBQueryTable(w io.Writer, columns []string, rows [][]any) error {
 		for i, column := range columns {
 			header[i] = sanitize.Text(column)
 		}
-		fmt.Fprintln(tw, strings.Join(header, "\t"))
+		if _, err := fmt.Fprintln(tw, strings.Join(header, "\t")); err != nil {
+			return fmt.Errorf("write db query table: %w", err)
+		}
 	}
 	for _, row := range rows {
 		cells := make([]string, len(row))
 		for i, value := range row {
 			cells[i] = sanitize.Text(formatDBQueryValue(value))
 		}
-		fmt.Fprintln(tw, strings.Join(cells, "\t"))
+		if _, err := fmt.Fprintln(tw, strings.Join(cells, "\t")); err != nil {
+			return fmt.Errorf("write db query table: %w", err)
+		}
 	}
 	return tw.Flush()
 }

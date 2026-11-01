@@ -99,7 +99,7 @@ func candidateSendRefused(b store.Binding, entries []store.LogEntry) bool {
 		return false
 	}
 	served := b.Owner != "" || b.Builder.Remote()
-	return !(served && b.State == store.StateNeedsYou)
+	return !served || b.State != store.StateNeedsYou
 }
 
 // HasPromptEntry reports whether the log holds a to-builder prompt entry of

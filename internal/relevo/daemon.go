@@ -321,11 +321,19 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	// The chain's staged rounds are shipped here, outside every lock, once per
 	// tick and after the binding loop: a tick above may have staged the next
 	// round for a remote member.
-	d.safely("chain pending send", func() { chainSendPending(ctx, d.rt) })
+	d.safely("chain pending send", func() {
+		if err := chainSendPending(ctx, d.rt); err != nil {
+			slog.Warn("chain pending send failed", "err", err)
+		}
+	})
 
 	// A server chain is moved by the pull, outside every lock: it collects
 	// every mirror chain's missing rounds and queues each chain's end delivery.
-	d.safely("chain pull", func() { chainPullServers(ctx, d.rt) })
+	d.safely("chain pull", func() {
+		if err := chainPullServers(ctx, d.rt); err != nil {
+			slog.Warn("chain pull failed", "err", err)
+		}
+	})
 
 	fresh, err := d.rt.Store.List()
 	if err != nil {

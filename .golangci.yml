@@ -24,20 +24,6 @@ linters:
       # test reads best as one long function. Every other linter applies.
       - path: '_test\.go$'
         linters: [funlen, gocognit]
-      # One rule per package not yet cleaned; every linter is excluded for that
-      # path. A change that cleans a package deletes its rule.
-      - path: '^cmd/relevo/'
-        text: '.*'
-      - path: '^internal/jsonshape/'
-        text: '.*'
-      - path: '^internal/patch/'
-        text: '.*'
-      - path: '^internal/relevo/'
-        text: '.*'
-      - path: '^internal/ui/[^/]+\.go$'
-        text: '.*'
-      - path: '^internal/ui/dash/'
-        text: '.*'
 
 issues:
   max-issues-per-linter: 0

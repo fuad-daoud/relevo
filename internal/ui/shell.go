@@ -162,6 +162,25 @@ func (m Model) Init() tea.Cmd {
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.KeyMsg, tea.MouseMsg, tea.WindowSizeMsg:
+		return m.updateInput(msg)
+
+	case widget.TickMsg:
+		return m.updateTick(msg)
+
+	case statusMsg:
+		return m.updateStatus(msg)
+
+	case watchdogMsg:
+		return m.onWatchdog()
+
+	default:
+		return m.updateMsg(msg)
+	}
+}
+
+func (m Model) updateInput(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return m.updateKey(msg)
 
@@ -173,24 +192,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.ready = true
 		return m.updateStack(msg)
+	}
 
-	case widget.TickMsg:
-		cmds := []tea.Cmd{tick(m.opts.Interval)}
-		if !m.statusInFlight {
-			m.statusInFlight = true
-			cmds = append(cmds, fetchStatus(m.ctx, m.src))
-		}
-		next, cmd := m.updateStack(msg)
-		m = next.(Model)
-		cmds = append(cmds, cmd)
-		return m, tea.Batch(cmds...)
+	return m.updateStack(msg)
+}
 
-	case statusMsg:
-		return m.updateStatus(msg)
+func (m Model) updateTick(msg widget.TickMsg) (tea.Model, tea.Cmd) {
+	cmds := []tea.Cmd{tick(m.opts.Interval)}
+	if !m.statusInFlight {
+		m.statusInFlight = true
+		cmds = append(cmds, fetchStatus(m.ctx, m.src))
+	}
+	next, cmd := m.updateStack(msg)
+	m = next.(Model)
+	cmds = append(cmds, cmd)
+	return m, tea.Batch(cmds...)
+}
 
-	case watchdogMsg:
-		return m.onWatchdog()
-
+func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
 	case widget.PushMsg:
 		m.stack = append(m.stack, msg.View)
 		return m, msg.Init

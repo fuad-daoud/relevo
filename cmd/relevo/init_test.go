@@ -214,7 +214,7 @@ func TestInitNothingLoggedInIsNotAvailable(t *testing.T) {
 	if err == nil {
 		t.Fatal("init with nothing logged in: want error, got nil")
 	}
-	requireCLIError(t, err, codeNotAvailable, "relevo setup")
+	_ = requireCLIError(t, err, codeNotAvailable, "relevo setup")
 	if !strings.Contains(err.Error(), "not_available") {
 		t.Fatalf("init error = %v, want the not_available code", err)
 	}

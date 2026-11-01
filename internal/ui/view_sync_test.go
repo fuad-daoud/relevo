@@ -390,7 +390,7 @@ func TestSyncKeysRecordOneCall(t *testing.T) {
 			// what is pinned here is that the key made exactly one verb call.
 			fa.syncs = nil
 			res, cmd := m.Update(key(k.r))
-			m = drain(t, res.(Model), cmd)
+			drain(t, res.(Model), cmd)
 			if len(fa.syncs) != 1 {
 				t.Fatalf("key %q made %d calls, want 1: %v", k.r, len(fa.syncs), fa.syncs)
 			}
@@ -588,7 +588,7 @@ func dumpSyncSnapshot(s widget.SyncSnapshot) string {
 	b.WriteString(s.Settings.RemoteURL + " " + s.Settings.Namespace + "\n")
 	b.WriteString(s.Attention + "\n")
 	b.WriteString(s.OwnID + "\n")
-	b.WriteString(fmt.Sprintf("tokenSet=%t measured=%t unknown=%t\n", s.TokenSet, s.Measured, s.Unknown))
+	_, _ = fmt.Fprintf(&b, "tokenSet=%t measured=%t unknown=%t\n", s.TokenSet, s.Measured, s.Unknown)
 	for _, in := range s.Installation {
 		b.WriteString(in.ID + " " + in.Label + "\n")
 	}

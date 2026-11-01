@@ -19,7 +19,7 @@ func openTestHistoryDB(t *testing.T) *db.DB {
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
-	t.Cleanup(func() { d.Close() })
+	t.Cleanup(func() { _ = d.Close() })
 	return d
 }
 
@@ -419,7 +419,9 @@ func TestParseSinceMovedKeepsRelevoWrapper(t *testing.T) {
 	if !errors.Is(err, histq.ErrBadSince) {
 		t.Errorf("relevo.ParseSince error = %v, want histq.ErrBadSince", err)
 	}
-	if ErrBadSince != histq.ErrBadSince {
+	// any() keeps the identity comparison: errorlint forbids != on errors,
+	// but the alias itself is the pin here, so a wrap on either side fails.
+	if any(ErrBadSince) != any(histq.ErrBadSince) {
 		t.Error("relevo.ErrBadSince is not histq.ErrBadSince; errors.Is across the move would break")
 	}
 }

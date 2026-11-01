@@ -57,7 +57,7 @@ func workflowEditStepFor(t *testing.T, m Model, name string) workflowEditStep {
 	if err != nil {
 		t.Fatalf("start the edit loop: %v", err)
 	}
-	t.Cleanup(func() { os.Remove(step.path) })
+	t.Cleanup(func() { _ = os.Remove(step.path) })
 	return step
 }
 
@@ -201,7 +201,7 @@ func TestWorkflowEditLoopReopensWithProblems(t *testing.T) {
 	m := workflowsViewModelOn(t, 132, 34, fa, "fix-first")
 	step := workflowEditStepFor(t, m, "fix-first")
 
-	m, cmd, res := workflowEditPass(t, m, step)
+	_, cmd, res := workflowEditPass(t, m, step)
 	if res.end != workflowEditReopen {
 		t.Fatalf("an invalid workflow must ask for the editor again, ended %v", res.end)
 	}
@@ -240,7 +240,7 @@ func TestWorkflowEditLoopQuitUnchangedEnds(t *testing.T) {
 	m := workflowsViewModelOn(t, 132, 34, fa, "fix-first")
 	step := workflowEditStepFor(t, m, "fix-first")
 
-	m, cmd := workflowEditLoop(t, m, step, workflowEditDone)
+	_, cmd := workflowEditLoop(t, m, step, workflowEditDone)
 	if msg, ok := cmd().(widget.NoticeMsg); !ok {
 		t.Fatalf("an unchanged buffer must end with a notice, got %T", cmd())
 	} else if msg.Text != "no changes" {
@@ -327,7 +327,7 @@ func TestWorkflowEditLoopNeverStoresProblemBlock(t *testing.T) {
 		t.Fatalf("write the reopened buffer: %v", err)
 	}
 	m, cmd := workflowEditLoop(t, m, step, workflowEditSaved)
-	m = drain(t, m, cmd)
+	drain(t, m, cmd)
 
 	if len(fa.saves) != 1 {
 		t.Fatalf("saves = %d, want the fixed workflow stored", len(fa.saves))
@@ -411,7 +411,7 @@ func TestWorkflowEditKeyOpensEditorOnSource(t *testing.T) {
 		t.Fatalf("the editor was opened %d times, want once", len(fa.edited))
 	}
 	path := fa.edited[0]
-	t.Cleanup(func() { os.Remove(path) })
+	t.Cleanup(func() { _ = os.Remove(path) })
 	if !strings.HasSuffix(path, ".yaml") {
 		t.Errorf("the editor path = %q, want the workflow's own suffix", path)
 	}
