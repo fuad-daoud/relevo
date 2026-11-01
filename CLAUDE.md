@@ -28,6 +28,12 @@ follows is what is specific to this machine and this repo.
 - A headless round's output is its stream
   `~/.local/state/relevo/<name>/NNN-runner.jsonl` (stderr included; sealed into the
   database after the round). Read it rendered with `relevo show <name> --round N --transcript`.
+- This repository's chains run on its own agents (`dev/agents`, installed by
+  `sh scripts/dev-agents.sh`): `relevo chain ... --param builder=relevo-builder
+  --planner-actor relevo-lite-planner --reviewer-actor relevo-reviewer`. A first
+  plan comes from a `relevo-lite-planner` binding, a larger design from
+  `relevo-planner`. Change an agent in `dev/agents` and re-run the script, never
+  the rendered copies under the harness homes.
 - When a builder reports a usage limit mid-round, `relevo gate <token>` is
   enough: the daemon switches and resends. Do not rebind by hand unless
   `relevo status` says `NEEDS YOU`.
