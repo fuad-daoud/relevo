@@ -8,13 +8,18 @@ import (
 
 // creditPatterns is the credit-exhaustion family a decision point classifies
 // before it calls MatchLimit. The class is not harness-specific: every provider
-// refuses a request it cannot pay for in its own words. Keeping the two tables
-// separate is deliberate: a limit pattern is timed, a credit pattern is not.
+// refuses a request it cannot pay for in its own words. Two of the patterns
+// restate the harness's own opencode limit patterns, so the class is decided
+// without consulting the candidate set; the two copies must agree. Keeping the
+// two tables separate is deliberate: a limit pattern is timed, a credit
+// pattern is not.
 //
 // They key on what actually reaches a scan. transcript.LimitLines is the
 // channel, and it hands a pattern the harness's own message TEXT, so a pattern
 // here matches a sentence, never a structured field.
 var creditPatterns = compileOutage(
+	// Quota counts as credit: a balance that will not cover the request is
+	// short.
 	`\binsufficient (credits?|quota)\b`,
 	`\brequires more credits\b`,
 	`\bcredits exhausted\b`,

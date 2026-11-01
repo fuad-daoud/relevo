@@ -23,8 +23,10 @@ type Deps struct {
 	Accounts account.Set
 	Gates    db.KV
 	// History is the shared file the availability_event and latency_sample rows
-	// are written into, read from and pruned from. Nil means this machine keeps
-	// no shared file, so it records no history rows and reads an empty history.
+	// are written into, read from and pruned from. It is the shared file, not
+	// the one Gates binds, because a history row travels through the outbox
+	// while a ledger row travels as a document. Nil means this machine keeps no
+	// shared file, so it records no history rows and reads an empty history.
 	History      *db.DB
 	Now          func() time.Time
 	Roles        harness.RoleChecker
@@ -35,7 +37,8 @@ type Deps struct {
 	// is stamped nowhere and signals nothing.
 	Local *db.DB
 	// SyncNow asks for an attempt now rather than at the end of the export
-	// debounce. Nil is the normal case for a caller with no daemon behind it:
+	// debounce, so the other machines see a gate a person just recorded in
+	// seconds. Nil is the normal case for a caller with no daemon behind it:
 	// the gate is written and the next ordinary trigger exports it.
 	SyncNow func()
 	// InFlight counts the rounds live on each candidate token, leaving out the

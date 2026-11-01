@@ -37,12 +37,12 @@ func stampedSubjects(e Entry) []string {
 }
 
 // GatesDoc is the gates document as a synclog document: one key per ledger
-// subject, one value per subject's live rate-limit entries. A spawn failure
-// is not in it: a provider's quota is the provider's, so every machine gating
-// the same provider gates the same candidates, which is what makes a rate
-// limit worth sharing. An entry this build does not understand stays local
-// for the reason the ledger keeps it raw: this machine cannot act on it and
-// must not erase it.
+// subject, one value per subject's live rate-limit entries. A spawn failure is
+// not in it: it says this binary could not start a candidate here, which is not
+// true of another machine. A rate limit is the provider's quota, so every
+// machine gating the same provider gates the same candidates. An entry this
+// build does not understand stays local for the reason the ledger keeps it raw:
+// this machine cannot act on it and must not erase it.
 //
 // It is bound to the machine-local file rather than to a handle chosen by the
 // caller, because the ledger row, the per-subject write stamps and the
@@ -157,8 +157,9 @@ func replaceSubject(l Ledger, subject string, entries []Entry) Ledger {
 // decodeGatesValue reads one subject's arriving entries and refuses every
 // shape this machine has no reader for: a kind other than a rate limit, a
 // source this build does not read (the ledger would have kept it raw, and a
-// raw entry is not a gate), a subject that is not the key, and a zero time or
-// an until before its at.
+// raw entry is not a gate), a subject that is not the key (which would gate a
+// provider the writer never named), and a zero time or an until before its at
+// (a gate never live, or already over when it lands).
 func decodeGatesValue(subject string, value json.RawMessage) ([]Entry, error) {
 	if len(value) > gatesValueMax {
 		return nil, fmt.Errorf("gates %s: value is %d bytes, over the %d byte cap: %w",

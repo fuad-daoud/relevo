@@ -6,16 +6,16 @@ import (
 )
 
 // The sync half of a ledger write: what one person's edit of a gate leaves
-// behind besides the ledger itself. The ledger row, the per-subject write stamps
-// and the document signal all live in one machine-local file, so a write that
-// stamped its subject in a second transaction could spend a stamp on a ledger it
-// then failed to keep.
+// behind besides the ledger itself. The ledger row, the per-subject write
+// stamps and the document signal all live in one machine-local file, so a write
+// that stamped its subject in a second transaction could spend a stamp on a
+// ledger it then failed to keep.
 
 // mutateLedgerLocked loads, prunes, applies fn and saves the ledger for a
 // caller that already holds the state lock, so every ledger write serialises on
 // the state lock the caller already holds. It does not take Store.WithLock
-// itself: that lock is a plain mutex and is not reentrant, so a second Lock from
-// the goroutine that already holds it blocks forever rather than erroring.
+// itself: that lock is a plain mutex and is not reentrant, so a second Lock
+// from the goroutine that already holds it blocks forever rather than erroring.
 //
 // subjects names the ledger subjects the write touched, and are what the write
 // stamps: a stamp says this machine last wrote that subject's value, so it
@@ -40,8 +40,8 @@ func mutateLedgerLocked(d Deps, subjects []string, fn func(Ledger) Ledger) error
 // so a stamp is never spent on a ledger the machine did not keep.
 //
 // The stamps and the signal land only when the ledger is the machine-local file
-// itself. A ledger bound to anything else -- the serve-wide ledger under its own
-// prefix, a test double -- is nobody's gates document: there is no stamp to
+// itself. A ledger bound to anything else -- the serve-wide ledger under its
+// own prefix, a test double -- is nobody's gates document: there is no stamp to
 // record for it and no signal any exporter here would read.
 func saveLedger(d Deps, l Ledger, subjects []string) error {
 	if len(subjects) == 0 || d.Local == nil || db.KV(d.Local) != d.Gates {

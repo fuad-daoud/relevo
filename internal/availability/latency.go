@@ -45,7 +45,8 @@ type Summary struct {
 // kept for that decode alone.
 const latencyKey = "latency"
 
-// Prune keeps every sample no older than LatencyRetainWindow, in order, without mutating the receiver.
+// Prune keeps every sample no older than LatencyRetainWindow, in order, without
+// mutating the receiver.
 func (h LatencyHistory) Prune(now time.Time) LatencyHistory {
 	cutoff := now.Add(-LatencyRetainWindow)
 	var kept []Sample
@@ -63,7 +64,8 @@ func (h LatencyHistory) Append(s Sample) LatencyHistory {
 	return LatencyHistory{Samples: append(cp, s)}
 }
 
-// Summary summarises token over every sample in h; the caller prunes first, errored samples are excluded, and the p50 is 0 with no success.
+// Summary summarises token over every sample in h; the caller prunes first,
+// errored samples are excluded, and the p50 is 0 with no success.
 func (h LatencyHistory) Summary(token string) Summary {
 	ttfts := make([]int64, 0, len(h.Samples))
 	var sum Summary

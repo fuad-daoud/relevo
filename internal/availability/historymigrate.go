@@ -24,15 +24,16 @@ const availabilityKey = "availability"
 
 // historyRowsMarker is the local kv row that records the documents have moved.
 // It is local, like every other run-once marker, because two machines sharing
-// it would each believe the other had moved its own documents -- and a machine's
-// documents are its own, so there is nothing for a peer to move.
+// it would each believe the other had moved its own documents -- and a
+// machine's documents are its own, so there is nothing for a peer to move.
 //
 // The name follows the run-once markers already in the file
 // (mirror-dedupe.v1, zstd-compress.v1): the migration it belongs to, then a
 // version.
 const historyRowsMarker = "sync.history_rows.v1"
 
-// MigratedHistory is what one migration pass moved; a second pass moves nothing.
+// MigratedHistory is what one migration pass moved; a second pass moves
+// nothing.
 type MigratedHistory struct {
 	Events  int
 	Samples int
@@ -52,8 +53,8 @@ type MigratedHistory struct {
 // says the move happened, and a document already deleted is not read again.
 //
 // The order is rows, then the marker, then the deletes. Rows before the marker
-// means the marker never claims a move that did not happen -- a pass that failed
-// halfway leaves the documents in place and is retried.
+// means the marker never claims a move that did not happen -- a pass that
+// failed halfway leaves the documents in place and is retried.
 func MigrateHistoryDocuments(local db.KV, shared *db.DB, origin string) (MigratedHistory, error) {
 	if local == nil || shared == nil {
 		return MigratedHistory{}, nil

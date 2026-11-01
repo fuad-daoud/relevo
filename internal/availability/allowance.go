@@ -125,7 +125,8 @@ func allowanceDimGates(used float64, resetsAtMS, nowMS int64) bool {
 	return resetsAtMS > 0 && nowMS < resetsAtMS && used >= AllowanceThreshold
 }
 
-// allowanceEntryGates reports whether either dimension of one stored record gates a pick now.
+// allowanceEntryGates reports whether either dimension of one stored record
+// gates a pick now.
 func allowanceEntryGates(e AllowanceEntry, nowMS int64) bool {
 	return allowanceDimGates(e.WindowUsed, e.WindowResetsAtMS, nowMS) ||
 		allowanceDimGates(e.WeeklyUsed, e.WeeklyResetsAtMS, nowMS)
@@ -171,7 +172,11 @@ func allowancePct(used float64) string {
 	return strconv.FormatFloat(used, 'f', -1, 64)
 }
 
-// allowanceGates gates a muse candidate only on exhausted allowance: every pool login (or the bare group record) must gate, nothing is recorded, and non-muse never gates.
+// allowanceGates gates a muse candidate only on exhausted allowance. A
+// candidate with no pool reads its bare group record; one with a pool is gated
+// only once every login is, so a gate on one login leaves the candidate
+// pickable on the other. Nothing is recorded, and a non-muse candidate never
+// gates.
 func allowanceGates(d Deps) []Gate {
 	if d.Candidates == nil || d.Gates == nil {
 		return nil

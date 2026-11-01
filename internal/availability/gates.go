@@ -142,8 +142,8 @@ func GateProvider(set *candidate.Set, l Ledger, subject string, keys []string) (
 // nothing about is refused rather than recorded.
 //
 // keys names the account gates to record instead of the bare group, one
-// group@account entry each; it is empty on every host with no accounts, when the
-// bare group gates every candidate of the provider exactly as before.
+// group@account entry each; it is empty on every host with no accounts, when
+// the bare group gates every candidate of the provider exactly as before.
 func Unavailable(d Deps, subject string, until time.Time, reason string, keys ...string) (provider string, err error) {
 	// The pruned ledger is what decides whether a provider no configured
 	// candidate uses is still known: a gate left by a candidate since removed
@@ -193,8 +193,8 @@ func Unavailable(d Deps, subject string, until time.Time, reason string, keys ..
 }
 
 // Available clears every rate-limit gate on subject's provider. subject may be
-// a candidate token or a bare provider name; ResolveClearSubject decides what it
-// names and refuses one relevo knows nothing about. A clear that removed
+// a candidate token or a bare provider name; ResolveClearSubject decides what
+// it names and refuses one relevo knows nothing about. A clear that removed
 // anything is recorded in the availability history as a Cleared event whose
 // Source is source. Zero removed is not an error and records nothing -- the
 // caller reports that nothing was gating.
@@ -222,7 +222,9 @@ func Available(d Deps, subject, source string) (provider string, removed int, er
 		if err != nil {
 			return err
 		}
-		// The account half of a group@account subject, empty for a bare group.
+		// The account half of a group@account subject, empty for a bare group:
+		// a group clear lifts the bare entry and every account entry, an
+		// account clear lifts only that key.
 		_, accountName, _ := account.ParseGateKey(subject)
 
 		cleared := clearSubjects(l, provider, accountName)
@@ -258,6 +260,9 @@ func Available(d Deps, subject, source string) (provider string, removed int, er
 	return provider, removed, nil
 }
 
+// clearLedger removes every rate-limit entry on the named subjects and returns
+// the ledger without them, how many were removed, and the At of the oldest
+// removal: how long the gate had been live.
 func clearLedger(l Ledger, subjects []string) (Ledger, int, time.Time) {
 	var removed int
 	var oldest time.Time
@@ -279,10 +284,11 @@ func clearLedger(l Ledger, subjects []string) (Ledger, int, time.Time) {
 // rolesMissingGates synthesises an in-memory RolesMissing gate for every
 // (candidate, role) pair whose role's resolved definitions are not all on disk,
 // per d.Roles, the same way ExitedNoReport is synthesised from
-// Binding.RoundExcluded rather than read from the ledger file. Each gate carries
-// the role it belongs to, so resolveRole can ignore the gates of every other
-// role. nil when d.Roles is nil: no checker configured (every test that does not
-// set one, and every caller before cmd/relevo wires harness.OSRoleChecker()).
+// Binding.RoundExcluded rather than read from the ledger file. Each gate
+// carries the role it belongs to, so resolveRole can ignore the gates of every
+// other role. nil when d.Roles is nil: no checker configured (every test that
+// does not set one, and every caller before cmd/relevo wires
+// harness.OSRoleChecker()).
 //
 // When a candidate's provider is served by an account pool, the definitions are
 // checked in each account's own home -- the builder reads them under that
@@ -410,12 +416,12 @@ func missingInHome(c harness.RoleChecker, home, kind string, definitions []strin
 	return c.Missing(kind, definitions)
 }
 
-// rolesMissingNote is one roles-missing gate's note: which of role's definitions
-// are missing on kind, and how to fix each class of them. where names the
-// account home when the check was per account, and is empty for the default
-// home. A shipped path is installed by `relevo config agents`; a custom one may
-// be rendered from a source agent by that same command, or be the user's own
-// native definition, so its fix names both.
+// rolesMissingNote is one roles-missing gate's note: which of role's
+// definitions are missing on kind, and how to fix each class of them. where
+// names the account home when the check was per account, and is empty for the
+// default home. A shipped path is installed by `relevo config agents`; a custom
+// one may be rendered from a source agent by that same command, or be the
+// user's own native definition, so its fix names both.
 func rolesMissingNote(role, kind string, defs, paths []string, where string) string {
 	var shipped, custom []string
 	for _, path := range paths {
@@ -489,7 +495,8 @@ func SetGateClock(now func() time.Time) (restore func()) {
 	return func() { gateClock = prev }
 }
 
-// GateTimeText renders a gate time in local time, with the date when it is not today.
+// GateTimeText renders a gate time in local time, with the date when it is not
+// today, so a gate hours or days out never reads as later today.
 func GateTimeText(t time.Time) string {
 	if t.IsZero() {
 		return ""
@@ -517,7 +524,8 @@ func noteIsReason(k Kind) bool {
 	return k == Scheduled || k == ConcurrencyLimit || k == SkillMissing || k == AllowanceExhausted
 }
 
-// GateText renders a gate's reason: a Scheduled note verbatim, else kind and Until.
+// GateText renders a gate's reason: a Scheduled note verbatim, else kind and
+// Until.
 func GateText(k Kind, until time.Time, note string) string {
 	if noteIsReason(k) {
 		return note
@@ -525,7 +533,8 @@ func GateText(k Kind, until time.Time, note string) string {
 	return GateKindText(k) + " " + GateUntilText(until)
 }
 
-// UntilText is the gate's "until ..." wording, empty when the note already says when it lifts.
+// UntilText is the gate's "until ..." wording, empty when the note already says
+// when it lifts.
 func (g Gate) UntilText() string {
 	if noteIsReason(g.Kind) {
 		return ""
@@ -533,7 +542,8 @@ func (g Gate) UntilText() string {
 	return GateUntilText(g.Until)
 }
 
-// gatedNote is the advisory line printed after spawning a gated candidate: the agent is already running.
+// gatedNote is the advisory line printed after spawning a gated candidate: the
+// agent is already running.
 func gatedNote(d Deps, token string) string {
 	var parts []string
 	for _, g := range append(append(LedgerGates(d, []string{token}), rolesMissingGates(d)...), windowGates(d)...) {

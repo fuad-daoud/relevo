@@ -207,7 +207,8 @@ func exitWord(err error) string {
 	return s
 }
 
-// probeErrText bounds an error's text to 300 bytes, so one pathological harness cannot bloat the history file.
+// probeErrText bounds an error's text to 300 bytes, so one pathological harness
+// cannot bloat the history file.
 func probeErrText(s string) string {
 	if len(s) <= 300 {
 		return s

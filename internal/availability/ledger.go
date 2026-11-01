@@ -91,9 +91,9 @@ type Ledger struct {
 	Other   []json.RawMessage `json:"-"`
 }
 
-// knownKind reports whether k is a kind this binary reads from the ledger
-// file. ExitedNoReport, RolesMissing and SkillMissing are synthesised in memory, never
-// written, so they are not known here either.
+// knownKind reports whether k is a kind this binary reads from the ledger file.
+// ExitedNoReport, RolesMissing and SkillMissing are synthesised in memory,
+// never written, so they are not known here either.
 func knownKind(k Kind) bool {
 	return k == SpawnFailed || k == RateLimited
 }

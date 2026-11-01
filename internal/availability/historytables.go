@@ -52,8 +52,8 @@ func insertEventRow(d Deps, ev Event) error {
 
 // recordSample commits one probe result as one row of latency_sample, under the
 // same rule recordEvent commits an observation: a failure is returned rather
-// than failed, because a probe that measured a candidate must not be reported as
-// broken because its history could not be written.
+// than failed, because a probe that measured a candidate must not be reported
+// as broken because its history could not be written.
 func recordSample(d Deps, s Sample) error {
 	return insertSampleRow(d, s)
 }
@@ -81,8 +81,8 @@ func insertSampleRow(d Deps, s Sample) error {
 //
 // The rows it removes are not recorded anywhere: the tables carry an insert
 // trigger alone, so an age delete exports nothing and no importer has to
-// reproduce it. Every machine prunes on its own clock, which is why the window is
-// a window rather than a set.
+// reproduce it. Every machine prunes on its own clock, which is why the window
+// is a window rather than a set.
 func PruneHistory(d Deps) (db.HistoryPruned, error) {
 	if d.History == nil {
 		return db.HistoryPruned{}, nil

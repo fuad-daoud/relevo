@@ -27,8 +27,8 @@ type OutageMatch struct {
 // They key on what actually reaches a scan. transcript.LimitLines is the
 // channel, and it hands a pattern the harness's own message TEXT -- an error
 // event's message, a failed result's result/error text, or a non-JSON line of
-// harness stderr -- never a structured status field, so there is no pattern here
-// for `"code":503` beside a message: that object never gets scanned.
+// harness stderr -- never a structured status field, so there is no pattern
+// here for `"code":503` beside a message: that object never gets scanned.
 //
 // Nothing here keys on a bare "ERROR" or a bare status word either. A harness
 // printing "ERROR" is exactly the genuine crash this classifier must leave
@@ -53,8 +53,8 @@ var outagePatterns = compileOutage(
 // reasoning about an outage is not hitting one.
 //
 // ok is false when no line matches, which is the caller's signal that this exit
-// is not a provider outage and the existing until-cleared classification stands.
-// Never errors, never panics.
+// is not a provider outage and the existing until-cleared classification
+// stands. Never errors, never panics.
 func MatchOutage(text string, now time.Time, fallback time.Duration) (OutageMatch, bool) {
 	lines := strings.Split(text, "\n")
 	for i := len(lines) - 1; i >= 0; i-- {

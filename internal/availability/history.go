@@ -47,7 +47,8 @@ type History struct {
 // table that replaced it; nothing writes it and nothing reads it after that, so
 // the tags are the migration's rather than a live wire format.
 
-// Prune keeps every event no older than HistoryRetainWindow, in order, without mutating the receiver.
+// Prune keeps every event no older than HistoryRetainWindow, in order, without
+// mutating the receiver.
 func (h History) Prune(now time.Time) History {
 	cutoff := now.Add(-HistoryRetainWindow)
 	var kept []Event
@@ -65,7 +66,8 @@ func (h History) Append(e Event) History {
 	return History{Events: append(cp, e)}
 }
 
-// FromEntry mirrors a ledger entry: a RateLimited Subject is a provider, a SpawnFailed Subject is a token providerOf resolves.
+// FromEntry mirrors a ledger entry: a RateLimited Subject is a provider, a
+// SpawnFailed Subject is a token providerOf resolves.
 func FromEntry(e Entry, providerOf func(token string) string) Event {
 	ev := Event{
 		At:      e.At,
@@ -76,7 +78,8 @@ func FromEntry(e Entry, providerOf func(token string) string) Event {
 	}
 	switch e.Kind {
 	case RateLimited:
-		// A rate-limit subject is a bare group or a group@account key, named as group and account.
+		// A rate-limit subject is a bare group or a group@account key, named as
+		// group and account.
 		group, accountName, ok := account.ParseGateKey(e.Subject)
 		if !ok {
 			group, accountName = e.Subject, ""
@@ -90,7 +93,8 @@ func FromEntry(e Entry, providerOf func(token string) string) Event {
 	return ev
 }
 
-// HourCounts buckets provider's events of kind by hour in loc. Pure; loc keeps tests timezone-independent.
+// HourCounts buckets provider's events of kind by hour in loc. Pure; loc keeps
+// tests timezone-independent.
 func HourCounts(h History, provider string, kind Kind, loc *time.Location) [24]int {
 	var counts [24]int
 	for _, e := range h.Events {
@@ -102,7 +106,8 @@ func HourCounts(h History, provider string, kind Kind, loc *time.Location) [24]i
 	return counts
 }
 
-// BlockedDurations returns At - Since for every valid Cleared event on provider, in order. Pure.
+// BlockedDurations returns At - Since for every valid Cleared event on
+// provider, in order. Pure.
 func BlockedDurations(h History, provider string) []time.Duration {
 	var out []time.Duration
 	for _, e := range h.Events {

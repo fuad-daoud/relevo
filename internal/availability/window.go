@@ -39,6 +39,8 @@ func windowGates(d Deps) []Gate {
 	return out
 }
 
+// windowNote is the window's own config text: the only-windows when now is
+// outside all of them, else the avoid windows now inside.
 func windowNote(w candidate.Windows, now time.Time) string {
 	if len(w.Only) > 0 {
 		covered := false

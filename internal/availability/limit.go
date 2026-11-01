@@ -23,11 +23,13 @@ type LimitMatch struct {
 	Parsed bool      // Until came from the stream's own reset rather than the fallback
 }
 
-// durationRe matches "resets in 2h48m52s" and captures the duration component run.
+// durationRe matches "resets in 2h48m52s" and captures the duration component
+// run.
 var durationRe = regexp.MustCompile(`(?i)(?:resets?|try again|retry)\s+(?:in|after)\s+~?((?:\d+\s*(?:days?|d|hours?|hr|h|minutes?|min|m|seconds?|sec|s)\s*)+)`)
 
 // durationComponentRe pulls one "<number><unit>" component at a time out of the
-// captured run above.
+// captured run above. Units are checked by first letter (h/m/s/d), so the
+// alternation only needs to keep a short form from swallowing a longer one.
 var durationComponentRe = regexp.MustCompile(`(?i)(\d+)\s*(days?|d|hours?|hr|h|minutes?|min|m|seconds?|sec|s)`)
 
 // clockRe matches "resets 7pm", "resets at 23:30", "resets ~00:26".
@@ -68,8 +70,8 @@ var monthByName = map[string]time.Month{
 // MatchLimit scans text line by line from the last line backwards and returns
 // the first (i.e. most recent) line any pattern matches. Until is
 // parseReset(line, now) when that succeeds, else now.Add(fallback). ok is false
-// when no line matches or patterns is empty. Thinking lines are skipped, because
-// a model reasoning about a limit is not hitting one. Never errors.
+// when no line matches or patterns is empty. Thinking lines are skipped,
+// because a model reasoning about a limit is not hitting one. Never errors.
 func MatchLimit(text string, patterns []*regexp.Regexp, now time.Time, fallback time.Duration) (LimitMatch, bool) {
 	return MatchLimitWithReset(text, patterns, now, fallback, 0)
 }
@@ -328,7 +330,8 @@ func parseClockReset(line string, now time.Time) (time.Time, bool) {
 	return windowedReset(t, now, limitWindowShort)
 }
 
-// parseClockParts parses the date form's optional time groups, defaulting a missing time to midnight.
+// parseClockParts parses the date form's optional time groups, defaulting a
+// missing time to midnight.
 func parseClockParts(hh, mm, ampm string) (hour, minute int, ok bool) {
 	if hh == "" {
 		return 0, 0, true
@@ -347,7 +350,8 @@ func parseClockParts(hh, mm, ampm string) (hour, minute int, ok bool) {
 	return hour, minute, true
 }
 
-// applyMeridiem folds an am/pm suffix into a 24-hour hour; an empty suffix requires an already-24-hour hour.
+// applyMeridiem folds an am/pm suffix into a 24-hour hour; an empty suffix
+// requires an already-24-hour hour.
 func applyMeridiem(hour int, ampm string) (int, bool) {
 	switch strings.ToLower(ampm) {
 	case "am":
@@ -414,9 +418,9 @@ func inLimitWindow(t, now time.Time, max time.Duration) bool {
 // LimitPatterns is the harness defaults for token's kind followed by the
 // candidate's own limit_patterns, each compiled. When token does not resolve to
 // a configured candidate (the candidate was edited or deleted after the binding
-// picked it), the harness's patterns alone stand in -- the candidate is gone, so
-// it has no patterns of its own. Compiled on each call; decision points fire at
-// most once per round, so caching buys nothing.
+// picked it), the harness's patterns alone stand in -- the candidate is gone,
+// so it has no patterns of its own. Compiled on each call; decision points fire
+// at most once per round, so caching buys nothing.
 //
 // A candidate pattern that fails to compile here cannot happen -- the set's
 // Load already refused the file -- so a pattern that somehow doesn't compile is

@@ -18,8 +18,8 @@ import (
 // assembled from rows.
 //
 // What a read must never become is an input to a decision. Nothing here reaches
-// a pick: resolveCandidate and resolveRole read availability.Gates, which is the
-// live ledger, and the gates document carries a rate limit to every machine
+// a pick: resolveCandidate and resolveRole read availability.Gates, which is
+// the live ledger, and the gates document carries a rate limit to every machine
 // because a provider's quota is the provider's. A peer's outages and latencies
 // are a display concern and not a scheduling one.
 
