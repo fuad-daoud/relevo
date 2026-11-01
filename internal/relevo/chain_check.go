@@ -21,8 +21,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
-// chainCheckGreen passed and chainCheckRed did not; the row keeps the
-// runner's own result, so a timeout stays distinguishable from a failure.
+// chainCheckGreen is a check that passed and chainCheckRed one that did not;
+// the engine reads these words, while the row keeps the runner's own
+// result, so a timeout stays distinguishable from a plain failure.
 const (
 	chainCheckGreen = "green"
 	chainCheckRed   = "red"
@@ -187,7 +188,9 @@ func chainKillRunningChecks(ctx context.Context, rt Runtime, tx *store.Tx, c db.
 	}
 }
 
-// chainKillCheck ends one run: the live process first, then its gate scope.
+// chainKillCheck ends one run: the recorded process when it is alive, then
+// its gate scope, exactly as the gate runner's own stop does for a member's
+// round.
 func chainKillCheck(ctx context.Context, rt Runtime, c db.ChainRow, row db.ChainCheckRow) error {
 	if row.PID != 0 && rt.Runner != nil {
 		h := spawn.ProcHandle{PID: row.PID, StartedAt: time.Unix(row.StartedAt, 0)}

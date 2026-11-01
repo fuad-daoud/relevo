@@ -21,7 +21,8 @@ import (
 // the closing round's closed tree -- as a round_file beside the round diff,
 // returning its key or "" when there is nothing to capture. It NEVER fails
 // the close: an empty plan-start commit, an unknown closed tree, no git, and
-// a git failure all read as "not captured".
+// a git failure all read as "not captured", the same shape capture's own
+// diff results use.
 func chainPlanDiff(rt Runtime, tx *store.Tx, c db.ChainRow, builder string, builderRound int) string {
 	if c.PlanStartCommit == "" {
 		return ""

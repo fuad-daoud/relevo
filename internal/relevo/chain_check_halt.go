@@ -16,6 +16,8 @@ import (
 // quotes: enough to name the failure, short enough for a notice.
 const haltCheckTailLines = 20
 
+// haltCheckResults are the settled check results that make a halt a check's
+// doing.
 var haltCheckResults = map[string]bool{"fail": true, "timeout": true, "error": true}
 
 // chainHaltReason is the reason a halted or stopped chain is saved with: the

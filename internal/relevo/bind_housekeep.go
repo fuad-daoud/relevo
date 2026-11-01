@@ -28,7 +28,8 @@ func housekeepAskUnbind(rt Runtime) func(context.Context, store.Binding, bool) e
 }
 
 // HousekeepDeps builds internal/housekeep's Deps from rt. Git and Refs carry
-// through nil-safe, since the assignments are between identical shapes.
+// through nil-safe: a nil rt.Git stays a nil interface on both, since the
+// assignments are between identical interface shapes.
 func HousekeepDeps(rt Runtime) housekeep.Deps {
 	return housekeep.Deps{Store: rt.Store, TmpRoot: rt.TmpRoot, Git: rt.Git, Refs: rt.Git,
 		ChainCheckSettled: chainCheckSettled, ChainFlowTerminal: chainFlowTerminal,

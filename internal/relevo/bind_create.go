@@ -61,8 +61,9 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		return store.Binding{}, resolve.Resolution{}, err
 	}
 
-	// Check the working tree before spawning anything: without this a refused
-	// bind would leave a started builder stranded with nothing pointing at it.
+	// Check the working tree before spawning anything: Save re-checks under the
+	// lock and stays authoritative, but without this a refused bind would
+	// leave a started builder stranded with nothing pointing at it.
 	//
 	// Only a writer can be blocked here: a reader may share a writer's
 	// tree, so this refusal applies between two writers only.

@@ -21,9 +21,10 @@ import (
 )
 
 // chainAppendPickNotes writes the pick log entry for every member whose
-// actor's placement list was walked, with the placement and every skip. A
-// member whose actor named no placement writes none, so its log stays as it
-// was before placement existed.
+// actor's placement list was walked: the same pick entry a local bind
+// writes, with the placement and every skip. A member whose actor named no
+// placement writes none, so its log stays as it was before placement
+// existed.
 func chainAppendPickNotes(tx *store.Tx, rt Runtime, members []chainMember, resolutions map[string]resolve.Resolution) error {
 	for _, m := range members {
 		res := resolutions[m.part]

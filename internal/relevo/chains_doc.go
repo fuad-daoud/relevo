@@ -180,7 +180,7 @@ func chainDocEntry(ctx context.Context, rt Runtime, c db.ChainRow, now time.Time
 }
 
 // chainDocStepsAndFacts extracts steps and plan facts for a chain row,
-// holding when workflow or engine state JSON is missing.
+// without panicking when workflow or engine state JSON is missing.
 func chainDocStepsAndFacts(c db.ChainRow, memberRows []db.ChainMemberRow, traceRows []db.ChainEventRow) ([]ChainStep, string, int, int) {
 	if len(c.StateJSON) == 0 || len(c.WorkflowJSON) == 0 {
 		planPos := c.Plan

@@ -142,7 +142,9 @@ func chainForkResumeRefusal(c db.ChainRow, before workflow.State) error {
 }
 
 // chainForkResumeParent answers a fork parent's resume, reporting whether it
-// did: handled is false for every other chain.
+// did: handled is false for every other chain. chainForkResumeRefusal has
+// already refused a fork with a child still standing, so every child here
+// has ended done.
 //
 // The parent does not re-enter the fork step: entering a fork starts its
 // children again, replacing the ones it already waits on. So the fork is

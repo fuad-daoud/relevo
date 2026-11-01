@@ -18,8 +18,8 @@ import (
 // A chain that runs a user workflow stores its definition and engine state
 // on the row: a non-empty workflow column selects the engine path.
 
-// chainResumeWorkflowRow is the resume path's read of that definition and
-// state. A row the migration sweep has not reached yet converts here, through
+// chainResumeWorkflowRow is the resume path's read of a chain row's engine
+// definition and state. A row the migration sweep has not reached yet converts here, through
 // the same single-row conversion; whatever still lacks a workflow or a state
 // is refused in the input class, naming the row's own reason and the command
 // that reads it.
@@ -412,7 +412,8 @@ func flowTraceStep(before workflow.State, ev workflow.Event) string {
 }
 
 // flowPlanPos is a state's plan position for the trace's legacy plan column.
-// An exhausted walk reads the last plan, like one that has not started.
+// An exhausted walk holds index -1, like one that has not started, so Done
+// is checked first to read the last plan.
 func flowPlanPos(st workflow.State) int {
 	it := st.Iter["plans"]
 	if it.Done && len(it.Items) > 0 {

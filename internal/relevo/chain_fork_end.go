@@ -69,7 +69,7 @@ func chainForkChildEnded(ctx context.Context, rt Runtime, tx *store.Tx, c db.Cha
 }
 
 // chainSaveForkAwait records one child's end on the parent. No action stands
-// behind it, so unlike chainSaveFlow's trace row it is written on its own.
+// behind it, so the chain row is written alone, with no trace row.
 func chainSaveForkAwait(tx *store.Tx, c db.ChainRow, def workflow.Definition, next workflow.State) error {
 	stateJSON, err := json.Marshal(next)
 	if err != nil {

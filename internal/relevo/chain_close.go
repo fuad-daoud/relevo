@@ -139,10 +139,11 @@ func chainPlanStepsReason(rt Runtime, c db.ChainRow, step string, wf chainCloseW
 	return fmt.Sprintf("step %s of chain %s: the planner's output has no plan steps (it may point at a file instead of containing the plan); nothing was sent to the builder", step, c.Name)
 }
 
-// chainDirtyCloseReason is the dirty gate's answer for one writer close. A
-// git error is not a clean tree, and the gate never fails the close it
-// reads: it decides in band, so the trace never records an unread tree as
-// finished.
+// chainDirtyCloseReason is the dirty gate's answer for one writer close: the
+// halt wording when the round must not advance, and "" when it may. A git
+// error is not a clean tree, and the gate never fails the close it reads:
+// it decides in band, exactly as escapeCheck does, so the trace never
+// records an unread tree as finished.
 func chainDirtyCloseReason(ctx context.Context, rt Runtime, c db.ChainRow, b store.Binding, round int) string {
 	if !chainDirtyGateApplies(rt, b) {
 		return ""

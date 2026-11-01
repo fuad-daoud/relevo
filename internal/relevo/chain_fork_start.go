@@ -97,7 +97,9 @@ func chainStartChild(ctx context.Context, rt Runtime, tx *store.Tx, parent db.Ch
 		childPlan.mastermind = recordEndpoint(rec)
 	}
 	// The child's members are built beside the parent's builder member, so
-	// they inherit its subdirectory rather than re-resolving one.
+	// they inherit its subdirectory rather than re-resolving one: the fork
+	// cuts from parent.Repo, the root checkout, whose own offset is not the
+	// one the parent's rounds run in.
 	if parentBuilder, lerr := tx.Load(parent.Builder); lerr == nil {
 		childPlan.subdir = parentBuilder.Subdir
 	}

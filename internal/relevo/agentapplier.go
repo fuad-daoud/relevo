@@ -10,9 +10,8 @@ import (
 )
 
 // Where a native agent's harness file belongs on this machine: the kind's
-// harness home through the install table, so an item cannot steer the write;
-// written via temp file and rename, never through a symlink, never
-// executable.
+// harness home through the install table, so an item cannot steer the write.
+// A definition is never written through a symlink, and never executable.
 
 // agentHome is the directory a kind's definitions live under, resolved as
 // harness.InstallEnv resolves it, so these paths are the ones the installer
@@ -66,7 +65,8 @@ func (a diskFileApplier) ReadAgentFile(path string) ([]byte, bool, error) {
 	return data, true, nil
 }
 
-// WriteAgentFile writes data at path through a temp file and a rename. The
+// WriteAgentFile writes data at path through a temp file in path's own
+// directory and a rename, so a reader never sees a half-written file. The
 // file lands mode 0644: a definition is read by a harness, not run.
 func (a diskFileApplier) WriteAgentFile(path string, data []byte) (bool, error) {
 	if info, err := os.Lstat(path); err == nil && !info.Mode().IsRegular() {

@@ -18,8 +18,8 @@ import (
 
 // resume re-points an existing binding at the calling mastermind, and -- when
 // the caller supplied a builder, or asked for one with Rebind -- at a new
-// builder as well. The current builder must not be alive: rebinding over a
-// working builder would abandon a round mid-flight.
+// builder as well. When a builder is supplied, the current one must not be
+// alive: rebinding over a working builder would abandon a round mid-flight.
 //
 // A rebind of a DONE binding is refused; a mastermind-only resume of one is
 // allowed and reactivates it. RoundClosedTree is cleared with a new builder:

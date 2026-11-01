@@ -124,8 +124,8 @@ func requireRemoteReaders(ctx context.Context, rt Runtime, server string) error 
 // or a wrapped git failure.
 func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	// Resolve the caller's mastermind first: a remote binding is the calling
-	// mastermind's, exactly like a local one, and nothing about it crosses
-	// the wire.
+	// mastermind's, exactly like a local one, and nothing about the
+	// mastermind crosses the wire.
 	rec, haveRec, err := resolveVerbMasterMind(rt, opts.MasterMindID)
 	if err != nil {
 		return AddResult{}, err

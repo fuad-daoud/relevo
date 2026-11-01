@@ -65,8 +65,8 @@ func takeRenders(shared *db.DB) []string {
 var agentInstallEnv = AgentInstallEnv
 
 // renderPendingAgents re-renders every queued agent in name order. It never
-// fails the import it follows: an unrenderable definition is one warning and
-// the entry stays applied.
+// fails the import it follows: an unrenderable definition is one warning,
+// exactly as refreshRoles treats one, and the entry stays applied.
 func renderPendingAgents(shared *db.DB) {
 	names := takeRenders(shared)
 	if len(names) == 0 {

@@ -22,8 +22,10 @@ func ResolveSendBuilder(rt Runtime, current, token string) (*resolve.Resolution,
 }
 
 // ResolveSendBuilderFor turns --candidate's token into the resolution to
-// apply for a binding whose writer role is role, or nil for a no-op. A gated
-// candidate still resolves, its gates recorded; only roles_missing refuses.
+// apply for a binding whose writer role is role, or nil for a no-op. An
+// explicit token is resolved exactly as `relevo bind --worktree --candidate`
+// resolves one, so a gated candidate still resolves, its gates recorded;
+// only roles_missing refuses.
 // A token naming the current candidate is a no-op. Every error is wrapped
 // with ErrBadBuilder, naming the token.
 //
@@ -90,7 +92,8 @@ func roundOpenIn(entries []store.LogEntry, round int) bool {
 //
 // "Served" has two spellings, because relevo keeps two copies: the server's
 // carries Owner and a headless builder, the client's Builder.Mode ==
-// ModeRemote and no Owner.
+// ModeRemote and no Owner. This is the same "not local" test
+// housekeep.RunningProcs uses.
 func candidateSendRefused(b store.Binding, entries []store.LogEntry) bool {
 	if !roundOpenIn(entries, b.Round) {
 		return false

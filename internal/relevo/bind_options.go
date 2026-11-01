@@ -64,9 +64,11 @@ type BindOptions struct {
 	// clears the stored feature.
 	NoFeature bool
 
-	// Ticket is the issue this binding serves in stored form; empty means
-	// none. On resume, empty leaves the stored ticket untouched: there is no
-	// way to clear one.
+	// Ticket is the issue this binding serves, as typed on --ticket: a number,
+	// #N, project/path#N, an issue key like ABC-123, or an http(s) URL. It is
+	// parsed into the stored form when the binding is created, and again on
+	// resume. Empty means none. On resume, empty leaves the stored ticket
+	// untouched: there is no way to clear one.
 	Ticket string
 
 	// Role is the writer role the new binding runs; "" means builder. Bind
