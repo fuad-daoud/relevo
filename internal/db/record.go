@@ -99,7 +99,8 @@ func scanRecord(s rowScanner) (Record, error) {
 
 // RecordGet returns owner's live row for name within this handle's origin, and
 // whether it was found. The live row is keyed by (origin, owner, name): one
-// machine database holds every owner's bindings.
+// machine database holds every owner's bindings, and a shared one every
+// installation's.
 func (d *DB) RecordGet(owner, name string) (Record, bool, error) {
 	return getRecord(context.Background(), d.sqlDB, d.origin, owner, name)
 }
@@ -168,8 +169,8 @@ func (d *DB) RecordList(owner string) ([]Record, error) {
 
 // RecordListForMasterMind is RecordList narrowed, in the query, to the records
 // whose binding names mastermindID, so a caller polling for its own bindings
-// does not read every record. '$.planner_id' is the JSON key MasterMindID is
-// written under.
+// does not read every record. '$.planner_id' is the JSON key store.Binding
+// writes MasterMindID under.
 func (d *DB) RecordListForMasterMind(owner, mastermindID string) ([]Record, error) {
 	rows, err := d.sqlDB.QueryContext(context.Background(),
 		`SELECT `+recordCols+` FROM binding_record WHERE `+writerScope+` AND owner = ? AND archived_at IS NULL
@@ -202,8 +203,6 @@ func (d *DB) RecordListArchived(owner string) ([]Record, error) {
 	return out, nil
 }
 
-// RecordGetByID returns the row with this id, live or archived, so an archive
-// source can read a record when it holds the id rather than the name.
 // RecordListUnlinked returns every remote binding row that carries no link at
 // all -- both link columns NULL. Name-ordered.
 //

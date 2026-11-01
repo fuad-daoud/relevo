@@ -57,7 +57,8 @@ const (
 )
 
 // UnixMS is the integer a history row's At is stored as: Unix milliseconds in
-// UTC.
+// UTC. The age prune and the arrival window compare it as a number because
+// RFC3339 text with mixed offsets and fractional widths does not sort by time.
 func UnixMS(t time.Time) int64 { return t.UTC().UnixMilli() }
 
 // TimeFromUnixMS is UnixMS read back into a time.Time: the zero millisecond is

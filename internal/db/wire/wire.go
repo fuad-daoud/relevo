@@ -158,6 +158,8 @@ func Kind(payload []byte) (byte, error) {
 	return payload[0], nil
 }
 
+// Decode unmarshals a payload's JSON header into v and returns the raw value
+// bytes that follow it.
 func Decode(payload []byte, v any) ([]byte, error) {
 	if len(payload) < 5 {
 		return nil, fmt.Errorf("wire: frame too short (%d bytes)", len(payload))

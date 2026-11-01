@@ -52,9 +52,10 @@ const cacheEnv = "TURSO_GO_CACHE_DIR"
 // is a bounded wait and then an error.
 const maxOpenConns = 128
 
-// maxIdleConns and idleConnTime bound what an idle pool keeps: every pooled
-// connection owns native memory the Go heap profile never shows, so only the
-// retention after a burst shrinks, not the ceiling above.
+// maxIdleConns and idleConnTime bound what an idle pool keeps. Every pooled
+// connection owns native memory the Go heap profile never shows, so keeping
+// all maxOpenConns alive would pin a burst's worth of it; the ceiling above
+// stays, only the retention after a burst shrinks.
 const (
 	maxIdleConns = 16
 	idleConnTime = 2 * time.Minute
@@ -226,7 +227,8 @@ func engineStatus(root string) EngineState {
 }
 
 // engineLocked reports whether err is the engine's own refusal to open a file
-// another process holds: ErrTursoGeneric carrying "locked by another process".
+// another process holds: ErrTursoGeneric carrying "locked by another process"
+// (core/io/unix.rs).
 // modernc's own lock is a busy error mapBusy already handles, so it never
 // reaches here.
 func engineLocked(err error) bool {
@@ -270,7 +272,9 @@ var tempDirEnv = []string{"TURSO_TMPDIR", "SQLITE_TMPDIR"}
 // prepareTempDir creates dir/tmp owner-only and points TURSO_TMPDIR and
 // SQLITE_TMPDIR at it, so temp files land beside the database instead of in
 // /tmp. A value this process pinned earlier is re-pointed at the database being
-// opened now: the earlier directory belongs to a different file and may be gone.
+// opened now: the earlier directory belongs to a different file and may be
+// gone, and re-creating it would write into a directory its owner is entitled
+// to have deleted.
 // A value the environment already carried is the operator's choice and is left
 // alone.
 func prepareTempDir(dir string) error {

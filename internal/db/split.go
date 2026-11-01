@@ -121,10 +121,11 @@ func (d *DB) SplitDone() bool {
 	return err == nil && ok
 }
 
-// Origin is the installation id this handle scopes its own writes to, or "" on
-// a handle carrying none. A reader that tells this machine's rows from another
-// installation's asks here, so the one place that knows stays the only place
-// with the answer.
+// Origin is the installation id this handle scopes its own writes to, or ""
+// when the installation id is unknown (tests, the peek runtime), where scoped
+// reads match only empty-origin rows. A reader that tells this machine's rows
+// from another installation's asks here, so the one place that knows stays the
+// only place with the answer.
 func (d *DB) Origin() string { return d.origin }
 
 // Path is the file this handle is open on, the shared one when opened split. A
@@ -246,7 +247,8 @@ var splitBeforeTable = func(table string) error { return nil }
 // another installation sharing this database can still write a machine-local row
 // into it. So a pass whose marker is present converges instead of returning: it
 // moves whatever local-scoped rows are left, backing up only when there is
-// something to move. The marker is never written again.
+// something to move, because the readers here are bound to the local file and
+// would never see such a row. The marker is never written again.
 func SplitOnce(d *DB, backupDir string, now time.Time) (stats SplitStats, ran bool, err error) {
 	local := d.Local()
 	if local == nil {

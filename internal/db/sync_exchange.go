@@ -90,7 +90,8 @@ func (t *Tx) RewindImportMark(origin string, seq int) error {
 //
 // Values come back typed rather than as text. A BLOB column returns its bytes
 // and the compressed columns of migration 013 return the bytes on disk, so a
-// caller sees exactly what is stored.
+// caller sees exactly what is stored and never a decompressed rendering that a
+// recompression might not reproduce.
 type ExchangeRow struct {
 	// Table is the shared table the row is in.
 	Table string
@@ -173,8 +174,8 @@ func exchangeRowQuery(shared SharedTable, columns []string, keys []any) (string,
 }
 
 // scanExchangeRow runs the row read and turns the result set into one row. A
-// NULL stays a nil, so a column the writer set to nothing stays distinct from
-// one that was never set.
+// NULL stays a nil, distinct from an empty string: that is the difference
+// between a column the writer set to nothing and one that was never set.
 func scanExchangeRow(ctx context.Context, q queryer, tbl, pk, query string, args []any) (ExchangeRow, bool, error) {
 	rows, err := q.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -331,7 +332,8 @@ func (t *Tx) DrainOutbox(limit int) ([]DrainedEntry, error) {
 	}
 	// The window's last sequence is the cut the exporter clears the outbox to.
 	// Pulled parents are prepended so the window's own entries stay last and the
-	// cut keeps naming the window's tail.
+	// cut keeps naming the window's tail: a pulled parent's later outbox entry
+	// has to survive for its own batch.
 	pulled, err := t.pendingParents(window, window[len(window)-1].Seq)
 	if err != nil {
 		return nil, err

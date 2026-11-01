@@ -10,7 +10,7 @@ import (
 )
 
 // ownerStep is one step from a shared row toward the installation that owns it:
-// read column from parent, where parentKey holds the value fed in.
+// read column from parent, where key holds the value fed in.
 type ownerStep struct {
 	column string
 	parent string
@@ -48,7 +48,8 @@ type ownerKind struct {
 
 // OwnerRules is how each shared table's rows resolve to the installation that
 // owns them, in SharedTables order. This is the Go half of the resolution the
-// outbox triggers already perform in SQL, so the two would drift;
+// outbox triggers perform in SQL. The triggers are immutable once applied, so
+// this second copy is where the two can drift;
 // TestOwnerResolutionMatchesTriggers compares each rule against the live
 // trigger body, which cannot go stale.
 var OwnerRules = map[string]ownerRule{

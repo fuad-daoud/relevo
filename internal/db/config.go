@@ -266,7 +266,8 @@ func openReadOnly(path string, o Options) (_ *DB, err error) {
 	}
 
 	// The marker check runs after the lock and before the pool, so a held file
-	// still reports ErrLocked and a refused file never opens the engine.
+	// still reports ErrLocked and a refused file never opens the engine, so no
+	// -wal is created beside an unconverted database.
 	if err = requireConverted(path); err != nil {
 		return nil, err
 	}

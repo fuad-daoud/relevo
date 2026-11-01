@@ -97,9 +97,9 @@ type Query struct {
 	Query string `json:"query"`
 }
 
-// Rows is a value frame; when no batch follows, a done frame follows
-// immediately, so a client that stops after the last row still leaves the
-// stream in a known state.
+// Rows is a value frame; Columns is set on the first batch only. When no batch
+// follows, a done frame follows immediately, so a client that stops after the
+// last row still leaves the stream in a known state.
 type Rows struct {
 	Header
 	Columns []string `json:"columns,omitempty"`

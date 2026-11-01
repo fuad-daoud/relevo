@@ -72,11 +72,13 @@ type Server struct {
 	OnAbandoned func()
 
 	// OnSyncVerb, when set, runs one sync verb against the handles the server
-	// already holds.
+	// already holds, so a writing verb never contends with the daemon for the
+	// file lock.
 	//
 	// The request carries the settings body and the token bytes; the hook is
 	// handed both and is trusted to keep the token out of every message, log
-	// line and response it produces.
+	// line and response it produces. The token may cross the stream because the
+	// socket sits under the 0700 state root and every peer passes the uid check.
 	//
 	// Nil refuses the verb (RefuseNoSyncVerb) rather than accepting it and
 	// doing nothing, so an owner with no executor installed cannot be read as a

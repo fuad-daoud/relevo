@@ -9,10 +9,11 @@ import (
 	"time"
 )
 
-// The machine-local layer of the config doc. The shared row stays the whole
-// truth for each key and this layer says what this machine overrides, so the
-// fields naming things here -- an account's config dir and home, the policy's
-// serve settings -- never reach another machine.
+// The machine-local layer of the config doc. A row here is a merge-patch over
+// one key of the shared config_doc, not a body of its own. The shared row stays
+// the whole truth for each key and this layer says what this machine overrides,
+// so the fields naming things here -- an account's config dir and home, the
+// policy's serve settings -- never reach another machine.
 //
 // The rows live in the machine-local file, so every caller reaches them through
 // a handle bound by LocalOrSelf: a store built over a shared handle must not be

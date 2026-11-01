@@ -18,7 +18,9 @@ import (
 const dialTimeout = 2 * time.Second
 
 // Dial connects to an owner over sock and returns the same *DB a direct Open
-// would. Dial plus the handshake share dialTimeout.
+// would. The schema and origin come from the owner's handshake, and a nil
+// error means the handshake completed. Dial plus the handshake share
+// dialTimeout.
 func Dial(sock string) (*DB, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 	defer cancel()

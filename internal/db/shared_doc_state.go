@@ -10,8 +10,9 @@ import (
 	"time"
 )
 
-// Every method binds the machine-local file itself, so a caller holding the
-// shared handle cannot read or write another file's copy of these tables.
+// The machine-local bookkeeping of the exporter of a shared doc. Every method
+// binds the machine-local file itself, so a caller holding the shared handle
+// cannot read or write another file's copy of these tables.
 
 // DocSignal is one doc whose items may have changed since the last export.
 type DocSignal struct {
@@ -93,6 +94,8 @@ func (d *DB) RecordDocExport(sig DocSignal, writes []DocExportWrite) error {
 }
 
 // SignalDoc records that doc's items may have changed since the last export.
+// It writes the same shared_outbox row the config_doc triggers write for the
+// config document.
 // It exists in Go for the documents whose changes do not go through a table
 // of their own: their write path knows it changed something, and no trigger
 // on a table can see it.
@@ -144,9 +147,9 @@ func (t *Tx) recordDocWrite(doc string, w DocExportWrite) error {
 }
 
 // ClearDocExportState forgets what was exported and every local write stamp:
-// local config is the machine's starting point, not an edit made against the
-// shared config. So the next export of each doc
-// that had state re-emits every key. Each such doc is signalled in the same
+// config written before a join is the machine's starting point, not an edit
+// made against the shared config. So the next export of each doc that had
+// state re-emits every key. Each such doc is signalled in the same
 // transaction, because an export only looks at a doc it has been told changed.
 func (d *DB) ClearDocExportState() error {
 	return d.LocalOrSelf().Tx(func(t *Tx) error {

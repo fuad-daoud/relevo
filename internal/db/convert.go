@@ -215,7 +215,8 @@ func fileMarker(path string) (converted, fresh bool, err error) {
 // markConverted writes the marker through the conversion's connection and drains
 // the -wal again, so the marker is in the main file rather than only in a log
 // another handle keeps alive: a kill right after still leaves a file the header
-// alone reads as converted.
+// alone reads as converted, and the sidecar check below still sees a drained
+// -wal.
 func markConverted(ctx context.Context, conn *sql.Conn) error {
 	if _, err := conn.ExecContext(ctx, markerStatement()); err != nil {
 		return fmt.Errorf("set application_id: %w", err)

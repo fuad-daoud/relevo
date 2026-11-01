@@ -37,9 +37,9 @@ type tursoCdcStats struct {
 	VacuumErr     string    `json:"vacuum_err,omitempty"`
 }
 
-// DropTursoCdcOnce removes the driver's change-capture table from the shared
-// file and the machine-local file beside it, once each, after a full backup
-// of each file that holds it. The table is dead weight: nothing reads
+// DropTursoCdcOnce removes the change-capture table an earlier engine left in
+// the shared file and the machine-local file beside it, once, after a full
+// backup of each file that holds it. The table is dead weight: nothing reads
 // it, and dropping it only frees pages once a VACUUM rewrites the file.
 //
 // A machine without the table writes the marker and takes no backup. A disk

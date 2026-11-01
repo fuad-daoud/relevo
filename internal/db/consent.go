@@ -85,8 +85,9 @@ func repoKeys(ref Repo) []repoKey {
 // the row is in the shared file, the stamp and the signal in the machine-local
 // one. The row is written first, so a failure between them leaves an answer
 // this machine holds and has not yet told anyone about, which the next consent
-// write of any key sends. The reverse order would spend a stamp on an answer
-// that never landed.
+// write of any key sends, because the exporter diffs the whole document. The
+// reverse order would spend a stamp, which tells every peer this machine last
+// wrote the key, on an answer that never landed.
 func (d *DB) SetRepoConsent(ref Repo, c Consent, now time.Time) (string, error) {
 	var id string
 	err := d.Tx(func(t *Tx) error {

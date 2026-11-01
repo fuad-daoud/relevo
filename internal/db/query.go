@@ -374,8 +374,8 @@ func isKeywordByte(c byte) bool {
 }
 
 // explainPragma returns the PRAGMA statement an `EXPLAIN` or `EXPLAIN QUERY
-// PLAN` prefixes, so the same read-only check runs on it. A non-EXPLAIN of a
-// PRAGMA returns "", and is left to the engine.
+// PLAN` prefixes, so the same read-only check runs on it. It returns "" when
+// the statement is not an EXPLAIN of a PRAGMA, and leaves it to the engine.
 func explainPragma(stmt string) string {
 	i := skipSpace(stmt, 0)
 	keyword, after := word(stmt, i)
