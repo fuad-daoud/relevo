@@ -71,7 +71,6 @@ versions corrupt each other and there is no rollback. Two flows exist:
 
 - Plans and specs are local working files. `docs/plans/`, `docs/specs/` and
   `docs/superpowers/` are gitignored and never committed.
-- The package layer map and where new code belongs live in `docs/architecture.md`.
 - State lives in `$XDG_STATE_HOME/relevo` (default `~/.local/state/relevo`);
   config resolves via `$XDG_CONFIG_HOME` (default `~/.config`).
   Compose relevo config paths through `userConfigRoot()` (`cmd/relevo/main.go`),
@@ -79,10 +78,23 @@ versions corrupt each other and there is no rollback. Two flows exist:
 
 ### Code style
 
-A package comment is 1-3 lines saying what the package owns; a comment says why, never restating the code.
-No history in the code: no issue or PR numbers, no spec sections, no "round N" or "used to" stories; tests follow the same rules.
-Functions hold at most 70 lines, non-test files at most 600, one package per concept; `make check` enforces the rules.
-The full rules live in `docs/style.md`.
+The rules are in `docs/style.md`, the package layers and where new code goes
+in `docs/architecture.md`, and how docs are written in `docs/docs-standard.md`.
+The ones a round most often breaks:
+
+- A comment says *why*, only where the code cannot, and never restates it. No
+  history in code or tests: no issue or PR numbers, spec sections, "round N",
+  "used to".
+- Functions at most 70 lines, non-test files at most 600, one package per
+  concept. A package imports only packages below it; a shared helper lives in
+  the lower package, never copied.
+- `make check` enforces lint, comments and file size. Packages not yet cleaned
+  are listed as exclusions; a round that finishes one removes its entries, and
+  no exclusion is ever added to get green.
+- CI fails when a package's coverage drops more than a point below
+  `testdata/coverage-baseline.txt`. A round that moves code between packages
+  regenerates it with `sh scripts/check-coverage.sh --write` and says so; no
+  round lowers a baseline to get green.
 
 ## Merging and CI
 

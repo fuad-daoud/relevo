@@ -1,72 +1,101 @@
 # Architecture
 
-relevo moves work between a MasterMind and builders: the MasterMind stages a plan file, a runner executes it in a worktree, and relevo carries the prompt, the report and the diff between them. The moving parts are the CLI (`cmd/relevo`), the daemon (`internal/serve`), the database owner (`internal/db/wire/owner`), the runners (`internal/harness` kinds started through `internal/spawn`), the remote server and client (`internal/serve`, `internal/remote/client`), and the cockpit (`internal/ui`). The command loop lives in `internal/mastermind/guide.md`; this guide maps where each part lives in the tree.
+relevo hands work between a MasterMind agent and builder agents. The
+MasterMind writes a plan, relevo starts a builder on it in a git worktree, and
+relevo carries the prompt, the report and the diff between the two. relevo
+holds no judgement: whether a round is done, and what comes next, is always
+the MasterMind's call.
+
+## Moving parts
+
+| Part | What it does | Where |
+| --- | --- | --- |
+| CLI | every `relevo` verb; parses flags and maps errors to exit codes | `cmd/relevo` |
+| Engine | bind, send, round life, status, chains: the handoff policy | `internal/relevo` |
+| Daemon | ticks every binding: reconciles finished rounds, delivers reports, ingests history, upgrades itself | `internal/relevo` (the tick), started by `cmd/relevo` |
+| Database owner | the one process that opens `relevo.db`; every other process reaches it over a unix socket | `internal/db`, `internal/db/wire/owner`, `internal/db/wire/client` |
+| Runners | the harness processes (Claude Code, OpenCode, Muse and others) a round starts | `internal/harness`, `internal/spawn`, `internal/proc` |
+| Remote server and client | run builders on another machine over HTTPS and git bundles | `internal/serve`, `internal/remote`, `internal/remote/client`, `internal/uplink` |
+| Cockpit | the `relevo ui` terminal interface | `internal/ui` and its subpackages |
 
 ## Layers
 
-Layer order comes from module-internal imports, computed with:
+A package imports only packages below it. Print each package's layer (0
+imports no relevo package; n imports nothing above n − 1) with:
 
+```sh
+go list -f '{{.ImportPath}} {{join .Imports " "}}' ./... | grep '^github.com/fuad-daoud/relevo'
 ```
-go list -f '{{.ImportPath}} {{join .Imports " "}}' ./...
-```
 
-A layer holds the packages whose deepest internal dependency sits one layer down. Layer membership traces to that listing; each ownership line traces to the package comment or files named beside it.
+The packages fall into five bands, bottom to top:
 
-| Layer | Packages | Owns |
+| Band | Packages | What they own |
 | --- | --- | --- |
-| 0 | `internal/account`, `internal/blobstore`, `internal/board/theme`, `internal/db/wire`, `internal/diskfree`, `internal/e2e` (test-only), `internal/jsonshape`, `internal/patch`, `internal/pathscope`, `internal/refusal`, `internal/sanitize`, `internal/serviceunit`, `internal/shipped`, `internal/skill`, `internal/spawn`, `internal/text`, `internal/tmpdir`, `internal/trail` | `internal/blobstore` holds the bodies sync moves outside the log, one object per stored value (`internal/blobstore/blobstore.go`). `internal/text` holds the display-text helpers the CLI, the cockpit views, the daemon and the listings share (`internal/text/text.go:1-3`). |
-| 1 | `internal/db/wire/client`, `internal/db/wire/owner`, `internal/harness`, `internal/proc`, `internal/reporttail`, `internal/syncworker`, `internal/transcript` | `internal/harness` owns the runner kinds and their agent definition files (`internal/harness/agentfiles.go`). |
-| 2 | `internal/agentsrc`, `internal/candidate`, `internal/db`, `internal/isolate`, `internal/usage`, `internal/workflow` | `internal/db` is the system of record, the sqlite file behind this package alone (`internal/db`, package comment). |
-| 3 | `internal/chatlabel`, `internal/db/dbtest`, `internal/installation`, `internal/policy`, `internal/release`, `internal/synclog` | — |
-| 4 | `internal/classify`, `internal/consent`, `internal/hooks`, `internal/roles`, `internal/store`, `internal/sync` | `internal/store` owns the on-disk state: the bindings and the append-only round log (`internal/store/types.go:1-2`). `internal/sync` is the scaffolding cloud sync needs before a byte moves (`internal/sync/sync.go`). |
-| 5 | `internal/availability`, `internal/git`, `internal/housekeep`, `internal/mastermind`, `internal/sync/verb`, `internal/syncpipe`, `internal/upgrade` | `internal/mastermind` owns the mastermind identity records and the rules that mint, validate and resolve them (`internal/mastermind/mastermind.go:1-3`). |
-| 6 | `internal/board`, `internal/capture`, `internal/delivery`, `internal/ingest`, `internal/remote`, `internal/stats` | `internal/delivery` gets a mastermind its queued payloads over a live push claim (`internal/delivery/deps.go:1-3`). `internal/ingest` reads a binding and upserts every fact it holds into `internal/db` (`internal/ingest/source.go:1-3`). `internal/remote` owns the remote-builder wire protocol — auth, bundle transport, round state, server registry — with the client in `remote/client` (`internal/remote/auth.go`, `bundle.go`, `rounds.go`, `servers.go`, `client/`). |
-| 7 | `internal/config`, `internal/consult`, `internal/histq`, `internal/remote/client` | — |
-| 8 | `internal/resolve` | `internal/resolve` picks the serving candidate: the first ungated candidate in the actor's order (`internal/resolve/candidate.go:185`). |
-| 9 | `internal/chain` | — |
-| 10 | `internal/view` | `internal/view` renders a binding's state for a human and holds the plain types that carry it; the computing code stays in `relevo` (`internal/view/status.go:1-3`). |
-| 11 | `internal/bugreport`, `internal/relevo` | `internal/relevo` implements the handoff policy — which text moves between a mastermind and a builder, when, and when to stop — and holds no judgement (`internal/relevo/runtime.go:1-3`). |
-| 12 | `internal/doctor`, `internal/pick`, `internal/ui/dash`, `internal/ui/widget`, `internal/uplink` | — |
-| 13 | `internal/mcp`, `internal/serve`, `internal/setup`, `internal/ui/stats` | `internal/serve` is the remote-builder server: the enrolled-client registry, the v1 wire routes over a git-bundle transport, the per-owner binding stores and the daemon that ticks them (`internal/serve/serve.go:1-3`). |
-| 14 | `internal/ui` | `internal/ui` is the fleet cockpit: the shell model, its views, forms and overlays (`internal/ui/ui.go:1-2`). |
-| 15 | `cmd/relevo` | `cmd/relevo` is the CLI surface: one file per verb family (`cmd/relevo/bind.go`, `chain.go`, `config.go`). |
+| Foundations | `text`, `sanitize`, `tmpdir`, `trail`, `refusal`, `jsonshape`, `patch`, `pathscope`, `spawn`, `skill`, `shipped`, `serviceunit`, `diskfree`, `account`, `blobstore`, `board/theme`, `db/wire` | Pure helpers and small primitives with no relevo imports: display text, untrusted-text cleaning, the state-root layout, the refusal errors the CLI maps to exit codes, the process model, the database wire protocol. |
+| Records | `db`, `db/wire/client`, `db/wire/owner`, `store`, `synclog`, `sync`, `installation`, `usage`, `transcript`, `reporttail`, `harness`, `proc`, `agentsrc`, `candidate`, `policy`, `roles`, `workflow` | The system of record and the documents in it: the database and its owner, bindings and the round log, the sync log, what a harness is and how to start one, candidates, policy, actors and workflows. |
+| Services | `config`, `availability`, `resolve`, `capture`, `ingest`, `delivery`, `consult`, `chain`, `git`, `housekeep`, `mastermind`, `remote`, `remote/client`, `stats`, `histq`, `hooks`, `classify`, `consent`, `upgrade`, `syncpipe`, `syncworker`, `sync/verb`, `board`, `chatlabel`, `release`, `isolate` | One job each, used by the engine: configuration and secrets, which candidate serves an actor, what a round changed, reading history into the database, getting reports to a MasterMind, consults, git, remote protocol, stats, hooks. |
+| Engine | `view`, `relevo`, `bugreport` | `relevo` runs the handoff. `view` holds the plain types a status or listing is drawn from, and renders them; `relevo` computes and fills them. |
+| Surfaces | `doctor`, `setup`, `pick`, `uplink`, `serve`, `mcp`, `ui`, `ui/dash`, `ui/stats`, `ui/widget`, `cmd/relevo` | What a human, a harness or another machine talks to: the health checks, the setup wizard, the remote server, the MCP server, the cockpit and the CLI. |
 
-## Import rule
+All package paths except `cmd/relevo` are under `internal/`. Two packages
+serve tests only: `db/dbtest` (a migrated template database per test binary)
+and `e2e` (end-to-end rounds against a fake harness).
 
-The bottom layer imports no relevo package. `internal/text` imports only `fmt`, `strconv` and `strings`, and stays that way: every higher layer renders through it, so a dependency from it to anything internal turns the layer map into a cycle. The same bar holds for the other bottom packages (`internal/sanitize`, `internal/trail`, `internal/tmpdir`, `internal/db/wire` and the rest of layer 0). Shared homes above the bottom name their boundary in their package comment, as `internal/view` does.
+## The import rule
+
+- A package imports only packages in a lower layer. A cycle does not compile;
+  an upward import that happens not to cycle is still wrong, because it pulls
+  the upper package's dependencies into everything below.
+- The foundations stay free of relevo imports. `internal/text` imports only
+  `fmt`, `strconv` and `strings`: everything renders through it, so one
+  internal import there reaches the whole tree.
+- When two packages need the same helper, it lives in the lower one, or moves
+  down to a package both can import. It is never copied.
+- Adding an import that deepens a package's dependencies is a design change:
+  check `go list -deps <package>` before and after.
 
 ## New code goes here
 
 | New code | Home |
 | --- | --- |
-| Wording helper shared by CLI, views and daemon | `internal/text` |
-| Listing shape a human reads | `internal/view` (plain types; computation stays in `internal/relevo`) |
-| CLI verb | `cmd/relevo`, calling into `internal/relevo` |
-| Cockpit screen | `internal/ui`, with the dashboard in `internal/ui/dash`, stats in `internal/ui/stats`, shared pieces in `internal/ui/widget` |
-| Database query | `internal/db`, behind its package alone |
-| Remote route | `internal/serve` (v1 wire routes); protocol shapes in `internal/remote` |
-| Engine operation (bind, send, round life, status) | `internal/relevo` |
-
-The comment, size and test rules each change follows live in `docs/style.md`.
+| A wording helper (plurals, first lines, fallbacks) | `internal/text` |
+| A shape a human reads (status, a listing) | `internal/view`; the engine computes the values |
+| A CLI verb | `cmd/relevo` for flags and exit codes, `internal/relevo` for the work |
+| A rule a CLI test needs to pin | a pure function in `internal/relevo` (CI has no harness or network) |
+| A cockpit screen | `internal/ui`; shared layout and palette in `internal/ui/widget` |
+| A database table or query | `internal/db`; only it opens the database |
+| A binding or round-log field | `internal/store` |
+| A remote route | `internal/serve`; shared request and reply shapes in `internal/remote` |
+| An engine operation (bind, send, round life) | `internal/relevo` |
+| A configuration key | `internal/config`, and `internal/policy` for policy knobs |
 
 ## Life of a round
 
-1. Bind: `relevo bind --name <n> --feature <label>` (`cmd/relevo`) reaches `internal/relevo` (`internal/relevo/bind_create.go`), which refuses a taken name and creates the binding and its worktree.
-2. Send: `relevo send --name <n> --file <path>` stages the prompt in `internal/relevo` (`internal/relevo/send.go`); `internal/store` copies it to the binding's `.NNN-prompt.md` (`internal/store/promptcopy.go`).
-3. Run: the runner process comes from an `internal/harness` kind and starts through `internal/spawn`.
-4. Report: the builder writes `NNN-report.md`, then creates empty `NNN-done` as its last action, both inside the binding's state directory (`internal/store`). A report with no marker closes as `unmarked` (`internal/relevo/headless_reconcile.go`).
-5. Ingest: `internal/ingest` reads the closed binding and upserts its facts into `internal/db`.
-6. Done: `relevo done` returns to `internal/relevo` (`internal/relevo/done.go`), which releases the binding.
-7. Read: `relevo show <n> --diff` reads the round in `internal/relevo` (`internal/relevo/show.go`); the diff covers send to report, and drift between report and next send is mirrored separately (`internal/relevo/remotefetch.go`, store drift path) without notifying.
+1. **Bind.** `relevo bind` reaches `internal/relevo`, which creates the
+   binding and its worktree. `internal/store` refuses a second writer on a
+   working tree that a binding not yet done still drives.
+2. **Send.** `relevo send` copies the plan into the binding's state directory
+   as the round's prompt (`internal/store`) and records the tree the round
+   starts from (`internal/capture`).
+3. **Run.** `internal/resolve` picks the candidate: the first one in the
+   actor's order that no gate holds. The runner starts as that harness kind
+   (`internal/harness`) through the process model in `internal/spawn`, or on a
+   server through `internal/uplink`.
+4. **Report.** The builder writes `NNN-report.md`, then an empty `NNN-done`
+   as its last action. The daemon's tick sees the process exit; a report
+   without the marker closes the round as `unmarked`.
+5. **Diff.** `internal/capture` records the diff from send to report. Changes
+   made between a report and the next send are drift, recorded apart from the
+   round and never notified.
+6. **Deliver.** `internal/delivery` gets the report to the MasterMind over the
+   route its harness supports.
+7. **Done.** The MasterMind verifies the round and runs `relevo done`.
+   The daemon's ingest (`internal/ingest`) folds each binding's rounds and
+   events into the database that history and stats read.
 
-## Kept rationale
+## Related
 
-Each item below names the file that states it in code:
-
-- File handoffs: the staged prompt copy (`internal/store/promptcopy.go`), the report-then-marker close and its `unmarked` path (`internal/relevo/headless_reconcile.go`), and the loop wording (`internal/mastermind/guide.md`).
-- Judgement and mechanism split: relevo holds no judgement; every judgement stays with the mastermind agent (`internal/relevo/runtime.go:1-3`, `README.md:17-20`).
-- One writer per tree: a bind on a taken name is refused (`internal/relevo/bind_create.go:52-59`).
-- Round diff and unattributed drift: the diff covers send to report (`internal/relevo/show.go`); drift is fetched and stored apart from it (`internal/relevo/remotefetch.go:200-206`) and never changes binding state or notifies.
-- Candidate order: the first ungated candidate in the actor's order serves (`internal/resolve/candidate.go:185`).
-
-Pane delivery, held-state clobber guards, key-based answers and the watcher daemon have no non-test `.go` references and are not part of this architecture.
+- [Code style](style.md): comments, size, helpers, tests and what
+  `make check` enforces.
+- `internal/mastermind/guide.md`: the dispatch protocol relevo injects into a
+  MasterMind's session.

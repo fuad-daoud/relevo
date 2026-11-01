@@ -1,36 +1,44 @@
 # Documentation standard
 
-This standard states where each fact lives and how each page reads. One fact lives in one place; every other page links to it.
+How relevo's documentation is organised and written. Code comments follow
+[Code style](style.md#comments); this page covers everything else.
 
 ## What goes where
 
-| Home | Holds | Stated in |
-| --- | --- | --- |
-| `README.md` | What relevo is, requirements, install, first run, quick start, the command surface, and the map of every `docs/` page | `README.md:8-20`, `## Requirements`, `## Install`, `## First run on a clean machine`, `## Quick start`, `## Command surface` |
-| One `docs/` page | One topic: verifying and merging (`runbook.md`), the default sandbox (`env-sandbox.md`), the per-user sandbox (`dev-sandbox.md`), comment and size rules (`style.md`), the layer map (`architecture.md`) | Each page's first lines: `docs/runbook.md:1-7`, `docs/env-sandbox.md:1-11`, `docs/dev-sandbox.md:1-12`, `docs/style.md:1-3`, `docs/architecture.md:1-3` |
-| `CLAUDE.md` | Agent instructions: working with builders, verifying, testing in isolation, conventions, code style, merging | `CLAUDE.md:7-96` |
-| Code comments | Why-for-the-reader: the constraint, number source, ordering or hazard the code cannot state | `docs/style.md` "Comments" |
-| `docs/plans/`, `docs/specs/`, `docs/superpowers/` | Local working files, gitignored, never committed | `CLAUDE.md:72-73` |
+| Home | Holds |
+| --- | --- |
+| `README.md` | What relevo is, requirements, install, first run, a quick start, and a map of the `docs/` pages. A newcomer reads it top to bottom. |
+| A page in `docs/` | One topic, complete: a reference (commands, the cockpit, candidates), a guide (style, architecture), or a runbook. |
+| `CLAUDE.md` | Instructions for an agent working on this repository: how to dispatch and verify builders here, the rules it must not break. It links to the guides rather than restating them. |
+| `internal/mastermind/guide.md` | The protocol relevo injects into a MasterMind's session. It ships in the binary, so it describes relevo, not this repository. |
+| Code comments | Why the code is the way it is, for someone reading it. |
+| `docs/plans/`, `docs/specs/`, `docs/superpowers/` | Local working files. They are gitignored and never committed. |
 
 ## Writing rules
 
-Present tense, describing what is true now. No history: no issue or pull-request numbers, no "used to" stories, no dates of change. Release notes and git hold history.
-
-One place per fact: link to it, never restate it. The sibling guides cite their source (`CLAUDE.md "Code style"`, `docs/style.md`) instead of copying it; this page does the same.
-
-Every command runs as written: each fenced command executes verbatim from the repository root before the page lands. A command that needs flags or a different directory shows them.
-
-Tables carry flags, fields and mappings; prose carries the rest. The layer map (`docs/architecture.md` "Layers") and the sandbox variables (`docs/env-sandbox.md:39-50`) are the shape to follow.
+- **Present tense, true now.** A page describes what relevo does today. No
+  history: no issue or pull-request numbers, no "used to" or "was renamed
+  from", no dates of change. Release notes and git hold history; a renamed
+  command or a migration step belongs in the release notes of the version
+  that changed it.
+- **One place per fact.** Each fact lives on one page. Every other page links
+  to it instead of restating it, so a change is made once.
+- **Commands run as written.** Every command in a code block runs exactly as
+  shown, from the directory the page says. Use `<placeholders>` for values
+  the reader supplies, and say what they are.
+- **Tables for flags and fields.** A flag, a config key or a document field
+  goes in a table with its meaning and default; prose explains how they fit
+  together.
+- **Plain words.** Name a thing the way the CLI and the cockpit name it.
+  Define a term once, where it first appears on its page.
 
 ## Adding a page
 
-One page holds one topic and links from the README map. It links outward to the one home of each fact it touches and restates none of them. It shows only commands that ran verbatim from the repository root.
-
-Each check below runs as written from the repository root:
-
-```
-wc -l docs/docs-standard.md
-git status --short
-```
-
-`wc` keeps the page near its budget (~250 lines); the `status` shows only the new page.
+1. Check the map in `README.md` first: the topic may already have a page
+   that the new material belongs in.
+2. Create `docs/<topic>.md`, with one `#` heading naming the topic and an
+   opening paragraph saying what the page covers.
+3. Add one line for it to the map in `README.md`.
+4. Move, don't copy: when the new page takes over material from another page,
+   delete it there and leave a link.
+5. Check every relative link and anchor on the pages you touched resolves.

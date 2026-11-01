@@ -1,78 +1,125 @@
 # Code style
 
-This guide states the comment, size, helper, test and lint rules each change follows. Every rule names the file that states or enforces it.
+The rules every Go change in this repository follows. `make check` enforces
+most of them; the rest are for the author and the reviewer.
+
+The dexpace Go styleguide applies, with two
+exceptions: there is no "two assertions per function" rule, and an exported
+name does not need a doc comment.
 
 ## Comments
 
-A package comment is 1-3 lines saying what the package owns (CLAUDE.md "Code style").
+A comment says **why**, and only where the code cannot: a constraint that is
+not obvious, where a number comes from, an ordering that matters, a hazard. It
+never restates the code.
 
-Good, `internal/text/text.go:1-3`:
+A good comment carries a decision the code cannot show:
 
-```
-// Package text holds the display-text helpers the CLI, the cockpit views,
-// the daemon and the listings share: first-line cuts, small plural and
-// fallback sentences, and millisecond counts.
-```
-
-Good, with an ownership boundary, `internal/view/status.go:1-3`:
-
-```
-// Package view renders a binding's state for a human and holds the plain
-// types that carry it. The code that computes that state -- probes, live
-// usage, git numstat, mastermind routing -- stays in relevo and fills them.
+```go
+// An unreadable store refuses the forget: deleting a record a live binding may
+// name is worse than making the human retry.
+func mastermindInUse(rt relevo.Runtime) func(id string) bool {
 ```
 
-A comment says why, and only where the code cannot: a non-obvious constraint, where a number comes from, an ordering that matters, a hazard (CLAUDE.md "Code style"). It never restates the code. A doc comment on an exported name appears only when it adds something the name and signature lack. The worked why-comment example sits under "No history": the fine present-state quote (`internal/availability/gatedoc.go:71-73`) names the constraint the exporter obeys.
+A comment that only repeats the name adds nothing, so leave it out:
+
+```go
+// dialUDS is one plain unix dial.
+func dialUDS(ctx context.Context, sock string) (net.Conn, error) {
+```
+
+- **Package comments.** One to three lines saying what the package owns. If a
+  package has a boundary, say where it is:
+
+  ```go
+  // Package text holds the display-text helpers the CLI, the cockpit views,
+  // the daemon and the listings share: first-line cuts, small plural and
+  // fallback sentences, and millisecond counts.
+  ```
+
+- **Doc comments on exported names.** Write one only when it adds something
+  the name and the signature do not.
+- **Length.** A comment as long as the function it sits on is usually telling
+  a story. Keep the reason and drop the story.
 
 ## No history
 
-No comment carries history: no issue or pull-request numbers, no spec sections, no round markers, no stories about what the code did at an earlier point (CLAUDE.md "Code style"). Git and the issues hold history. Tests follow the same rules.
+Code describes what is true now. Git and the issues hold how it got there, so
+a comment never carries:
 
-Bad (counterexample — this wording fails the rule), from `internal/availability/helpers_test.go` before the cleanup:
+- issue or pull-request numbers (`#123`), or spec section marks (`§4.1`);
+- "round N", step or phase names from a plan;
+- stories about earlier behaviour: "used to", "previously", "before the fix",
+  "pre-#NNN", "no longer does X".
 
+"No longer" is fine when it describes the present state, not a change:
+
+```go
+// A subject with no live rate-limit entry is absent, which the exporter reads
+// as a key the document no longer holds and sends as a delete.
 ```
-// failure a hand-edited file used to cause.
-```
 
-Fine (present state — this wording passes the rule), `internal/availability/gatedoc.go:71-73`:
-
-```
-// Items returns the document as one value per subject this machine holds a live
-// rate limit on. A subject with no live rate-limit entry is absent, which the
-// exporter reads as a key the document no longer holds and sends as a delete.
-```
-
-The first describes what the code did at an earlier point; the second describes what the document holds at read time.
+When a history comment carries a real reason, keep the reason and drop the
+history. Tests follow the same rules.
 
 ## Size
 
-A function holds at most 70 lines; the funlen gate counts lines rather than statements and ignores comments (`.golangci.yml:15-18`). A non-test `.go` file holds at most 600 lines against a working target near 500; test files carry no limit (`scripts/check-filesize.sh:4-6,27,39`). One package owns one concept (CLAUDE.md "Code style").
+- A function is at most 70 lines, comments not counted.
+- A non-test `.go` file is at most 600 lines; aim for about 500. Test files
+  have no limit.
+- One package per concept. When a file grows past its concept, split it into
+  files named for what they hold, moving whole functions.
 
 ## Shared helpers
 
-Shared text and rendering helpers live in few homes; new code cites them instead of duplicating them. `internal/text` holds the display-text helpers the CLI, the cockpit views, the daemon and the listings share (`internal/text/text.go:1-3`). `internal/view` renders a binding's state for a human while the computation stays in `relevo` (`internal/view/status.go:1-3`). The remaining shared homes sit under the layer map in `docs/architecture.md`; this guide does not restate that list.
+Look before writing a helper: wording helpers live in `internal/text`, the
+shapes a human reads in `internal/view`, the cockpit's layout and palette in
+`internal/ui/widget`. [Architecture](architecture.md#new-code-goes-here) lists
+the home for each kind of code. Never copy a helper into a second package;
+call it, or move it down to a package both callers can import.
 
 ## Tests
 
-A test's name says what it pins (CLAUDE.md "Code style"). A change earns its test by mutation: break the specific condition the change turns on and confirm a named test fails. A test that passes with and without the logic pins nothing (CLAUDE.md "Verifying a builder's work").
+- A test's name says what it pins: `TestConnCountExcludesAClientThatSawItsClose`,
+  not `TestConnCount2`.
+- A subtle change gets a mutation check: break the condition the change turns
+  on and confirm a named test fails. A test that passes with and without the
+  logic pins nothing.
+- A test in `cmd/relevo` never runs a subcommand that starts a harness or
+  reaches the network; CI runners have neither. Test the rule as a pure
+  function in `internal/relevo` instead.
 
-## Dexpace base
+## What `make check` enforces
 
-The dexpace Go styleguide applies, with two exceptions: no "two assertions per function" rule, and no mandatory doc comment on an exported name (CLAUDE.md "Code style").
+| Check | Fails on | Skips |
+| --- | --- | --- |
+| `golangci-lint` (`.golangci.yml`) | a function over 70 lines (`funlen`), cognitive complexity over 30 (`gocognit`), and the findings of `errcheck`, `errorlint`, `unused`, `govet`, `staticcheck` and `ineffassign` | the package directories listed under `exclusions` |
+| `scripts/check-comments.sh` | a `//` comment containing `#` followed by a digit, or `§` | the files in `scripts/check-comments.allow` |
+| `scripts/check-filesize.sh` | a non-test `.go` file over 600 lines | the files in `scripts/check-filesize.allow` |
 
-## Enforcement
+The exclusions and allow-lists name code not yet cleaned. A change that cleans
+a package or file removes its entries in the same change, and nothing is ever
+added to them to get a change green. The comment check is a text match, so it
+cannot see "used to" or "round N": those are for the author and the reviewer.
 
-`make check` enforces this guide with three static checks (CLAUDE.md "Code style"):
+Run the two scripts on their own from the repository root:
 
-- golangci-lint (`.golangci.yml:5-20`) runs funlen, gocognit with a minimum complexity of 30, errcheck, errorlint, unused, govet, staticcheck and ineffassign, with one exclusion rule per not-yet-clean package directory (`.golangci.yml:21-46`).
-- `scripts/check-comments.sh` fails on a history-citing comment — an issue or pull-request number or a section mark after `//` — in each tracked `.go` file and each untracked, non-ignored one, minus `scripts/check-comments.allow` (`scripts/check-comments.sh:40-55`).
-- `scripts/check-filesize.sh` fails on a non-test `.go` file over 600 lines from the same file set, minus `scripts/check-filesize.allow` (`scripts/check-filesize.sh:39-54`).
-
-Each check runs as written from the repository root:
-
-```
+```sh
 sh scripts/check-comments.sh
 sh scripts/check-filesize.sh
 ```
 
-A round that finishes a package removes its entries from the exclusion lists; no round adds an entry to get green (CLAUDE.md "Code style").
+## Coverage
+
+CI's coverage job fails when a package's statement coverage drops more than
+one point below `testdata/coverage-baseline.txt`. On a pull request it holds
+only the packages whose own files changed; a push to `main` holds every
+package. A change that moves code between packages regenerates the baseline
+with `sh scripts/check-coverage.sh --write` and says so. No change lowers a
+baseline to get green.
+
+The baseline is tied to the Go minor version and platform in its header, and
+only CI's job enforces it (`RELEVO_REQUIRE_COVERAGE=1`); elsewhere `make check`
+prints `skipped`, because another build of the same Go minor can measure a
+package several points apart. Set `RELEVO_REQUIRE_COVERAGE=1` to compare
+locally. A Go upgrade on CI's go-stable leg means regenerating the baseline.
