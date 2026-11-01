@@ -19,9 +19,13 @@ linters:
     gocognit:
       min-complexity: 30
   exclusions:
-    # One rule per Go package directory as it is today; every linter is
-    # excluded for that path. A change that cleans a package deletes its rule.
     rules:
+      # Tests are exempt from the length and complexity limits: a table-driven
+      # test reads best as one long function. Every other linter applies.
+      - path: '_test\.go$'
+        linters: [funlen, gocognit]
+      # One rule per package not yet cleaned; every linter is excluded for that
+      # path. A change that cleans a package deletes its rule.
       - path: '^cmd/relevo/'
         text: '.*'
       - path: '^internal/e2e/'

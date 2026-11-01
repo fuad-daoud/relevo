@@ -72,7 +72,9 @@ history. Tests follow the same rules.
 
 ## Size
 
-- A function is at most 70 lines, comments not counted.
+- A function is at most 70 lines, comments not counted, with cognitive
+  complexity at most 30. Test functions are exempt from both: a table-driven
+  test reads best as one long function.
 - A non-test `.go` file is at most 600 lines; aim for about 500. Test files
   have no limit.
 - One package per concept. When a file grows past its concept, split it into
@@ -101,7 +103,7 @@ call it, or move it down to a package both callers can import.
 
 | Check | Fails on | Skips |
 | --- | --- | --- |
-| `golangci-lint` (`.golangci.yml`) | a function over 70 lines (`funlen`), cognitive complexity over 30 (`gocognit`), and the findings of `errcheck`, `errorlint`, `unused`, `govet`, `staticcheck` and `ineffassign` | the package directories listed under `exclusions` |
+| `golangci-lint` (`.golangci.yml`) | a function over 70 lines (`funlen`), cognitive complexity over 30 (`gocognit`), and the findings of `errcheck`, `errorlint`, `unused`, `govet`, `staticcheck` and `ineffassign` | `funlen` and `gocognit` in `_test.go` files; the package directories listed under `exclusions` |
 | `scripts/check-comments.sh` | a `//` comment containing `#` followed by a digit, or `§` | the files in `scripts/check-comments.allow` |
 | `scripts/check-filesize.sh` | a non-test `.go` file over 600 lines | the files in `scripts/check-filesize.allow` |
 
