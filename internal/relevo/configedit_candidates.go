@@ -48,15 +48,7 @@ func AddCandidate(d ConfigDoc, in CandidateInput) (ConfigEdit, error) {
 // the model, and every actor entry that referenced the candidate follows the
 // rename.
 func EditCandidate(d ConfigDoc, name string, in CandidateInput) (ConfigEdit, error) {
-	i := candidateIndex(d, name)
-	if i < 0 {
-		return ConfigEdit{}, &FieldError{"", "no candidate named " + name}
-	}
-	entry := d.Candidates[i]
-	if in.Harness == entry.Harness && in.Provider == entry.Provider && in.Model == entry.Model {
-		return ConfigEdit{}, ErrNoChange
-	}
-	san, err := validateCandidateInput(in, d, i)
+	entry, san, i, err := validateEditCandidate(d, name, in)
 	if err != nil {
 		return ConfigEdit{}, err
 	}
@@ -74,32 +66,57 @@ func EditCandidate(d ConfigDoc, name string, in CandidateInput) (ConfigEdit, err
 	newToken := next[i].Ref().String()
 
 	acts := copyActors(d.Actors)
-	actsChanged := false
-	if newName != oldName || newToken != oldToken {
-		for actorName, a := range acts {
-			entries := a.Candidates
-			changed := false
-			for j, e := range entries {
-				if e.Candidate != oldName && e.Candidate != oldToken {
-					continue
-				}
-				if e.Candidate == newName {
-					continue
-				}
-				if !changed {
-					entries = append([]roles.Entry(nil), a.Candidates...)
-					changed = true
-				}
-				entries[j].Candidate = newName
+	acts, actsChanged := repointEditCandidateActors(acts, oldName, oldToken, newName, newToken)
+	return encodeEditCandidate(d, next, acts, actsChanged, oldName, newName)
+}
+
+func validateEditCandidate(d ConfigDoc, name string, in CandidateInput) (candidate.Candidate, CandidateInput, int, error) {
+	i := candidateIndex(d, name)
+	if i < 0 {
+		return candidate.Candidate{}, in, -1, &FieldError{"", "no candidate named " + name}
+	}
+	entry := d.Candidates[i]
+	if in.Harness == entry.Harness && in.Provider == entry.Provider && in.Model == entry.Model {
+		return candidate.Candidate{}, in, -1, ErrNoChange
+	}
+	san, err := validateCandidateInput(in, d, i)
+	if err != nil {
+		return candidate.Candidate{}, in, -1, err
+	}
+	return entry, san, i, nil
+}
+
+func repointEditCandidateActors(acts map[string]roles.Actor, oldName, oldToken, newName, newToken string) (map[string]roles.Actor, bool) {
+	changed := false
+	if newName == oldName && newToken == oldToken {
+		return acts, false
+	}
+	for actorName, a := range acts {
+		entries := a.Candidates
+		entryChanged := false
+		for j, e := range entries {
+			if e.Candidate != oldName && e.Candidate != oldToken {
+				continue
 			}
-			if changed {
-				a.Candidates = entries
-				acts[actorName] = a
-				actsChanged = true
+			if e.Candidate == newName {
+				continue
 			}
+			if !entryChanged {
+				entries = append([]roles.Entry(nil), a.Candidates...)
+				entryChanged = true
+			}
+			entries[j].Candidate = newName
+		}
+		if entryChanged {
+			a.Candidates = entries
+			acts[actorName] = a
+			changed = true
 		}
 	}
+	return acts, changed
+}
 
+func encodeEditCandidate(d ConfigDoc, next []candidate.Candidate, acts map[string]roles.Actor, actsChanged bool, oldName, newName string) (ConfigEdit, error) {
 	body, err := encodeCandidates(next)
 	if err != nil {
 		return ConfigEdit{}, err
@@ -116,7 +133,7 @@ func EditCandidate(d ConfigDoc, name string, in CandidateInput) (ConfigEdit, err
 		return ConfigEdit{}, err
 	}
 
-	message := "edit candidate " + name
+	message := "edit candidate " + oldName
 	if newName != oldName {
 		message = "edit candidate " + oldName + " → " + newName
 	}
@@ -133,7 +150,7 @@ func PreviewCandidateName(d ConfigDoc, editing string, in CandidateInput) string
 	}
 
 	entries := append([]candidate.Candidate(nil), d.Candidates...)
-	i := -1
+	var i int
 	if editing == "" {
 		entries = append(entries, candidate.Candidate{})
 		i = len(entries) - 1

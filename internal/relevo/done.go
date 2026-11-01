@@ -71,157 +71,13 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 			return fmt.Errorf("round %d is queued; relevo stop to drop it from the queue, or unbind", b.Round)
 		}
 
-		// A remote binding's server is told first: the server is the
-		// one place that knows whether the round is still open, and it must
-		// agree before this binding stops relaying locally.
-		//
-		// A member of a server chain is the exception: the chain's own verbs
-		// release it on the server, and this copy is the mirror, so calling
-		// the server here would refuse a done that already happened where it
-		// matters.
-		var remoteKept, remoteReason string
-		if b.Builder.Remote() && !chain.ServerMember(tx, b.Name) {
-			if rt.Remote == nil {
-				return ErrRemoteUnavailable
-			}
-			view, derr := rt.Remote.Done(ctx, b.Builder.Server, b.Name)
-			if derr != nil {
-				var httpErr *client.HTTPError
-				if errors.As(derr, &httpErr) && httpErr.Status == 409 {
-					return fmt.Errorf("round %d is running on %s; relevo stop %s to stop it and keep the binding, or relevo unbind %s to drop it", b.Round, b.Builder.Server, b.Name, b.Name)
-				}
-				if errors.Is(derr, client.ErrUnreachable) {
-					return fmt.Errorf("%s unreachable: %w", b.Builder.Server, derr)
-				}
-				// A 404 means the server already considers it gone, which is
-				// not a reason to refuse a done the human has already decided:
-				// fall through and settle it locally, exactly as Unbind does.
-				// The same tradeoff is accepted there: a 404 raised by a
-				// foreign owner reading another tenant's binding is
-				// indistinguishable from "gone", and marks the local record
-				// done too.
-				if !remote.Is404(derr) {
-					return fmt.Errorf("%s: %w", b.Builder.Server, derr)
-				}
-			} else {
-				remoteKept = view.WorktreeKept
-				if view.WorktreeKept != "" {
-					remoteReason = "on " + b.Builder.Server + ": " + view.KeptReason
-				}
-			}
-		}
-
-		// `done` is the last chance this binding has to hand its MasterMind
-		// something: after it, reconcile's DONE gate only admits what a push
-		// route already took and `relevo wait` answers `gone` without pulling,
-		// so an entry left unconfirmed here is stranded for good. They are
-		// claimed and confirmed with route "done" below, in wait's own
-		// pull-then-confirm shape and against the same read wait uses, so both
-		// paths agree on what pending means and what it becomes.
-		//
-		// A chain entry is NOT one of them: it is the chain's own status
-		// record, written under a binding named after the chain, and
-		// `chain done` deliberately queues no MasterMind delivery for it.
-		// Sweeping it here would consume that record on a plain
-		// `relevo done` of one member, so it is skipped by the same kind rule
-		// PushText applies.
-		//
-		// Best effort, like wait's own delivery: a Done that has already
-		// stopped the server must not be undone by a payload that would not
-		// read. The entries stay pending on a failure, which is the state this
-		// verb existed to leave behind -- the human can run `relevo wait` first.
-		all, perr := tx.ClaimableForMasterMindThrough(name, 0)
-		if perr != nil {
-			slog.Warn("could not list pending entries at done", "binding", name, "err", perr)
-		}
-		for _, p := range all {
-			if p.Entry.Kind == store.KindChain {
-				continue
-			}
-			if err := tx.ConfirmIndex(name, p.Idx, "done"); err != nil {
-				slog.Warn("could not confirm an entry delivered at done", "binding", name, "idx", p.Idx, "err", err)
-			} else {
-				claimed = append(claimed, p)
-			}
-		}
-
-		oldState := b.State
-		roundOpen, err := roundIsOpen(tx, b)
+		remoteKept, remoteReason, err := doneRemoteClose(ctx, rt, tx, b)
 		if err != nil {
 			return err
 		}
-		b.State = store.StateDone
-
-		// A headless round's process is stopped here: the
-		// mastermind has declared the work finished, so a builder still
-		// editing the tree is now the wrong thing. Failure is reported
-		// after DONE is saved -- the state change stands either way -- and
-		// the pid stays on the endpoint so the human can find it.
-		pid, stopErr := stopProcess(ctx, rt, b, "done")
-		if stopErr == nil {
-			b.Builder = clearProcess(b.Builder)
-			if pid != 0 {
-				b = abandonSession(b)
-			}
-		}
-
-		if err := tx.Save(b); err != nil {
-			return err
-		}
-
-		// A reader binding's throwaway worktree goes with it: done is the
-		// human's "this binding is finished", so nothing of it is left behind.
-		removeReaderScratch(ctx, rt, b, b.Round)
-		housekeep.RemoveRoundTmp(HousekeepDeps(rt), b, b.Round)
-
-		// The stop is recorded in the ledger in the same shape relevo stop
-		// uses (closeStopped), with no log marker: the round's own record of
-		// why the process went away is here.
-		if stopErr == nil && oldState != store.StateDone && (pid != 0 || roundOpen) {
-			if err := tx.AppendLog(b.Name, store.LogEntry{
-				TS: rt.Now().UTC(), Round: b.Round, Direction: store.DirToMasterMind,
-				Kind: store.KindStop, Note: "stopped/done", Confirmed: true,
-			}); err != nil {
-				return err
-			}
-		}
-
-		if rt.Hooks != nil && oldState != store.StateDone {
-			rt.Hooks.Dispatch(ctx, hooks.Event{
-				Type:      hooks.EventStateChanged,
-				BindingID: b.Name,
-				State:     string(store.StateDone),
-				OldState:  string(oldState),
-				Round:     b.Round,
-				Timestamp: rt.Now().UTC(),
-			})
-		}
-
-		out.Branch = b.Branch
-		switch {
-		case remoteKept != "":
-			out.WorktreeKept = remoteKept
-			out.KeptReason = remoteReason
-		case b.Worktree == "":
-			// nothing
-		case b.Builder.Headless() && stopErr != nil:
-			out.WorktreeKept = b.Worktree
-			out.KeptReason = "builder process still running"
-		case !b.Builder.Headless() && !b.RoundStartedAt.IsZero():
-			out.WorktreeKept = b.Worktree
-			out.KeptReason = fmt.Sprintf("round %d open; the builder may still write", b.Round)
-		default:
-			outcome := worktreeTeardown(ctx, rt, b, false)
-			out.WorktreeRemoved = outcome.Removed
-			out.WorktreeKept = outcome.Kept
-			out.KeptReason = outcome.Reason
-			out.WorktreeGone = outcome.Gone
-		}
-
-		if stopErr != nil {
-			return fmt.Errorf("%s marked done, but its builder process %d is still running: %v: %w", b.Name, pid, stopErr, ErrStopFailed)
-		}
-		return nil
+		claimed = append(claimed, doneClaimMasterMind(tx, name)...)
+		out, err = doneSettleWorktree(ctx, rt, tx, b, remoteKept, remoteReason)
+		return err
 	})
 	if err == nil {
 		// Outside the lock, and logged only: a delete never changes Done's
@@ -241,6 +97,168 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 		out.Payload = delivery.JoinDelivered(delivery.ReportLast(delivered))
 	}
 	return out, err
+}
+
+func doneRemoteClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (string, string, error) {
+	// A remote binding's server is told first: the server is the
+	// one place that knows whether the round is still open, and it must
+	// agree before this binding stops relaying locally.
+	//
+	// A member of a server chain is the exception: the chain's own verbs
+	// release it on the server, and this copy is the mirror, so calling
+	// the server here would refuse a done that already happened where it
+	// matters.
+	var remoteKept, remoteReason string
+	if b.Builder.Remote() && !chain.ServerMember(tx, b.Name) {
+		if rt.Remote == nil {
+			return "", "", ErrRemoteUnavailable
+		}
+		view, derr := rt.Remote.Done(ctx, b.Builder.Server, b.Name)
+		if derr != nil {
+			var httpErr *client.HTTPError
+			if errors.As(derr, &httpErr) && httpErr.Status == 409 {
+				return "", "", fmt.Errorf("round %d is running on %s; relevo stop %s to stop it and keep the binding, or relevo unbind %s to drop it", b.Round, b.Builder.Server, b.Name, b.Name)
+			}
+			if errors.Is(derr, client.ErrUnreachable) {
+				return "", "", fmt.Errorf("%s unreachable: %w", b.Builder.Server, derr)
+			}
+			// A 404 means the server already considers it gone, which is
+			// not a reason to refuse a done the human has already decided:
+			// fall through and settle it locally, exactly as Unbind does.
+			// The same tradeoff is accepted there: a 404 raised by a
+			// foreign owner reading another tenant's binding is
+			// indistinguishable from "gone", and marks the local record
+			// done too.
+			if !remote.Is404(derr) {
+				return "", "", fmt.Errorf("%s: %w", b.Builder.Server, derr)
+			}
+		} else {
+			remoteKept = view.WorktreeKept
+			if view.WorktreeKept != "" {
+				remoteReason = "on " + b.Builder.Server + ": " + view.KeptReason
+			}
+		}
+	}
+	return remoteKept, remoteReason, nil
+}
+
+func doneClaimMasterMind(tx *store.Tx, name string) []store.PendingEntry {
+	// `done` is the last chance this binding has to hand its MasterMind
+	// something: after it, reconcile's DONE gate only admits what a push
+	// route already took and `relevo wait` answers `gone` without pulling,
+	// so an entry left unconfirmed here is stranded for good. They are
+	// claimed and confirmed with route "done" below, in wait's own
+	// pull-then-confirm shape and against the same read wait uses, so both
+	// paths agree on what pending means and what it becomes.
+	//
+	// A chain entry is NOT one of them: it is the chain's own status
+	// record, written under a binding named after the chain, and
+	// `chain done` deliberately queues no MasterMind delivery for it.
+	// Sweeping it here would consume that record on a plain
+	// `relevo done` of one member, so it is skipped by the same kind rule
+	// PushText applies.
+	//
+	// Best effort, like wait's own delivery: a Done that has already
+	// stopped the server must not be undone by a payload that would not
+	// read. The entries stay pending on a failure, which is the state this
+	// verb existed to leave behind -- the human can run `relevo wait` first.
+	var claimed []store.PendingEntry
+	all, perr := tx.ClaimableForMasterMindThrough(name, 0)
+	if perr != nil {
+		slog.Warn("could not list pending entries at done", "binding", name, "err", perr)
+	}
+	for _, p := range all {
+		if p.Entry.Kind == store.KindChain {
+			continue
+		}
+		if err := tx.ConfirmIndex(name, p.Idx, "done"); err != nil {
+			slog.Warn("could not confirm an entry delivered at done", "binding", name, "idx", p.Idx, "err", err)
+		} else {
+			claimed = append(claimed, p)
+		}
+	}
+	return claimed
+}
+
+func doneSettleWorktree(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, remoteKept, remoteReason string) (DoneResult, error) {
+	var out DoneResult
+	oldState := b.State
+	roundOpen, err := roundIsOpen(tx, b)
+	if err != nil {
+		return DoneResult{}, err
+	}
+	b.State = store.StateDone
+
+	// A headless round's process is stopped here: the
+	// mastermind has declared the work finished, so a builder still
+	// editing the tree is now the wrong thing. Failure is reported
+	// after DONE is saved -- the state change stands either way -- and
+	// the pid stays on the endpoint so the human can find it.
+	pid, stopErr := stopProcess(ctx, rt, b, "done")
+	if stopErr == nil {
+		b.Builder = clearProcess(b.Builder)
+		if pid != 0 {
+			b = abandonSession(b)
+		}
+	}
+
+	if err := tx.Save(b); err != nil {
+		return DoneResult{}, err
+	}
+
+	// A reader binding's throwaway worktree goes with it: done is the
+	// human's "this binding is finished", so nothing of it is left behind.
+	removeReaderScratch(ctx, rt, b, b.Round)
+	housekeep.RemoveRoundTmp(HousekeepDeps(rt), b, b.Round)
+
+	// The stop is recorded in the ledger in the same shape relevo stop
+	// uses (closeStopped), with no log marker: the round's own record of
+	// why the process went away is here.
+	if stopErr == nil && oldState != store.StateDone && (pid != 0 || roundOpen) {
+		if err := tx.AppendLog(b.Name, store.LogEntry{
+			TS: rt.Now().UTC(), Round: b.Round, Direction: store.DirToMasterMind,
+			Kind: store.KindStop, Note: "stopped/done", Confirmed: true,
+		}); err != nil {
+			return DoneResult{}, err
+		}
+	}
+
+	if rt.Hooks != nil && oldState != store.StateDone {
+		rt.Hooks.Dispatch(ctx, hooks.Event{
+			Type:      hooks.EventStateChanged,
+			BindingID: b.Name,
+			State:     string(store.StateDone),
+			OldState:  string(oldState),
+			Round:     b.Round,
+			Timestamp: rt.Now().UTC(),
+		})
+	}
+
+	out.Branch = b.Branch
+	switch {
+	case remoteKept != "":
+		out.WorktreeKept = remoteKept
+		out.KeptReason = remoteReason
+	case b.Worktree == "":
+		// nothing
+	case b.Builder.Headless() && stopErr != nil:
+		out.WorktreeKept = b.Worktree
+		out.KeptReason = "builder process still running"
+	case !b.Builder.Headless() && !b.RoundStartedAt.IsZero():
+		out.WorktreeKept = b.Worktree
+		out.KeptReason = fmt.Sprintf("round %d open; the builder may still write", b.Round)
+	default:
+		outcome := worktreeTeardown(ctx, rt, b, false)
+		out.WorktreeRemoved = outcome.Removed
+		out.WorktreeKept = outcome.Kept
+		out.KeptReason = outcome.Reason
+		out.WorktreeGone = outcome.Gone
+	}
+
+	if stopErr != nil {
+		return out, fmt.Errorf("%s marked done, but its builder process %d is still running: %w: %w", b.Name, pid, stopErr, ErrStopFailed)
+	}
+	return out, nil
 }
 
 // roundIsOpen reports whether b's current round has a prompt and no report in
