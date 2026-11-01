@@ -22,6 +22,7 @@ func fetchTerminal(ctx context.Context, src widget.Source, key string, round, li
 	if lines < 1 {
 		lines = 1
 	}
+	_ = lines
 	return func() tea.Msg {
 		rt, name, ok := src.Runtime(key)
 		if !ok {

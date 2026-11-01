@@ -9,10 +9,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
-// sep joins a pane head's parts with a faint middle dot. Its only user
-// is roundPane.paneHead.
-var sep = widget.FaintStyle.Render(" · ")
-
 // diffStat counts a patch the way `git diff --stat` would summarise it:
 // files by `diff --git` headers, added and removed by leading +/- that
 // are not the ---/+++ file markers.

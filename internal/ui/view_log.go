@@ -437,12 +437,13 @@ func (v logView) Body(env widget.Env, width, height int) string {
 
 			bindText := e.Binding
 			var bStyle lipgloss.Style
-			if bindText == "" {
+			switch bindText {
+			case "":
 				bindText = "—"
 				bStyle = widget.FaintStyle
-			} else if bindText == "you" {
+			case "you":
 				bStyle = widget.AccentStyle
-			} else {
+			default:
 				bStyle = widget.TextStyle
 			}
 			if isCursor {

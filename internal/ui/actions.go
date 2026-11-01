@@ -23,12 +23,10 @@ import (
 )
 
 // mastermindActions is the real Actions: a thin adapter over internal/relevo.
-// repo is os.Getwd() at start, or "" when not inside a git repo; you is the
-// human mastermind's id, from ensureYou.
+// repo is os.Getwd() at start, or "" when not inside a git repo.
 type mastermindActions struct {
 	live  *liveRuntime
 	repo  string
-	you   string
 	probe availability.LineExec
 }
 

@@ -191,12 +191,12 @@ func agentDataLine(r agentRow, sel bool, nameW int, cols []candCol, cw int) stri
 	cells := []candCell{{text: widget.Pad(r.name, nameW), style: nameStyle}}
 	for _, col := range cols {
 		text, style := "", meta
-		switch {
-		case col.key == "shape":
+		switch col.key {
+		case "shape":
 			text = r.shape
-		case col.key == "source":
+		case "source":
 			text = r.source
-		case col.key == "used":
+		case "used":
 			text = agentUsedCell(r)
 		default:
 			text, style = agentStateCell(r, strings.TrimPrefix(col.key, "kind:"))
