@@ -237,6 +237,38 @@ type dbSyncCallDoc struct {
 	Aside   string   `json:"aside,omitempty"`
 }
 
+// resolveDBSyncEnableSecrets resolves the enable's secrets before anything is
+// dialed: the stdin-intake refusal, then the join code, the remote it names,
+// the token and the passphrase. A code this build cannot read is refused
+// before a daemon is reached.
+func resolveDBSyncEnableSecrets(v *dbSyncEnableFlagValues) (dbSyncJoin, []byte, []byte, error) {
+	var join dbSyncJoin
+	if err := dbSyncEnableIntake(*v.tokenStdin, *v.passphraseStdin, *v.joinStdin, v.dbSyncR2Flags); err != nil {
+		return join, nil, nil, err
+	}
+
+	// The code is parsed before anything is dialed, so a code this build cannot
+	// read is refused before a daemon is reached, and the remote and token it
+	// names are the ones that go on the wire.
+	code, err := dbSyncReadJoinCode(*v.joinStdin)
+	if err != nil {
+		return join, nil, nil, err
+	}
+	join, err = dbSyncEnableJoin(code, *v.remoteURL)
+	if err != nil {
+		return join, nil, nil, err
+	}
+	token, err := dbSyncEnableToken(join, *v.tokenStdin)
+	if err != nil {
+		return join, nil, nil, err
+	}
+	pass, err := dbSyncEnablePassphrase(*v.passphraseStdin, join.joining)
+	if err != nil {
+		return join, nil, nil, err
+	}
+	return join, token, pass, nil
+}
+
 // cmdDBSyncEnable runs the enable path through the daemon.
 //
 // The token is resolved here and nowhere else and is never stored, logged or
@@ -254,26 +286,7 @@ func cmdDBSyncEnable(args []string) error {
 		return fail(codeUsage, "relevo db sync enable takes no arguments, got %d", fs.NArg())
 	}
 
-	if err := dbSyncEnableIntake(*v.tokenStdin, *v.passphraseStdin, *v.joinStdin, v.dbSyncR2Flags); err != nil {
-		return err
-	}
-
-	// The code is parsed before anything is dialed, so a code this build cannot
-	// read is refused before a daemon is reached, and the remote and token it
-	// names are the ones that go on the wire.
-	code, err := dbSyncReadJoinCode(*v.joinStdin)
-	if err != nil {
-		return err
-	}
-	join, err := dbSyncEnableJoin(code, *v.remoteURL)
-	if err != nil {
-		return err
-	}
-	token, err := dbSyncEnableToken(join, *v.tokenStdin)
-	if err != nil {
-		return err
-	}
-	pass, err := dbSyncEnablePassphrase(*v.passphraseStdin, join.joining)
+	join, token, pass, err := resolveDBSyncEnableSecrets(v)
 	if err != nil {
 		return err
 	}

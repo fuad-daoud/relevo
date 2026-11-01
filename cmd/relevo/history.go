@@ -96,7 +96,7 @@ func cmdHistory(args []string) error {
 	mastermind, since, limit, by := v.mastermind, v.since, v.limit, v.by
 	query, withRows := v.query, v.withRows
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), historyUsage)
+		_, _ = fmt.Fprintln(fs.Output(), historyUsage)
 		fs.PrintDefaults()
 	}
 	if err := parseFlags(fs, args); err != nil {
@@ -114,7 +114,7 @@ func cmdHistory(args []string) error {
 	if err != nil {
 		return fail(codeInternal, "%v", err)
 	}
-	defer d.Close()
+	defer func() { _ = d.Close() }()
 	rt.DB = d
 
 	opts := relevo.HistoryOptions{
@@ -153,11 +153,17 @@ func cmdHistory(args []string) error {
 	}
 
 	parsed := opts.ParsedQuery()
+	return renderHistory(rt, rows, parsed, *withRows)
+}
+
+// renderHistory prints the queried rows: grouped by the query's axis, or flat
+// with each row wrapped with its candidate's name. Nil renders as [].
+func renderHistory(rt relevo.Runtime, rows []db.RoundRow, parsed histq.Query, withRows bool) error {
 	rows = parsed.Apply(rows)
 
 	if parsed.By != histq.AxisNone {
 		groups := histq.Group(rows, parsed.By, time.Local)
-		return json.NewEncoder(os.Stdout).Encode(groupJSON(groups, *withRows))
+		return json.NewEncoder(os.Stdout).Encode(groupJSON(groups, withRows))
 	}
 
 	if rows == nil {

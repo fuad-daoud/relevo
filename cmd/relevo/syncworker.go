@@ -26,7 +26,7 @@ func cmdSyncWorker(args []string) error {
 	fs.SetOutput(os.Stderr)
 	// The replica flag is documented below because the daemon passes it and a
 	// reader of a process list should know what the path is.
-	fs.Usage = func() { fmt.Fprint(fs.Output(), usage) }
+	fs.Usage = func() { _, _ = fmt.Fprint(fs.Output(), usage) }
 	replica := fs.String("replica", "", "the replica file this worker owns")
 	if err := parseFlags(fs, args); err != nil {
 		return err
