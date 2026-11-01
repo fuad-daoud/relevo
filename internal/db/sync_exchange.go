@@ -11,9 +11,8 @@ import (
 
 // The exchange seam the sync log is built on: the local-only import marks, the
 // outbox drain and the reads that turn a drained entry into the row's current
-// state. Every read and write here is scoped to one *Tx so a caller can hold the
-// outbox contents and the rows they name in a single consistent read, and every
-// *DB form opens that transaction itself.
+// state. Every read and write here is scoped to one *Tx, so a caller holds the
+// outbox contents and the rows they name in a single consistent read.
 
 // importMarkMigration is the schema version that creates sync_import_mark. It is
 // named so a test can stand up a file as the build before it left one.
@@ -21,11 +20,10 @@ const importMarkMigration = 23
 
 // ImportMark returns how far origin's entries have been applied: the sequence
 // number of the last entry applied from that origin's log. found is false when
-// origin has no mark, which is what a machine that has never imported from it
-// sees and is different from a mark of zero.
+// origin has no mark, which differs from a mark of zero.
 //
-// A mark is absent rather than zero on a file whose schema predates the table:
-// there is nothing applied either way, and the next write creates the row.
+// A mark is absent rather than zero on a file whose schema lacks the table:
+// nothing is applied either way, and the next write creates the row.
 func (d *DB) ImportMark(origin string) (int, bool, error) {
 	return importMark(context.Background(), d.sqlDB, origin)
 }
@@ -45,31 +43,26 @@ func importMark(ctx context.Context, q queryer, origin string) (int, bool, error
 }
 
 // SetImportMark records that every entry up to and including seq has been
-// applied from origin's log. It replaces any earlier mark for the origin in
-// place, so one origin keeps one mark however many rounds have written it.
+// applied from origin's log, replacing any earlier mark for the origin in place.
 //
-// The mark only ever moves forward. A sequence at or below the one already
-// stored is not written at all, so a replayed batch, an out-of-order pull, or a
-// transport that answers with a sequence behind this machine's own mark cannot
-// rewind what this file has applied and have the entries behind it offered again
-// as though they were new. The guard is in the statement rather than in the
-// caller, so every path that persists a mark gets it.
+// The mark only ever moves forward: a sequence at or below the one stored is
+// not written at all, so a replayed batch or an out-of-order pull cannot rewind
+// what this file applied and have old entries offered again as new. The guard is
+// in the statement rather than in the caller, so every path that persists a mark
+// gets it.
 //
-// It is written in the same transaction as the batch that moved the mark, which
-// is the property that makes a restore from a backup consistent: the file comes
-// back with the rows and the marks in the same state, so the entries that
-// arrived after the backup are re-applied rather than skipped.
+// It is written in the same transaction as the batch that moved the mark, so a
+// restore from a backup comes back with rows and marks in the same state, and
+// entries that arrived after the backup are re-applied rather than skipped.
 func (d *DB) SetImportMark(origin string, seq int) error {
 	return d.Tx(func(t *Tx) error { return t.SetImportMark(origin, seq) })
 }
 
 func (t *Tx) SetImportMark(origin string, seq int) error {
-	// An upsert rather than OR REPLACE: the mark table has no trigger, no
-	// foreign key and nothing that references it, so either form leaves one mark
-	// row per origin. The difference is the direction this one refuses to move.
-	// Replacing a shared row the way it replaces a mark would delete that row
-	// first and cascade to its children, which is why the importer writes those
-	// with a conflict clause instead.
+	// An upsert rather than OR REPLACE: either form leaves one mark row per
+	// origin, and only the upsert refuses to move backwards. Replacing a shared
+	// row instead would delete it first and cascade to its children, which is why
+	// the importer writes those with a conflict clause instead.
 	if _, err := t.exec(`INSERT INTO sync_import_mark (origin, seq) VALUES (?, ?)
 		ON CONFLICT(origin) DO UPDATE SET seq = excluded.seq
 		WHERE excluded.seq > sync_import_mark.seq`, origin, seq); err != nil {
@@ -93,29 +86,24 @@ func (t *Tx) RewindImportMark(origin string, seq int) error {
 }
 
 // ExchangeRow is one shared row read for export: the table it is in, the
-// primary key it was found by, and every column the file holds, in schema
-// order, each value in the type the file stored it as.
+// primary key it was found by, and every column the file holds, in schema order.
 //
 // Values come back typed rather than as text. A BLOB column returns its bytes
 // and the compressed columns of migration 013 return the bytes on disk, so a
-// caller sees exactly what is stored and never a decompressed rendering that a
-// recompression might not reproduce.
+// caller sees exactly what is stored.
 type ExchangeRow struct {
 	// Table is the shared table the row is in.
 	Table string
 	// PK is the primary key the row was read by, as the outbox records it.
 	PK string
 	// RowID is the row's position in its own table, which is what a paged walk
-	// carries between pages. It is local to one file: a rowid says nothing about
-	// another installation's table, which is what a cursor needs to be, and it is
-	// the one ordering an index serves, so paging by it reads a page of rows
-	// rather than sorting the table to find them.
+	// carries between pages. It is local to one file, and it is the one ordering
+	// an index serves, so paging by it reads a page rather than sorting the table.
 	RowID int64
 	// Columns are the row's columns in schema order, keyed by name.
 	Columns []ExchangeColumn
 }
 
-// Value returns the stored value for column name, and whether it was found.
 func (r ExchangeRow) Value(name string) (any, bool) {
 	for _, col := range r.Columns {
 		if col.Name == name {
@@ -138,9 +126,8 @@ type ExchangeColumn struct {
 // every column the table declares. ok is false when the table has no such row,
 // which for a drained outbox entry is the row's absence rather than a failure.
 //
-// tbl must be a name SharedTables carries: the table name reaches SQL from a
-// body a caller may not control, and the only names that may reach SQL are the
-// ones this package already classified as shared.
+// tbl must be a name SharedTables carries: it reaches SQL from a body a caller
+// may not control, so only names this package classified as shared may reach it.
 func (d *DB) ReadExchangeRow(tbl, pk string) (ExchangeRow, bool, error) {
 	return readExchangeRow(context.Background(), d.sqlDB, tbl, pk)
 }
@@ -166,9 +153,8 @@ func readExchangeRow(ctx context.Context, q queryer, tbl, pk string) (ExchangeRo
 	return scanExchangeRow(ctx, q, tbl, pk, query, args)
 }
 
-// exchangeRowQuery builds the one SELECT a row read runs: every column by name,
-// and the primary key as an equality chain with the key values bound rather
-// than spliced, so a pk that is not this machine's shape cannot become SQL.
+// exchangeRowQuery builds the one SELECT a row read runs, with the key values
+// bound rather than spliced, so a pk of another shape cannot become SQL.
 func exchangeRowQuery(shared SharedTable, columns []string, keys []any) (string, []any) {
 	quoted := make([]string, len(columns))
 	for i, col := range columns {
@@ -187,9 +173,8 @@ func exchangeRowQuery(shared SharedTable, columns []string, keys []any) (string,
 }
 
 // scanExchangeRow runs the row read and turns the result set into one row. A
-// NULL value is kept as a nil so an absent column is distinguishable from a
-// column holding an empty string, which is the difference between a column the
-// writer set to nothing and one that was never set.
+// NULL stays a nil, so a column the writer set to nothing stays distinct from
+// one that was never set.
 func scanExchangeRow(ctx context.Context, q queryer, tbl, pk, query string, args []any) (ExchangeRow, bool, error) {
 	rows, err := q.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -226,10 +211,8 @@ func scanExchangeRow(ctx context.Context, q queryer, tbl, pk, query string, args
 	return row, true, nil
 }
 
-// exchangeColumns returns the table's column names in schema order, so an
-// export carries the columns the file declares rather than the columns a query
-// happened to name. The names come from this machine's own schema, which is the
-// only source a column name may come from.
+// exchangeColumns returns the table's column names in schema order, from this
+// machine's own schema, which is the only source a column name may come from.
 func exchangeColumns(ctx context.Context, q queryer, tbl string) ([]string, error) {
 	rows, err := q.QueryContext(ctx, `SELECT name FROM pragma_table_info(?) ORDER BY cid`, tbl)
 	if err != nil {
@@ -239,11 +222,9 @@ func exchangeColumns(ctx context.Context, q queryer, tbl string) ([]string, erro
 }
 
 // exchangeKeyValues parses the pk text an outbox entry carries into the key
-// values it names. The text is JSON, so it is parsed rather than read, and each
-// value is returned as a parameter; nothing from the text is spliced into a
-// statement. A pk that is not the JSON array of exactly the table's key columns
-// is refused rather than guessed at, because a key of the wrong shape would
-// either match nothing or match a row the entry never named.
+// values it names. Nothing from the text is spliced into a statement, and a pk
+// that is not the JSON array of exactly the table's key columns is refused: a
+// key of the wrong shape would match nothing or a row the entry never named.
 func exchangeKeyValues(pk string, want int) ([]any, error) {
 	var raw []any
 	if err := json.Unmarshal([]byte(pk), &raw); err != nil {
@@ -259,9 +240,9 @@ func exchangeKeyValues(pk string, want int) ([]any, error) {
 	return out, nil
 }
 
-// exchangeKeyValue maps a decoded JSON key value onto the type the driver binds.
-// A JSON number arrives as a float64, and binding that for an INTEGER column
-// would compare as a real, so an integral number is bound as the integer it is.
+// exchangeKeyValue maps a decoded JSON key value onto the type the driver binds:
+// a JSON number arrives as a float64, and binding that for an INTEGER column
+// would compare as a real.
 func exchangeKeyValue(v any) any {
 	f, ok := v.(float64)
 	if !ok {
@@ -284,9 +265,8 @@ func sharedTable(tbl string) *SharedTable {
 	return nil
 }
 
-// DrainedEntry is one outbox entry with the state of the row it names. The entry
-// says which row was written and how; Row is what that row holds at the moment
-// the drain read it, and is absent when the row is gone.
+// DrainedEntry is one outbox entry with the state of the row it names at the
+// moment the drain read it, absent when the row is gone.
 type DrainedEntry struct {
 	// Seq is the entry's position in the outbox, and the order entries come
 	// back in.
@@ -308,21 +288,17 @@ type DrainedEntry struct {
 // DrainOutbox reads up to limit outbox entries in seq order, and with each entry
 // the current state of the row it names, from this one transaction.
 //
-// Both reads are here together on purpose. The exporter needs the entry and the
-// row to agree: an entry whose state is read after the drain, in a separate
-// transaction, would report a row as present or absent according to a write that
-// arrived between the two reads, and the batch it builds would carry a state no
-// point in time held. Holding the write lock for the whole read closes that
-// window -- another writer cannot commit while the drain runs, so every entry in
-// one drain is the state at one moment.
+// Both reads are here together on purpose: an entry whose state is read after
+// the drain would report a row as present or absent according to a write that
+// arrived between the two reads. Holding the write lock for the whole read
+// closes that window, so every entry in one drain is the state at one moment.
 //
 // The batch is closed over the parents its own rows reference. A child whose
-// snapshot points at a parent whose outbox entries all lie past the window would
-// otherwise travel alone, and an importer applying it with the foreign keys on
-// would refuse the batch for a parent it was never sent. Such a parent is pulled
-// in here with its snapshot state, and followed in turn. Its own later outbox
-// entries stay where they are and travel in their own batch, which is harmless
-// because import is an idempotent upsert.
+// parent's outbox entries all lie past the window would otherwise travel alone,
+// and an importer with the foreign keys on would refuse it for a parent it was
+// never sent. Such a parent is pulled in here with its snapshot state. Its own
+// later entries stay where they are and travel in their own batch, which is
+// harmless because import is an idempotent upsert.
 func (d *DB) DrainOutbox(limit int) ([]DrainedEntry, error) {
 	var out []DrainedEntry
 	err := d.Tx(func(t *Tx) error {
@@ -354,9 +330,8 @@ func (t *Tx) DrainOutbox(limit int) ([]DrainedEntry, error) {
 		return nil, nil
 	}
 	// The window's last sequence is the cut the exporter clears the outbox to.
-	// The pulled parents are prepended rather than appended so the window's own
-	// entries stay last and that cut keeps naming the window's tail: a parent's
-	// later outbox entry has to survive for its own batch.
+	// Pulled parents are prepended so the window's own entries stay last and the
+	// cut keeps naming the window's tail.
 	pulled, err := t.pendingParents(window, window[len(window)-1].Seq)
 	if err != nil {
 		return nil, err
@@ -365,8 +340,7 @@ func (t *Tx) DrainOutbox(limit int) ([]DrainedEntry, error) {
 }
 
 // readOutbox returns up to limit entries from the head of the change log, in
-// seq order. Reading in seq order and not by primary key is what makes the drain
-// a history: the order is the order the writes happened in, and a parent written
+// seq order. The order is the order the writes happened in, so a parent written
 // before its child comes out before it.
 func (t *Tx) readOutbox(limit int) ([]DrainedEntry, error) {
 	if limit <= 0 {
@@ -397,14 +371,12 @@ func (t *Tx) readOutbox(limit int) ([]DrainedEntry, error) {
 }
 
 // DeleteDrainedOutbox removes every outbox entry up to and including seq, and
-// leaves the rest. It runs after the transport has accepted the batch those
-// entries produced, so a crash between the append and this delete re-exports
-// them rather than losing them: re-export is safe because import is an
-// idempotent upsert.
+// leaves the rest. It runs after the transport has accepted the batch, so a
+// crash between the append and this delete re-exports rather than losing them:
+// re-export is safe because import is an idempotent upsert.
 //
 // The cut is by seq and not by count, so a drain that returned fewer entries
-// than the caller asked for -- because the log held fewer -- deletes exactly what
-// it drained and nothing that arrived after it.
+// than asked deletes exactly what it drained and nothing that arrived after it.
 func (d *DB) DeleteDrainedOutbox(seq int) error {
 	return d.Tx(func(t *Tx) error { return t.DeleteDrainedOutbox(seq) })
 }

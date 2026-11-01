@@ -10,47 +10,39 @@ import (
 
 // The write half of the exchange seam: how a row another installation sent
 // lands in this machine's file. Both writes name their columns from the schema
-// and their values from bound parameters, so nothing a body carries can become
-// SQL, and both run on a *Tx so a batch's rows and the mark that covers them
-// commit together.
+// and bind their values, so nothing a body carries becomes SQL, and both run on
+// a *Tx so a batch's rows and the mark covering them commit together.
 
 // ExchangeUpsert writes one row's values onto its primary key, inserting the row
 // when it is absent and updating it in place when it is present.
 //
-// The conflict clause is the whole point of the method. INSERT OR REPLACE would
-// delete the row it collides with before writing the new one, and binding_event,
-// round_file and chain_* hang off their parent with ON DELETE CASCADE, so
-// replacing a parent would take its children with it and lose history this file
-// already holds. DO UPDATE writes the columns in place and leaves every other
-// row alone.
+// INSERT OR REPLACE would delete the colliding row before writing the new one,
+// and binding_event, round_file and chain_* hang off their parent with ON DELETE
+// CASCADE, so replacing a parent would take its children with it. DO UPDATE
+// writes the columns in place and leaves every other row alone.
 //
-// Columns come from the table's own declaration, so a key in the body this
-// build's schema does not carry is dropped rather than named. The primary key
-// must be among them: a row whose key the body does not name cannot be placed,
-// and guessing a key would write the values onto whatever row held it.
+// Columns come from the table's own declaration, so a key this build's schema
+// does not carry is dropped rather than named. The primary key must be among
+// them: a row whose key the body does not name cannot be placed, and guessing
+// one would write the values onto whatever row held it.
 //
 // A column the body omits is left out of the statement, so on insert it takes
-// the column's declared default and on update it keeps what the file already
-// holds. Naming it as NULL instead would erase a value this machine has and the
-// other machine merely did not mention.
+// the declared default and on update it keeps what the file holds. Naming it as
+// NULL instead would erase a value this machine has that the other machine
+// merely did not mention.
 //
-// An append-only table is the one exception, and it is the exception that makes
-// the method's own contract true. A row of one of those tables is written once
-// and never rewritten -- by this machine or by any other -- so an upsert of an
-// id the file already holds is not an update at all: an identical body is a
-// replay the mark's own recovery makes possible (a batch re-offered after a mark
-// that did not survive a restore) and is a no-op, and a body differing in any
-// column is a peer rewriting history, which is refused. Both are decided before
-// the statement runs, so the replay records no outbox row: nothing was written.
-// The live writers and the migration's OR IGNORE path are untouched; they never
-// come through here.
+// An append-only table is the one exception. A row of one is written once and
+// never rewritten, so an upsert of an id already held is not an update: an
+// identical body is a replay the mark's recovery makes possible and is a no-op,
+// and a body differing in any column is a peer rewriting history, which is
+// refused. Both are decided before the statement runs, so the replay records no
+// outbox row. The live writers and the migration's OR IGNORE path never come
+// through here.
 //
 // owner is the installation the row belongs to, and it is a parameter rather
-// than something read out of values: a body may name the owner column, but what
-// it says there is a claim from a machine this one does not control, and a claim
-// is not a fact about this file. The caller resolves the owner from this
-// machine's own rows and passes it here, so a forged body cannot move a row
-// between owners.
+// than something read out of values: what a body names there is a claim from a
+// machine this one does not control. The caller resolves the owner from this
+// machine's own rows, so a forged body cannot move a row between owners.
 func (t *Tx) ExchangeUpsert(tbl, owner string, values map[string]any) error {
 	shared := sharedTable(tbl)
 	if shared == nil {
@@ -92,8 +84,8 @@ func (t *Tx) ExchangeUpsert(tbl, owner string, values map[string]any) error {
 	return nil
 }
 
-// checkCreatorImmutability validates that the creator column (origin) is immutable
-// on update, and ensures it is populated on insert (from body or owner).
+// checkCreatorImmutability keeps the creator column immutable on update and
+// populated on insert, from the body or the owner.
 func (t *Tx) checkCreatorImmutability(shared *SharedTable, creator, owner string, values map[string]any) error {
 	keyArgs := make([]any, len(shared.PrimaryKey))
 	for i, col := range shared.PrimaryKey {
@@ -127,9 +119,9 @@ func (t *Tx) checkCreatorImmutability(shared *SharedTable, creator, owner string
 	return fmt.Errorf("db: exchange upsert %s: check stored %s: %w", shared.Name, creator, mapRefused(mapBusy(err)))
 }
 
-// checkWriterNotStripped refuses a binding body that names writer as "" over a
-// stored row whose writer is not: other writer changes go through the hand-over
-// path, and an empty one would hand the row to every machine.
+// checkWriterNotStripped refuses a binding body naming writer as "" over a
+// stored row whose writer is not: an empty one would hand the row to every
+// machine, and other writer changes go through the hand-over path.
 func (t *Tx) checkWriterNotStripped(shared *SharedTable, values map[string]any) error {
 	if shared.Name != "binding" && shared.Name != "binding_record" {
 		return nil
@@ -175,10 +167,9 @@ func (t *Tx) MaxOutboxSeq() (int, error) {
 	return seq.V, nil
 }
 
-// DiscardOutboxSince removes any outbox entries for (tbl, pk) with seq > sinceSeq
-// that are attributed to this installation (origin IN (?, ”) or NULL).
-// This prevents import statements from queueing echoes of local writes,
-// whatever the op (insert, update, delete).
+// DiscardOutboxSince removes this installation's outbox entries for (tbl, pk)
+// past sinceSeq, so import statements queue no echoes of local writes,
+// whatever the op.
 func (t *Tx) DiscardOutboxSince(tbl, pk string, sinceSeq int) error {
 	query := `DELETE FROM sync_outbox WHERE seq > ? AND tbl = ? AND pk = ? AND (origin = ? OR origin = '' OR origin IS NULL)`
 	if _, err := t.exec(query, sinceSeq, tbl, pk, t.origin); err != nil {
@@ -191,13 +182,12 @@ func (t *Tx) DiscardOutboxSince(tbl, pk string, sinceSeq int) error {
 }
 
 // appendOnlyHeld reads the columns a body names out of the row the file already
-// holds under the body's key, and reports whether it holds one at all and
-// whether it is the row the body carries.
+// holds under the body's key, and reports whether it holds one and whether it
+// matches.
 //
-// The read is inside the transaction and the row is placed by the same one, so
-// a row cannot appear between the question and the write. It names only the
-// columns the body names, so a body that leaves a column out is compared on the
-// columns it did name -- which is the same set the upsert would have written.
+// The read and the write are one transaction, so no row appears between the
+// question and the write. Only the columns the body names are compared, which is
+// the same set the upsert would have written.
 func (t *Tx) appendOnlyHeld(shared *SharedTable, named []string, values map[string]any) (held, identical bool, err error) {
 	keyArgs := make([]any, len(shared.PrimaryKey))
 	for i, col := range shared.PrimaryKey {
@@ -239,10 +229,9 @@ func (t *Tx) appendOnlyHeld(shared *SharedTable, named []string, values map[stri
 
 // sameStoredValue reports whether the value a column holds is the value a body
 // carries. A body is decoded from JSON, so a number arrives as an integer or a
-// real while the column it lands in reads back as whichever of the two the
-// storage class chose; the two are compared as numbers, not as types. Anything
-// else -- text against a real, bytes against text, a null against a value --
-// differs, which for an append-only row is the refusal the caller wants.
+// real while the column reads back as whichever the storage class chose; the two
+// are compared as numbers, not as types. Anything else differs, which for an
+// append-only row is the refusal the caller wants.
 func sameStoredValue(have, incoming any) bool {
 	if have == nil || incoming == nil {
 		return have == nil && incoming == nil
@@ -261,8 +250,7 @@ func sameStoredValue(have, incoming any) bool {
 }
 
 // numericValue reads a value as the exact integer it is, when it is one. A real
-// with a fraction, one beyond int64, and one that is not a number at all are
-// none of them a column value this file could have stored, so they answer
+// with a fraction, one beyond int64, or one that is not a number at all answers
 // false rather than a number that would compare equal to something else.
 func numericValue(v any) (int64, bool) {
 	switch n := v.(type) {
@@ -280,11 +268,10 @@ func numericValue(v any) (int64, bool) {
 }
 
 // ownedValues is the values an upsert writes with the owner column set from the
-// owner the caller resolved, whatever the body carried there. A table whose rows
-// name their owner in a column of their own takes the caller's owner; a child
-// resolves through its parent and has no owner column of its own, so its values
-// pass through as they are. The map is copied rather than edited so the caller's
-// body is not rewritten behind its back.
+// owner the caller resolved, whatever the body carried there. A child resolves
+// through its parent and has no owner column, so its values pass through as they
+// are. The map is copied rather than edited so the caller's body is not
+// rewritten behind its back.
 func ownedValues(tbl, owner string, values map[string]any) map[string]any {
 	column := ownerColumn(tbl)
 	if column == "" {
@@ -299,9 +286,8 @@ func ownedValues(tbl, owner string, values map[string]any) map[string]any {
 }
 
 // ownerColumn is the column one shared table's rows carry their owner in, and
-// empty for a table whose rows resolve through a parent and therefore have none
-// of their own. Only the owner rules can answer it, which is why a writer asks
-// this package for the column rather than naming it.
+// empty for a table whose rows resolve through a parent. Only the owner rules
+// can answer it, which is why a writer asks this package rather than naming it.
 func ownerColumn(tbl string) string {
 	rule, ok := OwnerRules[tbl]
 	if !ok || len(rule.hops) != 0 || len(rule.kinds) != 0 {
@@ -312,9 +298,8 @@ func ownerColumn(tbl string) string {
 
 // mapRefused turns a constraint the engine refused into ErrInvalid: a foreign
 // key whose parent is not here, a unique index the row collides with. The values
-// broke it from a machine this one does not control, so the constraint is the
-// log's answer rather than this file's failure, and a caller can treat it as it
-// treats any other body it cannot act on rather than as an outage of its own.
+// came from a machine this one does not control, so the constraint is the log's
+// answer rather than this file's failure.
 func mapRefused(err error) error {
 	if err == nil {
 		return nil
@@ -330,9 +315,9 @@ func mapRefused(err error) error {
 	return err
 }
 
-// ExchangeDelete removes one row by its primary key. A row that is already gone
-// is not a failure: the delete is idempotent, which is what lets a batch be
-// re-applied after a mark that did not survive a restore.
+// ExchangeDelete removes one row by its primary key. A row already gone is not a
+// failure: the delete is idempotent, so a batch survives a mark lost to a
+// restore.
 func (t *Tx) ExchangeDelete(tbl, pk string) error {
 	shared := sharedTable(tbl)
 	if shared == nil {
@@ -350,10 +335,9 @@ func (t *Tx) ExchangeDelete(tbl, pk string) error {
 	return nil
 }
 
-// upsertColumns is the columns an upsert names and the values it binds for them,
-// in the order the table declares them. The order is the schema's so two bodies
-// naming the same values produce the same statement whatever order the map
-// hands them over in.
+// upsertColumns is the columns an upsert names and the values it binds, in the
+// order the table declares them, so two bodies naming the same values produce
+// the same statement whatever order the map hands over.
 func upsertColumns(keys, columns []string, values map[string]any) ([]string, []any, error) {
 	named := make([]string, 0, len(columns))
 	args := make([]any, 0, len(columns))
@@ -380,7 +364,7 @@ func upsertColumns(keys, columns []string, values map[string]any) ([]string, []a
 
 // upsertStatement builds the one INSERT that can write a row this file may
 // already hold. The key columns are the conflict target rather than part of the
-// update, since a row that collided already holds exactly those values.
+// update, since a colliding row already holds exactly those values.
 func upsertStatement(tbl string, named, keys []string) string {
 	target := make([]string, len(keys))
 	for i, col := range keys {
@@ -392,11 +376,9 @@ func upsertStatement(tbl string, named, keys []string) string {
 		" ON CONFLICT(" + strings.Join(target, ", ") + ") DO " + updateClause(named, keys)
 }
 
-// updateClause is what the conflict does to a row that is already there: every
-// named column the body carries takes the incoming value, and the key columns
-// are left alone. A body carrying nothing but the key updates nothing rather
-// than deleting the row, which is the failure mode the conflict clause exists
-// to avoid.
+// updateClause is what the conflict does to a row already there: every named
+// column takes the incoming value, and the key columns are left alone. A body
+// carrying nothing but the key updates nothing rather than deleting the row.
 func updateClause(named, keys []string) string {
 	isKey := make(map[string]bool, len(keys))
 	for _, col := range keys {
@@ -416,8 +398,7 @@ func updateClause(named, keys []string) string {
 }
 
 // keyWhere is the equality chain a key selects a row by, with every value bound
-// rather than spliced. The key text is JSON from another machine, so nothing in
-// it may reach the statement.
+// rather than spliced: the key text is JSON from another machine.
 func keyWhere(keys []string, values []any) (string, []any) {
 	where := make([]string, len(keys))
 	args := make([]any, len(keys))
@@ -429,9 +410,8 @@ func keyWhere(keys []string, values []any) (string, []any) {
 }
 
 // ImportMarks returns every origin this file has applied entries from and how
-// far it has applied them, as the mark map a transport's pull is asked with.
-// An origin absent from the map is one read from the start of its log, which is
-// the same thing as a mark of zero.
+// far, as the mark map a transport's pull is asked with. An origin absent from
+// the map reads from the start of its log, which is a mark of zero.
 func (d *DB) ImportMarks() (map[string]int, error) {
 	rows, err := d.sqlDB.Query(`SELECT origin, seq FROM sync_import_mark`)
 	if err != nil {
@@ -457,9 +437,7 @@ func (d *DB) ImportMarks() (map[string]int, error) {
 	return marks, nil
 }
 
-// placeholders is the "?, ?, ?" a VALUES clause of n bound values needs. The
-// values themselves are always arguments, so this is where a statement's shape
-// ends.
+// placeholders is the "?, ?, ?" a VALUES clause of n bound values needs.
 func placeholders(n int) string {
 	if n <= 0 {
 		return ""

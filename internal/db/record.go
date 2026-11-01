@@ -20,15 +20,13 @@ type Record struct {
 	JSON      string
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	// ViewedAt replaces the old <binding dir>/.viewed file.
-	ViewedAt *time.Time
+	ViewedAt  *time.Time
 	// ArchivedAt is set by RecordArchive, which hides the row from reads.
 	ArchivedAt *time.Time
 
 	// LinkOrigin and LinkID are the other copy of a remote binding: the
-	// installation that holds it and that installation's record id. Empty
-	// means the row is not linked -- every row written before migration 015,
-	// and every binding created by or against an older relevo.
+	// installation that holds it and that installation's record id. Empty means
+	// the row is not linked.
 	LinkOrigin string
 	LinkID     string
 }
@@ -49,12 +47,11 @@ type RecordEvent struct {
 
 const recordCols = `id, owner, name, state, round, cwd, record_json, created_at, updated_at, viewed_at, archived_at, link_origin, link_id`
 
-// originScope is the WHERE fragment every scoped record query carries, with
-// the handle's own origin as its one placeholder: a row is in scope when this
-// installation wrote it, or when its origin is empty -- a row that existed
-// before the origin column did. Only one installation opens a machine database
-// today, so an empty-origin row is this installation's own. A sync must refuse
-// to run while any empty-origin row remains.
+// originScope is the WHERE fragment every scoped record query carries, with the
+// handle's own origin as its one placeholder: a row is in scope when this
+// installation wrote it, or when its origin is empty. Only one installation
+// opens a machine database, so an empty-origin row is this installation's own.
+// A sync must refuse to run while any empty-origin row remains.
 const originScope = `origin IN (?, '')`
 
 // writerScope is the WHERE fragment every scoped binding_record query carries,
@@ -102,8 +99,7 @@ func scanRecord(s rowScanner) (Record, error) {
 
 // RecordGet returns owner's live row for name within this handle's origin, and
 // whether it was found. The live row is keyed by (origin, owner, name): one
-// machine database holds every owner's bindings, and a shared one would hold
-// every installation's.
+// machine database holds every owner's bindings.
 func (d *DB) RecordGet(owner, name string) (Record, bool, error) {
 	return getRecord(context.Background(), d.sqlDB, d.origin, owner, name)
 }
@@ -123,7 +119,7 @@ func getRecord(ctx context.Context, q queryer, origin, owner, name string) (Reco
 
 // RecordRevision is what a mirror reads from a record besides its bytes: the
 // record's own JSON and the extents of its log and sealed round files, cheap
-// enough to read every tick where a full mirror run would not be.
+// enough to read every tick.
 type RecordRevision struct {
 	JSON        string
 	EventCount  int
@@ -172,8 +168,8 @@ func (d *DB) RecordList(owner string) ([]Record, error) {
 
 // RecordListForMasterMind is RecordList narrowed, in the query, to the records
 // whose binding names mastermindID, so a caller polling for its own bindings
-// does not read every record of every MasterMind. '$.planner_id' is the JSON
-// key store.Binding writes MasterMindID under.
+// does not read every record. '$.planner_id' is the JSON key MasterMindID is
+// written under.
 func (d *DB) RecordListForMasterMind(owner, mastermindID string) ([]Record, error) {
 	rows, err := d.sqlDB.QueryContext(context.Background(),
 		`SELECT `+recordCols+` FROM binding_record WHERE `+writerScope+` AND owner = ? AND archived_at IS NULL
@@ -189,9 +185,9 @@ func (d *DB) RecordListForMasterMind(owner, mastermindID string) ([]Record, erro
 	return out, nil
 }
 
-// RecordListArchived returns every archived row, oldest archived_at first and
-// by name within one stamp, so the archive readers can see a row RecordGet and
-// RecordList hide.
+// RecordListArchived returns every archived row, oldest archived_at first and by
+// name within one stamp, so archive readers see what RecordGet and RecordList
+// hide.
 func (d *DB) RecordListArchived(owner string) ([]Record, error) {
 	rows, err := d.sqlDB.QueryContext(context.Background(),
 		`SELECT `+recordCols+` FROM binding_record WHERE `+writerScope+` AND owner = ? AND archived_at IS NOT NULL
@@ -209,15 +205,11 @@ func (d *DB) RecordListArchived(owner string) ([]Record, error) {
 // RecordGetByID returns the row with this id, live or archived, so an archive
 // source can read a record when it holds the id rather than the name.
 // RecordListUnlinked returns every remote binding row that carries no link at
-// all -- both link columns NULL, the shape migration 015 leaves every row
-// written before it in, and every binding created by or against an older
-// relevo. Name-ordered.
+// all -- both link columns NULL. Name-ordered.
 //
-// It is a read and never a repair: there is no backfill for it to perform and
-// this method deliberately performs none, so a row stays unlinked until it is
-// bound again on purpose. The link columns are read as NULL rather than
-// compared to a sentinel, so a row whose link was half written is still listed
-// rather than silently treated as bound.
+// It is a read and never a repair: a row stays unlinked until it is bound again
+// on purpose. The link columns are read as NULL rather than compared to a
+// sentinel, so a half-written link is still listed rather than treated as bound.
 func (d *DB) RecordListUnlinked() ([]Record, error) {
 	rows, err := d.sqlDB.QueryContext(context.Background(),
 		`SELECT `+recordCols+` FROM binding_record WHERE link_origin IS NULL AND link_id IS NULL
@@ -342,11 +334,11 @@ func (t *Tx) RecordArchive(owner, name string, at time.Time) error {
 }
 
 // RecordDelete removes owner's live row for name, with its events and sealed
-// files. Archived rows of the same name are kept: they are history a later
-// binding must not destroy.
+// files. Archived rows of the same name are kept: a later binding must not
+// destroy them.
 //
 // The children are deleted here, before the row, rather than left to the
-// foreign key's ON DELETE CASCADE. A child's delete trigger reads its origin
+// foreign key's ON DELETE CASCADE: a child's delete trigger reads its origin
 // from the parent, and in a cascade the parent is already gone, so the outbox
 // would record the delete with no origin and the exporter would never send it.
 func (t *Tx) RecordDelete(owner, name string) error {
@@ -364,7 +356,7 @@ func (t *Tx) RecordDelete(owner, name string) error {
 }
 
 // RecordSetViewed stamps viewed_at on owner's live row for name. No row is a
-// no-op: a read verb must not fail because a stamp could not be written.
+// no-op: a read verb must not fail over an unwritable stamp.
 func (t *Tx) RecordSetViewed(owner, name string, at time.Time) error {
 	if _, err := t.exec(`UPDATE binding_record SET viewed_at = ? WHERE `+writerScope+` AND owner = ? AND name = ? AND archived_at IS NULL`,
 		formatTime(at), t.origin, owner, name); err != nil {
@@ -462,9 +454,8 @@ func (t *Tx) EventConfirm(recordID string, seq int, at time.Time, route, newJSON
 }
 
 // EventAdmit replaces recordID's seq'th event's JSON with the caller's patched
-// map. The admit lives only in the entry's JSON, which is authoritative, so the
-// confirmed, delivered_at and route columns are untouched: a later EventConfirm
-// still writes them.
+// map. The admit lives only in the entry's JSON, so confirmed, delivered_at and
+// route are untouched for a later EventConfirm.
 func (t *Tx) EventAdmit(recordID string, seq int, newJSON string) error {
 	if err := t.guardRoot(recordID); err != nil {
 		return err
@@ -484,7 +475,6 @@ func (t *Tx) EventMaxSeq(recordID string) (int, error) {
 	return n, nil
 }
 
-// EventMaxSeq returns recordID's highest event seq.
 func (d *DB) EventMaxSeq(recordID string) (int, error) {
 	n, err := eventMaxSeq(d.sqlDB.QueryRowContext(context.Background(),
 		`SELECT MAX(seq) FROM binding_event WHERE record_id = ?`, recordID))

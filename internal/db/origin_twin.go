@@ -13,34 +13,25 @@ import (
 // Stamping an unstamped row moves it into this installation's half of its
 // natural key, and every live unique index over the tables the pass stamps is
 // keyed by origin plus that key -- migration 014 re-keys the four it already had
-// and migration 016 adds the fifth. So the stamp collides exactly when a row
-// already stamped with this origin holds the same key, which is what a rename or
-// a re-import leaves behind: one checkout recorded twice, once before the origin
-// column existed and once after it. NULL never collides, so a repo row with no
-// origin_url or no common_dir is not in either of its table's index sets and
-// cannot be a twin at all.
+// and migration 016 adds the fifth. The stamp collides exactly when a row
+// already stamped with this origin holds the same key. NULL never collides, so a
+// repo row with no origin_url or no common_dir cannot be a twin at all.
 //
 // The mirror tables are read models the ingest rebuilds from a log, so there the
-// stale '' row loses to the stamped live row and is dropped: repo is the shape
-// the field log line named, and binding, mastermind and chains are the same
-// shape on their own keys. binding_record is the system of record and is never
-// deleted, so a twin there halts the table for a person to decide rather than
-// resolving it in code.
+// stale '' row loses to the stamped live row and is dropped. binding_record is
+// the system of record and is never deleted, so a twin there halts the table for
+// a person to decide rather than resolving it in code.
 //
-// The drop is not unconditional on a mirror either, but the common case is not a
-// halt. round and event point at binding, binding points at repo and mastermind,
-// with no cascade, so the database refuses to let a row history depends on
-// disappear -- and on a database whose stale rows are referenced that refusal is
-// every row, which is why a pass over one reported itself skipped having settled
-// nothing. The twin is the same checkout recorded twice, so a pointer at the stale
-// id is a pointer at the same checkout the live id names: the pass repoints it
+// The drop is not unconditional on a mirror either: round and event point at
+// binding, binding points at repo and mastermind, with no cascade, so the
+// database refuses to let a row history depends on disappear. A pointer at the
+// stale id names the same checkout the live id names, so the pass repoints it
 // first (see origin_repoint.go), which changes no attribution and leaves the drop
 // with nothing to refuse on.
 //
-// Where a reference genuinely cannot move -- the live row already holds what the
-// pointer would bring -- the pass does not decide. It leaves the row unstamped and
-// halts it for the same reason a record does, naming the table and how many rows
-// are left rather than what any of them holds, and carries on to the next row.
+// Where a reference genuinely cannot move, the pass does not decide. It leaves
+// the row unstamped and halts it, naming the table and how many rows are left
+// rather than what any of them holds, and carries on to the next row.
 
 // twinRule is how one table resolves a stale row its stamp would collide on.
 type twinRule int
@@ -53,10 +44,9 @@ const (
 	twinHaltForHuman
 )
 
-// backfillTwinRule is that decision per table. It has one entry for every table
-// backfillTables names: a table the pass stamps with no rule here is a table
-// whose collision still aborts the whole pass, and a rule for a table the pass
-// does not stamp is a case no row can reach.
+// backfillTwinRule is that decision per table, with one entry for every table
+// backfillTables names: a stamped table with no rule here still aborts the whole
+// pass on collision, and a rule for an unstamped table no row can reach.
 var backfillTwinRule = map[string]twinRule{
 	"binding_record": twinHaltForHuman,
 	"binding":        twinDropStale,
@@ -66,9 +56,8 @@ var backfillTwinRule = map[string]twinRule{
 }
 
 // backfillTwinKey is the live unique index over one table that a stamp can
-// collide on: the index's own name, the table it covers, the columns it keys on
-// after origin, and its WHERE predicate. The predicate is spelled out because it
-// is why some rows cannot collide at all.
+// collide on: name, table, columns after origin, and WHERE predicate. The
+// predicate is spelled out because it is why some rows cannot collide at all.
 type backfillTwinKey struct {
 	name    string
 	table   string
@@ -77,10 +66,9 @@ type backfillTwinKey struct {
 }
 
 // backfillTwinKeys is every index a stamp can collide on, read off the schema:
-// the four migration 014 re-keys by origin and the one migration 016 creates with
-// origin already part of it. Every table backfillTables names appears here
-// exactly as the schema has it, and a table's own index set is what its rule is
-// read against.
+// the four migration 014 re-keys by origin and the one migration 016 creates
+// with origin already part of it. Every table backfillTables names appears here
+// as the schema has it.
 var backfillTwinKeys = []backfillTwinKey{
 	{
 		name: "binding_record_origin_owner_name_uidx", table: "binding_record",
@@ -109,7 +97,7 @@ var backfillTwinKeys = []backfillTwinKey{
 }
 
 // twinKeysFor is every index the pass can collide on inside one table, in schema
-// order, so a report of the same database twice is the same list twice.
+// order, so the same database reports the same list twice.
 func twinKeysFor(table string) []backfillTwinKey {
 	var keys []backfillTwinKey
 	for _, k := range backfillTwinKeys {
@@ -127,21 +115,18 @@ type collidingRowPair struct {
 	live  string
 }
 
-// collidingRowPairs names the stale rows in table whose stamp would collide with a
-// row already stamped as origin under one index, each with that live row's id. It
-// is the join that index would have to make: the two rows key alike, both inside
-// the index's predicate, and they share an origin only because the stale side is
-// the one about to move.
+// collidingRowPairs names the stale rows in table whose stamp would collide with
+// a row already stamped as origin under one index, each with that live row's id:
+// the two rows key alike, both inside the index's predicate, sharing an origin
+// only because the stale side is the one about to move.
 //
-// Both ids come back because resolving the pair needs both: the stale row is what
-// the pass drops, and the live row's id is where every reference to the stale row
-// moves first. Returning only the stale id is what left the pass no way to settle
-// a row anything pointed at.
+// Both ids come back because resolving the pair needs both: the stale row is
+// what the pass drops, and the live row's id is where every reference moves
+// first.
 //
-// Reading the pairs before moving anything is what makes the pass incremental.
-// The rows it drops are exactly the rows that would otherwise raise the unique
-// violation, so the stamp that follows completes instead of aborting the pass on
-// the first one and taking every clean row with it.
+// Reading the pairs before moving anything is what makes the pass incremental:
+// the rows dropped are exactly the ones that would raise the unique violation,
+// so the stamp that follows completes instead of aborting on the first one.
 func collidingRowPairs(q queryer, table, origin string, key backfillTwinKey) ([]collidingRowPair, error) {
 	var on strings.Builder
 	for i, col := range key.cols {
@@ -174,8 +159,8 @@ func collidingRowPairs(q queryer, table, origin string, key backfillTwinKey) ([]
 	return pairs, rows.Err()
 }
 
-// collidingRowIDs is collidingRowPairs read for the stale side only, which is all
-// a caller that previews the rows without settling them needs.
+// collidingRowIDs is collidingRowPairs read for the stale side only, for a
+// caller that previews the rows without settling them.
 func collidingRowIDs(q queryer, table, origin string, key backfillTwinKey) ([]string, error) {
 	pairs, err := collidingRowPairs(q, table, origin, key)
 	if err != nil {
@@ -189,25 +174,22 @@ func collidingRowIDs(q queryer, table, origin string, key backfillTwinKey) ([]st
 }
 
 // sqliteConstraintForeignKey is SQLITE_CONSTRAINT_FOREIGNKEY, the extended code
-// a parent row's children refuse the removal of. It is the one constraint
-// failure the twin rule expects to meet, because it means history points at the
-// stale row rather than that the rule was wrong.
+// a removal refused on the row's foreign keys carries. It is the one constraint
+// failure the twin rule expects: history points at the stale row.
 const sqliteConstraintForeignKey = 787
 
 // settleStaleRow resolves one stale row in its own transaction: every row that
 // names it is repointed at the live twin's id, and then the stale row is removed.
 // Both halves are one transaction, so a pointer that cannot move leaves the stale
-// row standing with every reference to it intact rather than half-migrated.
+// row standing with every reference intact rather than half-migrated.
 //
-// The id comes from the unstamped side of the join, and the drop's WHERE repeats
-// that, so this can only ever remove the stale half of a pair: the stamped live
-// row the pair is resolved in favour of is not this statement's to touch. live is
-// that row's id, and is only ever the twin the rule already paired this one with.
+// The drop's WHERE repeats the unstamped side of the join, so this only ever
+// removes the stale half of a pair. live is only ever the twin the rule already
+// paired this one with.
 //
-// A row whose references cannot all be moved -- or that the engine still refuses
-// to remove -- is halted rather than dropped: the row stays, unstamped, for a
-// person to decide, and the pass continues past it. That is the outcome a halt has
-// always meant, so a halt is never a reason to lose the pass.
+// A row whose references cannot all move -- or that the engine still refuses to
+// remove -- is halted rather than dropped: the row stays, unstamped, for a
+// person to decide, and the pass continues past it.
 func settleStaleRow(d *DB, table, id, live string) (halted bool, err error) {
 	derr := d.Tx(func(t *Tx) error {
 		if rerr := repointReferences(t, table, id, live); rerr != nil {
@@ -231,12 +213,10 @@ func settleStaleRow(d *DB, table, id, live string) (halted bool, err error) {
 // isForeignKeyRefusal reports whether an error is the engine refusing a removal
 // on the row's foreign keys.
 //
-// The message is checked first, and deliberately ahead of the extended code. A
-// Turso constraint carries the primary SQLITE_CONSTRAINT in both code slots, so
-// its extended code is 19 and never 787, and reading the code alone decided such
-// an error was not a foreign key refusal at all -- which is how the halt this
-// branch exists for went unreported and the pass aborted with nothing done. Only
-// the message distinguishes the two refusals on that engine.
+// The message is checked ahead of the extended code on purpose: a Turso
+// constraint carries the primary SQLITE_CONSTRAINT in both code slots, so its
+// extended code is 19 and never 787, and the code alone cannot tell the two
+// refusals apart on that engine.
 func isForeignKeyRefusal(err error) bool {
 	if strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
 		return true

@@ -11,20 +11,18 @@ import (
 	"time"
 )
 
-// The two-file split. Every table and every kv namespace has exactly one home:
-// the shared database, or the machine-local file beside it. The classification
-// is written once, here, and one pass moves what the shared file is holding.
-// Both files run the same migrations, so placement is a routing decision and
-// never a schema fork.
+// The two-file split: every table and every kv namespace has exactly one home,
+// the shared database or the machine-local file beside it. The classification is
+// written once here. Both files run the same migrations, so placement is a
+// routing decision and never a schema fork.
 
-// splitKVKey is the local kv key a finished split pass is recorded under. It
-// is machine-local itself: a shared copy of the marker would tell another
-// installation's pass that the move is done here too.
+// splitKVKey is the local kv key a finished split pass is recorded under: a
+// shared copy would tell another installation's pass the move is done here too.
 const splitKVKey = "split-local.v1"
 
-// splitLocalTables is every table whose rows mean something only on the
-// machine that wrote them, so they never leave it: pids, absolute paths,
-// offsets, listen addresses, secrets, and this machine's own configuration.
+// splitLocalTables is every table whose rows mean something only on the machine
+// that wrote them, so they never leave it: pids, paths, offsets, addresses,
+// secrets, and this machine's own configuration.
 var splitLocalTables = []string{
 	"secret",
 	"session_consent",
@@ -36,9 +34,8 @@ var splitLocalTables = []string{
 }
 
 // splitLocalNamespaces is the kv allowlist, one entry per namespace or key. A
-// key belongs to the local file when it equals an entry or extends it on a
-// namespace boundary, so `serve.clients` is local under `serve` while
-// `servers` is not local under `serve`.
+// key is local when it equals an entry or extends it on a namespace boundary,
+// so `serve.clients` is local under `serve` while `servers` is not.
 var splitLocalNamespaces = []string{
 	"daemon",
 	"serve",
@@ -60,10 +57,9 @@ var splitLocalNamespaces = []string{
 	"sync",
 }
 
-// SplitPath is the machine-local file beside a shared database: the shared
-// name with `-local` before its extension, in the same directory. A path
-// without an extension gains the suffix whole, so every open has exactly one
-// local companion and two opens can never collide on it.
+// SplitPath is the machine-local file beside a shared database: the shared name
+// with `-local` before its extension, in the same directory. A path without an
+// extension gains the suffix whole, so two opens can never collide on it.
 func SplitPath(shared string) string {
 	ext := filepath.Ext(shared)
 	if ext == "" {
@@ -72,11 +68,9 @@ func SplitPath(shared string) string {
 	return strings.TrimSuffix(shared, ext) + "-local" + ext
 }
 
-// OpenSplit opens the shared database at path and the machine-local file
-// beside it, applying the same migrations to both, and returns the shared
-// handle with the local one attached. Both files run the whole migration
-// series: the split is a placement decision, so the schema is never forked
-// and every existing call site keeps working against both.
+// OpenSplit opens the shared database at path and the machine-local file beside
+// it, applying the same migrations to both. The split is a placement decision,
+// so the schema is never forked and existing call sites keep working.
 func OpenSplit(path string, o Options) (*DB, error) {
 	shared, err := open(path, o)
 	if err != nil {
@@ -99,11 +93,9 @@ func OpenSplit(path string, o Options) (*DB, error) {
 func (d *DB) Local() *DB { return d.local }
 
 // LocalOrSelf is the file a machine-local reader binds: the machine-local file
-// beside this handle when it carries one, and the handle itself otherwise. It
-// is the one place the two files are told apart for reading, so every
-// exclusively machine-local surface -- config, secrets, and the local kv
-// namespaces -- binds through it rather than deciding per call site, and a
-// handle opened without a local file keeps answering exactly as it did.
+// when this handle carries one, and the handle itself otherwise. Every
+// exclusively machine-local surface binds through it rather than deciding per
+// call site, and a handle opened without a local file keeps answering as it did.
 //
 // A shared-history reader must not call it: those rows mean something on every
 // machine and belong on the shared file.
@@ -115,10 +107,8 @@ func (d *DB) LocalOrSelf() *DB {
 }
 
 // SplitDone reports whether the split-local pass finished on this handle's
-// files: the marker sits in the machine-local file, so a handle opened
-// without one, or on files the pass never ran on, reports false. Callers
-// that must not follow a binary which cannot read the split ask here
-// rather than re-deriving the marker read.
+// files: the marker sits in the machine-local file, so a handle opened without
+// one, or on files the pass never ran on, reports false.
 func (d *DB) SplitDone() bool {
 	if d == nil {
 		return false
@@ -132,16 +122,14 @@ func (d *DB) SplitDone() bool {
 }
 
 // Origin is the installation id this handle scopes its own writes to, or "" on
-// a handle opened before the origin column existed. A reader that has to tell
-// this machine's rows from another installation's asks here rather than
-// re-deriving it, so the one place that knows the answer stays the only place
-// that has it.
+// a handle carrying none. A reader that tells this machine's rows from another
+// installation's asks here, so the one place that knows stays the only place
+// with the answer.
 func (d *DB) Origin() string { return d.origin }
 
-// Path is the file this handle is open on, the shared one when it was opened
-// split. A driver that has to open the same file under its own name -- the
-// sync client is handed a path, not a handle -- reads it here rather than
-// reconstructing a name that could disagree with the one actually open.
+// Path is the file this handle is open on, the shared one when opened split. A
+// driver handed a path rather than a handle -- the sync client -- reads it here
+// rather than reconstructing a name that could disagree with the one open.
 func (d *DB) Path() string { return d.path }
 
 // splitFile names which of the two files a scope's rows live in.
@@ -152,9 +140,8 @@ const (
 	splitLocal
 )
 
-// splitTableFile names the file a table's rows live in. A table neither the
-// local allowlist nor the shared history names is shared: an unclassified
-// table is history, and history is the safe default for an unknown scope.
+// splitTableFile names the file a table's rows live in. A table neither list
+// names is shared: history is the safe default for an unknown scope.
 func splitTableFile(table string) splitFile {
 	for _, name := range splitLocalTables {
 		if name == table {
@@ -164,10 +151,9 @@ func splitTableFile(table string) splitFile {
 	return splitShared
 }
 
-// splitKeyFile names the file a kv key's row lives in. The match is the exact
-// key or an extension on a namespace boundary, never a bare prefix: a shared
-// key must not be captured by a local namespace that merely starts the same
-// way.
+// splitKeyFile names the file a kv key's row lives in: the exact key or an
+// extension on a namespace boundary, never a bare prefix, so a shared key is
+// not captured by a local namespace that merely starts the same way.
 func splitKeyFile(key string) splitFile {
 	for _, ns := range splitLocalNamespaces {
 		if key == ns || strings.HasPrefix(key, ns+".") || strings.HasPrefix(key, ns+"/") {
@@ -185,9 +171,9 @@ type SplitStats struct {
 	RowsMoved   int64     `json:"rows_moved"`
 	KVKeysMoved int64     `json:"kv_keys_moved"`
 	// Conflicts counts shared rows whose local counterpart already held
-	// different content: the pass keeps the local row and only converges
-	// the stray away, so a conflicting row is moved but never overwritten.
-	// ConflictKeys names them, most capped, never their contents.
+	// different content: the pass keeps the local row, so a conflicting row is
+	// moved but never overwritten. ConflictKeys names them, most capped, never
+	// their contents.
 	Conflicts    int64    `json:"conflicts"`
 	ConflictKeys []string `json:"conflict_keys,omitempty"`
 }
@@ -245,26 +231,22 @@ func splitTables() []splitTable {
 }
 
 // splitBeforeTable runs before each table's rows move. It is a var so a test
-// can fail a pass between two tables and pin what a half-finished pass leaves.
+// can fail a pass between two tables and pin the half-finished state.
 var splitBeforeTable = func(table string) error { return nil }
 
 // SplitOnce moves every machine-local row out of the shared database into the
-// local file beside it, once per pair and only after a full backup. An
-// existing local kv row means an earlier pass finished, so ran is false. An
-// empty candidate set writes the marker and returns with no backup. Otherwise
-// the shared file is backed up first -- a failure returns the error with
-// nothing moved and no marker -- then each table's rows are copied and
-// deleted, and the marker is written last, so a failure anywhere before it
-// leaves the next start retrying from the top.
+// local file beside it, once per pair and only after a full backup. An existing
+// local kv row means an earlier pass finished, so ran is false. An empty
+// candidate set writes the marker and returns with no backup. Otherwise the
+// shared file is backed up first, each table's rows are copied and deleted, and
+// the marker is written last, so a failure anywhere before it retries from the
+// top.
 //
-// A finished marker does not stop a row written to the shared file afterwards.
-// Another installation sharing this database can still write a machine-local
-// row into it, and the readers here are bound to the local file and would never
-// see it again. So a pass whose marker is already present converges instead of
-// returning: it moves whatever local-scoped rows are left, and backs up first
-// only when there is something to move. The marker is never written again, so
-// the pass that already finished is not re-stamped and no second backup appears
-// on a start that has nothing to move.
+// A finished marker does not stop a row written to the shared file afterwards:
+// another installation sharing this database can still write a machine-local row
+// into it. So a pass whose marker is present converges instead of returning: it
+// moves whatever local-scoped rows are left, backing up only when there is
+// something to move. The marker is never written again.
 func SplitOnce(d *DB, backupDir string, now time.Time) (stats SplitStats, ran bool, err error) {
 	local := d.Local()
 	if local == nil {
@@ -284,8 +266,7 @@ func SplitOnce(d *DB, backupDir string, now time.Time) (stats SplitStats, ran bo
 	}
 	if !have {
 		if finished {
-			// Nothing left to converge and the marker is already there: a start
-			// with nothing to do writes nothing at all.
+			// Nothing to converge and the marker already there: write nothing.
 			return SplitStats{}, false, nil
 		}
 		return stats, true, putSplitStats(local, stats)
@@ -297,9 +278,8 @@ func SplitOnce(d *DB, backupDir string, now time.Time) (stats SplitStats, ran bo
 	}
 	stats.BackupPath = backupPath
 	if finished {
-		// The marker's own DoneAt and backup name belong to the pass that ran
-		// before this one; a converge pass reports what it moved under its own
-		// stamp and leaves the marker exactly as the first pass wrote it.
+		// The marker's DoneAt and backup name belong to the first pass; a
+		// converge pass reports under its own stamp and leaves the marker alone.
 		stats.DoneAt = time.Time{}
 	}
 
@@ -330,8 +310,7 @@ func SplitOnce(d *DB, backupDir string, now time.Time) (stats SplitStats, ran bo
 
 // anySplitCandidate reports whether the shared file holds a local row worth
 // moving. The schema-seeded singletons do not count: every database carries
-// them, so counting one would make a fresh install take a backup to move
-// nothing.
+// them, so counting one would back up a fresh install to move nothing.
 func anySplitCandidate(d *DB) (bool, error) {
 	for _, tbl := range splitTables() {
 		if tbl.singleton {
@@ -359,12 +338,11 @@ func anySplitCandidate(d *DB) (bool, error) {
 }
 
 // splitMoveTable copies one table's rows into the local file and then deletes
-// them from the shared one. The copy is committed first, so a failure between
-// the two leaves the rows in both files and the retry's insert-or-replace
-// converges on one. A shared row whose local counterpart already holds
-// different content is a conflict, not a retry: the pass keeps the local row
-// -- it is what the running system read and wrote -- converges the stray
-// away, and counts the conflict for the log instead of overwriting.
+// them from the shared one. The copy commits first, so a failure between the two
+// leaves the rows in both files and the retry converges on one. A shared row
+// whose local counterpart holds different content is a conflict, not a retry:
+// the pass keeps the local row, converges the stray away, and counts the
+// conflict instead of overwriting.
 func splitMoveTable(shared, local *DB, tbl splitTable, stats *SplitStats) (int64, error) {
 	rows, err := splitReadRows(shared, tbl)
 	if err != nil {
@@ -382,7 +360,6 @@ func splitMoveTable(shared, local *DB, tbl splitTable, stats *SplitStats) (int64
 	return int64(len(rows)), nil
 }
 
-// splitReadRows reads every row of one table into column-ordered values.
 func splitReadRows(d *DB, tbl splitTable) ([][]any, error) {
 	query := "SELECT " + strings.Join(tbl.columns, ", ") + " FROM " + tbl.name
 	rows, err := d.sqlDB.QueryContext(context.Background(), query)
@@ -409,11 +386,10 @@ func splitReadRows(d *DB, tbl splitTable) ([][]any, error) {
 	return out, nil
 }
 
-// splitInsertRows upserts the moved rows into the local file's table. Replace
-// rather than insert, so a retry after a partial pass converges. A row the
-// local file already holds with different content is left alone and counted:
-// the local row is live, the shared one a stray, and replacing would swap
-// what the running system reads under it.
+// splitInsertRows upserts the moved rows into the local file's table: replace
+// rather than insert, so a retry after a partial pass converges. A row the local
+// file holds with different content is left alone and counted, since replacing
+// would swap what the running system reads.
 func splitInsertRows(t *Tx, tbl splitTable, rows [][]any, stats *SplitStats) error {
 	marks := strings.TrimSuffix(strings.Repeat("?,", len(tbl.columns)), ",")
 	query := "INSERT OR REPLACE INTO " + tbl.name + " (" + strings.Join(tbl.columns, ", ") + ") VALUES (" + marks + ")"
@@ -434,7 +410,7 @@ func splitInsertRows(t *Tx, tbl splitTable, rows [][]any, stats *SplitStats) err
 }
 
 // splitDeleteRows removes the moved rows from the shared file, one statement
-// per row so a row that moved under the pass is not deleted by it.
+// per row so a row moved under the pass is not deleted by it.
 func splitDeleteRows(t *Tx, tbl splitTable, rows [][]any) error {
 	where := splitKeyWhere(tbl)
 	for _, row := range rows {
@@ -449,7 +425,6 @@ func splitDeleteRows(t *Tx, tbl splitTable, rows [][]any) error {
 	return nil
 }
 
-// splitKeyWhere names the natural key columns as an equality chain.
 func splitKeyWhere(tbl splitTable) string {
 	parts := make([]string, len(tbl.key))
 	for i, col := range tbl.key {
@@ -458,11 +433,10 @@ func splitKeyWhere(tbl splitTable) string {
 	return strings.Join(parts, " AND ")
 }
 
-// splitMoveKeys moves the kv rows the allowlist routes to the local file,
-// reading the value out of the shared file before deleting it there. A key
-// the local file already holds with a different document is a conflict: the
-// local document stays, the stray is still converged away, and the conflict
-// is counted for the log.
+// splitMoveKeys moves the kv rows the allowlist routes to the local file. A key
+// the local file holds with a different document is a conflict: the local
+// document stays, the stray is still converged away, and the conflict is
+// counted.
 func splitMoveKeys(shared, local *DB, stats *SplitStats) (int64, error) {
 	keys, err := shared.KVKeys("")
 	if err != nil {

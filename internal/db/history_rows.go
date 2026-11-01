@@ -7,73 +7,61 @@ import (
 )
 
 // The write and retention seam of the two history tables. Both are append-only:
-// a row is never updated and is deleted only by age, so the whole seam is one
-// insert, one age delete and the two conversions the at_ms column needs.
+// a row is never updated and is deleted only by age.
 //
 // The insert is a plain INSERT rather than the exchange upsert, because a row
-// here is written once and never rewritten. The insert outbox trigger beside it
-// records the write, so a row lands in the log the same way every other shared
-// row does; the age delete has no trigger, so it lands in nothing, which is what
-// keeps a row every machine prunes on its own clock from being carried around as
-// a delete every other machine would then have to reproduce.
+// here is written once and never rewritten. The outbox trigger beside the insert
+// records the write; the age delete has no trigger, so a row every machine
+// prunes on its own clock is never carried around as a delete every other
+// machine would then have to reproduce.
 //
-// The one thing plain INSERT does not do is tolerate a second write of an id
-// already present, and exactly one caller needs that: the one-time migration,
-// which derives its ids from the documents it reads so a retry writes the rows
-// it already wrote. It gets its own entry points and the same statements with
-// OR IGNORE, rather than the live writers being relaxed for it.
+// Plain INSERT does not tolerate a second write of an id already present, and
+// the one-time migration needs that: it derives its ids from the documents it
+// reads, so a retry writes the rows it already wrote. It gets its own entry
+// points with OR IGNORE, rather than the live writers being relaxed for it.
 
 // HistoryWindow is how long a row of the availability or latency history is
-// kept. It lives here rather than in the package that renders the window because
-// three packages have to agree on it -- the writers that stamp a row, the
-// importer that skips a row already older than it, and the reconciler that
-// refuses to propose one -- and this is the only one of the three they all
+// kept. It lives here because three packages have to agree on it -- the writers
+// that stamp a row, the importer that skips a row already older than it, and the
+// reconciler that refuses to propose one -- and this is the only one they all
 // import.
 const HistoryWindow = 30 * 24 * time.Hour
 
 // HistoryClockSkew is how far ahead of this machine's clock an arriving history
-// row's at_ms may sit and still be written. Two machines' clocks are never the
-// same instant, so a peer whose clock runs a little fast stamps rows this
-// machine would otherwise refuse on arrival -- and refusing those would throw
-// away real observations of a fleet's own history over nothing but a clock.
+// row's at_ms may sit and still be written: a peer whose clock runs a little
+// fast stamps rows this machine would otherwise refuse, and refusing those
+// throws away real observations over nothing but a clock.
 //
 // It is minutes on purpose. The allowance covers drift between two machines
 // reading the time, not a body naming a time of its own choosing: a row a day
-// or a year ahead is not a clock that disagrees, and a row like that ages out
-// of no window, so writing one would pin a row in every machine's table that no
-// prune can ever reach.
+// or a year ahead ages out of no window, so writing one pins a row in every
+// machine's table that no prune can ever reach.
 const HistoryClockSkew = 5 * time.Minute
 
 // HistoryFutureMS is the latest at_ms an arriving history row may carry and
-// still be written: now plus the clock-skew allowance. It is the other side of
-// the arrival window HistoryAt's values are judged against, and it is stated
-// here rather than at the call site so the bound and the window it guards are
-// one number next to each other.
+// still be written: now plus the clock-skew allowance, stated here so the bound
+// and the window it guards sit next to each other.
 func HistoryFutureMS(now time.Time) int64 {
 	return UnixMS(now.Add(HistoryClockSkew))
 }
 
-// The names the history tables' rows are keyed and aged by. They are named here
-// so a caller passes a column and not a literal, and so a migration that renamed
-// one failed to compile rather than to compare the wrong column.
+// The columns the history tables' rows are keyed and aged by, named here so a
+// caller passes a column and not a literal, and so renaming one fails to
+// compile rather than comparing the wrong column.
 const (
 	historyAtColumn = "at_ms"
 	// AvailabilityEventTable and LatencySampleTable are the two append-only
-	// shared tables, named for the callers that write or prune them.
+	// shared tables.
 	AvailabilityEventTable = "availability_event"
 	LatencySampleTable     = "latency_sample"
 )
 
 // UnixMS is the integer a history row's At is stored as: Unix milliseconds in
-// UTC. The comparison the age prune and the arrival window make is a numeric one
-// for exactly the reason it is not text -- today's events carry mixed offsets
-// and variable-width fractional seconds, so '2026-10-14T09:00:00Z' sorts after
-// '2026-10-14T10:00:00+03:00'.
+// UTC.
 func UnixMS(t time.Time) int64 { return t.UTC().UnixMilli() }
 
-// TimeFromUnixMS is UnixMS read back into a time.Time. The zero millisecond is
-// the zero time rather than 1970, so a row without a time reads as a row with no
-// time at all.
+// TimeFromUnixMS is UnixMS read back into a time.Time: the zero millisecond is
+// the zero time, so a row without a time reads as a row with no time at all.
 func TimeFromUnixMS(ms int64) time.Time {
 	if ms == 0 {
 		return time.Time{}
@@ -81,10 +69,9 @@ func TimeFromUnixMS(ms int64) time.Time {
 	return time.UnixMilli(ms).UTC()
 }
 
-// AvailabilityEvent is one row of availability_event: a ledger observation
-// mirrored into the window the ledger itself does not keep. SinceMS is the at of
-// the oldest ledger entry a clear removed, and nil on every other kind, which is
-// how a cleared event that cleared nothing reads.
+// AvailabilityEvent is one row of availability_event. SinceMS is the at of the
+// oldest ledger entry a clear removed, and nil on every other kind, which is how
+// a cleared event that cleared nothing reads.
 type AvailabilityEvent struct {
 	ID       string
 	AtMS     int64
@@ -110,18 +97,12 @@ type LatencySample struct {
 }
 
 // historyConflict is the clause that decides what a second write of an id
-// already in the table does.
+// already in the table does: historyStrict reports it as the caller's bug, and
+// historyMigrated leaves the row alone so a retried pass finds the rows it
+// already wrote.
 //
-// historyStrict is the live contract: a row here is written once and never
-// rewritten, so a second write of the same id is the caller's own bug and is
-// reported as one rather than swallowed. historyMigrated is the one-time
-// migration's: it writes the rows it derives from the retired documents, and a
-// pass that crashed between its row writes and its marker is retried, so the
-// retry has to find the rows already there rather than fail on them.
-//
-// The value is concatenated into the statement, so it is a constant of this file
-// and never a caller's argument -- a caller-chosen one would carry whatever the
-// caller chose into the query.
+// The value is concatenated into the statement, so it is a constant of this
+// file and never a caller's argument.
 type historyConflict string
 
 const (
@@ -129,9 +110,9 @@ const (
 	historyMigrated historyConflict = "INSERT OR IGNORE"
 )
 
-// InsertAvailabilityEvent writes one availability observation as its own row,
-// stamped under origin. The outbox trigger on the table records it. A second
-// write of the same id is refused.
+// InsertAvailabilityEvent writes one availability observation stamped under
+// origin. The outbox trigger on the table records it, and a second write of the
+// same id is refused.
 func (d *DB) InsertAvailabilityEvent(origin string, e AvailabilityEvent) error {
 	return d.Tx(func(tx *Tx) error { return tx.insertAvailabilityEvent(origin, e) })
 }
@@ -140,14 +121,11 @@ func (t *Tx) insertAvailabilityEvent(origin string, e AvailabilityEvent) error {
 	return t.insertAvailabilityEventConflict(origin, e, historyStrict)
 }
 
-// InsertMigratedAvailabilityEvent writes one availability observation as its own
-// row and tolerates the row already being there.
-//
-// This is the migration's path and not the live writers': a retried pass offers
-// the ids the crashed pass already wrote, and OR IGNORE is what turns that
-// collision into "leave the row alone" instead of a failed retry. An ignored
-// duplicate inserts no row, so the outbox trigger beside the table does not fire
-// for it and the retry records nothing a peer would then apply twice.
+// InsertMigratedAvailabilityEvent writes one availability observation and
+// tolerates the row already being there: a retried pass offers the ids the
+// crashed pass already wrote, and OR IGNORE turns that collision into "leave the
+// row alone" instead of a failed retry. An ignored duplicate inserts no row, so
+// the retry records nothing a peer would then apply twice.
 func (d *DB) InsertMigratedAvailabilityEvent(origin string, e AvailabilityEvent) error {
 	return d.Tx(func(tx *Tx) error {
 		return tx.insertAvailabilityEventConflict(origin, e, historyMigrated)
@@ -165,9 +143,8 @@ func (t *Tx) insertAvailabilityEventConflict(origin string, e AvailabilityEvent,
 	return nil
 }
 
-// InsertLatencySample writes one probe result as its own row, stamped under
-// origin. The outbox trigger on the table records it. A second write of the same
-// id is refused.
+// InsertLatencySample writes one probe result stamped under origin. The outbox
+// trigger on the table records it, and a second write of the same id is refused.
 func (d *DB) InsertLatencySample(origin string, s LatencySample) error {
 	return d.Tx(func(tx *Tx) error { return tx.insertLatencySample(origin, s) })
 }
@@ -201,15 +178,14 @@ type HistoryPruned struct {
 	Samples int64
 }
 
-// PruneHistory deletes every row of both history tables older than cutoffMS, for
-// every origin rather than this machine's own: a machine holds a peer's history
-// as soon as it imports it, and what it shows is a window, so a peer's row ages
-// out here on the same clock as this machine's.
+// PruneHistory deletes every row of both history tables older than cutoffMS,
+// for every origin rather than this machine's own: a machine holds a peer's
+// history as soon as it imports it, so a peer's row ages out here on the same
+// clock as this machine's.
 //
-// The delete is not transactional with anything else and does not record an
-// outbox entry, which is why it may run on a maintenance tick without a sync
-// behind it. Both statements run in one transaction so a machine is never left
-// with one table pruned and the other not.
+// The delete records no outbox entry, which is why it may run on a maintenance
+// tick without a sync behind it. Both statements run in one transaction so a
+// machine is never left with one table pruned and the other not.
 func (d *DB) PruneHistory(cutoffMS int64) (HistoryPruned, error) {
 	var out HistoryPruned
 	err := d.Tx(func(tx *Tx) error {
@@ -242,14 +218,11 @@ func (t *Tx) pruneHistoryTable(tbl string, cutoffMS int64) (int64, error) {
 // HistoryAt reads a history row's at_ms out of the values a body carried, and
 // whether the body named a time this package can read.
 //
-// Only a whole number is a time here, and only an int64, an int or an integral
-// float64 is one the exchange can carry. The column is an integer and the age
-// prune compares it as one, so a body naming anything else -- no column at all,
-// text, a boolean, a fraction -- is naming something the file could not have
-// stored in the first place. It is reported as unreadable rather than as a time
-// of zero, because a caller that cannot read the time must not judge the row:
-// it has no age, no window and no clock skew to compare against, and guessing
-// any of them writes a row that no prune can reach.
+// Only a whole int64, int or integral float64 is a time here: the column is an
+// integer and the age prune compares it as one. Anything else is reported as
+// unreadable rather than as a time of zero, because a caller that cannot read
+// the time must not judge the row, and guessing writes a row that no prune can
+// reach.
 func HistoryAt(tbl string, values map[string]any) (int64, bool) {
 	if !AppendOnly(tbl) {
 		return 0, false
@@ -270,10 +243,8 @@ func HistoryAt(tbl string, values map[string]any) (int64, bool) {
 }
 
 // wholeNumber reports whether f is a value the integer column can hold whole: a
-// real with no fraction, and inside the range an int64 covers. The range is the
-// half of the test that matters most -- a real beyond it is not an unusual
-// timestamp, it is a body choosing one, and converting it would wrap it to a
-// time this machine would then treat as long past.
+// real with no fraction, and inside the range an int64 covers. A real beyond it
+// would wrap to a time this machine treats as long past.
 func wholeNumber(f float64) bool {
 	if math.IsNaN(f) || math.IsInf(f, 0) || f != math.Trunc(f) {
 		return false
@@ -281,9 +252,8 @@ func wholeNumber(f float64) bool {
 	return f >= math.MinInt64 && f < math.MaxInt64
 }
 
-// HistoryAtMS is one row's at_ms as the shared walk read it, and whether the row
-// carried one. A walk page names the columns by their own names, so the value is
-// found the same way a reader would find it.
+// HistoryAtMS is one row's at_ms as the shared walk read it, and whether the
+// row carried one.
 func HistoryAtMS(row ExchangeRow) (int64, bool) {
 	for _, col := range row.Columns {
 		if col.Name != historyAtColumn {
