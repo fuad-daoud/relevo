@@ -28,16 +28,14 @@ func (s *Store) As(source, message string) *Store {
 	return &c
 }
 
-// WithClock returns a copy of s whose writes and revisions read the time from
-// now.
 func (s *Store) WithClock(now func() time.Time) *Store {
 	c := *s
 	c.now = now
 	return &c
 }
 
-// readDoc reads every stored section in Sections order; secrets are never part
-// of it.
+// readDoc reads every stored section in Sections order; secrets are never
+// part of it.
 func readDoc(t *db.Tx) (Doc, error) {
 	doc := Doc{}
 	for _, sec := range Sections {
@@ -72,9 +70,9 @@ func readSnapshot(t *db.Tx) (snapshot, error) {
 
 // hadUserConfig reports whether doc holds config beyond the theme seed. The
 // seed writes revisionlessly, so a machine whose only stored section is
-// `themes` is still a fresh one as far as the revisions go: its first
-// recording write takes no baseline to roll back to, exactly as an empty one
-// does. Any other section earns the baseline as always.
+// `themes` is still fresh: its first recording write takes no baseline to
+// roll back to, exactly as an empty one does. Any other section earns the
+// baseline as always.
 func hadUserConfig(doc Doc) bool {
 	if len(doc) == 0 {
 		return false
@@ -87,8 +85,9 @@ func hadUserConfig(doc Doc) bool {
 	return false
 }
 
-// record appends one revision for a write that changed something; as the last
-// statement of every write transaction, it commits with the change or not.
+// record appends one revision for a write that changed something; as the
+// last statement of every write transaction, it commits with the change or
+// not.
 func (s *Store) record(t *db.Tx, before snapshot, extra []Change) error {
 	after, err := readDoc(t)
 	if err != nil {
@@ -182,7 +181,7 @@ func (s *Store) RevisionDoc(rev int64) (Doc, error) {
 }
 
 // RollbackPlan returns the changes rolling back to rev would make, or
-// ErrNoChange when there are none, so the CLI can answer without a transaction.
+// ErrNoChange when there are none, so the CLI answers without a transaction.
 func (s *Store) RollbackPlan(rev int64) ([]Change, error) {
 	target, err := s.Revision(rev)
 	if err != nil {
@@ -203,10 +202,10 @@ func (s *Store) RollbackPlan(rev int64) ([]Change, error) {
 	return changes, nil
 }
 
-// Rollback makes the stored config equal to rev's snapshot as one new revision
-// with source "rollback" and message "rollback to #<rev>", plus s.message when
-// set. A snapshot that no longer validates writes nothing, and an
-// already-matching config returns ErrNoChange.
+// Rollback makes the stored config equal to rev's snapshot as one new
+// revision sourced "rollback" with message "rollback to #<rev>", plus
+// s.message when set. A snapshot that no longer validates writes nothing,
+// and an already-matching config returns ErrNoChange.
 func (s *Store) Rollback(rev int64) (db.RevisionRow, error) {
 	target, err := s.Revision(rev)
 	if err != nil {

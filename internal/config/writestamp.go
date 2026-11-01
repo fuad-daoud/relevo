@@ -9,8 +9,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
-// txKV lets the hybrid clock keep its position inside the write's own
-// transaction, so a stamp is spent only if the write commits.
+// txKV keeps the hybrid clock's position inside the write's own transaction,
+// so a stamp is spent only if the write commits.
 type txKV struct{ t *db.Tx }
 
 func (k txKV) KVGet(key string) ([]byte, bool, error) { return k.t.KVGet(key) }
@@ -19,8 +19,8 @@ func (k txKV) KVDelete(key string) error              { return k.t.KVDelete(key)
 
 // stampWrites records a stamp for every syncable item whose value differs
 // between two documents, in the transaction of the write. The stamp is per
-// item: a section-wide one would let an old edit of one item ride a later edit
-// of another. A write that is not a person's edit is not stamped.
+// item: a section-wide one would let an old edit of one item ride a later
+// edit of another. A write that is not a person's edit is not stamped.
 func (s *Store) stampWrites(t *db.Tx, before, after Doc) error {
 	if s.unstamped {
 		return nil
@@ -42,8 +42,8 @@ func (s *Store) stampWrites(t *db.Tx, before, after Doc) error {
 	return nil
 }
 
-// changedItems is the sorted doc keys whose item was added, changed or removed
-// between two documents.
+// changedItems is the sorted doc keys whose item was added, changed or
+// removed between two documents.
 func changedItems(before, after Doc) ([]string, error) {
 	old, err := itemsOf(before, true)
 	if err != nil {

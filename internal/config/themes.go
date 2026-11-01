@@ -9,16 +9,16 @@ import (
 )
 
 // The themes section: one board palette per name, keyed by the name itself.
-// The section is a per-item one, so two machines editing two different
-// palettes converge on one entry each instead of displacing each other's.
-// The palettes are seed data: the release writes cockpit and blueprint into
-// the section once per database (EnsureThemesSeed), after which every lookup
-// reads what is stored -- a palette a user unsets stays unset.
+// The section is per-item, so two machines editing two palettes converge on
+// one entry each instead of displacing each other's. The palettes are seed
+// data: the release writes cockpit and blueprint into the section once per
+// database (EnsureThemesSeed), after which every lookup reads what is stored
+// -- a palette a user unsets stays unset.
 
 // ParseThemes reads and checks the themes body: an object keyed by theme
 // name, each value one palette parsed and colour-checked through theme.Parse.
-// Only the names are validated here beyond that parse; each entry's own refusals
-// name the entry and the field they were found on.
+// Only names are validated here beyond that parse; each entry's own refusals
+// name the entry and field they were found on.
 func ParseThemes(body []byte) (map[string]theme.Theme, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil {
@@ -48,8 +48,8 @@ func ParseThemes(body []byte) (map[string]theme.Theme, error) {
 }
 
 // EncodeThemes renders the themes section body: one entry per palette with
-// its eleven colours, the map's keys sorted, so the same set always encodes
-// to the same bytes.
+// its eleven colours, keys sorted, so the same set always encodes to the
+// same bytes.
 func EncodeThemes(m map[string]theme.Theme) ([]byte, error) {
 	body, err := theme.Encode(m)
 	if err != nil {
@@ -59,7 +59,7 @@ func EncodeThemes(m map[string]theme.Theme) ([]byte, error) {
 }
 
 // loadThemes fills L.Themes from the stored body. An absent section is an
-// empty map, so a machine that never seeded a palette reads none.
+// empty map, so a machine that never seeded reads none.
 func loadThemes(doc Doc, L *Loaded) error {
 	body, ok := doc[Themes]
 	if !ok {

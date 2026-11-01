@@ -7,8 +7,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 )
 
-// EnsureCandidateNames derives and stores names for candidates written before
-// names existed; it is idempotent and only matters for legacy data.
+// EnsureCandidateNames derives and stores names for candidates lacking them;
+// it is idempotent.
 func (s *Store) EnsureCandidateNames() (bool, error) {
 	body, ok, err := s.Body(Candidates)
 	if err != nil || !ok {
@@ -29,8 +29,8 @@ func (s *Store) EnsureCandidateNames() (bool, error) {
 	return true, nil
 }
 
-// fillCandidateNames edits decoded objects, so every extra key and the
-// element order survive.
+// fillCandidateNames edits decoded objects, so every extra key and element
+// order survive.
 func fillCandidateNames(body []byte) (filled []byte, changed bool, err error) {
 	var rows []map[string]json.RawMessage
 	if err := json.Unmarshal(body, &rows); err != nil {

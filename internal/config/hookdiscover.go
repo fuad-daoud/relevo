@@ -10,14 +10,14 @@ import (
 // DiscoverHookFiles is the set of scripts the stored argv rows name, read off
 // this machine's disk. An executable no row names is never read: naming a
 // script in a hook is the person's consent to publish its bytes, and nothing
-// else under the config root is.
-// The second map it returns is the hash cache that describes how the read went.
+// else under the config root is. The second map returned is the hash cache
+// describing how the read went.
 //
-// The capture is cheap because it stats first. A script whose size,
-// modification time and executable bit are what the cache last recorded is
-// taken from the document rather than read again, so an unchanged hook costs one stat per file. Anything
-// the cache cannot vouch for is read once, and a file that is not a regular file
-// is left out rather than followed.
+// The capture stats first: a script whose size, modification time and
+// executable bit match the cache's last record is taken from the document
+// rather than read again, so an unchanged hook costs one stat per file.
+// Anything the cache cannot vouch for is read once, and a non-regular file is
+// left out rather than followed.
 func DiscoverHookFiles(root string, cache map[string]fileHash, known map[string]HookFile, events map[string][][]string) (map[string]HookFile, map[string]fileHash, error) {
 	out := map[string]HookFile{}
 	hashes := map[string]fileHash{}
@@ -35,7 +35,6 @@ func DiscoverHookFiles(root string, cache map[string]fileHash, known map[string]
 	return out, hashes, nil
 }
 
-// argvHookPaths is every root-relative script the stored argv rows name.
 func argvHookPaths(root string, events map[string][][]string) []string {
 	var out []string
 	for _, event := range sortedEvents(events) {
@@ -54,7 +53,7 @@ func argvHookPaths(root string, events map[string][][]string) []string {
 }
 
 // keepHookScript records one script and its cache entry, or nothing when the
-// path is absent, is not a regular file, or is over the per-file cap.
+// path is absent, non-regular, or over the per-file cap.
 func keepHookScript(root, rel string, cache map[string]fileHash, known map[string]HookFile, out map[string]HookFile, hashes map[string]fileHash) error {
 	file, entry, err := readHookScript(root, rel, cache, known)
 	if err != nil || file == nil {
@@ -66,14 +65,14 @@ func keepHookScript(root, rel string, cache map[string]fileHash, known map[strin
 }
 
 // readHookScript reads one script through the cache: a cached entry the file
-// still matches costs no read at all, and the document's copy supplies the
-// bytes. Anything else is read, capped and hashed.
+// still matches costs no read, the document's copy supplying the bytes.
+// Anything else is read, capped and hashed.
 //
 // A path that is gone records nothing rather than failing the walk. A person
-// who deletes a script a hook names has made an edit, and it is the capture's
-// job to carry it: refusing here would fail the export and the capture both,
-// over a deletion the document is supposed to travel. A genuine read failure is
-// still an error, because it says nothing about what the file holds.
+// deleting a script a hook names has made an edit, and the capture carries
+// it: refusing here would fail export and capture both, over a deletion the
+// document is supposed to travel. A genuine read failure stays an error,
+// because it says nothing about what the file holds.
 func readHookScript(root, rel string, cache map[string]fileHash, known map[string]HookFile) (*HookFile, fileHash, error) {
 	full := filepath.Join(root, filepath.FromSlash(rel))
 	info, err := os.Lstat(full)
@@ -104,7 +103,7 @@ func readHookScript(root, rel string, cache map[string]fileHash, known map[strin
 }
 
 // readHookFileAt reads one root-relative script, reporting nil when it is
-// absent or is not a regular file.
+// absent or non-regular.
 func readHookFileAt(root, rel string) (*HookFile, error) {
 	full := filepath.Join(root, filepath.FromSlash(rel))
 	info, err := os.Lstat(full)

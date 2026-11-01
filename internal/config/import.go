@@ -42,8 +42,8 @@ type pendingImport struct {
 
 // ImportFiles is the one-time migration and the way config is dropped in
 // (provisioning, tests). A present file is validated and stored with its raw
-// bytes, and removed only after the commit, so a crash leaves the files and
-// the next verb re-imports the same bytes idempotently.
+// bytes, removed only after the commit, so a crash leaves the files and the
+// next verb re-imports the same bytes idempotently.
 func (s *Store) ImportFiles(configDir string, now time.Time) (ImportResult, error) {
 	// Every revision this import writes is stamped with the time the caller
 	// gave, and labelled "import" unless the caller labelled it.
@@ -103,10 +103,9 @@ func (s *Store) ImportFiles(configDir string, now time.Time) (ImportResult, erro
 	if err != nil {
 		return ImportResult{}, err
 	}
-	// An import reads the config dir once; the scripts under it are the
-	// document's contents rather than only its argv rows, so the capture runs
-	// afterwards and stores what it found. A config dir with no hooks dir
-	// changes nothing and is not a capture at all.
+	// The capture runs afterwards and stores what it found: the scripts under
+	// the config dir are the document's contents, not only its argv rows. A
+	// config dir with no hooks dir changes nothing and captures nothing.
 	s.captureAfterHooksWrite(Hooks)
 	return res, nil
 }
@@ -168,11 +167,9 @@ func (s *Store) commitImport(p pendingImport, now time.Time) error {
 // commitSecrets stores the secret files the import carried, and returns the
 // changes to record alongside the sections.
 //
-// A secret file in the import is a person dropping a file into the config dir,
-// so it stamps and signals the way `relevo config secret set` does -- even
-// though every other write this import makes is unstamped. The blanket flag
-// covers the sections; the secret writes are named as what they are here, or an
-// imported client key would sit in the table forever and never reach a joiner.
+// A secret file in the import stamps and signals as `relevo config secret
+// set` does, though every other write here is unstamped: otherwise an
+// imported client key would sit unstamped and never reach a joiner.
 func (s *Store) commitSecrets(t *db.Tx, p pendingImport, now time.Time) ([]Change, error) {
 	var extra []Change
 	for _, secret := range []struct {
@@ -243,8 +240,8 @@ func (s *Store) afterImport(configDir string, p pendingImport, clientKeyPath, ty
 	return res, nil
 }
 
-// readClientKey validates the client key file; an absent file is ok with no
-// data.
+// readClientKey validates the client key file; an absent file is no data, not
+// an error.
 func readClientKey(path string) (data []byte, ok bool, err error) {
 	raw, rerr := os.ReadFile(path)
 	if errors.Is(rerr, os.ErrNotExist) {
@@ -259,8 +256,8 @@ func readClientKey(path string) (data []byte, ok bool, err error) {
 	return raw, true, nil
 }
 
-// readTypesafeKey rejects a present but blank key file: importing it would
-// store no key at all.
+// readTypesafeKey rejects a present but blank key file, which would store no
+// key at all.
 func readTypesafeKey(path string) (string, bool, error) {
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {

@@ -9,8 +9,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 )
 
-// Policy is the mastermind's candidate preferences and daemon tuning, loaded
-// from policy.json.
 type Policy struct {
 	// Order maps a role to its preferred candidate tokens, most preferred
 	// first; an absent role is unordered.
@@ -80,7 +78,6 @@ type AccountsPolicy struct {
 	Rotation string `json:"rotation,omitempty"`
 }
 
-// ServePolicy configures relevo serve.
 type ServePolicy struct {
 	// MaxBuilders caps headless builders running at once; nil is
 	// max(1, runtime.NumCPU()-1).
@@ -267,8 +264,8 @@ func (p Policy) SwitchLimit() int {
 	return *p.MaxSwitches
 }
 
-// ArtifactMaxBytes returns the artifact directory cap in bytes: the
-// configured artifact_max_mb, or DefaultArtifactMaxMB when it is unset or 0.
+// ArtifactMaxBytes returns the cap in bytes: the configured
+// artifact_max_mb, or DefaultArtifactMaxMB when unset or 0.
 func (p Policy) ArtifactMaxBytes() int64 {
 	mb := DefaultArtifactMaxMB
 	if p.ArtifactMaxMB != nil && *p.ArtifactMaxMB > 0 {
@@ -277,9 +274,9 @@ func (p Policy) ArtifactMaxBytes() int64 {
 	return int64(mb) * (1 << 20)
 }
 
-// DiskMinFreeBytes returns the preflight's minimum free space in bytes: the
-// configured disk_min_free_gb, or DefaultDiskMinFreeGB when unset. 0 turns
-// the preflight off, so it reads as 0 bytes.
+// DiskMinFreeBytes returns the preflight minimum in bytes: the configured
+// disk_min_free_gb, or DefaultDiskMinFreeGB when unset. 0 turns the preflight
+// off, so it reads as 0 bytes.
 func (p Policy) DiskMinFreeBytes() uint64 {
 	gb := DefaultDiskMinFreeGB
 	if p.DiskMinFreeGB != nil {
@@ -341,7 +338,7 @@ func (p Policy) MaxTierOrDefault() harness.Tier {
 	return t
 }
 
-// TierFor returns the configured tier for role, or ok false if absent.
+// TierFor returns the configured tier for role; ok is false when absent.
 func (p Policy) TierFor(role string) (harness.Tier, bool) {
 	if p.Tier == nil {
 		return "", false
@@ -479,7 +476,7 @@ func (p Policy) ScopeFor(served bool) *ScopePolicy {
 
 // OrderFor returns role's preferred candidate tokens, most preferred first,
 // or nil when absent. The result is a copy, so a caller cannot reorder the
-// loaded policy by accident.
+// loaded policy.
 func (p Policy) OrderFor(role string) []string {
 	return append([]string(nil), p.Order[role]...)
 }

@@ -12,10 +12,9 @@ import (
 // Put stores body as sec in one transaction; a refused body writes nothing. A
 // write the next Load would refuse is refused here.
 //
-// The machine fields are taken out of the body and stored as local overrides
-// before anything is stored, and what is validated is the merged document the
-// reader would see rather than the shared half alone: a body that omits an
-// account's config dir is valid, because the local row still supplies it.
+// Machine fields leave the body for local overrides before anything is
+// stored, and validation reads the merged document: a body omitting an
+// account's config dir is valid because the local row still supplies it.
 func (s *Store) Put(sec Section, body []byte) ([]string, error) {
 	if sec == Candidates {
 		filled, _, err := fillCandidateNames(body)
@@ -72,11 +71,11 @@ func (s *Store) Put(sec Section, body []byte) ([]string, error) {
 }
 
 // Delete removes sec's stored body, if any, in one transaction. The version
-// bumps even when sec was absent: it is a change counter, not a section count.
-// A removal the next Load would refuse is refused here.
+// still bumps when sec was absent: it is a change counter, not a section
+// count. A removal the next Load would refuse is refused here.
 //
-// The machine fields go out of the shared body with it and stay in the local
-// layer, so removing a section never takes this machine's directories with it.
+// Machine fields leave with the shared body and stay local, so removing a
+// section never takes this machine's directories with it.
 func (s *Store) Delete(sec Section) error {
 	if err := s.db.Tx(func(t *db.Tx) error {
 		before, err := readSnapshot(t)
@@ -103,9 +102,9 @@ func (s *Store) Delete(sec Section) error {
 	return nil
 }
 
-// validateNamedSections runs the per-section checks that need a config root,
-// which decodeDoc cannot do because it is handed a document and nothing else.
-// A section that is not hooks has no root-dependent rule, so it is skipped.
+// validateNamedSections runs the per-section checks needing a config root,
+// which decodeDoc cannot do with a document alone. A section without a
+// root-dependent rule is skipped.
 func (s *Store) validateNamedSections(doc Doc) error {
 	for _, sec := range Sections {
 		body, ok := doc[sec]
@@ -119,11 +118,11 @@ func (s *Store) validateNamedSections(doc Doc) error {
 	return nil
 }
 
-// PutDoc stores every section in doc in one transaction, validating every body
-// first; an unknown section or the first invalid body aborts with nothing
-// written. Sections not named in doc are untouched. A write the next Load
-// would refuse is refused here. The machine fields of every section named are
-// split out on the same terms Put splits them.
+// PutDoc stores every section in doc in one transaction, validating every
+// body first; an unknown section or the first invalid body aborts with
+// nothing written. Sections absent from doc are untouched. A write the next
+// Load would refuse is refused here. Machine fields of every named section
+// split out as Put splits them.
 func (s *Store) PutDoc(doc map[Section]json.RawMessage) ([]string, error) {
 	if err := checkDocSections(doc); err != nil {
 		return nil, invalidValueOf(err)
@@ -138,8 +137,8 @@ func (s *Store) PutDoc(doc map[Section]json.RawMessage) ([]string, error) {
 	}
 
 	// The hooks section is divided by path before anything is written, so an
-	// argv row naming a file outside this machine's config root lands in the
-	// local layer rather than in the shared body. Put divides it the same way.
+	// argv row naming a file outside this machine's config root lands local
+	// rather than shared, as Put divides it.
 	if body, ok := doc[Hooks]; ok {
 		normalized, err := s.normalizeSectionBody(Hooks, body)
 		if err != nil {
@@ -191,10 +190,10 @@ func (s *Store) PutDoc(doc map[Section]json.RawMessage) ([]string, error) {
 	return warnings, nil
 }
 
-// clearsFor adds the nulls a write needs to drop the machine fields it no
-// longer carries, judged against the merged stored body rather than the shared
-// one: the shared body is where those fields were taken out of, so it is where
-// they are already absent, and comparing against it would clear nothing.
+// clearsFor adds the nulls dropping machine fields the write no longer
+// carries, judged against the merged stored body rather than the shared one:
+// the shared body already lacks those fields, so comparing against it would
+// clear nothing.
 func (s *Store) clearsFor(t *db.Tx, sec Section, body json.RawMessage, patches map[string]json.RawMessage) (map[string]json.RawMessage, error) {
 	stored, ok, err := t.ConfigGet(string(sec))
 	if err != nil || !ok {
@@ -207,9 +206,9 @@ func (s *Store) clearsFor(t *db.Tx, sec Section, body json.RawMessage, patches m
 	return clearedFields(sec, merged, body, patches), nil
 }
 
-// stripMachineFields writes the overrides every section of doc implies and
-// returns the prospective shared document, which is before.doc with the machine
-// fields taken out of each section named.
+// stripMachineFields writes the overrides each section of doc implies and
+// returns the prospective shared document: before.doc with the machine fields
+// of each named section taken out.
 func (s *Store) stripMachineFields(t *db.Tx, before Doc, doc Doc, now time.Time) (Doc, error) {
 	prospective := copyDoc(before)
 	for _, sec := range Sections {
@@ -237,8 +236,8 @@ func (s *Store) stripMachineFields(t *db.Tx, before Doc, doc Doc, now time.Time)
 }
 
 // docWarnings returns the warnings of every section doc names, read off the
-// merged bodies rather than the shared halves, so a warning is produced for
-// the document a reader actually gets.
+// merged bodies rather than the shared halves: the warned document is the one
+// a reader gets.
 func docWarnings(doc, merged Doc) ([]string, error) {
 	var warnings []string
 	for _, sec := range Sections {

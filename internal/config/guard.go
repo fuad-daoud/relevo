@@ -8,28 +8,26 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
-// DroppedActorCandidates names every actor candidate reference that oldDoc
-// resolves and newDoc does not, as one "actor <a> names candidate <c>" line per
-// drop. An absent candidates section is the empty set, exactly what Load
-// decodes, so a write that removes the section reads as a drop of everything an
-// actor named. Actors come from newDoc, falling back to oldDoc when newDoc
-// carries no actors section: a candidates-only write must not be excused by a
-// write that also happens to drop the actors alongside.
+// DroppedActorCandidates names every actor candidate reference oldDoc
+// resolves and newDoc does not, as one "actor <a> names candidate <c>" line
+// per drop. An absent candidates section is the empty set Load decodes, so a
+// write removing the section reads as dropping everything an actor named.
+// Actors come from newDoc, falling back to oldDoc when newDoc carries no
+// actors section: a candidates-only write must not be excused by a write also
+// dropping the actors alongside.
 //
-// Both candidate names and harness/provider/model tokens go through
-// candidate.Set.Resolve, which is the same resolution Load performs, so the
-// guard agrees with the read path on what "resolves" means.
+// Candidate names and harness/provider/model tokens resolve through
+// candidate.Set.Resolve, the same resolution Load performs, so the guard
+// agrees with the read path on what "resolves" means.
 //
-// A reference that already failed to resolve in oldDoc is not a drop: it was
-// broken before this write, and refusing would make a machine that predates
-// the guard unable to repair its own config. The reverse direction -- adding
-// an actor that names a candidate nobody defines yet -- is allowed for the same
-// reason: an actor may be provisioned before its candidate.
+// A reference already broken in oldDoc is not a drop: it was broken before
+// this write, and refusing would leave a machine from before the guard unable
+// to repair itself. Adding an actor naming a candidate nobody defines yet is
+// allowed for the same reason: an actor may precede its candidate.
 //
-// Any parse error returns nil: the callers validate the document before they
-// guard it, and Put re-validates inside the transaction, so a body this
-// function cannot read is already refused upstream and reporting a drop from it
-// would only add noise.
+// A parse error returns nil: callers validate before guarding, and Put
+// re-validates inside the transaction, so an unreadable body is already
+// refused upstream and a drop from it would only add noise.
 func DroppedActorCandidates(oldDoc, newDoc Doc) []string {
 	oldSet := candidateSet(oldDoc)
 	newSet := candidateSet(newDoc)
@@ -68,9 +66,9 @@ func DroppedActorCandidates(oldDoc, newDoc Doc) []string {
 	return drops
 }
 
-// candidateSet parses doc's candidates section, treating an absent section as
-// the empty set. A parse error yields the empty set too: the caller has already
-// validated the document, and an unreadable body is refused there, not here.
+// candidateSet parses doc's candidates section, an absent section being the
+// empty set. A parse error yields the empty set too: the caller already
+// validated, and an unreadable body is refused there, not here.
 func candidateSet(doc Doc) *candidate.Set {
 	body, ok := doc[Candidates]
 	if !ok {
