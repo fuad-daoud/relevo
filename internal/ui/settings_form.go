@@ -131,9 +131,9 @@ func parseDuration(s string) (any, error) {
 	return int(d.Milliseconds()), nil
 }
 
-// parseCommand is gate.default's parser: "" deletes, else the trimmed
-// command.
-func parseCommand(s string) (any, error) {
+// parseOptionalText is a free-text field's parser: "" deletes, else the
+// trimmed text.
+func parseOptionalText(s string) (any, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return nil, nil
@@ -205,7 +205,7 @@ func newSettingsForm(env widget.Env, doc relevo.ConfigDoc, form, focusKey string
 
 	case "check":
 		title = "check"
-		cmdField := textSettingField("command", byKey("gate.default"), parseCommand)
+		cmdField := textSettingField("command", byKey("gate.default"), parseOptionalText)
 		cmdField.path = "gate.default"
 
 		toField := textSettingField("timeout", byKey("gate.timeout"), parseDuration)

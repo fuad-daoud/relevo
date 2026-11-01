@@ -357,18 +357,20 @@ func (v settingsView) Context(env widget.Env) (string, string) {
 	return left, ""
 }
 
-func (v settingsView) Body(env widget.Env, width, height int) string {
+// pagedBody windows lines to the height page at top. lines must already hold
+// the full body: callers build it only once the doc has loaded, so the
+// loading and error frames never touch the table.
+func pagedBody(loaded bool, err error, lines []string, top, width, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}
-	if !v.loaded && v.err != nil {
-		return strings.Join(widget.Centered(v.err.Error(), width, height), "\n")
+	if !loaded && err != nil {
+		return strings.Join(widget.Centered(err.Error(), width, height), "\n")
 	}
-	if !v.loaded {
+	if !loaded {
 		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
-	lines := v.bodyLines(width)
-	top := widget.Clamp(v.top, 0, max(0, len(lines)-height))
+	top = widget.Clamp(top, 0, max(0, len(lines)-height))
 	if top > len(lines) {
 		top = len(lines)
 	}
@@ -377,6 +379,14 @@ func (v settingsView) Body(env widget.Env, width, height int) string {
 		end = len(lines)
 	}
 	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
+}
+
+func (v settingsView) Body(env widget.Env, width, height int) string {
+	var lines []string
+	if v.loaded && width > 0 && height > 0 {
+		lines = v.bodyLines(width)
+	}
+	return pagedBody(v.loaded, v.err, lines, v.top, width, height)
 }
 
 func (v settingsView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {

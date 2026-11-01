@@ -197,25 +197,11 @@ func (v webhooksView) Context(env widget.Env) (string, string) {
 }
 
 func (v webhooksView) Body(env widget.Env, width, height int) string {
-	if width <= 0 || height <= 0 {
-		return ""
+	var lines []string
+	if v.loaded && width > 0 && height > 0 {
+		lines = v.bodyLines(width)
 	}
-	if !v.loaded && v.err != nil {
-		return strings.Join(widget.Centered(v.err.Error(), width, height), "\n")
-	}
-	if !v.loaded {
-		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
-	}
-	lines := v.bodyLines(width)
-	top := widget.Clamp(v.top, 0, max(0, len(lines)-height))
-	if top > len(lines) {
-		top = len(lines)
-	}
-	end := top + height
-	if end > len(lines) {
-		end = len(lines)
-	}
-	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
+	return pagedBody(v.loaded, v.err, lines, v.top, width, height)
 }
 
 func (v webhooksView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {

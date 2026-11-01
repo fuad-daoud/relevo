@@ -79,7 +79,7 @@ func newScopeFields(doc relevo.ConfigDoc, form string) ([]settingField, string, 
 		scopeText("memory_max", "memory_max", "default none · e.g. 8G", memoryMax, parseMemoryMax),
 		scopeText("cpu_quota", "cpu_quota", "default none · e.g. 200%", cpuQuota, parseCPUQuota),
 		scopeText("gate_cpu_quota", "gate_cpu_quota", "default: cpu_quota", gateCPUQuota, parseCPUQuota),
-		scopeText("allowed_cpus", "allowed_cpus", "default: no pinning · e.g. 0-3", allowedCPUs, parseScopeText),
+		scopeText("allowed_cpus", "allowed_cpus", "default: no pinning · e.g. 0-3", allowedCPUs, parseOptionalText),
 		scopeText("tasks_max", "tasks_max", "default none", tasksMax, parseIntMin(1, "a whole number, 1 or more")),
 	}
 
@@ -137,7 +137,7 @@ func newClassifyFields(doc relevo.ConfigDoc) ([]settingField, string, string) {
 
 	fields := []settingField{
 		providerField,
-		textField("model", "classify.model", modelOrig, "default jev-latest", parseCommand),
+		textField("model", "classify.model", modelOrig, "default jev-latest", parseOptionalText),
 		textField("threshold", "classify.injection_threshold", thresholdOrig, "default 0.7", parseInjectionThreshold),
 		textField("timeout", "classify.timeout_ms", timeoutOrig, "default 4s", parseDuration),
 	}
@@ -270,17 +270,6 @@ func parseCPUQuota(s string) (any, error) {
 	n, _ := strconv.Atoi(strings.TrimSuffix(s, "%"))
 	if n < 1 {
 		return nil, errors.New("a percentage like 200%")
-	}
-	return s, nil
-}
-
-// parseScopeText is allowed_cpus's parser: "" deletes, else the trimmed text
-// passes through unchecked -- policy.Parse's validateScope judges it when the
-// edit is dry-run.
-func parseScopeText(s string) (any, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil, nil
 	}
 	return s, nil
 }

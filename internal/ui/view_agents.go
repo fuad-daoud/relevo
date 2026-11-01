@@ -75,6 +75,19 @@ func (v agentsView) bodyLines(env widget.Env, width int) []string {
 
 func (v agentsView) rows() []agentRow { return agentRows(v.doc, v.files) }
 
+// followCursor scrolls top so the cursor's table row stays visible. The
+// cursor's line counts the blank line and the header row above the rows.
+func followCursor(top, cur, lineCount, avail int) int {
+	sel := 2 + cur
+	if sel < top {
+		top = sel
+	}
+	if sel >= top+avail {
+		top = sel - avail + 1
+	}
+	return widget.Clamp(top, 0, max(0, lineCount-avail))
+}
+
 func (v *agentsView) follow(env widget.Env) {
 	rows := v.rows()
 	if len(rows) == 0 {
@@ -86,15 +99,7 @@ func (v *agentsView) follow(env widget.Env) {
 		v.top = 0
 		return
 	}
-	lines := v.bodyLines(env, env.Width)
-	sel := 2 + v.cur // the blank line, the header row, then the rows
-	if sel < v.top {
-		v.top = sel
-	}
-	if sel >= v.top+avail {
-		v.top = sel - avail + 1
-	}
-	v.top = widget.Clamp(v.top, 0, max(0, len(lines)-avail))
+	v.top = followCursor(v.top, v.cur, len(v.bodyLines(env, env.Width)), avail)
 }
 
 func (v agentsView) Crumbs() []string { return []string{"agents"} }
