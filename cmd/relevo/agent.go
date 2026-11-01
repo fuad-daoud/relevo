@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/fuad-daoud/relevo/internal/account"
@@ -64,9 +65,9 @@ func agentFlagSet(fs *flag.FlagSet) *agentFlagValues {
 	v.dryRun = fs.Bool("dry-run", false, "dry run")
 	v.asJSON = fs.Bool("json", false, "print the document the install produced")
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), "usage: relevo config agents [--kind <agy|claude|opencode>] [--agent <name>] [--force] [--dry-run]")
-		fmt.Fprintln(fs.Output(), "Installs relevo's shipped agents and the custom agents in your config.")
-		fmt.Fprintln(fs.Output(), "For opencode it also installs the relevo OpenCode plugin (~/.config/opencode/plugins/relevo).")
+		_, _ = fmt.Fprintln(fs.Output(), "usage: relevo config agents [--kind <agy|claude|opencode>] [--agent <name>] [--force] [--dry-run]")
+		_, _ = fmt.Fprintln(fs.Output(), "Installs relevo's shipped agents and the custom agents in your config.")
+		_, _ = fmt.Fprintln(fs.Output(), "For opencode it also installs the relevo OpenCode plugin (~/.config/opencode/plugins/relevo).")
 	}
 	return v
 }
@@ -75,77 +76,136 @@ func cmdAgentInstall(args []string) error {
 	return outcomeError(cmdAgentInstallRun(args))
 }
 
-func cmdAgentInstallRun(args []string) error {
+// agentInstallInput is the validated input cmdAgentInstallRun acts on: the
+// parsed flags as install options, the env they install into, and the machine
+// config's custom agents with the load failure when it is only a warning.
+type agentInstallInput struct {
+	opts       harness.InstallOptions
+	agent      string
+	asJSON     bool
+	env        setup.SetupEnv
+	cfg        *config.Store
+	loaded     config.Loaded
+	sourceRole bool
+	cfgErr     error
+}
+
+// agentInstallInputOf parses and validates one `relevo config agents`
+// invocation: flags, then the env, then the machine config, which stays a
+// warning when unreadable so a bad config never stops the shipped install.
+func agentInstallInputOf(args []string) (agentInstallInput, error) {
+	var in agentInstallInput
 	fs := flag.NewFlagSet("relevo config agents", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	v := agentFlagSet(fs)
-	kind, agent, force, dryRun, asJSON := v.kind, v.agent, v.force, v.dryRun, v.asJSON
 	if err := parseFlags(fs, args); err != nil {
-		return err
+		return in, err
 	}
 
-	opts := harness.InstallOptions{
-		Kind:   *kind,
-		Role:   *agent,
-		Force:  *force,
-		DryRun: *dryRun,
+	in.opts = harness.InstallOptions{
+		Kind:   *v.kind,
+		Role:   *v.agent,
+		Force:  *v.force,
+		DryRun: *v.dryRun,
 		// The OpenCode plugin is opt-in: this verb is the one place that
 		// writes it when it is absent.
 		Files: true,
 	}
+	in.agent = *v.agent
+	in.asJSON = *v.asJSON
 
 	env, err := agentInstallEnv()
 	if err != nil {
-		return err
+		return in, err
 	}
+	in.env = env
 
-	// The custom agents live in the machine config, which may be unreadable;
-	// that must not stop the shipped install, so a config failure is only a
-	// warning on stderr and nothing more.
 	cfg, cfgErr := relevo.MachineConfig()
-	var loaded config.Loaded
-	sourceRole := false
 	if cfgErr == nil {
-		loaded, cfgErr = cfg.Load()
-		if cfgErr == nil && *agent != "" {
-			sourceRole = relevo.IsSourceAgent(loaded.Agents, *agent)
+		in.loaded, cfgErr = cfg.Load()
+		if cfgErr == nil && in.agent != "" {
+			in.sourceRole = relevo.IsSourceAgent(in.loaded.Agents, in.agent)
 		}
 	}
-	if cfgErr != nil {
-		fmt.Fprintf(os.Stderr, "relevo: custom agents not installed: %v\n", cfgErr)
+	in.cfg = cfg
+	in.cfgErr = cfgErr
+	return in, nil
+}
+
+// reportAgentInstall prints one line per install result and the document when
+// asked. A failed write fails the command like any other output error.
+func reportAgentInstall(w io.Writer, results []harness.InstallResult, asJSON bool) error {
+	if len(results) == 0 {
+		if _, err := fmt.Fprintln(w, "no harness binaries on PATH (agy, claude, opencode); nothing to install"); err != nil {
+			return fmt.Errorf("write install report: %w", err)
+		}
+		if asJSON {
+			return printDoc(configAgentsDocOf(nil))
+		}
+		return nil
+	}
+
+	failed := false
+	for _, r := range results {
+		if _, err := fmt.Fprintln(w, r.Line()); err != nil {
+			return fmt.Errorf("write install report: %w", err)
+		}
+		if r.Outcome == harness.OutcomeError {
+			failed = true
+		}
+	}
+	if failed {
+		return fail(codeInternal, "one or more agent definitions failed to install")
+	}
+	if asJSON {
+		return printDoc(configAgentsDocOf(results))
+	}
+	return nil
+}
+
+func cmdAgentInstallRun(args []string) error {
+	in, err := agentInstallInputOf(args)
+	if err != nil {
+		return err
+	}
+	opts := in.opts
+
+	// A config failure is only a warning on stderr and nothing more.
+	if in.cfgErr != nil {
+		fmt.Fprintf(os.Stderr, "relevo: custom agents not installed: %v\n", in.cfgErr)
 	}
 
 	var results []harness.InstallResult
-	if sourceRole {
+	if in.sourceRole {
 		// A source agent goes by the custom path alone: harness.Install refuses
 		// a name it does not ship.
-		custom, cerr := relevo.InstallCustomAgents(cfg, env, opts)
+		custom, cerr := relevo.InstallCustomAgents(in.cfg, in.env, opts)
 		if cerr != nil {
 			fmt.Fprintf(os.Stderr, "relevo: custom agents not installed: %v\n", cerr)
 		}
 		results = append(results, custom...)
 	} else {
-		shipped, serr := harness.Install(env, opts)
+		shipped, serr := harness.Install(in.env, opts)
 		if serr != nil {
 			return fail(codeUsage, "%v", serr)
 		}
 		results = append(results, shipped...)
-		if cfgErr == nil && *agent == "" {
+		if in.cfgErr == nil && in.agent == "" {
 			// An --agent names exactly the one agent to install, so the custom
 			// walk runs only with no agent.
 			customOpts := opts
 			customOpts.Role = ""
-			custom, cerr := relevo.InstallCustomAgents(cfg, env, customOpts)
+			custom, cerr := relevo.InstallCustomAgents(in.cfg, in.env, customOpts)
 			if cerr != nil {
 				fmt.Fprintf(os.Stderr, "relevo: custom agents not installed: %v\n", cerr)
 			}
 			results = append(results, custom...)
 		}
 	}
-	if cfgErr == nil {
+	if in.cfgErr == nil {
 		// Every configured claude and codex account reads its own home, so the
 		// definitions land there too; a failure never fails the default install.
-		acct, aerr := installAccountHomes(env, loaded.Accounts, opts)
+		acct, aerr := installAccountHomes(in.env, in.loaded.Accounts, opts)
 		if aerr != nil {
 			fmt.Fprintf(os.Stderr, "relevo: account homes not installed: %v\n", aerr)
 		}
@@ -154,28 +214,5 @@ func cmdAgentInstallRun(args []string) error {
 
 	// Human lines move to stderr under --json, where stdout carries the document
 	// alone.
-	w := noticeWriter(*asJSON)
-
-	if len(results) == 0 {
-		fmt.Fprintln(w, "no harness binaries on PATH (agy, claude, opencode); nothing to install")
-		if *asJSON {
-			return printDoc(configAgentsDocOf(nil))
-		}
-		return nil
-	}
-
-	failed := false
-	for _, r := range results {
-		fmt.Fprintln(w, r.Line())
-		if r.Outcome == harness.OutcomeError {
-			failed = true
-		}
-	}
-	if failed {
-		return fail(codeInternal, "one or more agent definitions failed to install")
-	}
-	if *asJSON {
-		return printDoc(configAgentsDocOf(results))
-	}
-	return nil
+	return reportAgentInstall(noticeWriter(in.asJSON), results, in.asJSON)
 }

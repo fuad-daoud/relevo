@@ -70,7 +70,8 @@ func TestSyncStatusReportsOff(t *testing.T) {
 	// The document is the whole input: the same one renders the same line on
 	// every call. And it says off in the document itself, not only in the line,
 	// so an agent reading --json is told the same thing a human is.
-	if dbSyncStatusLine(off) != dbSyncStatusLine(off) {
+	first, second := dbSyncStatusLine(off), dbSyncStatusLine(off)
+	if first != second {
 		t.Error("the off line is not a function of the document")
 	}
 	body, err := json.Marshal(off)

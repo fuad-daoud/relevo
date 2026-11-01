@@ -109,6 +109,62 @@ func statusFlagSet(fs *flag.FlagSet) *statusFlagValues {
 	return v
 }
 
+// statusChainTarget resolves a name that is a chain or a member of one to the
+// chain, so the waiting notice's hint stays true.
+func statusChainTarget(rt relevo.Runtime, target string) (string, bool) {
+	isChain := target != "" && statusChain(rt, target)
+	if target != "" && !isChain {
+		if c, memberOf := chain.MemberChain(rt.Store.ChainByMember, target); memberOf {
+			isChain = true
+			target = c.Name
+		}
+	}
+	return target, isChain
+}
+
+// statusReportOf builds the rows for the resolved scope: the chain with its
+// members, or the scoped binding rows.
+func statusReportOf(ctx context.Context, rt relevo.Runtime, sc relevo.Scope, isChain bool, target string) (view.Report, error) {
+	if isChain {
+		rep, err := relevo.ChainStatus(ctx, rt, target)
+		if err != nil {
+			return view.Report{}, fail(codeInternal, "%v", err)
+		}
+		return rep, nil
+	}
+	rep, err := relevo.ScopedStatus(ctx, rt, sc)
+	if err != nil {
+		return view.Report{}, fail(codeInternal, "%v", err)
+	}
+	return rep, nil
+}
+
+// printStatusNotices prints the lines above the rows: a newer release, a
+// restart that would kill a foreign process, the daemon's version, and the
+// Turso and export meters. A read error prints nothing, since a status must
+// never fail on a notice.
+func printStatusNotices(rt relevo.Runtime) {
+	env := doctor.NewEnv(rt.Store, releaseInputs())
+	running, latest, ok, kind := env.ReleaseState()
+	if notice := statusNotice(running, latest, ok, kind); notice != "" {
+		fmt.Println(notice)
+	}
+	if notice := restartNotice(restartCheck(rt)); notice != "" {
+		fmt.Println(notice)
+	}
+	if daemonRunning, derr := rt.Store.DaemonRunning(); derr == nil {
+		if info, iok, ierr := rt.Store.ReadDaemonInfo(); ierr == nil {
+			if notice := daemonNotice(buildVersion(), info, iok, daemonRunning); notice != "" {
+				fmt.Println(notice)
+			}
+		}
+	}
+	q, qok, idle, iok := syncMeter(rt.Store, time.Now())
+	if notice := syncMeterNotice(q, qok, idle, iok); notice != "" {
+		fmt.Println(notice)
+	}
+}
+
 func cmdStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	v := statusFlagSet(fs)
@@ -153,31 +209,14 @@ func cmdStatus(args []string) error {
 		}
 	}
 
-	// A name that resolves to a chain is the chain: `status <chain>` lists the chain
-	// row with its members under it, and a name that is one of any chain's members
-	// is the chain too, so the waiting notice's hint stays true. The lookups run
-	// before filterReport, so neither comes back as a missing binding.
-	isChain := target != "" && statusChain(rt, target)
-	if target != "" && !isChain {
-		if c, memberOf := chain.MemberChain(rt.Store.ChainByMember, target); memberOf {
-			isChain = true
-			target = c.Name
-		}
-	}
+	target, isChain := statusChainTarget(rt, target)
 	sc, _, err := statusScopeOrNone(*v.mastermind, *v.allMasterMinds, *all, target != "", rt)
 	if err != nil {
 		return err
 	}
-	var rep view.Report
-	if isChain {
-		rep, err = relevo.ChainStatus(context.Background(), rt, target)
-	} else {
-		// sc is already resolved, so the rows are built for this scope alone;
-		// ScopeReport below still runs as the post-check.
-		rep, err = relevo.ScopedStatus(context.Background(), rt, sc)
-	}
+	rep, err := statusReportOf(context.Background(), rt, sc, isChain, target)
 	if err != nil {
-		return fail(codeInternal, "%v", err)
+		return err
 	}
 
 	// A chain report already holds exactly the chain and its members, so it skips
@@ -200,37 +239,7 @@ func cmdStatus(args []string) error {
 		return enc.Encode(rep)
 	}
 
-	// One line above the rows, only when the daemon's cached check has seen a newer
-	// release. Read through the doctor's own Env so `status` and `doctor` never
-	// disagree. JSON output above stays notice-free.
-	env := doctor.NewEnv(rt.Store, releaseInputs())
-	running, latest, ok, kind := env.ReleaseState()
-	if notice := statusNotice(running, latest, ok, kind); notice != "" {
-		fmt.Println(notice)
-	}
-	// One line above the rows only when a daemon restart right now would kill a
-	// process running outside its own scope. The same computation doctor's restart
-	// row makes. JSON output above stays notice-free.
-	if notice := restartNotice(restartCheck(rt)); notice != "" {
-		fmt.Println(notice)
-	}
-
-	// The daemon's own version state, read from its record rather than probed: a
-	// read error prints nothing, since a status must never fail on it.
-	if daemonRunning, derr := rt.Store.DaemonRunning(); derr == nil {
-		if info, iok, ierr := rt.Store.ReadDaemonInfo(); ierr == nil {
-			if notice := daemonNotice(buildVersion(), info, iok, daemonRunning); notice != "" {
-				fmt.Println(notice)
-			}
-		}
-	}
-	// One line above the rows only when the account's month of Turso traffic or the
-	// last hour's idle exports need a human, read from the local file under the
-	// same rule: a read error prints nothing. JSON output above stays notice-free.
-	q, qok, idle, iok := syncMeter(rt.Store, time.Now())
-	if notice := syncMeterNotice(q, qok, idle, iok); notice != "" {
-		fmt.Println(notice)
-	}
+	printStatusNotices(rt)
 
 	fmt.Print(view.RenderStatus(rep))
 	return nil

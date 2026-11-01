@@ -48,14 +48,14 @@ func TestBoardPromoteIsAPeekVerb(t *testing.T) {
 func TestBoardPromoteRefusesAScenePath(t *testing.T) {
 	t.Chdir(t.TempDir())
 	err := cmdBoardPromote([]string{"docs/boards/api/board.html"})
-	requireCLIError(t, err, codeUsage, "relevo help")
+	_ = requireCLIError(t, err, codeUsage, "relevo help")
 }
 
 // TestBoardPromoteRefusesOutsideARepository: promoting lands in the repo, so
 // outside one there is nowhere to put it.
 func TestBoardPromoteRefusesOutsideARepository(t *testing.T) {
 	t.Chdir(t.TempDir()) // no git repository here
-	requireCLIError(t, cmdBoardPromote([]string{"--mastermind", "alpha"}), codeUsage, "")
+	_ = requireCLIError(t, cmdBoardPromote([]string{"--mastermind", "alpha"}), codeUsage, "")
 }
 
 // seedDispatchRecords creates <stateHome>/relevo/relevo.db with recs, then

@@ -255,8 +255,8 @@ func editWorkflowLoop(rt relevo.Runtime, name string, saved config.StoredWorkflo
 		return err
 	}
 	tmpPath := tmp.Name()
-	tmp.Close()
-	defer os.Remove(tmpPath)
+	_ = tmp.Close()
+	defer func() { _ = os.Remove(tmpPath) }()
 
 	for {
 		if err := os.WriteFile(tmpPath, prev, 0o600); err != nil {

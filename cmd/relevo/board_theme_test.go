@@ -127,7 +127,7 @@ func TestConfigGetThemesPrintsIt(t *testing.T) {
 	_, _, err = captureOutput(t, func() error {
 		return run([]string{"config", "get", "themes.ghost"})
 	})
-	requireCLIError(t, err, codeConfigPathNotSet, "")
+	_ = requireCLIError(t, err, codeConfigPathNotSet, "")
 
 	if _, stderr, err := captureOutput(t, func() error {
 		return run([]string{"config", "get", "themes.cockpit", "--json"})

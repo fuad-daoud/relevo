@@ -44,6 +44,36 @@ func unbindFlagSet(fs *flag.FlagSet) *unbindFlagValues {
 	return v
 }
 
+// checkUnbindFlags refuses the flag combinations no unbind path takes, before
+// any store or network access.
+func checkUnbindFlags(v *unbindFlagValues, nArgs int) error {
+	if *v.sweep {
+		if *v.done || *v.delete || *v.archive || *v.pick || *v.name != "" || nArgs > 0 || *v.mastermindRef != "" || *v.allMasterMinds || *v.force {
+			return fail(codeRefused, "--sweep takes no binding and no other flag except --dry-run")
+		}
+		return nil
+	}
+	if (*v.mastermindRef != "" || *v.allMasterMinds) && !*v.done {
+		return fail(codeRefused, "--mastermind and --all-masterminds go with --done")
+	}
+	if *v.dryRun && !*v.done {
+		return fail(codeRefused, "--dry-run goes with --done or --sweep")
+	}
+	if *v.delete && !*v.done {
+		return fail(codeRefused, "--delete goes with --done")
+	}
+	if *v.done && *v.archive {
+		return fail(codeRefused, "--archive goes with a named binding or --pick, not --done")
+	}
+	if *v.done && (*v.name != "" || nArgs > 0 || *v.pick) {
+		return fail(codeRefused, "--done clears DONE bindings; do not also name one or pass --pick")
+	}
+	if *v.pick && *v.force {
+		return fail(codeRefused, "--force goes with a named binding or --done, not --pick")
+	}
+	return nil
+}
+
 func cmdUnbind(args []string) error {
 	fs := flag.NewFlagSet("unbind", flag.ContinueOnError)
 	v := unbindFlagSet(fs)
@@ -55,43 +85,20 @@ func cmdUnbind(args []string) error {
 		return err
 	}
 
+	if err := checkUnbindFlags(v, len(fs.Args())); err != nil {
+		return err
+	}
+
 	if *sweep {
-		if *done || *delete || *archive || *pickFlag || *name != "" || len(fs.Args()) > 0 || *mastermindRef != "" || *allMasterMinds || *force {
-			return fail(codeRefused, "--sweep takes no binding and no other flag except --dry-run")
-		}
 		return runSweep(*dryRun, *asJSON)
-	}
-
-	if (*mastermindRef != "" || *allMasterMinds) && !*done {
-		return fail(codeRefused, "--mastermind and --all-masterminds go with --done")
-	}
-
-	// The plain and --pick paths honour neither --dry-run nor --delete, and
-	// --done archives by default, so --archive contradicts it. Refuse here,
-	// before newRuntime and any store or network access: each flag is scoped
-	// to a path this command does not take.
-	if *dryRun && !*done {
-		return fail(codeRefused, "--dry-run goes with --done or --sweep")
-	}
-	if *delete && !*done {
-		return fail(codeRefused, "--delete goes with --done")
-	}
-	if *done && *archive {
-		return fail(codeRefused, "--archive goes with a named binding or --pick, not --done")
 	}
 
 	// --done is gc, not unbind: naming one or picking one contradicts it.
 	if *done {
-		if *name != "" || len(fs.Args()) > 0 || *pickFlag {
-			return fail(codeRefused, "--done clears DONE bindings; do not also name one or pass --pick")
-		}
 		return runGC(*delete, *dryRun, *force, *mastermindRef, *allMasterMinds, *asJSON)
 	}
 
 	if *pickFlag {
-		if *force {
-			return fail(codeRefused, "--force goes with a named binding or --done, not --pick")
-		}
 		if err := pickNamesNothing(*name, fs.Args()); err != nil {
 			return err
 		}

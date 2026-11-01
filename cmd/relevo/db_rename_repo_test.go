@@ -16,7 +16,7 @@ func TestDBRenameRepoUsage(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, _, err := captureOutput(t, func() error { return run(args) })
-			requireCLIError(t, err, codeUsage, "")
+			_ = requireCLIError(t, err, codeUsage, "")
 		})
 	}
 }

@@ -162,6 +162,8 @@ func report(w io.Writer, err error, jsonMode bool) int {
 
 	var ce *cliError
 	if errors.As(err, &ce) {
+		// The envelope below is the last write before os.Exit, so a failed
+		// one has nowhere to return to; the bytes are best-effort.
 		if jsonMode {
 			_ = json.NewEncoder(w).Encode(errorEnvelope{Error: errorDocument{
 				Code:    ce.code,
@@ -169,9 +171,9 @@ func report(w io.Writer, err error, jsonMode bool) int {
 				Next:    ce.next,
 			}})
 		} else {
-			fmt.Fprintf(w, "relevo: %s: %s\n", ce.code, ce.message)
+			_, _ = fmt.Fprintf(w, "relevo: %s: %s\n", ce.code, ce.message)
 			if ce.next != "" {
-				fmt.Fprintf(w, "  next: %s\n", ce.next)
+				_, _ = fmt.Fprintf(w, "  next: %s\n", ce.next)
 			}
 		}
 		return catalogExit(ce.code)
@@ -187,7 +189,7 @@ func report(w io.Writer, err error, jsonMode bool) int {
 		return catalog[codeUsage].exit
 	}
 
-	fmt.Fprintf(w, "relevo: %v\n", err)
+	_, _ = fmt.Fprintf(w, "relevo: %v\n", err)
 	return 1
 }
 
@@ -203,7 +205,10 @@ func jsonRequested(args []string) bool {
 	return false
 }
 
-func run(args []string) error {
+// prepareRun applies run's pre-dispatch handling: the bare-invocation
+// default, the agy capture, the sandbox banner and the active verb. It
+// returns the args the dispatch table runs.
+func prepareRun(args []string) ([]string, error) {
 	if len(args) == 0 {
 		// A bare `relevo` on a terminal is `relevo ui`; it then falls through
 		// every guard below exactly as `ui` does.
@@ -211,7 +216,7 @@ func run(args []string) error {
 			args = uiArgs
 		} else {
 			fmt.Fprint(os.Stderr, usage)
-			return errUsagePrinted
+			return nil, errUsagePrinted
 		}
 	}
 
@@ -235,6 +240,14 @@ func run(args []string) error {
 		// A --json caller reads stderr as the error document alone.
 		activeVerb = ""
 	}
+	return args, nil
+}
+
+func run(args []string) error {
+	var err error
+	if args, err = prepareRun(args); err != nil {
+		return err
+	}
 
 	switch args[0] {
 	case "help", "-h", "--help":
@@ -251,9 +264,6 @@ func run(args []string) error {
 		return cmdTakeover(args[1:])
 	case "send":
 		return cmdSend(args[1:])
-	case "ask":
-		return failNext(codeUsage, "relevo bind --actor reviewer",
-			"relevo ask is gone: bind a reader actor (relevo bind --actor reviewer) and send it a plan")
 	case "status":
 		return cmdStatus(args[1:])
 	case "history":
@@ -301,14 +311,22 @@ func run(args []string) error {
 	case "sync-worker":
 		return cmdSyncWorker(args[1:])
 	default:
-		// The verbs folded into `relevo config`, and the verbs merged
-		// into bind/show/unbind/status, name their replacement rather than the
-		// generic unknown-subcommand error.
-		if replacement, ok := removedVerbs[args[0]]; ok {
-			return failNext(codeUsage, replacement, "%q was removed; use %s", args[0], replacement)
-		}
-		return fail(codeUsage, "unknown subcommand %q; run \"relevo help\" for the command list", args[0])
+		return runRemovedOrUnknown(args[0])
 	}
+}
+
+// runRemovedOrUnknown reports the verbs that were folded, merged or taken
+// away, and the unknown subcommand. Each one names its replacement rather
+// than the generic unknown-subcommand error.
+func runRemovedOrUnknown(arg string) error {
+	if arg == "ask" {
+		return failNext(codeUsage, "relevo bind --actor reviewer",
+			"relevo ask is gone: bind a reader actor (relevo bind --actor reviewer) and send it a plan")
+	}
+	if replacement, ok := removedVerbs[arg]; ok {
+		return failNext(codeUsage, replacement, "%q was removed; use %s", arg, replacement)
+	}
+	return fail(codeUsage, "unknown subcommand %q; run \"relevo help\" for the command list", arg)
 }
 
 // removedVerbs maps each entry below to its replacement: the seven folded
@@ -385,7 +403,7 @@ func cmdUI(args []string) error {
 		notice = fmt.Sprintf("no database: %v", dbErr)
 	} else {
 		rt.DB = d
-		defer d.Close()
+		defer func() { _ = d.Close() }()
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
