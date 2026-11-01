@@ -167,3 +167,12 @@ func swapFreshTemplate(t *testing.T, path string) {
 	SetFreshTemplate(path)
 	t.Cleanup(func() { SetFreshTemplate(prev) })
 }
+
+// TestPackageSeedsFreshFilesFromATemplate pins TestMain's install: without it
+// every fresh Open in this package runs every migration again, and the suite
+// slows until load pushes it past the test timeout.
+func TestPackageSeedsFreshFilesFromATemplate(t *testing.T) {
+	if freshTemplate == "" {
+		t.Fatal("no template is installed: TestMain must seed fresh files from one")
+	}
+}
