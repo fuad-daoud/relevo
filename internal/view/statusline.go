@@ -25,9 +25,8 @@ var (
 	ansiReset    = "\x1b[0m"
 )
 
-// AgeText humanises a duration into coarse units: truncating; under a minute
-// Ns; under an hour Nm; otherwise Nh Mm with M the whole minutes past the
-// hour, always present (e.g. 1h 0m). Negative renders 0s.
+// AgeText humanises a duration into coarse units (e.g. 1h 0m, with the minutes
+// always present). Negative renders 0s.
 func AgeText(d time.Duration) string {
 	if d <= 0 {
 		return "0s"
@@ -45,11 +44,9 @@ func AgeText(d time.Duration) string {
 
 // RenderStatusLine formats a Report into one row per live binding
 // for Claude Code's statusLine setting. It renders the same row rule the
-// OpenCode sidebar shows: the shown round (report_round when > 0, else round)
-// and the row's status and tone come from StatusLineRows. The middle names the
-// actor; the status column is padded to the widest status and the clock is
-// right-aligned last, so neither moves when another row's status or clock
-// changes length.
+// OpenCode sidebar shows; the status column is padded to the widest status
+// and the clock is right-aligned last, so neither moves when another row's
+// text changes length.
 func RenderStatusLine(r Report, now time.Time, columns int) string {
 	if len(r.Bindings) == 0 {
 		return ""
@@ -146,9 +143,9 @@ func statusLineRowText(row StatusLineRow, nameW, statusW, clockW, columns int, d
 	return dot + " " + pad(row.Name, nameW) + "  " + pad(truncate(mid, midW), midW) + " " + status + "  " + padLeft(row.Clock, clockW) + "\n"
 }
 
-// renderedStatusLineRow lays out one StatusLineRow with its SGR codes: the dot
-// keeps its dim or needs colour, and the tone colours only the visible status
-// text, so the padding never counts the colour and the column never widens.
+// renderedStatusLineRow lays out one StatusLineRow with its SGR codes. The
+// tone colours only the visible status text, so the padding never counts the
+// colour and the column never widens.
 func renderedStatusLineRow(row StatusLineRow, nameW, statusW, clockW, columns int) string {
 	dotColour := ansiDim
 	if row.NeedsYou {
@@ -230,13 +227,9 @@ func phase(b BindingStatus) string {
 
 // ActivityWord is the runner's own activity word a row may show while its round
 // is in flight, or "" when the runner's status carries no word a row may claim.
-// A working runner reads "working", or "quiet X" once the progress sampler has
-// gone silent (QuietFor is set). The definite words -- "stalled X", "exploring
-// X", "gating X", "exited N", the bare "exited", "running", "queued (...)" and
-// the bare "queued" -- pass through verbatim. Every other word returns "": a
-// runner that is idle, unknown or "", and words a row must not claim as its own
-// activity (unreachable, a credential word, cert, closed, gone). The caller
-// keeps its phase when this is empty.
+// The definite words pass through verbatim; every other word -- idle, unknown,
+// "", and words a row must not claim as its own activity -- returns "", and
+// the caller keeps its phase when this is empty.
 func ActivityWord(b BindingStatus) string {
 	switch s := b.BuilderStatus; {
 	case s == "working":
@@ -340,9 +333,8 @@ func roundTokens(b BindingStatus) string {
 	return ""
 }
 
-// harnessSegment is the harness segment of a candidate token: the part
-// before its first "/" (agy, claude, opencode). A token with no "/" is
-// returned whole.
+// harnessSegment is the part of a candidate token before its first "/"; a
+// token with no "/" is returned whole.
 func harnessSegment(token string) string {
 	if i := strings.IndexByte(token, '/'); i >= 0 {
 		return token[:i]
@@ -369,8 +361,8 @@ func pad(s string, w int) string {
 	return s + strings.Repeat(" ", w-n)
 }
 
-// padLeft pads s on the left to w runes, so the clock column is right-aligned
-// and its last rune sits at the same cell on every row.
+// padLeft pads s on the left to w runes, so the clock column stays
+// right-aligned.
 func padLeft(s string, w int) string {
 	n := utf8.RuneCountInString(s)
 	if n >= w {
@@ -445,15 +437,14 @@ type StatusLineRow struct {
 	// Actor is who runs the binding: b.Role when it is set, else "builder",
 	// because a builder binding stores an empty role (normRole).
 	Actor string `json:"actor"`
-	// Shape is the actor's shape, carried through from the status row:
-	// store.ShapeReader for a reader, empty for a writer.
+	// Shape is carried through from the status row: store.ShapeReader for a
+	// reader, empty for a writer.
 	Shape string `json:"shape,omitempty"`
 	// Status is the row's one status text (rowStatus), so no surface derives
 	// it again; Tone is the colour it takes.
 	Status string `json:"status"`
 	Tone   string `json:"tone"`
-	// Reason explains the status in the middle segment; empty unless there is
-	// something to explain.
+	// Reason explains the status in the middle segment.
 	Reason string `json:"reason"`
 	// Chain is the whole middle segment for the row that stands in for a
 	// chain: "chain x · plan 2/4 · reviewing · 1 correction". Empty on every
@@ -464,7 +455,7 @@ type StatusLineRow struct {
 	// default width. Only the --line --json path fills it; it is the OpenCode
 	// sidebar's row, so no consumer composes one.
 	Text string `json:"text,omitempty"`
-	// Activity is ActivityWord verbatim, age included; see statusline_band.go.
+	// Activity is ActivityWord verbatim, age included.
 	Activity string `json:"activity,omitempty"`
 	// ChainProgress is set only on a chain's stand-in row.
 	ChainProgress *ChainProgress `json:"chain_progress,omitempty"`

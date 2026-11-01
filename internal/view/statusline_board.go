@@ -11,8 +11,8 @@ type StatusLineBoard struct {
 	URL   string `json:"url"`
 }
 
-// RenderBoardLine is the statusline's board line: "board <mastermind> · <url>",
-// dim, directly after the MasterMind line, truncated to the statusline width.
+// RenderBoardLine is the statusline's board line, dim, directly after the
+// MasterMind line, truncated to the statusline width.
 // The owner names the MasterMind whose board it is; when it is unknown the line
 // falls back to the scene name. A nil block renders nothing.
 func RenderBoardLine(b *StatusLineBoard, mastermind string, columns int) string {

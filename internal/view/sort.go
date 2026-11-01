@@ -5,17 +5,13 @@ import (
 	"strings"
 )
 
-// attentionRankUnknown is the rank of a display state the ordering table does
-// not name: after every named group, so an unrecognised state sinks below DONE
-// rather than floating to the top.
+// attentionRankUnknown sorts after every named group, so an unrecognised
+// state sinks below DONE rather than floating to the top.
 const attentionRankUnknown = 4
 
-// rankOf orders display states for a human: what needs a decision first, what
-// is waiting on the mastermind next, then what is working, then what is
-// finished. A halted or stopped chain with a manual round running ranks with
-// ACTIVE, so it does not sink below DONE. Unknown states (none today) sort
-// after DONE. A switch, not a table: this runs once per comparison of the
-// fleet's hot sort.
+// rankOf orders display states for a human. A halted or stopped chain with a
+// manual round running ranks with ACTIVE, so it does not sink below DONE. A
+// switch, not a table: this runs once per comparison of the fleet's hot sort.
 func rankOf(display string) int {
 	switch display {
 	case "NEEDS YOU":
@@ -32,13 +28,10 @@ func rankOf(display string) int {
 }
 
 // compareRows is SortRows' ordering on two rows: OwnerLabel is the primary key
-// (ascending, plain <) so a client's cards stay contiguous under a header in
-// the serve ui. Then attention groups by display state -- NEEDS YOU, ACTIVE,
-// DONE -- and within a group puts the most recent Last.TS first (a nil Last
-// last), name as the tiebreak. With attention false, and with every label
-// empty (a mastermind), the output is exactly what the pre-owner implementation
-// returned. Zero means "neither first": the rows compare equal, and a stable
-// sort keeps their input order.
+// so a client's cards stay contiguous under a header in the serve ui. Then
+// attention groups by display state, most recent first (a nil Last last), name
+// as the tiebreak. Zero means "neither first": the rows compare equal, and a
+// stable sort keeps their input order.
 func compareRows(a, b BindingStatus, attention bool) int {
 	if a.OwnerLabel != b.OwnerLabel {
 		return strings.Compare(a.OwnerLabel, b.OwnerLabel)
@@ -87,9 +80,8 @@ func compareBools(a, b bool) int {
 
 // SortRows orders status rows for a human; name is the order Status has always
 // returned. It sorts a permutation of row indices and copies once at the end,
-// so the elements it moves are machine words rather than whole rows -- a
-// BindingStatus is eight hundred-odd bytes. Stable, so an input order never
-// shows through; never mutates its input.
+// so the elements it moves are machine words rather than whole rows. Stable,
+// so an input order never shows through; never mutates its input.
 func SortRows(rows []BindingStatus, attention bool) []BindingStatus {
 	order := make([]int, len(rows))
 	for i := range order {

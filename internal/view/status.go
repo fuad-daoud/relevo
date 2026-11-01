@@ -14,15 +14,13 @@ import (
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
-// AgentUnknown is the status word for a builder relevo could not determine: a
-// remote server that has not reported yet, or a headless process whose state
-// could not be read. It means "relevo did not ask and must not claim absence",
-// the same word the headless and remote paths use for "could not determine".
+// AgentUnknown means "relevo did not ask and must not claim absence": a remote
+// server that has not reported yet, or a headless process whose state could
+// not be read. Both paths use this one word for "could not determine".
 const AgentUnknown = "unknown"
 
-// LiveDiff is the live "+N/-M in F" a status row shows while a round is
-// open: dir's working tree against the round's baseline tree, no patch body,
-// just the numstat. Shared marks a --cwd binding, whose worktree is the
+// LiveDiff is dir's working tree against the round's baseline tree: no patch
+// body, just the numstat. Shared marks a --cwd binding, whose worktree is the
 // mastermind's own tree rather than one relevo created.
 type LiveDiff struct {
 	Files   int  `json:"files"`
@@ -35,97 +33,82 @@ type LiveDiff struct {
 // can determine about its builder and its delivery route.
 type BindingStatus struct {
 	Name string `json:"name"`
-	// CWD is the round's directory, the binding's tree plus its
-	// subdirectory: the directory the round's processes run in is not
-	// necessarily the tree itself.
+	// CWD is the directory the round's processes run in, which is not
+	// necessarily the binding's tree itself.
 	CWD   string `json:"cwd"`
 	Round int    `json:"round"`
-	// PlanRound is the highest round with a plan log entry -- the round in
-	// flight while one is, the last round sent once it has closed; 0 before
-	// any plan. Unlike Round, it never names an unsent round.
+	// PlanRound is the highest round with a plan log entry; 0 before any
+	// plan. Unlike Round, it never names an unsent round.
 	PlanRound        int    `json:"plan_round,omitempty"`
 	State            string `json:"state"`
 	Display          string `json:"display"`
 	BuilderCandidate string `json:"candidate"`
-	// BuilderName is that candidate's short name, for display. Empty when the
-	// candidate is no longer configured, in which case the token is shown;
-	// the token always stays the identity.
+	// BuilderName is empty when the candidate is no longer configured, in
+	// which case the token is shown; the token always stays the identity.
 	BuilderName string `json:"candidate_name,omitempty"`
-	// BuilderAccount is the login of the candidate's pool this round drew from,
-	// for display. Empty on a host with no accounts, and omitted from JSON so a
-	// row that never learned it keeps the document it always had.
+	// BuilderAccount is empty on a host with no accounts, and omitted from
+	// JSON so a row that never learned it keeps the document it always had.
 	BuilderAccount string `json:"account,omitempty"`
-	// Role is the actor the runner plays; always present, "builder" when the
-	// binding stores the empty (builder) one.
+	// Role is always present: "builder" when the binding stores the empty
+	// (builder) one.
 	Role string `json:"actor"`
-	// Shape is the actor's shape: store.ShapeReader for a reader, empty for a
-	// writer, so a writer's document keeps every key it always had. A consumer
-	// reads an absent shape as a writer.
-	Shape string `json:"shape,omitempty"`
-	// MasterMindID and MasterMindName name the relevo mastermind record this binding
-	// belongs to.
+	// Shape is store.ShapeReader for a reader, empty for a writer, so a
+	// writer's document keeps every key it always had. A consumer reads an
+	// absent shape as a writer.
+	Shape          string `json:"shape,omitempty"`
 	MasterMindID   string `json:"mastermind_id,omitempty"`
 	MasterMindName string `json:"mastermind_name,omitempty"`
-	// MasterMindChatLabel and MasterMindChatLink are the harness's own name for the
-	// mastermind's session: Label.Text and Label.Link, resolved from an opencode
-	// session's own title and empty for every other kind. Only cmd/relevo fills
+	// MasterMindChatLabel and MasterMindChatLink resolve from an opencode
+	// session's own title and stay empty for every other kind. Only cmd/relevo fills
 	// them, inside the command a person ran, and only to print them; Status
 	// itself leaves them empty, so no label is ever computed on, or sent to,
 	// a server. They are never stored or logged.
 	MasterMindChatLabel string `json:"mastermind_chat_label,omitempty"`
 	MasterMindChatLink  string `json:"mastermind_chat_link,omitempty"`
 	MasterMindKind      string `json:"mastermind_kind"`
-	// MasterMindRoute is how a pending report reaches this binding mastermind:
-	// "push", "deliverer" or "pull". "pull" is a route, not a fault: it is
-	// the background wait's `relevo wait`, which is how a Claude Code mastermind
-	// in tools mode gets its report.
+	// "pull" is a route, not a fault: the background wait's `relevo wait`,
+	// which is how a Claude Code mastermind in tools mode gets its report.
 	MasterMindRoute string `json:"mastermind_route"`
-	// MasterMindRouteLive reports whether that route can push right now: a live
-	// push claim, or a configured deliverer. A pull route is never live,
-	// because the daemon cannot see whether a background wait is running.
+	// A live push claim, or a configured deliverer. A pull route is never
+	// live, because the daemon cannot see whether a background wait is
+	// running.
 	MasterMindRouteLive bool `json:"mastermind_route_live"`
 	// WaitLive reports whether a `relevo wait` is polling this binding right
 	// now: it wrote a registration and has refreshed it within its TTL. It is
 	// the fact MasterMindRouteLive cannot carry, since a pull route is never
 	// live precisely because the daemon cannot see the wait. False for a
 	// binding nobody is waiting on, and for every binding on a host with no
-	// wait store configured -- both of which the row treats alike, and both
-	// of which are the direction that still escalates an uncollected payload.
+	// wait store configured; both still escalate an uncollected payload.
 	WaitLive    bool   `json:"wait_live,omitempty"`
 	BuilderKind string `json:"harness"`
-	// BuilderDefinition is the builder's resolved agent definition on this
-	// binding's builder kind, set only when it is custom: a shipped
-	// definition leaves the field empty and omitted, so today's JSON is
-	// unchanged.
+	// BuilderDefinition is set only when it is custom: a shipped definition
+	// leaves the field empty and omitted, so today's JSON is unchanged.
 	BuilderDefinition string `json:"agent_definition,omitempty"`
 	// BuilderDefinitionCustom is true exactly when BuilderDefinition is set,
 	// so a consumer can tell "custom" from "absent" without the string.
 	BuilderDefinitionCustom bool   `json:"agent_definition_custom,omitempty"`
 	BuilderStatus           string `json:"runner_status"`
-	// Headless is set for a headless builder: its process state and log.
-	// BuilderStatus is one of idle, working, exited N, exited, unknown. Nil
-	// for a remote builder.
+	// Headless is the process state and log of a headless builder; nil for
+	// a remote builder. BuilderStatus is one of idle, working, exited N,
+	// exited, unknown.
 	Headless *HeadlessInfo `json:"headless,omitempty"`
-	// Detail explains an overloaded state where the display word cannot.
-	// Populated only for store.StateBroken, which covers three situations
-	// whose correct recoveries differ -- and in one of which the obvious
-	// recovery orphans a builder that is still running.
+	// Detail is populated only for store.StateBroken, which covers three
+	// situations whose correct recoveries differ -- and in one of which the
+	// obvious recovery orphans a builder that is still running.
 	Detail string `json:"detail,omitempty"`
 	// Question is the first line of the newest to-mastermind question, capped
-	// as Waiting lines are; PromptPath is the staged prompt of the round the
-	// newest payload answers. Both feed the statusline's next move and stay
-	// out of the pinned status document.
+	// as Waiting lines are. Both it and PromptPath feed the statusline's next
+	// move and stay out of the pinned status document.
 	Question   string     `json:"-"`
 	PromptPath string     `json:"-"`
 	Last       *LastEvent `json:"last,omitempty"`
-	// LastSeq is the Seq of the newest log entry; 0 when the log is empty.
-	// No omitempty: a consumer reads 0 as "nothing yet".
+	// LastSeq is 0 when the log is empty. No omitempty: a consumer reads 0
+	// as "nothing yet".
 	LastSeq int `json:"last_seq"`
 	// LastPayload is the most recent plan/report/question/answer entry --
 	// the four kinds that cross between mastermind and builder -- as opposed to
 	// Last, which is the most recent entry of any kind including relevo's own
-	// bookkeeping (drift, pick, switch, exit, diff). Nil when the log has
-	// none.
+	// bookkeeping. Nil when the log has none.
 	LastPayload *LastEvent `json:"last_payload,omitempty"`
 	// LastClose is the newest diff entry's commit facts; nil when the log
 	// has no diff entry.
@@ -141,30 +124,27 @@ type BindingStatus struct {
 	// harness's record on this call. nil when no round is open or nothing is
 	// readable yet. Never recorded, never summed into Spend.
 	LiveUsage *usage.Usage `json:"live_usage,omitempty"`
-	// RoundStart is the TS of the earliest prompt + DirToBuilder entry whose
-	// Round equals the round of the newest such entry. Zero when the log has no
-	// such entry.
+	// RoundStart is the TS of the earliest prompt + DirToBuilder entry for
+	// the newest such entry's round. Zero when the log has no such entry.
 	RoundStart time.Time `json:"round_start,omitzero"`
 	// RoundEnd is the TS of the newest KindReport + DirToMasterMind entry with that
 	// same Round and TS >= RoundStart. Zero when none (the round is open).
 	RoundEnd time.Time `json:"round_end,omitzero"`
 	// RoundUsage is a copy of the Usage on the entry that set RoundEnd. Nil when
 	// RoundEnd is zero or that entry's Usage is nil. Never taken from any other entry.
-	RoundUsage *usage.Usage `json:"round_usage,omitempty"`
-	// RoundPriorTokens is the tokens of the current round's earlier segments.
+	RoundUsage       *usage.Usage `json:"round_usage,omitempty"`
 	RoundPriorTokens usage.Tokens `json:"round_prior_tokens,omitzero"`
-	// Server is b.Builder.Server when b.Builder.Remote(); "" otherwise.
-	Server string `json:"server,omitempty"`
-	// Dirty is the rendered rule: the newest close left the tree dirty and
-	// no newer round has been sent, so the uncommitted work is still what
-	// the tree holds. False once a round is running -- a dirty tree is then
-	// the expected state.
+	Server           string       `json:"server,omitempty"`
+	// Dirty means the newest close left the tree dirty and no newer round
+	// has been sent, so the uncommitted work is still what the tree holds.
+	// False once a round is running -- a dirty tree is then the expected
+	// state.
 	Dirty         bool         `json:"dirty"`
 	Pending       *PendingInfo `json:"pending,omitempty"`
 	ForkedFrom    string       `json:"forked_from,omitempty"`
 	ForkedAtRound int          `json:"forked_at_round,omitempty"`
-	// Consults is how many consults are reserved or running on this binding.
-	// Terminal ones are omitted: they are a reap chore, not work in flight.
+	// Consults omits terminal consults: they are a reap chore, not work in
+	// flight.
 	Consults int `json:"consults,omitempty"`
 	// Switches is builder switches in the current round; zero is omitted.
 	Switches int `json:"switches,omitempty"`
@@ -238,14 +218,13 @@ type BindingStatus struct {
 	// being silently dropped. omitempty, so every other row's document keeps
 	// exactly the keys it always had.
 	Gone bool `json:"gone,omitempty"`
-	// GoneStep is the next step for a gone row, naming the verb that clears
-	// it. Empty on every other row, and omitted from JSON with it, so a live
-	// row's document keeps exactly the keys it always had.
+	// GoneStep names the verb that clears a gone row. Empty on every other
+	// row, and omitted from JSON with it, so a live row's document keeps
+	// exactly the keys it always had.
 	//
 	// A chain row's step is `relevo chain --resume`, not `serve gc` or
 	// `serve unbind`: those two walk Store.List() and Store.Load(name), which
-	// a chain row is in neither of -- it is a chains-table row, not a binding
-	// -- so neither verb could remove it.
+	// a chain row is in neither of, so neither verb could remove it.
 	GoneStep string `json:"gone_step,omitempty"`
 }
 
@@ -258,8 +237,6 @@ func (b BindingStatus) Key() string {
 	return b.Owner + "/" + b.Name
 }
 
-// ProcessWord returns "remote" when the binding is hosted on a remote server,
-// else "headless".
 func (b BindingStatus) ProcessWord() string {
 	if b.Server != "" {
 		return "remote"
@@ -267,8 +244,7 @@ func (b BindingStatus) ProcessWord() string {
 	return "headless"
 }
 
-// HeadlessInfo is the process half of a headless builder's status row.
-// Nil on a pane row.
+// HeadlessInfo is nil on a pane row.
 type HeadlessInfo struct {
 	PID       int       `json:"pid,omitempty"`
 	StartedAt time.Time `json:"started_at"` // zero when idle
@@ -339,7 +315,6 @@ type Report struct {
 	HandedOver []HandedOverRow `json:"handed_over,omitempty"`
 }
 
-// HandedOverRow is one binding another machine writes now.
 type HandedOverRow struct {
 	Name string `json:"name"`
 	// To is the label of the machine that writes it, or its id.
@@ -350,8 +325,6 @@ type HandedOverRow struct {
 	NotExported bool `json:"not_exported,omitempty"`
 }
 
-// ApplyRemoteLive sets the live facts from the remote server on the client's
-// status row.
 func ApplyRemoteLive(row *BindingStatus, lf *store.LiveFacts, stalled bool, logPath string, now time.Time) {
 	if lf == nil {
 		return
@@ -398,9 +371,8 @@ func ApplyRemoteLive(row *BindingStatus, lf *store.LiveFacts, stalled bool, logP
 }
 
 // QueueText renders a served, queued round's status word: the bare
-// "queued" when the server has not yet reported facts, else the full picture
-// -- how many builders are busy on that server, how far back in line, and how
-// long it has waited.
+// "queued" when the server has not yet reported facts, else the full
+// picture.
 func QueueText(q *store.QueueFacts, server string, now time.Time) string {
 	if q == nil {
 		return "queued"
@@ -409,9 +381,9 @@ func QueueText(q *store.QueueFacts, server string, now time.Time) string {
 		q.Running, q.Cap, server, q.Ahead, AgeText(now.Sub(q.Since)))
 }
 
-// IsPayloadKind reports whether k is one of the four kinds that cross
-// between mastermind and builder (prompt, report, question, answer) -- the ones
-// LastPayload tracks, as opposed to relevo's own bookkeeping kinds.
+// IsPayloadKind reports whether k is one of the four kinds LastPayload
+// tracks (prompt, report, question, answer), as opposed to relevo's own
+// bookkeeping kinds.
 func IsPayloadKind(k store.Kind) bool {
 	if store.IsPromptKind(k) {
 		return true
@@ -496,15 +468,13 @@ func ShortOwner(id string) string {
 }
 
 // HideDone returns a copy of r excluding every binding whose state is DONE.
-// The order of the remaining bindings is preserved. DoneHidden is set to
-// the count of removed bindings. The input report is not modified.
+// The input report is not modified.
 func HideDone(r Report) Report {
 	out := Report{
 		Bindings:   make([]BindingStatus, 0, len(r.Bindings)),
 		DoneHidden: 0,
 		// Gated is machine-wide, not per binding: hiding DONE rows must not
-		// hide a rate limit. Found by rendering a hand-written ledger
-		// through the real binary; the renderer tests could not see it.
+		// hide a rate limit.
 		Gated: r.Gated,
 		// Unused is machine-wide too: a gate on a provider no candidate uses
 		// belongs to no binding, so hiding DONE rows must not hide it.
