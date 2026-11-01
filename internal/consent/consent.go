@@ -1,7 +1,6 @@
-// Package consent carries the two consent documents: repository answers keyed
-// by remote URL, session answers keyed by kind and id. The package exists
-// because a *db.DB method cannot return a synclog document without an import
-// cycle.
+// Package consent carries the two consent documents, repository answers by
+// remote URL and session answers by kind and id. It exists because a *db.DB
+// method cannot return a synclog document without an import cycle.
 package consent
 
 import (
