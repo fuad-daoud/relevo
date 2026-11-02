@@ -751,6 +751,48 @@ func TestServedCheckFrozenStartRecordsTheErrorRun(t *testing.T) {
 	}
 }
 
+// TestServedCheckFrozenStartWithoutScopeUsesGenericGateWording pins the
+// unscoped fallback: without a scope the frozen start still records the
+// gate's generic refusal, naming no slice and no chain remedy.
+func TestServedCheckFrozenStartWithoutScopeUsesGenericGateWording(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := sentBinding(t)
+	rt.Runner = fr
+	rt.TmpRoot = t.TempDir()
+	rt.Scope = nil
+	fr.startErr = errFrozenStart
+
+	run, err := startServedCheck(context.Background(), rt, b, remote.CreateCheckRequest{ID: "c1", Command: "make check"})
+	if err != nil {
+		t.Fatalf("startServedCheck: %v, want the errored run, not a refusal", err)
+	}
+	if run == nil {
+		t.Fatal("run = nil, want the errored run recorded")
+	}
+	if run.Result != "error" {
+		t.Errorf("run.Result = %q, want error", run.Result)
+	}
+	for _, want := range []string{"gate could not start", "the slice", "frozen", "thaw"} {
+		if !strings.Contains(run.Note, want) {
+			t.Errorf("run.Note = %q, want it to name %q", run.Note, want)
+		}
+	}
+	if strings.Contains(run.Note, "relevo.slice") {
+		t.Errorf("run.Note = %q, want no slice name without a scope", run.Note)
+	}
+	if strings.Contains(run.Note, "chain --resume") {
+		t.Errorf("run.Note = %q, want no chain remedy for a served client", run.Note)
+	}
+	if run.PID != 0 {
+		t.Errorf("run.PID = %d, want none: nothing started", run.PID)
+	}
+	if len(fr.specs) != 0 {
+		t.Errorf("starts = %d, want none: nothing ran", len(fr.specs))
+	}
+}
+
 // TestGateStepFrozenRetrySettlesTheErrorRecord pins the advance containment:
 // a gate lost to a restart whose single re-run Start fails frozen settles
 // done with the error record, storing no run and logging no restart.
@@ -816,6 +858,54 @@ func TestGateStepFrozenRetrySettlesTheErrorRecord(t *testing.T) {
 		if e.Kind == store.KindGate && strings.Contains(e.Note, "restarted") {
 			t.Errorf("restart entry = %+v, want none: nothing restarted", e)
 		}
+	}
+	if len(fr.specs) != 0 {
+		t.Errorf("starts = %d, want none: a refused retry starts nothing", len(fr.specs))
+	}
+}
+
+// TestServedCheckFrozenRetrySettlesTheErrorRun pins the served half of a
+// frozen retry: a check lost to a restart whose re-run Start fails frozen
+// settles the run with the gate's own refusal wording, never the check's
+// resume remedy a served client cannot act on.
+func TestServedCheckFrozenRetrySettlesTheErrorRun(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := sentBinding(t)
+	rt.Runner = fr
+	rt.StartedAt = baseTime
+	rt.Watched = NewWatched()
+	rt.Scope = &spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 100}
+	b.CheckRun = &store.CheckRun{
+		ID:        "c1",
+		Command:   "make check",
+		PID:       9001,
+		StartedAt: baseTime.Add(-time.Minute).Unix(),
+		Round:     b.Round,
+		Attempt:   0,
+	}
+	fr.script(9001, false) // exited; no exit() set: no trailer
+	fr.startErr = errFrozenStart
+
+	got, changed := servedCheckStep(context.Background(), rt, b)
+
+	if !changed {
+		t.Error("changed = false, want the refused retry to settle the run")
+	}
+	if got.CheckRun == nil {
+		t.Fatal("CheckRun = nil, want the settled error run")
+	}
+	if got.CheckRun.Result != "error" {
+		t.Errorf("Result = %q, want error", got.CheckRun.Result)
+	}
+	for _, want := range []string{"gate could not start", "relevo.slice", "frozen", "thaw"} {
+		if !strings.Contains(got.CheckRun.Note, want) {
+			t.Errorf("Note = %q, want it to name %q", got.CheckRun.Note, want)
+		}
+	}
+	if strings.Contains(got.CheckRun.Note, "chain --resume") {
+		t.Errorf("Note = %q, want the gate wording, never the check's", got.CheckRun.Note)
 	}
 	if len(fr.specs) != 0 {
 		t.Errorf("starts = %d, want none: a refused retry starts nothing", len(fr.specs))

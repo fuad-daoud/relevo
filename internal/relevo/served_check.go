@@ -243,6 +243,14 @@ func servedCheckStep(ctx context.Context, rt Runtime, b store.Binding) (store.Bi
 		// Settling the run is what keeps the binding out of check_running: a
 		// step that returned early would leave the next POST refused forever.
 		slog.Warn("served check advance failed", "binding", b.Name, "err", err)
+		if environmentRefusal(err) {
+			// A frozen slice refused the retry's start: the run records
+			// the gate's own refusal, since a served client cannot act on
+			// the check's resume remedy.
+			applyServedCheckRecord(&run, frozenGateRecord(rt, spec))
+			b.CheckRun = &run
+			return b, true
+		}
 		run.Result, run.Note = "error", err.Error()
 		b.CheckRun = &run
 		return b, true
