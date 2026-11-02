@@ -28,6 +28,8 @@ func TestIsFrozenUnitError(t *testing.T) {
 		{"empty", "", false},
 		{"bare frozen musings", "the UI is frozen after resume", false},
 		{"freeze verb alone", "freezing the unit before sleep", false},
+		{"commit subject in a tail", "02f250c1 relevo: hold builder rounds on a frozen slice instead of switching", false},
+		{"test name in a tail", "--- FAIL: TestFreezeHoldOnFrozenUnit (0.01s)\n    freeze_test.go:40: hold failed with 2 retries left on a frozen scope", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
