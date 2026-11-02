@@ -16,6 +16,9 @@ const (
 	EventBindingStale  EventType = "binding_stale"
 	EventRoundQueued   EventType = "round_queued"
 	EventRoundAdmitted EventType = "round_admitted"
+	// EventBurstSecurity fires when the head's node check finds a
+	// fingerprint mismatch: the node may be an impersonator.
+	EventBurstSecurity EventType = "burst_security"
 )
 
 // Event is one state transition or action, with enough context for a hook

@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"runtime"
@@ -25,16 +26,18 @@ func (s *Server) burstOn() bool {
 	return s.burstProvider != nil && len(s.cfg.ClientKey) > 0
 }
 
-// burstTick requeues what dead nodes lost, places waiting rounds onto live
-// nodes as sending forwards, and reports the load. Callers hold admitMu; the
-// provider call keeps it while dropping s.mu, so a hung provider stalls the
-// tick up to the provider's own timeout after local admit already ran.
-func (s *Server) burstTick() {
+// burstTick requeues what dead nodes lost, checks new nodes, places waiting
+// rounds onto live nodes as sending forwards, and reports the load. Callers
+// hold admitMu; the provider and node calls keep it while dropping s.mu, so
+// a hung peer stalls the tick up to its own timeout after local admit
+// already ran.
+func (s *Server) burstTick(ctx context.Context) {
 	if !s.burstOn() {
 		return
 	}
 	now := s.cfg.Now().UTC()
 	s.requeueLost(now)
+	s.verifyNodes(ctx)
 	placed := s.placeForwards(now)
 	s.reportCycle(now, placed)
 }
@@ -355,6 +358,104 @@ func burstStoredForward(b store.Binding) *store.Forward {
 		return nil
 	}
 	return b.Burst.Forward
+}
+
+// adoptSending resolves every forward a crash left in sending: a forward
+// the head claimed but no node confirmed. A node whose round is open at the
+// forward's round holds it, so the forward turns running; anything else --
+// a refused fetch, a missing or different round, a closed one -- returns to
+// the local queue at its FIFO place. Fetching runs without s.mu; each
+// answer applies under the owner store only while the forward still
+// matches, the Plan 3 discipline, so a result for a superseded claim never
+// lands. The live fetch stays in this lane, on GetBinding; the closed
+// rounds it requeues are lane C's observe path to close again.
+func (s *Server) adoptSending(ctx context.Context) {
+	if !s.burstOn() {
+		return
+	}
+	now := s.cfg.Now().UTC()
+	t := s.copyBurstTable()
+	if t == nil {
+		return
+	}
+	rows := map[string]burst.NodeRow{}
+	for _, r := range t.Nodes {
+		rows[r.ID] = r
+	}
+	type pending struct {
+		ownerPath string
+		id        remote.ClientID
+		name      string
+		fwd       store.Forward
+	}
+	var work []pending
+	_ = s.walkOwners(func(id remote.ClientID, ownerPath string, bindings []store.Binding) {
+		for _, b := range bindings {
+			if f := burstStoredForward(b); f != nil && f.Phase == "sending" {
+				work = append(work, pending{ownerPath: ownerPath, id: id, name: b.Name, fwd: *f})
+			}
+		}
+	})
+	if len(work) == 0 {
+		return
+	}
+	cl, err := s.burstNodeClient(t.Nodes)
+	if err != nil {
+		slog.Warn("burst: adopt skipped, client key unusable", "err", err)
+		return
+	}
+	for _, p := range work {
+		if _, ok := rows[p.fwd.Node]; !ok {
+			s.requeueOne(p.id, p.ownerPath, p.name, p.fwd, now)
+			continue
+		}
+		view, ferr := cl.GetBinding(ctx, p.fwd.Node, p.fwd.NodeBinding)
+		if burstAdoptRunning(p.fwd, view, ferr) {
+			s.adoptRunning(p.ownerPath, p.name, p.fwd)
+		} else {
+			if ferr != nil {
+				slog.Info("burst: adopt requeues an unconfirmed forward", "binding", p.name, "node", p.fwd.Node, "err", ferr)
+			}
+			s.requeueOne(p.id, p.ownerPath, p.name, p.fwd, now)
+		}
+	}
+}
+
+// burstAdoptRunning says whether a sending forward survived the restart: the
+// node answered, its round is open, and it is the round the head claimed.
+// Every other answer -- a fetch failure, a missing node binding, a different
+// or closed round -- requeues, so the round waits locally instead of holding
+// a seat on a node that never took it.
+func burstAdoptRunning(fwd store.Forward, view remote.BindingView, fetchErr error) bool {
+	if fetchErr != nil {
+		return false
+	}
+	if view.Round != fwd.Round {
+		return false
+	}
+	return view.RoundState == remote.RoundRunning || view.RoundState == remote.RoundQueued
+}
+
+// adoptRunning turns a confirmed sending forward into a running one. The
+// binding is re-read and the mark lands only while the forward still
+// matches, so a result for a superseded claim never applies.
+func (s *Server) adoptRunning(ownerPath, name string, fwd store.Forward) {
+	st := s.ownerStore(ownerPath)
+	b, err := st.Load(name)
+	if err != nil {
+		slog.Warn("burst: adopt confirm failed: load failed", "binding", name, "err", err)
+		return
+	}
+	have := burstStoredForward(b)
+	if have == nil || have.Phase != "sending" || have.Node != fwd.Node || b.Round != fwd.Round {
+		return
+	}
+	have.Phase = "running"
+	if err := st.Save(b); err != nil {
+		slog.Warn("burst: adopt confirm failed: save failed", "binding", name, "err", err)
+		return
+	}
+	slog.Info("burst: adopt confirmed a forward its node holds", "binding", name, "node", fwd.Node)
 }
 
 // burstOwner8 is the owner half of a node binding name: the first 8 hex of

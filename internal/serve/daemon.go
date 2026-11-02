@@ -66,7 +66,7 @@ func (s *Server) Tick(ctx context.Context) error {
 	if err := s.admitLocked(ctx); err != nil {
 		slog.Warn("admit failed", "err", err)
 	}
-	s.burstTick()
+	s.burstTick(ctx)
 	return nil
 }
 
@@ -121,6 +121,11 @@ func (s *Server) Run(ctx context.Context) error {
 	if err := s.settleAllServed(); err != nil {
 		slog.Warn("settle served reports failed", "err", err)
 	}
+
+	// A restart re-resolves the forwards the last process left in sending
+	// before the first tick can place anything new: a confirmed forward
+	// stays out, anything else waits locally again.
+	s.adoptSending(ctx)
 
 	ticks := 0
 	for {

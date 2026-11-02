@@ -299,7 +299,7 @@ func TestBurstReportCycleContract(t *testing.T) {
 	saveBurstBinding(t, rt, "a", time.Time{}, 4242)
 	saveBurstBinding(t, rt, "b", clock.Add(-time.Minute), 0)
 
-	env.srv.burstTick()
+	env.srv.burstTick(context.Background())
 	if got := fake.calls(); got != 1 {
 		t.Fatalf("provider calls = %d, want 1", got)
 	}
@@ -322,7 +322,7 @@ func TestBurstReportCycleContract(t *testing.T) {
 
 	fake.err = errors.New("provider boom")
 	clock = clock.Add(31 * time.Second)
-	env.srv.burstTick()
+	env.srv.burstTick(context.Background())
 	if got := fake.calls(); got != 2 {
 		t.Fatalf("provider calls after the interval = %d, want 2", got)
 	}
@@ -337,7 +337,7 @@ func TestBurstReportCycleContract(t *testing.T) {
 		t.Errorf("LastReport = %v, want the failed attempt to cost a full interval from %v", table.LastReport, clock)
 	}
 
-	env.srv.burstTick()
+	env.srv.burstTick(context.Background())
 	if got := fake.calls(); got != 2 {
 		t.Errorf("provider calls without an interval passing = %d, want still 2", got)
 	}
@@ -347,7 +347,7 @@ func TestBurstReportCycleContract(t *testing.T) {
 	env.srv.mu.Lock()
 	env.srv.burstTable.Nodes[0].Verified = true
 	env.srv.mu.Unlock()
-	env.srv.burstTick()
+	env.srv.burstTick(context.Background())
 	if got := fake.calls(); got != 3 {
 		t.Fatalf("provider calls after a forward = %d, want 3: a forward reports out of cycle", got)
 	}
