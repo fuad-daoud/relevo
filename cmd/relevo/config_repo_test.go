@@ -343,6 +343,24 @@ func TestConfigRepoRefusesAnUnknownKey(t *testing.T) {
 	}
 }
 
+// TestConfigRepoRegistryArgsNameAllSevenKeys pins the registry's set and
+// unset Args on the seven keys an entry takes, so the help document keeps
+// the vocabulary the verbs accept. A four-key Args is the drift this test
+// catches.
+func TestConfigRepoRegistryArgsNameAllSevenKeys(t *testing.T) {
+	for _, name := range []string{"config repo set", "config repo unset"} {
+		entry, ok := registryEntry(name)
+		if !ok {
+			t.Fatalf("registryEntry(%q) not found, want the verb registered", name)
+		}
+		for _, want := range []string{"name", "gate", "board_theme", "trimpath", "builder_actor", "reviewer_actor", "planner_actor"} {
+			if !strings.Contains(entry.Args, want) {
+				t.Errorf("%s Args = %q, want it to name %q", name, entry.Args, want)
+			}
+		}
+	}
+}
+
 // TestConfigRepoActorFieldsSetShowUnsetRoundTrip pins the three chain actor
 // keys through the verbs: a set stores the field the section validation
 // carries, show and list read it back in human and --json form, and an unset

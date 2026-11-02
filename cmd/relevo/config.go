@@ -34,8 +34,8 @@ const configUsage = `usage: relevo config [--probe [token...]]
        relevo config workflow show <name> [--json]
        relevo config workflow edit <name>
        relevo config repo [--repo <path>] [--json]
-       relevo config repo set <name|gate|board_theme|trimpath> <value> [--repo <path>] [--json]
-       relevo config repo unset <name|gate|board_theme|trimpath> [--repo <path>] [--json]
+       relevo config repo set <name|gate|board_theme|trimpath|builder_actor|reviewer_actor|planner_actor> <value> [--repo <path>] [--json]
+       relevo config repo unset <name|gate|board_theme|trimpath|builder_actor|reviewer_actor|planner_actor> [--repo <path>] [--json]
        relevo config repo list [--json]`
 
 // cmdConfig dispatches the config verbs. A bare invocation, or one whose
