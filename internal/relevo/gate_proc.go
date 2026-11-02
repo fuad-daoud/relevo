@@ -10,6 +10,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
+// gateNoTrailerNote is the record note of a run that died with no exit
+// trailer: the process never reported, so nothing about its end is known.
+const gateNoTrailerNote = "no exit trailer"
+
 // gateProcSpec is one process started through the gate runner's mechanics,
 // freed of any binding: the tree it runs in, the shell command, the log it
 // streams to, its scope unit and CPU pin, and the timeout that bounds it. A
@@ -25,9 +29,12 @@ type gateProcSpec struct {
 }
 
 // startGateProc starts spec's command and records the handle. A Start failure
-// returns a non-nil record with Result "error" and a nil error. attempt is
-// stored on the run: 0 for a first run, 1 for the single re-run allowed after
-// a daemon restart took the first one with it.
+// returns a non-nil record with Result "error" and a nil error, except a
+// frozen slice's refusal, which returns a nil record and a typed
+// *EnvironmentError: the check never started, so no record blames it. Only
+// chain checks read the hold; the round gate converts it back below. attempt
+// is stored on the run: 0 for a first run, 1 for the single re-run allowed
+// after a daemon restart took the first one with it.
 func startGateProc(ctx context.Context, rt Runtime, spec gateProcSpec, attempt int) (store.GateRun, *store.GateRecord, error) {
 	// The check process is prepared through the same seam a round's start
 	// uses.
@@ -50,6 +57,9 @@ func startGateProc(ctx context.Context, rt Runtime, spec gateProcSpec, attempt i
 		// Nothing started, so the directory the preparation made goes back:
 		// no advance will ever run for a process that never existed.
 		cleanupProc()
+		if spawn.IsFrozenUnitError(err.Error()) {
+			return store.GateRun{}, nil, &EnvironmentError{Reason: frozenCheckReason(rt)}
+		}
 		return store.GateRun{}, &store.GateRecord{Command: spec.Command, Result: "error", Note: err.Error(), LogPath: spec.LogPath}, nil
 	}
 	// The daemon has now seen this process alive: a later tick never judges it
@@ -109,7 +119,7 @@ func advanceGateProc(ctx context.Context, rt Runtime, run store.GateRun, spec ga
 			return &nr, false, nil, rerr
 		}
 		rec.Result = "error"
-		rec.Note = "no exit trailer"
+		rec.Note = gateNoTrailerNote
 	case code == 0:
 		rec.Result = "pass"
 		rec.ExitCode = 0

@@ -87,7 +87,19 @@ func chainStartCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRo
 	if err := tx.ChainCheckPut(c.Name, row); err != nil {
 		return 0, err
 	}
-	got, rec, _ := startGateProc(ctx, rt, spec, 0)
+	got, rec, serr := startGateProc(ctx, rt, spec, 0)
+	if serr != nil {
+		// A frozen slice refused the spawn: the tracking row settles as
+		// could-not-start, never red and never sealed, and the refusal
+		// returns typed, so the flow halts on the environment wording. Only
+		// a freeze arrives here typed.
+		row.Result = chainCheckCouldNotStart
+		row.Note = serr.Error()
+		if perr := tx.ChainCheckPut(c.Name, row); perr != nil {
+			return 0, perr
+		}
+		return 0, serr
+	}
 	if rec != nil {
 		row.Result = "error"
 		row.Note = rec.Note
@@ -210,8 +222,9 @@ func chainKillCheck(ctx context.Context, rt Runtime, c db.ChainRow, row db.Chain
 }
 
 // chainAdvanceCheck advances one check run a single tick: green or red once
-// ended, "" while it runs. A settled run answers from its row, so a repeated
-// tick is a stable read.
+// ended, "" while it runs. A frozen slice holding the run past its bound
+// reports a typed error instead. A settled run answers from its row, so a
+// repeated tick is a stable read.
 func chainAdvanceCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, run int) (result string, logKey string, err error) {
 	row, err := tx.ChainCheck(c.Name, run)
 	if err != nil {
@@ -250,6 +263,12 @@ func chainAdvanceCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 	}
 	if !done {
 		return "", row.Log, nil
+	}
+	if frozenNoTrailer(rec) && frozenCheckTail(rt, row.Log) {
+		// The run died with no trailer and the log carries the freeze
+		// signature: the slice refused the spawn, so the run holds as
+		// could-not-start instead of reddening.
+		return advanceFrozenCheck(ctx, rt, tx, c, row)
 	}
 
 	row.Result = rec.Result
@@ -325,6 +344,12 @@ func chainAdvanceOneCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 		}
 		result, logKey, err := chainAdvanceCheck(ctx, rt, tx, c, run)
 		if err != nil {
+			// An advance reporting the check could not start halts the chain
+			// the way an unstartable check does; any other advance failure
+			// keeps the tick's warning.
+			if halted, herr := chainHaltOnCouldNotStart(ctx, rt, tx, c, run, err); halted || herr != nil {
+				return herr
+			}
 			return err
 		}
 		if result == "" {

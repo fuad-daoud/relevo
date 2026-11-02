@@ -51,6 +51,12 @@ func gateStep(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (s
 
 	if b.GateRun == nil {
 		run, rec, err := startGateProc(ctx, rt, spec, 0)
+		if err != nil {
+			// A frozen slice refusal travels typed for chain checks; a round
+			// gate keeps the error record it has always written. Only a
+			// freeze arrives here typed.
+			return b, true, &store.GateRecord{Command: spec.Command, Result: "error", Note: err.Error(), LogPath: spec.LogPath}, nil
+		}
 		if rec != nil {
 			return b, true, rec, err
 		}
