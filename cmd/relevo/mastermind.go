@@ -27,6 +27,22 @@ import (
 // database to open: a SessionStart hook must never block a session on sqlite.
 const mastermindPriorIDTimeout = 2 * time.Second
 
+// mastermindNoticeTimeout bounds the whole UserPromptSubmit hook, from before
+// the runtime is built to the stdout write: the hook blocks the session's next
+// prompt, so a missed budget answers empty and the next prompt retries. Five
+// hundred milliseconds matches the statusline's own give-up on the same prompt
+// path, with an order of magnitude over a healthy hook's tens of milliseconds.
+const mastermindNoticeTimeout = 500 * time.Millisecond
+
+// mastermindHookBusyTimeout and mastermindHookBeginRetry are the short busy
+// waits the notice hook's own handle opens with, so work the deadline abandons
+// fails fast on a lock instead of lingering the defaults. Brief contention
+// still succeeds; a sustained lock answers busy at once.
+const (
+	mastermindHookBusyTimeout = 50 * time.Millisecond
+	mastermindHookBeginRetry  = 100 * time.Millisecond
+)
+
 // mastermindFlagSet exists so the registry's parity test finds exactly one
 // installer per verb.
 func mastermindFlagSet(*flag.FlagSet) {}
