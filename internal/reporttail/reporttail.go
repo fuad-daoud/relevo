@@ -31,6 +31,11 @@ type Tail struct {
 	ChangedPaths    []string
 	CommandsRun     []string
 	NotDone         []string
+	// TrailerIgnored records that the block closed on a fence carrying
+	// leaked chat-template tokens, so the rest of that line and everything
+	// after it was ignored rather than read as the block's. False for a
+	// clean fence and for a block that runs to end of file.
+	TrailerIgnored bool
 }
 
 // Parse finds and decodes the builder's trailing relevo block. Pure; no I/O;
@@ -62,6 +67,7 @@ func ParseWithReason(report []byte) (Tail, bool, string) {
 	if !hasStatus {
 		return Tail{}, false, "tail: missing status"
 	}
+	tail.TrailerIgnored = closeIdx < len(lines) && isTokenFence(lines[closeIdx])
 
 	status := strings.TrimSpace(UnquoteScalar(statusRaw))
 	switch status {
@@ -208,7 +214,7 @@ func FindRelevoBlock(lines []string) (openIdx, closeIdx int) {
 
 	closeIdx = -1
 	for i := openIdx + 1; i < len(lines); i++ {
-		if strings.TrimRight(lines[i], " \t") == "```" {
+		if strings.TrimRight(lines[i], " \t") == "```" || isTokenFence(lines[i]) {
 			closeIdx = i
 			break
 		}
@@ -219,6 +225,17 @@ func FindRelevoBlock(lines []string) (openIdx, closeIdx int) {
 		return openIdx, len(lines)
 	}
 	return openIdx, closeIdx
+}
+
+// isTokenFence reports whether line is a closing fence carrying leaked
+// chat-template tokens: ``` followed directly by `<|` text. A harness can
+// emit its turn tokens on the fence line itself, hiding it from the exact
+// match; the tokens are not the block's, so the line still ends the block
+// and the rest is ignored with a warning. A fence followed by anything else
+// is no fence.
+func isTokenFence(line string) bool {
+	rest, ok := strings.CutPrefix(strings.TrimRight(line, " \t"), "```")
+	return ok && strings.HasPrefix(rest, "<|")
 }
 
 // textAfter reports whether any non-blank line follows the closing fence at

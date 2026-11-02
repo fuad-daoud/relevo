@@ -41,6 +41,17 @@ type queueReportState struct {
 	stopRequested bool
 }
 
+// joinTrailerNote carries an ignored trailer into the report note: a block
+// that closed on a token-trailed fence parsed with its own status, but the
+// text after the fence was not the block's, so the note says what was
+// dropped. A clean parse returns the note unchanged.
+func joinTrailerNote(note string, tail reporttail.Tail) string {
+	if !tail.TrailerIgnored {
+		return note
+	}
+	return joinNotes(note, "tail: closing fence carried leaked tokens; trailer ignored")
+}
+
 // parseReportOutcome parses the closing round's outcome: the chain event, the
 // reader output path, the report tail with its fallback, the injection scan
 // and the scope verdict. st carries the result into the lines and the entry
@@ -91,6 +102,7 @@ func parseReportOutcome(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 	st.tail, st.hasTail = tail, ok
 	if ok {
 		st.outcome = tail.Status
+		st.note = joinTrailerNote(st.note, tail)
 	} else {
 		if reject != "" {
 			// A fence was present but unreadable: keep unstructured, but say why
