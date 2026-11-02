@@ -245,6 +245,13 @@ func openDB(path string) (*db.DB, error) {
 // database is opened with it and runs the same migrations, so the split is a
 // placement decision rather than a schema fork.
 func openDBDirect(path string) (*db.DB, error) {
+	return openDBDirectWith(path, db.Options{})
+}
+
+// openDBDirectWith opens path like openDBDirect, with the busy waits tunable so
+// a caller that must fail fast does not wait out the defaults. The origin is
+// always the installation beside the path, never the caller's.
+func openDBDirectWith(path string, o db.Options) (*db.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("create %s: %w", filepath.Dir(path), err)
 	}
@@ -252,7 +259,8 @@ func openDBDirect(path string) (*db.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	return db.OpenSplit(path, db.Options{Origin: inst.ID})
+	o.Origin = inst.ID
+	return db.OpenSplit(path, o)
 }
 
 // newRuntimePeek constructs the runtime `relevo daemon --preflight` and

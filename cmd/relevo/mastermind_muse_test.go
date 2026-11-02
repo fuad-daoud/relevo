@@ -172,6 +172,7 @@ func TestMasterMindNoticeHookMuse(t *testing.T) {
 	}
 
 	t.Run("no change is the empty object", func(t *testing.T) {
+		generousNoticeTimeout(t)
 		state := t.TempDir()
 		t.Setenv("XDG_STATE_HOME", state)
 		t.Setenv("MUSE_SESSION_ID", "")
@@ -192,6 +193,7 @@ func TestMasterMindNoticeHookMuse(t *testing.T) {
 	})
 
 	t.Run("a grant from elsewhere carries the muse wording", func(t *testing.T) {
+		generousNoticeTimeout(t)
 		state := t.TempDir()
 		t.Setenv("XDG_STATE_HOME", state)
 		t.Setenv("MUSE_SESSION_ID", "")
@@ -227,6 +229,7 @@ func TestMasterMindNoticeHookMuse(t *testing.T) {
 	})
 
 	t.Run("a rename is the rename line", func(t *testing.T) {
+		generousNoticeTimeout(t)
 		state := t.TempDir()
 		t.Setenv("XDG_STATE_HOME", state)
 		t.Setenv("MUSE_SESSION_ID", "")
@@ -257,6 +260,7 @@ func TestMasterMindNoticeHookMuse(t *testing.T) {
 	})
 
 	t.Run("a NULL baseline is written and stays silent", func(t *testing.T) {
+		generousNoticeTimeout(t)
 		state := t.TempDir()
 		t.Setenv("XDG_STATE_HOME", state)
 		t.Setenv("MUSE_SESSION_ID", "")
