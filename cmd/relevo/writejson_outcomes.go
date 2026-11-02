@@ -180,6 +180,38 @@ func configServerRmDocOf(name string) ConfigServerRmDoc {
 	return ConfigServerRmDoc{Name: name, Removed: true}
 }
 
+// ConfigWorkflowAddDoc is `config workflow add --json`: the stored name.
+type ConfigWorkflowAddDoc struct {
+	Name string `json:"name"`
+}
+
+func configWorkflowAddDocOf(name string) ConfigWorkflowAddDoc {
+	return ConfigWorkflowAddDoc{Name: name}
+}
+
+// ConfigWorkflowRmDoc is `config workflow rm --json`: the name and that it
+// was removed.
+type ConfigWorkflowRmDoc struct {
+	Name    string `json:"name"`
+	Removed bool   `json:"removed"`
+}
+
+func configWorkflowRmDocOf(name string) ConfigWorkflowRmDoc {
+	return ConfigWorkflowRmDoc{Name: name, Removed: true}
+}
+
+// ConfigWorkflowEditDoc is `config workflow edit --json` on the saved path:
+// the workflow name and the config version the write left. A path that wrote
+// nothing keeps its human line, so there is nothing for a script to read.
+type ConfigWorkflowEditDoc struct {
+	Name    string `json:"name"`
+	Version int64  `json:"version"`
+}
+
+func configWorkflowEditDocOf(name string, version int64) ConfigWorkflowEditDoc {
+	return ConfigWorkflowEditDoc{Name: name, Version: version}
+}
+
 // ConfigSecretDoc is `config secret set`/`config secret rm --json`: the name
 // only, never the value.
 type ConfigSecretDoc struct {
@@ -363,6 +395,9 @@ func outcomeDocFixtures() []struct {
 		})},
 		{"config-server-add-json", configServerAddDocOf("zen", "https://zen.example.test:7777")},
 		{"config-server-rm-json", configServerRmDocOf("zen")},
+		{"config-workflow-add-json", configWorkflowAddDocOf("custom")},
+		{"config-workflow-rm-json", configWorkflowRmDocOf("custom")},
+		{"config-workflow-edit-json", configWorkflowEditDocOf("custom", 11)},
 		{"config-secret-set-json", configSecretDocOf("typesafe")},
 		{"config-secret-rm-json", configSecretDocOf("client.key")},
 		{"mastermind-init-json", mastermindDocOf("pl_aaaaaaaabbbb", "architect-1", "created", "https://github.com/acme/webshop")},

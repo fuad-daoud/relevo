@@ -263,12 +263,9 @@ var jsonExemptByDesign = map[string]string{
 // ever added. The rule is the one CLAUDE.md gives lint exclusions, and
 // TestJSONNotYetHasNoConvertedVerb below enforces the leaving half of it.
 var jsonNotYet = map[string]string{
-	"board annotate":       "not yet converted",
-	"board comment":        "not yet converted",
-	"board promote":        "not yet converted",
-	"config workflow add":  "not yet converted",
-	"config workflow edit": "not yet converted",
-	"config workflow rm":   "not yet converted",
+	"board annotate": "not yet converted",
+	"board comment":  "not yet converted",
+	"board promote":  "not yet converted",
 }
 
 // TestEveryRegistryVerbTakesJSON is the plan's guard: the guide tells every
@@ -336,15 +333,15 @@ func TestJSONExemptionNamesAreRegistryVerbs(t *testing.T) {
 
 // TestJSONExemptionCount pins the size of both maps, so a verb leaving one of
 // them has to be a deliberate edit rather than a silent deletion: today
-// jsonExemptByDesign holds 14 and jsonNotYet 6, which is every verb the
+// jsonExemptByDesign holds 14 and jsonNotYet 3, which is every verb the
 // registry lists without --json. A count that moves is a verb converted or a
 // verb added, and either belongs in the change that moved it.
 func TestJSONExemptionCount(t *testing.T) {
 	if len(jsonExemptByDesign) != 14 {
 		t.Errorf("jsonExemptByDesign holds %d verbs, want 14", len(jsonExemptByDesign))
 	}
-	if len(jsonNotYet) != 6 {
-		t.Errorf("jsonNotYet holds %d verbs, want 6", len(jsonNotYet))
+	if len(jsonNotYet) != 3 {
+		t.Errorf("jsonNotYet holds %d verbs, want 3", len(jsonNotYet))
 	}
 }
 
@@ -356,6 +353,9 @@ func TestConfigJSONFlagIsOnTheSurface(t *testing.T) {
 	for _, c := range []struct{ verb, doc string }{
 		{"config edit", "json:ConfigEditDoc"},
 		{"config rollback", "json:ConfigRollbackDoc"},
+		{"config workflow add", "json:ConfigWorkflowAddDoc"},
+		{"config workflow edit", "json:ConfigWorkflowEditDoc"},
+		{"config workflow rm", "json:ConfigWorkflowRmDoc"},
 	} {
 		e, ok := registryEntry(c.verb)
 		if !ok {
