@@ -18,7 +18,7 @@ import (
 
 // maxConns caps simultaneous pinned connections. Only a request that needs a
 // pinned connection takes a slot: the handshake never waits on the cap, and a
-// client over the cap waits rather than being refused.
+// client over the cap is refused as busy past the slot bound.
 var maxConns = 64
 
 // maxLiveConns caps every connection the owner tracks at once -- handshaken,
@@ -62,8 +62,9 @@ type Server struct {
 	// shrink the package var before the accept goroutines start.
 	maxLive int
 	// sem holds one slot per pinned connection; a request that needs one waits
-	// on it inside pin, and cleanup returns it when that connection is
-	// discarded. Idle handshaken connections never take a slot.
+	// on it inside pin up to the slot bound. release returns it when a statement
+	// ends outside a transaction, and cleanup when that connection is discarded.
+	// An idle connection never holds a slot, handshaken or between statements.
 	sem chan struct{}
 
 	// OnAbandoned, when set, runs once when an abandoned statement has not

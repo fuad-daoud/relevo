@@ -64,16 +64,20 @@ type Hello struct {
 // opened without one.
 type Welcome struct {
 	Header
-	Proto      string   `json:"proto"`
-	MinClient  int      `json:"min_client"`
-	Version    int      `json:"version"`
-	SchemaHave int      `json:"schema_have"`
-	SchemaKnow int      `json:"schema_know"`
-	Origin     string   `json:"origin"`
-	PID        int      `json:"pid"`
-	Conns      int      `json:"conns"`
-	Features   []string `json:"features"`
-	HasLocal   bool     `json:"has_local"`
+	Proto      string `json:"proto"`
+	MinClient  int    `json:"min_client"`
+	Version    int    `json:"version"`
+	SchemaHave int    `json:"schema_have"`
+	SchemaKnow int    `json:"schema_know"`
+	Origin     string `json:"origin"`
+	PID        int    `json:"pid"`
+	Conns      int    `json:"conns"`
+	// Pinned counts the connections holding a slot: the work the cap is
+	// bounding now, beside the live total. A probe reads both, so doctor can
+	// show real work next to idle handshakes.
+	Pinned   int      `json:"pinned"`
+	Features []string `json:"features"`
+	HasLocal bool     `json:"has_local"`
 }
 
 // Refusal answers Hello when the owner will not serve: a protocol mismatch or

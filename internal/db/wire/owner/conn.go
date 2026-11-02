@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -20,9 +21,10 @@ import (
 // return before it rolls the pinned connection back anyway.
 const discardTimeout = 2 * time.Second
 
-// conn pins one database connection for its life, runs one request at a time,
-// and tracks that request so a cancel or a next can reach it from the read
-// loop.
+// conn serves one client connection, runs one request at a time, and tracks
+// that request so a cancel or a next can reach it from the read loop. A
+// database connection is pinned only while a statement or transaction needs
+// it: an idle connection holds no slot, so the cap binds real work.
 type conn struct {
 	s  *Server
 	nc net.Conn
@@ -102,6 +104,7 @@ func (c *conn) serve() error {
 		Origin:     c.s.origin,
 		PID:        os.Getpid(),
 		Conns:      c.s.ConnCount(),
+		Pinned:     len(c.s.sem),
 		HasLocal:   c.s.hasLocal(),
 	}
 	if err := c.send(wire.KindWelcome, w, nil); err != nil {
@@ -288,9 +291,21 @@ func (c *conn) claim(id int) (*request, context.Context, error) {
 func (c *conn) run(ctx context.Context, r *request, kind byte, query string, raw []byte) {
 	pinned, err := c.pin(ctx)
 	if err != nil {
+		// A pin that timed out already names its refusal: answer it rather
+		// than reporting an error, so the client sees the busy code.
+		var busy *slotBusyError
+		if errors.As(err, &busy) {
+			// The connection is unusable when this send fails, and run has
+			// nothing else to answer on, so the error is dropped.
+			_ = c.refuse(wire.RefuseBusy, busy.Error())
+			return
+		}
 		c.sendError(r.id, err)
 		return
 	}
+	// The statement below answers and returns; the release runs after either,
+	// so every path -- ack, error, or an abandoned stream -- passes through it.
+	defer c.release()
 	args, err := decodeArgs(raw)
 	if err != nil {
 		c.sendError(r.id, err)
@@ -303,10 +318,12 @@ func (c *conn) run(ctx context.Context, r *request, kind byte, query string, raw
 	c.query(ctx, r, pinned, query, args)
 }
 
-// pin opens the client's own owner connection on first use, holding one of the
-// server's connection slots for it. The slot is taken on the request's context,
-// with no deadline of its own, so a client over the cap waits here -- the
-// handshake never does -- and a disconnect releases the wait.
+// pin returns the database connection this request runs on: the one already
+// held inside a transaction, else a fresh pool connection holding one of the
+// server's slots. The slot is taken on the request's context with a bounded
+// wait, so a client over the cap is refused as busy past the bound instead of
+// hanging -- the handshake never waits on the cap, and a disconnect releases
+// the wait.
 func (c *conn) pin(ctx context.Context) (*sql.Conn, error) {
 	c.mu.Lock()
 	if c.pinned != nil {
@@ -320,6 +337,8 @@ func (c *conn) pin(ctx context.Context) (*sql.Conn, error) {
 	case c.s.sem <- struct{}{}:
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	case <-time.After(slotWait):
+		return nil, &slotBusyError{held: len(c.s.sem), max: maxConns}
 	}
 
 	c.mu.Lock()
@@ -331,6 +350,26 @@ func (c *conn) pin(ctx context.Context) (*sql.Conn, error) {
 	}
 	c.pinned = pinned
 	return pinned, nil
+}
+
+// release returns the pinned connection to the pool when no transaction is
+// open, freeing the slot pin took. Inside a transaction the connection is
+// kept: the transaction's later statements must run on it. A nil take means
+// cleanup already discarded it, so the slot is freed exactly once between the
+// two.
+func (c *conn) release() {
+	if c.transactionOpen() {
+		return
+	}
+	pinned := c.takePinned()
+	if pinned == nil {
+		return
+	}
+	// Outside a transaction there is nothing to roll back; the pool reuses
+	// the connection, so the discard's bad-conn mark stays cleanup's.
+	_, _ = pinned.ExecContext(context.Background(), "ROLLBACK")
+	_ = pinned.Close()
+	<-c.s.sem
 }
 
 func (c *conn) exec(ctx context.Context, r *request, pinned *sql.Conn, query string, args []any) {
@@ -403,88 +442,11 @@ func (c *conn) query(ctx context.Context, r *request, pinned *sql.Conn, query st
 	}
 }
 
-// rowStream reads one query's rows, one row ahead, so the sender knows whether
-// the batch that just filled is the last one.
-type rowStream struct {
-	rows        *sql.Rows
-	cols        []string
-	pending     []any
-	havePending bool
-	// ceiling is the largest value this stream may carry, or 0 for no bound.
-	// It is set from the connection's ad-hoc marker, so a normal verb's own
-	// blobs still flow.
-	ceiling int
-}
-
-// next fills a batch up to budget and reports whether another row follows.
-func (s *rowStream) next(budget int) ([]byte, int, bool, error) {
-	batch := &wire.Builder{}
-	n := 0
-	for batch.Len() < budget {
-		vals, ok, err := s.take()
-		if err != nil {
-			return nil, 0, false, err
-		}
-		if !ok {
-			break
-		}
-		for _, v := range vals {
-			if err := batch.Add(v); err != nil {
-				return nil, 0, false, err
-			}
-		}
-		n++
-	}
-	more, err := s.peek()
-	if err != nil {
-		return nil, 0, false, err
-	}
-	return batch.Bytes(), n, more, nil
-}
-
-func (s *rowStream) take() ([]any, bool, error) {
-	if s.havePending {
-		s.havePending = false
-		return s.pending, true, nil
-	}
-	return s.read()
-}
-
-func (s *rowStream) peek() (bool, error) {
-	if s.havePending {
-		return true, nil
-	}
-	vals, ok, err := s.read()
-	if err != nil || !ok {
-		return false, err
-	}
-	s.pending, s.havePending = vals, true
-	return true, nil
-}
-
-func (s *rowStream) read() ([]any, bool, error) {
-	if !s.rows.Next() {
-		return nil, false, s.rows.Err()
-	}
-	vals := make([]any, len(s.cols))
-	ptrs := make([]any, len(s.cols))
-	for i := range vals {
-		ptrs[i] = &vals[i]
-	}
-	if err := s.rows.Scan(ptrs...); err != nil {
-		return nil, false, err
-	}
-	// The check runs the moment the engine yields the row, before the caller
-	// copies the value into a batch or peeks the next row.
-	if err := s.checkCeiling(vals); err != nil {
-		return nil, false, err
-	}
-	return vals, true, nil
-}
-
 // cleanup runs when the client goes away: it interrupts any running statement,
 // rolls the pinned connection back whatever state it was in, discards it, and
-// frees the connection slot that pin took.
+// frees the connection slot that pin took. When the last statement already
+// released the connection there is nothing to discard and the slot is already
+// free.
 func (c *conn) cleanup() {
 	c.mu.Lock()
 	r := c.cur

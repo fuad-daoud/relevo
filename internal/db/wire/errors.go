@@ -7,6 +7,14 @@ import "errors"
 // driver.ErrBadConn and database/sql must not retry it automatically.
 var ErrConnLost = errors.New("wire: connection lost after the request was sent")
 
+// ErrBusy marks a request the owner refused because every connection slot was
+// held. The request never ran, but a retry on a fresh connection would meet
+// the same cap, so it deliberately does not match driver.ErrBadConn and
+// database/sql must not retry it automatically. The refusal stays inspectable
+// through the wrap, and the owner's message names the counts, so the client
+// passes it through untouched.
+var ErrBusy = errors.New("wire: owner is busy")
+
 // Error is a rebuilt SQLite error: it carries the owner's code so the client's
 // existing code masks keep working, and its text so the message fallbacks do.
 type Error struct {
@@ -43,6 +51,10 @@ const (
 	// is ending a statement that will not stop. It is never sent for the
 	// handshake and never for a connection that did not mark itself ad-hoc.
 	RefuseReaping = "reaping"
+	// RefuseBusy answers a request that needs a pinned connection while every
+	// slot is held. The request never ran, but a fresh connection would meet
+	// the same cap, so the client reports it without retrying.
+	RefuseBusy = "busy"
 	// RefuseNoLocal answers a handshake that asked for the machine-local file
 	// from an owner serving only the shared one. The client asked for a file
 	// that does not exist on this owner, and answering from the shared file

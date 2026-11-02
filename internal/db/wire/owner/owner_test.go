@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -237,18 +238,25 @@ func TestOwnerRefusesWhenShuttingDown(t *testing.T) {
 	}
 }
 
-func TestConnectionCapWaitsInsteadOfRefusing(t *testing.T) {
-	old := maxConns
+func TestConnectionCapRefusesBusyWithinDeadline(t *testing.T) {
+	oldMax, oldWait := maxConns, slotWait
 	maxConns = 1
-	defer func() { maxConns = old }()
+	SetSlotWait(100 * time.Millisecond)
+	defer func() {
+		maxConns = oldMax
+		SetSlotWait(oldWait)
+	}()
 
 	_, sock := startServer(t)
 
-	// One client pins the single slot for the life of its connection.
+	// One client holds the single slot inside an open transaction: an idle
+	// connection holds none, so the hold has to be real work.
 	a, na := dialRaw(t, sock)
 	sendHello(t, a, wire.Version)
 	welcome(t, a)
 	execRaw(t, a, 1, `CREATE TABLE t (n INTEGER)`)
+	readDone(t, a, na)
+	execRaw(t, a, 2, "BEGIN")
 	readDone(t, a, na)
 
 	// A second client's handshake is served while the cap is full: the cap
@@ -264,25 +272,22 @@ func TestConnectionCapWaitsInsteadOfRefusing(t *testing.T) {
 		t.Fatalf("SetReadDeadline: %v", err)
 	}
 
-	// Its request waits for the slot, and keeps waiting longer than the
-	// client's two-second handshake timeout: a cap that refused, or that
-	// bounded the handshake, would have failed this client already.
+	// Its request is refused as busy inside the shrunk bound, naming the held
+	// and maximum slot counts.
 	execRaw(t, b, 1, `INSERT INTO t (n) VALUES (1)`)
-	if err := nb.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+	if err := nb.SetReadDeadline(time.Now().Add(readAllowance)); err != nil {
 		t.Fatalf("SetReadDeadline: %v", err)
 	}
-	if _, err := b.Read(); err == nil {
-		t.Fatal("a request was served over the cap")
+	got := refusal(t, b)
+	if got.Code != wire.RefuseBusy {
+		t.Errorf("refusal code = %q, want %q", got.Code, wire.RefuseBusy)
+	}
+	if !strings.Contains(got.Message, "1/1") {
+		t.Errorf("refusal message = %q, want it to name the held and maximum slots (1/1)", got.Message)
 	}
 	if err := nb.SetReadDeadline(time.Time{}); err != nil {
 		t.Fatalf("SetReadDeadline: %v", err)
 	}
-
-	// Free the slot; the waiting request now succeeds. Cleanup may legally
-	// spend its own discardTimeout releasing the slot, so the answer waits on
-	// the allowance, not on a guess about how long that takes.
-	_ = na.Close()
-	readDoneWithin(t, b, nb, readAllowance)
 }
 
 func TestLiveConnectionCapDropsTheExtra(t *testing.T) {

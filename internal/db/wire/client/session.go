@@ -26,6 +26,7 @@ type conn struct {
 	origin string
 	pid    int
 	conns  int
+	pinned int
 	// adHoc is the marker every handshake this connection opens carries.
 	adHoc bool
 	// hasLocal is the owner's answer to whether it serves a machine-local file.
@@ -88,7 +89,7 @@ func (c *conn) handshake(ctx context.Context) error {
 			return err
 		}
 		c.have, c.know, c.origin = m.SchemaHave, m.SchemaKnow, m.Origin
-		c.pid, c.conns = m.PID, m.Conns
+		c.pid, c.conns, c.pinned = m.PID, m.Conns, m.Pinned
 		c.hasLocal = m.HasLocal
 		return nil
 	case wire.KindRefuse:
@@ -215,6 +216,12 @@ func (c *conn) midRefuse(frame []byte) error {
 	c.dead.Store(true)
 	if r.Code == wire.RefuseRestarting {
 		return fmt.Errorf("%w: %w", driver.ErrBadConn, &r)
+	}
+	// A busy owner would answer a fresh connection the same way, so the
+	// refusal is never retried: it stays a plain typed refusal under its own
+	// sentinel, and the owner's message already carries the counts.
+	if r.Code == wire.RefuseBusy {
+		return fmt.Errorf("%w: %w", wire.ErrBusy, &r)
 	}
 	return &r
 }

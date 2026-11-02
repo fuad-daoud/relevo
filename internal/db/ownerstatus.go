@@ -20,5 +20,5 @@ func ProbeOwner(sock string) (OwnerStatus, error) {
 	if err != nil {
 		return OwnerStatus{Socket: sock}, err
 	}
-	return OwnerStatus{Socket: sock, PID: in.PID, Version: wire.Version, Conns: in.Conns}, nil
+	return OwnerStatus{Socket: sock, PID: in.PID, Version: wire.Version, Conns: in.Conns, Pinned: in.Pinned}, nil
 }

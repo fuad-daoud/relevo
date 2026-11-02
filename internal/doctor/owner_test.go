@@ -9,11 +9,11 @@ import (
 )
 
 func TestOwnerCheck(t *testing.T) {
-	ok := ownerCheck(db.OwnerStatus{Socket: "/tmp/rvo/o.sock", PID: 42, Version: 1, Conns: 3}, nil)
+	ok := ownerCheck(db.OwnerStatus{Socket: "/tmp/rvo/o.sock", PID: 42, Version: 1, Conns: 3, Pinned: 1}, nil)
 	if ok.Name != "owner" || ok.Severity != SevOK {
 		t.Fatalf("ok row = %+v, want name owner and severity ok", ok)
 	}
-	for _, want := range []string{"/tmp/rvo/o.sock", "pid 42", "relevo-owner v1", "3 connections"} {
+	for _, want := range []string{"/tmp/rvo/o.sock", "pid 42", "relevo-owner v1", "3 connections", "1 pinned"} {
 		if !strings.Contains(ok.Detail, want) {
 			t.Errorf("detail %q must contain %q", ok.Detail, want)
 		}

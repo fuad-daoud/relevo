@@ -80,6 +80,75 @@ func restartingOwner(t *testing.T) string {
 	return sock
 }
 
+func refuseBusy(w *wire.Conn) {
+	payload, err := wire.Encode(wire.KindRefuse, &wire.Refusal{
+		Header:  wire.Header{Type: wire.TypeRefuse},
+		Code:    wire.RefuseBusy,
+		Message: "the owner is busy (1/1 connection slots held); retry in a moment",
+	}, nil)
+	if err != nil {
+		return
+	}
+	_ = w.Write(payload)
+}
+
+// busyOwner answers every handshake and refuses every exec as busy, so the
+// driver's mapping of a mid-request busy refusal can be pinned without a real
+// owner.
+func busyOwner(t *testing.T) string {
+	t.Helper()
+	l, sock := shortListener(t)
+	go func() {
+		for {
+			nc, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer func() { _ = nc.Close() }()
+				w := wire.NewConn(nc)
+				if !serveFakeWelcome(nc, w) {
+					return
+				}
+				if _, err := w.Read(); err != nil {
+					return
+				}
+				refuseBusy(w)
+			}()
+		}
+	}()
+	return sock
+}
+
+// TestDriverSeesABusyRefusal pins the mid-request mapping for the busy code: a
+// refusal that arrives after the request was sent stays a plain typed refusal
+// under its own sentinel, and never matches driver.ErrBadConn, so
+// database/sql reports it instead of retrying a request the owner would
+// refuse again.
+func TestDriverSeesABusyRefusal(t *testing.T) {
+	sock := busyOwner(t)
+	sqlDB, err := sql.Open(client.DriverName, sock)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+
+	_, err = sqlDB.ExecContext(context.Background(), `CREATE TABLE t (n INTEGER)`)
+	if err == nil {
+		t.Fatal("Exec against a busy owner succeeded")
+	}
+	if errors.Is(err, driver.ErrBadConn) {
+		t.Errorf("error %v must not be driver.ErrBadConn; a fresh connection would meet the same cap", err)
+	}
+	if !errors.Is(err, wire.ErrBusy) {
+		t.Errorf("error %v must match the busy sentinel", err)
+	}
+	var ref *wire.Refusal
+	if !errors.As(err, &ref) || ref.Code != wire.RefuseBusy {
+		t.Errorf("error %v must carry the busy refusal", err)
+	}
+}
+
 // TestDriverSeesARestartingRefusal pins the mid-request mapping: a refusal that
 // arrives after the request was sent is not a lost connection. It wraps
 // driver.ErrBadConn so database/sql may retry, and stays inspectable.
