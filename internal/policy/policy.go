@@ -45,8 +45,6 @@ type Policy struct {
 
 	// ScanPatterns extends the built-in instruction-shaped line patterns.
 	ScanPatterns []string `json:"scan_patterns,omitempty"`
-	// Classify configures the optional classifier beside the regex scan.
-	Classify *Classify `json:"classify,omitempty"`
 
 	// Tier maps a role to its default tier, capped by MaxTierOrDefault().
 	Tier map[string]string `json:"tier,omitempty"`
@@ -183,39 +181,6 @@ type GatePolicy struct {
 	// Regate is the automatic repair-round budget after a failing gate; nil
 	// is 0 (no repair).
 	Regate *int `json:"regate,omitempty"`
-}
-
-// Classify configures the optional classifier beside the regex scan.
-type Classify struct {
-	Provider           string   `json:"provider"`                      // required; only "jev" is known
-	Model              string   `json:"model,omitempty"`               // default DefaultClassifyModel
-	InjectionThreshold *float64 `json:"injection_threshold,omitempty"` // default DefaultInjectionThreshold; (0, 1]
-	TimeoutMS          *int     `json:"timeout_ms,omitempty"`          // default DefaultClassifyTimeout; must be > 0
-}
-
-const DefaultClassifyModel = "jev-latest"
-const DefaultInjectionThreshold = 0.7
-const DefaultClassifyTimeout = 4 * time.Second
-
-func (c *Classify) ModelName() string {
-	if c == nil || c.Model == "" {
-		return DefaultClassifyModel
-	}
-	return c.Model
-}
-
-func (c *Classify) Threshold() float64 {
-	if c == nil || c.InjectionThreshold == nil {
-		return DefaultInjectionThreshold
-	}
-	return *c.InjectionThreshold
-}
-
-func (c *Classify) Timeout() time.Duration {
-	if c == nil || c.TimeoutMS == nil {
-		return DefaultClassifyTimeout
-	}
-	return time.Duration(*c.TimeoutMS) * time.Millisecond
 }
 
 // DefaultMaxTier is the ceiling used when MaxTier is empty.
