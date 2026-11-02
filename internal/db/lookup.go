@@ -57,7 +57,8 @@ const roundColumns = `id, binding_id, number, started_at, closed_at, outcome, ac
 	candidate, account, harness, provider, model, mode, tier,
 	commits, tree, gate_result, gate_exit, gate_duration_ms,
 	in_tokens, cache_tokens, write_tokens, out_tokens, cost_usd, cost_basis,
-	report_outcome, switches`
+	report_outcome, switches,
+	queue_wait_ms, start_kind, rusage_cpu_ms, rusage_peak_mem_bytes`
 
 func scanRound(s rowScanner) (Round, error) {
 	var r Round
@@ -71,12 +72,15 @@ func scanRound(s rowScanner) (Round, error) {
 	var inTokens, cacheTokens, writeTokens, outTokens sql.Null[int64]
 	var costUSD sql.Null[float64]
 	var costBasis, reportOutcome sql.Null[string]
+	var queueWaitMS, rusageCPUMS, rusagePeakMemBytes sql.Null[int64]
+	var startKind sql.Null[string]
 
 	if err := s.Scan(&r.ID, &r.BindingID, &r.Number, &startedAt, &closedAt, &r.Outcome, &r.Actor,
 		&candidate, &account, &harness, &provider, &model, &mode, &tier,
 		&commits, &tree, &gateResult, &gateExit, &gateDurationMS,
 		&inTokens, &cacheTokens, &writeTokens, &outTokens, &costUSD, &costBasis,
-		&reportOutcome, &r.Switches); err != nil {
+		&reportOutcome, &r.Switches,
+		&queueWaitMS, &startKind, &rusageCPUMS, &rusagePeakMemBytes); err != nil {
 		return Round{}, fmt.Errorf("scan: %w", err)
 	}
 
@@ -107,6 +111,10 @@ func scanRound(s rowScanner) (Round, error) {
 	r.CostUSD = ptrIfValid(costUSD)
 	r.CostBasis = ptrIfValid(costBasis)
 	r.ReportOutcome = ptrIfValid(reportOutcome)
+	r.QueueWaitMS = ptrIfValid(queueWaitMS)
+	r.StartKind = ptrIfValid(startKind)
+	r.RusageCPUMS = ptrIfValid(rusageCPUMS)
+	r.RusagePeakMemBytes = ptrIfValid(rusagePeakMemBytes)
 
 	return r, nil
 }

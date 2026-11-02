@@ -272,7 +272,7 @@ func (r *ingestRun) upsertRounds(tx *db.Tx, bindingID string, all []store.LogEnt
 }
 
 func (r *ingestRun) upsertRound(tx *db.Tx, bindingID string, n int, all []store.LogEntry, now time.Time, hadRound map[int]bool) (string, error) {
-	rd := roundFacts(all, n)
+	rd := roundFacts(all, n, r.b.Builder.Mode == store.ModeRemote)
 	rd.BindingID = bindingID
 	rd.Number = n
 	rd.Outcome = deriveOutcome(all, n, r.b, r.members)

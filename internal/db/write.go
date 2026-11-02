@@ -281,7 +281,8 @@ func (t *Tx) UpsertRound(r Round) (string, error) {
 			"account", "harness", "provider", "model", "mode", "actor", "tier",
 			"commits", "tree", "gate_result", "gate_exit", "gate_duration_ms",
 			"in_tokens", "cache_tokens", "write_tokens", "out_tokens", "cost_usd", "cost_basis",
-			"report_outcome", "switches"},
+			"report_outcome", "switches",
+			"queue_wait_ms", "start_kind", "rusage_cpu_ms", "rusage_peak_mem_bytes"},
 			formatTime(r.StartedAt), nullableTime(r.ClosedAt), r.Outcome, nullableString(r.Candidate),
 			nullableString(r.Account),
 			nullableString(r.Harness), nullableString(r.Provider), nullableString(r.Model),
@@ -290,7 +291,9 @@ func (t *Tx) UpsertRound(r Round) (string, error) {
 			nullableInt64(r.GateDurationMS),
 			nullableInt64(r.InTokens), nullableInt64(r.CacheTokens), nullableInt64(r.WriteTokens), nullableInt64(r.OutTokens),
 			nullableFloat64(r.CostUSD), nullableString(r.CostBasis),
-			nullableString(r.ReportOutcome), r.Switches); uerr != nil {
+			nullableString(r.ReportOutcome), r.Switches,
+			nullableInt64(r.QueueWaitMS), nullableString(r.StartKind),
+			nullableInt64(r.RusageCPUMS), nullableInt64(r.RusagePeakMemBytes)); uerr != nil {
 			return "", fmt.Errorf("db: upsert round: update: %w", mapBusy(uerr))
 		}
 		return id, nil
@@ -308,8 +311,9 @@ func (t *Tx) UpsertRound(r Round) (string, error) {
 			candidate, account, harness, provider, model, mode, actor, tier,
 			commits, tree, gate_result, gate_exit, gate_duration_ms,
 			in_tokens, cache_tokens, write_tokens, out_tokens, cost_usd, cost_basis,
-			report_outcome, switches)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			report_outcome, switches,
+			queue_wait_ms, start_kind, rusage_cpu_ms, rusage_peak_mem_bytes)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		id, r.BindingID, r.Number, formatTime(startedAt), nullableTime(r.ClosedAt), r.Outcome,
 		nullableString(r.Candidate), nullableString(r.Account), nullableString(r.Harness), nullableString(r.Provider),
 		nullableString(r.Model), nullableString(r.Mode), r.Actor, nullableString(r.Tier),
@@ -317,7 +321,9 @@ func (t *Tx) UpsertRound(r Round) (string, error) {
 		nullableInt64(r.GateDurationMS),
 		nullableInt64(r.InTokens), nullableInt64(r.CacheTokens), nullableInt64(r.WriteTokens), nullableInt64(r.OutTokens),
 		nullableFloat64(r.CostUSD), nullableString(r.CostBasis),
-		nullableString(r.ReportOutcome), r.Switches); err != nil {
+		nullableString(r.ReportOutcome), r.Switches,
+		nullableInt64(r.QueueWaitMS), nullableString(r.StartKind),
+		nullableInt64(r.RusageCPUMS), nullableInt64(r.RusagePeakMemBytes)); err != nil {
 		return "", fmt.Errorf("db: upsert round: insert: %w", mapBusy(err))
 	}
 	return id, nil

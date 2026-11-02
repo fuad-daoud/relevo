@@ -80,6 +80,15 @@ type Round struct {
 	CostBasis      *string
 	ReportOutcome  *string
 	Switches       int
+	// QueueWaitMS is admitTS minus queuedTS in milliseconds, nil when the
+	// round never queued or never reported.
+	QueueWaitMS *int64
+	// StartKind is 'local' on the host that ran the round, nil elsewhere.
+	StartKind *string
+	// RusageCPUMS and RusagePeakMemBytes copy the report entry's rusage,
+	// nil when the report carried none.
+	RusageCPUMS        *int64
+	RusagePeakMemBytes *int64
 }
 
 type Event struct {
