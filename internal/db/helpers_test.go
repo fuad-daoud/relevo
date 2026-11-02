@@ -345,6 +345,21 @@ func isCrockford(c byte) bool {
 	return false
 }
 
+// envWithout copies env with every entry named key removed, so a value this
+// process sets cannot be shadowed by an inherited duplicate the child reads
+// first.
+func envWithout(env []string, key string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(env))
+	for _, e := range env {
+		if len(e) >= len(prefix) && e[:len(prefix)] == prefix {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
 // pollUntil polls cond in short steps until it returns true or the test's
 // deadline arrives. If t.Deadline() is set, it stops slightly before the
 // deadline and fails with msg. If no deadline is set, it polls indefinitely.
