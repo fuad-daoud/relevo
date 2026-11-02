@@ -563,6 +563,79 @@ func TestSweepScratchRemovesScratchPointingAtDeletedRepo(t *testing.T) {
 	}
 }
 
+// TestSweepScratchFailsScratchWithMalformedGitFile pins the malformed-gitfile
+// refusal: a scratch whose .git is present but names no repository fails the
+// sweep instead of deleting a directory that may belong to a live checkout.
+// No binding record exists, so the sweep takes the .git branch.
+func TestSweepScratchFailsScratchWithMalformedGitFile(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	repo := scratchSeedRepo(t, "one\n")
+	st := store.New(t.TempDir())
+	deps := Deps{Store: st, Git: git.NewClient("git", 0, 0)}
+
+	path := st.ScratchWorktreePath("web", 7)
+	if _, err := CreateScratch(ctx, deps, store.Binding{Name: "web", CWD: repo}, 7); err != nil {
+		t.Fatalf("CreateScratch: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(path, ".git"), []byte("not a gitdir line\n"), 0o644); err != nil {
+		t.Fatalf("clobber scratch .git: %v", err)
+	}
+
+	removed, err := SweepScratch(ctx, deps, nil)
+	if err == nil {
+		t.Errorf("SweepScratch = nil error, want the malformed-.git failure")
+	}
+	for _, r := range removed {
+		if r == path {
+			t.Errorf("SweepScratch removed %s, want it kept on a malformed .git", path)
+		}
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("malformed scratch %s is gone after the sweep: %v", path, err)
+	}
+}
+
+// TestSweepScratchFailsScratchWithUnstatableRepo pins the stat-guard refusal:
+// a scratch whose .git names a repository path that fails to stat for a
+// reason other than absence (here ENOTDIR through a regular file) fails the
+// sweep instead of deleting a directory that may belong to a live checkout.
+func TestSweepScratchFailsScratchWithUnstatableRepo(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	repo := scratchSeedRepo(t, "one\n")
+	st := store.New(t.TempDir())
+	deps := Deps{Store: st, Git: git.NewClient("git", 0, 0)}
+
+	path := st.ScratchWorktreePath("web", 8)
+	if _, err := CreateScratch(ctx, deps, store.Binding{Name: "web", CWD: repo}, 8); err != nil {
+		t.Fatalf("CreateScratch: %v", err)
+	}
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	if err := os.WriteFile(blocker, []byte("not a dir\n"), 0o644); err != nil {
+		t.Fatalf("write blocker: %v", err)
+	}
+	gitfile := "gitdir: " + filepath.Join(blocker, "sub", "worktrees", "web-008") + "\n"
+	if err := os.WriteFile(filepath.Join(path, ".git"), []byte(gitfile), 0o644); err != nil {
+		t.Fatalf("clobber scratch .git: %v", err)
+	}
+
+	removed, err := SweepScratch(ctx, deps, nil)
+	if err == nil {
+		t.Errorf("SweepScratch = nil error, want the unstatable-repo failure")
+	}
+	for _, r := range removed {
+		if r == path {
+			t.Errorf("SweepScratch removed %s, want it kept on an unstatable repo", path)
+		}
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("unstatable scratch %s is gone after the sweep: %v", path, err)
+	}
+}
+
 // TestRemoveScratchSkipsWhenTheSourceAndTheScratchAreGone pins the shared-tree
 // release: a chain done removes the builder's worktree first, and every reader
 // cut from that tree then cleans a scratch whose source no longer exists. Both
