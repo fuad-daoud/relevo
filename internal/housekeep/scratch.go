@@ -226,8 +226,11 @@ func SweepScratch(ctx context.Context, deps Deps, keep func(binding string, roun
 // binding's own tree names the repository. Without one -- the binding is gone
 // -- the worktree's .git file names it instead: the directory goes first, and
 // the RemoveWorktree call afterwards only prunes the now-stale admin entry.
-// Both the .git read and the removal go through the .worktrees root, so a
-// plant that escapes it is refused.
+// A scratch whose .git is gone, or whose .git names a repository that is gone
+// too, is orphaned: no repository is left to prune in, so taking the directory
+// away is the whole cleanup. A .git that is present but malformed still fails,
+// since it may name a live repository. Both the .git read and the removal go
+// through the .worktrees root, so a plant that escapes it is refused.
 func removeScratchEntry(ctx context.Context, deps Deps, root *os.Root, name, rel, path string) error {
 	if b, err := deps.Store.Load(name); err == nil {
 		return deps.Git.RemoveWorktree(ctx, b.CWD, path, true)
@@ -235,7 +238,16 @@ func removeScratchEntry(ctx context.Context, deps Deps, root *os.Root, name, rel
 
 	repo, err := scratchRepoFromRoot(root, rel)
 	if err != nil {
-		return err
+		if !os.IsNotExist(err) {
+			return err
+		}
+		return root.RemoveAll(rel)
+	}
+	if _, err := os.Stat(repo); err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		return root.RemoveAll(rel)
 	}
 	if err := root.RemoveAll(rel); err != nil {
 		return err

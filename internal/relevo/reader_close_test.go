@@ -3,6 +3,7 @@ package relevo
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -573,6 +574,57 @@ func TestSweepKeepsTheCurrentRoundsScratchBeforeItOpens(t *testing.T) {
 	}
 	if _, err := os.Stat(rt.Store.ScratchWorktreePath("reader-bind", 1)); !os.IsNotExist(err) {
 		t.Errorf("round 1's scratch is still present after the sweep: %v", err)
+	}
+}
+
+// TestSweepReaderScratchWarnsOncePerFailingEntry pins the once-per-entry
+// warning: repeated sweeps with an unchanged failing entry log one
+// "scratch sweep" warning, while a newly failing entry warns once more. The
+// removal itself is retried every sweep: only the warning is deduped.
+func TestSweepReaderScratchWarnsOncePerFailingEntry(t *testing.T) {
+	buf := captureLog(t)
+	ctx := context.Background()
+	fg := &fakeGit{removeWorktreeErr: errors.New("test stuck scratch removal")}
+	rt := newTestRuntime(t, fg)
+	if err := rt.Store.Save(store.Binding{
+		Name: "reader-bind", CWD: "/repo", Shape: store.ShapeReader,
+		Round: 2, State: store.StateDone,
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := os.MkdirAll(rt.Store.ScratchWorktreePath("reader-bind", 1), 0o755); err != nil {
+		t.Fatalf("mkdir scratch: %v", err)
+	}
+
+	sweep := func() {
+		t.Helper()
+		bindings, err := rt.Store.List()
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		sweepReaderScratch(ctx, rt, bindings)
+	}
+	sweep()
+	sweep()
+	if n := strings.Count(buf.String(), `msg="scratch sweep"`); n != 1 {
+		t.Fatalf("scratch sweep warned %d times across two identical failing sweeps, want 1:\n%s", n, buf.String())
+	}
+
+	if err := rt.Store.Save(store.Binding{
+		Name: "other-bind", CWD: "/repo", Shape: store.ShapeReader,
+		Round: 2, State: store.StateDone,
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := os.MkdirAll(rt.Store.ScratchWorktreePath("other-bind", 1), 0o755); err != nil {
+		t.Fatalf("mkdir scratch: %v", err)
+	}
+	sweep()
+	if n := strings.Count(buf.String(), `msg="scratch sweep"`); n != 2 {
+		t.Fatalf("scratch sweep warned %d times after a second entry started failing, want 2:\n%s", n, buf.String())
+	}
+	if len(fg.removeWorktreeCalls) != 4 {
+		t.Errorf("RemoveWorktree calls = %d, want 4: the retry must not stop", len(fg.removeWorktreeCalls))
 	}
 }
 

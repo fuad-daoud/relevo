@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"runtime/debug"
+	"sync"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -26,6 +27,22 @@ const mastermindPruneInterval = time.Hour
 
 // mastermindPrunedAtKey is the store database's kv row naming the last prune.
 const mastermindPrunedAtKey = "planner.pruned_at"
+
+// scratchSweepWarned remembers the sweep failures already warned about, keyed
+// by the joined error's message. This is the one repeating scratch-sweep site
+// both daemons reach, so the gate lives here: without it one stuck entry warns
+// once per tick per daemon.
+var scratchSweepWarned sync.Map
+
+// warnScratchSweepOnce warns about a sweep failure the first time its message
+// is seen. The error itself still propagates to the caller, so the tick keeps
+// retrying the removal.
+func warnScratchSweepOnce(err error) {
+	if _, seen := scratchSweepWarned.LoadOrStore(err.Error(), struct{}{}); seen {
+		return
+	}
+	slog.Warn("scratch sweep", "err", err)
+}
 
 // sweepReaderScratch removes the scratch worktrees whose reader round is no
 // longer needed, walking the tick's own binding list. A scratch for the
@@ -50,7 +67,7 @@ func sweepReaderScratch(ctx context.Context, rt Runtime, bindings []store.Bindin
 		return ok && round >= r
 	})
 	if err != nil {
-		slog.Warn("scratch sweep", "err", err)
+		warnScratchSweepOnce(err)
 	}
 	for _, path := range removed {
 		slog.Info("removed scratch worktree", "path", path)
