@@ -511,6 +511,119 @@ func TestMasterMindInitHookWritesToldBaseline(t *testing.T) {
 	}
 }
 
+// TestMasterMindInitHookLockedDatabaseStillAnswersEmptyFast is the init hook's
+// budget: a fresh session forces the registration write, so with the local
+// write lock held the hook must answer the empty object and exit 0 instead of
+// waiting out the database.
+func TestMasterMindInitHookLockedDatabaseStillAnswersEmptyFast(t *testing.T) {
+	// A manual state directory, not TempDir: the worker the deadline
+	// abandons keeps its handles into cleanup, and a retrying removal
+	// outlasts its last checkpoint instead of racing it.
+	state, err := os.MkdirTemp("", "init-lock-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() {
+		for i := 0; i < 100; i++ {
+			if rerr := os.RemoveAll(state); rerr == nil {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		t.Errorf("RemoveAll %s keeps failing after the hook returned", state)
+	})
+	t.Setenv("XDG_STATE_HOME", state)
+	t.Setenv("CLAUDE_ENV_FILE", "")
+	repo := mastermindConsentRepo(t, state, db.ConsentYes)
+
+	// Hold the local write lock every hook write needs, with a blocking
+	// Tx the way the database's own short-busy test holds it. A fresh
+	// session forces the registration write, so without a deadline the
+	// hook waits out the unbounded failure instead of answering.
+	local := openConsentMachineDB(t, state).LocalOrSelf()
+	holding := make(chan struct{})
+	release := make(chan struct{})
+	holderDone := make(chan error, 1)
+	go func() {
+		holderDone <- local.Tx(func(*db.Tx) error {
+			close(holding)
+			<-release
+			return nil
+		})
+	}()
+	<-holding
+	// The holder is released below; a fatal before that still frees it.
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+
+	payload := fmt.Sprintf(`{"hook_event_name":"SessionStart","session_id":"sess-locked-init","cwd":%q}`, repo)
+	start := time.Now()
+	stdout, _, err := runWithStdin(t, payload, "mastermind", "init", "--hook", "claude")
+	elapsed := time.Since(start)
+	t.Logf("locked init answered in %v", elapsed)
+	close(release)
+	if cerr := <-holderDone; cerr != nil {
+		t.Fatalf("holder Tx: %v", cerr)
+	}
+	if err != nil {
+		t.Fatalf("init = %v, want exit 0", err)
+	}
+	if got := strings.TrimSpace(string(stdout)); got != "{}" {
+		t.Errorf("init stdout = %q, want {}", got)
+	}
+	// Five seconds cleanly separates the deadline near a second from the
+	// unbounded failure it cuts: busy waits per statement plus a 30 s
+	// begin retry.
+	if elapsed >= 5*time.Second {
+		t.Errorf("init took %v with the database locked, want the deadline near a second", elapsed)
+	}
+}
+
+// TestMasterMindInitHookBrokenDatabaseAnswersTheFailureNote pins the open
+// error branch: a database that cannot be opened fails the run, and the hook
+// still exits 0 with the failure note on stdout and the error on stderr.
+func TestMasterMindInitHookBrokenDatabaseAnswersTheFailureNote(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	t.Setenv("CLAUDE_ENV_FILE", "")
+	repo := mastermindConsentRepo(t, state, db.ConsentYes)
+	// Break the open the runtime does first: a directory where each
+	// database file belongs. The hook still exits 0 with the note
+	// envelope and the error on stderr.
+	for _, p := range []string{"relevo.db", "relevo-local.db"} {
+		p = filepath.Join(state, "relevo", p)
+		if err := os.Remove(p); err != nil {
+			t.Fatalf("Remove %s: %v", p, err)
+		}
+		if err := os.Mkdir(p, 0o700); err != nil {
+			t.Fatalf("Mkdir %s: %v", p, err)
+		}
+	}
+	payload := fmt.Sprintf(`{"hook_event_name":"SessionStart","session_id":"sess-broken-init","cwd":%q}`, repo)
+	stdout, stderr, err := runWithStdin(t, payload, "mastermind", "init", "--hook", "claude")
+	if err != nil {
+		t.Fatalf("init = %v, want exit 0", err)
+	}
+	var env hookEnvelope
+	if err := json.Unmarshal(bytes.TrimSpace(stdout), &env); err != nil {
+		t.Fatalf("stdout is not the hook envelope: %v: %q", err, stdout)
+	}
+	if env.HookSpecificOutput.HookEventName != "SessionStart" {
+		t.Errorf("hookEventName = %q, want SessionStart", env.HookSpecificOutput.HookEventName)
+	}
+	if !strings.Contains(env.HookSpecificOutput.AdditionalContext, "relevo mastermind init failed") {
+		t.Errorf("additionalContext = %q, want the failure note", env.HookSpecificOutput.AdditionalContext)
+	}
+	if len(stderr) == 0 {
+		t.Error("stderr is empty; the error belongs there too")
+	}
+}
+
 // TestMasterMindEnableWritesConsentAndRegisters pins the yes answer: the repo
 // gains the answer and the calling session a record.
 func TestMasterMindEnableWritesConsentAndRegisters(t *testing.T) {

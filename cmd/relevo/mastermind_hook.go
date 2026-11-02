@@ -36,16 +36,6 @@ func mastermindEffective(d *db.DB, rt relevo.Runtime, cwd, kind, session string)
 	return ref, own, mastermind.EffectiveConsent(own, repo)
 }
 
-func mastermindRegisterSession(d *db.DB, rt relevo.Runtime, in mastermind.InitInput) (mastermind.Record, error) {
-	reg, err := mastermindRegistry(rt)
-	if err != nil {
-		return mastermind.Record{}, err
-	}
-	in.PriorID = mastermindPriorIDFunc(d)
-	rec, _, err := mastermind.Init(reg, in)
-	return rec, err
-}
-
 // mastermindToldBaseline records the status token a hook just injected, so the
 // next prompt's notice compares against what the session was already told. A nil
 // handle writes nothing: the notice then treats its first read as the baseline.
@@ -71,6 +61,13 @@ func readHookInput(hookKind, event string) (mastermind.HookInput, error) {
 	return in, err
 }
 
+// mastermindInitTimeout bounds the whole SessionStart hook, from the parsed
+// input to the stdout write: the hook blocks the session's start, so a missed
+// budget answers empty, writes no baseline, and leaves the session to the next
+// prompt's notice. One second keeps the session start far below Claude's 30 s
+// hook cutoff.
+var mastermindInitTimeout = time.Second
+
 // mastermindInitHook runs `relevo mastermind init --hook claude|muse`. It never
 // returns an error and never exits non-zero: blocking a session because relevo
 // could not read its own state is worse than an unregistered mastermind.
@@ -87,14 +84,49 @@ func mastermindInitHook(nameFlag, hookKind string) error {
 		return mastermindInitHookFailure(err)
 	}
 
+	// The whole run answers under one deadline, in the same goroutine+select
+	// shape as the notice hook: a stuck database gets the empty answer, never
+	// the session's wait. The worker returns its stdout instead of writing it,
+	// so a late answer cannot land in the session; the channel holds one, so
+	// the loser never blocks sending it.
+	done := make(chan mastermindNoticeResult, 1)
+	go func() {
+		stdout, err := mastermindInitRun(nameFlag, hookKind, in)
+		done <- mastermindNoticeResult{stdout: stdout, err: err}
+	}()
+	select {
+	case r := <-done:
+		if r.err != nil {
+			return mastermindInitHookFailure(r.err)
+		}
+		_, _ = os.Stdout.Write(r.stdout)
+		return nil
+	case <-time.After(mastermindInitTimeout):
+		// No baseline is written here: the session was told nothing, so the
+		// next prompt's notice establishes the baseline from the live state
+		// instead of reading this silence as told.
+		_, _ = os.Stdout.Write(mastermind.HookConsent(""))
+		return nil
+	}
+}
+
+// mastermindInitRun does the init hook's work and returns its stdout. It runs
+// on a goroutine under the hook's deadline and writes no output itself.
+func mastermindInitRun(nameFlag, hookKind string, in mastermind.HookInput) ([]byte, error) {
+	empty := mastermind.HookConsent("")
+
 	rt, err := newRuntime()
 	if err != nil {
-		return mastermindInitHookFailure(err)
+		return nil, err
 	}
 
-	// One timed open serves the prior id and both answers, so the hook never
-	// waits on sqlite.
-	d, closeDB := mastermindOpenTimed(rt.Store.DBPath())
+	// One bounded handle serves every database touch below. An open error
+	// fails the run, and the wrapper answers the failure note: there is no
+	// nil handle for the reads to dereference.
+	d, closeDB, err := mastermindOpenHook(rt.Store.DBPath())
+	if err != nil {
+		return nil, err
+	}
 	defer closeDB()
 
 	ref, own, effective := mastermindEffective(d, rt, in.CWD, hookKind, in.SessionID)
@@ -102,29 +134,27 @@ func mastermindInitHook(nameFlag, hookKind string) error {
 	// With no repository and no session answer of its own, the session is left
 	// alone: there is nothing to remember, so nothing to ask.
 	if !mastermindRepoKnown(ref) && own == mastermind.ConsentUnset {
-		_, _ = os.Stdout.Write(mastermind.HookConsent(""))
-		return nil
+		return empty, nil
 	}
 
 	// A session `no` hides any record: no briefing and no registration. Its
 	// baseline is the silent token, so the next prompt's notice stays quiet.
 	if effective == mastermind.ConsentNo {
-		_, _ = os.Stdout.Write(mastermind.HookConsent(""))
 		mastermindToldBaseline(d, rt, hookKind, in.SessionID, mastermind.StatusNone)
-		return nil
+		return empty, nil
 	}
 
 	// An unset answer injects the ask-note and registers nothing.
 	if effective != mastermind.ConsentYes {
-		_, _ = os.Stdout.Write(mastermind.HookConsent(mastermind.ConsentText(effective, nil)))
 		mastermindToldBaseline(d, rt, hookKind, in.SessionID, mastermind.StatusAsk)
-		return nil
+		return mastermind.HookConsent(mastermind.ConsentText(effective, nil)), nil
 	}
 
 	// The hook's parent is the harness process itself, so the session's host.
 	host := os.Getppid()
 
-	rec, err := mastermindRegisterSession(d, rt, mastermind.InitInput{
+	reg := mastermindHookRegistry(d, rt)
+	initIn := mastermind.InitInput{
 		Kind:          hookKind,
 		SessionID:     in.SessionID,
 		CWD:           in.CWD,
@@ -133,9 +163,11 @@ func mastermindInitHook(nameFlag, hookKind string) error {
 		HostPID:       host,
 		HostStartedAt: mastermindHostStart(host),
 		Now:           rt.Now(),
-	})
+	}
+	initIn.PriorID = mastermindPriorIDFunc(d)
+	rec, _, err := mastermind.Init(reg, initIn)
 	if err != nil {
-		return mastermindInitHookFailure(err)
+		return nil, err
 	}
 
 	// The export line is how every later Bash call in the session learns its
@@ -152,16 +184,15 @@ func mastermindInitHook(nameFlag, hookKind string) error {
 		out = mastermind.HookOutput(rec)
 		if envFile := os.Getenv("CLAUDE_ENV_FILE"); envFile != "" {
 			if err := appendEnvLine(envFile, mastermind.EnvLine(rec.ID)); err != nil {
-				return mastermindInitHookFailure(err)
+				return nil, err
 			}
 		} else {
 			out = mastermind.HookOutputNoEnv(rec)
 		}
 	}
 
-	_, _ = os.Stdout.Write(out)
 	mastermindToldBaseline(d, rt, hookKind, in.SessionID, mastermind.StatusToken(effective, &rec))
-	return nil
+	return out, nil
 }
 
 // mastermindInitHookFailure reports a hook failure and swallows it: the note goes
