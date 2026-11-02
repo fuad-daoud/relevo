@@ -3,11 +3,14 @@ package relevo
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
+	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -93,6 +96,111 @@ func TestDoneChainMembersSelectsOnlyInScopeDoneChains(t *testing.T) {
 	}
 }
 
+// TestGCDoneChainsRefusesScopeLessOpts pins the scope guard: the sweep
+// refuses a missing or a doubled scope before reading the store, so neither
+// call settles or clears anything and the seeded chain survives untouched.
+func TestGCDoneChainsRefusesScopeLessOpts(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	seedSettleChain(t, rt, "ch-scope", "done", testMasterMindID, "ch-scope", "ch-scope-plan")
+
+	beforeBindings, err := rt.Store.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	beforeChain, err := rt.Store.Chain("ch-scope")
+	if err != nil {
+		t.Fatalf("Chain: %v", err)
+	}
+
+	if _, err := GCDoneChains(context.Background(), rt, housekeep.GCOptions{}); !errors.Is(err, housekeep.ErrGCNoScope) {
+		t.Fatalf("GCDoneChains without scope: err = %v, want ErrGCNoScope", err)
+	}
+	if _, err := GCDoneChains(context.Background(), rt,
+		housekeep.GCOptions{MasterMindID: testMasterMindID, AllMasterMinds: true}); !errors.Is(err, housekeep.ErrGCNoScope) {
+		t.Fatalf("GCDoneChains with both scopes: err = %v, want ErrGCNoScope", err)
+	}
+
+	afterBindings, err := rt.Store.List()
+	if err != nil {
+		t.Fatalf("List after: %v", err)
+	}
+	if !reflect.DeepEqual(afterBindings, beforeBindings) {
+		t.Errorf("bindings after scope refusals differ: before %+v, after %+v", beforeBindings, afterBindings)
+	}
+	afterChain, err := rt.Store.Chain("ch-scope")
+	if err != nil {
+		t.Fatalf("Chain after: %v", err)
+	}
+	if !reflect.DeepEqual(afterChain, beforeChain) {
+		t.Errorf("chain after scope refusals = %+v, want %+v", afterChain, beforeChain)
+	}
+}
+
+// TestDoneChainMembersFollowsWorkflowRows pins the workflow read: a row
+// that carries a workflow names its engine-recorded members, not the legacy
+// part columns, so the sweep settles what the end verbs would release.
+func TestDoneChainMembersFollowsWorkflowRows(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	now := rt.Now().UTC()
+	row := db.ChainRow{
+		ID:           db.NewID(),
+		Name:         "ch-wf",
+		Status:       "done",
+		Phase:        "build",
+		Step:         "reviewing",
+		Plan:         1,
+		Plans:        1,
+		SettingsJSON: []byte(`{"max_corrections":1}`),
+		Builder:      "engine-a",
+		Planner:      "engine-b",
+		WorkflowJSON: []byte(`{}`),
+		MasterMindID: testMasterMindID,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	members := []store.Binding{
+		{Name: "engine-a", CWD: "/repo/engine-a", Round: 1, State: store.StateActive, MasterMindID: testMasterMindID},
+		{Name: "engine-b", CWD: "/repo/engine-b", Round: 1, State: store.StateActive, MasterMindID: testMasterMindID},
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error { return tx.CreateChain(row, members) }); err != nil {
+		t.Fatalf("seed the workflow chain: %v", err)
+	}
+	// Diverge the legacy columns from the engine-recorded members: the
+	// chain_member rows stay keyed by chain ID, so only the row changes.
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		row.Builder = "legacy-a"
+		row.Planner = "legacy-b"
+		return tx.ChainPut(row)
+	}); err != nil {
+		t.Fatalf("diverge the legacy columns: %v", err)
+	}
+
+	chains, err := rt.Store.Chains()
+	if err != nil {
+		t.Fatalf("Chains: %v", err)
+	}
+
+	got := memberSet(doneChainMembers(housekeep.GCOptions{MasterMindID: testMasterMindID}, chains, rt.Store))
+	want := map[string]bool{"engine-a": true, "engine-b": true}
+	if len(got) != len(want) {
+		t.Fatalf("workflow members = %v, want %v", got, want)
+	}
+	for m := range want {
+		if !got[m] {
+			t.Errorf("workflow members = %v, missing %q", got, m)
+		}
+	}
+	for _, m := range []string{"legacy-a", "legacy-b"} {
+		if got[m] {
+			t.Errorf("workflow members = %v, want no legacy column %q", got, m)
+		}
+	}
+}
+
 // TestGCDoneChainsSettlesADoneChainThenClears pins the sweep: a done chain
 // with two ACTIVE members and no worktrees ends with both members archived
 // and the chain row still done. Without the settle the members survive, since
@@ -121,6 +229,75 @@ func TestGCDoneChainsSettlesADoneChainThenClears(t *testing.T) {
 	}
 	if row.Status != "done" {
 		t.Errorf("chain status = %q, want done", row.Status)
+	}
+}
+
+// TestGCDoneChainsAbortsBeforeGCOnSettleFailure pins the sweep's contract:
+// abort on first settle failure, retry self-heals. The trailing GC never
+// runs, so the DONE binding it would have cleared is still there, the first
+// chain's settled members are still DONE, and the failed chain is untouched.
+func TestGCDoneChainsAbortsBeforeGCOnSettleFailure(t *testing.T) {
+	t.Parallel()
+
+	fr := &fakeRemote{doneErr: &client.HTTPError{Status: 500, Body: remote.ErrorBody{Code: "boom"}}}
+	rt := newRuntime(t)
+	rt.Remote = fr
+	seedSettleChain(t, rt, "ch-aa-ok", "done", testMasterMindID, "ch-aa-ok", "ch-aa-ok-plan")
+
+	now := rt.Now().UTC()
+	bad := db.ChainRow{
+		ID:           db.NewID(),
+		Name:         "ch-zz-bad",
+		Status:       "done",
+		Phase:        "build",
+		Step:         "reviewing",
+		Plan:         1,
+		Plans:        1,
+		SettingsJSON: []byte(`{"max_corrections":1}`),
+		Builder:      "ch-zz-bad",
+		Planner:      "ch-zz-bad-plan",
+		MasterMindID: testMasterMindID,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	badMembers := []store.Binding{
+		{Name: "ch-zz-bad", CWD: "/repo/zz-bad", Round: 1, State: store.StateActive,
+			MasterMindID: testMasterMindID,
+			Builder:      store.Endpoint{Kind: "opencode", Mode: store.ModeRemote, Server: "zen"}},
+		{Name: "ch-zz-bad-plan", CWD: "/repo/zz-bad-plan", Round: 1, State: store.StateActive,
+			Role: "planner", Shape: store.ShapeReader, MasterMindID: testMasterMindID},
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error { return tx.CreateChain(bad, badMembers) }); err != nil {
+		t.Fatalf("seed the failing chain: %v", err)
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		return tx.Save(store.Binding{Name: "lone", CWD: "/repo/lone", Round: 1,
+			State: store.StateDone, MasterMindID: testMasterMindID})
+	}); err != nil {
+		t.Fatalf("seed the DONE binding: %v", err)
+	}
+
+	done, err := GCDoneChains(context.Background(), rt, housekeep.GCOptions{MasterMindID: testMasterMindID})
+	if err == nil {
+		t.Fatal("GCDoneChains = nil error, want the settle failure")
+	}
+	if len(done) != 0 {
+		t.Errorf("GC results = %+v, want none: the trailing GC never ran", done)
+	}
+	if got, lerr := rt.Store.Load("lone"); lerr != nil || got.State != store.StateDone {
+		t.Errorf("lone = %+v err %v, want it still DONE: the trailing GC never ran", got, lerr)
+	}
+	for _, m := range []string{"ch-aa-ok", "ch-aa-ok-plan"} {
+		got, lerr := rt.Store.Load(m)
+		if lerr != nil || got.State != store.StateDone {
+			t.Errorf("%s = %+v err %v, want settled DONE and never cleared", m, got, lerr)
+		}
+	}
+	for _, m := range []string{"ch-zz-bad", "ch-zz-bad-plan"} {
+		got, lerr := rt.Store.Load(m)
+		if lerr != nil || got.State != store.StateActive {
+			t.Errorf("%s = %+v err %v, want it still ACTIVE past the abort", m, got, lerr)
+		}
 	}
 }
 
@@ -156,12 +333,69 @@ func TestGCDoneChainsLeavesUnfinishedChainsAlone(t *testing.T) {
 
 // TestGCDoneChainsDryRunReportsWithoutSettling pins the dry run: the store
 // reads back identical, and both members are still reported as would-clear
-// even though neither is done yet.
+// even though neither is done yet. An already-done member prints exactly
+// once, through the GC rows rather than the settle rows; a selected name
+// with no record names nothing; and a member with a kept worktree still
+// lists as would-clear with its binding kept.
 func TestGCDoneChainsDryRunReportsWithoutSettling(t *testing.T) {
 	t.Parallel()
 
 	rt := newRuntime(t)
+	rt.Git = &fakeGit{dirtyResult: true}
 	seedSettleChain(t, rt, "ch-dry", "done", testMasterMindID, "ch-dry", "ch-dry-plan")
+	seedSettleChain(t, rt, "ch-mixed", "done", testMasterMindID, "ch-mixed", "ch-mixed-plan")
+	seedSettleChain(t, rt, "ch-dirty", "done", testMasterMindID, "ch-dirty")
+
+	now := rt.Now().UTC()
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		b, err := tx.Load("ch-mixed-plan")
+		if err != nil {
+			return err
+		}
+		b.State = store.StateDone
+		return tx.Save(b)
+	}); err != nil {
+		t.Fatalf("mark the mixed member done: %v", err)
+	}
+	// A selected name with no record: the row names a planner that was
+	// never saved, so the dry run has nothing to report for it.
+	ghost := db.ChainRow{
+		ID:           db.NewID(),
+		Name:         "ch-ghost",
+		Status:       "done",
+		Phase:        "build",
+		Step:         "reviewing",
+		Plan:         1,
+		Plans:        1,
+		SettingsJSON: []byte(`{"max_corrections":1}`),
+		Builder:      "ch-ghost",
+		Planner:      "ch-ghost-plan",
+		MasterMindID: testMasterMindID,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		if err := tx.ChainPut(ghost); err != nil {
+			return err
+		}
+		return tx.Save(store.Binding{Name: "ch-ghost", CWD: "/repo/ch-ghost", Round: 1,
+			State: store.StateActive, MasterMindID: testMasterMindID})
+	}); err != nil {
+		t.Fatalf("seed the ghost chain: %v", err)
+	}
+	// A member with a kept worktree: the dirtied tree reports kept, so the
+	// binding stays even though the dry run still lists it.
+	wt := t.TempDir()
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		b, err := tx.Load("ch-dirty")
+		if err != nil {
+			return err
+		}
+		b.Worktree = wt
+		return tx.Save(b)
+	}); err != nil {
+		t.Fatalf("give the dirty member a worktree: %v", err)
+	}
 
 	beforeBindings, err := rt.Store.List()
 	if err != nil {
@@ -176,14 +410,32 @@ func TestGCDoneChainsDryRunReportsWithoutSettling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GCDoneChains dry-run: %v", err)
 	}
-	got := memberSet(nil)
+	seen := map[string]int{}
+	byName := map[string]housekeep.GCResult{}
 	for _, r := range done {
-		got[r.Name] = true
+		seen[r.Name]++
+		byName[r.Name] = r
 	}
-	for _, m := range []string{"ch-dry", "ch-dry-plan"} {
-		if !got[m] {
-			t.Errorf("dry-run results = %+v, missing would-clear member %q", done, m)
+	for _, m := range []string{"ch-dry", "ch-dry-plan", "ch-mixed", "ch-ghost", "ch-dirty"} {
+		if seen[m] != 1 {
+			t.Errorf("dry-run results = %+v, want exactly one would-clear row for %q", done, m)
 		}
+	}
+	if seen["ch-mixed-plan"] != 1 {
+		t.Errorf("dry-run results = %+v, want the done member exactly once, via the GC rows", done)
+	}
+	if seen["ch-ghost-plan"] != 0 {
+		t.Errorf("dry-run results = %+v, want nothing for the unrecorded member", done)
+	}
+	kept, ok := byName["ch-dirty"]
+	if !ok {
+		t.Fatalf("dry-run results = %+v, missing would-clear member %q", done, "ch-dirty")
+	}
+	if !kept.BindingKept || kept.WorktreeKept != wt || kept.KeptReason != "uncommitted changes" {
+		t.Errorf("dirty result = %+v, want BindingKept with the dirty-tree reason", kept)
+	}
+	if kept.Archived || kept.Deleted {
+		t.Errorf("dirty result = %+v, want neither archived nor deleted on a dry run", kept)
 	}
 
 	afterBindings, err := rt.Store.List()
@@ -194,14 +446,11 @@ func TestGCDoneChainsDryRunReportsWithoutSettling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Chains after: %v", err)
 	}
-	if len(afterBindings) != len(beforeBindings) || len(afterChains) != len(beforeChains) {
-		t.Fatalf("dry run changed the store: %d bindings/%d chains before, %d/%d after",
-			len(beforeBindings), len(beforeChains), len(afterBindings), len(afterChains))
+	if !reflect.DeepEqual(afterBindings, beforeBindings) {
+		t.Errorf("dry run changed the bindings: before %+v, after %+v", beforeBindings, afterBindings)
 	}
-	for _, b := range afterBindings {
-		if b.State != store.StateActive {
-			t.Errorf("%s state = %q after dry run, want active", b.Name, b.State)
-		}
+	if !reflect.DeepEqual(afterChains, beforeChains) {
+		t.Errorf("dry run changed the chains: before %+v, after %+v", beforeChains, afterChains)
 	}
 }
 
