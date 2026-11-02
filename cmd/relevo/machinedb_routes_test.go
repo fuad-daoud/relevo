@@ -5,7 +5,6 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -21,29 +20,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db/wire/owner"
 	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
-
-// cmdTestHelperEnv marks the one-opener child: TestMain answers it before any
-// isolation, so the child keeps the parent's state root.
-const cmdTestHelperEnv = "RELEVO_CMDTEST_HELPER"
-
-// cmdTestDaemonHelperEnv marks the daemon-runtime child: TestMain answers it
-// before any isolation, so the child keeps the parent's state root too.
-const cmdTestDaemonHelperEnv = "RELEVO_CMDTEST_DAEMON_HELPER"
-
-// shortStateRoot is a state home directly under /tmp: the socket path under
-// t.TempDir can exceed the sun_path limit.
-func shortStateRoot(t *testing.T) string {
-	t.Helper()
-	root, err := os.MkdirTemp("/tmp", "rvo-")
-	if err != nil {
-		t.Fatalf("MkdirTemp: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(root) })
-	if n := len(filepath.Join(root, "relevo", "relevo.sock")); n >= 104 {
-		t.Fatalf("socket path is %d bytes, over the 104-byte sun_path", n)
-	}
-	return root
-}
 
 // machineRoot resolves the state root the current XDG_STATE_HOME selects.
 func machineRoot(t *testing.T) string {
@@ -373,58 +349,6 @@ func TestDaemonUnitDetection(t *testing.T) {
 	}
 }
 
-// helperReport is what the one-opener child prints on stdout.
-type helperReport struct {
-	Version int      `json:"version"`
-	DBFDs   []string `json:"db_fds"`
-}
-
-// runCmdTestHelper is the child half of TestOneOpenerWithAnOwnerRunning: it
-// reaches the machine database through the parent's owner, proves the read,
-// and reports every descriptor it holds on the database.
-func runCmdTestHelper() int {
-	installDBRoute(routeOwner, verbDialBudget, 0)
-	d, err := openDB(machineDBPath())
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "helper: open: %v\n", err)
-		return 1
-	}
-	defer func() { _ = d.Close() }()
-
-	version, err := d.Version()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "helper: read: %v\n", err)
-		return 1
-	}
-	report, err := json.Marshal(helperReport{Version: version, DBFDs: databaseFDs()})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "helper: marshal: %v\n", err)
-		return 1
-	}
-	fmt.Println(string(report))
-	return 0
-}
-
-// databaseFDs names the open descriptors that point at a relevo database or
-// its WAL siblings.
-func databaseFDs() []string {
-	entries, err := os.ReadDir("/proc/self/fd")
-	if err != nil {
-		return nil
-	}
-	var out []string
-	for _, e := range entries {
-		target, err := os.Readlink(filepath.Join("/proc/self/fd", e.Name()))
-		if err != nil {
-			continue
-		}
-		if strings.HasPrefix(filepath.Base(target), "relevo.db") {
-			out = append(out, target)
-		}
-	}
-	return out
-}
-
 // TestOneOpenerWithAnOwnerRunning is the one-opener proof: a re-exec'd child
 // reads through the parent's owner and holds no descriptor on the database.
 func TestOneOpenerWithAnOwnerRunning(t *testing.T) {
@@ -455,84 +379,6 @@ func TestOneOpenerWithAnOwnerRunning(t *testing.T) {
 	if len(report.DBFDs) != 0 {
 		t.Errorf("the child holds database descriptors: %v", report.DBFDs)
 	}
-}
-
-// daemonHelperReport is what the daemon-runtime child prints on stdout.
-type daemonHelperReport struct {
-	Newer        bool `json:"newer"`
-	RTDBSet      bool `json:"rt_db_set"`
-	SameStore    bool `json:"same_store"`
-	StoreIsOwner bool `json:"store_is_owner"`
-	DBFDs        int  `json:"db_fds"`
-}
-
-// runCmdTestDaemonHelper is the child half of TestDaemonRuntimeOpensTheDatabaseOnce
-// and TestDaemonServesANewerSchema: it opens the machine database directly the
-// way cmdDaemon does, builds the daemon runtime over it, applies the daemon's
-// own ingest decision, and reports the handle identity plus how many descriptors
-// the process holds on relevo.db itself.
-func runCmdTestDaemonHelper() int {
-	root, err := tmpdir.DefaultRoot()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "daemon helper: root: %v\n", err)
-		return 1
-	}
-	path := filepath.Join(root, "relevo.db")
-	d, err := openDBDirect(path)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "daemon helper: open: %v\n", err)
-		return 1
-	}
-	defer func() { _ = d.Close() }()
-
-	rt, err := newRuntimeOn(root, d)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "daemon helper: runtime: %v\n", err)
-		return 1
-	}
-	daemonRuntimeHandle(&rt, d)
-
-	storeDB, err := rt.Store.DB()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "daemon helper: store db: %v\n", err)
-		return 1
-	}
-
-	report, err := json.Marshal(daemonHelperReport{
-		Newer:        d.Newer(),
-		RTDBSet:      rt.DB != nil,
-		SameStore:    rt.DB != nil && rt.DB == storeDB,
-		StoreIsOwner: storeDB == d,
-		DBFDs:        countDatabaseFDs(path),
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "daemon helper: marshal: %v\n", err)
-		return 1
-	}
-	fmt.Println(string(report))
-	return 0
-}
-
-// countDatabaseFDs counts this process's descriptors on path itself -- not its
-// -wal or -shm siblings: one open handle is one descriptor on the file. A host
-// with no /proc reports -1, which a test reads as "not measured".
-func countDatabaseFDs(path string) int {
-	entries, err := os.ReadDir("/proc/self/fd")
-	if err != nil {
-		return -1
-	}
-	base := filepath.Base(path)
-	n := 0
-	for _, e := range entries {
-		target, lerr := os.Readlink(filepath.Join("/proc/self/fd", e.Name()))
-		if lerr != nil {
-			continue
-		}
-		if filepath.Base(target) == base {
-			n++
-		}
-	}
-	return n
 }
 
 // runDaemonHelperChild re-execs the test binary as the daemon-runtime child and

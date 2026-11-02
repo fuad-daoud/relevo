@@ -33,15 +33,6 @@ import (
 // the only shape that takes the lock for real, so that is where the conflict
 // and the daemon's own answers are pinned.
 
-// The fixture a sync section is seeded with. The remote is an unroutable name:
-// these tests open no handle to it, and a name that could resolve would only
-// invite one.
-const (
-	syncStatusRemote    = "libsql://sync-status-fixture.invalid"
-	syncStatusNamespace = "default"
-	syncStatusSecret    = "sync-status-token-fixture"
-)
-
 // syncStatusNow is the timestamp every marker is stamped with, so a seeded file
 // is byte-identical between the two roots a case is compared across.
 var syncStatusNow = time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
