@@ -46,30 +46,38 @@ func Comments(deps Deps, cwd, ref, boardName, arg string, asJSON bool) error {
 	return nil
 }
 
-// WriteComment appends one comment to the resolved scene and prints
-// comment: <id>  <path>. A live scene whose name did not come from the
-// pointer writes the pointer; a repo scene never does.
-func WriteComment(deps Deps, cwd string, in CommentInput) error {
+// CommentWrite is what a comment write appended: the comment's id and the
+// resolved scene path it lives in. The caller prints both, so the human line
+// and the JSON document can never disagree about the same write.
+type CommentWrite struct {
+	ID   string
+	Path string
+}
+
+// WriteComment appends one comment to the resolved scene and returns what it
+// wrote; printing is the caller's. A live scene whose name did not come from
+// the pointer writes the pointer; a repo scene never does.
+func WriteComment(deps Deps, cwd string, in CommentInput) (CommentWrite, error) {
 	if in.Text == "" {
-		return usagef("relevo board comment: --text is required and must not be empty")
+		return CommentWrite{}, usagef("relevo board comment: --text is required and must not be empty")
 	}
 	if (in.X == nil) != (in.Y == nil) {
-		return usagef("relevo board comment: --x and --y go together")
+		return CommentWrite{}, usagef("relevo board comment: --x and --y go together")
 	}
 
 	res, err := ResolveScene(deps, cwd, in.Ref, in.BoardName, in.Arg)
 	if err != nil {
-		return err
+		return CommentWrite{}, err
 	}
 	if res.Scope == ScopeLive && !res.FromPointer {
 		if err := WritePointer(res.LiveDir, res.Scene); err != nil {
-			return err
+			return CommentWrite{}, err
 		}
 	}
 
 	theme, err := ResolveTheme(deps, cwd, "")
 	if err != nil {
-		return err
+		return CommentWrite{}, err
 	}
 	by := in.By
 	if by == "" {
@@ -82,10 +90,9 @@ func WriteComment(deps Deps, cwd string, in CommentInput) error {
 
 	c, err := AddComment(res.Path, req)
 	if err != nil {
-		return err
+		return CommentWrite{}, err
 	}
-	fmt.Printf("comment: %s  %s\n", c.ID, res.Path)
-	return nil
+	return CommentWrite{ID: c.ID, Path: res.Path}, nil
 }
 
 func number(f float64) string {

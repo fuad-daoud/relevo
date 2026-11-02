@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/board"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -260,4 +261,43 @@ type ServiceDoc struct {
 // serviceDocOf is the service document; the human line prints the same fields.
 func serviceDocOf(action, unit, outcome string) ServiceDoc {
 	return ServiceDoc{Action: action, Unit: unit, Outcome: outcome}
+}
+
+// AnnotateDoc is `relevo board annotate --json`: the text element the run
+// appended, as the scene now holds it.
+type AnnotateDoc struct {
+	ID   string  `json:"id"`
+	X    float64 `json:"x"`
+	Y    float64 `json:"y"`
+	Text string  `json:"text"`
+}
+
+// annotateDocOf is annotate's document; the id the human line prints, plus
+// the element's own fields.
+func annotateDocOf(a board.Annotation) AnnotateDoc {
+	return AnnotateDoc{ID: a.Element.ID, X: a.Element.X, Y: a.Element.Y, Text: a.Element.Text}
+}
+
+// CommentDoc is `relevo board comment --json`: the comment's id and the
+// resolved scene path it was appended to.
+type CommentDoc struct {
+	ID   string `json:"id"`
+	Path string `json:"path"`
+}
+
+// commentDocOf is comment's document; the two fields the human line prints.
+func commentDocOf(w board.CommentWrite) CommentDoc {
+	return CommentDoc{ID: w.ID, Path: w.Path}
+}
+
+// PromoteDoc is `relevo board promote --json`: the live board it read and the
+// repo board it wrote.
+type PromoteDoc struct {
+	Live string `json:"live"`
+	Dst  string `json:"repo"`
+}
+
+// promoteDocOf is promote's document; the two paths the human line prints.
+func promoteDocOf(p board.Promotion) PromoteDoc {
+	return PromoteDoc{Live: p.Live, Dst: p.Dst}
 }

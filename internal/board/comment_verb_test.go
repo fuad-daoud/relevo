@@ -110,7 +110,8 @@ func TestBoardCommentsNeverWritesPointer(t *testing.T) {
 }
 
 // TestBoardCommentWritesPointer pins that writing a comment selects like
-// board: a live scene that did not come from the pointer writes it.
+// board: a live scene that did not come from the pointer writes it, and the
+// write names the resolved live scene it landed in.
 func TestBoardCommentWritesPointer(t *testing.T) {
 	liveRoot := boardStateRoot(t)
 	deps := testDeps(t)
@@ -118,14 +119,12 @@ func TestBoardCommentWritesPointer(t *testing.T) {
 	id := "mm_aaaaaaaaaaaa"
 	t.Setenv("RELEVO_MASTERMIND", id)
 
-	stdout, _, err := captureOutput(t, func() error {
-		return WriteComment(deps, t.TempDir(), CommentInput{Ref: id, Text: "hello"})
-	})
+	w, err := WriteComment(deps, t.TempDir(), CommentInput{Ref: id, Text: "hello"})
 	if err != nil {
 		t.Fatalf("board comment: %v", err)
 	}
-	if !strings.HasPrefix(string(stdout), "comment: ") {
-		t.Errorf("stdout = %q, want a comment: line", stdout)
+	if want := filepath.Join(liveRoot, id, "board.excalidraw"); w.Path != want || w.ID == "" {
+		t.Errorf("write = %+v, want an id at %s", w, want)
 	}
 	got, err := os.ReadFile(filepath.Join(liveRoot, id, "current"))
 	if err != nil {
@@ -146,9 +145,8 @@ func TestBoardCommentByDefaultsToMasterMind(t *testing.T) {
 	_, scene := liveBoardFor(t, liveRoot, id)
 	t.Setenv("RELEVO_MASTERMIND", id)
 
-	if _, _, err := captureOutput(t, func() error {
-		return WriteComment(deps, t.TempDir(), CommentInput{Ref: id, Text: "hello"})
-	}); err != nil {
+	_, err := WriteComment(deps, t.TempDir(), CommentInput{Ref: id, Text: "hello"})
+	if err != nil {
 		t.Fatalf("board comment: %v", err)
 	}
 	comments, err := ReadComments(scene)
@@ -160,9 +158,10 @@ func TestBoardCommentByDefaultsToMasterMind(t *testing.T) {
 	}
 }
 
-// TestBoardCommentPrintsLineAndAppends pins the success line and the append:
-// comment: <id>  <path>, and the scene reads the comment back.
-func TestBoardCommentPrintsLineAndAppends(t *testing.T) {
+// TestBoardCommentWriteReturnsIDAndAppends pins the values the CLI prints:
+// the comment id and the resolved scene path, and the scene reads the comment
+// back under that id. The human line itself is pinned by the CLI.
+func TestBoardCommentWriteReturnsIDAndAppends(t *testing.T) {
 	liveRoot := boardStateRoot(t)
 	deps := testDeps(t)
 	stubBoardClock(t, &deps, time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC))
@@ -172,25 +171,20 @@ func TestBoardCommentPrintsLineAndAppends(t *testing.T) {
 	t.Setenv("RELEVO_MASTERMIND", id)
 
 	x, y := 5.0, 6.0
-	stdout, _, err := captureOutput(t, func() error {
-		return WriteComment(deps, t.TempDir(), CommentInput{Ref: id, Text: "a note", By: "human", X: &x, Y: &y})
-	})
+	w, err := WriteComment(deps, t.TempDir(), CommentInput{Ref: id, Text: "a note", By: "human", X: &x, Y: &y})
 	if err != nil {
 		t.Fatalf("board comment: %v", err)
 	}
-	line := strings.TrimSuffix(string(stdout), "\n")
-	rest, ok := strings.CutPrefix(line, "comment: ")
-	if !ok || !strings.HasSuffix(rest, "  "+scene) {
-		t.Fatalf("stdout = %q, want \"comment: <id>  %s\"", stdout, scene)
+	if w.Path != scene {
+		t.Errorf("write path = %q, want %s", w.Path, scene)
 	}
-	gotID := strings.TrimSuffix(rest, "  "+scene)
 	comments, err := ReadComments(scene)
 	if err != nil {
 		t.Fatalf("ReadComments: %v", err)
 	}
-	if gotID == "" || len(comments) != 1 || comments[0].ID != gotID ||
+	if w.ID == "" || len(comments) != 1 || comments[0].ID != w.ID ||
 		comments[0].Text != "a note" || comments[0].X != 5 || comments[0].Y != 6 {
-		t.Errorf("comments = %+v (printed id %q), want the appended one at (5, 6)", comments, gotID)
+		t.Errorf("comments = %+v (written id %q), want the appended one at (5, 6)", comments, w.ID)
 	}
 }
 
@@ -226,7 +220,7 @@ func TestBoardCommentRefusalCodes(t *testing.T) {
 	})
 
 	t.Run("bad author flag", func(t *testing.T) {
-		err := WriteComment(deps, t.TempDir(), CommentInput{Ref: id, Arg: scene, Text: "x", By: strings.Repeat("a", 65)})
+		_, err := WriteComment(deps, t.TempDir(), CommentInput{Ref: id, Arg: scene, Text: "x", By: strings.Repeat("a", 65)})
 		if !errors.Is(err, ErrUsage) {
 			t.Fatalf("comment(bad author) = %v, want ErrUsage", err)
 		}
@@ -237,7 +231,7 @@ func TestBoardCommentRefusalCodes(t *testing.T) {
 
 	t.Run("bad author from environment", func(t *testing.T) {
 		t.Setenv("RELEVO_MASTERMIND", "bad\tby")
-		err := WriteComment(deps, t.TempDir(), CommentInput{Ref: id, Arg: scene, Text: "x"})
+		_, err := WriteComment(deps, t.TempDir(), CommentInput{Ref: id, Arg: scene, Text: "x"})
 		if !errors.Is(err, ErrUsage) {
 			t.Errorf("comment(bad author env) = %v, want ErrUsage", err)
 		}
@@ -253,16 +247,16 @@ func TestBoardCommentInputRefusals(t *testing.T) {
 	_, scene := liveBoardFor(t, liveRoot, id)
 	x := 1.0
 
-	if err := WriteComment(deps, t.TempDir(), CommentInput{Ref: id, Arg: scene}); !errors.Is(err, ErrUsage) {
+	if _, err := WriteComment(deps, t.TempDir(), CommentInput{Ref: id, Arg: scene}); !errors.Is(err, ErrUsage) {
 		t.Errorf("comment(no text) = %v, want ErrUsage", err)
 	}
-	if err := WriteComment(deps, t.TempDir(), CommentInput{Ref: id, Arg: scene, Text: ""}); !errors.Is(err, ErrUsage) {
+	if _, err := WriteComment(deps, t.TempDir(), CommentInput{Ref: id, Arg: scene, Text: ""}); !errors.Is(err, ErrUsage) {
 		t.Errorf("comment(empty text) = %v, want ErrUsage", err)
 	}
-	if err := WriteComment(deps, t.TempDir(), CommentInput{Ref: id, Arg: scene, Text: "x", X: &x}); !errors.Is(err, ErrUsage) {
+	if _, err := WriteComment(deps, t.TempDir(), CommentInput{Ref: id, Arg: scene, Text: "x", X: &x}); !errors.Is(err, ErrUsage) {
 		t.Errorf("comment(lone x) = %v, want ErrUsage", err)
 	}
-	if err := WriteComment(deps, t.TempDir(), CommentInput{Ref: id, Arg: scene, Text: "x", Y: &x}); !errors.Is(err, ErrUsage) {
+	if _, err := WriteComment(deps, t.TempDir(), CommentInput{Ref: id, Arg: scene, Text: "x", Y: &x}); !errors.Is(err, ErrUsage) {
 		t.Errorf("comment(lone y) = %v, want ErrUsage", err)
 	}
 }
@@ -279,9 +273,7 @@ func TestBoardCommentRepoScopeNeverWritesPointer(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(scene), 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	if _, _, err := captureOutput(t, func() error {
-		return WriteComment(deps, t.TempDir(), CommentInput{Arg: scene, Text: "hi", By: "human"})
-	}); err != nil {
+	if _, err := WriteComment(deps, t.TempDir(), CommentInput{Arg: scene, Text: "hi", By: "human"}); err != nil {
 		t.Fatalf("board comment repo scene: %v", err)
 	}
 	if _, statErr := os.Stat(filepath.Join(repoRoot, "docs", "boards", "current")); !os.IsNotExist(statErr) {
