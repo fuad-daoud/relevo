@@ -215,6 +215,16 @@ type hookEnvelope struct {
 	} `json:"hookSpecificOutput"`
 }
 
+// generousNoticeTimeout runs a healthy-path notice test under a budget no
+// healthy hook can miss, so the test pins what the hook says rather than how
+// fast it says it. The lock test keeps the production budget.
+func generousNoticeTimeout(t *testing.T) {
+	t.Helper()
+	orig := mastermindNoticeTimeout
+	mastermindNoticeTimeout = time.Minute
+	t.Cleanup(func() { mastermindNoticeTimeout = orig })
+}
+
 // TestMasterMindInitHookAlwaysExitsZero is the hook's contract: a
 // hook failure must never block a Claude Code session, so malformed or
 // incomplete stdin still exits 0 and answers on stdout with the note envelope.
@@ -1134,6 +1144,7 @@ func TestMasterMindNoticeHook(t *testing.T) {
 	}
 
 	t.Run("no change is the empty object", func(t *testing.T) {
+		generousNoticeTimeout(t)
 		state := t.TempDir()
 		t.Setenv("XDG_STATE_HOME", state)
 		t.Setenv("CLAUDE_ENV_FILE", "")
@@ -1153,6 +1164,7 @@ func TestMasterMindNoticeHook(t *testing.T) {
 	})
 
 	t.Run("an enable from elsewhere carries the notice", func(t *testing.T) {
+		generousNoticeTimeout(t)
 		state := t.TempDir()
 		t.Setenv("XDG_STATE_HOME", state)
 		t.Setenv("CLAUDE_ENV_FILE", "")
@@ -1185,6 +1197,7 @@ func TestMasterMindNoticeHook(t *testing.T) {
 	})
 
 	t.Run("a rename is the rename line", func(t *testing.T) {
+		generousNoticeTimeout(t)
 		state := t.TempDir()
 		t.Setenv("XDG_STATE_HOME", state)
 		t.Setenv("CLAUDE_ENV_FILE", "")
@@ -1214,6 +1227,7 @@ func TestMasterMindNoticeHook(t *testing.T) {
 	})
 
 	t.Run("a NULL baseline is written and stays silent", func(t *testing.T) {
+		generousNoticeTimeout(t)
 		state := t.TempDir()
 		t.Setenv("XDG_STATE_HOME", state)
 		t.Setenv("CLAUDE_ENV_FILE", "")
@@ -1235,6 +1249,7 @@ func TestMasterMindNoticeHook(t *testing.T) {
 	})
 
 	t.Run("a broken payload exits 0 with the empty object", func(t *testing.T) {
+		generousNoticeTimeout(t)
 		state := t.TempDir()
 		t.Setenv("XDG_STATE_HOME", state)
 		for _, payload := range []string{"not json at all", `{"session_id":"s"}`, `{"hook_event_name":"UserPromptSubmit","cwd":"/tmp"}`} {
@@ -1252,6 +1267,7 @@ func TestMasterMindNoticeHook(t *testing.T) {
 	})
 
 	t.Run("nothing outside a repo without a session answer", func(t *testing.T) {
+		generousNoticeTimeout(t)
 		state := t.TempDir()
 		t.Setenv("XDG_STATE_HOME", state)
 		t.Setenv("CLAUDE_ENV_FILE", "")
@@ -1325,12 +1341,15 @@ func TestMasterMindNoticeHook(t *testing.T) {
 		if got := strings.TrimSpace(string(stdout)); got != "{}" {
 			t.Errorf("notice stdout = %q, want {}", got)
 		}
-		if elapsed >= time.Second {
-			t.Errorf("notice took %v with the database locked, want an answer well under a second", elapsed)
+		// Five seconds cleanly separates the deadline from the unbounded
+		// failure it cuts: busy waits per statement plus a 30 s begin retry.
+		if elapsed >= 5*time.Second {
+			t.Errorf("notice took %v with the database locked, want the deadline near a second", elapsed)
 		}
 	})
 
 	t.Run("a broken database still exits 0 with the empty object", func(t *testing.T) {
+		generousNoticeTimeout(t)
 		state := t.TempDir()
 		t.Setenv("XDG_STATE_HOME", state)
 		t.Setenv("CLAUDE_ENV_FILE", "")

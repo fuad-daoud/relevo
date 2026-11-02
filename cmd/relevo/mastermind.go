@@ -29,10 +29,10 @@ const mastermindPriorIDTimeout = 2 * time.Second
 
 // mastermindNoticeTimeout bounds the whole UserPromptSubmit hook, from before
 // the runtime is built to the stdout write: the hook blocks the session's next
-// prompt, so a missed budget answers empty and the next prompt retries. Five
-// hundred milliseconds matches the statusline's own give-up on the same prompt
-// path, with an order of magnitude over a healthy hook's tens of milliseconds.
-const mastermindNoticeTimeout = 500 * time.Millisecond
+// prompt, so a missed budget answers empty and the next prompt retries. A
+// healthy hook measured ~150-175 ms at idle on the dev machine; one second
+// keeps the prompt wait far below Claude's 30 s hook cutoff.
+var mastermindNoticeTimeout = time.Second
 
 // mastermindHookBusyTimeout and mastermindHookBeginRetry are the short busy
 // waits the notice hook's own handle opens with, so work the deadline abandons
