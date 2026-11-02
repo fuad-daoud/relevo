@@ -281,7 +281,8 @@ type Response struct {
 	// holding after its write: empty and zero when it holds none.
 	ClaimToken string     `json:"claim_token,omitempty"`
 	ClaimAt    *time.Time `json:"claim_at,omitempty"`
-	// Traffic is a publish_traffic's answer: every origin's row the replica holds.
+	// Traffic is a publish_traffic or read_traffic answer: every origin's row
+	// the replica holds.
 	Traffic map[string]TrafficRow `json:"traffic,omitempty"`
 }
 

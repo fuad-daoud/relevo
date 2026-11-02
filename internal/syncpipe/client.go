@@ -59,6 +59,7 @@ func callBound(verb syncworker.Verb) (time.Duration, error) {
 		syncworker.VerbPullRange, syncworker.VerbCompact:
 		return dataCallTimeout, nil
 	case syncworker.VerbHead, syncworker.VerbStats, syncworker.VerbReadMarks,
+		syncworker.VerbReadTraffic,
 		syncworker.VerbKeyMeta, syncworker.VerbKeyInit, syncworker.VerbKeyRekey,
 		syncworker.VerbKeyCut, syncworker.VerbClaim,
 		syncworker.VerbShutdown:
