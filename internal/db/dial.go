@@ -5,6 +5,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"time"
 
@@ -16,6 +17,25 @@ import (
 // dialTimeout bounds dial plus handshake: a surface that must answer in two
 // seconds cannot wait longer than one.
 const dialTimeout = 2 * time.Second
+
+// clientIdleTime is how long a dialled pool keeps an idle owner connection. The
+// owner holds one of its connection slots for every client connection until
+// that connection closes, so a long-lived process that kept idle connections
+// would hold slots it is not using, and a few dozen such processes leave none
+// for anyone else.
+const clientIdleTime = 30 * time.Second
+
+// ownerPool opens a pool over c that keeps at most one idle owner connection,
+// and drops it after idle (clientIdleTime when zero).
+func ownerPool(c driver.Connector, idle time.Duration) *sql.DB {
+	if idle <= 0 {
+		idle = clientIdleTime
+	}
+	pool := sql.OpenDB(c)
+	pool.SetMaxIdleConns(1)
+	pool.SetConnMaxIdleTime(idle)
+	return pool
+}
 
 // Dial connects to an owner over sock and returns the same *DB a direct Open
 // would. The schema and origin come from the owner's handshake, and a nil
@@ -75,7 +95,7 @@ func dialContext(ctx context.Context, sock string, o Options, adoptOrigin bool) 
 		origin = info.Origin
 	}
 
-	sqlDB := sql.OpenDB(client.Connector(sock, o.AdHoc))
+	sqlDB := ownerPool(client.Connector(sock, o.AdHoc), o.idleTime)
 	handle := &DB{
 		sqlDB:      sqlDB,
 		have:       info.Have,
@@ -105,7 +125,7 @@ func dialContext(ctx context.Context, sock string, o Options, adoptOrigin bool) 
 // on every open, so one handshake answers for both.
 func dialLocal(sock string, o Options, have, know int, retry time.Duration, origin string) *DB {
 	return &DB{
-		sqlDB:      sql.OpenDB(client.ScopedConnector(sock, o.AdHoc, wire.ScopeLocal)),
+		sqlDB:      ownerPool(client.ScopedConnector(sock, o.AdHoc, wire.ScopeLocal), o.idleTime),
 		have:       have,
 		know:       know,
 		newer:      have > know,
