@@ -62,8 +62,9 @@ type Server struct {
 	// shrink the package var before the accept goroutines start.
 	maxLive int
 	// sem holds one slot per pinned connection; a request that needs one waits
-	// on it inside pin up to the slot bound, and cleanup returns it when that
-	// connection is discarded. Idle handshaken connections never take a slot.
+	// on it inside pin up to the slot bound. release returns it when a statement
+	// ends outside a transaction, and cleanup when that connection is discarded.
+	// An idle connection never holds a slot, handshaken or between statements.
 	sem chan struct{}
 
 	// OnAbandoned, when set, runs once when an abandoned statement has not

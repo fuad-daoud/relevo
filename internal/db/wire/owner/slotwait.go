@@ -8,9 +8,10 @@ import (
 )
 
 // defaultSlotWait bounds how long a request waits for a free pinned-connection
-// slot before it is refused as busy. A slot frees only when a client
-// disconnects, so a burst of short-lived clients drains on its own; thirty
-// seconds lets that drain while a wedged slot stops holding a caller past it.
+// slot before it is refused as busy. A slot frees when a statement ends outside
+// a transaction or when its client disconnects, so a burst of short-lived
+// clients drains on its own; thirty seconds lets that drain while a wedged
+// slot stops holding a caller past it.
 const defaultSlotWait = 30 * time.Second
 
 // slotWait is the bound in force, a var so a test can shrink it the way it

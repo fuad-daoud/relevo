@@ -249,11 +249,14 @@ func TestConnectionCapRefusesBusyWithinDeadline(t *testing.T) {
 
 	_, sock := startServer(t)
 
-	// One client pins the single slot for the life of its connection.
+	// One client holds the single slot inside an open transaction: an idle
+	// connection holds none, so the hold has to be real work.
 	a, na := dialRaw(t, sock)
 	sendHello(t, a, wire.Version)
 	welcome(t, a)
 	execRaw(t, a, 1, `CREATE TABLE t (n INTEGER)`)
+	readDone(t, a, na)
+	execRaw(t, a, 2, "BEGIN")
 	readDone(t, a, na)
 
 	// A second client's handshake is served while the cap is full: the cap

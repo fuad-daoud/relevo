@@ -32,8 +32,9 @@ func TestProbeOwnerReportsFieldsAgainstARealOwner(t *testing.T) {
 		_ = l.Close()
 	})
 
-	// One held connection pins a slot, so the probe reports real work beside
-	// the live total rather than two bare counts.
+	// One held connection inside a transaction pins a slot -- an idle one holds
+	// none -- so the probe reports real work beside the live total rather
+	// than two bare counts.
 	holder, err := sql.Open(client.DriverName, sock)
 	if err != nil {
 		t.Fatalf("holder open: %v", err)
@@ -46,6 +47,9 @@ func TestProbeOwnerReportsFieldsAgainstARealOwner(t *testing.T) {
 	t.Cleanup(func() { _ = hc.Close() })
 	if _, err := hc.ExecContext(context.Background(), `CREATE TABLE t (n INTEGER)`); err != nil {
 		t.Fatalf("holder exec: %v", err)
+	}
+	if _, err := hc.ExecContext(context.Background(), "BEGIN"); err != nil {
+		t.Fatalf("holder begin: %v", err)
 	}
 
 	status, err := db.ProbeOwner(sock)

@@ -21,9 +21,10 @@ import (
 // return before it rolls the pinned connection back anyway.
 const discardTimeout = 2 * time.Second
 
-// conn pins one database connection for its life, runs one request at a time,
-// and tracks that request so a cancel or a next can reach it from the read
-// loop.
+// conn serves one client connection, runs one request at a time, and tracks
+// that request so a cancel or a next can reach it from the read loop. A
+// database connection is pinned only while a statement or transaction needs
+// it: an idle connection holds no slot, so the cap binds real work.
 type conn struct {
 	s  *Server
 	nc net.Conn
@@ -302,6 +303,9 @@ func (c *conn) run(ctx context.Context, r *request, kind byte, query string, raw
 		c.sendError(r.id, err)
 		return
 	}
+	// The statement below answers and returns; the release runs after either,
+	// so every path -- ack, error, or an abandoned stream -- passes through it.
+	defer c.release()
 	args, err := decodeArgs(raw)
 	if err != nil {
 		c.sendError(r.id, err)
@@ -314,11 +318,12 @@ func (c *conn) run(ctx context.Context, r *request, kind byte, query string, raw
 	c.query(ctx, r, pinned, query, args)
 }
 
-// pin opens the client's own owner connection on first use, holding one of the
-// server's connection slots for it. The slot is taken on the request's context
-// with a bounded wait, so a client over the cap is refused as busy past the
-// bound instead of hanging -- the handshake never waits on the cap, and a
-// disconnect releases the wait.
+// pin returns the database connection this request runs on: the one already
+// held inside a transaction, else a fresh pool connection holding one of the
+// server's slots. The slot is taken on the request's context with a bounded
+// wait, so a client over the cap is refused as busy past the bound instead of
+// hanging -- the handshake never waits on the cap, and a disconnect releases
+// the wait.
 func (c *conn) pin(ctx context.Context) (*sql.Conn, error) {
 	c.mu.Lock()
 	if c.pinned != nil {
@@ -345,6 +350,26 @@ func (c *conn) pin(ctx context.Context) (*sql.Conn, error) {
 	}
 	c.pinned = pinned
 	return pinned, nil
+}
+
+// release returns the pinned connection to the pool when no transaction is
+// open, freeing the slot pin took. Inside a transaction the connection is
+// kept: the transaction's later statements must run on it. A nil take means
+// cleanup already discarded it, so the slot is freed exactly once between the
+// two.
+func (c *conn) release() {
+	if c.transactionOpen() {
+		return
+	}
+	pinned := c.takePinned()
+	if pinned == nil {
+		return
+	}
+	// Outside a transaction there is nothing to roll back; the pool reuses
+	// the connection, so the discard's bad-conn mark stays cleanup's.
+	_, _ = pinned.ExecContext(context.Background(), "ROLLBACK")
+	_ = pinned.Close()
+	<-c.s.sem
 }
 
 func (c *conn) exec(ctx context.Context, r *request, pinned *sql.Conn, query string, args []any) {
@@ -419,7 +444,9 @@ func (c *conn) query(ctx context.Context, r *request, pinned *sql.Conn, query st
 
 // cleanup runs when the client goes away: it interrupts any running statement,
 // rolls the pinned connection back whatever state it was in, discards it, and
-// frees the connection slot that pin took.
+// frees the connection slot that pin took. When the last statement already
+// released the connection there is nothing to discard and the slot is already
+// free.
 func (c *conn) cleanup() {
 	c.mu.Lock()
 	r := c.cur
