@@ -21,10 +21,10 @@ func configWorkflowFlagSet(*flag.FlagSet) {}
 
 // configWorkflow is the workflow half of `relevo config`.
 func configWorkflow(args []string) error {
-	const usage = `usage: relevo config workflow add <file> [--replace] [--force]
-       relevo config workflow rm <name>
+	const usage = `usage: relevo config workflow add <file> [--replace] [--force] [--json]
+       relevo config workflow rm <name> [--json]
        relevo config workflow show <name> [--json]
-       relevo config workflow edit <name>`
+       relevo config workflow edit <name> [--json]`
 
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, usage)
