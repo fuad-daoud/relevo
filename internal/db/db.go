@@ -100,6 +100,8 @@ type Options struct {
 	// the owner may refuse such a request while it reaps an abandoned
 	// statement. A handle opened without it is never refused.
 	AdHoc bool
+	// idleTime overrides clientIdleTime for a dialled handle's pools.
+	idleTime time.Duration
 }
 
 // Open opens (creating if needed) the sqlite database at path, applying
