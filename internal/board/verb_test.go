@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"math"
 	"net"
@@ -661,19 +660,21 @@ func TestBoardTextHumanRows(t *testing.T) {
 	}
 }
 
-// TestBoardAnnotateAppends pins the annotate happy path: the stdout line, and
-// a well-formed appended element that keeps the scene's other bytes.
+// TestBoardAnnotateAppends pins the annotate happy path: the returned element
+// and scene path, and a well-formed appended element that keeps the scene's
+// other bytes. The human line is pinned by the CLI.
 func TestBoardAnnotateAppends(t *testing.T) {
 	boardStateRoot(t)
 	deps := testDeps(t)
 	root := withTempRepoRoot(t, &deps)
 	path := seedBoardScene(t, root, "board.excalidraw", `{"type":"excalidraw","elements":[]}`)
 
-	stdout, stderr, err := captureOutput(t, func() error {
-		return AnnotateScene(deps, root, "board.excalidraw", AnnotateRequest{Text: "hello", HasText: true})
-	})
+	a, err := AnnotateScene(deps, root, "board.excalidraw", AnnotateRequest{Text: "hello", HasText: true})
 	if err != nil {
-		t.Fatalf("board annotate: %v (stderr %s)", err, stderr)
+		t.Fatalf("board annotate: %v", err)
+	}
+	if a.Path != path {
+		t.Errorf("annotation path = %q, want %s", a.Path, path)
 	}
 	els := readBoardElements(t, path)
 	if len(els) != 1 {
@@ -684,9 +685,8 @@ func TestBoardAnnotateAppends(t *testing.T) {
 	if !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(id) {
 		t.Errorf("id = %q, want 32 hex characters", id)
 	}
-	want := fmt.Sprintf("board: annotated %s (id %s)\n", path, id)
-	if string(stdout) != want {
-		t.Errorf("stdout = %q, want %q", stdout, want)
+	if a.Element.ID != id {
+		t.Errorf("returned id = %q, want the appended element's %s", a.Element.ID, id)
 	}
 	if el["text"] != "hello" || el["type"] != "text" {
 		t.Errorf("element = %v, want text hello", el)
@@ -718,9 +718,7 @@ func TestBoardAnnotateThemeInk(t *testing.T) {
 	root := withTempRepoRoot(t, &deps)
 	path := seedBoardScene(t, root, "board.excalidraw", `{"type":"excalidraw","elements":[]}`)
 
-	if _, _, err := captureOutput(t, func() error {
-		return AnnotateScene(deps, root, "board.excalidraw", AnnotateRequest{Text: "hi", HasText: true})
-	}); err != nil {
+	if _, err := AnnotateScene(deps, root, "board.excalidraw", AnnotateRequest{Text: "hi", HasText: true}); err != nil {
 		t.Fatalf("board annotate: %v", err)
 	}
 	if got := readBoardElements(t, path)[0]["strokeColor"]; got != "#dbe4f0" {
@@ -792,7 +790,7 @@ func TestBoardAnnotateRefusals(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := captureOutput(t, func() error { return AnnotateScene(deps, root, tc.arg, tc.req) })
+			_, err := AnnotateScene(deps, root, tc.arg, tc.req)
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("AnnotateScene(%q) = %v, want %v", tc.arg, err, tc.want)
 			}

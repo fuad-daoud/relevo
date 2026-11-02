@@ -257,16 +257,16 @@ var jsonExemptByDesign = map[string]string{
 
 // jsonNotYet names the verbs that print a human result a document could
 // replace, but have not been converted yet -- every one of them a write whose
-// answer is what it wrote.
+// answer is what it wrote. It is empty: every verb that prints a result now
+// takes --json.
 //
 // This list only shrinks: a verb leaves it when it is converted, and no verb is
 // ever added. The rule is the one CLAUDE.md gives lint exclusions, and
-// TestJSONNotYetHasNoConvertedVerb below enforces the leaving half of it.
-var jsonNotYet = map[string]string{
-	"board annotate": "not yet converted",
-	"board comment":  "not yet converted",
-	"board promote":  "not yet converted",
-}
+// TestJSONNotYetHasNoConvertedVerb below enforces the leaving half of it. The
+// empty map is kept, with TestJSONExemptionCount pinning it at zero, so a
+// regression is still caught by the same machinery and re-adds an entry on
+// purpose rather than by omission.
+var jsonNotYet = map[string]string{}
 
 // TestEveryRegistryVerbTakesJSON is the plan's guard: the guide tells every
 // agent that every verb that prints a result takes --json, so the registry must
@@ -333,15 +333,15 @@ func TestJSONExemptionNamesAreRegistryVerbs(t *testing.T) {
 
 // TestJSONExemptionCount pins the size of both maps, so a verb leaving one of
 // them has to be a deliberate edit rather than a silent deletion: today
-// jsonExemptByDesign holds 14 and jsonNotYet 3, which is every verb the
+// jsonExemptByDesign holds 14 and jsonNotYet 0, which is every verb the
 // registry lists without --json. A count that moves is a verb converted or a
 // verb added, and either belongs in the change that moved it.
 func TestJSONExemptionCount(t *testing.T) {
 	if len(jsonExemptByDesign) != 14 {
 		t.Errorf("jsonExemptByDesign holds %d verbs, want 14", len(jsonExemptByDesign))
 	}
-	if len(jsonNotYet) != 3 {
-		t.Errorf("jsonNotYet holds %d verbs, want 3", len(jsonNotYet))
+	if len(jsonNotYet) != 0 {
+		t.Errorf("jsonNotYet holds %d verbs, want 0", len(jsonNotYet))
 	}
 }
 
@@ -356,6 +356,32 @@ func TestConfigJSONFlagIsOnTheSurface(t *testing.T) {
 		{"config workflow add", "json:ConfigWorkflowAddDoc"},
 		{"config workflow edit", "json:ConfigWorkflowEditDoc"},
 		{"config workflow rm", "json:ConfigWorkflowRmDoc"},
+	} {
+		e, ok := registryEntry(c.verb)
+		if !ok {
+			t.Fatalf("no registry entry for %s", c.verb)
+		}
+		if !slices.Contains(e.Flags, "--json") {
+			t.Errorf("%s registry flags %v do not list --json", c.verb, e.Flags)
+		}
+		if !strings.Contains(e.Args, "--json") {
+			t.Errorf("%s registry args %q do not mention --json", c.verb, e.Args)
+		}
+		if e.Output != c.doc {
+			t.Errorf("%s registry output = %q, want %q", c.verb, e.Output, c.doc)
+		}
+	}
+}
+
+// TestBoardJSONFlagIsOnTheSurface: the flag reaches the registry row and the
+// installer together for the three board writes, so `relevo help --json` and
+// `relevo board annotate -h` cannot disagree about it, and each row names the
+// document its verb prints.
+func TestBoardJSONFlagIsOnTheSurface(t *testing.T) {
+	for _, c := range []struct{ verb, doc string }{
+		{"board annotate", "json:AnnotateDoc"},
+		{"board comment", "json:CommentDoc"},
+		{"board promote", "json:PromoteDoc"},
 	} {
 		e, ok := registryEntry(c.verb)
 		if !ok {

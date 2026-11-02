@@ -255,40 +255,48 @@ type AnnotateRequest struct {
 	X, Y       float64
 }
 
-// AnnotateScene appends one text element to a scene and prints its id.
-func AnnotateScene(deps Deps, cwd, arg string, req AnnotateRequest) error {
+// Annotation is what an annotate wrote: the element appended, and the
+// resolved scene path it was appended to. The caller prints both, so the
+// human line and the JSON document can never disagree about the same write.
+type Annotation struct {
+	Path    string
+	Element AgentText
+}
+
+// AnnotateScene appends one text element to a scene and returns what it
+// wrote; printing is the caller's.
+func AnnotateScene(deps Deps, cwd, arg string, req AnnotateRequest) (Annotation, error) {
 	if !req.HasText {
-		return usagef("--text is required")
+		return Annotation{}, usagef("--text is required")
 	}
 	if req.Text == "" {
-		return usagef("--text must not be empty")
+		return Annotation{}, usagef("--text must not be empty")
 	}
 	if req.HasX != req.HasY {
-		return usagef("--x and --y come together")
+		return Annotation{}, usagef("--x and --y come together")
 	}
 	if req.HasX && (math.IsNaN(req.X) || math.IsInf(req.X, 0)) {
-		return usagef("--x must be a finite number")
+		return Annotation{}, usagef("--x must be a finite number")
 	}
 	if req.HasY && (math.IsNaN(req.Y) || math.IsInf(req.Y, 0)) {
-		return usagef("--y must be a finite number")
+		return Annotation{}, usagef("--y must be a finite number")
 	}
 
 	cwd, path, err := agentPath(deps, cwd, arg)
 	if err != nil {
-		return err
+		return Annotation{}, err
 	}
 	theme, err := ResolveTheme(deps, cwd, "")
 	if err != nil {
-		return err
+		return Annotation{}, err
 	}
 	el, err := Annotate(path, AnnotateOptions{
 		Text: req.Text, X: req.X, Y: req.Y, HasX: req.HasX, HasY: req.HasY, Theme: theme,
 	})
 	if err != nil {
-		return err
+		return Annotation{}, err
 	}
-	fmt.Printf("board: annotated %s (id %s)\n", path, el.ID)
-	return nil
+	return Annotation{Path: path, Element: el}, nil
 }
 
 // FormatURL is the printed board URL: the loopback host, the owner segment
