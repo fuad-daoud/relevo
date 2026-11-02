@@ -425,9 +425,10 @@ func installSwitchReplacement(ctx context.Context, rt Runtime, tx *store.Tx, b s
 
 // hostStartError reports whether a startRound failure is the host refusing the
 // spawn rather than the candidate failing to run: a scope-unit collision, a
-// tenant-boundary refusal, a runner that is gone, and the lost-builder resume
-// path's own refusal. Each is an operator's problem, so a switch that hits one
-// must not spend the round's switch budget or exclude the candidate it picked.
+// frozen slice, a tenant-boundary refusal, a runner that is gone, and the
+// lost-builder resume path's own refusal. Each is an operator's problem, so a
+// switch that hits one must not spend the round's switch budget or exclude
+// the candidate it picked.
 //
 // startProcess wraps all of these in a plain (non-spawnFailure) error, so the
 // classes are distinguishable at the call site only by what the error says.
@@ -441,7 +442,8 @@ func hostStartError(err error) bool {
 	}
 	return isScopeBusy(err) ||
 		errors.Is(err, spawn.ErrBoundarySetup) ||
-		errors.Is(err, spawn.ErrRunnerUnavailable)
+		errors.Is(err, spawn.ErrRunnerUnavailable) ||
+		spawn.IsFrozenUnitError(err.Error())
 }
 
 // limitText is the text a decision point scans for rate-limit patterns: the
