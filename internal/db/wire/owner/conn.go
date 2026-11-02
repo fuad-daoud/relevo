@@ -46,6 +46,11 @@ type conn struct {
 	// for the life of the connection, so every request on it reaches the same
 	// file: a connection cannot start on one file and continue on the other.
 	local bool
+	// session records that a statement here changed per-connection engine
+	// state (query_only, an attached file, a temp object). Such a database
+	// connection must never reach another client, so it stays pinned until
+	// this client goes and cleanup discards it.
+	session bool
 }
 
 type request struct {
@@ -306,6 +311,11 @@ func (c *conn) run(ctx context.Context, r *request, kind byte, query string, raw
 	// The statement below answers and returns; the release runs after either,
 	// so every path -- ack, error, or an abandoned stream -- passes through it.
 	defer c.release()
+	if changesSession(query) {
+		c.mu.Lock()
+		c.session = true
+		c.mu.Unlock()
+	}
 	args, err := decodeArgs(raw)
 	if err != nil {
 		c.sendError(r.id, err)
@@ -358,7 +368,7 @@ func (c *conn) pin(ctx context.Context) (*sql.Conn, error) {
 // cleanup already discarded it, so the slot is freed exactly once between the
 // two.
 func (c *conn) release() {
-	if c.transactionOpen() {
+	if c.transactionOpen() || c.holdsSession() {
 		return
 	}
 	pinned := c.takePinned()
@@ -370,6 +380,28 @@ func (c *conn) release() {
 	_, _ = pinned.ExecContext(context.Background(), "ROLLBACK")
 	_ = pinned.Close()
 	<-c.s.sem
+}
+
+func (c *conn) holdsSession() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.session
+}
+
+// changesSession reports whether query can change state that lives on the
+// engine connection rather than in the database: any PRAGMA (query_only among
+// them), ATTACH, DETACH, or a TEMP object. It errs towards true, since the
+// cost is one slot held until the client leaves, while the miss is a pooled
+// connection that refuses the next client's writes.
+func changesSession(query string) bool {
+	switch firstKeyword(query) {
+	case "PRAGMA", "ATTACH", "DETACH":
+		return true
+	case "CREATE":
+		rest := strings.Fields(strings.ToUpper(query))
+		return len(rest) > 1 && (rest[1] == "TEMP" || rest[1] == "TEMPORARY")
+	}
+	return false
 }
 
 func (c *conn) exec(ctx context.Context, r *request, pinned *sql.Conn, query string, args []any) {
