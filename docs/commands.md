@@ -299,21 +299,18 @@ relevo history [--here]                    filter to a repo: --here resolves the
               [--json]                    a JSON array of RoundRow, `[]` when empty
               [-q "<query>"]              filter with the query language below
               [--by <axis>]               regroup the result: none, binding, repo, feature, ticket,
-                                           candidate, actor, harness, provider, model, day, outcome
+                                           candidate, account, actor, harness, provider, model, day,
+                                           outcome
               [--rows]                    with --json --by, include each group's Rows
 ```
 
-Two switches turn the same query into an aggregate instead of a
-row-per-round list:
+`--by` turns the same query into an aggregate instead of a row-per-round
+list. Token and cost totals across bindings, and the outcome and gate
+breakdown, live in the cockpit: `relevo ui`, then `:rounds` or `:stats` (see
+[Round usage](readers.md#round-usage) and [Usage stats](readers.md#usage-stats)).
 
-- `--tab` — tokens and cost across bindings, archived ones included (see
-  [Round usage](readers.md#round-usage)).
-- `--stats` — rounds, outcomes, switches, gate results and consults across
-  bindings, archived ones included, with the last 30 days of provider blocks
-  (see [Usage stats](readers.md#usage-stats)).
-
-Every flag is one field of the shared `Filter`. `--archived` and `--live` together, and an
-`--outcome` outside the enum above, are usage errors. A plain line looks
+Every flag is one field of the shared `Filter`; archived bindings are
+included unless `-q "archived:false"` leaves them out. A plain line looks
 like:
 
 ```
@@ -343,7 +340,7 @@ values : outcome reported|halted|exited|switched|done_no_report|open
          mode    pane|headless|remote   (pane: history only)
          archived true|false
          since/until 24h|7d|YYYY-MM-DD
-         by      none|binding|repo|feature|ticket|candidate|actor|harness|provider|model|day|outcome
+         by      none|binding|repo|feature|ticket|candidate|account|actor|harness|provider|model|day|outcome
          duration minutes; tokens = in+cache+write+out; cost in USD
 ```
 
@@ -355,7 +352,7 @@ An unknown key, a bad enum value or a bad number is a usage error (exit 2).
 
 ```
 $ relevo history -q "harness:agy outcome:halted since:30d"
-$ relevo history -q "auth cost>1" --by builder
+$ relevo history -q "auth cost>1" --by candidate
 $ relevo history --by day --since 14d
 ```
 

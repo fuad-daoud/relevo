@@ -182,7 +182,7 @@ scripts/relevo-sandbox.sh destroy demo
 of its state, config, data, cache and harness homes live. Two refusals stand in
 the way. A directory with no `sandbox` marker is refused outright, so the
 `rm -rf` can never be aimed at an ordinary directory that happens to sit under
-the root. A held `<sandbox>/state/.daemon.lock` means a foreground daemon is
+the root. A held `<sandbox>/state/relevo/.daemon.lock` means a foreground daemon is
 still writing into the directory about to be removed, so `destroy` refuses unless
 you pass `--force`.
 

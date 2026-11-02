@@ -1,0 +1,477 @@
+package serve
+
+import (
+	"context"
+	"log/slog"
+	"os"
+	"runtime"
+	"time"
+
+	"github.com/fuad-daoud/relevo/internal/burst"
+	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/store"
+)
+
+// The burst hook runs at the end of every tick, after admit, still under
+// admitMu: local seats fill first and a placement never races a concurrent
+// admission. The provider exchange runs without s.mu -- a hung provider must
+// not wedge the request handlers -- while every state change applies under
+// the lock only after re-checking the table it was built on.
+
+// burstOn reports whether the hook may act. No provider means no command was
+// configured; no client key means New refused the configured command, so an
+// injected provider alone never turns the loop on.
+func (s *Server) burstOn() bool {
+	return s.burstProvider != nil && len(s.cfg.ClientKey) > 0
+}
+
+// burstTick requeues what dead nodes lost, checks new nodes, places waiting
+// rounds onto live nodes as sending forwards, and reports the load. Callers
+// hold admitMu; the provider and node calls keep it while dropping s.mu, so
+// a hung peer stalls the tick up to its own timeout after local admit
+// already ran.
+func (s *Server) burstTick(ctx context.Context) {
+	if !s.burstOn() {
+		return
+	}
+	now := s.cfg.Now().UTC()
+	s.requeueLost(now)
+	s.verifyNodes(ctx)
+	placed := s.placeForwards(now)
+	s.reportCycle(now, placed)
+}
+
+// requeueLost returns every forward on a dead node to the local queue at the
+// FIFO place it held before the claim. A node is dead when the last good
+// response stopped listing it, or when it has stayed unreachable past the
+// configured bound. A requeued round keeps its candidate: the loss says
+// nothing about the pick, only about where it ran.
+func (s *Server) requeueLost(now time.Time) {
+	lostAfter := s.live().Policy.BurstNodeLostAfter()
+	rows := map[string]burst.NodeRow{}
+	if t := s.copyBurstTable(); t != nil {
+		for _, r := range t.Nodes {
+			rows[r.ID] = r
+		}
+	}
+	_ = s.walkOwners(func(id remote.ClientID, ownerPath string, bindings []store.Binding) {
+		for _, b := range bindings {
+			fwd := burstStoredForward(b)
+			if fwd == nil {
+				continue
+			}
+			if !burstRowDead(rows, fwd.Node, now, lostAfter) {
+				continue
+			}
+			s.requeueOne(id, ownerPath, b.Name, *fwd, now)
+		}
+	})
+}
+
+// burstRowDead reports whether the node holding a forward is lost: missing
+// from the last good response, marked gone, or unreachable past the bound.
+func burstRowDead(rows map[string]burst.NodeRow, node string, now time.Time, lostAfter time.Duration) bool {
+	row, ok := rows[node]
+	if !ok || row.Gone {
+		return true
+	}
+	return row.Problem == burst.ReportProblemUnreachable && now.Sub(row.ProblemSince) >= lostAfter
+}
+
+// requeueOne returns the named round to the queue at its FIFO place. The
+// binding is re-read and the requeue lands only while the forward still
+// matches, so a late result for a superseded forward never applies.
+func (s *Server) requeueOne(id remote.ClientID, ownerPath, name string, fwd store.Forward, now time.Time) {
+	st := s.ownerStore(ownerPath)
+	cur, err := st.Load(name)
+	if err != nil {
+		slog.Warn("burst: requeue lost round: load failed", "owner", string(id), "binding", name, "err", err)
+		return
+	}
+	have := burstStoredForward(cur)
+	if have == nil || have.Node != fwd.Node || cur.Round != fwd.Round {
+		return
+	}
+	since := have.QueuedSince
+	if since.IsZero() {
+		since = now
+	}
+	cur.QueuedAt = since
+	cur.Burst.Forward = nil
+	if len(cur.Burst.Shipped) == 0 && len(cur.Burst.NodeBindings) == 0 {
+		cur.Burst = nil
+	}
+	if err := st.Save(cur); err != nil {
+		slog.Warn("burst: requeue lost round: save failed", "owner", string(id), "binding", name, "err", err)
+		return
+	}
+	slog.Info("burst: requeued a round its node lost", "owner", string(id), "binding", name, "node", fwd.Node)
+}
+
+// placeForwards claims queued rounds for live nodes after admit ran, so the
+// head's own seats fill first. The first localFree queued rounds are the
+// head's: they emit no placement. Each claim records a sending forward and
+// clears QueuedAt, keeping the FIFO place in QueuedSince for the requeue.
+// Nothing here dials a node; lane C sends what this marks.
+func (s *Server) placeForwards(now time.Time) int {
+	t := s.copyBurstTable()
+	if t == nil {
+		return 0
+	}
+	c, _ := s.census()
+	if len(c.Queued) == 0 {
+		return 0
+	}
+	waiting, index := s.burstWaiting(c)
+	counts := map[string]int{}
+	queued := map[string]int{}
+	for _, f := range s.burstForwards() {
+		switch f.State {
+		case burst.ForwardRunning:
+			counts[f.NodeID]++
+		case burst.ForwardQueued:
+			queued[f.NodeID]++
+		}
+	}
+	nodes := make([]burst.PlaceNode, 0, len(t.Nodes))
+	for _, r := range t.Nodes {
+		if r.Gone {
+			continue
+		}
+		nodes = append(nodes, burst.PlaceNode{
+			ID: r.ID, Verified: r.Verified, Problem: r.Problem,
+			State: r.State, Cap: r.Cap, Running: counts[r.ID], Queued: queued[r.ID],
+		})
+	}
+	placed := 0
+	for _, p := range burst.Place(s.cap()-c.Running, waiting, nodes) {
+		if s.placeOne(index[p.Round.ID], p.NodeID, now) {
+			placed++
+		}
+	}
+	return placed
+}
+
+// placeOne claims q for nodeID. The binding is re-read and the claim lands
+// only while the round is still queued where the census saw it.
+func (s *Server) placeOne(q queuedRound, nodeID string, now time.Time) bool {
+	st := s.ownerStore(q.OwnerRoot)
+	b, err := st.Load(q.Name)
+	if err != nil {
+		slog.Warn("burst: place round: load failed", "owner", string(q.Owner), "binding", q.Name, "err", err)
+		return false
+	}
+	if b.State != store.StateActive || b.QueuedAt.IsZero() || !b.QueuedAt.Equal(q.QueuedAt) {
+		return false
+	}
+	if burstStoredForward(b) != nil {
+		return false
+	}
+	if b.Burst == nil {
+		b.Burst = &store.BurstFacts{}
+	}
+	b.Burst.Forward = &store.Forward{
+		Node: nodeID, NodeBinding: burstNodeBinding(q.Owner, q.Name),
+		Round: b.Round, Phase: "sending", ClaimedAt: now, QueuedSince: b.QueuedAt,
+	}
+	b.QueuedAt = time.Time{}
+	if err := st.Save(b); err != nil {
+		slog.Warn("burst: place round: save failed", "owner", string(q.Owner), "binding", q.Name, "err", err)
+		return false
+	}
+	slog.Info("burst: placed a round on a node", "owner", string(q.Owner), "binding", q.Name, "node", nodeID)
+	return true
+}
+
+// reportCycle sends the load to the provider when one is owed and folds the
+// answer into the node table. The request is built from a table snapshot and
+// the provider runs with no lock held; the answer applies under s.mu only
+// while the table still carries the snapshot's mark, so a report that raced
+// another is dropped instead of merged twice.
+func (s *Server) reportCycle(now time.Time, placed int) {
+	t := s.copyBurstTable()
+	if t == nil {
+		return
+	}
+	c, _ := s.census()
+	waiting, _ := s.burstWaiting(c)
+	forwards := s.burstForwards()
+	reason := burst.ReportReasonInterval
+	switch {
+	case placed > 0:
+		reason = burst.ReportReasonForwarded
+	case t.LastReport.IsZero():
+		reason = burst.ReportReasonStartup
+	}
+	if !t.Due(now, len(waiting) > 0, reason) {
+		return
+	}
+	req, notes, err := burst.BuildReport(burst.Census{
+		Head: s.burstHead(), Local: burst.ReportLocal{Running: c.Running, Queued: len(c.Queued), Cap: s.cap()},
+		Waiting: waiting,
+	}, *t, now, reason, forwards)
+	if err != nil {
+		slog.Warn("burst: report not built", "err", err)
+		return
+	}
+	for _, n := range notes {
+		slog.Info("burst: report normalized a field", "field", n)
+	}
+	resp, rnotes, rerr := s.burstProvider.Report(req)
+	for _, n := range rnotes {
+		slog.Info("burst: provider normalized a field", "field", n)
+	}
+	s.applyReport(t, now, resp, rerr)
+}
+
+// applyReport folds one provider answer into the table. A failed call keeps
+// the last good list and waits a full interval: RecordFailure advances the
+// attempt mark while leaving rows, blocks and cadence on the last good
+// response.
+func (s *Server) applyReport(snap *burst.NodeTable, now time.Time, resp burst.ReportResponse, rerr error) {
+	s.mu.Lock()
+	if s.burstTable == nil || !s.burstTable.LastReport.Equal(snap.LastReport) {
+		s.mu.Unlock()
+		slog.Warn("burst: dropping a report the table moved past")
+		return
+	}
+	var events []burst.NodeEvent
+	if rerr != nil {
+		s.burstTable.RecordFailure(now, rerr.Error())
+	} else {
+		events = s.burstTable.Merge(now, resp)
+	}
+	cp := *s.burstTable
+	cp.Nodes = append([]burst.NodeRow(nil), s.burstTable.Nodes...)
+	s.mu.Unlock()
+	if rerr != nil {
+		slog.Warn("burst: report failed, keeping the last good node list", "err", rerr)
+	} else {
+		for _, e := range events {
+			slog.Info("burst: node changed", "kind", e.Kind, "node", e.NodeID)
+		}
+	}
+	if err := saveBurstTable(s.cfg.DB.LocalOrSelf(), &cp); err != nil {
+		slog.Warn("burst: node table not saved", "err", err)
+	}
+}
+
+// burstHead names this head for the report. Memory has no inventory behind
+// it, so it stays zero; the contract accepts it.
+func (s *Server) burstHead() burst.ReportHead {
+	name := s.cfg.Installation.Label
+	if name == "" {
+		name, _ = os.Hostname()
+	}
+	if name == "" {
+		name = "relevo-head"
+	}
+	return burst.ReportHead{Name: name, CPUs: runtime.NumCPU()}
+}
+
+// burstWaiting lists the queued FIFO the way the provider counts it. A round
+// whose binding vanished since the census still waits as far as the head
+// knows; it carries no candidate rather than dropping the load.
+func (s *Server) burstWaiting(c census) ([]burst.ReportWaiting, map[string]queuedRound) {
+	waiting := make([]burst.ReportWaiting, 0, len(c.Queued))
+	index := make(map[string]queuedRound, len(c.Queued))
+	for _, q := range c.Queued {
+		id := string(q.Owner) + "/" + q.Name
+		entry := burst.ReportWaiting{ID: id, Since: q.QueuedAt.UTC()}
+		if b, err := s.ownerStore(q.OwnerRoot).Load(q.Name); err == nil && b.BuilderCandidate != "" {
+			entry.Candidate = b.BuilderCandidate
+			if ref, rerr := candidate.ParseRef(b.BuilderCandidate); rerr == nil {
+				entry.Harness = ref.Harness
+			}
+		}
+		waiting = append(waiting, entry)
+		index[id] = q
+	}
+	return waiting, index
+}
+
+// burstForwards maps every stored forward onto the report's states. A
+// node-view queued nuance belongs to the observe half; here a sending forward
+// already holds its seat, so sending counts as running. An unknown phase is
+// left out and logged rather than refusing the whole report.
+func (s *Server) burstForwards() []burst.Forward {
+	var out []burst.Forward
+	now := s.cfg.Now().UTC()
+	_ = s.walkOwners(func(id remote.ClientID, _ string, bindings []store.Binding) {
+		for _, b := range bindings {
+			fwd := burstStoredForward(b)
+			if fwd == nil {
+				continue
+			}
+			state, ok := burstForwardState(fwd.Phase)
+			if !ok {
+				slog.Warn("burst: forward in an unknown phase, left out of the report",
+					"owner", string(id), "binding", b.Name, "phase", fwd.Phase)
+				continue
+			}
+			started := fwd.ClaimedAt
+			if started.IsZero() {
+				started = fwd.QueuedSince
+			}
+			if started.IsZero() {
+				started = now
+			}
+			out = append(out, burst.Forward{
+				Round: burst.ReportRound{
+					ID: string(id) + "/" + b.Name, Candidate: b.BuilderCandidate, Started: started.UTC(),
+				},
+				NodeID: fwd.Node, State: state,
+			})
+		}
+	})
+	return out
+}
+
+// burstForwardState maps the stored phase onto the report's states.
+func burstForwardState(phase string) (string, bool) {
+	switch phase {
+	case "sending", "running":
+		return burst.ForwardRunning, true
+	case "closed":
+		return burst.ForwardUnacked, true
+	}
+	return "", false
+}
+
+// copyBurstTable snapshots the node table for a lock-free build. Nil when
+// bursting is off, which keeps every later step a no-op.
+func (s *Server) copyBurstTable() *burst.NodeTable {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.burstTable == nil {
+		return nil
+	}
+	cp := *s.burstTable
+	cp.Nodes = append([]burst.NodeRow(nil), s.burstTable.Nodes...)
+	return &cp
+}
+
+// burstStoredForward reads the binding's forward, if any.
+func burstStoredForward(b store.Binding) *store.Forward {
+	if b.Burst == nil {
+		return nil
+	}
+	return b.Burst.Forward
+}
+
+// adoptSending resolves every forward a crash left in sending: a forward
+// the head claimed but no node confirmed. A node whose round is open at the
+// forward's round holds it, so the forward turns running; anything else --
+// a refused fetch, a missing or different round, a closed one -- returns to
+// the local queue at its FIFO place. Fetching runs without s.mu; each
+// answer applies under the owner store only while the forward still
+// matches, the Plan 3 discipline, so a result for a superseded claim never
+// lands. The live fetch stays in this lane, on GetBinding; the closed
+// rounds it requeues are lane C's observe path to close again.
+func (s *Server) adoptSending(ctx context.Context) {
+	if !s.burstOn() {
+		return
+	}
+	now := s.cfg.Now().UTC()
+	t := s.copyBurstTable()
+	if t == nil {
+		return
+	}
+	rows := map[string]burst.NodeRow{}
+	for _, r := range t.Nodes {
+		rows[r.ID] = r
+	}
+	type pending struct {
+		ownerPath string
+		id        remote.ClientID
+		name      string
+		fwd       store.Forward
+	}
+	var work []pending
+	_ = s.walkOwners(func(id remote.ClientID, ownerPath string, bindings []store.Binding) {
+		for _, b := range bindings {
+			if f := burstStoredForward(b); f != nil && f.Phase == "sending" {
+				work = append(work, pending{ownerPath: ownerPath, id: id, name: b.Name, fwd: *f})
+			}
+		}
+	})
+	if len(work) == 0 {
+		return
+	}
+	cl, err := s.burstNodeClient(t.Nodes)
+	if err != nil {
+		slog.Warn("burst: adopt skipped, client key unusable", "err", err)
+		return
+	}
+	for _, p := range work {
+		if _, ok := rows[p.fwd.Node]; !ok {
+			s.requeueOne(p.id, p.ownerPath, p.name, p.fwd, now)
+			continue
+		}
+		view, ferr := cl.GetBinding(ctx, p.fwd.Node, p.fwd.NodeBinding)
+		if burstAdoptRunning(p.fwd, view, ferr) {
+			s.adoptRunning(p.ownerPath, p.name, p.fwd)
+		} else {
+			if ferr != nil {
+				slog.Info("burst: adopt requeues an unconfirmed forward", "binding", p.name, "node", p.fwd.Node, "err", ferr)
+			}
+			s.requeueOne(p.id, p.ownerPath, p.name, p.fwd, now)
+		}
+	}
+}
+
+// burstAdoptRunning says whether a sending forward survived the restart: the
+// node answered, its round is open, and it is the round the head claimed.
+// Every other answer -- a fetch failure, a missing node binding, a different
+// or closed round -- requeues, so the round waits locally instead of holding
+// a seat on a node that never took it.
+func burstAdoptRunning(fwd store.Forward, view remote.BindingView, fetchErr error) bool {
+	if fetchErr != nil {
+		return false
+	}
+	if view.Round != fwd.Round {
+		return false
+	}
+	return view.RoundState == remote.RoundRunning || view.RoundState == remote.RoundQueued
+}
+
+// adoptRunning turns a confirmed sending forward into a running one. The
+// binding is re-read and the mark lands only while the forward still
+// matches, so a result for a superseded claim never applies.
+func (s *Server) adoptRunning(ownerPath, name string, fwd store.Forward) {
+	st := s.ownerStore(ownerPath)
+	b, err := st.Load(name)
+	if err != nil {
+		slog.Warn("burst: adopt confirm failed: load failed", "binding", name, "err", err)
+		return
+	}
+	have := burstStoredForward(b)
+	if have == nil || have.Phase != "sending" || have.Node != fwd.Node || b.Round != fwd.Round {
+		return
+	}
+	have.Phase = "running"
+	if err := st.Save(b); err != nil {
+		slog.Warn("burst: adopt confirm failed: save failed", "binding", name, "err", err)
+		return
+	}
+	slog.Info("burst: adopt confirmed a forward its node holds", "binding", name, "node", fwd.Node)
+}
+
+// burstOwner8 is the owner half of a node binding name: the first 8 hex of
+// the owning client's id, "local" for a binding with no owner. Two owners
+// may bind the same name, so the node side namespaces by this.
+func burstOwner8(owner remote.ClientID) string {
+	if owner == "" {
+		return "local"
+	}
+	if dir, ok := owner.Dir(); ok {
+		return dir[:8]
+	}
+	return "unknown"
+}
+
+// burstNodeBinding names the round's binding on its node.
+func burstNodeBinding(owner remote.ClientID, name string) string {
+	return burstOwner8(owner) + "-" + name
+}

@@ -1,4 +1,4 @@
-//go:build !modernc
+//go:build unix && !modernc
 
 package db
 

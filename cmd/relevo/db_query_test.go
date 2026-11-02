@@ -55,6 +55,21 @@ func seedQueryRootAt(t *testing.T, stateHome string) string {
 	return stateHome
 }
 
+// shortStateRoot is a state home directly under /tmp: the socket path under
+// t.TempDir can exceed the sun_path limit.
+func shortStateRoot(t *testing.T) string {
+	t.Helper()
+	root, err := os.MkdirTemp("/tmp", "rvo-")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	if n := len(filepath.Join(root, "relevo", "relevo.sock")); n >= 104 {
+		t.Fatalf("socket path is %d bytes, over the 104-byte sun_path", n)
+	}
+	return root
+}
+
 func TestDBQueryPrintsATableFromADirectOpen(t *testing.T) {
 	seedQueryRoot(t)
 

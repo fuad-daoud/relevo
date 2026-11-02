@@ -192,6 +192,45 @@ type ServeFacts struct {
 	Trimpath string `json:"trimpath,omitempty"`
 }
 
+// BurstFacts is the head binding's burst forward state: what is on pool
+// nodes now, and what the head must still do to them when rounds come home.
+type BurstFacts struct {
+	// Forward is the round sent to a node and not yet brought home; nil
+	// means no round is out.
+	Forward *Forward `json:"forward,omitempty"`
+	// Shipped maps node id to the commit last shipped to that node, so the
+	// next ship sends only the difference; a node with no entry takes the
+	// full bundle.
+	Shipped map[string]string `json:"shipped,omitempty"`
+	// NodeBindings names every node binding this binding has created, so a
+	// release fans the unbind out to all of them, not only visible nodes.
+	NodeBindings []string `json:"node_bindings,omitempty"`
+}
+
+// Forward is one round a head sent to a burst node and has not brought home.
+type Forward struct {
+	// Node is the node id the round was placed on.
+	Node string `json:"node"`
+	// NodeBinding is the round's binding name on that node,
+	// "<owner8>-<name>": the node-side namespace two owners cannot collide in.
+	NodeBinding string `json:"node_binding"`
+	// Round is the head-side round number the forward carries.
+	Round int `json:"round"`
+	// Phase is sending, running or closed: sent and not yet confirmed,
+	// accepted by the node, or closed there with the result not yet acked.
+	Phase string `json:"phase"`
+	// ClaimedAt is when placement claimed the round for this node.
+	ClaimedAt time.Time `json:"claimed_at,omitempty"`
+	// SentAt is when the prompt reached the node; zero until it did.
+	SentAt time.Time `json:"sent_at,omitempty"`
+	// QueuedSince is the queue time the round held before the claim, restored
+	// on requeue so a lost node never pushes it back in the local FIFO.
+	QueuedSince time.Time `json:"queued_since,omitempty"`
+	// StopRequested is stamped before the stop fans out to the node, so a
+	// forward whose node never took the stop still records that one was asked.
+	StopRequested bool `json:"stop_requested,omitempty"`
+}
+
 // Binding ties one mastermind to one builder over one working tree.
 type Binding struct {
 	// Format is the on-disk format: 0 (a missing key) is format 1; save
@@ -420,6 +459,10 @@ type Binding struct {
 
 	// Serve is nil on local bindings.
 	Serve *ServeFacts `json:"serve,omitempty"`
+
+	// Burst is nil everywhere except a head binding with a forwarded round.
+	// It is the head's own record: the node keeps no copy of it.
+	Burst *BurstFacts `json:"burst,omitempty"`
 
 	RemoteUnreachableSince time.Time `json:"remote_unreachable_since,omitempty"`
 	// RemoteHaltKind names the episode behind a halt this file's own paths wrote:

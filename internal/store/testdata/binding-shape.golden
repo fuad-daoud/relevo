@@ -1,4 +1,4 @@
-format 18
+format 19
 abandoned_sessions[].attempts
 abandoned_sessions[].id
 abandoned_sessions[].kind
@@ -8,6 +8,16 @@ base
 base_ref
 branch
 builder_pinned
+burst.forward.claimed_at
+burst.forward.node
+burst.forward.node_binding
+burst.forward.phase
+burst.forward.queued_since
+burst.forward.round
+burst.forward.sent_at
+burst.forward.stop_requested
+burst.node_bindings[]
+burst.shipped{}
 candidate
 check_run.attempt
 check_run.command
