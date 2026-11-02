@@ -128,63 +128,28 @@ figure read from the harness's record on each refresh, and
 `relevo status --line` appends `live $0.02 · 41k tok` to the row. On
 `status --json` it is carried as `live_usage`. The live figure is
 estimated (`~$`) unless the harness reports dollars per step (opencode).
-It is never recorded and never added to `spend`. Across bindings:
+It is never recorded and never added to `spend`.
 
-```
-relevo history --tab [--since 7d|24h|2026-09-01] [--by binding|model|provider|owner] [--json]
-```
-
-sums every round relevo has recorded, including bindings `unbind --done` has
-archived, one row per group and a total, with the four token columns
-`in`, `cache`, `write`, `out` (a sum across models has no meaningful
-ratio, so `cache` carries no percentage). Measured and estimated dollars
-never share a column; `plan` and `unknown` are counts of rounds. Those
-sums exist regardless (they are on `status --json`), and a cross-binding
-view has no other home.
+Across bindings, `relevo history --by <axis>` sums every round relevo has
+recorded, including bindings `unbind --done` has archived: one row per group
+with its rounds, reported, halted, commits, tokens and cost
+(`relevo history --by provider --since 7d`). The same records are views in the
+cockpit: `relevo ui`, then `:rounds [query]` for every round, filtered by the
+[history query language](commands.md#relevo-history).
 
 ### Usage stats
 
-```
-relevo history --stats [--since 7d] [--json]
-```
+`relevo ui`, then `:stats [7d|30d|90d|all]`, reads the same records, live and
+archived, locally only: nothing leaves the machine. Its overview shows rounds,
+tokens, the share of input served from cache and output for the window, a
+daily token chart, and per-candidate and per-repository tables (rounds, done,
+halted, tokens in and out per round, cache share). Its reliability page counts
+switches, rate limits and spawn failures, lists the candidates gated now, and
+charts limits by hour.
 
-`relevo history --stats` answers the questions `--tab`'s money sums do not. It reads
-the same records as `relevo history --tab`, live and archived, locally only:
-nothing leaves the machine. `--since` cuts on a round's start, so a round that
-started before the cut is not counted.
-
-Each counted round has one builder -- `harness/provider/model`, taken from the
-report's usage record when it has one, else from the round's pick, else
-`unknown` -- and one outcome:
-
-| outcome | meaning |
-|---|---|
-| `done` | the report's relevo block said `done` |
-| `halted` | the report's block said `halted` |
-| `blocked` | the report's block said `blocked` |
-| `deferred` | the report's block said `deferred` |
-| `unstructured` | a report arrived without a usable block |
-| `noreport` | the report was noted `noreport` |
-| `stopped` | no report; the round was stopped |
-| `exited` | no report; the builder exited |
-| `open` | no report, no stop and no exit: the round is still open |
-
-`needs-you` and `stalled` are not outcomes because they are live state, not a
-property of a finished round: relevo records neither in the round log, so there
-is nothing to count after the fact. They stay where they are visible, on
-`relevo status` and in `relevo ui`.
-
-`switches` counts the rounds that changed builder mid-round, attributes each to
-the provider it left with a reason (`rate-limited`, `exited`, `gated`, `remote`
-or `other`), and says how many of the rounds that was. `gate` counts pass, fail,
-timeout and error over the rounds that ran a gate. `consults` counts consults
-per actor with the findings' models beside them, plus the verifies that were
-skipped.
-
-`blocked` comes from the gate history in the database, which keeps 30 days: rate-limit and
-spawn-failure events in that window, and the gates a human cleared with
-`relevo gate --clear`. Only a gate cleared by hand has a recorded length -- an
-expired gate keeps no expiry time, so it counts as an event with no duration.
+`needs-you` and `stalled` are not counted because they are live state, not a
+property of a finished round; they stay where they are visible, on
+`relevo status` and in the cockpit's fleet.
 
 ### Reviewer candidates
 

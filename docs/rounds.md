@@ -272,7 +272,7 @@ Archiving is the default because every other destruction decision in relevo keep
 by default. An archived binding keeps every row it had -- its rounds, its events,
 its artifacts and its transcripts -- so [`relevo history`](commands.md#relevo-history),
 [`relevo show`](commands.md#relevo-show) and the
-ui's `all` scope still read it months later, and the name frees for a fresh
+cockpit's `:rounds` view still read it months later, and the name frees for a fresh
 binding.
 
 `unbind --done` only touches bindings the MasterMind marked `DONE`. A `PAUSED` or a `BROKEN`
@@ -401,7 +401,7 @@ round just closed.
 
 **A verdict decides nothing.** `rejected` does not reopen the round, stop the
 binding, or summon a human: the report is delivered exactly as it always was,
-and the human still judges. `relevo wait --verdict` is a follow-up.
+and the human still judges.
 
 A round whose reviewer could not be started -- no reviewer candidate, every one
 of them gated, no runner, a worktree that could not be created -- closes
