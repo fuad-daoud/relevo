@@ -1032,7 +1032,8 @@ func TestRenderGatesSanitizesNote(t *testing.T) {
 // TestServeStatusJSONBurstBlock pins the additive burst block in `serve
 // status --json`: the block appears with its keys when the head holds a
 // node table, naming the report mark, the last failure, the provider's
-// preparing and denied blocks and every node with its check marks and load.
+// preparing and denied blocks and every live node with its check marks and
+// load; a gone node the table still keeps is left out.
 // Without a table the key is absent, so a reader that never configured
 // bursting sees today's document -- while a command refused for want of a
 // client key still surfaces that refusal as last_err.
@@ -1048,8 +1049,11 @@ func TestServeStatusJSONBurstBlock(t *testing.T) {
 	row.Verified = true
 	row.Problem = burst.ReportProblemUnreachable
 	row.ProblemSince = since
+	gone := burstRowFor("b0", "https://b0.example", burstTestFingerprint)
+	gone.Verified = true
+	gone.Gone = true
 	env.srv.burstTable = &burst.NodeTable{
-		Nodes: []burst.NodeRow{row}, LastReport: now, LastErr: "boom",
+		Nodes: []burst.NodeRow{gone, row}, LastReport: now, LastErr: "boom",
 		Preparing: &burst.Preparing{Slots: 2, Since: since},
 		Denied:    &burst.Denied{Reason: "cap", RetryAfter: "30s"},
 	}
@@ -1082,7 +1086,7 @@ func TestServeStatusJSONBurstBlock(t *testing.T) {
 	}
 	nodes, ok := bm["nodes"].([]any)
 	if !ok || len(nodes) != 1 {
-		t.Fatalf("nodes is not a one-entry JSON array: %T %v", bm["nodes"], bm["nodes"])
+		t.Fatalf("nodes = %T %v, want one entry: the gone b0 left out, live b1 kept", bm["nodes"], bm["nodes"])
 	}
 	n0, ok := nodes[0].(map[string]any)
 	if !ok {

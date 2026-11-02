@@ -242,6 +242,12 @@ func (s *Server) BurstStatus() *BurstStatus {
 	st.Preparing = t.Preparing
 	st.Denied = t.Denied
 	for _, r := range t.Nodes {
+		// The table keeps a gone row behind the live ones until the next
+		// merge drops it; listed here it would read as a node that can
+		// still take a round.
+		if r.Gone {
+			continue
+		}
 		st.Nodes = append(st.Nodes, BurstNodeStatus{
 			ID: r.ID, Name: r.Name, State: r.State, Verified: r.Verified,
 			Problem: r.Problem, Running: running[r.ID], Cap: r.Cap,
