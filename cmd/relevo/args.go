@@ -293,6 +293,7 @@ func writeError(err error) error {
 	var openMember *relevo.RoundOpenError
 	var candOpen *relevo.CandidateRoundOpenError
 	var envErr *relevo.EnvironmentError
+	var remoteOpen *relevo.RemoteRoundOpenError
 	switch {
 	case errors.Is(err, store.ErrHandedOver), errors.Is(err, db.ErrWriterMoved):
 		return fail(codeRefused, "%v", err)
@@ -315,6 +316,10 @@ func writeError(err error) error {
 		return failNext(codeConflict, "relevo stop "+openMember.Member, "%v", err)
 	case errors.As(err, &candOpen):
 		return failNext(codeConflict, "relevo stop "+candOpen.Name, "%v", err)
+	case errors.As(err, &remoteOpen) && remoteOpen.Halted:
+		return failNext(codeConflict, "relevo status --name "+remoteOpen.Name, "%v", err)
+	case errors.As(err, &remoteOpen):
+		return failNext(codeConflict, "relevo wait --name "+remoteOpen.Name, "%v", err)
 	case errors.Is(err, resolve.ErrNoViablePlacement):
 		return failNext(codePolicyRefused, "relevo config", "%v", err)
 	case errors.Is(err, relevo.ErrNoMasterMindSession):

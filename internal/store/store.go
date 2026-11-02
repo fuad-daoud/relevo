@@ -234,13 +234,13 @@ func ValidName(name string) error {
 	// check-ref-format rejects. Every caller mints a branch from the name, so
 	// refusing them here is the one choke point that keeps a binding bindable.
 	if strings.HasSuffix(name, ".") {
-		return fmt.Errorf("binding name %q must not end with a dot", name)
+		return invalidOf(ErrInvalidName, "binding name %q must not end with a dot", name)
 	}
 	if strings.Contains(name, "..") {
-		return fmt.Errorf("binding name %q must not contain %q", name, "..")
+		return invalidOf(ErrInvalidName, "binding name %q must not contain %q", name, "..")
 	}
 	if strings.HasSuffix(name, ".lock") {
-		return fmt.Errorf("binding name %q must not end with %q", name, ".lock")
+		return invalidOf(ErrInvalidName, "binding name %q must not end with %q", name, ".lock")
 	}
 
 	return nil

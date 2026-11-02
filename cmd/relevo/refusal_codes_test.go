@@ -61,6 +61,9 @@ func TestBindInvalidNameIsUsage(t *testing.T) {
 		{"plB", `binding name "plB" has an invalid character "B"`},
 		{"", "binding name is empty"},
 		{"Plb", `binding name "Plb" must start with a lowercase letter`},
+		{"a.", `binding name "a." must not end with a dot`},
+		{"a..b", `binding name "a..b" must not contain ".."`},
+		{"a.lock", `binding name "a.lock" must not end with ".lock"`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
@@ -289,5 +292,45 @@ func TestWaitFailureMapsOnlyNotFoundToBindingNotFound(t *testing.T) {
 	code, _, ok = codedOf(t, waitFailure(errors.New("boom")))
 	if !ok || code != codeInternal {
 		t.Fatalf("waitFailure(other) = (%q, %v), want internal", code, ok)
+	}
+}
+
+// TestReadVerbInvalidNameIsUsage pins that a read verb classes a bad binding
+// name the way a write verb does: `relevo show "a b"` is the caller's typo,
+// not an internal failure that points at bugreport.
+func TestReadVerbInvalidNameIsUsage(t *testing.T) {
+	t.Parallel()
+
+	err := store.ValidName("a b")
+	coded, _, ok := codedOf(t, classifyReadErr(fmt.Errorf("show: %w", err)))
+	if !ok || coded != codeUsage {
+		t.Errorf("classifyReadErr(invalid name) code = %q (coded %t), want %q", coded, ok, codeUsage)
+	}
+}
+
+// TestRemoteRoundOpenIsConflict pins that a server refusing a send because
+// its round is open, or halted starting, is a conflict with a next step, not
+// internal.
+func TestRemoteRoundOpenIsConflict(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		halted   bool
+		wantNext string
+	}{
+		{false, "relevo wait --name r1"},
+		{true, "relevo status --name r1"},
+	} {
+		err := &relevo.RemoteRoundOpenError{Name: "r1", Server: "sbsrv", Round: 1, Message: "round is running", Halted: c.halted}
+		coded, next, ok := codedOf(t, writeError(fmt.Errorf("send: %w", err)))
+		if !ok || coded != codeConflict {
+			t.Errorf("halted %t: code = %q (coded %t), want %q", c.halted, coded, ok, codeConflict)
+		}
+		if next != c.wantNext {
+			t.Errorf("halted %t: next = %q, want %q", c.halted, next, c.wantNext)
+		}
+		if got := err.Error(); got != "r1: round 1 could not start on sbsrv: round is running" {
+			t.Errorf("message = %q, want the server's reason unchanged", got)
+		}
 	}
 }

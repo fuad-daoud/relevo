@@ -202,10 +202,11 @@ func startRound(ctx context.Context, rt relevo.Runtime, server, name string, rou
 // itself in the message rather than restating as "running".
 func startRoundRefusal(name, server string, round int, httpErr *client.HTTPError) error {
 	switch {
-	case httpErr.Status == 409 && httpErr.Body.Code == remote.CodeRoundOpen:
-		return fmt.Errorf("%s: round %d could not start on %s: %s", name, round, server, httpErr.Body.Message)
-	case httpErr.Status == 409 && httpErr.Body.Code == remote.CodeRoundHalted:
-		return fmt.Errorf("%s: round %d could not start on %s: %s", name, round, server, httpErr.Body.Message)
+	case httpErr.Status == 409 && (httpErr.Body.Code == remote.CodeRoundOpen || httpErr.Body.Code == remote.CodeRoundHalted):
+		return &relevo.RemoteRoundOpenError{
+			Name: name, Server: server, Round: round, Message: httpErr.Body.Message,
+			Halted: httpErr.Body.Code == remote.CodeRoundHalted,
+		}
 	case httpErr.Status == 422 && httpErr.Body.Code == remote.CodeTierAboveMax:
 		return fmt.Errorf("%w: %s", resolve.ErrTierAboveMax, httpErr.Body.Message)
 	case httpErr.Status == 422 && httpErr.Body.Code == remote.CodeInvalid && resolve.TierUnsupportedMessage(httpErr.Body.Message):

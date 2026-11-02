@@ -290,9 +290,13 @@ func classifyReadErr(err error) error {
 	case errors.Is(err, relevo.ErrNotAChain):
 		// --trace names a chain, and only a chain has one.
 		return failWrap(codeUsage, err, "%v", err)
-	default:
-		return fail(codeInternal, "%v", err)
 	}
+	// A read verb takes the same names and flags a write verb does, so a bad
+	// one is the caller's usage error here too.
+	if out, ok := writeErrorUsage(err); ok {
+		return out
+	}
+	return fail(codeInternal, "%v", err)
 }
 
 // showHeaderOf renders the stderr header: a trace or a workflow names the

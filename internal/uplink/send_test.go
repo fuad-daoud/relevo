@@ -526,6 +526,20 @@ func haltedRoundHalted(t *testing.T) {
 
 	_, err := relevo.Send(context.Background(), rt, "api", planFile, relevo.SendOptions{})
 	assertNothingWritten(t, st, err, "could not start", "already switched 2 time(s)")
+	assertRemoteRoundOpen(t, err, true)
+}
+
+// assertRemoteRoundOpen pins that a 409 refusal reaches the CLI as the typed
+// refusal it maps to a conflict, not as a plain error it would class internal.
+func assertRemoteRoundOpen(t *testing.T, err error, halted bool) {
+	t.Helper()
+	var open *relevo.RemoteRoundOpenError
+	if !errors.As(err, &open) {
+		t.Fatalf("Send error = %v (%T), want a *relevo.RemoteRoundOpenError", err, err)
+	}
+	if open.Name != "api" || open.Halted != halted {
+		t.Errorf("refusal = %+v, want name api and Halted %t", *open, halted)
+	}
 }
 
 // haltedBrokenView pins that a 200 carrying a broken view reads as the
@@ -571,6 +585,7 @@ func haltedRoundOpenOnBroken(t *testing.T) {
 	if strings.Contains(err.Error(), "is running") {
 		t.Errorf("Send error = %q, want no claim that the round is running", err.Error())
 	}
+	assertRemoteRoundOpen(t, err, false)
 }
 
 // TestSendRemoteTierPassedToStartRound pins that a Send with a Tier option
