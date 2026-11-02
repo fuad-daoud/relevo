@@ -28,12 +28,6 @@ func LogLine(e store.LogEntry) string {
 	if e.Flagged > 0 && e.FlaggedBy != "" {
 		first += " by=" + e.FlaggedBy
 	}
-	if e.Classify != nil && e.Classify.Note == "" {
-		first += fmt.Sprintf(" p=%.2f", e.Classify.Max)
-	}
-	if e.Classify != nil && e.Classify.Partial {
-		first += " partial"
-	}
 	if e.Late {
 		first += " late"
 	}

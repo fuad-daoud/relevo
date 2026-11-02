@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
-	"github.com/fuad-daoud/relevo/internal/classify"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/delivery"
@@ -373,8 +372,6 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 	// and the daemon logs each once.
 	configWarnings := L.Warnings
 
-	cls, _ := classify.Resolve(pol.Classify, L.Typesafe, os.Getenv)
-
 	reader, prices := newUsageReader(L.Prices)
 
 	gitClient := git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes)
@@ -411,7 +408,6 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 		Registry:       L.Registry,
 		ConfigWarnings: configWarnings,
 		Scope:          scopeFromPolicy(pol.ScopeFor(false)),
-		Classify:       cls,
 		Usage:          reader,
 		Prices:         prices,
 		Fetcher:        release.NewHTTPFetcher(release.Source(), 5*time.Second),
