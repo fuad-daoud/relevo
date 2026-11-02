@@ -576,11 +576,11 @@ func TestMasterMindInitHookLockedDatabaseStillAnswersEmptyFast(t *testing.T) {
 	if got := strings.TrimSpace(string(stdout)); got != "{}" {
 		t.Errorf("init stdout = %q, want {}", got)
 	}
-	// Five seconds cleanly separates the deadline near a second from the
+	// Fifteen seconds cleanly separates the five-second deadline from the
 	// unbounded failure it cuts: busy waits per statement plus a 30 s
 	// begin retry.
-	if elapsed >= 5*time.Second {
-		t.Errorf("init took %v with the database locked, want the deadline near a second", elapsed)
+	if elapsed >= 15*time.Second {
+		t.Errorf("init took %v with the database locked, want the deadline near %v", elapsed, mastermindInitTimeout)
 	}
 }
 

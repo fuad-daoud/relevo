@@ -64,9 +64,11 @@ func readHookInput(hookKind, event string) (mastermind.HookInput, error) {
 // mastermindInitTimeout bounds the whole SessionStart hook, from the parsed
 // input to the stdout write: the hook blocks the session's start, so a missed
 // budget answers empty, writes no baseline, and leaves the session to the next
-// prompt's notice. One second keeps the session start far below Claude's 30 s
-// hook cutoff.
-var mastermindInitTimeout = time.Second
+// prompt's notice. It is wider than the notice's budget because this hook is
+// the one that registers the session and exports its id: a miss leaves the
+// session without a MasterMind until it is started again. Five seconds still
+// keeps the start far below Claude's 30 s hook cutoff.
+var mastermindInitTimeout = 5 * time.Second
 
 // mastermindInitHook runs `relevo mastermind init --hook claude|muse`. It never
 // returns an error and never exits non-zero: blocking a session because relevo
