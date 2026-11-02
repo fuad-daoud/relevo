@@ -65,7 +65,7 @@ func (s *Server) collectSettled(ctx context.Context) (int, error) {
 	for _, entry := range entries {
 		id, ok := remote.IDFromDir(entry.Name())
 		if !entry.IsDir() || !ok {
-			slog.Warn("unexpected entry in bindings dir", "entry", entry.Name())
+			warnStrayBindingsEntry(entry.Name())
 			continue
 		}
 		ownerPath := filepath.Join(bindingsDir, entry.Name())

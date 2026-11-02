@@ -453,6 +453,189 @@ func TestSweepScratchDoesNotFollowSymlinkedScratchDir(t *testing.T) {
 	}
 }
 
+// TestSweepScratchRemovesScratchWithNoGitFile pins the missing-.git orphan: a
+// scratch directory whose .git is gone, holding leftover files, is removed
+// with a nil error instead of failing the sweep every tick. No binding record
+// exists, so the sweep takes the .git branch.
+func TestSweepScratchRemovesScratchWithNoGitFile(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	repo := scratchSeedRepo(t, "one\n")
+	st := store.New(t.TempDir())
+	deps := Deps{Store: st, Git: git.NewClient("git", 0, 0)}
+
+	path := st.ScratchWorktreePath("web", 4)
+	if _, err := CreateScratch(ctx, deps, store.Binding{Name: "web", CWD: repo}, 4); err != nil {
+		t.Fatalf("CreateScratch: %v", err)
+	}
+	if err := os.Remove(filepath.Join(path, ".git")); err != nil {
+		t.Fatalf("remove scratch .git: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(path, "leftover.txt"), []byte("stale\n"), 0o644); err != nil {
+		t.Fatalf("write leftover: %v", err)
+	}
+
+	removed, err := SweepScratch(ctx, deps, nil)
+	if err != nil {
+		t.Fatalf("SweepScratch: %v", err)
+	}
+	if !reflect.DeepEqual(removed, []string{path}) {
+		t.Errorf("SweepScratch removed = %v, want [%s]", removed, path)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("orphaned scratch %s is still present after the sweep: %v", path, err)
+	}
+}
+
+// TestSweepScratchRemovesScratchPointingAtDeletedWorktree pins the
+// deleted-worktree orphan: a scratch whose .git names a checkout that has
+// since been removed is taken away with a nil error instead of failing
+// RemoveWorktree against the missing checkout every tick. The worktree is a
+// real one; the gitfile mirrors the line a scratch cut from a checkout at
+// that path carries, which is what is left once the checkout is gone.
+func TestSweepScratchRemovesScratchPointingAtDeletedWorktree(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	repo := scratchSeedRepo(t, "one\n")
+	wt := filepath.Join(t.TempDir(), "wt")
+	scratchRunGit(t, repo, "worktree", "add", "--detach", wt)
+
+	st := store.New(t.TempDir())
+	deps := Deps{Store: st, Git: git.NewClient("git", 0, 0)}
+	path := st.ScratchWorktreePath("web", 5)
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatalf("mkdir scratch: %v", err)
+	}
+	gitfile := "gitdir: " + filepath.Join(wt, ".git", "worktrees", "web-005") + "\n"
+	if err := os.WriteFile(filepath.Join(path, ".git"), []byte(gitfile), 0o644); err != nil {
+		t.Fatalf("write scratch .git: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(path, "leftover.txt"), []byte("stale\n"), 0o644); err != nil {
+		t.Fatalf("write leftover: %v", err)
+	}
+	if err := os.RemoveAll(wt); err != nil {
+		t.Fatalf("remove worktree: %v", err)
+	}
+
+	removed, err := SweepScratch(ctx, deps, nil)
+	if err != nil {
+		t.Fatalf("SweepScratch: %v", err)
+	}
+	if !reflect.DeepEqual(removed, []string{path}) {
+		t.Errorf("SweepScratch removed = %v, want [%s]", removed, path)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("orphaned scratch %s is still present after the sweep: %v", path, err)
+	}
+}
+
+// TestSweepScratchRemovesScratchPointingAtDeletedRepo pins the gone-repository
+// orphan: a scratch whose .git names a repository directory that has since
+// been removed is taken away with a nil error instead of failing
+// RemoveWorktree against the missing repository every tick.
+func TestSweepScratchRemovesScratchPointingAtDeletedRepo(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	repo := scratchSeedRepo(t, "one\n")
+	st := store.New(t.TempDir())
+	deps := Deps{Store: st, Git: git.NewClient("git", 0, 0)}
+
+	path := st.ScratchWorktreePath("web", 6)
+	if _, err := CreateScratch(ctx, deps, store.Binding{Name: "web", CWD: repo}, 6); err != nil {
+		t.Fatalf("CreateScratch: %v", err)
+	}
+	if err := os.RemoveAll(repo); err != nil {
+		t.Fatalf("remove repo: %v", err)
+	}
+
+	removed, err := SweepScratch(ctx, deps, nil)
+	if err != nil {
+		t.Fatalf("SweepScratch: %v", err)
+	}
+	if !reflect.DeepEqual(removed, []string{path}) {
+		t.Errorf("SweepScratch removed = %v, want [%s]", removed, path)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("orphaned scratch %s is still present after the sweep: %v", path, err)
+	}
+}
+
+// TestSweepScratchFailsScratchWithMalformedGitFile pins the malformed-gitfile
+// refusal: a scratch whose .git is present but names no repository fails the
+// sweep instead of deleting a directory that may belong to a live checkout.
+// No binding record exists, so the sweep takes the .git branch.
+func TestSweepScratchFailsScratchWithMalformedGitFile(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	repo := scratchSeedRepo(t, "one\n")
+	st := store.New(t.TempDir())
+	deps := Deps{Store: st, Git: git.NewClient("git", 0, 0)}
+
+	path := st.ScratchWorktreePath("web", 7)
+	if _, err := CreateScratch(ctx, deps, store.Binding{Name: "web", CWD: repo}, 7); err != nil {
+		t.Fatalf("CreateScratch: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(path, ".git"), []byte("not a gitdir line\n"), 0o644); err != nil {
+		t.Fatalf("clobber scratch .git: %v", err)
+	}
+
+	removed, err := SweepScratch(ctx, deps, nil)
+	if err == nil {
+		t.Errorf("SweepScratch = nil error, want the malformed-.git failure")
+	}
+	for _, r := range removed {
+		if r == path {
+			t.Errorf("SweepScratch removed %s, want it kept on a malformed .git", path)
+		}
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("malformed scratch %s is gone after the sweep: %v", path, err)
+	}
+}
+
+// TestSweepScratchFailsScratchWithUnstatableRepo pins the stat-guard refusal:
+// a scratch whose .git names a repository path that fails to stat for a
+// reason other than absence (here ENOTDIR through a regular file) fails the
+// sweep instead of deleting a directory that may belong to a live checkout.
+func TestSweepScratchFailsScratchWithUnstatableRepo(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	repo := scratchSeedRepo(t, "one\n")
+	st := store.New(t.TempDir())
+	deps := Deps{Store: st, Git: git.NewClient("git", 0, 0)}
+
+	path := st.ScratchWorktreePath("web", 8)
+	if _, err := CreateScratch(ctx, deps, store.Binding{Name: "web", CWD: repo}, 8); err != nil {
+		t.Fatalf("CreateScratch: %v", err)
+	}
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	if err := os.WriteFile(blocker, []byte("not a dir\n"), 0o644); err != nil {
+		t.Fatalf("write blocker: %v", err)
+	}
+	gitfile := "gitdir: " + filepath.Join(blocker, "sub", "worktrees", "web-008") + "\n"
+	if err := os.WriteFile(filepath.Join(path, ".git"), []byte(gitfile), 0o644); err != nil {
+		t.Fatalf("clobber scratch .git: %v", err)
+	}
+
+	removed, err := SweepScratch(ctx, deps, nil)
+	if err == nil {
+		t.Errorf("SweepScratch = nil error, want the unstatable-repo failure")
+	}
+	for _, r := range removed {
+		if r == path {
+			t.Errorf("SweepScratch removed %s, want it kept on an unstatable repo", path)
+		}
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("unstatable scratch %s is gone after the sweep: %v", path, err)
+	}
+}
+
 // TestRemoveScratchSkipsWhenTheSourceAndTheScratchAreGone pins the shared-tree
 // release: a chain done removes the builder's worktree first, and every reader
 // cut from that tree then cleans a scratch whose source no longer exists. Both
