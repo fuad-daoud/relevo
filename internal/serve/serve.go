@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/account"
+	"github.com/fuad-daoud/relevo/internal/burst"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
@@ -100,6 +101,16 @@ type Config struct {
 	// certificate fingerprint and every host:<h> a --public-host value names.
 	// An empty set refuses every signed request, so production must fill it.
 	Audiences []string
+	// ClientKey is this head's own client private key, the one
+	// `relevo config server key` creates. Everything the head sends to a
+	// burst node is signed as a serve client, so an empty key keeps
+	// bursting off even when a command is configured.
+	ClientKey []byte
+	// Burst is the serve.burst policy block; nil means no provider to run.
+	Burst *policy.BurstPolicy
+	// Provider is the head's burst report exchange; nil means built from
+	// Burst's command when bursting is on.
+	Provider burst.Provider
 }
 
 type Server struct {
@@ -148,6 +159,19 @@ type Server struct {
 	// sweeps lives for one tick, so the pace has to outlive it here.
 	tmpSweptAt sync.Map
 	liveCache  *liveCache
+	// burstProvider is the head's resolved report provider: nil when
+	// bursting is off, which is either no configured command or a command
+	// refused for want of a client key. With it nil every later burst step
+	// is a no-op.
+	burstProvider burst.Provider
+	// burstOffErr is why a configured burst command was refused at
+	// startup, naming the command that fixes it; "" when bursting came up
+	// or was never configured. The status block reports it as last_err.
+	burstOffErr string
+	// burstTable is the node table loaded from the machine database at
+	// startup; nil when bursting is off. Its rows keep the provider's
+	// response order, which placement's tie-break reads.
+	burstTable *burst.NodeTable
 	// tickFn, when non-nil, replaces Tick in Run.
 	tickFn func(context.Context) error
 }
@@ -212,6 +236,32 @@ func New(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A configured burst command without a client key is a
+	// misconfiguration: every request the head sends to a node is signed
+	// as a serve client, and there is no key to sign with. It is one
+	// startup error, not a refused boot -- the head keeps serving local
+	// rounds -- and bursting stays off: no provider resolved, no table,
+	// and the reason is kept for the status block.
+	var burstProvider burst.Provider
+	var burstOffErr string
+	if cfg.Burst != nil && len(cfg.Burst.Command) > 0 {
+		if len(cfg.ClientKey) == 0 {
+			burstOffErr = "bursting is off: serve.burst.command is set but this head has no client key; run `relevo config server key` to create and enroll one"
+			slog.Error(burstOffErr)
+		} else {
+			burstProvider = cfg.Provider
+			if burstProvider == nil {
+				burstProvider = &burst.CommandProvider{Argv: cfg.Burst.Command}
+			}
+		}
+	}
+	var burstTable *burst.NodeTable
+	if burstProvider != nil {
+		burstTable, err = loadBurstTable(local)
+		if err != nil {
+			return nil, err
+		}
+	}
 	nonces := remote.NewNonceWindow(remote.MaxClockSkew)
 	transport := remote.NewBundleTransport(cfg.Git, tmpDir)
 
@@ -226,6 +276,10 @@ func New(cfg Config) (*Server, error) {
 		gatesLocal: local,
 		stores:     map[string]*store.Store{},
 		liveCache:  newLiveCache(),
+
+		burstProvider: burstProvider,
+		burstOffErr:   burstOffErr,
+		burstTable:    burstTable,
 	}, nil
 }
 

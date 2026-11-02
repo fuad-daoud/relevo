@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/burst"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -144,6 +145,17 @@ type serveRunWiring struct {
 // assembly order.
 func buildServeConfig(w serveRunWiring) serve.Config {
 	L := w.loaded
+	// The burst block sits under a serve section that a config without one
+	// leaves nil; the provider is built only when a command exists, so a
+	// head with no command keeps Provider nil and every burst step a no-op.
+	var burstBlock *policy.BurstPolicy
+	if L.Policy.Serve != nil {
+		burstBlock = L.Policy.Serve.Burst
+	}
+	var burstProvider burst.Provider
+	if argv := L.Policy.BurstCommand(); len(argv) > 0 {
+		burstProvider = &burst.CommandProvider{Argv: argv}
+	}
 	return serve.Config{
 		Root:           w.root,
 		DB:             w.d,
@@ -172,6 +184,9 @@ func buildServeConfig(w serveRunWiring) serve.Config {
 		ReaperFor:      userReaperFor(L.Policy.ServeIsolationSharedLogins()),
 		Installation:   w.inst,
 		Audiences:      w.audiences,
+		ClientKey:      L.ClientKey,
+		Burst:          burstBlock,
+		Provider:       burstProvider,
 	}
 }
 
