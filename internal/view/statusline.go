@@ -478,11 +478,13 @@ type StatusLineDoc struct {
 // This is the one projection both the Go statusline and the status --line --json
 // document read, so a fork's children are collapsed here rather than by either
 // consumer: a parent row carries "split 1/2" and gains a row only for a child
-// that needs a human. A report with no fork produces exactly the rows it
+// that needs a human. Finished rows rank last, stably, so a finished chain
+// never pushes a running one past the host's visible rows; a fork's children
+// stay with their parent. A report with no fork produces exactly the rows it
 // produced before.
 func StatusLineRows(r Report, now time.Time) []StatusLineRow {
 	rows := make([]StatusLineRow, 0, len(r.Bindings))
-	for _, b := range r.Bindings {
+	for _, b := range orderStatusLineBindings(r.Bindings) {
 		// A fork child contributes a row only when a human must act on it; a
 		// running or done child is counted inside its parent's split and adds
 		// no row of its own.
