@@ -198,10 +198,20 @@ func startServedCheck(ctx context.Context, rt Runtime, b store.Binding, req remo
 		Round:   b.Round,
 		LogPath: rt.Store.ServedCheckLogPath(b.Name, b.Round),
 	}
-	started, rec, err := startGateProc(ctx, rt, servedCheckSpec(rt, b, run), 0)
+	spec := servedCheckSpec(rt, b, run)
+	started, rec, err := startGateProc(ctx, rt, spec, 0)
 	if rec != nil {
 		applyServedCheckRecord(&run, rec)
 		return &run, err
+	}
+	if environmentRefusal(err) {
+		// A frozen slice refused the spawn: the run records the errored
+		// result the function has always written, worded as the gate's own
+		// refusal, so the client reads the failure from the run it asked
+		// for instead of failing the create with no record of what was
+		// tried.
+		applyServedCheckRecord(&run, frozenGateRecord(rt, spec))
+		return &run, nil
 	}
 	if err != nil {
 		return nil, err

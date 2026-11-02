@@ -38,6 +38,38 @@ func frozenCheckReason(rt Runtime) string {
 	return "check could not start -- the slice is frozen; thaw it, then `relevo chain --resume`"
 }
 
+// frozenGateReason is the environment wording a gate record carries for a
+// frozen slice: the gate noun, never the check's, so a gate failure names no
+// check remedy. It agrees with frozenCheckReason on the slice and the thaw,
+// and drops the resume: a gate's reader cannot resume a chain.
+func frozenGateReason(rt Runtime) string {
+	if slice := frozenSliceName(rt); slice != "the slice" {
+		return fmt.Sprintf("gate could not start -- slice %s is frozen; thaw it with `systemctl --user thaw %s`", slice, slice)
+	}
+	return "gate could not start -- the slice is frozen; thaw it"
+}
+
+// frozenGateRecord converts a frozen-slice refusal to the error record a gate
+// has always written for a start it could not make: the typed hold travels
+// for chain checks, while a gate settles the errored run its reader already
+// reads.
+func frozenGateRecord(rt Runtime, spec gateProcSpec) *store.GateRecord {
+	return &store.GateRecord{
+		Command: spec.Command,
+		Result:  "error",
+		Note:    (&EnvironmentError{Reason: frozenGateReason(rt)}).Error(),
+		LogPath: spec.LogPath,
+	}
+}
+
+// environmentRefusal reports whether err refuses the start for environmental
+// reasons: a gate proc start returns only a freeze typed, so callers settle
+// the hold by type rather than by matching the manager's text again.
+func environmentRefusal(err error) bool {
+	var envErr *EnvironmentError
+	return errors.As(err, &envErr)
+}
+
 // frozenNoTrailer reports whether rec is the error of a run that died at
 // once: no trailer means the host never ran the command, the shape a frozen
 // slice leaves behind.

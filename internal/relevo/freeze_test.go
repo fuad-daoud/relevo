@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -707,5 +708,194 @@ func TestGateStepFrozenStartKeepsTheErrorRecord(t *testing.T) {
 	}
 	if got.GateRun != nil {
 		t.Errorf("GateRun = %+v, want none: nothing started", got.GateRun)
+	}
+}
+
+// TestServedCheckFrozenStartRecordsTheErrorRun pins the served containment: a
+// Start the host refuses for a frozen slice records the errored run the
+// function has always written, worded as the gate's own refusal, instead of
+// failing the create with no record of what was tried.
+func TestServedCheckFrozenStartRecordsTheErrorRun(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := sentBinding(t)
+	rt.Runner = fr
+	rt.TmpRoot = t.TempDir()
+	rt.Scope = &spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 100}
+	fr.startErr = errFrozenStart
+
+	run, err := startServedCheck(context.Background(), rt, b, remote.CreateCheckRequest{ID: "c1", Command: "make check"})
+	if err != nil {
+		t.Fatalf("startServedCheck: %v, want the errored run, not a refusal", err)
+	}
+	if run == nil {
+		t.Fatal("run = nil, want the errored run recorded")
+	}
+	if run.Result != "error" {
+		t.Errorf("run.Result = %q, want error", run.Result)
+	}
+	for _, want := range []string{"gate could not start", "relevo.slice", "frozen", "thaw"} {
+		if !strings.Contains(run.Note, want) {
+			t.Errorf("run.Note = %q, want it to name %q", run.Note, want)
+		}
+	}
+	if strings.Contains(run.Note, "chain --resume") {
+		t.Errorf("run.Note = %q, want no chain remedy for a served client", run.Note)
+	}
+	if run.PID != 0 {
+		t.Errorf("run.PID = %d, want none: nothing started", run.PID)
+	}
+	if len(fr.specs) != 0 {
+		t.Errorf("starts = %d, want none: nothing ran", len(fr.specs))
+	}
+}
+
+// TestGateStepFrozenRetrySettlesTheErrorRecord pins the advance containment:
+// a gate lost to a restart whose single re-run Start fails frozen settles
+// done with the error record, storing no run and logging no restart.
+func TestGateStepFrozenRetrySettlesTheErrorRecord(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := sentBinding(t)
+	rt.Runner = fr
+	rt.StartedAt = baseTime
+	rt.Watched = NewWatched()
+	rt.Scope = &spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 100}
+	b.Gate = "make check"
+	b.GateRun = &store.GateRun{
+		PID:       9001,
+		StartedAt: baseTime.Add(-time.Minute).Unix(),
+		Round:     b.Round,
+		Command:   "make check",
+		Attempt:   0,
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	fr.script(9001, false) // exited; no exit() set: no trailer
+	fr.startErr = errFrozenStart
+
+	var got store.Binding
+	var done bool
+	var rec *store.GateRecord
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		var err error
+		got, done, rec, err = gateStep(context.Background(), rt, tx, b)
+		return err
+	}); err != nil {
+		t.Fatalf("gateStep: %v", err)
+	}
+
+	if !done {
+		t.Error("done = false, want the refused retry to finish the gate")
+	}
+	if rec == nil {
+		t.Fatalf("rec = nil, want the error record a refused retry settles")
+	}
+	if rec.Result != "error" {
+		t.Errorf("rec.Result = %q, want error", rec.Result)
+	}
+	for _, want := range []string{"gate could not start", "relevo.slice", "frozen", "thaw"} {
+		if !strings.Contains(rec.Note, want) {
+			t.Errorf("rec.Note = %q, want it to name %q", rec.Note, want)
+		}
+	}
+	if strings.Contains(rec.Note, "chain --resume") {
+		t.Errorf("rec.Note = %q, want the gate wording, never the check's", rec.Note)
+	}
+	if got.GateRun != nil {
+		t.Errorf("GateRun = %+v, want none: a refused retry stores no run", got.GateRun)
+	}
+	entries, err := rt.Store.ReadLog(b.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Kind == store.KindGate && strings.Contains(e.Note, "restarted") {
+			t.Errorf("restart entry = %+v, want none: nothing restarted", e)
+		}
+	}
+	if len(fr.specs) != 0 {
+		t.Errorf("starts = %d, want none: a refused retry starts nothing", len(fr.specs))
+	}
+}
+
+// TestChainCheckFrozenRetrySettlesTheLostRun pins the chain half of a frozen
+// retry: a check lost to a restart whose re-run Start fails frozen settles
+// the lost run as could-not-start, counting toward the bound, instead of
+// dropping the loss.
+func TestChainCheckFrozenRetrySettlesTheLostRun(t *testing.T) {
+	t.Parallel()
+
+	rt, fr, c := chainCheckFixture(t)
+	rt.Scope = &spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 100}
+	run := chainStartCheckForTest(t, rt, c, "check", "make check")
+	row := loadChainCheck(t, rt, run)
+
+	// The daemon that started the run has gone: the recorded start predates
+	// this one, and the watch set never saw the process.
+	rt.StartedAt = time.Unix(row.StartedAt, 0).Add(time.Minute)
+	rt.Watched = NewWatched()
+	fr.startErr = errFrozenStart
+
+	result, _, aerr := freezeCheckAdvanceWithLog(t, rt, c, run, freezeFixtureLine+"\n")
+	var envErr *EnvironmentError
+	if !errors.As(aerr, &envErr) {
+		t.Fatalf("err = %v (%T), want a typed *EnvironmentError", aerr, aerr)
+	}
+	if result != "" {
+		t.Errorf("result = %q, want empty: the refused retry holds, never red", result)
+	}
+	lost := loadChainCheck(t, rt, run)
+	if lost.Result != chainCheckCouldNotStart {
+		t.Errorf("run %d Result = %q, want the lost run settled could-not-start", run, lost.Result)
+	}
+	for _, want := range []string{"frozen", "chain --resume"} {
+		if !strings.Contains(lost.Note, want) {
+			t.Errorf("run %d Note = %q, want it to carry %q", run, lost.Note, want)
+		}
+	}
+	retry := loadChainCheck(t, rt, run+1)
+	if retry.Result != chainCheckCouldNotStart {
+		t.Errorf("run %d Result = %q, want the refused retry settled too", run+1, retry.Result)
+	}
+	if _, err := rt.Store.ChainCheck("shop", run+2); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("run %d exists after a refused retry: %v", run+2, err)
+	}
+	if len(fr.handles) != 1 {
+		t.Errorf("starts = %d, want only the lost run: the refused retry starts nothing", len(fr.handles))
+	}
+}
+
+// TestChainCheckFrozenLogWithTrailerStaysRed pins the no-trailer guard: a run
+// that exited with a genuine trailer stays red even when its log carries the
+// freeze signature, starting no fresh run.
+func TestChainCheckFrozenLogWithTrailerStaysRed(t *testing.T) {
+	t.Parallel()
+
+	rt, fr, c := chainCheckFixture(t)
+	rt.Scope = &spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 100}
+	run := chainStartCheckForTest(t, rt, c, "check", "make check")
+	row := loadChainCheck(t, rt, run)
+	fr.exit(row.PID, 2)
+
+	result, _, aerr := freezeCheckAdvanceWithLog(t, rt, c, run, freezeFixtureLine+"\n")
+	if aerr != nil {
+		t.Fatalf("chainAdvanceCheck: %v", aerr)
+	}
+	if result != chainCheckRed {
+		t.Errorf("result = %q, want red: a trailered exit is the command's own failure", result)
+	}
+	got := loadChainCheck(t, rt, run)
+	if got.Result != "fail" || got.ExitCode != 2 {
+		t.Errorf("row = %+v, want result fail and exit 2", got)
+	}
+	if _, err := rt.Store.ChainCheck("shop", run+1); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("run %d exists for a red run: %v", run+1, err)
+	}
+	if len(fr.handles) != 1 {
+		t.Errorf("starts = %d, want only the red run: no hold retries it", len(fr.handles))
 	}
 }

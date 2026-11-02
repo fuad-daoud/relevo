@@ -251,6 +251,13 @@ func chainAdvanceCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 	spec := chainCheckSpec(rt, c, run, row.Command, row.Log)
 	state := store.GateRun{PID: row.PID, StartedAt: row.StartedAt, Attempt: row.Attempt, Command: row.Command}
 	next, done, rec, err := advanceGateProc(ctx, rt, state, spec)
+	if environmentRefusal(err) {
+		// The retry's start met the frozen slice: the lost run settles as
+		// could-not-start through the same settlement a dead frozen run
+		// takes, counting toward the bound and retrying or halting there,
+		// instead of dropping the loss.
+		return advanceFrozenCheck(ctx, rt, tx, c, row)
+	}
 	if err != nil {
 		return "", row.Log, err
 	}
