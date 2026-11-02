@@ -165,3 +165,27 @@ func TestReleaseAfterTakePinnedFreesNoSlot(t *testing.T) {
 		t.Errorf("len(sem) after release with nothing pinned = %d, want 1", got)
 	}
 }
+
+func TestChangesSession(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		query string
+		want  bool
+	}{
+		{"PRAGMA query_only = 1", true},
+		{"  pragma table_info(t)", true},
+		{"ATTACH DATABASE 'x.db' AS x", true},
+		{"DETACH x", true},
+		{"CREATE TEMP TABLE t(x)", true},
+		{"create temporary view v as select 1", true},
+		{"CREATE TABLE t(x)", false},
+		{"SELECT 1", false},
+		{"INSERT INTO kv(k, v) VALUES (?, ?)", false},
+		{"BEGIN IMMEDIATE", false},
+	} {
+		if got := changesSession(c.query); got != c.want {
+			t.Errorf("changesSession(%q) = %v, want %v", c.query, got, c.want)
+		}
+	}
+}
