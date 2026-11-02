@@ -22,8 +22,9 @@ var registryConfigVerbs = []verbEntry{
 	{
 		Name:    "config edit",
 		Summary: "edit the configuration document in $EDITOR",
-		Args:    "[--local]",
-		Flags:   []string{"--local"},
+		Args:    "[--local] [--json]",
+		Flags:   []string{"--json", "--local"},
+		Output:  "json:ConfigEditDoc",
 		Exit:    []int{0, 1, 2},
 		Errors:  []string{"usage"},
 	},
@@ -79,10 +80,11 @@ var registryConfigVerbs = []verbEntry{
 	{
 		Name:    "config rollback",
 		Summary: "restore an earlier configuration revision",
-		Args:    "<rev> [--yes] [-m <message>]",
-		Flags:   []string{"--m", "--yes"},
+		Args:    "<rev> [--yes] [-m <message>] [--json]",
+		Flags:   []string{"--json", "--m", "--yes"},
+		Output:  "json:ConfigRollbackDoc",
 		Exit:    []int{0, 1, 2},
-		Errors:  []string{"usage"},
+		Errors:  []string{"revision_not_found", "usage"},
 	},
 	{
 		Name:    "config secret",

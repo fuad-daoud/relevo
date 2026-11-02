@@ -78,6 +78,35 @@ func configWriteDocOf(path, section string, version int64) ConfigWriteDoc {
 	return ConfigWriteDoc{Section: section, Path: path, Version: version}
 }
 
+// ConfigRollbackDoc is `config rollback --json`: the revision restored, the
+// new revision the rollback wrote, and the config version it left.
+type ConfigRollbackDoc struct {
+	Target  int64 `json:"target"`
+	Rev     int64 `json:"rev"`
+	Version int64 `json:"version"`
+}
+
+// configRollbackDocOf is the rollback document; the same three numbers the
+// human line prints.
+func configRollbackDocOf(target, rev, version int64) ConfigRollbackDoc {
+	return ConfigRollbackDoc{Target: target, Rev: rev, Version: version}
+}
+
+// ConfigEditDoc is `config edit --json` on the saved path: the config version
+// the write left and the revision it created. A path that wrote nothing
+// (abort, no-change, editor failure, invalid-document retry) prints no
+// document, so there is nothing for a script to read back.
+type ConfigEditDoc struct {
+	Version int64 `json:"version"`
+	Rev     int64 `json:"rev"`
+}
+
+// configEditDocOf is the edit document; the same two numbers the human line
+// prints.
+func configEditDocOf(version, rev int64) ConfigEditDoc {
+	return ConfigEditDoc{Version: version, Rev: rev}
+}
+
 // ConfigImportDoc is `config import`/`config init --json`: the sections
 // touched, the warnings, and the version. Sections and Warnings are never nil,
 // so an empty answer marshals [] rather than null.
@@ -322,6 +351,8 @@ func outcomeDocFixtures() []struct {
 	}{
 		{"config-set-json", configWriteDocOf("policy.order.builder", "policy", 7)},
 		{"config-unset-json", configWriteDocOf("actors", "actors", 8)},
+		{"config-rollback-json", configRollbackDocOf(1, 4, 11)},
+		{"config-edit-json", configEditDocOf(12, 5)},
 		{"config-import-json", configImportDocOf(
 			[]string{"candidates", "policy"}, []string{"prices[0].in is deprecated"}, 9)},
 		{"config-init-json", configImportDocOf(

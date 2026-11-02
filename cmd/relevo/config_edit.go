@@ -246,11 +246,13 @@ func configUnsetRun(args []string) error {
 }
 
 type configEditFlagValues struct {
-	local *bool
+	asJSON *bool
+	local  *bool
 }
 
 func configEditFlagSet(fs *flag.FlagSet) *configEditFlagValues {
 	v := &configEditFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the document the saved edit wrote")
 	v.local = fs.Bool("local", false, "store the edits on this machine only, never in the shared config")
 	return v
 }
@@ -266,7 +268,7 @@ func configEdit(args []string) error {
 		return err
 	}
 	if len(fs.Args()) != 0 {
-		fmt.Fprintln(os.Stderr, "usage: relevo config edit [--local]")
+		fmt.Fprintln(os.Stderr, "usage: relevo config edit [--local] [--json]")
 		return exitCodeErr{code: 2}
 	}
 
@@ -296,7 +298,7 @@ func configEdit(args []string) error {
 	defer func() { _ = os.Remove(tmpPath) }()
 
 	for {
-		next, done, err := editConfigRound(rt, tmpPath, doc, *v.local)
+		next, done, err := editConfigRound(rt, tmpPath, doc, *v.local, *v.asJSON)
 		if err != nil {
 			return err
 		}
@@ -310,8 +312,10 @@ func configEdit(args []string) error {
 // editConfigRound runs one editor pass over doc: it writes the buffer, runs
 // the editor, and stores the result, or reports the buffer to reopen with when
 // the edit needs another pass. done is false only for the invalid-document
-// retry, where the loop reopens the editor on the returned buffer.
-func editConfigRound(rt relevo.Runtime, tmpPath string, doc []byte, local bool) (next []byte, done bool, err error) {
+// retry, where the loop reopens the editor on the returned buffer. Only the
+// saved path answers with a document under --json: a pass that wrote nothing
+// has nothing to return, so it keeps its human line either way.
+func editConfigRound(rt relevo.Runtime, tmpPath string, doc []byte, local, asJSON bool) (next []byte, done bool, err error) {
 	if err := os.WriteFile(tmpPath, doc, 0o600); err != nil {
 		return nil, true, err
 	}
@@ -361,6 +365,9 @@ func editConfigRound(rt relevo.Runtime, tmpPath string, doc []byte, local bool) 
 	var rev int64
 	if rows, err := rt.Config.Log(1); err == nil && len(rows) > 0 {
 		rev = rows[0].Rev
+	}
+	if asJSON {
+		return nil, true, printDoc(configEditDocOf(v, rev))
 	}
 	fmt.Printf("saved (config version %d, revision #%d)\n", v, rev)
 	return nil, true, nil

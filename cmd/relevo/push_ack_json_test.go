@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -265,8 +266,6 @@ var jsonNotYet = map[string]string{
 	"board annotate":       "not yet converted",
 	"board comment":        "not yet converted",
 	"board promote":        "not yet converted",
-	"config edit":          "not yet converted",
-	"config rollback":      "not yet converted",
 	"config workflow add":  "not yet converted",
 	"config workflow edit": "not yet converted",
 	"config workflow rm":   "not yet converted",
@@ -337,14 +336,39 @@ func TestJSONExemptionNamesAreRegistryVerbs(t *testing.T) {
 
 // TestJSONExemptionCount pins the size of both maps, so a verb leaving one of
 // them has to be a deliberate edit rather than a silent deletion: today
-// jsonExemptByDesign holds 14 and jsonNotYet 8, which is every verb the
+// jsonExemptByDesign holds 14 and jsonNotYet 6, which is every verb the
 // registry lists without --json. A count that moves is a verb converted or a
 // verb added, and either belongs in the change that moved it.
 func TestJSONExemptionCount(t *testing.T) {
 	if len(jsonExemptByDesign) != 14 {
 		t.Errorf("jsonExemptByDesign holds %d verbs, want 14", len(jsonExemptByDesign))
 	}
-	if len(jsonNotYet) != 8 {
-		t.Errorf("jsonNotYet holds %d verbs, want 8", len(jsonNotYet))
+	if len(jsonNotYet) != 6 {
+		t.Errorf("jsonNotYet holds %d verbs, want 6", len(jsonNotYet))
+	}
+}
+
+// TestConfigJSONFlagIsOnTheSurface: the flag reaches the registry row and the
+// installer together for the config verbs that print a result document, so
+// `relevo help --json` and `relevo config edit -h` cannot disagree about it,
+// and each row names the document its verb prints.
+func TestConfigJSONFlagIsOnTheSurface(t *testing.T) {
+	for _, c := range []struct{ verb, doc string }{
+		{"config edit", "json:ConfigEditDoc"},
+		{"config rollback", "json:ConfigRollbackDoc"},
+	} {
+		e, ok := registryEntry(c.verb)
+		if !ok {
+			t.Fatalf("no registry entry for %s", c.verb)
+		}
+		if !slices.Contains(e.Flags, "--json") {
+			t.Errorf("%s registry flags %v do not list --json", c.verb, e.Flags)
+		}
+		if !strings.Contains(e.Args, "--json") {
+			t.Errorf("%s registry args %q do not mention --json", c.verb, e.Args)
+		}
+		if e.Output != c.doc {
+			t.Errorf("%s registry output = %q, want %q", c.verb, e.Output, c.doc)
+		}
 	}
 }

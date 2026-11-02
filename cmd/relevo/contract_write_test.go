@@ -353,7 +353,8 @@ func TestContractWriteNoticeRouting(t *testing.T) {
 func TestContractWriteRegistryExits(t *testing.T) {
 	for _, name := range []string{
 		"bind", "send", "stop", "done", "unbind", "gate",
-		"config agents", "config import", "config init", "config secret rm",
+		"config agents", "config edit", "config import", "config init", "config rollback",
+		"config secret rm",
 		"config secret set", "config server add", "config server rm", "config set",
 		"config unset", "mastermind disable", "mastermind enable", "mastermind forget",
 		"mastermind init", "mastermind rename", "mastermind reset",
