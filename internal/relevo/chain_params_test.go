@@ -251,6 +251,12 @@ func TestChainRepoSuppliedActors(t *testing.T) {
 	if got := chainRepoSuppliedActors(apply(def, same), same, repo); len(got) != 2 || got["reviewer"] != "" {
 		t.Errorf("supplied with a flag repeating the entry = %v, want builder and planner only", got)
 	}
+	// A --param repeating the entry's own word still wins the tier: the
+	// entry did not supply the actor, so the refusal must not blame it.
+	sameParam := ChainOptions{Params: map[string]string{"reviewer": "repo-reviewer"}}
+	if got := chainRepoSuppliedActors(apply(def, sameParam), sameParam, repo); len(got) != 2 || got["reviewer"] != "" {
+		t.Errorf("supplied with a --param repeating the entry = %v, want builder and planner only", got)
+	}
 	if got := chainRepoSuppliedActors(apply(def, ChainOptions{Params: map[string]string{"planner": "param-planner"}}), ChainOptions{Params: map[string]string{"planner": "param-planner"}}, repo); len(got) != 2 || got["planner"] != "" {
 		t.Errorf("supplied with a planner --param = %v, want builder and reviewer only", got)
 	}

@@ -121,8 +121,8 @@ func chainParamFlags(opts ChainOptions) []chainParamFlag {
 
 // chainRepoSuppliedActors lists the member parts whose actor the repository
 // entry supplied to the shipped default's definition: the entry's actor for
-// a slot with no flag override, and only when the definition actually
-// carries that value. A custom workflow keeps its own defaults, so the entry
+// a slot with no flag or --param override, and only when the definition
+// actually carries that value. A custom workflow keeps its own defaults, so the entry
 // supplies nothing there. The unknown-actor refusal reads this, so a start
 // names the entry as the source instead of failing on the bare actor.
 func chainRepoSuppliedActors(def workflow.Definition, opts ChainOptions, repo RepoSettings) map[string]string {
@@ -138,6 +138,9 @@ func chainRepoSuppliedActors(def workflow.Definition, opts ChainOptions, repo Re
 		{chain.MemberPlanner, opts.PlannerActor, repo.PlannerActor},
 	} {
 		if tc.flag != "" || tc.entry == "" {
+			continue
+		}
+		if _, overridden := opts.Params[tc.part]; overridden {
 			continue
 		}
 		p, ok := def.Params[tc.part]
