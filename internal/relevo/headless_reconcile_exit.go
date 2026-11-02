@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
@@ -14,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/pathscope"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/text"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -277,6 +279,88 @@ func exitHaltGate(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 	return b, false, nil
 }
 
+// freezeHoldMax is how many times one round relaunches into a frozen slice
+// before it halts for a human: a suspend/resume thaw lands in seconds, so a
+// few immediate retries cover the race; a slice still frozen after that needs
+// a hand, not another spawn.
+const freezeHoldMax = 5
+
+// freezeNotePrefix marks the hold a frozen slice earns, so the bound counts
+// holds and nothing else: the exit entries the same ticks also write stay for
+// humans, and the switch lines the report renders stay for switches.
+const freezeNotePrefix = "frozen slice hold"
+
+// freezesSincePlan counts freeze holds after the latest prompt for round; a
+// resend of the same round allows another set.
+func freezesSincePlan(entries []store.LogEntry, round int) int {
+	plan := -1
+	for i, e := range entries {
+		if e.Round == round && e.Direction == store.DirToBuilder && store.IsPromptKind(e.Kind) {
+			plan = i
+		}
+	}
+	if plan < 0 {
+		return 0
+	}
+	var count int
+	for _, e := range entries[plan+1:] {
+		if e.Round == round && e.Kind == store.KindQueue && strings.HasPrefix(e.Note, freezeNotePrefix) {
+			count++
+		}
+	}
+	return count
+}
+
+// frozenSliceName is the slice a freeze halt names: the template's slice when
+// scopes are on, else the generic word, so the halt never names an empty unit.
+func frozenSliceName(rt Runtime) string {
+	if rt.Scope != nil && rt.Scope.Slice != "" {
+		return rt.Scope.Slice
+	}
+	return "the slice"
+}
+
+// exitFreezeHold holds a round whose builder never started because its slice
+// is frozen: the same candidate relaunches uncounted, with no exclusion and
+// no ledger write, since the host, not the candidate, refused. Past the
+// bound it halts naming the slice and the thaw, so a human, or
+// `chain --resume`, retries the right candidate.
+func exitFreezeHold(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, now time.Time) (store.Binding, bool, error) {
+	if !spawn.IsFrozenUnitError(limitText(ctx, rt, b)) {
+		return b, false, nil
+	}
+	if freezesSincePlan(entries, b.Round) >= freezeHoldMax {
+		slice := frozenSliceName(rt)
+		halted, herr := haltAndSettle(ctx, rt, tx, b, fmt.Sprintf(
+			"%s: builder could not start -- slice %s is frozen; thaw it with `systemctl --user thaw %s`, then `relevo send --name %s --file <plan>` again or `relevo chain --resume`",
+			b.Name, slice, slice, b.Name))
+		return halted, true, herr
+	}
+	b = abandonSession(b)
+	text := roundPrompt(rt, tx, b, rt.Store.PromptPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round))
+	next, err := startRound(ctx, rt, tx, b, text, false)
+	if err != nil {
+		if spawn.IsFrozenUnitError(err.Error()) {
+			slice := frozenSliceName(rt)
+			halted, herr := haltAndSettle(ctx, rt, tx, b, fmt.Sprintf(
+				"%s: builder could not start -- slice %s is frozen; thaw it with `systemctl --user thaw %s`, then `relevo send --name %s --file <plan>` again or `relevo chain --resume`",
+				b.Name, slice, slice, b.Name))
+			return halted, true, herr
+		}
+		return b, true, err
+	}
+	next = ClearHaltFields(next)
+	if err := tx.AppendLog(b.Name, store.LogEntry{
+		TS: now, Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindQueue, Confirmed: true,
+		Note: fmt.Sprintf("%s (%d/%d): relaunched %s on the same round: same candidate, not counted",
+			freezeNotePrefix, freezesSincePlan(entries, b.Round)+1, freezeHoldMax, b.BuilderCandidate),
+	}); err != nil {
+		return next, true, err
+	}
+	slog.Info("headless builder held on a frozen slice", "binding", b.Name, "round", b.Round, "candidate", b.BuilderCandidate)
+	return next, true, nil
+}
+
 func exitTailSwitch(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, codeText string, now time.Time, switchable bool) (store.Binding, error) {
 	// A builder that ended its turn cleanly without a report has left a session
 	// nothing will wake: resume it once with a nudge rather than spend a
@@ -302,6 +386,15 @@ func exitTailSwitch(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 		return next, err
 	} else if ok {
 		return next, nil
+	}
+	// A frozen slice behind this exit is an environmental hold, not a
+	// candidate failure and not a provider fault: the same candidate
+	// relaunches uncounted, with no exclusion and no ledger write, so it
+	// stays eligible. It sits before the outage gate, so a frozen tail never
+	// earns a provider gate, and before the exclusion below, so it never
+	// reddens the round.
+	if next, held, herr := exitFreezeHold(ctx, rt, tx, b, entries, now); herr != nil || held {
+		return next, herr
 	}
 	// A provider-side outage behind this exit is a provider gate, not a builder
 	// failure: one rate_limited entry keeping the cause, and the builder

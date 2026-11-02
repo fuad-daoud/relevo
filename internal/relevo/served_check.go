@@ -198,10 +198,20 @@ func startServedCheck(ctx context.Context, rt Runtime, b store.Binding, req remo
 		Round:   b.Round,
 		LogPath: rt.Store.ServedCheckLogPath(b.Name, b.Round),
 	}
-	started, rec, err := startGateProc(ctx, rt, servedCheckSpec(rt, b, run), 0)
+	spec := servedCheckSpec(rt, b, run)
+	started, rec, err := startGateProc(ctx, rt, spec, 0)
 	if rec != nil {
 		applyServedCheckRecord(&run, rec)
 		return &run, err
+	}
+	if environmentRefusal(err) {
+		// A frozen slice refused the spawn: the run records the errored
+		// result the function has always written, worded as the gate's own
+		// refusal, so the client reads the failure from the run it asked
+		// for instead of failing the create with no record of what was
+		// tried.
+		applyServedCheckRecord(&run, frozenGateRecord(rt, spec))
+		return &run, nil
 	}
 	if err != nil {
 		return nil, err
@@ -233,6 +243,14 @@ func servedCheckStep(ctx context.Context, rt Runtime, b store.Binding) (store.Bi
 		// Settling the run is what keeps the binding out of check_running: a
 		// step that returned early would leave the next POST refused forever.
 		slog.Warn("served check advance failed", "binding", b.Name, "err", err)
+		if environmentRefusal(err) {
+			// A frozen slice refused the retry's start: the run records
+			// the gate's own refusal, since a served client cannot act on
+			// the check's resume remedy.
+			applyServedCheckRecord(&run, frozenGateRecord(rt, spec))
+			b.CheckRun = &run
+			return b, true
+		}
 		run.Result, run.Note = "error", err.Error()
 		b.CheckRun = &run
 		return b, true

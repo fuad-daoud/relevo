@@ -223,8 +223,9 @@ func classifySpawnStartError(ctx context.Context, rt Runtime, b store.Binding, c
 		// path from spending its one fresh attempt on a resume that would
 		// collide the same way. freeRoundScope is the primary guard, but a
 		// scope loading between the probe and the Start still arrives here as
-		// an ordinary error.
-		if errors.Is(err, spawn.ErrBoundarySetup) || isScopeBusy(err) || errors.Is(err, spawn.ErrScopeUnavailable) {
+		// an ordinary error. A frozen slice is the host's too: gating it would
+		// gate a candidate that never ran, for a thaw only a human can do.
+		if errors.Is(err, spawn.ErrBoundarySetup) || isScopeBusy(err) || errors.Is(err, spawn.ErrScopeUnavailable) || spawn.IsFrozenUnitError(err.Error()) {
 			return b, fmt.Errorf("start headless builder for %q (%s): %w", b.Name, c.Ref().String(), err)
 		}
 		availability.RecordSpawnFailureLocked(AvailabilityDeps(rt), c.Ref().String(), b.Name, err)

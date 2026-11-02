@@ -51,6 +51,12 @@ func gateStep(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (s
 
 	if b.GateRun == nil {
 		run, rec, err := startGateProc(ctx, rt, spec, 0)
+		if err != nil {
+			// A frozen slice refusal travels typed for chain checks; a round
+			// gate keeps the error record it has always written, worded as
+			// the gate's own refusal. Only a freeze arrives here typed.
+			return b, true, frozenGateRecord(rt, spec), nil
+		}
 		if rec != nil {
 			return b, true, rec, err
 		}
@@ -63,6 +69,13 @@ func gateStep(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (s
 	}
 
 	next, done, rec, err := advanceGateProc(ctx, rt, *b.GateRun, spec)
+	if environmentRefusal(err) {
+		// The retry's start met the frozen slice: the gate settles done
+		// with the error record, the way a refused first start does.
+		// Nothing restarted, so no run is stored and no restart is logged.
+		b.GateRun = nil
+		return b, true, frozenGateRecord(rt, spec), nil
+	}
 	if next != nil {
 		next.Round = b.Round
 		b.GateRun = next
