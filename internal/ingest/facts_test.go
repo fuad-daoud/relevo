@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
@@ -35,7 +36,7 @@ func TestRoundFactsFromFixtureRound1(t *testing.T) {
 		{TS: ts("2026-09-10T10:01:00Z"), Round: 2, Kind: store.KindPrompt, Tier: "low"},
 	}
 
-	r := roundFacts(events, 1)
+	r := roundFacts(events, 1, false)
 
 	if !r.StartedAt.Equal(ts("2026-09-10T10:00:01Z")) {
 		t.Errorf("StartedAt = %v, want the plan entry's ts", r.StartedAt)
@@ -86,7 +87,7 @@ func TestRoundFactsSumsANudgedRoundsSegments(t *testing.T) {
 			Usage: &usage.Usage{Tokens: usage.Tokens{In: 200, Out: 30}, Cost: usage.Cost{USD: 0.40, Basis: usage.Measured}}},
 	}
 
-	r := roundFacts(events, 1)
+	r := roundFacts(events, 1, false)
 
 	checkPtr(t, "InTokens", r.InTokens, int64(300))
 	checkPtr(t, "CacheTokens", r.CacheTokens, int64(0))
@@ -114,7 +115,7 @@ func TestRoundFactsSumsASwitchedRoundsSegments(t *testing.T) {
 			Usage: &usage.Usage{Tokens: usage.Tokens{In: 200, Out: 30}, Cost: usage.Cost{USD: 0.40, Basis: usage.Measured}}},
 	}
 
-	r := roundFacts(events, 2)
+	r := roundFacts(events, 2, false)
 
 	checkPtr(t, "InTokens", r.InTokens, int64(300))
 	checkPtr(t, "OutTokens", r.OutTokens, int64(80))
@@ -134,7 +135,7 @@ func TestRoundFactsRemoteRoundCountsPriorTokens(t *testing.T) {
 			PriorTokens: &usage.Tokens{In: 400, Out: 150}},
 	}
 
-	r := roundFacts(events, 1)
+	r := roundFacts(events, 1, false)
 
 	checkPtr(t, "InTokens", r.InTokens, int64(500))
 	checkPtr(t, "OutTokens", r.OutTokens, int64(200))
@@ -149,7 +150,7 @@ func TestRoundFactsSingleSegmentUnchanged(t *testing.T) {
 			Usage: &usage.Usage{Tokens: usage.Tokens{In: 200, Out: 30}, Cost: usage.Cost{USD: 0.40, Basis: usage.Measured}}},
 	}
 
-	r := roundFacts(events, 1)
+	r := roundFacts(events, 1, false)
 
 	checkPtr(t, "InTokens", r.InTokens, int64(200))
 	checkPtr(t, "OutTokens", r.OutTokens, int64(30))
@@ -164,7 +165,7 @@ func TestRoundFactsPlanLaneSingleSegmentUnchanged(t *testing.T) {
 		{Round: 1, Kind: store.KindReport, Direction: store.DirToMasterMind, Usage: planUsage},
 	}
 
-	r := roundFacts(events, 1)
+	r := roundFacts(events, 1, false)
 
 	checkPtr(t, "InTokens", r.InTokens, int64(200))
 	checkPtr(t, "OutTokens", r.OutTokens, int64(30))
@@ -182,7 +183,7 @@ func TestRoundFactsPlanLaneWithNudgeSegmentIsUnknown(t *testing.T) {
 			Usage: &usage.Usage{Tokens: usage.Tokens{In: 200, Out: 30}, Cost: usage.Cost{USD: 0.40, Basis: usage.Measured, Plan: true}}},
 	}
 
-	r := roundFacts(events, 1)
+	r := roundFacts(events, 1, false)
 
 	checkPtr(t, "InTokens", r.InTokens, int64(300))
 	checkPtr(t, "OutTokens", r.OutTokens, int64(80))
@@ -201,7 +202,7 @@ func TestRoundFactsReportWithoutUsageKeepsNoFigures(t *testing.T) {
 		{Round: 1, Kind: store.KindReport, Direction: store.DirToMasterMind},
 	}
 
-	r := roundFacts(events, 1)
+	r := roundFacts(events, 1, false)
 
 	if r.InTokens != nil || r.CacheTokens != nil || r.WriteTokens != nil || r.OutTokens != nil {
 		t.Errorf("tokens = %v/%v/%v/%v, want no figures at all", r.InTokens, r.CacheTokens, r.WriteTokens, r.OutTokens)
@@ -218,8 +219,108 @@ func TestRoundFactsStopEntryStampsClosedAt(t *testing.T) {
 		{Round: 1, Kind: store.KindStop, TS: ts},
 		{Round: 1, Kind: store.KindStop, TS: ts.Add(time.Minute)},
 	}
-	r := roundFacts(events, 1)
+	r := roundFacts(events, 1, false)
 	if r.ClosedAt == nil || !r.ClosedAt.Equal(ts) {
 		t.Errorf("ClosedAt = %v, want %v", r.ClosedAt, ts)
+	}
+}
+
+// The burst tests pin the four burst columns: a queued local round measures
+// its first wait, a never-queued round claims no wait, the last report's
+// rusage lands verbatim, a round without a report claims nothing, and a
+// remote round claims no start kind while keeping its wait and rusage.
+func TestRoundFactsQueuedLocalRoundRecordsWaitAndKind(t *testing.T) {
+	queued := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
+	events := []store.LogEntry{
+		{TS: queued, Round: 1, Kind: store.KindQueue, Note: "queued (3/4 builders busy)"},
+		{TS: queued.Add(90 * time.Second), Round: 1, Kind: store.KindQueue, Note: "started after 1m30s queued"},
+		// A re-queue measures its first wait only, never the sum.
+		{TS: queued.Add(100 * time.Second), Round: 1, Kind: store.KindQueue, Note: "queued (2/4 builders busy)"},
+		{TS: queued.Add(200 * time.Second), Round: 1, Kind: store.KindQueue, Note: "started after 1m40s queued"},
+		{TS: queued.Add(3 * time.Minute), Round: 1, Kind: store.KindPrompt},
+		{TS: queued.Add(4 * time.Minute), Round: 1, Kind: store.KindReport, Outcome: "done"},
+	}
+
+	r := roundFacts(events, 1, false)
+
+	checkPtr(t, "QueueWaitMS", r.QueueWaitMS, int64(90000))
+	checkPtr(t, "StartKind", r.StartKind, "local")
+	if r.RusageCPUMS != nil || r.RusagePeakMemBytes != nil {
+		t.Errorf("rusage = %v/%v, want nil without a report rusage", r.RusageCPUMS, r.RusagePeakMemBytes)
+	}
+}
+
+func TestRoundFactsNeverQueuedRoundKeepsWaitNil(t *testing.T) {
+	queued := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
+	events := []store.LogEntry{
+		{TS: queued, Round: 1, Kind: store.KindPrompt},
+		{TS: queued.Add(time.Minute), Round: 1, Kind: store.KindReport, Outcome: "done"},
+	}
+
+	r := roundFacts(events, 1, false)
+
+	if r.QueueWaitMS != nil {
+		t.Errorf("QueueWaitMS = %v, want nil for a round that never queued", r.QueueWaitMS)
+	}
+	checkPtr(t, "StartKind", r.StartKind, "local")
+}
+
+func TestRoundFactsReportRusageLandsVerbatim(t *testing.T) {
+	queued := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
+	events := []store.LogEntry{
+		{TS: queued, Round: 1, Kind: store.KindPrompt},
+		{TS: queued.Add(time.Minute), Round: 1, Kind: store.KindReport, Outcome: "done",
+			Rusage: &store.Rusage{CPUMS: 0, PeakMemBytes: 12345}},
+	}
+
+	r := roundFacts(events, 1, false)
+
+	// A zero CPU total is presence, not absence: the report carried rusage.
+	checkPtr(t, "RusageCPUMS", r.RusageCPUMS, int64(0))
+	checkPtr(t, "RusagePeakMemBytes", r.RusagePeakMemBytes, int64(12345))
+	checkPtr(t, "StartKind", r.StartKind, "local")
+	if r.QueueWaitMS != nil {
+		t.Errorf("QueueWaitMS = %v, want nil for a round that never queued", r.QueueWaitMS)
+	}
+}
+
+func TestRoundFactsRoundWithoutReportClaimsNoBurst(t *testing.T) {
+	queued := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
+	events := []store.LogEntry{
+		{TS: queued, Round: 1, Kind: store.KindQueue, Note: "queued (3/4 builders busy)"},
+		{TS: queued.Add(90 * time.Second), Round: 1, Kind: store.KindQueue, Note: "started after 1m30s queued"},
+		{TS: queued.Add(3 * time.Minute), Round: 1, Kind: store.KindPrompt},
+	}
+
+	r := roundFacts(events, 1, false)
+
+	checkBurstNil(t, r)
+}
+
+func TestRoundFactsRemoteRoundClaimsNoStartKind(t *testing.T) {
+	queued := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
+	events := []store.LogEntry{
+		{TS: queued, Round: 1, Kind: store.KindQueue, Note: "queued (3/4 builders busy)"},
+		{TS: queued.Add(90 * time.Second), Round: 1, Kind: store.KindQueue, Note: "started after 1m30s queued"},
+		{TS: queued.Add(3 * time.Minute), Round: 1, Kind: store.KindPrompt},
+		{TS: queued.Add(4 * time.Minute), Round: 1, Kind: store.KindReport, Outcome: "done",
+			Rusage: &store.Rusage{CPUMS: 42000, PeakMemBytes: 1 << 20}},
+	}
+
+	r := roundFacts(events, 1, true)
+
+	if r.StartKind != nil {
+		t.Errorf("StartKind = %v, want nil for a round that ran on a server", r.StartKind)
+	}
+	checkPtr(t, "QueueWaitMS", r.QueueWaitMS, int64(90000))
+	checkPtr(t, "RusageCPUMS", r.RusageCPUMS, int64(42000))
+	checkPtr(t, "RusagePeakMemBytes", r.RusagePeakMemBytes, int64(1<<20))
+}
+
+func checkBurstNil(t *testing.T, r db.Round) {
+	t.Helper()
+	if r.QueueWaitMS != nil || r.StartKind != nil || r.RusageCPUMS != nil || r.RusagePeakMemBytes != nil {
+		t.Errorf("burst = %v/%v/%v/%v, want all nil",
+			r.QueueWaitMS, r.StartKind, r.RusageCPUMS, r.RusagePeakMemBytes)
 	}
 }

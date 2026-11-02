@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 	"testing/fstest"
+	"time"
 )
 
 // rawSQLDB opens a driver connection straight to path, without Open's
@@ -302,7 +303,130 @@ func TestMigration031AddsWriterColumn(t *testing.T) {
 	defer func() { _ = d.Close() }()
 
 	have, know := d.SchemaVersions()
-	if have != 31 || know != 31 {
-		t.Errorf("SchemaVersions = (%d, %d), want (31, 31)", have, know)
+	if have != 32 || know != 32 {
+		t.Errorf("SchemaVersions = (%d, %d), want (32, 32)", have, know)
+	}
+}
+
+// TestMigration032AddsBurstStatsColumns pins the burst columns: a database at
+// 031 with a round row gains the four columns as NULL, a second apply of 032
+// is a no-op, and a fresh database writes and reads the four columns through
+// the round write path and the row exchange alike.
+func TestMigration032AddsBurstStatsColumns(t *testing.T) {
+	// 1. Upgraded DB from version 31 to 32
+	sqlDB := rawSQLDB(t, filepath.Join(t.TempDir(), "relevo.db"))
+
+	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 31)); err != nil {
+		t.Fatalf("applyMigrations through 031: %v", err)
+	}
+
+	if _, err := sqlDB.Exec(`INSERT INTO binding
+		(id, origin, name, cwd, builder_mode, created_at, ingest_source)
+		VALUES ('b1', 'inst1', 'test1', '/work/1', 'pane', '2026-10-17T10:00:00Z', 'live')`); err != nil {
+		t.Fatalf("insert binding at 031: %v", err)
+	}
+	if _, err := sqlDB.Exec(`INSERT INTO round (id, binding_id, number, started_at, outcome, switches)
+		VALUES ('r1', 'b1', 1, '2026-10-17T10:00:00.000Z', 'reported', 0)`); err != nil {
+		t.Fatalf("insert round at 031: %v", err)
+	}
+
+	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 32)); err != nil {
+		t.Fatalf("applyMigrations through 032: %v", err)
+	}
+
+	// A row recorded before 032 reads NULL for the four columns; the SELECT
+	// itself proves the columns exist.
+	var queueWaitMS, rusageCPUMS, rusagePeakMemBytes sql.Null[int64]
+	var startKind sql.Null[string]
+	if err := sqlDB.QueryRow(`SELECT queue_wait_ms, start_kind, rusage_cpu_ms, rusage_peak_mem_bytes
+		FROM round WHERE id = 'r1'`).
+		Scan(&queueWaitMS, &startKind, &rusageCPUMS, &rusagePeakMemBytes); err != nil {
+		t.Fatalf("select burst columns: %v", err)
+	}
+	if queueWaitMS.Valid || startKind.Valid || rusageCPUMS.Valid || rusagePeakMemBytes.Valid {
+		t.Errorf("pre-032 row burst columns = %v/%v/%v/%v, want all NULL",
+			queueWaitMS, startKind, rusageCPUMS, rusagePeakMemBytes)
+	}
+
+	// A second apply of 032 is a no-op: the version guard means the ALTERs,
+	// which have no IF NOT EXISTS form, never run twice.
+	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 32)); err != nil {
+		t.Fatalf("second applyMigrations 032: %v", err)
+	}
+	var rows int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM schema_version WHERE version = 32`).Scan(&rows); err != nil {
+		t.Fatalf("count schema_version: %v", err)
+	}
+	if rows != 1 {
+		t.Errorf("schema_version rows for 32 = %d, want 1", rows)
+	}
+
+	// 2. Fresh DB
+	freshPath := filepath.Join(t.TempDir(), "fresh.db")
+	d, err := Open(freshPath)
+	if err != nil {
+		t.Fatalf("Open fresh db: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	have, know := d.SchemaVersions()
+	if have != 32 || know != 32 {
+		t.Errorf("SchemaVersions = (%d, %d), want (32, 32)", have, know)
+	}
+
+	// A 032 row round-trips the four columns through the round write path,
+	// and the row exchange surfaces them: the provider reads the round table
+	// with `relevo db query --json` rather than parsing log JSON.
+	bindingID, err := d.UpsertBinding(Binding{
+		Name: "burst", CWD: "/work/burst", BuilderMode: "headless", IngestSource: IngestLive,
+		CreatedAt: time.Date(2026, 10, 17, 10, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("UpsertBinding: %v", err)
+	}
+	wait, kind, cpu, peak := int64(1250), "local", int64(42000), int64(1<<20)
+	roundID, err := d.UpsertRound(Round{
+		BindingID: bindingID, Number: 1, Outcome: OutcomeReported,
+		QueueWaitMS: &wait, StartKind: &kind, RusageCPUMS: &cpu, RusagePeakMemBytes: &peak,
+	})
+	if err != nil {
+		t.Fatalf("UpsertRound: %v", err)
+	}
+	rounds, err := d.Rounds(bindingID)
+	if err != nil {
+		t.Fatalf("Rounds: %v", err)
+	}
+	if len(rounds) != 1 {
+		t.Fatalf("Rounds = %d rows, want 1", len(rounds))
+	}
+	got := rounds[0]
+	if got.QueueWaitMS == nil || *got.QueueWaitMS != wait {
+		t.Errorf("QueueWaitMS = %v, want %d", got.QueueWaitMS, wait)
+	}
+	if got.StartKind == nil || *got.StartKind != kind {
+		t.Errorf("StartKind = %v, want %q", got.StartKind, kind)
+	}
+	if got.RusageCPUMS == nil || *got.RusageCPUMS != cpu {
+		t.Errorf("RusageCPUMS = %v, want %d", got.RusageCPUMS, cpu)
+	}
+	if got.RusagePeakMemBytes == nil || *got.RusagePeakMemBytes != peak {
+		t.Errorf("RusagePeakMemBytes = %v, want %d", got.RusagePeakMemBytes, peak)
+	}
+
+	row, found, err := d.ReadExchangeRow("round", `["`+roundID+`"]`)
+	if err != nil {
+		t.Fatalf("ReadExchangeRow: %v", err)
+	}
+	if !found {
+		t.Fatalf("ReadExchangeRow: round %s not found", roundID)
+	}
+	byName := make(map[string]any, len(row.Columns))
+	for _, col := range row.Columns {
+		byName[col.Name] = col.Value
+	}
+	for _, name := range []string{"queue_wait_ms", "start_kind", "rusage_cpu_ms", "rusage_peak_mem_bytes"} {
+		if _, ok := byName[name]; !ok {
+			t.Errorf("exchange row misses column %s: %+v", name, row.Columns)
+		}
 	}
 }
