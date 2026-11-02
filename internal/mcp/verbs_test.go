@@ -437,6 +437,38 @@ func TestRelevoVerbsStatusWithoutIdentityErrors(t *testing.T) {
 	}
 }
 
+// TestRelevoVerbsStatusRetriesResolveSession pins the late-record path: a
+// resolver that fails until the record appears makes the next Status succeed.
+func TestRelevoVerbsStatusRetriesResolveSession(t *testing.T) {
+	s := store.New(t.TempDir())
+	rt := relevo.Runtime{Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
+	saveVerbBinding(t, s, store.Binding{Name: "mine", CWD: "/repo/mine", MasterMindID: mcpTestMasterMindA, Round: 1, State: store.StateActive})
+
+	ready := false
+	v := &RelevoVerbs{RT: rt, ResolveSession: func(string) (string, error) {
+		if !ready {
+			return "", errors.New(`no relevo MasterMind for this session; run "relevo mastermind init"`)
+		}
+		return mcpTestMasterMindA, nil
+	}}
+
+	if _, err := v.Status(context.Background(), "", StatusArgs{}); err == nil {
+		t.Fatal("Status before the record appears must error")
+	}
+	ready = true
+	res, err := v.Status(context.Background(), "", StatusArgs{})
+	if err != nil {
+		t.Fatalf("Status after the record appears: %v", err)
+	}
+	rep, ok := res.(view.Report)
+	if !ok {
+		t.Fatalf("result = %#v, want view.Report", res)
+	}
+	if len(rep.Bindings) != 1 || rep.Bindings[0].Name != "mine" {
+		t.Fatalf("status = %+v, want only mine", rep.Bindings)
+	}
+}
+
 // newShowVerbStore seeds a live binding "webshop" with two rounds: round 1
 // closed with a report, round 2 the open round (its prompt only). Round 1 is
 // therefore the newest completed round.

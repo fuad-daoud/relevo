@@ -13,6 +13,15 @@ import (
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
+// The fixture a sync section is seeded with. The remote is an unroutable name:
+// these tests open no handle to it, and a name that could resolve would only
+// invite one.
+const (
+	syncStatusRemote    = "libsql://sync-status-fixture.invalid"
+	syncStatusNamespace = "default"
+	syncStatusSecret    = "sync-status-token-fixture"
+)
+
 // The two values that must never reach a status document, kept distinct so a
 // test can search for each on its own.
 const (
