@@ -337,8 +337,11 @@ cat > "$work/bin/go" <<'SH'
 #!/bin/sh
 # A stand-in for go: `go test` is recorded and skipped, so the coverage flags can
 # be read off the argv without running anything; everything else is the real go.
+# The shard's jobs run in the background, and their multi-kilobyte argv lines
+# interleave when they share one file, so each invocation records to its own
+# file and record_shard joins them after the run.
 if [ "${1:-}" = "test" ]; then
-	printf '%s\n' "$*" >> "$SHIM_LOG"
+	printf '%s\n' "$*" >> "$SHIM_LOG-$$"
 	exit 0
 fi
 exec "$real_go" "$@"
@@ -346,11 +349,13 @@ SH
 chmod +x "$work/bin/go"
 
 # record_shard runs one shard from the repo root under the stand-in, leaving the
-# recorded argv lines in $1; $2 is SHARD_COVER's value (empty means unset).
+# recorded argv lines in $1, joined from one file per invocation after the run;
+# $2 is SHARD_COVER's value (empty means unset).
 record_shard() {
 	status=0
 	(cd "$repo" && PATH="$work/bin:$PATH" SHIM_LOG="$1" SHARD_COVER="$2" \
 		SPLIT_PKGS="${3:-}" sh "$here/test-shard.sh" 0 3 "$work/shard") > "$work/out" 2>&1 || status=$?
+	cat "$1"-* > "$1" 2>/dev/null || : > "$1"
 }
 
 # Default: coverage is on, so every `go test` carries -cover and race, and at
