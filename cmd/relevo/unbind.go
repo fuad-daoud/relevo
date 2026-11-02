@@ -200,10 +200,32 @@ func runGC(delete, dryRun, force bool, mastermindRef string, all, asJSON bool) e
 	opts.Force = force
 
 	done, err := relevo.GCDoneChains(context.Background(), rt, opts)
-	if err != nil {
+	var unsettled *relevo.ChainsNotSettledError
+	if err != nil && !errors.As(err, &unsettled) {
 		return writeError(err)
 	}
+	if perr := printGCRun(rt, opts, done, dryRun, asJSON); perr != nil {
+		return perr
+	}
+	return unsettledChainsError(unsettled)
+}
 
+// unsettledChainsError reports the done chains the sweep skipped, after the
+// rest of the sweep has printed: each one's members stay until its own close
+// succeeds.
+func unsettledChainsError(e *relevo.ChainsNotSettledError) error {
+	if e == nil {
+		return nil
+	}
+	for _, f := range e.Failures[1:] {
+		fmt.Fprintf(os.Stderr, "relevo: chain %s not closed, its members stay: %v\n  next: relevo done %s\n", f.Chain, f.Err, f.Chain)
+	}
+	first := e.Failures[0]
+	return failNext(codeRefused, "relevo done "+first.Chain, "chain %s not closed, its members stay: %v", first.Chain, first.Err)
+}
+
+// printGCRun prints one sweep's results, as the JSON document or as lines.
+func printGCRun(rt relevo.Runtime, opts housekeep.GCOptions, done []housekeep.GCResult, dryRun, asJSON bool) error {
 	if asJSON {
 		return printDoc(gcDocOf(dryRun, done))
 	}

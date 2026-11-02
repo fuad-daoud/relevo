@@ -232,11 +232,11 @@ func TestGCDoneChainsSettlesADoneChainThenClears(t *testing.T) {
 	}
 }
 
-// TestGCDoneChainsAbortsBeforeGCOnSettleFailure pins the sweep's contract:
-// abort on first settle failure, retry self-heals. The trailing GC never
-// runs, so the DONE binding it would have cleared is still there, the first
-// chain's settled members are still DONE, and the failed chain is untouched.
-func TestGCDoneChainsAbortsBeforeGCOnSettleFailure(t *testing.T) {
+// TestGCDoneChainsSkipsAChainThatFailsToSettle pins the sweep's contract when
+// one chain cannot be closed (its server answers 500): that chain is named in
+// the returned error and its members stay ACTIVE, while every other done
+// chain still settles and the trailing GC still clears what is done.
+func TestGCDoneChainsSkipsAChainThatFailsToSettle(t *testing.T) {
 	t.Parallel()
 
 	fr := &fakeRemote{doneErr: &client.HTTPError{Status: 500, Body: remote.ErrorBody{Code: "boom"}}}
@@ -278,25 +278,32 @@ func TestGCDoneChainsAbortsBeforeGCOnSettleFailure(t *testing.T) {
 	}
 
 	done, err := GCDoneChains(context.Background(), rt, housekeep.GCOptions{MasterMindID: testMasterMindID})
-	if err == nil {
-		t.Fatal("GCDoneChains = nil error, want the settle failure")
+	var unsettled *ChainsNotSettledError
+	if !errors.As(err, &unsettled) {
+		t.Fatalf("GCDoneChains err = %v, want a ChainsNotSettledError", err)
 	}
-	if len(done) != 0 {
-		t.Errorf("GC results = %+v, want none: the trailing GC never ran", done)
+	if len(unsettled.Failures) != 1 || unsettled.Failures[0].Chain != "ch-zz-bad" {
+		t.Fatalf("unsettled = %+v, want only ch-zz-bad", unsettled.Failures)
 	}
-	if got, lerr := rt.Store.Load("lone"); lerr != nil || got.State != store.StateDone {
-		t.Errorf("lone = %+v err %v, want it still DONE: the trailing GC never ran", got, lerr)
+	cleared := map[string]bool{}
+	for _, r := range done {
+		cleared[r.Name] = true
 	}
-	for _, m := range []string{"ch-aa-ok", "ch-aa-ok-plan"} {
-		got, lerr := rt.Store.Load(m)
-		if lerr != nil || got.State != store.StateDone {
-			t.Errorf("%s = %+v err %v, want settled DONE and never cleared", m, got, lerr)
+	for _, m := range []string{"lone", "ch-aa-ok", "ch-aa-ok-plan"} {
+		if !cleared[m] {
+			t.Errorf("GC results = %+v, want %s cleared past the failed chain", done, m)
+		}
+		if _, lerr := rt.Store.Load(m); !errors.Is(lerr, store.ErrNotFound) {
+			t.Errorf("Load %s after sweep = %v, want the record archived away", m, lerr)
 		}
 	}
 	for _, m := range []string{"ch-zz-bad", "ch-zz-bad-plan"} {
 		got, lerr := rt.Store.Load(m)
 		if lerr != nil || got.State != store.StateActive {
-			t.Errorf("%s = %+v err %v, want it still ACTIVE past the abort", m, got, lerr)
+			t.Errorf("%s = %+v err %v, want it still ACTIVE: its chain was not closed", m, got, lerr)
+		}
+		if cleared[m] {
+			t.Errorf("%s was cleared, want it left for its own close", m)
 		}
 	}
 }

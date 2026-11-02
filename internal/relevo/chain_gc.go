@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -44,6 +45,10 @@ func doneChainMembers(opts housekeep.GCOptions, chains []db.ChainRow, lister cha
 // orchestration lives here and not in housekeep: housekeep must not import
 // the engine's verbs or views.
 //
+// A chain whose close fails is skipped and named in a ChainsNotSettledError
+// returned with the results; every other chain still settles and the GC still
+// runs.
+//
 // A dry run settles nothing: each member still owed a close is reported as
 // would-clear beside whatever a dry-run GC already lists, and the store is
 // untouched. A member with a kept worktree and no --force keeps its binding
@@ -68,12 +73,51 @@ func GCDoneChains(ctx context.Context, rt Runtime, opts housekeep.GCOptions) ([]
 	if opts.DryRun {
 		return gcDoneChainsDryRun(ctx, rt, opts, targets)
 	}
+	var unsettled []ChainSettleFailure
 	for _, c := range targets {
 		if _, err := ChainDone(ctx, rt, c.Name); err != nil {
-			return nil, err
+			unsettled = append(unsettled, ChainSettleFailure{Chain: c.Name, Err: err})
 		}
 	}
-	return housekeep.GC(ctx, HousekeepDeps(rt), opts)
+	done, err := housekeep.GC(ctx, HousekeepDeps(rt), opts)
+	if err != nil {
+		return nil, err
+	}
+	if len(unsettled) > 0 {
+		return done, &ChainsNotSettledError{Failures: unsettled}
+	}
+	return done, nil
+}
+
+// ChainSettleFailure is one done chain the sweep could not close, with why.
+type ChainSettleFailure struct {
+	Chain string
+	Err   error
+}
+
+// ChainsNotSettledError names the done chains the sweep could not close. It
+// comes back beside the GC's results, not instead of them: one chain whose
+// server is unreachable must not keep every other finished binding from
+// clearing. The skipped chains' members stay as they were, so `relevo done
+// <chain>` or the next sweep settles them.
+type ChainsNotSettledError struct {
+	Failures []ChainSettleFailure
+}
+
+func (e *ChainsNotSettledError) Error() string {
+	parts := make([]string, 0, len(e.Failures))
+	for _, f := range e.Failures {
+		parts = append(parts, fmt.Sprintf("chain %s not closed: %v", f.Chain, f.Err))
+	}
+	return strings.Join(parts, "; ")
+}
+
+func (e *ChainsNotSettledError) Unwrap() []error {
+	errs := make([]error, 0, len(e.Failures))
+	for _, f := range e.Failures {
+		errs = append(errs, f.Err)
+	}
+	return errs
 }
 
 // gcDoneChainsDryRun reports the settle set without settling it: every
