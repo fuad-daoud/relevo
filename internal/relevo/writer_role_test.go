@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
@@ -214,6 +216,17 @@ func TestReaderRefusesGateRegateAndVerify(t *testing.T) {
 	_, err = Send(context.Background(), rt, "rev-plain", writePlan(t, "do it"), SendOptions{Verify: ptr(true)})
 	if err == nil || !strings.Contains(err.Error(), "--verify") || !strings.Contains(err.Error(), "a reader round has no check") {
 		t.Fatalf("Send(--verify on a reader) = %v, want the --verify refusal", err)
+	}
+	if !errors.Is(err, refusal.ErrBadInput) {
+		t.Errorf("Send(--verify on a reader) = %v, want it classed as bad input", err)
+	}
+
+	// --no-verify asks for what a reader already does, so a script that passes
+	// it to every round gets the same answer as a send without it.
+	_, plain := Send(context.Background(), rt, "rev-plain", writePlan(t, "do it"), SendOptions{})
+	_, noVerify := Send(context.Background(), rt, "rev-plain", writePlan(t, "do it"), SendOptions{Verify: ptr(false)})
+	if fmt.Sprint(noVerify) != fmt.Sprint(plain) {
+		t.Errorf("Send(--no-verify on a reader) = %v, want what a plain send gives: %v", noVerify, plain)
 	}
 }
 

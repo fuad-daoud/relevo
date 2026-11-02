@@ -30,6 +30,19 @@ func (e *RoundOpenError) Error() string {
 	return fmt.Sprintf("%s: round %d is still open; relevo stop %s ends it", e.Member, e.Round, e.Member)
 }
 
+// RemoteRoundOpenError refuses a send because the server still has the
+// binding's round open, or halted trying to start it. The message is the
+// server's own; the CLI reads Halted to point at status rather than wait.
+type RemoteRoundOpenError struct {
+	Name, Server, Message string
+	Round                 int
+	Halted                bool
+}
+
+func (e *RemoteRoundOpenError) Error() string {
+	return fmt.Sprintf("%s: round %d could not start on %s: %s", e.Name, e.Round, e.Server, e.Message)
+}
+
 // sendChainRound starts one round for a chain member. It is Send's in-lock
 // core as a reusable helper: the caller holds the state lock and passes its
 // tx, and the member's new binding and prompt entry are written in the same

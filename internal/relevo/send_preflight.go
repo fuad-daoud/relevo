@@ -82,9 +82,10 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 		return preflight{}, fmt.Errorf("binding %q is paused; relevo bind --resume --name %s first", name, name)
 	}
 	// A reader round has no check, so --verify, which only a writer's gate
-	// round has, names its flag. It stands before any spawn.
-	if b.Shape == store.ShapeReader && opts.Verify != nil {
-		return preflight{}, errors.New("--verify: a reader round has no check")
+	// round has, names its flag. --no-verify asks for what a reader already
+	// does. It stands before any spawn.
+	if b.Shape == store.ShapeReader && opts.Verify != nil && *opts.Verify {
+		return preflight{}, refusal.BadInputf("--verify: a reader round has no check")
 	}
 	b, pick, repickFrom, repickWhy, remoteBuilder, err := resolveSendCandidate(ctx, rt, name, b, opts)
 	if err != nil {
