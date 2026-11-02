@@ -294,6 +294,9 @@ func validateThresholds(path string, p Policy) error {
 		if p.Serve.IsolationSharedLogins && p.Serve.Isolation != "user" {
 			return fmt.Errorf("%s: serve.isolation_shared_logins: only meaningful when serve.isolation is \"user\", got isolation %q: %w", path, p.Serve.Isolation, ErrBadPolicy)
 		}
+		if p.Serve.Burst != nil && p.Serve.Burst.NodeLostAfterMS != nil && *p.Serve.Burst.NodeLostAfterMS <= 0 {
+			return fmt.Errorf("%s: serve.burst.node_lost_after_ms: must be > 0, got %d: %w", path, *p.Serve.Burst.NodeLostAfterMS, ErrBadPolicy)
+		}
 	}
 	return nil
 }
