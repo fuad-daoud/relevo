@@ -832,6 +832,50 @@ func TestParseSingleQuotedFlowElements(t *testing.T) {
 	}
 }
 
+// TestParseApostropheInPlainFlowElement pins that an apostrophe inside a plain
+// word is text: the list closes at its own ], the block parses, and the items
+// keep the apostrophe. Reading it as an opening quote ran the scalar to the end
+// of the block and refused a finished round as an unclosed list.
+func TestParseApostropheInPlainFlowElement(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		notDone string
+		want    []string
+	}{
+		{
+			name:    "possessive in one line",
+			notDone: "not_done: [the design's band (Foundations vs Services), shellcheck of testdata/*.sh]",
+			want:    []string{"the design's band (Foundations vs Services)", "shellcheck of testdata/*.sh"},
+		},
+		{
+			name:    "plural possessive and a contraction across lines",
+			notDone: "not_done: [the rounds' seats,\n  it doesn't wire lane B]",
+			want:    []string{"the rounds' seats", "it doesn't wire lane B"},
+		},
+		{
+			name:    "quoted element after a plain one",
+			notDone: "not_done: [lane B's loop, 'a, b']",
+			want:    []string{"lane B's loop", "a, b"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := "```relevo\nstatus: done\nhalted_at: \"\"\nchanged_paths: [a.go]\n" + tc.notDone + "\n```\n"
+			tail, ok, reason := ParseWithReason([]byte(input))
+			if !ok {
+				t.Fatalf("ParseWithReason ok = false, reason %q", reason)
+			}
+			if tail.Status != OutcomeDone {
+				t.Errorf("Status = %q, want %q", tail.Status, OutcomeDone)
+			}
+			if !reflect.DeepEqual(tail.NotDone, tc.want) {
+				t.Errorf("NotDone = %q, want %q", tail.NotDone, tc.want)
+			}
+		})
+	}
+}
+
 // TestFlowListDepthHonoursScalarEscapes pins the depth count against the escape
 // rules: an escaped quote inside a scalar never reaches the bracket count.
 func TestFlowListDepthHonoursScalarEscapes(t *testing.T) {
@@ -856,6 +900,11 @@ func TestFlowListDepthHonoursScalarEscapes(t *testing.T) {
 			name: "value continued on the next line",
 			in:   `["a",`,
 			want: 1,
+		},
+		{
+			name: "apostrophe inside a word leaves the bracket outside",
+			in:   `[the design's band, x]`,
+			want: 0,
 		},
 	}
 	for _, tc := range cases {
@@ -926,6 +975,16 @@ func TestStripCommentHonoursScalarEscapes(t *testing.T) {
 			name: "hash after a single-quoted flow list is cut",
 			in:   `['a', 'b'] # c`,
 			want: `['a', 'b'] `,
+		},
+		{
+			name: "hash after an apostrophe in a word is cut",
+			in:   `the design's band # c`,
+			want: `the design's band `,
+		},
+		{
+			name: "hash inside a shell quote after a space is content",
+			in:   `go test -run 'a # b' ./x`,
+			want: `go test -run 'a # b' ./x`,
 		},
 	}
 	for _, tc := range cases {
