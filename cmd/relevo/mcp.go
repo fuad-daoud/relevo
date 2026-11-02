@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -74,7 +75,7 @@ func cmdMCP(args []string) error {
 	version := buildVersion()
 	reportMCPMode(haveRec, kind, rec)
 
-	verbs, err := mcpVerbs(rt, kind, rec.ID)
+	verbs, err := mcpVerbs(rt, kind, rec.ID, *mastermindFlag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relevo mcp: %v\n", err)
 		return exitCodeErr{code: 2}
@@ -172,8 +173,10 @@ func mcpResolveKind(kind string) (string, error) {
 }
 
 // mcpVerbs builds the tool verbs. An opencode server with no mastermind registry
-// is refused rather than served with a resolver that could never resolve.
-func mcpVerbs(rt relevo.Runtime, kind, masterMindID string) (*mcp.RelevoVerbs, error) {
+// is refused rather than served with a resolver that could never resolve. A
+// Claude server that started with no identity re-resolves on each call until a
+// record appears, then pins it.
+func mcpVerbs(rt relevo.Runtime, kind, masterMindID, flagVal string) (*mcp.RelevoVerbs, error) {
 	v := &mcp.RelevoVerbs{RT: rt, MasterMind: masterMindID}
 	if kind == "opencode" {
 		resolve, err := opencodeSessionMasterMind(rt)
@@ -181,8 +184,49 @@ func mcpVerbs(rt relevo.Runtime, kind, masterMindID string) (*mcp.RelevoVerbs, e
 			return nil, err
 		}
 		v.ResolveSession = resolve
+		return v, nil
+	}
+	if kind == "" && masterMindID == "" && rt.MasterMinds != nil {
+		v.ResolveSession = claudeFallbackMasterMind(rt, flagVal)
 	}
 	return v, nil
+}
+
+// claudeFallbackMasterMind re-resolves this session on each call until a record
+// appears, then pins its id. Wait calls run in goroutines, so a mutex guards
+// the pin. While resolution is still ErrNoMasterMind the tools-mode init error
+// answers; any other resolution error propagates.
+func claudeFallbackMasterMind(rt relevo.Runtime, flagVal string) func(string) (string, error) {
+	var mu sync.Mutex
+	var cached string
+	return func(string) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if cached != "" {
+			return cached, nil
+		}
+		var now time.Time
+		if rt.Now != nil {
+			now = rt.Now()
+		}
+		rec, _, err := mastermind.Resolve(rt.MasterMinds, mastermind.ResolveInput{
+			Flag:      flagVal,
+			Env:       os.Getenv,
+			PPID:      os.Getppid(),
+			ProcStart: rt.ProcStart,
+			MuseHost:  rt.MuseHost,
+			Now:       now,
+			Heal:      true,
+		})
+		if err != nil {
+			if errors.Is(err, mastermind.ErrNoMasterMind) {
+				return "", errors.New(`no relevo MasterMind for this session; run "relevo mastermind init"`)
+			}
+			return "", err
+		}
+		cached = rec.ID
+		return cached, nil
+	}
 }
 
 // opencodeSessionMasterMind maps one tool call's session to the record the
@@ -193,6 +237,9 @@ func opencodeSessionMasterMind(rt relevo.Runtime) (func(session string) (string,
 		return nil, errors.New("opencode tools server has no mastermind registry; cannot resolve tool-call sessions")
 	}
 	return func(session string) (string, error) {
+		if session == "" {
+			return "", errors.New("this call carries no OpenCode session (`_meta ai.opencode/sessionID`); cannot tell which MasterMind it belongs to")
+		}
 		rec, err := rt.MasterMinds.BySession("opencode", session)
 		switch {
 		case err == nil:

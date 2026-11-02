@@ -44,15 +44,12 @@ type RelevoVerbs struct {
 // "" is an error, never a filter that silently matches nothing.
 func (v *RelevoVerbs) masterMindFor(session string) (string, error) {
 	if v.ResolveSession != nil {
-		if session == "" {
-			return "", errors.New("this call carries no OpenCode session (`_meta ai.opencode/sessionID`); cannot tell which MasterMind it belongs to")
-		}
 		id, err := v.ResolveSession(session)
 		if err != nil {
 			return "", err
 		}
 		if id == "" {
-			return "", fmt.Errorf("opencode session %s resolved to no MasterMind", session)
+			return "", fmt.Errorf("session %s resolved to no MasterMind", session)
 		}
 		return id, nil
 	}
