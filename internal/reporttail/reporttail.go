@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/fuad-daoud/relevo/internal/sanitize"
@@ -362,7 +363,7 @@ type scalarRune struct {
 // the one place the YAML escape rules live, so every caller agrees on where a
 // scalar ends and never mistakes an escaped quote for a closer.
 func scanScalars(s string, fn func(scalarRune) bool) {
-	var quote rune
+	var quote, prev rune
 	literal := false
 	for i := 0; i < len(s); {
 		r, size := utf8.DecodeRuneInString(s[i:])
@@ -386,14 +387,23 @@ func scanScalars(s string, fn func(scalarRune) bool) {
 			literal = false
 		case quote != 0 && r == quote:
 			quote = 0
-		case quote == 0 && (r == '"' || r == '\''):
+		case quote == 0 && (r == '"' || r == '\'') && !inWord(prev):
 			quote = r
 		}
 		if !fn(sr) {
 			return
 		}
+		prev = r
 		i += size
 	}
+}
+
+// inWord reports whether a quote after r sits inside a plain word. YAML opens a
+// quoted scalar only where a scalar starts, so the apostrophe in "design's" or
+// "rounds'" is text; reading it as an opener swallows the rest of the line,
+// the closing ] of a flow list included.
+func inWord(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r)
 }
 
 // StripComment drops a trailing # comment, honouring quotes and a bracketed
