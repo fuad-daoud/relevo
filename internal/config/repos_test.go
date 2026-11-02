@@ -19,7 +19,7 @@ func TestReposEntryRoundTripsEveryField(t *testing.T) {
 	t.Parallel()
 
 	in := map[string]RepoEntry{
-		reposTestKey: {Name: "laptop", Gate: "make check", BoardTheme: "midnight"},
+		reposTestKey: {Name: "laptop", Gate: "make check", BoardTheme: "midnight", BuilderActor: "relevo-builder", ReviewerActor: "relevo-reviewer", PlannerActor: "relevo-lite-planner"},
 	}
 	body, err := EncodeRepos(in)
 	if err != nil {
@@ -81,6 +81,79 @@ func TestParseReposTrimpath(t *testing.T) {
 	}
 	if _, ok := out[reposTestKey]; !ok {
 		t.Errorf("an entry holding only trimpath on dropped: %+v, want it stored (on is stored explicitly for exactly this reason)", out)
+	}
+}
+
+// TestParseReposActors pins the three actor keys: each stores and round-trips
+// through EncodeRepos like gate does, an entry holding only one is still
+// stored, a non-string value is refused naming the section and the entry, and
+// the unknown-field refusal names the new vocabulary. Dropping one field's
+// case arm is the mutation this test catches.
+func TestParseReposActors(t *testing.T) {
+	t.Parallel()
+
+	actorOf := func(e RepoEntry, field string) string {
+		switch field {
+		case "builder_actor":
+			return e.BuilderActor
+		case "reviewer_actor":
+			return e.ReviewerActor
+		case "planner_actor":
+			return e.PlannerActor
+		default:
+			t.Fatalf("unknown actor field %q", field)
+			return ""
+		}
+	}
+
+	for _, field := range []string{"builder_actor", "reviewer_actor", "planner_actor"} {
+		body := `{"` + reposTestKey + `":{"` + field + `":"relevo-custom"}}`
+		out, err := ParseRepos([]byte(body))
+		if err != nil {
+			t.Fatalf("ParseRepos(%s): %v", body, err)
+		}
+		if got := actorOf(out[reposTestKey], field); got != "relevo-custom" {
+			t.Errorf("%s = %q, want %q", field, got, "relevo-custom")
+		}
+		encoded, err := EncodeRepos(out)
+		if err != nil {
+			t.Fatalf("EncodeRepos(%+v): %v", out, err)
+		}
+		round, err := ParseRepos(encoded)
+		if err != nil {
+			t.Fatalf("ParseRepos(%s): %v", encoded, err)
+		}
+		if got := actorOf(round[reposTestKey], field); got != "relevo-custom" {
+			t.Errorf("%s round trip = %q, want %q", field, got, "relevo-custom")
+		}
+
+		_, err = ParseRepos([]byte(`{"` + reposTestKey + `":{"` + field + `":1}}`))
+		if err == nil {
+			t.Fatalf("ParseRepos(%s as a number) = nil error, want a refusal", field)
+		}
+		for _, want := range []string{string(Repos), reposTestKey, field + " is not text"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s refusal = %q, want it to name %q", field, err, want)
+			}
+		}
+
+		empty, err := ParseRepos([]byte(`{"` + reposTestKey + `":{"` + field + `":""}}`))
+		if err != nil {
+			t.Fatalf("ParseRepos(%s empty): %v", field, err)
+		}
+		if len(empty) != 0 {
+			t.Errorf("ParseRepos(%s empty) = %+v, want no entry (an empty field stores as absent)", field, empty)
+		}
+	}
+
+	_, err := ParseRepos([]byte(`{"` + reposTestKey + `":{"typo":"x"}}`))
+	if err == nil {
+		t.Fatal("ParseRepos(typo) = nil error, want a refusal")
+	}
+	for _, want := range []string{"builder_actor", "reviewer_actor", "planner_actor"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("unknown-field refusal = %q, want it to name %q", err, want)
+		}
 	}
 }
 
