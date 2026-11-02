@@ -11,6 +11,31 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 )
 
+// TestServeStatusConfigCarriesBurst pins that the status verb's config holds
+// the burst block and the client key, the two inputs New needs before it
+// loads the node table the status document reads; without a serve block both
+// stay empty. Pure struct assembly: no serve.New, no harness, no network.
+func TestServeStatusConfigCarriesBurst(t *testing.T) {
+	key := []byte("pem-encoded-client-key")
+	burstBlock := &policy.BurstPolicy{Command: []string{"burst", "report"}}
+
+	cfg := serveStatusConfigFrom(t.TempDir(), nil, config.Loaded{
+		ClientKey: key,
+		Policy:    policy.Policy{Serve: &policy.ServePolicy{Burst: burstBlock}},
+	})
+	if !reflect.DeepEqual(cfg.Burst, burstBlock) {
+		t.Errorf("cfg.Burst = %+v, want the serve.burst block", cfg.Burst)
+	}
+	if !bytes.Equal(cfg.ClientKey, key) {
+		t.Errorf("cfg.ClientKey = %q, want the loaded client key", cfg.ClientKey)
+	}
+
+	cfgNone := serveStatusConfigFrom(t.TempDir(), nil, config.Loaded{})
+	if cfgNone.Burst != nil || len(cfgNone.ClientKey) != 0 {
+		t.Errorf("no serve block: cfg.Burst = %+v, ClientKey = %q, want both empty", cfgNone.Burst, cfgNone.ClientKey)
+	}
+}
+
 // TestBuildServeConfigWiresBurst pins the burst section of the server config:
 // the policy block passes through, the client key reaches the server so the
 // startup gate can read it, and a command builds the provider while no

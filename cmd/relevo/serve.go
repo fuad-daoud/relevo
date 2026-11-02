@@ -333,7 +333,20 @@ func serveAdminConfigWithPolicy(root string, d *db.DB) (serve.Config, error) {
 	if err != nil {
 		return serve.Config{}, err
 	}
-	return withIsolation(serveAdminConfigFrom(root, d, L), L.Policy.ServeIsolation()), nil
+	return serveStatusConfigFrom(root, d, L), nil
+}
+
+// serveStatusConfigFrom is the status verb's config. It carries the burst
+// block and the client key because New loads the persisted node table only
+// when bursting would be on, and the status document's burst block is read
+// from that table: without them the block never reaches the provider.
+func serveStatusConfigFrom(root string, d *db.DB, L config.Loaded) serve.Config {
+	cfg := withIsolation(serveAdminConfigFrom(root, d, L), L.Policy.ServeIsolation())
+	if L.Policy.Serve != nil {
+		cfg.Burst = L.Policy.Serve.Burst
+	}
+	cfg.ClientKey = L.ClientKey
+	return cfg
 }
 
 // serveAdminConfigWithCandidates is serveAdminConfigFrom plus the configured
