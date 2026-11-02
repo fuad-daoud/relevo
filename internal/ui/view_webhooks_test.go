@@ -62,7 +62,7 @@ func webhookStoredHooks(t *testing.T, edit relevo.ConfigEdit) []any {
 func webhooksViewFrom(t *testing.T, fa *fakeActions, env widget.Env) webhooksView {
 	t.Helper()
 	v := settingsFixtureView(t, fa)
-	v.cur = 19 // notify.webhooks
+	v.cur = 18 // notify.webhooks
 	_, cmd := v.Update(tea.KeyMsg{Type: tea.KeyEnter}, env)
 	if cmd == nil {
 		t.Fatal("enter must return a command")

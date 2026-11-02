@@ -71,7 +71,6 @@ var settingHelp = map[string]string{
 	"serve.max_builders": "How many builders relevo serve runs at once; more rounds wait in its queue.",
 	"serve.scope":        "The scope for rounds relevo serve runs; when set it replaces scope for them.",
 	"scan_patterns":      "Extra patterns that mark a builder's line as instruction-shaped, beside the built-in list.",
-	"classify":           "An optional classifier that scores a builder's lines for prompt injection, beside the pattern scan.",
 	"notify.webhooks":    "Where relevo posts round and binding events over HTTP.",
 
 	"chain.max_corrections": "How many correction rounds one plan may take before the chain asks you; 0 halts on the first changes verdict.",
@@ -427,7 +426,7 @@ func (v settingsView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.
 		}
 		row := settings[candClamp(v.cur, n)]
 		switch row.Form {
-		case "rounds", "check", "timing", "max_builders", "scope", "serve.scope", "classify", "chain":
+		case "rounds", "check", "timing", "max_builders", "scope", "serve.scope", "chain":
 			return v, openOverlay(newSettingsForm(env, v.doc, row.Form, row.Key))
 		case "webhooks":
 			return v, push(newWebhooksView(env, v.doc))

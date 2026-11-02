@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fuad-daoud/relevo/internal/classify"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -838,37 +837,6 @@ func TestExtraChecksAppended(t *testing.T) {
 	}
 	if c := findCheck(rep, "", "prices"); c == nil {
 		t.Fatal("usage's own prices check must still run alongside an extra check")
-	}
-}
-
-func TestClassifyCheck(t *testing.T) {
-	tests := []struct {
-		name       string
-		st         classify.Status
-		wantSev    Severity
-		wantDetail string
-		wantFix    string
-	}{
-		{name: "unconfigured", st: classify.Status{Configured: false},
-			wantSev: SevOK, wantDetail: "regex only (no classify block in policy.json)"},
-		{name: "configured with env key", st: classify.Status{Configured: true, Model: "jev-latest", KeySource: "env"},
-			wantSev: SevOK, wantDetail: "jev-latest; key from TYPESAFE_API_KEY; not passed to builders"},
-		{name: "configured with db key", st: classify.Status{Configured: true, Model: "jev-custom", KeySource: "db"},
-			wantSev: SevOK, wantDetail: "jev-custom; key from the database"},
-		{name: "configured with missing key", st: classify.Status{Configured: true, Model: "jev-latest"},
-			wantSev: SevWarn, wantDetail: "jev-latest configured but no classifier key; the daemon falls back to regex",
-			wantFix: "set TYPESAFE_API_KEY for the daemon, or store a key in the database"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			c := ClassifyCheck(tc.st)
-			if c.Name != "classify" || c.Severity != tc.wantSev || !strings.Contains(c.Detail, tc.wantDetail) {
-				t.Errorf("row = %+v, want name classify, severity %v, detail containing %q", c, tc.wantSev, tc.wantDetail)
-			}
-			if !strings.Contains(c.Fix, tc.wantFix) {
-				t.Errorf("Fix = %q, want it to contain %q", c.Fix, tc.wantFix)
-			}
-		})
 	}
 }
 

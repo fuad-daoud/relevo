@@ -3,25 +3,14 @@ package classify
 import (
 	"bytes"
 	"strings"
+
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 )
 
 const (
 	MaxParagraphs = 120    // one noul question each; ~120 tokens per question keeps the 64k total budget
 	MaxStateBytes = 96_000 // ~24k tokens at 4 bytes/token, under the 32k state ceiling
 )
-
-func IsFence(line string) bool {
-	trimmed := strings.TrimRight(line, " \t")
-	n := 0
-	for n < len(trimmed) && trimmed[n] == '`' {
-		n++
-	}
-	if n < 3 {
-		return false
-	}
-	rest := trimmed[n:]
-	return !strings.Contains(rest, "`")
-}
 
 // Split turns text into paragraphs: CR stripped from every line; a fence line
 // opens a fenced paragraph running to the next fence line, itself in none.
@@ -54,7 +43,7 @@ func Split(text []byte) []Paragraph {
 	for i, rawLine := range rawLines {
 		lineNo := i + 1
 		line := string(bytes.TrimRight(rawLine, "\r"))
-		if IsFence(line) {
+		if housekeep.IsFence(line) {
 			if inFence {
 				flush(KindFenced)
 				inFence = false
