@@ -22,37 +22,52 @@ type chainParamFlag struct {
 }
 
 // chainParamsFor resolves a workflow's params in precedence order: the
-// workflow's own defaults, then the repository's own gate, then policy for
-// the shipped default, then the old flags, then --param. It returns only the
-// params it overrides; the caller merges them with workflow.WithParams. A
-// flag the workflow has no slot for is refused, naming the params it takes.
+// workflow's own defaults, then the repository's own actors and gate, then
+// policy for the shipped default, then the old flags, then --param. It
+// returns only the params it overrides; the caller merges them with
+// workflow.WithParams. A flag the workflow has no slot for is refused,
+// naming the params it takes.
 //
 // Policy fills slots only for the shipped default: a custom workflow's own
 // defaults are the human's intent, so policy never overwrites them. The
-// repository's own gate sits exactly where the policy tier sat, behind the
-// flags; the old flags and --param override either.
+// repository's own actors and gate sit exactly where the policy tier sat,
+// behind the flags; the old flags and --param override either. The builder
+// slot has no policy default, so only the repository fills it here.
 func chainParamsFor(def workflow.Definition, pol policy.Policy, opts ChainOptions, repo RepoSettings) (map[string]string, error) {
 	out := map[string]string{}
 
 	// Policy fills only the shipped default's slots: a custom workflow keeps
 	// its own defaults.
 	if def.Name == workflow.Default().Name {
-		// The gate param takes the repository's own gate before the policy
-		// default: the repo tier sits exactly where the policy tier sat.
+		// The actor and gate params take the repository's own values before
+		// the policy defaults: the repo tier sits exactly where the policy
+		// tier sat. The builder slot has no policy default, so the entry
+		// fills it only when it names one.
 		gate := pol.GateDefault()
 		if repo.Gate != "" {
 			gate = repo.Gate
 		}
-		policyValues := map[string]string{
-			"reviewer":        pol.ChainReviewerActor(),
-			"planner":         pol.ChainPlannerActor(),
+		reviewer := pol.ChainReviewerActor()
+		if repo.ReviewerActor != "" {
+			reviewer = repo.ReviewerActor
+		}
+		planner := pol.ChainPlannerActor()
+		if repo.PlannerActor != "" {
+			planner = repo.PlannerActor
+		}
+		tierValues := map[string]string{
+			"reviewer":        reviewer,
+			"planner":         planner,
 			"security":        pol.ChainSecurityActor(),
 			"scan":            strconv.FormatBool(pol.ChainSecurityOn()),
 			"gate":            gate,
 			"regate":          strconv.Itoa(pol.GateRegate()),
 			"max_corrections": strconv.Itoa(pol.ChainMaxCorrections()),
 		}
-		for name, value := range policyValues {
+		if repo.BuilderActor != "" {
+			tierValues["builder"] = repo.BuilderActor
+		}
+		for name, value := range tierValues {
 			if chain.HasParam(def, name) {
 				out[name] = value
 			}
@@ -102,6 +117,36 @@ func chainParamFlags(opts ChainOptions) []chainParamFlag {
 		flags = append(flags, chainParamFlag{flag: "--max-corrections", param: "max_corrections", value: strconv.Itoa(*opts.MaxCorrections), given: true})
 	}
 	return flags
+}
+
+// chainRepoSuppliedActors lists the member parts whose actor the repository
+// entry supplied to the shipped default's definition: the entry's actor for
+// a slot with no flag override, and only when the definition actually
+// carries that value. A custom workflow keeps its own defaults, so the entry
+// supplies nothing there. The unknown-actor refusal reads this, so a start
+// names the entry as the source instead of failing on the bare actor.
+func chainRepoSuppliedActors(def workflow.Definition, opts ChainOptions, repo RepoSettings) map[string]string {
+	out := map[string]string{}
+	if def.Name != workflow.Default().Name {
+		return out
+	}
+	for _, tc := range []struct {
+		part, flag, entry string
+	}{
+		{chain.MemberBuilder, opts.BuilderActor, repo.BuilderActor},
+		{chain.MemberReviewer, opts.ReviewerActor, repo.ReviewerActor},
+		{chain.MemberPlanner, opts.PlannerActor, repo.PlannerActor},
+	} {
+		if tc.flag != "" || tc.entry == "" {
+			continue
+		}
+		p, ok := def.Params[tc.part]
+		if !ok || p.Kind != workflow.ParamString || p.Str != tc.entry {
+			continue
+		}
+		out[tc.part] = tc.entry
+	}
+	return out
 }
 
 // chainParamNames lists a workflow's params, sorted, for the refusal naming

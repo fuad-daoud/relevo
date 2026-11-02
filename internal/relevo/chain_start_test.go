@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -749,5 +750,94 @@ func TestChainCheckReportNamesTheCheckStepsCommand(t *testing.T) {
 				t.Errorf("chain.CheckReport = %q (%q), want %q (%q)", cmd, source, c.cmd, c.source)
 			}
 		})
+	}
+}
+
+// TestChainStartRefusesUnknownRepoActors pins the start refusal for a
+// repository entry naming an actor no role defines, one case per actor slot.
+// Dropping the repo tier would run the generic actor instead of refusing, and
+// dropping the refusal would fail on the bare actor without naming the entry:
+// either way these tests go red. A refused start creates nothing.
+func TestChainStartRefusesUnknownRepoActors(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		part  string
+		field string
+	}{
+		{chain.MemberBuilder, "builder_actor"},
+		{chain.MemberReviewer, "reviewer_actor"},
+		{chain.MemberPlanner, "planner_actor"},
+	} {
+		t.Run(tc.part, func(t *testing.T) {
+			t.Parallel()
+			rt, fg := chainRuntime(t)
+			fg.rootCommitSHA = reposRootCommit
+			st := auditStore(t)
+			seedOneRepos(t, st, fmt.Sprintf(`{%q:{"name":"shop",%q:"ghost"}}`, reposKeyOf(t), tc.field))
+			rt.Config = st
+			opts := ChainOptions{
+				Name:         "shop",
+				Plans:        []string{writePlan(t, "build it")},
+				Feature:      "auth",
+				MasterMindID: testMasterMindName,
+			}
+			_, err := ChainStart(context.Background(), rt, opts)
+			if err == nil {
+				t.Fatalf("ChainStart(%s from the repo entry) = nil, want a refusal naming the repository entry", tc.part)
+			}
+			if !errors.Is(err, resolve.ErrUnknownRole) {
+				t.Errorf("err = %v, want errors.Is(err, resolve.ErrUnknownRole)", err)
+			}
+			for _, want := range []string{"repository entry", `"ghost"`, tc.part} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("err = %q, want it to name %q", err.Error(), want)
+				}
+			}
+			assertNothingCreated(t, rt, fg, "shop")
+		})
+	}
+}
+
+// TestChainResolveActorsNamesRepoEntry pins the member-path refusal: a member
+// whose actor the repository entry supplied and no role defines fails naming
+// the entry as the source. The same unknown actor with no entry supply, or
+// an entry supply for another actor, fails on the bare registry error.
+func TestChainResolveActorsNamesRepoEntry(t *testing.T) {
+	t.Parallel()
+
+	members := []chainMember{{part: chain.MemberBuilder, name: "shop", actor: "ghost", shape: store.ShapeWriter, writer: true}}
+	supplied := map[string]string{chain.MemberBuilder: "ghost"}
+
+	rt, _ := chainRuntime(t)
+	_, err := chainResolveActors(rt, members, supplied)
+	if err == nil {
+		t.Fatal("chainResolveActors(repo-supplied ghost) = nil, want a refusal naming the repository entry")
+	}
+	if !errors.Is(err, resolve.ErrUnknownRole) {
+		t.Errorf("err = %v, want errors.Is(err, resolve.ErrUnknownRole)", err)
+	}
+	for _, want := range []string{"repository entry", `"ghost"`, chain.MemberBuilder} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %q, want it to name %q", err.Error(), want)
+		}
+	}
+
+	// No entry supply: the bare registry error stands, naming no entry.
+	_, err = chainResolveActors(rt, members, nil)
+	if err == nil {
+		t.Fatal("chainResolveActors(bare ghost) = nil, want the registry's unknown-actor error")
+	}
+	if strings.Contains(err.Error(), "repository entry") {
+		t.Errorf("err = %q, want no repository entry named without a supply", err.Error())
+	}
+
+	// An entry supply for another actor does not taint this member.
+	_, err = chainResolveActors(rt, members, map[string]string{chain.MemberReviewer: "ghost"})
+	if err == nil {
+		t.Fatal("chainResolveActors(other-part supply) = nil, want the registry's unknown-actor error")
+	}
+	if strings.Contains(err.Error(), "repository entry") {
+		t.Errorf("err = %q, want no repository entry named for another part's supply", err.Error())
 	}
 }

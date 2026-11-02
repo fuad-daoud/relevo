@@ -170,11 +170,13 @@ func chainResumeSwapLocal(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 	if err := validateSwapOpenRounds(tx, c, swap); err != nil {
 		return c, err
 	}
-	swapRes, err := chainResolveActors(rt, swap)
+	// Swapped and added members keep their stored actors, never the
+	// repository entry, so no part is entry-supplied here.
+	swapRes, err := chainResolveActors(rt, swap, nil)
 	if err != nil {
 		return c, err
 	}
-	addRes, err := chainResolveActors(rt, add)
+	addRes, err := chainResolveActors(rt, add, nil)
 	if err != nil {
 		return c, err
 	}

@@ -133,7 +133,9 @@ func ServedChainPreflight(rt Runtime, req ServedChainRequest) (ServedChainPlan, 
 	}
 	settings := chainSettingsFromWire(req.Settings)
 	opts := ChainOptions{Name: req.Name, BuilderActor: req.BuilderActor, Feature: req.Feature, Ticket: req.Ticket}
-	members := chainMembersFor(opts, settings)
+	// The wire settings already carry the client's repository tier, so the
+	// server applies none of its own.
+	members := chainMembersFor(opts, settings, RepoSettings{})
 	def, err := servedChainDefinition(req)
 	if err != nil {
 		return ServedChainPlan{}, err

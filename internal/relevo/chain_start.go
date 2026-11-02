@@ -16,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // chainMaxNameLen is the longest chain name: the longest member suffix is
@@ -165,12 +166,13 @@ func chainRollback(ctx context.Context, rt Runtime, repo, worktree, branch strin
 	_ = rt.Git.DeleteBranch(ctx, repo, branch)
 }
 
-// chainSettings resolves the chain's settings: a flag beats the setting, and
-// the setting beats the policy default. checks is the builder role's own
-// check flag, deciding whether an unset gate flag takes the repository's own
-// gate or policy's gate.default, exactly as a lone binding resolves it. repo
-// is the chain repository's own settings; its zero value leaves the old two
-// tiers standing.
+// chainSettings resolves the chain's settings: a flag beats the repository
+// entry, and the entry beats the policy default. checks is the builder
+// role's own check flag, deciding whether an unset gate flag takes the
+// repository's own gate or policy's gate.default, exactly as a lone binding
+// resolves it. repo is the chain repository's own settings; its zero value
+// leaves the old two tiers standing. The security actor has no repository
+// tier, so a flag still beats the policy default there directly.
 func chainSettings(pol policy.Policy, opts ChainOptions, checks bool, repo RepoSettings) chain.Settings {
 	set := chain.Settings{
 		MaxCorrections: pol.ChainMaxCorrections(),
@@ -180,6 +182,12 @@ func chainSettings(pol policy.Policy, opts ChainOptions, checks bool, repo RepoS
 		Security:       pol.ChainSecurityOn(),
 		Gate:           resolveGateFor(opts.Gate, opts.NoGate, pol, checks, repo).Command,
 		Regate:         ResolveRegate(opts.Regate, pol),
+	}
+	if repo.ReviewerActor != "" {
+		set.ReviewerActor = repo.ReviewerActor
+	}
+	if repo.PlannerActor != "" {
+		set.PlannerActor = repo.PlannerActor
 	}
 	if opts.MaxCorrections != nil {
 		set.MaxCorrections = *opts.MaxCorrections
@@ -247,10 +255,16 @@ func chainPlanBodies(paths []string) ([][]byte, error) {
 }
 
 // chainMembersFor names the parts: the builder is the chain's own name, and
-// the security member exists only when the security phase is on.
-func chainMembersFor(opts ChainOptions, set chain.Settings) []chainMember {
+// the security member exists only when the security phase is on. The builder
+// member's actor resolves flag, then the repository entry, then the builder
+// default; repo is the chain repository's own settings.
+func chainMembersFor(opts ChainOptions, set chain.Settings, repo RepoSettings) []chainMember {
+	builder := opts.BuilderActor
+	if builder == "" {
+		builder = repo.BuilderActor
+	}
 	members := []chainMember{
-		{part: chain.MemberBuilder, name: opts.Name, actor: chainActorOrBuilder(opts.BuilderActor), shape: store.ShapeWriter, writer: true},
+		{part: chain.MemberBuilder, name: opts.Name, actor: chainActorOrBuilder(builder), shape: store.ShapeWriter, writer: true},
 		{part: chain.MemberReviewer, name: opts.Name + "-rev", actor: set.ReviewerActor, shape: store.ShapeReader},
 		{part: chain.MemberPlanner, name: opts.Name + "-plan", actor: set.PlannerActor, shape: store.ShapeReader},
 	}
@@ -292,12 +306,18 @@ func chainFreeNames(rt Runtime, members []chainMember) error {
 
 // chainResolveActors checks every member's actor has the shape its part needs
 // and resolves the candidate that member's round will run, read-only and
-// before anything is created.
-func chainResolveActors(rt Runtime, members []chainMember) (map[string]resolve.Resolution, error) {
+// before anything is created. repoActors lists the parts whose actor the
+// repository entry supplied, so an unknown actor there is refused naming the
+// entry as the source instead of failing on the bare actor; nil leaves the
+// old error standing.
+func chainResolveActors(rt Runtime, members []chainMember, repoActors map[string]string) (map[string]resolve.Resolution, error) {
 	out := make(map[string]resolve.Resolution, len(members))
 	for _, m := range members {
 		shape, err := resolve.ActorShape(rt.RoleRegistry(), m.actor)
 		if err != nil {
+			if entry, ok := repoActors[m.part]; ok && entry == m.actor {
+				return nil, chainRepoActorRefusal(m.part, m.actor, err)
+			}
 			return nil, err
 		}
 		if shape != m.shape {
@@ -311,6 +331,34 @@ func chainResolveActors(rt Runtime, members []chainMember) (map[string]resolve.R
 		out[m.part] = res
 	}
 	return out, nil
+}
+
+// chainRepoActorRefusal is the unknown-actor error for a member actor the
+// repository entry supplied: it names the entry as the source, so the human
+// fixes the entry instead of the flags. It wraps the registry's own error,
+// so the CLI classifies it as the unknown actor it is.
+func chainRepoActorRefusal(part, actor string, err error) error {
+	return fmt.Errorf("chain %s actor %q comes from the repository entry: %w", part, actor, err)
+}
+
+// chainRepoActorsOrRefuse lists the member parts whose actor the repository
+// entry supplied to the definition, refusing an entry actor no role of this
+// machine defines. The params already carry the repo tier, so it runs before
+// the workflow's own validation, which would refuse the bare actor without
+// naming the source. It checks the supplied parts in part order, so a start
+// naming two unknown entry actors always names the same one first.
+func chainRepoActorsOrRefuse(rt Runtime, def workflow.Definition, opts ChainOptions, repo RepoSettings) (map[string]string, error) {
+	supplied := chainRepoSuppliedActors(def, opts, repo)
+	for _, part := range []string{chain.MemberBuilder, chain.MemberReviewer, chain.MemberPlanner} {
+		actor, ok := supplied[part]
+		if !ok {
+			continue
+		}
+		if _, err := resolve.ActorShape(rt.RoleRegistry(), actor); err != nil {
+			return nil, chainRepoActorRefusal(part, actor, err)
+		}
+	}
+	return supplied, nil
 }
 
 // chainBuildMembers builds every member's stored binding: its tier from its
