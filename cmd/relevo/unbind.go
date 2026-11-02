@@ -199,7 +199,7 @@ func runGC(delete, dryRun, force bool, mastermindRef string, all, asJSON bool) e
 	opts.DryRun = dryRun
 	opts.Force = force
 
-	done, err := housekeep.GC(context.Background(), relevo.HousekeepDeps(rt), opts)
+	done, err := relevo.GCDoneChains(context.Background(), rt, opts)
 	if err != nil {
 		return writeError(err)
 	}
