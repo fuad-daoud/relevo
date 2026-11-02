@@ -226,9 +226,10 @@ func TestRoundFactsStopEntryStampsClosedAt(t *testing.T) {
 }
 
 // The burst tests pin the four burst columns: a queued local round measures
-// its first wait, a never-queued round claims no wait, the last report's
-// rusage lands verbatim, a round without a report claims nothing, and a
-// remote round claims no start kind while keeping its wait and rusage.
+// its first wait, a never-queued round claims no wait, an accepted round
+// with no admit claims no wait either, the last report's rusage lands
+// verbatim, a round without a report claims nothing, and a remote round
+// claims no start kind while keeping its wait and rusage.
 func TestRoundFactsQueuedLocalRoundRecordsWaitAndKind(t *testing.T) {
 	queued := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
 	events := []store.LogEntry{
@@ -315,6 +316,26 @@ func TestRoundFactsRemoteRoundClaimsNoStartKind(t *testing.T) {
 	checkPtr(t, "QueueWaitMS", r.QueueWaitMS, int64(90000))
 	checkPtr(t, "RusageCPUMS", r.RusageCPUMS, int64(42000))
 	checkPtr(t, "RusagePeakMemBytes", r.RusagePeakMemBytes, int64(1<<20))
+}
+
+func TestRoundFactsAcceptedButNeverAdmittedKeepsWaitNil(t *testing.T) {
+	queued := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
+	events := []store.LogEntry{
+		{TS: queued, Round: 1, Kind: store.KindQueue, Note: "queued (3/4 builders busy)"},
+		{TS: queued.Add(3 * time.Minute), Round: 1, Kind: store.KindPrompt},
+		{TS: queued.Add(4 * time.Minute), Round: 1, Kind: store.KindReport, Outcome: "done",
+			Rusage: &store.Rusage{CPUMS: 7, PeakMemBytes: 8}},
+	}
+
+	r := roundFacts(events, 1, false)
+
+	// A missing admit end leaves no wait: the accept alone must not read as a zero wait.
+	if r.QueueWaitMS != nil {
+		t.Errorf("QueueWaitMS = %v, want nil for an accepted round with no admit", r.QueueWaitMS)
+	}
+	checkPtr(t, "StartKind", r.StartKind, "local")
+	checkPtr(t, "RusageCPUMS", r.RusageCPUMS, int64(7))
+	checkPtr(t, "RusagePeakMemBytes", r.RusagePeakMemBytes, int64(8))
 }
 
 func checkBurstNil(t *testing.T, r db.Round) {
