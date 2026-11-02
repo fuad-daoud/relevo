@@ -29,6 +29,7 @@ type info struct {
 	Origin   string
 	PID      int
 	Conns    int
+	Pinned   int
 	HasLocal bool
 }
 

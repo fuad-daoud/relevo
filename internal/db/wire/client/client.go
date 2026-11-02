@@ -28,12 +28,14 @@ func init() { sql.Register(DriverName, &Driver{}) }
 // The value is unexported because the exported handshake is the Info function,
 // which cannot share its name. HasLocal says the owner serves a machine-local
 // file beside the shared one, which is what tells a dial it may attach one.
+// Pinned counts the connections holding a slot, beside the live total.
 type info struct {
 	Have     int
 	Know     int
 	Origin   string
 	PID      int
 	Conns    int
+	Pinned   int
 	HasLocal bool
 }
 
@@ -90,7 +92,7 @@ func Info(ctx context.Context, sock string) (info, error) {
 		_ = nc.Close()
 		return info{}, err
 	}
-	answer := info{Have: c.have, Know: c.know, Origin: c.origin, PID: c.pid, Conns: c.conns, HasLocal: c.hasLocal}
+	answer := info{Have: c.have, Know: c.know, Origin: c.origin, PID: c.pid, Conns: c.conns, Pinned: c.pinned, HasLocal: c.hasLocal}
 	_ = c.Close()
 	return answer, nil
 }

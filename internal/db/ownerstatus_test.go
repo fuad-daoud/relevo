@@ -3,17 +3,20 @@
 package db_test
 
 import (
+	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
+	"github.com/fuad-daoud/relevo/internal/db/wire/client"
 )
 
 // TestProbeOwnerReportsFieldsAgainstARealOwner pins what the doctor row reads:
-// the socket it dialled, the owner's pid, the protocol version and the live
-// connection count.
+// the socket it dialled, the owner's pid, the protocol version, the live
+// connection count and the pinned slot count beside it.
 func TestProbeOwnerReportsFieldsAgainstARealOwner(t *testing.T) {
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
 	if err != nil {
@@ -29,6 +32,22 @@ func TestProbeOwnerReportsFieldsAgainstARealOwner(t *testing.T) {
 		_ = l.Close()
 	})
 
+	// One held connection pins a slot, so the probe reports real work beside
+	// the live total rather than two bare counts.
+	holder, err := sql.Open(client.DriverName, sock)
+	if err != nil {
+		t.Fatalf("holder open: %v", err)
+	}
+	t.Cleanup(func() { _ = holder.Close() })
+	hc, err := holder.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("holder Conn: %v", err)
+	}
+	t.Cleanup(func() { _ = hc.Close() })
+	if _, err := hc.ExecContext(context.Background(), `CREATE TABLE t (n INTEGER)`); err != nil {
+		t.Fatalf("holder exec: %v", err)
+	}
+
 	status, err := db.ProbeOwner(sock)
 	if err != nil {
 		t.Fatalf("ProbeOwner: %v", err)
@@ -42,7 +61,10 @@ func TestProbeOwnerReportsFieldsAgainstARealOwner(t *testing.T) {
 	if status.Version != wire.Version {
 		t.Errorf("Version = %d, want %d", status.Version, wire.Version)
 	}
-	if status.Conns < 1 {
-		t.Errorf("Conns = %d, want at least the probing connection", status.Conns)
+	if status.Conns < 2 {
+		t.Errorf("Conns = %d, want at least the holder and the probing connection", status.Conns)
+	}
+	if status.Pinned != 1 {
+		t.Errorf("Pinned = %d, want 1 with one pinned connection", status.Pinned)
 	}
 }

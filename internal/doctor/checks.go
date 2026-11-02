@@ -94,8 +94,8 @@ func ownerCheck(status db.OwnerStatus, probeErr error) Check {
 		c.Fix = "run any relevo command: it starts the daemon when the socket is missing"
 		return c
 	}
-	c.Detail = fmt.Sprintf("socket %s · pid %d · protocol %s v%d · %d connections",
-		status.Socket, status.PID, wire.Proto, status.Version, status.Conns)
+	c.Detail = fmt.Sprintf("socket %s · pid %d · protocol %s v%d · %d connections (%d pinned)",
+		status.Socket, status.PID, wire.Proto, status.Version, status.Conns, status.Pinned)
 	return c
 }
 
