@@ -69,11 +69,15 @@ check "reviewer declares the verdict" \
 check "planner takes lite-planner's candidates" \
 	"$(value actors.relevo-planner | jq -c .candidates)" '["lite-planner-a","lite-planner-b"]'
 check "planner outputs a design" "$(value actors.relevo-planner | jq -c .outputs)" '{"design":"artifact"}'
+check "repo builder_actor recorded" "$(value builder_actor)" "relevo-builder"
+check "repo reviewer_actor recorded" "$(value reviewer_actor)" "relevo-reviewer"
+check "repo planner_actor recorded" "$(value planner_actor)" "relevo-lite-planner"
 
 : > "$work/calls"
 sh "$fx/scripts/dev-agents.sh" --dry-run > "$work/dry"
 check "dry run writes nothing" "$(grep -c '^set$' "$work/calls" || :)" "0"
 check "dry run prints every write" "$(grep -c '^relevo config set' "$work/dry")" "8"
+check "dry run prints repo actor writes" "$(grep -cE '^relevo config repo set (builder_actor|reviewer_actor|planner_actor)' "$work/dry")" "3"
 
 if sh "$fx/scripts/dev-agents.sh" --bogus > /dev/null 2>&1; then
 	check "unknown flag refused" "exit 0" "exit 2"

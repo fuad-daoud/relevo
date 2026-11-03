@@ -60,6 +60,7 @@ func chainServerResolveBodies(ctx context.Context, rt Runtime, opts ChainOptions
 		settings: chainSettings(rt.Policy, opts, checks, repoSet),
 		gateRes:  resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, checks, repoSet),
 		server:   opts.Server,
+		repoSet:  repoSet,
 	}
 	plan.repo = repo
 	// From the same repository value, not a second working-directory probe.
@@ -124,7 +125,7 @@ func chainServerResolveGates(ctx context.Context, rt Runtime, opts ChainOptions,
 		return fail(fmt.Errorf("server %s does not take --param: the server's workflow feature is not available yet; upgrade it, or start the chain without --server", opts.Server))
 	}
 	if !hasWorkflow {
-		plan.members = chainMembersFor(opts, plan.settings)
+		plan.members = chainMembersFor(opts, plan.settings, plan.repoSet)
 		if err := chainFreeNames(rt, plan.members); err != nil {
 			return fail(err)
 		}

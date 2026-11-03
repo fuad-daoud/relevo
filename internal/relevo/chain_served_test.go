@@ -309,7 +309,7 @@ func TestServedMemberNamesMatchClientMirror(t *testing.T) {
 		engineNames[m.Name] = m.Actor
 	}
 	mirrorNames := map[string]string{}
-	for _, m := range chainMembersFor(ChainOptions{Name: "shop"}, chainSettingsFromWire(req.Settings)) {
+	for _, m := range chainMembersFor(ChainOptions{Name: "shop"}, chainSettingsFromWire(req.Settings), RepoSettings{}) {
 		mirrorNames[m.name] = m.actor
 	}
 	if !reflect.DeepEqual(engineNames, mirrorNames) {

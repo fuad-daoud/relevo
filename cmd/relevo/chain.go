@@ -45,6 +45,7 @@ type chainFlagValues struct {
 	noGate         *bool
 	regate         *int
 	maxCorrections *int
+	builderActor   *string
 	reviewerActor  *string
 	plannerActor   *string
 	securityActor  *string
@@ -77,6 +78,7 @@ func chainFlagSet(fs *flag.FlagSet) *chainFlagValues {
 	v.noGate = fs.Bool("no-gate", false, "opt the builder out of config policy's gate.default")
 	v.regate = fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: config policy gate.regate)")
 	v.maxCorrections = fs.Int("max-corrections", -1, "correction rounds allowed per plan before NEEDS YOU; 0 halts on the first changes (default: config policy chain.max_corrections)")
+	v.builderActor = fs.String("builder-actor", "", "the actor the builder member runs (default: config repo builder_actor)")
 	v.reviewerActor = fs.String("reviewer-actor", "", "the actor the reviewer member runs (default: config policy chain.reviewer_actor)")
 	v.plannerActor = fs.String("planner-actor", "", "the actor that writes correction and fix plans (default: config policy chain.planner_actor)")
 	v.securityActor = fs.String("security-actor", "", "the actor the security member runs (default: config policy chain.security_actor)")
@@ -220,6 +222,7 @@ func chainStartOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ChainOption
 		NoGate:         *v.noGate,
 		Regate:         regate,
 		MaxCorrections: maxCorrections,
+		BuilderActor:   *v.builderActor,
 		ReviewerActor:  *v.reviewerActor,
 		PlannerActor:   *v.plannerActor,
 		SecurityActor:  *v.securityActor,
@@ -323,7 +326,7 @@ func chainResumeOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ResumeOpti
 	// A start's own flags have nothing to act on in a resume, so each is
 	// refused by name before any runtime is built: silently ignoring one would
 	// leave the caller believing it took effect.
-	for _, name := range []string{"plan", "base", "ticket", "feature", "no-feature", "mastermind", "workflow", "task", "task-file", "dry-run"} {
+	for _, name := range []string{"plan", "base", "builder-actor", "ticket", "feature", "no-feature", "mastermind", "workflow", "task", "task-file", "dry-run"} {
 		if flagGiven(fs, name) {
 			return relevo.ResumeOptions{}, fail(codeUsage, "relevo chain --resume does not take --%s: a resume continues the chain it names, which already holds its plans, label, workflow and mastermind", name)
 		}

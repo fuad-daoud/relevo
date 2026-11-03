@@ -19,7 +19,7 @@ import (
 
 // repoEntryKeys is the key vocabulary one entry takes; anything else is a
 // usage refusal.
-var repoEntryKeys = []string{"name", "gate", "board_theme", "trimpath"}
+var repoEntryKeys = []string{"name", "gate", "board_theme", "trimpath", "builder_actor", "reviewer_actor", "planner_actor"}
 
 func repoKeyKnown(key string) bool {
 	for _, k := range repoEntryKeys {
@@ -30,11 +30,34 @@ func repoKeyKnown(key string) bool {
 	return false
 }
 
+// repoEntryField points at the entry field one CLI key names, so the set and
+// unset verbs share the key vocabulary instead of each switching on it. The
+// caller checks the key with repoKeyKnown first, so the result is never nil.
+func repoEntryField(entry *config.RepoEntry, key string) *string {
+	switch key {
+	case "name":
+		return &entry.Name
+	case "gate":
+		return &entry.Gate
+	case "board_theme":
+		return &entry.BoardTheme
+	case "trimpath":
+		return &entry.Trimpath
+	case "builder_actor":
+		return &entry.BuilderActor
+	case "reviewer_actor":
+		return &entry.ReviewerActor
+	case "planner_actor":
+		return &entry.PlannerActor
+	}
+	return nil
+}
+
 // configRepoUsage is the whole `config repo` surface. The trimpath paragraph
 // stays long because the flag's cost is not visible from the word "on" alone.
 const configRepoUsage = `usage: relevo config repo [--repo <path>] [--json]
-       relevo config repo set <name|gate|board_theme|trimpath> <value> [--repo <path>] [--json]
-       relevo config repo unset <name|gate|board_theme|trimpath> [--repo <path>] [--json]
+       relevo config repo set <name|gate|board_theme|trimpath|builder_actor|reviewer_actor|planner_actor> <value> [--repo <path>] [--json]
+       relevo config repo unset <name|gate|board_theme|trimpath|builder_actor|reviewer_actor|planner_actor> [--repo <path>] [--json]
        relevo config repo list [--json]
 
 trimpath on|off (unset means on): under -trimpath, file paths in panics and
@@ -113,6 +136,10 @@ type ConfigRepoDoc struct {
 	Gate       string `json:"gate,omitempty"`
 	BoardTheme string `json:"board_theme,omitempty"`
 	Trimpath   string `json:"trimpath,omitempty"`
+	// The chain members' actors, unset meaning the policy default.
+	BuilderActor  string `json:"builder_actor,omitempty"`
+	ReviewerActor string `json:"reviewer_actor,omitempty"`
+	PlannerActor  string `json:"planner_actor,omitempty"`
 }
 
 // ConfigRepoListDoc is `config repo list --json`: one row per repository in
@@ -161,7 +188,7 @@ func configRepoShow(args []string) error {
 		fmt.Println("no settings for this repository")
 		return nil
 	}
-	doc := ConfigRepoDoc{Repo: key, Name: entry.Name, Gate: entry.Gate, BoardTheme: entry.BoardTheme, Trimpath: entry.Trimpath}
+	doc := ConfigRepoDoc{Repo: key, Name: entry.Name, Gate: entry.Gate, BoardTheme: entry.BoardTheme, Trimpath: entry.Trimpath, BuilderActor: entry.BuilderActor, ReviewerActor: entry.ReviewerActor, PlannerActor: entry.PlannerActor}
 	if *v.asJSON {
 		return printDoc(doc)
 	}
@@ -184,11 +211,11 @@ func configRepoSet(args []string) error {
 	}
 	rest := fs.Args()
 	if len(rest) != 2 {
-		return fail(codeUsage, "config repo set wants <key> <value>; the keys are name, gate, board_theme and trimpath")
+		return fail(codeUsage, "config repo set wants <key> <value>; the keys are name, gate, board_theme, trimpath, builder_actor, reviewer_actor and planner_actor")
 	}
 	key, raw := rest[0], rest[1]
 	if !repoKeyKnown(key) {
-		return fail(codeUsage, "config repo set: unknown key %q; a repos entry takes name, gate, board_theme and trimpath", key)
+		return fail(codeUsage, "config repo set: unknown key %q; a repos entry takes name, gate, board_theme, trimpath, builder_actor, reviewer_actor and planner_actor", key)
 	}
 
 	rt, err := newRuntime()
@@ -212,16 +239,7 @@ func configRepoSet(args []string) error {
 		return failWrap(codeConfigInvalid, err, "%v", err)
 	}
 	entry := entries[id]
-	switch key {
-	case "name":
-		entry.Name = repoValueString(raw)
-	case "gate":
-		entry.Gate = repoValueString(raw)
-	case "board_theme":
-		entry.BoardTheme = repoValueString(raw)
-	case "trimpath":
-		entry.Trimpath = repoValueString(raw)
-	}
+	*repoEntryField(&entry, key) = repoValueString(raw)
 	if entry == (config.RepoEntry{}) {
 		delete(entries, id)
 	} else {
@@ -257,11 +275,11 @@ func configRepoUnset(args []string) error {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		return fail(codeUsage, "config repo unset wants <key>; the keys are name, gate, board_theme and trimpath")
+		return fail(codeUsage, "config repo unset wants <key>; the keys are name, gate, board_theme, trimpath, builder_actor, reviewer_actor and planner_actor")
 	}
 	key := rest[0]
 	if !repoKeyKnown(key) {
-		return fail(codeUsage, "config repo unset: unknown key %q; a repos entry takes name, gate, board_theme and trimpath", key)
+		return fail(codeUsage, "config repo unset: unknown key %q; a repos entry takes name, gate, board_theme, trimpath, builder_actor, reviewer_actor and planner_actor", key)
 	}
 
 	rt, err := newRuntime()
@@ -277,21 +295,9 @@ func configRepoUnset(args []string) error {
 	if !ok {
 		return fail(codeConfigInvalid, "repos.%s.%s: not set", id, key)
 	}
-	wasSet := false
-	switch key {
-	case "name":
-		wasSet = entry.Name != ""
-		entry.Name = ""
-	case "gate":
-		wasSet = entry.Gate != ""
-		entry.Gate = ""
-	case "board_theme":
-		wasSet = entry.BoardTheme != ""
-		entry.BoardTheme = ""
-	case "trimpath":
-		wasSet = entry.Trimpath != ""
-		entry.Trimpath = ""
-	}
+	field := repoEntryField(&entry, key)
+	wasSet := *field != ""
+	*field = ""
 	if !wasSet {
 		return fail(codeConfigInvalid, "repos.%s.%s: not set", id, key)
 	}
@@ -376,7 +382,7 @@ func configRepoList(args []string) error {
 	rows := make([]ConfigRepoDoc, 0, len(ids))
 	for _, id := range ids {
 		entry := entries[id]
-		rows = append(rows, ConfigRepoDoc{Repo: id, Name: entry.Name, Gate: entry.Gate, BoardTheme: entry.BoardTheme, Trimpath: entry.Trimpath})
+		rows = append(rows, ConfigRepoDoc{Repo: id, Name: entry.Name, Gate: entry.Gate, BoardTheme: entry.BoardTheme, Trimpath: entry.Trimpath, BuilderActor: entry.BuilderActor, ReviewerActor: entry.ReviewerActor, PlannerActor: entry.PlannerActor})
 	}
 	if *v.asJSON {
 		return printDoc(ConfigRepoListDoc{Repos: rows})
@@ -386,7 +392,7 @@ func configRepoList(args []string) error {
 		return nil
 	}
 	for _, row := range rows {
-		entry := config.RepoEntry{Name: row.Name, Gate: row.Gate, BoardTheme: row.BoardTheme, Trimpath: row.Trimpath}
+		entry := config.RepoEntry{Name: row.Name, Gate: row.Gate, BoardTheme: row.BoardTheme, Trimpath: row.Trimpath, BuilderActor: row.BuilderActor, ReviewerActor: row.ReviewerActor, PlannerActor: row.PlannerActor}
 		fmt.Printf("%s  %s\n", row.Repo, strings.Join(configRepoLines(entry), "  "))
 	}
 	return nil
@@ -411,6 +417,15 @@ func configRepoLines(entry config.RepoEntry) []string {
 		value = "on (default)"
 	}
 	lines = append(lines, "trimpath "+value)
+	if entry.BuilderActor != "" {
+		lines = append(lines, "builder_actor "+entry.BuilderActor)
+	}
+	if entry.ReviewerActor != "" {
+		lines = append(lines, "reviewer_actor "+entry.ReviewerActor)
+	}
+	if entry.PlannerActor != "" {
+		lines = append(lines, "planner_actor "+entry.PlannerActor)
+	}
 	return lines
 }
 
