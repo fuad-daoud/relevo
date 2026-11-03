@@ -15,6 +15,10 @@ import (
 // Cleanup never reports: the caller already failed, and a lost temp
 // directory must not replace its error.
 func (c *Client) clearWorktreeRegistration(ctx context.Context, dir, absPath string) {
+	// A request-scoped deadline firing mid-checkout reaches cleanup with an
+	// already-expired context; detaching lets each child still run under the
+	// client's own timeout instead of dying before it starts.
+	ctx = context.WithoutCancel(ctx)
 	_, _ = c.run(ctx, dir, nil, "worktree", "remove", "--force", "--force", absPath)
 	_ = os.RemoveAll(absPath)
 }
@@ -63,10 +67,13 @@ func (c *Client) AddWorktree(ctx context.Context, dir, path, branch, commit stri
 		// above refused a pre-existing one, and the race maps to
 		// ErrBranchExists. Clear the entry first — git refuses to delete a
 		// branch still checked out in a worktree — then the branch; the
-		// deferred cleanup repeats the clearing harmlessly.
-		c.clearWorktreeRegistration(ctx, dir, absPath)
-		if existsNow, berr := c.BranchExists(ctx, dir, branchName); berr == nil && existsNow {
-			_ = c.DeleteBranch(ctx, dir, branchName)
+		// deferred cleanup repeats the clearing harmlessly. The branch check and
+		// delete are cleanup under the same deadline hazard, so they share one
+		// detached context with the clear.
+		cctx := context.WithoutCancel(ctx)
+		c.clearWorktreeRegistration(cctx, dir, absPath)
+		if existsNow, berr := c.BranchExists(cctx, dir, branchName); berr == nil && existsNow {
+			_ = c.DeleteBranch(cctx, dir, branchName)
 		}
 		return err
 	}

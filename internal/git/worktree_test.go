@@ -169,6 +169,31 @@ func TestAddWorktreeTimeoutRemovesLockedRegistrationAndBranch(t *testing.T) {
 	}
 }
 
+// TestAddWorktreeExpiredCallerContextRemovesLockedRegistrationAndBranch is the
+// request-deadline case: the caller's context expires mid-checkout while the
+// client's own budget is still open, and the cleanup children must not inherit
+// that expiry.
+func TestAddWorktreeExpiredCallerContextRemovesLockedRegistrationAndBranch(t *testing.T) {
+	repoDir := slowCheckoutRepo(t)
+	client := NewClient("git", time.Minute, 0)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	wtDir := filepath.Join(resolvedTempDir(t), "wt-expired")
+	branch := "relevo/expired-ctx"
+	err := client.AddWorktree(ctx, repoDir, wtDir, branch, "HEAD")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("AddWorktree err = %v, want a deadline", err)
+	}
+	if list := runGit(t, repoDir, "worktree", "list", "--porcelain"); strings.Contains(list, wtDir) {
+		t.Fatalf("locked registration still listed after AddWorktree under an expired caller context:\n%s", list)
+	}
+	if exists, err := client.BranchExists(context.Background(), repoDir, branch); err != nil || exists {
+		t.Fatalf("BranchExists(%q) = %v, %v, want false, nil", branch, exists, err)
+	}
+}
+
 func TestAddDetachedWorktreeTimeoutRemovesLockedRegistration(t *testing.T) {
 	ctx := context.Background()
 	repoDir := slowCheckoutRepo(t)
