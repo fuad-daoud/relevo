@@ -98,10 +98,10 @@ func (s *Server) observeForwards(ctx context.Context) int {
 	return closed
 }
 
-// observeOne polls one forward. A queued or running view refreshes the
-// node-live cache; a closed view fetches and closes; a waiting view halts
-// the head binding. Every network call runs without s.mu, and each answer
-// applies only while the forward still matches.
+// observeOne polls one forward. A view answering the forward's own round
+// refreshes the node-live cache; a closed view fetches and closes; a
+// waiting view halts the head binding. Every network call runs without
+// s.mu, and each answer applies only while the forward still matches.
 func (s *Server) observeOne(ctx context.Context, cl *client.Client, row burst.NodeRow, w observeWork, now time.Time) bool {
 	view, err := cl.GetBinding(ctx, w.fwd.Node, w.fwd.NodeBinding)
 	if err != nil {
@@ -113,7 +113,12 @@ func (s *Server) observeOne(ctx context.Context, cl *client.Client, row burst.No
 		return false
 	}
 	s.clearNodeProblem(row)
-	if view.Live != nil && (view.RoundState == remote.RoundQueued || view.RoundState == remote.RoundRunning || view.RoundState == remote.RoundClosed) {
+	// The cache is keyed by the forward's round and served as that round's
+	// live, so a view answering another round must never land in it: the
+	// node's next round would be served as the head round's work. The
+	// switch below only warns on that mismatch after the fact, so the
+	// agreement check has to gate the write here.
+	if view.Live != nil && observeRoundAgrees(view, w) {
 		s.cacheNodeLive(w.ownerPath, w.name, w.fwd.Round, view.Live, now)
 	}
 	switch view.RoundState {
@@ -130,8 +135,21 @@ func (s *Server) observeOne(ctx context.Context, cl *client.Client, row burst.No
 	}
 }
 
-// observeLive refreshes the cache for an open node round. A view for a
-// different round is stale, so it caches nothing.
+// observeRoundAgrees says whether a view answers the round its forward
+// holds: an open view carries it in Round, a closed one in ClosedRound.
+// Any other state is not one the live cache keys.
+func observeRoundAgrees(view remote.BindingView, w observeWork) bool {
+	switch view.RoundState {
+	case remote.RoundQueued, remote.RoundRunning:
+		return view.Round == w.fwd.Round
+	case remote.RoundClosed:
+		return view.ClosedRound == w.fwd.Round
+	}
+	return false
+}
+
+// observeLive watches an open node round. A view for a different round is
+// stale: nothing was cached for it and the forward stays out.
 func (s *Server) observeLive(view remote.BindingView, w observeWork) bool {
 	if view.Round != w.fwd.Round {
 		slog.Warn("burst: observe answered another round", "binding", w.name, "node", w.fwd.Node, "want", w.fwd.Round, "got", view.Round)
