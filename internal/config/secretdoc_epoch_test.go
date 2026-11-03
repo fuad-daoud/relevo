@@ -34,7 +34,7 @@ func epochStore(t *testing.T) (*Store, []byte) {
 func TestItemsSealUnderTheNewestEpoch(t *testing.T) {
 	t.Parallel()
 	s, key2 := epochStore(t)
-	if err := s.PutSecret(SecretTypesafe, canarySecret); err != nil {
+	if err := s.PutSecret(sync.SecretR2Bucket, canarySecret); err != nil {
 		t.Fatalf("PutSecret: %v", err)
 	}
 	items, err := s.SecretsDoc().Items()
@@ -45,14 +45,14 @@ func TestItemsSealUnderTheNewestEpoch(t *testing.T) {
 		V int `json:"v"`
 		E int `json:"e"`
 	}
-	if err := json.Unmarshal(items[SecretTypesafe], &shape); err != nil {
+	if err := json.Unmarshal(items[sync.SecretR2Bucket], &shape); err != nil {
 		t.Fatalf("decode the sealed item: %v", err)
 	}
 	if shape.V != 2 || shape.E != 2 {
 		t.Fatalf("the item sealed as v%d e%d, want v2 e2", shape.V, shape.E)
 	}
 	ring := sync.Keyring{Epoch: 2, Keys: map[int][]byte{2: key2}}
-	plain, err := sync.OpenSecret(ring, SecretTypesafe, items[SecretTypesafe])
+	plain, err := sync.OpenSecret(ring, sync.SecretR2Bucket, items[sync.SecretR2Bucket])
 	if err != nil || string(plain) != string(canarySecret) {
 		t.Fatalf("the item did not open under the epoch-2 key: %q, %v", plain, err)
 	}
@@ -67,14 +67,14 @@ func TestTheDocOpensHistoryAtEveryEpochItHolds(t *testing.T) {
 	s, _ := epochStore(t)
 	key1 := []byte("0123456789abcdef0123456789abcdef")
 	old, err := sync.SealSecret(sync.Keyring{Epoch: 1, Keys: map[int][]byte{1: key1}},
-		SecretTypesafe, []byte("the value before the rekey"))
+		sync.SecretR2Bucket, []byte("the value before the rekey"))
 	if err != nil {
 		t.Fatalf("seal the old envelope: %v", err)
 	}
-	if err := s.SecretsDoc().Apply(SecretTypesafe, old); err != nil {
+	if err := s.SecretsDoc().Apply(sync.SecretR2Bucket, old); err != nil {
 		t.Fatalf("Apply a v1 envelope on a rekeyed machine: %v", err)
 	}
-	if got := held(t, s, SecretTypesafe); string(got) != "the value before the rekey" {
+	if got := held(t, s, sync.SecretR2Bucket); string(got) != "the value before the rekey" {
 		t.Fatalf("held = %q, want the old plaintext", got)
 	}
 
@@ -84,14 +84,14 @@ func TestTheDocOpensHistoryAtEveryEpochItHolds(t *testing.T) {
 	fresh := secretStore(t)
 	key2 := []byte("fedcba9876543210fedcba9876543210")
 	newest, err := sync.SealSecret(sync.Keyring{Epoch: 2, Keys: map[int][]byte{2: key2}},
-		SecretTypesafe, []byte("the value after the rekey"))
+		sync.SecretR2Bucket, []byte("the value after the rekey"))
 	if err != nil {
 		t.Fatalf("seal the new envelope: %v", err)
 	}
-	if err := fresh.SecretsDoc().Apply(SecretTypesafe, newest); !errors.Is(err, sync.ErrSecretEnvelope) {
+	if err := fresh.SecretsDoc().Apply(sync.SecretR2Bucket, newest); !errors.Is(err, sync.ErrSecretEnvelope) {
 		t.Fatalf("Apply a v2 envelope on an epoch-1 machine = %v, want a refusal", err)
 	}
-	if _, ok, err := fresh.Secret(SecretTypesafe); err != nil || ok {
+	if _, ok, err := fresh.Secret(sync.SecretR2Bucket); err != nil || ok {
 		t.Fatalf("the refused envelope wrote the secret: (ok %v, err %v)", ok, err)
 	}
 }
@@ -103,17 +103,17 @@ func TestALockedApplyErrorsRatherThanEmptying(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	env, err := sync.SealSecret(sync.Keyring{Epoch: 1, Keys: map[int][]byte{1: []byte(secretDocKey)}},
-		SecretTypesafe, canarySecret)
+		sync.SecretR2Bucket, canarySecret)
 	if err != nil {
 		t.Fatalf("SealSecret: %v", err)
 	}
 	if err := sync.DeleteKey(s.db); err != nil {
 		t.Fatalf("DeleteKey: %v", err)
 	}
-	if err := s.SecretsDoc().Apply(SecretTypesafe, env); !errors.Is(err, sync.ErrNoKey) {
+	if err := s.SecretsDoc().Apply(sync.SecretR2Bucket, env); !errors.Is(err, sync.ErrNoKey) {
 		t.Fatalf("Apply on a locked machine = %v, want the no-key refusal", err)
 	}
-	if _, ok, err := s.Secret(SecretTypesafe); err != nil || ok {
+	if _, ok, err := s.Secret(sync.SecretR2Bucket); err != nil || ok {
 		t.Fatalf("the refused apply wrote the secret: (ok %v, err %v)", ok, err)
 	}
 }

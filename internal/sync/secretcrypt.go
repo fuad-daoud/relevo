@@ -27,13 +27,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
-// The two secret names a caller outside the R2 set owns, spelled here rather
-// than imported: the config package imports this one, so the travelling rule
-// cannot be decided by the package reading the value.
-const (
-	SecretClientKey = "client.key"
-	SecretTypesafe  = "typesafe"
-)
+// The secret name a caller outside the R2 set owns, spelled here rather than
+// imported: the config package imports this one, so the travelling rule cannot
+// be decided by the package reading the value.
+const SecretClientKey = "client.key"
 
 // SecretsDocName is the name the secrets document travels under, as
 // `doc:secrets` on the log. It lives here rather than in the config package that
@@ -113,7 +110,6 @@ const secretSubkeyLen = 32
 // credentials without its identity.
 var allowedSecrets = []string{
 	SecretClientKey,
-	SecretTypesafe,
 	SecretR2Endpoint,
 	SecretR2Bucket,
 	SecretR2KeyID,

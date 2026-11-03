@@ -73,7 +73,7 @@ func TestDBQueryShowsTheSharedSecretsAreGone(t *testing.T) {
 		t.Fatalf("OpenSplit: %v", err)
 	}
 	if err := d.Local().Tx(func(tx *db.Tx) error {
-		return tx.SecretPut("typesafe", []byte("token"), time.Now().UTC())
+		return tx.SecretPut("client.key", []byte("token"), time.Now().UTC())
 	}); err != nil {
 		t.Fatalf("seed the local file's secret: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestDBQueryShowsTheSharedSecretsAreGone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("db query: %v (stderr: %s)", err, stderr)
 	}
-	if strings.Contains(string(stdout), "typesafe") {
+	if strings.Contains(string(stdout), "client.key") {
 		t.Errorf("the query answered with the local file's secret:\n%s", stdout)
 	}
 }

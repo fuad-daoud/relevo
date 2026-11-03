@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/sync"
 )
 
 // A machine that has run the split keeps its config and secrets in the local
@@ -46,8 +47,8 @@ func serveSplit(t *testing.T) (*db.DB, string) {
 	return shared, sock
 }
 
-// seedEverySection stores every section the registry names, plus both secrets,
-// so a reader that finds nothing is looking in the wrong file.
+// seedEverySection stores every section the registry names, plus one shared
+// secret, so a reader that finds nothing is looking in the wrong file.
 //
 // It writes through the store, so it pins the direction a caller writes.
 func seedEverySection(t *testing.T, s *Store) {
@@ -58,8 +59,8 @@ func seedEverySection(t *testing.T, s *Store) {
 			t.Fatalf("Put(%s): %v", sec, err)
 		}
 	}
-	if err := s.As("test", "seed typesafe").PutSecret(SecretTypesafe, []byte("test-key")); err != nil {
-		t.Fatalf("PutSecret(typesafe): %v", err)
+	if err := s.As("test", "seed r2.bucket").PutSecret(sync.SecretR2Bucket, []byte("test-key")); err != nil {
+		t.Fatalf("PutSecret(r2.bucket): %v", err)
 	}
 }
 
@@ -76,7 +77,7 @@ func seedLocalFile(t *testing.T, local *db.DB) {
 				return err
 			}
 		}
-		return tx.SecretPut(SecretTypesafe, []byte("test-key"), now)
+		return tx.SecretPut(sync.SecretR2Bucket, []byte("test-key"), now)
 	}); err != nil {
 		t.Fatalf("seed the local file: %v", err)
 	}
@@ -125,18 +126,18 @@ func assertFullConfig(t *testing.T, s *Store) {
 			t.Errorf("section %s is not readable through this handle", sec)
 		}
 	}
-	ts, ok, err := s.Secret(SecretTypesafe)
+	ts, ok, err := s.Secret(sync.SecretR2Bucket)
 	if err != nil {
-		t.Fatalf("Secret(typesafe): %v", err)
+		t.Fatalf("Secret(r2.bucket): %v", err)
 	}
 	if !ok || string(ts) != "test-key" {
-		t.Errorf("the typesafe secret = %q (present %t), want the seeded value", ts, ok)
+		t.Errorf("the r2.bucket secret = %q (present %t), want the seeded value", ts, ok)
 	}
 }
 
 // TestOpenReadsTheMachineLocalFileAfterTheSplit pins the routing on a split
 // pair opened directly: a store built over the shared handle still reads every
-// section and both secrets, because the split moved them to the local file.
+// section and the shared secret, because the split moved them to the local file.
 func TestOpenReadsTheMachineLocalFileAfterTheSplit(t *testing.T) {
 	shared, _ := serveSplit(t)
 	seedLocalFile(t, shared.Local())
@@ -183,10 +184,10 @@ func TestTheSplitMovedEveryConfigRowOutOfTheSharedFile(t *testing.T) {
 			t.Errorf("section %s is not in the local file", sec)
 		}
 	}
-	if _, ok, err := shared.SecretGet(SecretTypesafe); err != nil {
+	if _, ok, err := shared.SecretGet(sync.SecretR2Bucket); err != nil {
 		t.Fatalf("SecretGet on the shared handle: %v", err)
 	} else if ok {
-		t.Error("the typesafe secret is still readable on the shared file")
+		t.Error("the r2.bucket secret is still readable on the shared file")
 	}
 }
 

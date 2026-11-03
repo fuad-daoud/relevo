@@ -166,9 +166,6 @@ func TestContractDocsSecretListJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MarshalPrivate: %v", err)
 	}
-	if _, _, err := runWithStdin(t, "ts-key-123\n", "config", "secret", "set", "typesafe"); err != nil {
-		t.Fatalf("secret set typesafe: %v", err)
-	}
 	if _, _, err := runWithStdin(t, string(pem), "config", "secret", "set", "client.key"); err != nil {
 		t.Fatalf("secret set client.key: %v", err)
 	}
@@ -180,13 +177,11 @@ func TestContractDocsSecretListJSON(t *testing.T) {
 	if err := json.Unmarshal(stdout, &names); err != nil {
 		t.Fatalf("config secret list --json: %v", err)
 	}
-	if !slices.Equal(names, []string{"client.key", "typesafe"}) {
-		t.Errorf("names = %v, want both names", names)
+	if !slices.Equal(names, []string{"client.key"}) {
+		t.Errorf("names = %v, want the one secret the CLI stores", names)
 	}
-	for _, v := range []string{"ts-key-123", "PRIVATE KEY"} {
-		if strings.Contains(string(stdout), v) {
-			t.Errorf("secret list carries the value %q:\n%s", v, stdout)
-		}
+	if strings.Contains(string(stdout), "PRIVATE KEY") {
+		t.Errorf("secret list carries the client key:\n%s", stdout)
 	}
 }
 

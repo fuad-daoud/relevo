@@ -96,15 +96,15 @@ func TestSecretRoundTrip(t *testing.T) {
 		t.Errorf("SecretGet = %v, want %v", got, value)
 	}
 
-	if err := d.Tx(func(tx *Tx) error { return tx.SecretPut("typesafe", []byte("k"), now) }); err != nil {
-		t.Fatalf("SecretPut typesafe: %v", err)
+	if err := d.Tx(func(tx *Tx) error { return tx.SecretPut("vendor.key", []byte("k"), now) }); err != nil {
+		t.Fatalf("SecretPut vendor.key: %v", err)
 	}
 	names, err := d.SecretNames()
 	if err != nil {
 		t.Fatalf("SecretNames: %v", err)
 	}
-	if len(names) != 2 || names[0] != "client.key" || names[1] != "typesafe" {
-		t.Errorf("SecretNames = %v, want [client.key typesafe]", names)
+	if len(names) != 2 || names[0] != "client.key" || names[1] != "vendor.key" {
+		t.Errorf("SecretNames = %v, want [client.key vendor.key]", names)
 	}
 
 	if err := d.Tx(func(tx *Tx) error { return tx.SecretDelete("client.key") }); err != nil {

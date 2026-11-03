@@ -158,7 +158,6 @@ func zeroJoinPair(t *testing.T) (a, b *cfgMachine, rel string, pair bodyPair) {
 	a.set(t, config.Candidates, cfgCandidate)
 	a.set(t, config.Hooks, `{"events":{"PreToolUse":[["`+rel+`"]]}}`)
 	a.set(t, config.Agents, `{"my-native":`+nativeAgentBody+`}`)
-	a.setSecret(t, config.SecretTypesafe, canarySecret)
 	if err := relevosync.SetR2(a.local, verbFixtureR2, time.Unix(0, 0).UTC()); err != nil {
 		t.Fatalf("SetR2 on A: %v", err)
 	}
@@ -220,7 +219,7 @@ func (m *cfgMachine) exportThrough(t *testing.T) {
 
 // TestAJoinerEndsUpHoldingEverythingTheFleetShares is the round's convergence
 // case. B joins with only a code and a passphrase and ends holding A's shared
-// config, its rendered hooks, its agent, its typesafe key and its bucket
+// config, its rendered hooks, its agent and its bucket
 // credentials -- including the body of the row whose `$ref` sits above the
 // document that grants the fetch.
 //
@@ -243,9 +242,6 @@ func TestAJoinerEndsUpHoldingEverythingTheFleetShares(t *testing.T) {
 	}
 	if got := b.body(t, config.Agents); !strings.Contains(got, "my-native") {
 		t.Errorf("B's agents after the join = %s, want A's", got)
-	}
-	if got := b.secret(t, config.SecretTypesafe); got != canarySecret {
-		t.Errorf("B's typesafe after the join = %q, want A's", got)
 	}
 	stored, err := relevosync.ReadR2(b.local)
 	if err != nil {
@@ -315,7 +311,10 @@ func assertBReEmittedNothing(t *testing.T, a, b *cfgMachine) {
 			t.Errorf("B re-exported a secret it applied: %s", e.Body)
 		}
 	}
-	for _, name := range []string{config.SecretTypesafe, relevosync.SecretR2Bucket} {
+	for _, name := range []string{
+		relevosync.SecretR2Endpoint, relevosync.SecretR2Bucket,
+		relevosync.SecretR2KeyID, relevosync.SecretR2Secret,
+	} {
 		if _, ok := b.writeStamp(t, "secrets/"+name); ok {
 			t.Errorf("B stamped %s, which it adopted rather than set", name)
 		}

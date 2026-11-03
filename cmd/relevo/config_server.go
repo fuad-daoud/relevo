@@ -96,8 +96,8 @@ func configSecretFlagSet(*flag.FlagSet) {}
 // configSecret is the secrets half of `relevo config`; a list prints names
 // only, never values.
 func configSecret(args []string) error {
-	const usage = `usage: relevo config secret set <typesafe|client.key>
-       relevo config secret rm <typesafe|client.key>
+	const usage = `usage: relevo config secret set <client.key>
+       relevo config secret rm <client.key>
        relevo config secret list`
 
 	if len(args) == 0 {
@@ -120,12 +120,11 @@ func configSecret(args []string) error {
 	}
 }
 
-// checkSecretName refuses any name but the two secrets relevo stores; the
-// error names both, so the frame carries the words a human needs.
+// checkSecretName refuses any name but the secret relevo stores; the error
+// names it, so the frame carries the words a human needs.
 func checkSecretName(name string) error {
-	if name != config.SecretTypesafe && name != config.SecretClientKey {
-		return fail(codeUsage, "unknown secret %q (allowed: %s, %s)",
-			name, config.SecretTypesafe, config.SecretClientKey)
+	if name != config.SecretClientKey {
+		return fail(codeUsage, "unknown secret %q (allowed: %s)", name, config.SecretClientKey)
 	}
 	return nil
 }
@@ -158,7 +157,7 @@ func configSecretSetRun(args []string) error {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		return fail(codeUsage, "config secret set wants <typesafe|client.key>")
+		return fail(codeUsage, "config secret set wants <client.key>")
 	}
 	name := rest[0]
 	if err := checkSecretName(name); err != nil {
@@ -211,7 +210,7 @@ func configSecretRmRun(args []string) error {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		return fail(codeUsage, "config secret rm wants <typesafe|client.key>")
+		return fail(codeUsage, "config secret rm wants <client.key>")
 	}
 	name := rest[0]
 	if err := checkSecretName(name); err != nil {

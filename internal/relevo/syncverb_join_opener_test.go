@@ -105,7 +105,6 @@ func prodFleet(t *testing.T, withBucket bool) (a, b *cfgMachine, bRunner *verb.R
 	bRunner = daemonWiring(t, b)
 	// The secrets are stamped before the large value is written, so its entry
 	// lands above the secrets entries the export writes (zeroJoinPair's order).
-	a.setSecret(t, config.SecretTypesafe, canarySecret)
 	a.setSecret(t, config.SecretClientKey, newClientKeyPEM(t))
 	if err := b.cfg.PutSecretUnstamped(config.SecretClientKey, []byte(newClientKeyPEM(t))); err != nil {
 		t.Fatalf("PutSecretUnstamped on B: %v", err)
@@ -334,8 +333,8 @@ func TestAJoinRefusedForTheFleetsMissingBucketCanRetryAndThenHoldsTheFleetsSecre
 
 	// The fleet's document said what it said before the refusal. Its next export
 	// gains only the four bucket credentials: a fleet whose unchanged values
-	// re-seal into new envelopes would re-issue typesafe and the client key
-	// under fresh stamps, and the retry would then land on the fleet's answer
+	// re-seal into new envelopes would re-issue the client key
+	// under a fresh stamp, and the retry would then land on the fleet's answer
 	// to values it had a moment ago instead of its redeliveries.
 	before := docSecretsKeys(t, b.log, "A")
 
@@ -363,9 +362,6 @@ func TestAJoinRefusedForTheFleetsMissingBucketCanRetryAndThenHoldsTheFleetsSecre
 	}
 	if stored != verbFixtureR2 {
 		t.Errorf("B's R2 credentials after the retry = %+v, want the fleet's", stored)
-	}
-	if got := b.secret(t, config.SecretTypesafe); got != canarySecret {
-		t.Errorf("B's typesafe after the retry = %q, want the fleet's", got)
 	}
 	if got := b.secret(t, config.SecretClientKey); got != a.secret(t, config.SecretClientKey) {
 		t.Errorf("B's client key after the retry is not the fleet's: %q", got)

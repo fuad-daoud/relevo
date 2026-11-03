@@ -463,7 +463,8 @@ func TestConfigServerKeyEnrollLinePrintsOnlyTheLine(t *testing.T) {
 func TestConfigSecretSetListHidesValue(t *testing.T) {
 	initRoot(t)
 
-	if _, stderr, err := runWithStdin(t, "  ts-key-123  \n", "config", "secret", "set", "typesafe"); err != nil {
+	value, leak := cliSecret(t)
+	if _, stderr, err := runWithStdin(t, "  \n"+value+"\n  ", "config", "secret", "set", "client.key"); err != nil {
 		t.Fatalf("secret set: %v (stderr: %s)", err, stderr)
 	}
 
@@ -473,10 +474,10 @@ func TestConfigSecretSetListHidesValue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("secret list: %v", err)
 	}
-	if !strings.Contains(string(stdout), "typesafe") {
+	if !strings.Contains(string(stdout), "client.key") {
 		t.Errorf("secret list = %q, want the name", stdout)
 	}
-	if strings.Contains(string(stdout), "ts-key-123") {
+	if strings.Contains(string(stdout), leak) {
 		t.Errorf("secret list = %q, must never print the value", stdout)
 	}
 }
@@ -493,8 +494,36 @@ func TestConfigSecretUnknownNameExits2(t *testing.T) {
 	if len(stderr) != 0 {
 		t.Errorf("stderr = %q, want empty before report", stderr)
 	}
-	if !strings.Contains(ce.message, "typesafe") || !strings.Contains(ce.message, "client.key") {
-		t.Errorf("message = %q, want both allowed names", ce.message)
+	if !strings.Contains(ce.message, "client.key") {
+		t.Errorf("message = %q, want the allowed name", ce.message)
+	}
+}
+
+// TestConfigSecretRefusesTheTypesafeName pins that neither secret verb takes the
+// name any more: a person typing it gets the usage error naming the one secret
+// that is stored, and no secret lands under a name nothing reads.
+func TestConfigSecretRefusesTheTypesafeName(t *testing.T) {
+	initRoot(t)
+
+	for _, verb := range []string{"set", "rm"} {
+		_, stderr, err := runWithStdin(t, "x", "config", "secret", verb, "typesafe")
+		ce := requireCLIError(t, err, codeUsage, "relevo help")
+		if !strings.Contains(ce.message, "client.key") {
+			t.Errorf("config secret %s typesafe: message = %q, want the allowed name", verb, ce.message)
+		}
+		if len(stderr) != 0 {
+			t.Errorf("config secret %s typesafe: stderr = %q, want empty before report", verb, stderr)
+		}
+	}
+
+	stdout, _, err := captureOutput(t, func() error {
+		return run([]string{"config", "secret", "list"})
+	})
+	if err != nil {
+		t.Fatalf("secret list: %v", err)
+	}
+	if strings.Contains(string(stdout), "typesafe") {
+		t.Errorf("secret list = %q, want no stored typesafe secret", stdout)
 	}
 }
 

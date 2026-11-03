@@ -332,7 +332,7 @@ func outcomeDocFixtures() []struct {
 		})},
 		{"config-server-add-json", configServerAddDocOf("zen", "https://zen.example.test:7777")},
 		{"config-server-rm-json", configServerRmDocOf("zen")},
-		{"config-secret-set-json", configSecretDocOf("typesafe")},
+		{"config-secret-set-json", configSecretDocOf("client.key")},
 		{"config-secret-rm-json", configSecretDocOf("client.key")},
 		{"mastermind-init-json", mastermindDocOf("pl_aaaaaaaabbbb", "architect-1", "created", "https://github.com/acme/webshop")},
 		{"mastermind-enable-json", mastermindDocOf("pl_aaaaaaaabbbb", "architect-1", "reattached", "https://github.com/acme/webshop")},

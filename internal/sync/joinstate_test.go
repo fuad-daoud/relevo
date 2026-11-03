@@ -30,7 +30,6 @@ func joinRows(t *testing.T, l Local) map[string]string {
 		KeyEnabled:           func() ([]byte, bool, error) { return l.KVGet(KeyEnabled) },
 		KeyJoin:              func() ([]byte, bool, error) { return l.KVGet(KeyJoin) },
 		SecretClientKey:      func() ([]byte, bool, error) { return l.SecretGet(SecretClientKey) },
-		SecretTypesafe:       func() ([]byte, bool, error) { return l.SecretGet(SecretTypesafe) },
 		SecretR2Endpoint:     func() ([]byte, bool, error) { return l.SecretGet(SecretR2Endpoint) },
 		SecretR2Bucket:       func() ([]byte, bool, error) { return l.SecretGet(SecretR2Bucket) },
 		SecretR2KeyID:        func() ([]byte, bool, error) { return l.SecretGet(SecretR2KeyID) },
@@ -124,7 +123,7 @@ func TestJoinSnapshotRestoresOverRowsThatAlreadyExisted(t *testing.T) {
 		if err := t.SecretPut(SecretClientKey, []byte("THE-CLIENT-KEY-THIS-MACHINE-HAD"), at); err != nil {
 			return err
 		}
-		if err := t.SecretPut(SecretTypesafe, []byte("THE-TYPESAFE-THIS-MACHINE-HAD"), at); err != nil {
+		if err := t.SecretPut(SecretR2Bucket, []byte("THE-R2-BUCKET-THIS-MACHINE-HAD"), at); err != nil {
 			return err
 		}
 		return t.ConfigPut(KeyClientKeyReplaced, []byte(`{"from":"old","to":"now"}`), at)
