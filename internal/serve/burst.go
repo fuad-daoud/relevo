@@ -364,11 +364,12 @@ func burstStoredForward(b store.Binding) *store.Forward {
 // the head claimed but no node confirmed. A node whose round is open at the
 // forward's round holds it, so the forward turns running; anything else --
 // a refused fetch, a missing or different round, a closed one -- returns to
-// the local queue at its FIFO place. Fetching runs without s.mu; each
-// answer applies under the owner store only while the forward still
-// matches, the Plan 3 discipline, so a result for a superseded claim never
-// lands. The live fetch stays in this lane, on GetBinding; the closed
-// rounds it requeues are lane C's observe path to close again.
+// the local queue at its FIFO place. Fetching runs without s.mu, since a
+// node round-trip must never hold the server lock; each answer applies
+// under the owner store only while the forward still matches, so a result
+// for a superseded claim never lands. Between passes the live fetch rides
+// on GetBinding, and the closed rounds it requeues close again on the
+// observe path.
 func (s *Server) adoptSending(ctx context.Context) {
 	if !s.burstOn() {
 		return

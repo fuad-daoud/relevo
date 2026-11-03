@@ -19,6 +19,12 @@ const (
 	// EventBurstSecurity fires when the head's node check finds a
 	// fingerprint mismatch: the node may be an impersonator.
 	EventBurstSecurity EventType = "burst_security"
+	// EventBurstNodeLost fires when a burst node stops answering with the
+	// head's round still on it: the round may need placing again.
+	EventBurstNodeLost EventType = "burst_node_lost"
+	// EventBurstAckStuck fires when a node's close of a burst round stays
+	// unacked past its window: the head is still waiting on the result.
+	EventBurstAckStuck EventType = "burst_ack_stuck"
 )
 
 // Event is one state transition or action, with enough context for a hook

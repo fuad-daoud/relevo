@@ -207,6 +207,11 @@ type Runtime struct {
 	// the next ordinary trigger exports the gate.
 	SyncNow func()
 
+	// NodeLive is the cached live view of a round running on a burst node,
+	// installed by the serve side; nil means no node cache is wired, so
+	// ServedLive reads the binding's own row.
+	NodeLive func(b store.Binding) *remote.LiveView
+
 	// InFlight counts the live rounds per candidate token across every binding
 	// the resolver knows, leaving out the binding named by its argument. Nil
 	// means a walk over Store.
