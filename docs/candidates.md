@@ -384,7 +384,9 @@ contract on its actor -- `relevo config set actors.morphic-reviewer.outputs '{"v
 -- and by ending its output with a fenced `relevo` block holding `verdict: pass`
 or `verdict: changes`, which relevo's round prompt already tells it to write;
 then `--reviewer-actor morphic-reviewer`. Outcomes are declared on actors, never
-on agents; `outcomes` or `role` on an agent is refused.
+on agents; `outcomes` or `role` on an agent is refused. Pin that member to one
+of the actor's candidates with `relevo chain --candidate reviewer=<token>`;
+the pin rules live with the [Chains](rounds.md#chains) section.
 
 - A new **reader** actor runs as a binding's actor too, as [Reader actors](readers.md#reader-actors) describes; a planner actor as [Planner actors](readers.md#planner-actors) describes. A new **writer** actor runs a round the same way. Every round of that binding runs it.
 

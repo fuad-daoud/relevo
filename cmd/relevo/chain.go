@@ -127,6 +127,9 @@ type ChainDoc struct {
 type ChainMemberDoc struct {
 	Name  string `json:"name"`
 	Actor string `json:"actor"`
+	// Candidate is the token the member's pin resolved to; empty when the
+	// member runs the policy pick, so a consumer reads absence as unpinned.
+	Candidate string `json:"candidate"`
 	// Placement names where the member runs: "local", or the server a remote
 	// member runs on.
 	Placement string `json:"placement"`
@@ -160,7 +163,7 @@ func cmdChain(args []string) error {
 		if *v.asJSON {
 			return printDoc(chainDocOf(res))
 		}
-		chainResumedText(res)
+		chainResumedText(rt, res)
 		return nil
 	}
 
@@ -412,6 +415,7 @@ func chainDocOf(res relevo.ChainResult) ChainDoc {
 		doc.Members = append(doc.Members, ChainMemberDoc{
 			Name:      m.Name,
 			Actor:     m.WriterRole(),
+			Candidate: m.BuilderCandidate,
 			Placement: chainMemberPlacement(m),
 		})
 	}
@@ -446,10 +450,7 @@ func chainStartedText(rt relevo.Runtime, res relevo.ChainResult) {
 		res.Chain.Name, res.Plans, res.Chain.Status)
 	builderPlacement := ""
 	for _, m := range res.Members {
-		actor := m.WriterRole()
-		if m.BuilderCandidate != "" {
-			actor = fmt.Sprintf("%s (%s)", actor, candidateLabel(rt, m.BuilderCandidate))
-		}
+		actor := chainMemberActor(rt, m)
 		placement := chainMemberPlacement(m)
 		if m.Name == res.Chain.Builder {
 			builderPlacement = placement
@@ -475,13 +476,24 @@ func chainCheckText(check string) string {
 	return check
 }
 
+// chainMemberActor is the member row's actor: the writer role, with the pinned
+// candidate's label when the member runs a pin, exactly as the start text
+// prints it, so the resume text cannot drift from it.
+func chainMemberActor(rt relevo.Runtime, m store.Binding) string {
+	actor := m.WriterRole()
+	if m.BuilderCandidate != "" {
+		actor = fmt.Sprintf("%s (%s)", actor, candidateLabel(rt, m.BuilderCandidate))
+	}
+	return actor
+}
+
 // chainResumedText is what a resume prints for a human.
-func chainResumedText(res relevo.ChainResult) {
+func chainResumedText(rt relevo.Runtime, res relevo.ChainResult) {
 	c := res.Chain
 	fmt.Printf("resumed chain %s: status %s, step %s\n",
 		c.Name, c.Status, c.Step)
 	for _, m := range res.Members {
-		fmt.Printf("  %-8s %-16s %-8s %s\n", chainPartOf(c, m.Name), m.Name, chainMemberPlacement(m), m.WriterRole())
+		fmt.Printf("  %-8s %-16s %-8s %s\n", chainPartOf(c, m.Name), m.Name, chainMemberPlacement(m), chainMemberActor(rt, m))
 	}
 	fmt.Printf("  awaiting %s round %d\n", c.AwaitingMember, c.AwaitingRound)
 	fmt.Printf("  relevo wait --name %s\n", c.Name)
