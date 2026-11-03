@@ -405,6 +405,10 @@ func TestBurstSendAnswers(t *testing.T) {
 		if second.Problem != burst.ReportProblemUnreachable || !second.ProblemSince.Equal(first.ProblemSince) {
 			t.Errorf("Problem = %q since %v, want the first failure kept", second.Problem, second.ProblemSince)
 		}
+		b := loadBurstBinding(t, env.runtime(t), "api")
+		if _, ok, err := env.srv.cfg.Git.RefSHA(context.Background(), b.Serve.BareRepo, "refs/relevo/nb-api/out"); err != nil || ok {
+			t.Errorf("forward ref present (ok=%v err=%v), want the failed send to restore the staged ref", ok, err)
+		}
 	})
 
 	t.Run("create failure stays sending", func(t *testing.T) {
@@ -435,6 +439,10 @@ func TestBurstSendAnswers(t *testing.T) {
 		requireStillSending(t, env, "api")
 		if got := env.srv.copyBurstTable().Nodes[0].Problem; got != burst.ReportProblemUnreachable {
 			t.Errorf("Problem = %q, want unreachable", got)
+		}
+		b := loadBurstBinding(t, env.runtime(t), "api")
+		if _, ok, err := env.srv.cfg.Git.RefSHA(context.Background(), b.Serve.BareRepo, "refs/relevo/nb-api/out"); err != nil || ok {
+			t.Errorf("forward ref present (ok=%v err=%v), want the unreachable send to restore the staged ref", ok, err)
 		}
 	})
 
@@ -470,6 +478,10 @@ func TestBurstSendAnswers(t *testing.T) {
 		requireStillSending(t, env, "api")
 		if got := env.srv.copyBurstTable().Nodes[0].Problem; got != "" {
 			t.Errorf("Problem = %q, want no mark for a redirect", got)
+		}
+		b := loadBurstBinding(t, env.runtime(t), "api")
+		if _, ok, err := env.srv.cfg.Git.RefSHA(context.Background(), b.Serve.BareRepo, "refs/relevo/nb-api/out"); err != nil || ok {
+			t.Errorf("forward ref present (ok=%v err=%v), want the redirected send to restore the staged ref", ok, err)
 		}
 	})
 
@@ -734,6 +746,9 @@ func TestBurstSendSuperseded(t *testing.T) {
 	}
 	if tab := env.srv.copyBurstTable().Nodes[0]; tab.ForwardedAt != nil {
 		t.Errorf("ForwardedAt = %v, want no mark for a superseded claim", tab.ForwardedAt)
+	}
+	if _, ok, err := env.srv.cfg.Git.RefSHA(context.Background(), back.Serve.BareRepo, "refs/relevo/nb-api/out"); err != nil || ok {
+		t.Errorf("forward ref present (ok=%v err=%v), want the superseded send to restore the staged ref", ok, err)
 	}
 }
 
