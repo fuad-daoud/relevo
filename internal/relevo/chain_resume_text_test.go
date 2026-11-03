@@ -95,4 +95,20 @@ func TestResumeAwaitingTextNamesTheCheckAndManualRound(t *testing.T) {
 	if got := ResumeAwaitingText(bare, 0); got != "awaiting builder round 5" {
 		t.Errorf("ResumeAwaitingText stateless = %q, want the columns line", got)
 	}
+
+	// A memberless await on a step without a check keeps the columns line:
+	// build runs the builder with no check step to name.
+	buildState := st
+	buildState.Awaiting = workflow.Awaiting{Step: "build"}
+	buildRow := res.Chain
+	buildRow.AwaitingMember = chain.MemberBuilder
+	buildRow.AwaitingRound = 0
+	buildStateJSON, err := json.Marshal(buildState)
+	if err != nil {
+		t.Fatalf("encode the build-await state: %v", err)
+	}
+	buildRow.StateJSON = buildStateJSON
+	if got := ResumeAwaitingText(buildRow, 2); got != "awaiting builder round 0" {
+		t.Errorf("ResumeAwaitingText build-await = %q, want the columns line", got)
+	}
 }
