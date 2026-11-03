@@ -337,6 +337,24 @@ func TestNoAccountNoteNamesTheNewestSnapshot(t *testing.T) {
 		t.Errorf("note %q names a row that is not the newest", note)
 	}
 
+	future := noAccountNote(AccountSnapshot{
+		ReadAt: joinNow.Add(time.Hour),
+		Rows: map[string]synclog.TrafficRow{
+			"m2": {Month: "2026-09", Push: 1},
+		},
+	}, joinNow)
+	if !strings.Contains(future, "read 0s ago") {
+		t.Errorf("note %q lacks the clamped zero age", future)
+	}
+	if strings.Contains(future, "read -") {
+		t.Errorf("note %q carries a negative duration", future)
+	}
+	for _, want := range []string{"the account's traffic cannot be seen", "2026-09"} {
+		if !strings.Contains(future, want) {
+			t.Errorf("note %q lacks %q", future, want)
+		}
+	}
+
 	bare := noAccountNote(AccountSnapshot{}, joinNow)
 	if !strings.Contains(bare, "the account's traffic cannot be seen") {
 		t.Errorf("note %q states no plain no-visibility sentence", bare)
