@@ -208,6 +208,28 @@ func TestAddDetachedWorktreeTimeoutRemovesLockedRegistration(t *testing.T) {
 	}
 }
 
+// TestAddDetachedWorktreeExpiredCallerContextRemovesLockedRegistration is the
+// request-deadline case for the detached add: the caller's context expires
+// mid-checkout while the client's own budget is still open, and the deferred
+// clear must not inherit that expiry. The add creates no branch, so nothing
+// can be asserted about one.
+func TestAddDetachedWorktreeExpiredCallerContextRemovesLockedRegistration(t *testing.T) {
+	repoDir := slowCheckoutRepo(t)
+	client := NewClient("git", time.Minute, 0)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	wtDir := filepath.Join(resolvedTempDir(t), "wt-detached-expired")
+	err := client.AddDetachedWorktree(ctx, repoDir, wtDir, "HEAD")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("AddDetachedWorktree err = %v, want a deadline", err)
+	}
+	if list := runGit(t, repoDir, "worktree", "list", "--porcelain"); strings.Contains(list, wtDir) {
+		t.Fatalf("locked registration still listed after AddDetachedWorktree under an expired caller context:\n%s", list)
+	}
+}
+
 func TestCheckoutWorktreeTimeoutRemovesLockedRegistration(t *testing.T) {
 	ctx := context.Background()
 	repoDir := slowCheckoutRepo(t)
@@ -223,6 +245,32 @@ func TestCheckoutWorktreeTimeoutRemovesLockedRegistration(t *testing.T) {
 	}
 	// The checkout creates no branch, so the fix must not delete one either.
 	if exists, err := client.BranchExists(ctx, repoDir, "feature"); err != nil || !exists {
+		t.Fatalf("BranchExists(%q) = %v, %v, want true, nil", "feature", exists, err)
+	}
+}
+
+// TestCheckoutWorktreeExpiredCallerContextRemovesLockedRegistration is the
+// request-deadline case for the branch checkout: the caller's context expires
+// mid-checkout while the client's own budget is still open, and the deferred
+// clear must not inherit that expiry.
+func TestCheckoutWorktreeExpiredCallerContextRemovesLockedRegistration(t *testing.T) {
+	repoDir := slowCheckoutRepo(t)
+	runGit(t, repoDir, "branch", "feature")
+	client := NewClient("git", time.Minute, 0)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	wtDir := filepath.Join(resolvedTempDir(t), "wt-checkout-expired")
+	err := client.CheckoutWorktree(ctx, repoDir, wtDir, "feature")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("CheckoutWorktree err = %v, want a deadline", err)
+	}
+	if list := runGit(t, repoDir, "worktree", "list", "--porcelain"); strings.Contains(list, wtDir) {
+		t.Fatalf("locked registration still listed after CheckoutWorktree under an expired caller context:\n%s", list)
+	}
+	// The checkout creates no branch, so the fix must not delete one either.
+	if exists, err := client.BranchExists(context.Background(), repoDir, "feature"); err != nil || !exists {
 		t.Fatalf("BranchExists(%q) = %v, %v, want true, nil", "feature", exists, err)
 	}
 }
@@ -259,6 +307,50 @@ func TestRemoveWorktreeMissingButLockedPrunesRegistration(t *testing.T) {
 	}
 	if err := client.DeleteBranch(ctx, repoDir, branch); err != nil {
 		t.Fatalf("DeleteBranch after removing a missing but locked worktree = %v, want nil", err)
+	}
+}
+
+// TestRemoveWorktreeMissingButLockedExpiredCallerContextPrunesRegistration is
+// the request-deadline case for removing an already-gone worktree: the gone
+// path makes the call fast, so the caller's context is cancelled before it
+// rather than expiring during it, and the registration clear must not inherit
+// that cancellation.
+func TestRemoveWorktreeMissingButLockedExpiredCallerContextPrunesRegistration(t *testing.T) {
+	ctx := context.Background()
+	repoDir := slowCheckoutRepo(t)
+	client := NewClient("git", time.Minute, 0)
+
+	wtDir := filepath.Join(resolvedTempDir(t), "wt")
+	branch := "relevo/missing-locked-expired-ctx"
+	// A killer that does not clean up: raw worktree add dies mid-checkout and
+	// leaves a locked initializing entry, as a crashed helper would.
+	killCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	killCmd := exec.CommandContext(killCtx, "git", "worktree", "add", "-b", branch, wtDir, "HEAD")
+	killCmd.Dir = repoDir
+	_ = killCmd.Run()
+	if !errors.Is(killCtx.Err(), context.DeadlineExceeded) {
+		t.Fatalf("setup kill did not time out: %v", killCtx.Err())
+	}
+	if list := runGit(t, repoDir, "worktree", "list", "--porcelain"); !strings.Contains(list, "locked") {
+		t.Fatalf("setup left no locked entry:\n%s", list)
+	}
+	if err := os.RemoveAll(wtDir); err != nil {
+		t.Fatal(err)
+	}
+
+	callerCtx, cancelCaller := context.WithCancel(ctx)
+	cancelCaller()
+	defer cancelCaller()
+
+	if err := client.RemoveWorktree(callerCtx, repoDir, wtDir, true); err != nil {
+		t.Fatalf("RemoveWorktree on a missing but locked path under an expired caller context = %v, want nil", err)
+	}
+	if list := runGit(t, repoDir, "worktree", "list", "--porcelain"); strings.Contains(list, wtDir) {
+		t.Fatalf("locked registration still listed after RemoveWorktree under an expired caller context:\n%s", list)
+	}
+	if err := client.DeleteBranch(context.Background(), repoDir, branch); err != nil {
+		t.Fatalf("DeleteBranch after removing a missing but locked worktree under an expired caller context = %v, want nil", err)
 	}
 }
 
