@@ -181,7 +181,25 @@ func flowTraceLine(e ChainTraceEvent) string {
 		b.WriteString(e.Step)
 	}
 	b.WriteString(" → " + flowTargetText(*e.FlowAction))
+	if e.Flow.Kind == workflow.EventNeedsYou {
+		if reason := manualTraceReason(e); reason != "" {
+			b.WriteString(" (" + reason + ")")
+		}
+	}
 	return b.String()
+}
+
+// manualTraceReason is the reviewed human round a resume's trace row names,
+// empty when the row is not such a review: other needs-you rows keep no
+// marker, so a re-send never reads as a manual review.
+func manualTraceReason(e ChainTraceEvent) string {
+	if strings.HasPrefix(e.Reason, "manual ") {
+		return e.Reason
+	}
+	if e.Flow != nil && strings.HasPrefix(e.Flow.Reason, "manual ") {
+		return e.Flow.Reason
+	}
+	return ""
 }
 
 // mergeTraceText is a fork's merge row: the children the merge integrated

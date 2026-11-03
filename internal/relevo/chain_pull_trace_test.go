@@ -1,12 +1,14 @@
 package relevo
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // traceStep is one server-side transition a pull copies onto the mirror.
@@ -220,5 +222,41 @@ func TestChainEventPutKeepsTheNamedSeq(t *testing.T) {
 	got := chainTrace(t, rt, "shop")
 	if len(got) != 1 || got[0].Seq != 4 {
 		t.Errorf("stored trace = %+v, want the single row at the server's seq 4", got)
+	}
+}
+
+// TestChainPullCarriesTheManualResumeRow pins the served half of the manual
+// marker: the server's resume row naming the reviewed human round arrives on
+// the mirror through the pull and renders there, so a served chain shows the
+// same manual line as a local one.
+func TestChainPullCarriesTheManualResumeRow(t *testing.T) {
+	t.Parallel()
+
+	ev := workflow.EncodeEvent(workflow.Event{Kind: workflow.EventNeedsYou, Step: "review"})
+	act := workflow.EncodeAction(workflow.Action{Kind: workflow.ActionSend, Step: "review", Actor: "reviewer"})
+	row := remote.ChainEventView{
+		Seq: 2, TS: serverStart.Add(2 * time.Minute),
+		Phase: "build", Step: "review", Member: "shop-rev", Round: 1, Plan: 1,
+		Event: ev, Action: act, Reason: "manual r2",
+	}
+	rt := chainPullRuntime(t, chainPullFake(chainPullTraceView(traceStep(1, "building", "shop", 1), row)))
+	seedServerChain(t, rt, "shop")
+
+	pullRounds(t, rt, "shop")
+
+	got := chainTrace(t, rt, "shop")
+	if len(got) != 2 {
+		t.Fatalf("mirror trace holds %d rows, want the server's 2: %+v", len(got), got)
+	}
+	if got[1].Reason != "manual r2" {
+		t.Errorf("mirror row reason = %q, want the server's manual r2", got[1].Reason)
+	}
+	mirror := chainStoredRow(t, rt, "shop")
+	doc, err := chainStoredTrace(rt, mirror)
+	if err != nil {
+		t.Fatalf("chainStoredTrace: %v", err)
+	}
+	if out := RenderTrace(doc); !strings.Contains(out, "manual r2") {
+		t.Errorf("RenderTrace = %q, want it to carry the pulled manual r2", out)
 	}
 }

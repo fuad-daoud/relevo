@@ -522,6 +522,67 @@ func assertResumeRowStep(t *testing.T, rt Runtime, want string) {
 	}
 }
 
+// TestChainResumeTraceNamesTheReviewedManualRound pins the manual marker: a
+// halted chain's resume reviewing a human-sent builder round leaves a trace
+// row naming that round, while a plain re-send leaves none, so a later read
+// tells the review from a re-run.
+func TestChainResumeTraceNamesTheReviewedManualRound(t *testing.T) {
+	t.Parallel()
+
+	t.Run("halted manual reviewed", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		haltedChain(t, rt)
+		if _, err := Send(context.Background(), rt, "shop", writePlan(t, "carry on"), SendOptions{}); err != nil {
+			t.Fatalf("Send after the halt: %v", err)
+		}
+		chainBuilderClose(t, rt, "shop", chainDoneBody())
+		manual := chainBinding(t, rt, "shop").Round - 1
+
+		if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+			t.Fatalf("ChainResume: %v", err)
+		}
+
+		want := fmt.Sprintf("manual r%d", manual)
+		events := chainTrace(t, rt, "shop")
+		last := events[len(events)-1]
+		if !strings.Contains(last.Reason, want) {
+			t.Errorf("resume row reason = %q, want it to name %q", last.Reason, want)
+		}
+		doc, err := ChainTrace(context.Background(), rt, "shop")
+		if err != nil {
+			t.Fatalf("ChainTrace: %v", err)
+		}
+		if out := RenderTrace(doc); !strings.Contains(out, want) {
+			t.Errorf("RenderTrace = %q, want it to name the reviewed %q", out, want)
+		}
+	})
+
+	t.Run("re-sent build has no manual", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		stoppedChain(t, rt, ChainOptions{})
+		if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+			t.Fatalf("ChainResume: %v", err)
+		}
+
+		events := chainTrace(t, rt, "shop")
+		last := events[len(events)-1]
+		if strings.Contains(last.Reason, "manual ") {
+			t.Errorf("resume row reason = %q, want no manual marker on a re-send", last.Reason)
+		}
+		doc, err := ChainTrace(context.Background(), rt, "shop")
+		if err != nil {
+			t.Fatalf("ChainTrace: %v", err)
+		}
+		if out := RenderTrace(doc); strings.Contains(out, "manual ") {
+			t.Errorf("RenderTrace = %q, want no manual marker on a re-send", out)
+		}
+	})
+}
+
 // TestChainResumeHaltsWhenTheSendFails pins the failed re-run: a member that
 // cannot start leaves the chain halted with the member's own reason, rather
 // than running and awaiting a round that never opened.
