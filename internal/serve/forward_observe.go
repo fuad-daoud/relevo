@@ -63,6 +63,17 @@ func (s *Server) observeForwards(ctx context.Context) int {
 			work = append(work, observeWork{ownerPath: ownerPath, id: id, name: b.Name, fwd: *fwd})
 		}
 	})
+	// A node that no longer holds a closed forward has no ack episode to
+	// carry: the forward left by ack, requeue or parking, and the count
+	// dies with it until a fresh forward starts failing again. An empty
+	// work set ends every episode.
+	holdingClosed := make(map[string]bool, len(work))
+	for _, w := range work {
+		if w.fwd.Phase == "closed" {
+			holdingClosed[w.fwd.Node] = true
+		}
+	}
+	s.burstHealth.forgetAckEpisodes(holdingClosed)
 	if len(work) == 0 {
 		return 0
 	}
@@ -501,12 +512,17 @@ func writeObserveFiles(rt relevo.Runtime, name string, round int, fetch *observe
 
 // ackObserveClosed acks the closed round without the lock. An ack failure
 // keeps Phase closed so the next cycle retries and the node keeps counting
-// unacked. True means the ack landed and the forward cleared.
+// unacked; it is also the node's ack episode, counted and flagged once when
+// a reachable node refuses three in a row. A failure never marks the node
+// unreachable and never requeues: the round is home, only its receipt is
+// missing. True means the ack landed and the forward cleared.
 func (s *Server) ackObserveClosed(ctx context.Context, cl *client.Client, w observeWork) bool {
 	if _, err := cl.Ack(ctx, w.fwd.Node, w.fwd.NodeBinding, w.fwd.Round); err != nil {
 		slog.Warn("burst: observe ack failed, keeping closed", "binding", w.name, "node", w.fwd.Node, "err", err)
+		s.noteAckStuck(ctx, w)
 		return false
 	}
+	s.burstHealth.clearAckFails(w.fwd.Node)
 	st := s.ownerStore(w.ownerPath)
 	cur, err := st.Load(w.name)
 	if err != nil {

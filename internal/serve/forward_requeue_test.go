@@ -340,7 +340,7 @@ func TestBurstNodeLostHookFiresOncePerLostNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := burstVerifyEnv(t, headKP, hookEvents)
+	env := burstVerifyEnv(t, headKP, hookEvents, nil)
 	env.srv.burstTable = &burst.NodeTable{Nodes: []burst.NodeRow{
 		burstEligibleRow("b1", 1),
 		{ID: "b8", Gone: true},
@@ -443,7 +443,7 @@ func burstLetterKey(t *testing.T) remote.Keypair {
 // client; only the classify half below runs without the network.
 func TestBurstAdoptSending(t *testing.T) {
 	headKP := burstLetterKey(t)
-	env := burstVerifyEnv(t, headKP, nil)
+	env := burstVerifyEnv(t, headKP, nil, nil)
 	nodeSrv, nodeTS, nodeFP := startBurstNode(t, &headKP)
 	env.srv.burstTable = &burst.NodeTable{Nodes: []burst.NodeRow{
 		burstRowFor("b1", nodeTS.URL, nodeFP),

@@ -1,14 +1,17 @@
 package serve
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -22,8 +25,10 @@ import (
 )
 
 // burstVerifyEnv is a head with bursting on and a real client key, so
-// WhoAmI and GetBinding to a test node sign and verify like production.
-func burstVerifyEnv(t *testing.T, kp remote.Keypair, hookEvents *countingHooks) *testEnv {
+// WhoAmI and GetBinding to a test node sign and verify like production. A
+// non-nil clock pins s.cfg.Now so a test can move time past the recheck
+// backoff.
+func burstVerifyEnv(t *testing.T, kp remote.Keypair, hookEvents *countingHooks, clock *time.Time) *testEnv {
 	t.Helper()
 	pem, err := remote.MarshalPrivate(kp)
 	if err != nil {
@@ -35,6 +40,9 @@ func burstVerifyEnv(t *testing.T, kp remote.Keypair, hookEvents *countingHooks) 
 		cfg.Provider = &recordingBurstProvider{}
 		if hookEvents != nil {
 			cfg.Hooks = hookEvents
+		}
+		if clock != nil {
+			cfg.Now = func() time.Time { return *clock }
 		}
 	})
 }
@@ -117,16 +125,17 @@ func burstRowFor(id, url, fp string) burst.NodeRow {
 // TestBurstVerifyFingerprint pins the impersonator path: a node presenting
 // a certificate the pin does not name stays unverified, carries
 // Problem=fingerprint, and dispatches one burst_security hook -- still one
-// after a second cycle, since a standing mismatch is not a new event. A
-// draining row is not dialed at all: it can take no forward, so checking it
-// would only cry wolf on a node being torn down.
+// after a re-dial past the backoff window, since a standing mismatch is not
+// a new event. A draining row is not dialed at all: it can take no forward,
+// so checking it would only cry wolf on a node being torn down.
 func TestBurstVerifyFingerprint(t *testing.T) {
+	clock := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
 	headKP, err := remote.Generate()
 	if err != nil {
 		t.Fatal(err)
 	}
 	hookEvents := &countingHooks{}
-	env := burstVerifyEnv(t, headKP, hookEvents)
+	env := burstVerifyEnv(t, headKP, hookEvents, &clock)
 	_, nodeTS, _ := startBurstNode(t, nil)
 	env.srv.burstTable = &burst.NodeTable{Nodes: []burst.NodeRow{
 		burstRowFor("b1", nodeTS.URL, burstTestFingerprint),
@@ -150,9 +159,12 @@ func TestBurstVerifyFingerprint(t *testing.T) {
 		t.Errorf("draining b9 = verified %v problem %q, want untouched", rows[1].Verified, rows[1].Problem)
 	}
 
+	// Past the backoff the row is re-dialled; the standing mismatch must
+	// still not re-fire the hook.
+	clock = clock.Add(verifyRecheckAfter + time.Second)
 	env.srv.verifyNodes(context.Background())
 	if got := hookEvents.count(hooks.EventBurstSecurity); got != 1 {
-		t.Errorf("burst_security dispatches after a second cycle = %d, want still 1", got)
+		t.Errorf("burst_security dispatches after a re-dial = %d, want still 1", got)
 	}
 }
 
@@ -166,7 +178,7 @@ func TestBurstVerifyKeyNotEnrolled(t *testing.T) {
 		t.Fatal(err)
 	}
 	hookEvents := &countingHooks{}
-	env := burstVerifyEnv(t, headKP, hookEvents)
+	env := burstVerifyEnv(t, headKP, hookEvents, nil)
 	_, nodeTS, nodeFP := startBurstNode(t, nil)
 	env.srv.burstTable = &burst.NodeTable{Nodes: []burst.NodeRow{
 		burstRowFor("b1", nodeTS.URL, nodeFP),
@@ -184,17 +196,18 @@ func TestBurstVerifyKeyNotEnrolled(t *testing.T) {
 }
 
 // TestBurstVerifyUnreachableRetried pins the dropped-exchange path: a node
-// answering 5xx stays unverified with Problem=unreachable, and the next
-// cycle dials it again -- one hit per pass, retried rather than stuck. The
-// 500 answers without the gateway wrapper so the client does not retry
-// inside the pass; the ErrUnreachable arm itself is pinned by the pure
-// classifier test.
+// answering 5xx stays unverified with Problem=unreachable, and once the
+// recheck backoff passes it is dialled again -- one hit per pass, retried
+// rather than stuck. The 500 answers without the gateway wrapper so the
+// client does not retry inside the pass; the ErrUnreachable arm itself is
+// pinned by the pure classifier test.
 func TestBurstVerifyUnreachableRetried(t *testing.T) {
+	clock := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
 	headKP, err := remote.Generate()
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := burstVerifyEnv(t, headKP, nil)
+	env := burstVerifyEnv(t, headKP, nil, &clock)
 	var hits atomic.Int64
 	nodeTS := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hits.Add(1)
@@ -215,6 +228,7 @@ func TestBurstVerifyUnreachableRetried(t *testing.T) {
 		t.Errorf("node hits after one pass = %d, want 1", got)
 	}
 
+	clock = clock.Add(verifyRecheckAfter + time.Second)
 	env.srv.verifyNodes(context.Background())
 	row = env.srv.copyBurstTable().Nodes[0]
 	if row.Verified || row.Problem != burst.ReportProblemUnreachable {
@@ -235,7 +249,7 @@ func TestBurstVerifySurvivesSameURLMerge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := burstVerifyEnv(t, headKP, nil)
+	env := burstVerifyEnv(t, headKP, nil, nil)
 	_, nodeTS, nodeFP := startBurstNode(t, &headKP)
 	row := burstRowFor("b1", nodeTS.URL, nodeFP)
 	env.srv.burstTable = &burst.NodeTable{Nodes: []burst.NodeRow{row}}
@@ -336,4 +350,70 @@ func TestBurstVerifyOffAndBadKey(t *testing.T) {
 			t.Errorf("b1 = verified %v problem %q, want untouched with an unparsable key", row.Verified, row.Problem)
 		}
 	})
+}
+
+// TestBurstVerifyStandingProblemRecheckBackoff pins the recheck pacing: a
+// node carrying a fingerprint problem is dialled once across two rapid
+// checks and re-dialled only after the backoff passes; a re-dial keeps the
+// problem's first-failure stamp, and the check failure logs once -- on the
+// transition, not every pass. The stub answers the pin-mismatch message as
+// an HTTP failure so every dial is counted at the handler, which a real TLS
+// pin mismatch would eat before the request line.
+func TestBurstVerifyStandingProblemRecheckBackoff(t *testing.T) {
+	clock := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	headKP, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	hookEvents := &countingHooks{}
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	env := burstVerifyEnv(t, headKP, hookEvents, &clock)
+	var hits atomic.Int64
+	url, fp := startStubNode(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		writeJSON(w, http.StatusInternalServerError, remote.ErrorBody{
+			Code: remote.Code("internal"), Message: client.ErrCertChanged.Error(),
+		})
+	}))
+	env.srv.burstTable = &burst.NodeTable{Nodes: []burst.NodeRow{
+		burstRowFor("b1", url, fp),
+	}}
+
+	env.srv.verifyNodes(context.Background())
+	first := env.srv.copyBurstTable().Nodes[0]
+	if first.Problem != burst.ReportProblemFingerprint || !first.ProblemSince.Equal(clock) {
+		t.Fatalf("b1 = problem %q since %v, want fingerprint stamped at %v", first.Problem, first.ProblemSince, clock)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Errorf("node hits after the first check = %d, want 1", got)
+	}
+
+	// A rapid second check inside the window leaves the standing problem
+	// alone: no dial, no log, no hook.
+	clock = clock.Add(30 * time.Second)
+	env.srv.verifyNodes(context.Background())
+	if got := hits.Load(); got != 1 {
+		t.Errorf("node hits inside the backoff = %d, want the standing problem not re-dialled", got)
+	}
+
+	// Past the window the node is re-dialled, but the standing problem
+	// keeps its first-failure stamp and says nothing new.
+	clock = clock.Add(31 * time.Second)
+	env.srv.verifyNodes(context.Background())
+	if got := hits.Load(); got != 2 {
+		t.Errorf("node hits past the backoff = %d, want 2: the problem is re-checked, not stuck", got)
+	}
+	row := env.srv.copyBurstTable().Nodes[0]
+	if !row.ProblemSince.Equal(first.ProblemSince) {
+		t.Errorf("ProblemSince = %v, want the first failure %v kept", row.ProblemSince, first.ProblemSince)
+	}
+	if got := strings.Count(logs.String(), "node check failed"); got != 1 {
+		t.Errorf("check-failure log lines = %d, want 1: only the transition logs", got)
+	}
+	if got := hookEvents.count(hooks.EventBurstSecurity); got != 1 {
+		t.Errorf("burst_security dispatches = %d, want 1: a standing mismatch fires once", got)
+	}
 }

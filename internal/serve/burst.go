@@ -26,21 +26,24 @@ func (s *Server) burstOn() bool {
 	return s.burstProvider != nil && len(s.cfg.ClientKey) > 0
 }
 
-// burstTick requeues what dead nodes lost, checks new nodes, places waiting
-// rounds onto live nodes as sending forwards, sends and observes those, and
-// reports the load. Callers hold admitMu; the provider and node calls keep
-// it while dropping s.mu, so a hung peer stalls the tick up to its own
-// timeout after local admit already ran.
+// burstTick requeues what dead nodes lost, places waiting rounds onto live
+// nodes as sending forwards, sends and observes those, checks new nodes, and
+// reports the load. The order is the pipeline: a round the requeue just
+// freed can be placed this tick, what placement just claimed is sent and
+// observed this tick, and a node the verify pass just marked is reported to
+// the provider on this same answer. Callers hold admitMu; the provider and
+// node calls keep it while dropping s.mu, so a hung peer stalls the tick up
+// to its own timeout after local admit already ran.
 func (s *Server) burstTick(ctx context.Context) {
 	if !s.burstOn() {
 		return
 	}
 	now := s.cfg.Now().UTC()
 	s.requeueLost(ctx, now)
-	s.verifyNodes(ctx)
 	placed := s.placeForwards(now)
 	confirmed := s.sendForwards(ctx, now)
 	closed := s.observeForwards(ctx)
+	s.verifyNodes(ctx)
 	s.reportCycle(now, placed+confirmed, closed)
 }
 

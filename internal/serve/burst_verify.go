@@ -14,13 +14,23 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 )
 
+// verifyRecheckAfter bounds how often a node with a standing problem is
+// re-dialled: moving a failing node from every-2-second checks to one a
+// minute cuts the dials and the check-failure lines thirtyfold, and the up
+// to one minute of staleness is small against the ten-minute
+// node_lost_after. It stays shorter than burst.HeartbeatInterval so loss
+// detection keeps answering within a heartbeat.
+const verifyRecheckAfter = time.Minute
+
 // verifyOutcome is one WhoAmI answer: a clean check verifies the row, a
 // failed one names the head-side problem, and an unmapped failure names
-// none, leaving the row for the next cycle.
+// none, leaving the row for the next cycle. err is the raw failure, kept so
+// a standing problem logs once rather than every cycle.
 type verifyOutcome struct {
 	row      burst.NodeRow
 	verified bool
 	problem  string
+	err      error
 }
 
 // verifyNodes checks every unverified live node against its pinned
@@ -28,9 +38,13 @@ type verifyOutcome struct {
 // the pinned TLS connection, so the pin itself is the check: a mismatch
 // fails the handshake before any HTTP. Success marks the row verified; a
 // failure records the head-side problem for the next report and leaves the
-// row unverified, so the check runs again next cycle. Fetching runs without
-// s.mu; each result applies under it only while the row still carries the
-// checked URL and fingerprint.
+// row unverified, so the check runs again later -- a row carrying a standing
+// problem only once every verifyRecheckAfter, since a failing node that is
+// not being re-dialled stays failing and per-cycle re-dials add noise, not
+// information. The problem's stamp keeps naming the first failure: a
+// recheck never refreshes it. Fetching runs without s.mu; each result
+// applies under it only while the row still carries the checked URL and
+// fingerprint.
 func (s *Server) verifyNodes(ctx context.Context) {
 	if !s.burstOn() {
 		return
@@ -45,6 +59,9 @@ func (s *Server) verifyNodes(ctx context.Context) {
 		if r.Verified || r.Gone || r.State != "ready" {
 			continue
 		}
+		if r.Problem != "" && !s.burstHealth.recheckDue(r.ID, now, verifyRecheckAfter) {
+			continue
+		}
 		check = append(check, r)
 	}
 	if len(check) == 0 {
@@ -57,10 +74,10 @@ func (s *Server) verifyNodes(ctx context.Context) {
 	}
 	results := make([]verifyOutcome, 0, len(check))
 	for _, r := range check {
+		s.burstHealth.noteCheck(r.ID, now)
 		_, werr := cl.WhoAmI(ctx, r.ID)
 		if werr != nil {
-			slog.Warn("burst: node check failed", "node", r.ID, "err", werr)
-			results = append(results, verifyOutcome{row: r, problem: burstVerifyProblem(werr)})
+			results = append(results, verifyOutcome{row: r, problem: burstVerifyProblem(werr), err: werr})
 			continue
 		}
 		results = append(results, verifyOutcome{row: r, verified: true})
@@ -118,11 +135,13 @@ func burstVerifyProblem(err error) string {
 // applyVerifyResults folds one check pass into the table. A result lands
 // only while its row is still unverified at the checked URL and
 // fingerprint, so a report that merged mid-pass wins. A fingerprint problem
-// dispatches the security hook only on the transition into it: the check
-// runs every cycle while the row stays unverified, and a standing mismatch
-// re-reported each time is noise, not an event.
+// dispatches the security hook only on the transition into it, and a failed
+// check logs only on a transition too: the check keeps running while the
+// row stays unverified, and a standing problem re-reported each cycle is
+// noise, not an event.
 func (s *Server) applyVerifyResults(ctx context.Context, now time.Time, results []verifyOutcome) {
 	var events []hooks.Event
+	var failed []verifyOutcome
 	s.mu.Lock()
 	if s.burstTable == nil {
 		s.mu.Unlock()
@@ -151,11 +170,15 @@ func (s *Server) applyVerifyResults(ctx context.Context, now time.Time, results 
 			}
 			row.Problem = res.problem
 			row.ProblemSince = now
+			failed = append(failed, res)
 		}
 	}
 	cp := *s.burstTable
 	cp.Nodes = append([]burst.NodeRow(nil), s.burstTable.Nodes...)
 	s.mu.Unlock()
+	for _, res := range failed {
+		slog.Warn("burst: node check failed", "node", res.row.ID, "err", res.err)
+	}
 	for _, e := range events {
 		if s.cfg.Hooks != nil {
 			s.cfg.Hooks.Dispatch(ctx, e)

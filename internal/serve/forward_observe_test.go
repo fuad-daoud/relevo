@@ -1,7 +1,9 @@
 package serve
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -10,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/burst"
+	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -526,5 +529,109 @@ func TestBurstClosedForwardLeavesNextRoundAdmissible(t *testing.T) {
 	}
 	if have := burstStoredForward(admitted); have == nil || have.Phase != "closed" {
 		t.Errorf("forward = %+v, want the closed forward kept across the local admit", admitted.Burst)
+	}
+}
+
+// TestBurstAckStuckFiresOncePerEpisode pins the ack episode: three
+// consecutive refused acks on a reachable node fire one burst_ack_stuck,
+// a fourth failure fires nothing, every failure is logged, and the node
+// keeps the closed forward and keeps being reported unacked -- a refused
+// receipt never marks the node unreachable and never requeues. An ack that
+// lands ends the episode, and so does a forward that leaves while the
+// observe pass runs without it: either way a fresh streak of three fires
+// afresh.
+func TestBurstAckStuckFiresOncePerEpisode(t *testing.T) {
+	headKP, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pem, err := remote.MarshalPrivate(headKP)
+	if err != nil {
+		t.Fatalf("marshal head client key: %v", err)
+	}
+	hookEvents := &countingHooks{}
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	env := setupTestEnv(t, func(cfg *Config) {
+		cfg.Burst = burstTestPolicy()
+		cfg.ClientKey = pem
+		cfg.Provider = &recordingBurstProvider{}
+		cfg.MaxBuilders = 1
+		cfg.Hooks = hookEvents
+	})
+	clock := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	since := clock.Add(-time.Minute)
+	failURL, failFP := startStubNode(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusInternalServerError, remote.ErrorBody{Code: remote.Code("internal"), Message: "boom"})
+	}))
+	env.srv.burstTable = &burst.NodeTable{Nodes: []burst.NodeRow{stubRow(t, "b1", failURL, failFP)}}
+	saveLostForward(t, env, "fq", "b1", "closed", 1, since)
+	rt := env.runtime(t)
+	w := observeWork{ownerPath: headOwnerPath(t, env), name: "fq", fwd: *burstStoredForward(loadBurstBinding(t, rt, "fq"))}
+	failCl, err := env.srv.burstNodeClient([]burst.NodeRow{stubRow(t, "b1", failURL, failFP)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	for i := 0; i < 3; i++ {
+		if env.srv.ackObserveClosed(ctx, failCl, w) {
+			t.Fatalf("failing ack %d cleared the forward", i+1)
+		}
+	}
+	if got := hookEvents.count(hooks.EventBurstAckStuck); got != 1 {
+		t.Fatalf("burst_ack_stuck = %d, want exactly one after three failing cycles", got)
+	}
+	if got := strings.Count(logs.String(), "observe ack failed"); got != 3 {
+		t.Errorf("ack-failure log lines = %d, want each failure logged", got)
+	}
+	if kept := burstStoredForward(loadBurstBinding(t, rt, "fq")); kept == nil || kept.Phase != "closed" {
+		t.Fatalf("fq forward = %+v, want the closed claim kept through the failures", kept)
+	}
+	if got := env.srv.burstForwards(); len(got) != 1 || got[0].State != burst.ForwardUnacked || got[0].NodeID != "b1" {
+		t.Errorf("forwards = %+v, want one unacked on b1", got)
+	}
+	if row := env.srv.copyBurstTable().Nodes[0]; row.Problem != "" {
+		t.Errorf("row Problem = %q, want an ack failure never marking the node unreachable", row.Problem)
+	}
+
+	if env.srv.ackObserveClosed(ctx, failCl, w) {
+		t.Fatal("fourth failing ack cleared the forward")
+	}
+	if got := hookEvents.count(hooks.EventBurstAckStuck); got != 1 {
+		t.Errorf("burst_ack_stuck after a fourth failure = %d, want still 1: once per episode", got)
+	}
+
+	okURL, okFP := startStubNode(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, stubRoundView("deadbeef-fq", 1, remote.RoundClosed))
+	}))
+	okCl, err := env.srv.burstNodeClient([]burst.NodeRow{stubRow(t, "b1", okURL, okFP)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !env.srv.ackObserveClosed(ctx, okCl, w) {
+		t.Fatal("successful ack did not clear the forward")
+	}
+	if burstStoredForward(loadBurstBinding(t, rt, "fq")) != nil {
+		t.Fatal("fq forward survives the successful ack, want it cleared")
+	}
+	for i := 0; i < 3; i++ {
+		env.srv.ackObserveClosed(ctx, failCl, w)
+	}
+	if got := hookEvents.count(hooks.EventBurstAckStuck); got != 2 {
+		t.Fatalf("burst_ack_stuck in a second episode = %d, want 2: the success reset the count", got)
+	}
+
+	// The forward left without another ack ever landing: the observe pass
+	// sees no closed forward on b1 and forgets the standing count, so a
+	// third streak fires as a new episode.
+	env.srv.observeForwards(ctx)
+	for i := 0; i < 3; i++ {
+		env.srv.ackObserveClosed(ctx, failCl, w)
+	}
+	if got := hookEvents.count(hooks.EventBurstAckStuck); got != 3 {
+		t.Errorf("burst_ack_stuck after the forward left = %d, want 3: leaving ends the episode too", got)
 	}
 }

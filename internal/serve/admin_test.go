@@ -1043,7 +1043,7 @@ func TestServeStatusJSONBurstBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := burstVerifyEnv(t, headKP, nil)
+	env := burstVerifyEnv(t, headKP, nil, nil)
 	since := now.Add(-time.Hour)
 	row := burstRowFor("b1", "https://b1.example", burstTestFingerprint)
 	row.Verified = true

@@ -173,7 +173,8 @@ type Server struct {
 	// burstTable is the node table loaded from the machine database at
 	// startup; nil when bursting is off. Its rows keep the provider's
 	// response order, which placement's tie-break reads.
-	burstTable *burst.NodeTable
+	burstTable  *burst.NodeTable
+	burstHealth *burstHealth
 	// tickFn, when non-nil, replaces Tick in Run.
 	tickFn func(context.Context) error
 }
@@ -283,6 +284,7 @@ func New(cfg Config) (*Server, error) {
 		burstProvider: burstProvider,
 		burstOffErr:   burstOffErr,
 		burstTable:    burstTable,
+		burstHealth:   newBurstHealth(),
 	}, nil
 }
 

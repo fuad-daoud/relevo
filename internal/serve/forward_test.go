@@ -1126,7 +1126,8 @@ func TestBurstSendOffAndKey(t *testing.T) {
 
 // TestBurstTickSendsAndReportsConfirmed pins the tick wiring: a forward the
 // node refused with a server failure stays sending, and once the node
-// answers the tick confirms it and reports forwarded with nothing placed.
+// answers the tick verifies the moved row, then the next tick confirms the
+// forward and reports forwarded with nothing placed.
 func TestBurstTickSendsAndReportsConfirmed(t *testing.T) {
 	headKP, err := remote.Generate()
 	if err != nil {
@@ -1170,6 +1171,14 @@ func TestBurstTickSendsAndReportsConfirmed(t *testing.T) {
 	back := &env.srv.burstTable.Nodes[0]
 	back.URL, back.Fingerprint, back.Verified = nodeTS.URL, nodeFP, false
 	env.srv.mu.Unlock()
+	env.srv.burstTick(context.Background())
+	// The verify pass runs after the send: the tick that re-verifies the
+	// moved row confirms nothing yet, and nothing is owed a report.
+	requireStillSending(t, env, "api")
+	if got := fake.calls(); got != 1 {
+		t.Fatalf("provider calls = %d, want the verifying tick to owe no report", got)
+	}
+
 	env.srv.burstTick(context.Background())
 
 	requireConfirmedRunning(t, env)
