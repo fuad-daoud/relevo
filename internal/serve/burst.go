@@ -62,6 +62,7 @@ func (s *Server) placeForwards(now time.Time) int {
 		return 0
 	}
 	waiting, index := s.burstWaiting(c)
+	waiting = s.withoutHeldRefusals(waiting, now)
 	counts := map[string]int{}
 	queued := map[string]int{}
 	for _, f := range s.burstForwards() {

@@ -132,9 +132,7 @@ func (s *Server) sendOne(ctx context.Context, cl *client.Client, row burst.NodeR
 		return false
 	}
 	if burstForwardRefused(serr) {
-		slog.Warn("burst: node refused a forward, requeued", "owner", string(w.id),
-			"binding", w.b.Name, "node", fwd.Node, "err", serr)
-		s.requeueOne(w.id, w.ownerPath, w.b.Name, fwd, now)
+		s.refuseForward(w, fwd, now, "burst: node refused a forward, requeued", serr)
 		restoreForwardStage(ctx, rt, stage)
 		return false
 	}
@@ -282,9 +280,7 @@ func (s *Server) ensureNodeBinding(ctx context.Context, cl *client.Client, row b
 	}
 	if !burstHTTPStatus(gerr, http.StatusNotFound) {
 		if burstForwardRefused(gerr) {
-			slog.Warn("burst: node refused a forward binding, requeued", "owner", string(w.id),
-				"binding", w.b.Name, "node", fwd.Node, "err", gerr)
-			s.requeueOne(w.id, w.ownerPath, w.b.Name, fwd, now)
+			s.refuseForward(w, fwd, now, "burst: node refused a forward binding, requeued", gerr)
 			return false
 		}
 		if burstForwardUnreachable(gerr) {
@@ -304,9 +300,7 @@ func (s *Server) ensureNodeBinding(ctx context.Context, cl *client.Client, row b
 		return true
 	}
 	if burstForwardRefused(cerr) {
-		slog.Warn("burst: node refused a forward binding, requeued", "owner", string(w.id),
-			"binding", w.b.Name, "node", fwd.Node, "err", cerr)
-		s.requeueOne(w.id, w.ownerPath, w.b.Name, fwd, now)
+		s.refuseForward(w, fwd, now, "burst: node refused a forward binding, requeued", cerr)
 		return false
 	}
 	if burstForwardUnreachable(cerr) {
@@ -432,4 +426,29 @@ func (s *Server) noteForwardSent(row burst.NodeRow, now time.Time) {
 	s.updateBurstRow(row, func(r *burst.NodeRow) {
 		r.ForwardedAt = &at
 	})
+}
+
+// refuseForward returns a round a node refused to the queue and holds it out
+// of placement for a while, so the next tick does not claim it for the same
+// refusal again.
+func (s *Server) refuseForward(w sendWork, fwd store.Forward, now time.Time, msg string, err error) {
+	slog.Warn(msg, "owner", string(w.id), "binding", w.b.Name, "node", fwd.Node, "err", err)
+	since := fwd.QueuedSince
+	if since.IsZero() {
+		since = now
+	}
+	s.burstHealth.noteRefused(burstRefusalKey(string(w.id)+"/"+w.b.Name, since), now)
+	s.requeueOne(w.id, w.ownerPath, w.b.Name, fwd, now)
+}
+
+// withoutHeldRefusals drops from placement every waiting round a node
+// refused inside the hold.
+func (s *Server) withoutHeldRefusals(waiting []burst.ReportWaiting, now time.Time) []burst.ReportWaiting {
+	out := waiting[:0:0]
+	for _, w := range waiting {
+		if !s.burstHealth.refusalHeld(burstRefusalKey(w.ID, w.Since), now) {
+			out = append(out, w)
+		}
+	}
+	return out
 }

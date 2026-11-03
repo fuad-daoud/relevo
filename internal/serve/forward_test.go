@@ -1193,3 +1193,58 @@ func TestBurstTickSendsAndReportsConfirmed(t *testing.T) {
 		t.Errorf("reason = %q, want forwarded for the confirmed round", got)
 	}
 }
+
+// TestBurstRefusedRoundHeldFromPlacement pins the refusal hold: a round a
+// node refused is not claimed again on the next tick, where the same node
+// would refuse it the same way, and is placeable again once the hold ends.
+func TestBurstRefusedRoundHeldFromPlacement(t *testing.T) {
+	clock := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	script := &nodeScript{
+		getStatus: http.StatusNotFound, getCode: remote.CodeNotFound, getMsg: "not found",
+		createStatus: http.StatusUnprocessableEntity, createCode: remote.CodeInvalid, createMsg: "no candidate serves actor",
+	}
+	env, _, fwd := answerSetup(t, script, clock)
+	if got := env.srv.sendForwards(context.Background(), clock); got != 0 {
+		t.Fatalf("confirmed = %d, want 0", got)
+	}
+	requireRequeued(t, env, fwd)
+
+	if got := env.srv.placeForwards(clock.Add(time.Second)); got != 0 {
+		t.Fatalf("placed inside the hold = %d, want 0", got)
+	}
+	if f := burstStoredForward(loadBurstBinding(t, env.runtime(t), "api")); f != nil {
+		t.Fatalf("api forward = %+v, want none inside the hold", f)
+	}
+	if got := env.srv.placeForwards(clock.Add(burstRefusalHold)); got != 1 {
+		t.Fatalf("placed after the hold = %d, want 1", got)
+	}
+}
+
+// TestBurstRefusalHoldKeys pins what the hold names: one round, kept across
+// its requeue by the queue stamp, so a later round of the same binding and a
+// different binding are both free, and an entry past the hold is forgotten
+// when the next refusal lands.
+func TestBurstRefusalHoldKeys(t *testing.T) {
+	at := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	h := newBurstHealth()
+	k := burstRefusalKey("owner/api", at)
+	h.noteRefused(k, at)
+	if !h.refusalHeld(k, at.Add(burstRefusalHold-time.Second)) {
+		t.Error("refused round not held inside the hold")
+	}
+	if h.refusalHeld(burstRefusalKey("owner/api", at.Add(time.Minute)), at) {
+		t.Error("a later round of the same binding is held")
+	}
+	if h.refusalHeld(burstRefusalKey("owner/web", at), at) {
+		t.Error("another binding is held")
+	}
+	h.noteRefused(burstRefusalKey("owner/web", at), at.Add(burstRefusalHold))
+	if _, kept := h.refused[k]; kept {
+		t.Error("an entry past the hold was kept")
+	}
+	var nilHealth *burstHealth
+	nilHealth.noteRefused(k, at)
+	if nilHealth.refusalHeld(k, at) {
+		t.Error("nil health holds a round")
+	}
+}

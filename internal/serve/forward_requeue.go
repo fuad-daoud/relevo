@@ -136,7 +136,7 @@ func (s *Server) requeueOne(id remote.ClientID, ownerPath, name string, fwd stor
 		slog.Warn("burst: requeue lost round: save failed", "owner", string(id), "binding", name, "err", err)
 		return false
 	}
-	slog.Info("burst: requeued a round its node lost", "owner", string(id), "binding", name, "node", fwd.Node)
+	slog.Info("burst: requeued a forwarded round", "owner", string(id), "binding", name, "node", fwd.Node)
 	return true
 }
 

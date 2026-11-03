@@ -9,20 +9,22 @@ import (
 )
 
 // burstHealth is the server's memory-only picture of node health: when the
-// verify pass last dialled each checked node, and how many acks in a row
-// each node has refused. Nothing is persisted: a restart re-dials once and
+// verify pass last dialled each checked node, how many acks in a row each
+// node has refused, and which waiting rounds a node refused lately. Nothing is persisted: a restart re-dials once and
 // can re-fire one stuck-ack hook, which is cheaper than storing marks no
 // reader needs across a process.
 type burstHealth struct {
 	mu        sync.Mutex
 	lastCheck map[string]time.Time
 	ackFails  map[string]int
+	refused   map[string]time.Time
 }
 
 func newBurstHealth() *burstHealth {
 	return &burstHealth{
 		lastCheck: map[string]time.Time{},
 		ackFails:  map[string]int{},
+		refused:   map[string]time.Time{},
 	}
 }
 
@@ -109,4 +111,45 @@ func (s *Server) noteAckStuck(ctx context.Context, w observeWork) {
 			Timestamp: s.cfg.Now().UTC(),
 		})
 	}
+}
+
+// burstRefusalHold is how long a round a node refused stays out of
+// placement. A refusal names the round, not the moment: the same node
+// answers the same way on the next tick, so without the hold the round
+// would bounce between claim and requeue every tick. It still runs locally
+// in the meantime.
+const burstRefusalHold = 5 * time.Minute
+
+// burstRefusalKey names one waiting round: its owner-scoped id and the queue
+// stamp it keeps across a requeue, so a later round of the same binding is
+// a new key.
+func burstRefusalKey(id string, queuedAt time.Time) string {
+	return id + "@" + queuedAt.UTC().Format(time.RFC3339Nano)
+}
+
+// noteRefused records that a node refused the round at now, and forgets
+// refusals older than the hold so the map stays as small as the queue.
+func (h *burstHealth) noteRefused(key string, now time.Time) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for k, at := range h.refused {
+		if now.Sub(at) >= burstRefusalHold {
+			delete(h.refused, k)
+		}
+	}
+	h.refused[key] = now
+}
+
+// refusalHeld says whether the round is still inside its hold at now.
+func (h *burstHealth) refusalHeld(key string, now time.Time) bool {
+	if h == nil {
+		return false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	at, ok := h.refused[key]
+	return ok && now.Sub(at) < burstRefusalHold
 }
