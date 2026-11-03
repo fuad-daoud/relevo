@@ -158,15 +158,41 @@ func TestChainFlagsCandidateParsesIntoOptions(t *testing.T) {
 	}
 }
 
-// TestChainFlagsCandidateRefusedOnResume pins that --candidate is a start-only
-// flag: a resume naming it is refused before any runtime is built, so a
-// resumed chain keeps the pins its start stored.
+// TestChainFlagsCandidateAcceptedOnResume pins the resume arm's mapping: each
+// --candidate part=value lands in ResumeOptions.Candidates keyed by part, so a
+// resume re-pins that member, and a resume without the flag keeps the pins its
+// start stored.
+func TestChainFlagsCandidateAcceptedOnResume(t *testing.T) {
+	opts, err := chainResumeOptionsFrom(t, "--resume", "--name", "shop",
+		"--candidate", "reviewer=claude/test/m")
+	if err != nil {
+		t.Fatalf("chainResumeOptions --candidate: %v", err)
+	}
+	if opts.Candidates["reviewer"] != "claude/test/m" {
+		t.Errorf("Candidates = %v, want the reviewer pin", opts.Candidates)
+	}
+
+	unnamed, err := chainResumeOptionsFrom(t, "--resume", "--name", "shop")
+	if err != nil {
+		t.Fatalf("chainResumeOptions without --candidate: %v", err)
+	}
+	if len(unnamed.Candidates) != 0 {
+		t.Errorf("Candidates = %v, want none so the resume keeps the stored pins", unnamed.Candidates)
+	}
+}
+
+// TestChainFlagsCandidateRefusedOnResume pins the resume arm's refusal: an
+// unknown part is refused before any runtime is built, naming the parts a pin
+// can take.
 func TestChainFlagsCandidateRefusedOnResume(t *testing.T) {
-	_, _, err := captureOutput(t, func() error {
-		return run([]string{"chain", "--resume", "--name", "shop", "--candidate", "builder=opencode/test/m"})
-	})
+	_, err := chainResumeOptionsFrom(t, "--resume", "--name", "shop", "--candidate", "writer=opencode/test/m")
+	if err == nil {
+		t.Fatal("chainResumeOptions(--candidate writer=...) = nil, want a usage refusal")
+	}
 	ce := requireCLIError(t, err, codeUsage, "")
-	if !strings.Contains(ce.message, "--candidate") {
-		t.Errorf("message = %q, want it to name --candidate", ce.message)
+	for _, want := range []string{`"writer"`, "builder", "reviewer", "planner", "security"} {
+		if !strings.Contains(ce.message, want) {
+			t.Errorf("message = %q, want it to name %q", ce.message, want)
+		}
 	}
 }

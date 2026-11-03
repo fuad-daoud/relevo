@@ -342,12 +342,6 @@ func chainResumeOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ResumeOpti
 	if *v.security && *v.noSecurity {
 		return relevo.ResumeOptions{}, fail(codeUsage, "--security and --no-security are exclusive")
 	}
-	// A resume keeps the pins its start stored, so --candidate is refused
-	// by name before any runtime is built: silently ignoring it would leave
-	// the caller believing it took effect while the stored pin stands.
-	if flagGiven(fs, "candidate") {
-		return relevo.ResumeOptions{}, fail(codeUsage, "relevo chain --resume does not take --candidate: a resume keeps the pins the chain started with")
-	}
 	// A start's own flags have nothing to act on in a resume, so each is
 	// refused by name before any runtime is built: silently ignoring one would
 	// leave the caller believing it took effect.
@@ -359,6 +353,10 @@ func chainResumeOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ResumeOpti
 	params, err := parseChainParams(v.params)
 	if err != nil {
 		return relevo.ResumeOptions{}, err
+	}
+	candidates, err := relevo.ParseChainCandidates([]string(*v.candidates))
+	if err != nil {
+		return relevo.ResumeOptions{}, fail(codeUsage, "%v", err)
 	}
 	maxCorrections, err := chainIntFlag(fs, "max-corrections", *v.maxCorrections)
 	if err != nil {
@@ -380,6 +378,7 @@ func chainResumeOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ResumeOpti
 		Regate:         regate,
 		From:           *v.from,
 		Params:         params,
+		Candidates:     candidates,
 	}
 	// --security/--no-security are exclusive (refused above), so an explicit
 	// value is whichever flag was given; neither leaves the stored setting.
