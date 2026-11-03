@@ -99,11 +99,14 @@ func (s *Server) sendForwards(ctx context.Context, now time.Time) int {
 // missing and the round starts with the head's own plan, candidate, tier
 // and tags. A started round and an already-started answer both confirm;
 // a refusal requeues, and anything else keeps the claim for the next tick.
+// A send that never confirms restores the staged forward ref, so the next
+// send stages fresh instead of wedging on this attempt's leftover.
 func (s *Server) sendOne(ctx context.Context, cl *client.Client, row burst.NodeRow, w sendWork, now time.Time) bool {
 	fwd := *w.b.Burst.Forward
 	rt := s.runtimeAt(w.ownerPath)
-	ship, ok := s.shipForward(ctx, rt, w.b, fwd, w.since)
+	ship, stage, ok := s.shipForward(ctx, rt, w.b, fwd, w.since)
 	if !ok {
+		restoreForwardStage(ctx, rt, stage)
 		return false
 	}
 	defer func() {
@@ -112,6 +115,7 @@ func (s *Server) sendOne(ctx context.Context, cl *client.Client, row burst.NodeR
 		}
 	}()
 	if !s.ensureNodeBinding(ctx, cl, row, w, ship, now) {
+		restoreForwardStage(ctx, rt, stage)
 		return false
 	}
 	var bundle io.Reader
@@ -121,12 +125,17 @@ func (s *Server) sendOne(ctx context.Context, cl *client.Client, row burst.NodeR
 	_, serr := cl.StartRound(ctx, row.ID, fwd.NodeBinding, fwd.Round, ship.plan,
 		bundle, ship.tier, w.b.BuilderCandidate, false, ship.tags, false, nil)
 	if serr == nil || burstHTTPStatus(serr, http.StatusConflict) {
-		return s.confirmSend(w, row, ship.outSHA, now)
+		if s.confirmSend(w, row, ship.outSHA, now) {
+			return true
+		}
+		restoreForwardStage(ctx, rt, stage)
+		return false
 	}
 	if burstForwardRefused(serr) {
 		slog.Warn("burst: node refused a forward, requeued", "owner", string(w.id),
 			"binding", w.b.Name, "node", fwd.Node, "err", serr)
 		s.requeueOne(w.id, w.ownerPath, w.b.Name, fwd, now)
+		restoreForwardStage(ctx, rt, stage)
 		return false
 	}
 	if burstForwardUnreachable(serr) {
@@ -135,6 +144,7 @@ func (s *Server) sendOne(ctx context.Context, cl *client.Client, row burst.NodeR
 		slog.Warn("burst: send forward failed, kept sending", "owner", string(w.id),
 			"binding", w.b.Name, "node", fwd.Node, "err", serr)
 	}
+	restoreForwardStage(ctx, rt, stage)
 	return false
 }
 
@@ -151,32 +161,66 @@ type forwardShip struct {
 	tags   []remote.TagRef
 }
 
+// forwardStage is one staged forward ref: what shipForward wrote so a send
+// that never confirms can put the ref back. The served cleanup drops only
+// refs/relevo/<name>/*, which a forward ref never matches, and the requeue
+// clears only the claim, so without the restore a staged ref would wedge
+// the next send's availability guard.
+type forwardStage struct {
+	bare     string
+	ref      string
+	prior    string
+	hadPrior bool
+	staged   string
+}
+
+// restoreForwardStage puts back the forward ref a send staged but never
+// confirmed. An absent ref deletes; a present one compare-and-swaps to the
+// prior value, so a concurrent stage that moved the ref keeps it: no
+// retry, no delete. A failed put-back only warns: the send's answer already
+// decided the round.
+func restoreForwardStage(ctx context.Context, rt relevo.Runtime, stage *forwardStage) {
+	if stage == nil {
+		return
+	}
+	if !stage.hadPrior {
+		if err := rt.Git.DeleteRef(ctx, stage.bare, stage.ref); err != nil {
+			slog.Warn("burst: staged forward ref not removed", "ref", stage.ref, "err", err)
+		}
+		return
+	}
+	if err := rt.Git.UpdateRef(ctx, stage.bare, stage.ref, stage.prior, stage.staged); err != nil {
+		slog.Warn("burst: staged forward ref not restored", "ref", stage.ref, "err", err)
+	}
+}
+
 // shipForward reads one forward's ship without touching the network. A
 // binding without repo facts, a missing plan or out ref, unreadable tags
 // or a failed snapshot keeps the forward sending for the next tick; an
 // unknown ship base falls back to the full bundle, the way the client's
-// own send does.
-func (s *Server) shipForward(ctx context.Context, rt relevo.Runtime, b store.Binding, fwd store.Forward, since string) (*forwardShip, bool) {
+// own send does. Every path that staged carries the stage, even when the
+// snapshot fails; paths that never staged carry none.
+func (s *Server) shipForward(ctx context.Context, rt relevo.Runtime, b store.Binding, fwd store.Forward, since string) (*forwardShip, *forwardStage, bool) {
 	if b.Serve == nil || b.Serve.BareRepo == "" || b.Serve.RepoID == "" {
 		slog.Warn("burst: send forward: binding has no repo facts", "binding", b.Name)
-		return nil, false
+		return nil, nil, false
 	}
 	plan, err := os.ReadFile(rt.Store.PromptPath(b.Name, fwd.Round))
 	if err != nil {
 		slog.Warn("burst: send forward: plan missing", "binding", b.Name, "round", fwd.Round, "err", err)
-		return nil, false
+		return nil, nil, false
 	}
 	bare, repoID := b.Serve.BareRepo, b.Serve.RepoID
 	tags, err := forwardTags(ctx, rt, bare)
 	if err != nil {
 		slog.Warn("burst: send forward: tags unreadable", "binding", b.Name, "err", err)
-		return nil, false
+		return nil, nil, false
 	}
 	outRef := "refs/relevo/" + b.Name + "/out"
 	outSHA, ok, err := rt.Git.RefSHA(ctx, bare, outRef)
 	if err != nil || !ok {
 		slog.Warn("burst: send forward: out ref missing", "binding", b.Name, "ref", outRef, "err", err)
-		return nil, false
+		return nil, nil, false
 	}
 	// The node absorbs the bundle only into its own out ref, so the head
 	// stages the same tree under the forward's ref before cutting the
@@ -189,15 +233,12 @@ func (s *Server) shipForward(ctx context.Context, rt relevo.Runtime, b store.Bin
 	cur, ok, err := rt.Git.RefSHA(ctx, bare, fwdRef)
 	if err != nil || (ok && cur != since && cur != outSHA) {
 		slog.Warn("burst: send forward: forward ref not available", "binding", b.Name, "ref", fwdRef, "err", err)
-		return nil, false
+		return nil, nil, false
 	}
-	old := ""
-	if ok {
-		old = cur
-	}
-	if err := rt.Git.UpdateRef(ctx, bare, fwdRef, outSHA, old); err != nil {
+	stage := &forwardStage{bare: bare, ref: fwdRef, prior: cur, hadPrior: ok, staged: outSHA}
+	if err := rt.Git.UpdateRef(ctx, bare, fwdRef, outSHA, cur); err != nil {
 		slog.Warn("burst: send forward: forward ref not staged", "binding", b.Name, "ref", fwdRef, "err", err)
-		return nil, false
+		return nil, nil, false
 	}
 	snap, err := rt.Transport.Snapshot(ctx, bare, []string{fwdRef}, since)
 	if errors.Is(err, remote.ErrSinceUnknown) {
@@ -205,12 +246,12 @@ func (s *Server) shipForward(ctx context.Context, rt relevo.Runtime, b store.Bin
 	}
 	if err != nil {
 		slog.Warn("burst: send forward: snapshot failed", "binding", b.Name, "err", err)
-		return nil, false
+		return nil, stage, false
 	}
 	return &forwardShip{
 		plan: plan, snap: snap, outSHA: outSHA, repoID: repoID,
 		tier: string(resolve.EffectiveTier(b)), tags: tags,
-	}, true
+	}, stage, true
 }
 
 // forwardTags lists the bare repo's tags for the ship, sorted by name the
@@ -240,6 +281,12 @@ func (s *Server) ensureNodeBinding(ctx context.Context, cl *client.Client, row b
 		return true
 	}
 	if !burstHTTPStatus(gerr, http.StatusNotFound) {
+		if burstForwardRefused(gerr) {
+			slog.Warn("burst: node refused a forward binding, requeued", "owner", string(w.id),
+				"binding", w.b.Name, "node", fwd.Node, "err", gerr)
+			s.requeueOne(w.id, w.ownerPath, w.b.Name, fwd, now)
+			return false
+		}
 		if burstForwardUnreachable(gerr) {
 			s.noteNodeUnreachable(now, row)
 		} else {

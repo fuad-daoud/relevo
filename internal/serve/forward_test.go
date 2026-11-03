@@ -438,17 +438,22 @@ func TestBurstSendAnswers(t *testing.T) {
 		}
 	})
 
-	t.Run("check failure stays sending without a problem", func(t *testing.T) {
+	t.Run("check refusal requeues", func(t *testing.T) {
 		script := &nodeScript{
 			getStatus: http.StatusUnauthorized, getCode: remote.CodeNotEnrolled, getMsg: "not enrolled",
 		}
-		env, _, _ := answerSetup(t, script, clock)
+		env, _, fwd := answerSetup(t, script, clock)
 		if got := env.srv.sendForwards(context.Background(), clock); got != 0 {
 			t.Fatalf("confirmed = %d, want 0", got)
 		}
-		requireStillSending(t, env, "api")
+		requireRequeued(t, env, fwd)
 		if got := env.srv.copyBurstTable().Nodes[0].Problem; got != "" {
-			t.Errorf("Problem = %q, want no mark for a refusal to check", got)
+			t.Errorf("Problem = %q, want no mark for a refused check", got)
+		}
+		rt := env.runtime(t)
+		b := loadBurstBinding(t, rt, "api")
+		if _, ok, err := env.srv.cfg.Git.RefSHA(context.Background(), b.Serve.BareRepo, "refs/relevo/nb-api/out"); err != nil || ok {
+			t.Errorf("forward ref present (ok=%v err=%v), want the refused check to restore the staged ref", ok, err)
 		}
 	})
 
@@ -482,6 +487,162 @@ func TestBurstSendAnswers(t *testing.T) {
 			t.Errorf("Problem = %q, want no mark for a redirect", got)
 		}
 	})
+}
+
+// TestBurstSendRefusalRestoresForwardRef pins the staged-ref restore: a
+// refused send removes the ref it staged, so a later send with new work
+// stages fresh instead of wedging on the leftover. Without the restore the
+// second send never dials: the guard rejects a ref that is neither the
+// ship base nor the out ref, and the round stays sending.
+func TestBurstSendRefusalRestoresForwardRef(t *testing.T) {
+	clock := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	script := &nodeScript{
+		getStatus: http.StatusOK, getView: stubRoundView("nb-api", 1, remote.RoundRunning),
+		startStatus: http.StatusUnprocessableEntity, startCode: remote.CodeInvalid, startMsg: "tier above max",
+	}
+	env, _, fwd := answerSetup(t, script, clock)
+	ctx := context.Background()
+	rt := env.runtime(t)
+	if got := env.srv.sendForwards(ctx, clock); got != 0 {
+		t.Fatalf("confirmed = %d, want 0", got)
+	}
+	requireRequeued(t, env, fwd)
+
+	b := loadBurstBinding(t, rt, "api")
+	fwdRef := "refs/relevo/nb-api/out"
+	if _, ok, err := env.srv.cfg.Git.RefSHA(ctx, b.Serve.BareRepo, fwdRef); err != nil || ok {
+		t.Errorf("forward ref present (ok=%v err=%v), want the refusal to remove the staged ref", ok, err)
+	}
+
+	outSHA, ok, err := env.srv.cfg.Git.RefSHA(ctx, b.Serve.BareRepo, "refs/relevo/api/out")
+	if err != nil || !ok {
+		t.Fatalf("out ref: %v, ok=%v", err, ok)
+	}
+	tree := strings.TrimSpace(runGit(t, b.Serve.BareRepo, "rev-parse", outSHA+"^{tree}"))
+	next, err := rt.Git.CommitTree(ctx, b.Serve.BareRepo, tree, outSHA, "round 2 work")
+	if err != nil {
+		t.Fatalf("CommitTree: %v", err)
+	}
+	if err := rt.Git.UpdateRef(ctx, b.Serve.BareRepo, "refs/relevo/api/out", next, outSHA); err != nil {
+		t.Fatalf("advance out ref: %v", err)
+	}
+	round2 := loadBurstBinding(t, rt, "api")
+	round2.Round = 2
+	if err := rt.Store.Save(round2); err != nil {
+		t.Fatalf("advance round: %v", err)
+	}
+	writeHeadPlan(t, env, "api", 2)
+	if got := env.srv.placeForwards(clock.Add(time.Minute)); got != 1 {
+		t.Fatalf("placed = %d, want 1", got)
+	}
+	// The re-place mints the deterministic owner-prefixed name again, so
+	// keep the fixed valid name: production reuses the same node binding
+	// across attempts, which is what wedges on a leftover staged ref.
+	replaced := loadBurstBinding(t, rt, "api")
+	replaced.Burst.Forward.NodeBinding = "nb-api"
+	if err := rt.Store.Save(replaced); err != nil {
+		t.Fatalf("rename node binding: %v", err)
+	}
+	script.getView = stubRoundView("nb-api", 2, remote.RoundRunning)
+	script.startStatus = http.StatusCreated
+	script.startView = stubRoundView("nb-api", 2, remote.RoundRunning)
+	before := script.hits.Load()
+	if got := env.srv.sendForwards(ctx, clock.Add(2*time.Minute)); got != 1 {
+		t.Fatalf("confirmed = %d, want 1", got)
+	}
+	if got := script.hits.Load(); got <= before {
+		t.Errorf("node hits = %d, want the re-placed round dialled", got)
+	}
+	requireConfirmedRunning(t, env)
+}
+
+// TestBurstSendRefusalRestoresPriorForwardRef pins the restore's present
+// arm: a forward ref that already pointed at the ship base comes back to
+// that value after a refusal, instead of keeping the staged out sha.
+func TestBurstSendRefusalRestoresPriorForwardRef(t *testing.T) {
+	clock := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	script := &nodeScript{
+		getStatus: http.StatusOK, getView: stubRoundView("nb-api", 1, remote.RoundRunning),
+		startStatus: http.StatusUnprocessableEntity, startCode: remote.CodeInvalid, startMsg: "tier above max",
+	}
+	env, _, fwd := answerSetup(t, script, clock)
+	ctx := context.Background()
+	rt := env.runtime(t)
+
+	b := loadBurstBinding(t, rt, "api")
+	outSHA, ok, err := env.srv.cfg.Git.RefSHA(ctx, b.Serve.BareRepo, "refs/relevo/api/out")
+	if err != nil || !ok {
+		t.Fatalf("out ref: %v, ok=%v", err, ok)
+	}
+	tree := strings.TrimSpace(runGit(t, b.Serve.BareRepo, "rev-parse", outSHA+"^{tree}"))
+	prior, err := rt.Git.CommitTree(ctx, b.Serve.BareRepo, tree, outSHA, "prior ship")
+	if err != nil {
+		t.Fatalf("CommitTree: %v", err)
+	}
+	fwdRef := "refs/relevo/nb-api/out"
+	if err := rt.Git.UpdateRef(ctx, b.Serve.BareRepo, fwdRef, prior, ""); err != nil {
+		t.Fatalf("seed forward ref: %v", err)
+	}
+	b.Burst.Shipped = map[string]string{"b1": prior}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("seed ship base: %v", err)
+	}
+
+	if got := env.srv.sendForwards(ctx, clock); got != 0 {
+		t.Fatalf("confirmed = %d, want 0", got)
+	}
+	requireRequeued(t, env, fwd)
+	if cur, ok, err := env.srv.cfg.Git.RefSHA(ctx, b.Serve.BareRepo, fwdRef); err != nil || !ok || cur != prior {
+		t.Errorf("forward ref = %q (ok=%v err=%v), want the prior %q back", cur, ok, err, prior)
+	}
+}
+
+// TestRestoreForwardStageConflict pins the restore's concurrent-writer arm:
+// a compare-and-swap that loses only warns, and the ref keeps the newer
+// stage instead of coming back to the prior value.
+func TestRestoreForwardStageConflict(t *testing.T) {
+	headKP, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := forwardEnv(t, headKP)
+	clock := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	queueForward(t, env, "api", stubRow(t, "b1", closedPortURL(t), burstTestFingerprint), clock)
+	ctx := context.Background()
+	rt := env.runtime(t)
+	b := loadBurstBinding(t, rt, "api")
+
+	outSHA, ok, rerr := env.srv.cfg.Git.RefSHA(ctx, b.Serve.BareRepo, "refs/relevo/api/out")
+	if rerr != nil || !ok {
+		t.Fatalf("out ref: %v, ok=%v", rerr, ok)
+	}
+	tree := strings.TrimSpace(runGit(t, b.Serve.BareRepo, "rev-parse", outSHA+"^{tree}"))
+	staged, err := rt.Git.CommitTree(ctx, b.Serve.BareRepo, tree, outSHA, "staged")
+	if err != nil {
+		t.Fatalf("CommitTree staged: %v", err)
+	}
+	moved, err := rt.Git.CommitTree(ctx, b.Serve.BareRepo, tree, staged, "concurrent stage")
+	if err != nil {
+		t.Fatalf("CommitTree concurrent: %v", err)
+	}
+	fwdRef := "refs/relevo/nb-api/out"
+	if err := rt.Git.UpdateRef(ctx, b.Serve.BareRepo, fwdRef, outSHA, ""); err != nil {
+		t.Fatalf("seed forward ref: %v", err)
+	}
+	stage := &forwardStage{bare: b.Serve.BareRepo, ref: fwdRef, prior: outSHA, hadPrior: true, staged: staged}
+	if err := rt.Git.UpdateRef(ctx, b.Serve.BareRepo, fwdRef, staged, outSHA); err != nil {
+		t.Fatalf("stage forward ref: %v", err)
+	}
+	if err := rt.Git.UpdateRef(ctx, b.Serve.BareRepo, fwdRef, moved, staged); err != nil {
+		t.Fatalf("concurrent stage: %v", err)
+	}
+
+	restoreForwardStage(ctx, rt, stage)
+	if cur, ok, err := env.srv.cfg.Git.RefSHA(ctx, b.Serve.BareRepo, fwdRef); err != nil || !ok || cur != moved {
+		t.Errorf("forward ref = %q (ok=%v err=%v), want the concurrent stage %q kept", cur, ok, err, moved)
+	}
+
+	restoreForwardStage(ctx, rt, nil)
 }
 
 // requireConfirmedRunning pins the confirm: the forward runs with the sent
