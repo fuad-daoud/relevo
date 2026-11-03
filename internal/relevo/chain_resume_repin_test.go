@@ -270,3 +270,53 @@ func TestChainResumePinOnServedChainRefuses(t *testing.T) {
 		t.Errorf("chain status = %q, want it still halted", row.Status)
 	}
 }
+
+// TestChainResumePinOnForkParentRefuses pins the fork-parent rule: a resume
+// carrying --candidate on a parent halted at its earned join is refused
+// before anything is written, naming the fork join and the unapplied pin,
+// while the member rows, the stored candidate and the halt stand untouched.
+// The pin is locally valid for the parent's merge, so only the fork-parent
+// guard can refuse it.
+func TestChainResumePinOnForkParentRefuses(t *testing.T) {
+	t.Parallel()
+
+	rt, fg := chainPinRuntime(t)
+	forkHaltedAtJoin(t, rt, fg)
+	rowsBefore, err := rt.Store.ChainMembers("shop")
+	if err != nil {
+		t.Fatalf("ChainMembers before: %v", err)
+	}
+	shopBefore := chainBinding(t, rt, "shop")
+
+	_, err = ChainResume(context.Background(), rt, ResumeOptions{
+		Name:       "shop",
+		Candidates: map[string]string{"builder": "claude/test/m"},
+	})
+	if err == nil {
+		t.Fatal("ChainResume(pin on a fork parent) = nil, want a refusal")
+	}
+	for _, want := range []string{"--candidate", "fork join", "not applied"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %q, want it to name %q", err.Error(), want)
+		}
+	}
+
+	rowsAfter, err := rt.Store.ChainMembers("shop")
+	if err != nil {
+		t.Fatalf("ChainMembers after: %v", err)
+	}
+	if !reflect.DeepEqual(rowsAfter, rowsBefore) {
+		t.Errorf("member rows = %+v, want untouched %+v", rowsAfter, rowsBefore)
+	}
+	after := chainBinding(t, rt, "shop")
+	if after.BuilderCandidate != shopBefore.BuilderCandidate || after.BuilderPinned != shopBefore.BuilderPinned {
+		t.Errorf("builder candidate = %q pinned %v, want the stored %q pinned %v",
+			after.BuilderCandidate, after.BuilderPinned, shopBefore.BuilderCandidate, shopBefore.BuilderPinned)
+	}
+	if after.BuilderPinned {
+		t.Error("builder BuilderPinned = true, want false: the pin was not applied")
+	}
+	if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusHalted) {
+		t.Errorf("chain status = %q, want it still halted", row.Status)
+	}
+}

@@ -83,6 +83,12 @@ func chainResumePreflight(ctx context.Context, rt Runtime, c db.ChainRow, opts R
 	if err := chainForkResumeRefusal(c, before); err != nil {
 		return fail(err)
 	}
+	// A parent's resume answers the earned join by running the merge, which
+	// discards re-pins, so a pin would be silently ignored. It is refused
+	// instead, before anything is written.
+	if len(opts.Candidates) > 0 && len(before.Awaiting.Children) > 0 {
+		return fail(refusal.New("chain %s is halted at the fork join %q: --candidate on a fork-parent resume is refused; the pin was not applied", c.Name, before.Awaiting.Step))
+	}
 	// The old flags fill the params exactly as a start's do, so a resume can
 	// replace the check or the budgets the chain runs under.
 	flagParams, err := chainResumeFlagParams(def, rt, opts)
@@ -209,7 +215,8 @@ func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, opts Resum
 
 // chainResumePrepareLocked loads the row and resolves the resumed engine
 // state, still inside the caller's lock. Nothing is written yet, so its
-// errors return plain.
+// errors return plain — except the fork-parent handled path, which answers
+// the earned join through chainForkResumeParent before returning handled=true.
 func chainResumePrepareLocked(ctx context.Context, rt Runtime, tx *store.Tx, opts ResumeOptions, def workflow.Definition, before workflow.State, from string, set chain.Settings, merged map[string]string) (chainResumePrepared, bool, ChainResult, error) {
 	fail := func(err error) (chainResumePrepared, bool, ChainResult, error) {
 		return chainResumePrepared{}, false, ChainResult{}, err
