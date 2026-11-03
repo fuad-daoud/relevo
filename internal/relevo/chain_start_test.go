@@ -841,3 +841,86 @@ func TestChainResolveActorsNamesRepoEntry(t *testing.T) {
 		t.Errorf("err = %q, want no repository entry named for another part's supply", err.Error())
 	}
 }
+
+// chainPinCandidatesJSON is three candidates on distinct tokens: opencode
+// serves builder only, claude serves builder and reviewer, and alt serves
+// reviewer only, so a pin and a cross-part pin each have a token to name.
+const chainPinCandidatesJSON = `[
+  {"harness":"opencode","provider":"test","model":"m","roles":["builder"]},
+  {"harness":"claude","provider":"test","model":"m","roles":["builder","reviewer"]},
+  {"harness":"claude","provider":"test","model":"alt","roles":["reviewer"]}
+]`
+
+// chainPinRuntime is a runtime whose builder row lists both builder tokens
+// and whose reviewer row lists claude, so a builder pin resolves and a
+// reviewer-only pin does not serve the builder.
+func chainPinRuntime(t *testing.T) (Runtime, *fakeGit) {
+	t.Helper()
+
+	rt, fg := chainRuntime(t)
+	rt.Candidates = candidateSet(t, chainPinCandidatesJSON)
+	rows := chainRows()
+	rows["builder"] = roles.Row{Candidates: []string{"opencode/test/m", "claude/test/m"}}
+	rows["reviewer"] = roles.Row{Candidates: []string{"claude/test/m"}}
+	rt.Registry = rolesFileRegistry(t, rt.Candidates, rt.Policy, rows)
+	return rt, fg
+}
+
+// TestChainStartPinsBuilderCandidate pins the pinned start: the builder
+// member stores the pin's token with BuilderPinned set, exactly as a bind
+// with --candidate does.
+func TestChainStartPinsBuilderCandidate(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainPinRuntime(t)
+	res := startedChain(t, rt, ChainOptions{Candidates: map[string]string{"builder": "opencode/test/m"}})
+
+	builder := memberByName(t, res.Members, "shop")
+	if builder.BuilderCandidate != "opencode/test/m" {
+		t.Errorf("builder candidate = %q, want the pinned opencode/test/m", builder.BuilderCandidate)
+	}
+	if !builder.BuilderPinned {
+		t.Error("builder BuilderPinned = false, want true for an explicit pin")
+	}
+}
+
+// TestChainStartUnpinnedMemberKeepsPolicyPick pins the unpinned side of a
+// pinned start: the reviewer keeps the policy pick with BuilderPinned
+// unset while the builder runs its pin.
+func TestChainStartUnpinnedMemberKeepsPolicyPick(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainPinRuntime(t)
+	res := startedChain(t, rt, ChainOptions{Candidates: map[string]string{"builder": "opencode/test/m"}})
+
+	reviewer := memberByName(t, res.Members, "shop-rev")
+	if reviewer.BuilderCandidate != "claude/test/m" {
+		t.Errorf("reviewer candidate = %q, want the policy pick claude/test/m", reviewer.BuilderCandidate)
+	}
+	if reviewer.BuilderPinned {
+		t.Error("reviewer BuilderPinned = true, want false without a pin")
+	}
+}
+
+// TestChainStartPinServingAnotherActorRefuses pins the bad pin: a builder
+// pin that serves only the reviewer refuses the start with bind's own
+// wording before anything is created.
+func TestChainStartPinServingAnotherActorRefuses(t *testing.T) {
+	t.Parallel()
+
+	rt, fg := chainPinRuntime(t)
+	_, err := ChainStart(context.Background(), rt, ChainOptions{
+		Name:         "shop",
+		Plans:        []string{writePlan(t, "build it")},
+		Feature:      "auth",
+		MasterMindID: testMasterMindName,
+		Candidates:   map[string]string{"builder": "claude/test/alt"},
+	})
+	if err == nil {
+		t.Fatal("ChainStart(cross-part pin) = nil, want a refusal")
+	}
+	if !strings.Contains(err.Error(), `does not serve actor "builder"`) {
+		t.Errorf("err = %q, want bind's does-not-serve-actor wording", err.Error())
+	}
+	assertNothingCreated(t, rt, fg, "shop")
+}

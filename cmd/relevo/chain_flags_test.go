@@ -121,3 +121,52 @@ func TestChainFlagsBuilderActorRefusedOnResume(t *testing.T) {
 		t.Errorf("message = %q, want it to name --builder-actor", ce.message)
 	}
 }
+
+// TestChainFlagsCandidateParsesIntoOptions pins the start arm's mapping: each
+// --candidate part=value lands in ChainOptions.Candidates keyed by part, and
+// a bad entry is a usage error before any runtime is built.
+func TestChainFlagsCandidateParsesIntoOptions(t *testing.T) {
+	opts, err := chainOptionsFrom(t, "--name", "shop", "--plan", chainPlanArg(t), "--no-feature",
+		"--candidate", "builder=opencode/test/m", "--candidate", "reviewer=claude/test/m")
+	if err != nil {
+		t.Fatalf("chainOptions --candidate: %v", err)
+	}
+	if opts.Candidates["builder"] != "opencode/test/m" || opts.Candidates["reviewer"] != "claude/test/m" {
+		t.Errorf("Candidates = %v, want builder and reviewer pins", opts.Candidates)
+	}
+
+	unnamed, err := chainOptionsFrom(t, "--name", "shop", "--plan", chainPlanArg(t), "--no-feature")
+	if err != nil {
+		t.Fatalf("chainOptions without --candidate: %v", err)
+	}
+	if len(unnamed.Candidates) != 0 {
+		t.Errorf("Candidates = %v, want none so every member takes the policy pick", unnamed.Candidates)
+	}
+
+	for _, args := range [][]string{
+		{"--candidate", "writer=opencode/test/m"},
+		{"--candidate", "builder=opencode/test/m", "--candidate", "builder=claude/test/m"},
+		{"--candidate", "builder="},
+	} {
+		full := append([]string{"--name", "shop", "--plan", chainPlanArg(t), "--no-feature"}, args...)
+		_, err := chainOptionsFrom(t, full...)
+		if err == nil {
+			t.Errorf("chainOptions(%v) = nil, want a usage refusal", args)
+			continue
+		}
+		_ = requireCLIError(t, err, codeUsage, "")
+	}
+}
+
+// TestChainFlagsCandidateRefusedOnResume pins that --candidate is a start-only
+// flag: a resume naming it is refused before any runtime is built, so a
+// resumed chain keeps the pins its start stored.
+func TestChainFlagsCandidateRefusedOnResume(t *testing.T) {
+	_, _, err := captureOutput(t, func() error {
+		return run([]string{"chain", "--resume", "--name", "shop", "--candidate", "builder=opencode/test/m"})
+	})
+	ce := requireCLIError(t, err, codeUsage, "")
+	if !strings.Contains(ce.message, "--candidate") {
+		t.Errorf("message = %q, want it to name --candidate", ce.message)
+	}
+}

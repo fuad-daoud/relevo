@@ -33,6 +33,17 @@ func (p *paramSlice) Set(val string) error {
 	return nil
 }
 
+// candidateSlice collects the repeatable --candidate part=value flag: one
+// pinned candidate per chain member part.
+type candidateSlice []string
+
+func (p *candidateSlice) String() string { return strings.Join(*p, ",") }
+
+func (p *candidateSlice) Set(val string) error {
+	*p = append(*p, val)
+	return nil
+}
+
 type chainFlagValues struct {
 	name           *string
 	plans          *planSlice
@@ -56,6 +67,7 @@ type chainFlagValues struct {
 	server         *string
 	workflow       *string
 	params         *paramSlice
+	candidates     *candidateSlice
 	task           *string
 	taskFile       *string
 	dryRun         *bool
@@ -90,6 +102,8 @@ func chainFlagSet(fs *flag.FlagSet) *chainFlagValues {
 	v.workflow = fs.String("workflow", "", "run this workflow: a saved or shipped name, or a YAML/JSON file")
 	v.params = &paramSlice{}
 	fs.Var(v.params, "param", "fill a workflow param as key=value; repeatable")
+	v.candidates = &candidateSlice{}
+	fs.Var(v.candidates, "candidate", "pin one chain member to a candidate as part=value (parts: builder, reviewer, planner, security); repeatable")
 	v.task = fs.String("task", "", "the chain's task input text")
 	v.taskFile = fs.String("task-file", "", "read the chain's task input from this file")
 	v.dryRun = fs.Bool("dry-run", false, "resolve and validate the workflow and print its graph; start nothing")
@@ -192,6 +206,10 @@ func chainStartOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ChainOption
 	if err != nil {
 		return relevo.ChainOptions{}, err
 	}
+	candidates, err := relevo.ParseChainCandidates([]string(*v.candidates))
+	if err != nil {
+		return relevo.ChainOptions{}, fail(codeUsage, "%v", err)
+	}
 	if *v.server != "" && (*v.workflow != "" || *v.task != "" || *v.taskFile != "" || *v.from != "") {
 		return relevo.ChainOptions{}, fail(codeUsage, "relevo chain --server does not take --workflow, --task or --from: the server's workflow feature is not available yet")
 	}
@@ -230,6 +248,7 @@ func chainStartOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ChainOption
 		Server:         *v.server,
 		Workflow:       *v.workflow,
 		Params:         params,
+		Candidates:     candidates,
 		Task:           task,
 		DryRun:         *v.dryRun,
 	}
@@ -322,6 +341,12 @@ func chainResumeOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ResumeOpti
 	}
 	if *v.security && *v.noSecurity {
 		return relevo.ResumeOptions{}, fail(codeUsage, "--security and --no-security are exclusive")
+	}
+	// A resume keeps the pins its start stored, so --candidate is refused
+	// by name before any runtime is built: silently ignoring it would leave
+	// the caller believing it took effect while the stored pin stands.
+	if flagGiven(fs, "candidate") {
+		return relevo.ResumeOptions{}, fail(codeUsage, "relevo chain --resume does not take --candidate: a resume keeps the pins the chain started with")
 	}
 	// A start's own flags have nothing to act on in a resume, so each is
 	// refused by name before any runtime is built: silently ignoring one would

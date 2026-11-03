@@ -152,7 +152,7 @@ func chainResolveWorkflowMembers(ctx context.Context, rt Runtime, opts ChainOpti
 	if err := chainFreeNames(rt, plan.members); err != nil {
 		return chainWFStart{}, err
 	}
-	if plan.resolutions, err = chainResolveActors(rt, plan.members, plan.repoActors); err != nil {
+	if plan.resolutions, err = chainResolveActors(rt, plan.members, plan.repoActors, opts.Candidates); err != nil {
 		return chainWFStart{}, err
 	}
 	return plan, nil
