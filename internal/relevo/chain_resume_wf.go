@@ -184,6 +184,10 @@ type chainResumePrepared struct {
 	acts      []workflow.Action
 	snap      *chainResumeSnapshot
 	toConfirm []pendingDelivery
+	// manualRound is the newer builder round a resume reviews, 0 when the
+	// resume re-runs the halted step instead: the trace names it so a later
+	// read tells a reviewed human round from a re-send.
+	manualRound int
 }
 
 func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, opts ResumeOptions, def workflow.Definition, before workflow.State, from string, set chain.Settings, merged map[string]string) (ChainResult, error) {
@@ -247,7 +251,11 @@ func chainResumePrepareLocked(ctx context.Context, rt Runtime, tx *store.Tx, opt
 	if err != nil {
 		return fail(refusal.New("%v", err))
 	}
-	return chainResumePrepared{row: row, resumed: resumed, acts: acts, snap: snap, toConfirm: toConfirm}, false, ChainResult{}, nil
+	manualRound := 0
+	if closed != nil && !sameRound {
+		manualRound = closed.Round
+	}
+	return chainResumePrepared{row: row, resumed: resumed, acts: acts, snap: snap, toConfirm: toConfirm, manualRound: manualRound}, false, ChainResult{}, nil
 }
 
 // chainResumeCommitLocked writes the resumed row, still inside the caller's
@@ -295,7 +303,7 @@ func chainResumeApplyActionsLocked(ctx context.Context, rt Runtime, tx *store.Tx
 	resumed := prep.resumed
 	gateChanged := chainResumeChangesGate(opts)
 	for _, act := range prep.acts {
-		if err := chainResumeRunAction(ctx, rt, tx, row, def, before, &resumed, act, gateChanged); err != nil {
+		if err := chainResumeRunAction(ctx, rt, tx, row, def, before, &resumed, act, gateChanged, prep.manualRound); err != nil {
 			return ChainResult{}, prep.snap.restore(tx, err)
 		}
 	}
@@ -440,7 +448,12 @@ func memberReportEntry(tx *store.Tx, name string, round int) (store.LogEntry, bo
 // the stopped-on round re-hands that round's staged prompt, so the member sees
 // the bytes already given; anything else is the engine's ordinary action.
 // gateChanged walks a stale repair prompt back to the step's own seed.
-func chainResumeRunAction(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before workflow.State, next *workflow.State, act workflow.Action, gateChanged bool) error {
+func chainResumeRunAction(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before workflow.State, next *workflow.State, act workflow.Action, gateChanged bool, manualRound int) error {
+	if manualRound > 0 {
+		// A reviewed human round is named on the trace row, so a later read
+		// tells it from a re-send: the send's own reason is otherwise empty.
+		act.Reason = fmt.Sprintf("manual r%d", manualRound)
+	}
 	if act.Kind == workflow.ActionSend {
 		if name, text, ok := chainResumeStagedText(rt, tx, c, before, act, gateChanged); ok {
 			ev := workflow.Event{Kind: workflow.EventNeedsYou, Step: next.At}
