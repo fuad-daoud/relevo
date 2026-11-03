@@ -147,3 +147,64 @@ func TestMirrorRetriesFailedIngest(t *testing.T) {
 		t.Errorf("ingests = %d, want one attempt per tick", backend.ingestCalls)
 	}
 }
+
+// fakeArchiveBackend serves archived records from a slice, so a test can add
+// a record stamped below the cursor's high water after the cursor primed.
+type fakeArchiveBackend struct {
+	recs     []store.ArchivedRef
+	ingested map[string]bool
+}
+
+func (b *fakeArchiveBackend) listAll() ([]store.ArchivedBinding, error) {
+	out := make([]store.ArchivedBinding, 0, len(b.recs))
+	for _, r := range b.recs {
+		out = append(out, store.ArchivedBinding{Binding: store.Binding{Name: r.Name}, RecordID: r.RecordID, ArchivedAt: r.ArchivedAt})
+	}
+	return out, nil
+}
+
+func (b *fakeArchiveBackend) listSince(since time.Time) ([]store.ArchivedRef, error) {
+	var out []store.ArchivedRef
+	for _, r := range b.recs {
+		if !r.ArchivedAt.Before(since) {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+func (b *fakeArchiveBackend) marked(recordID string) (bool, error) {
+	return b.ingested[recordID], nil
+}
+
+func (b *fakeArchiveBackend) ingest(context.Context, string, string) (ingest.Stats, error) {
+	return ingest.Stats{}, nil
+}
+
+func (b *fakeArchiveBackend) confirm(recordID string) error {
+	b.ingested[recordID] = true
+	return nil
+}
+
+// TestMirrorCatchesARecordStampedBelowTheHighWater pins the lookback: a
+// record whose stamp is older than the newest one the cursor saw, committed
+// after that pass, is still mirrored by a later tick rather than waiting for
+// a restart.
+func TestMirrorCatchesARecordStampedBelowTheHighWater(t *testing.T) {
+	t0 := time.Date(2026, 11, 4, 1, 0, 0, 0, time.UTC)
+	b := &fakeArchiveBackend{
+		recs:     []store.ArchivedRef{{RecordID: "r2", Name: "two", ArchivedAt: t0}},
+		ingested: map[string]bool{},
+	}
+	var c ArchiveCursor
+	c.mirror(context.Background(), b)
+	if !b.ingested["r2"] {
+		t.Fatal("first pass did not mirror r2")
+	}
+
+	b.recs = append(b.recs, store.ArchivedRef{RecordID: "r1", Name: "one", ArchivedAt: t0.Add(-2 * time.Second)})
+	c.mirror(context.Background(), b)
+	if !b.ingested["r1"] {
+		t.Error("a record stamped below the high water was not mirrored by the next pass")
+	}
+}

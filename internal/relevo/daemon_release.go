@@ -125,6 +125,12 @@ type ArchiveCursor struct {
 	retry     map[string]string
 }
 
+// archiveLookback is how far below the high water each later pass reads. An
+// archive stamps its time before it commits, so a record stamped just before
+// another can land after the pass that saw the other, and a stepped clock can
+// stamp below the high water; the seen set absorbs the overlap.
+const archiveLookback = time.Minute
+
 // archiveBackend is the archived mirror's collaborator: listing archived
 // records, reading and writing ingested.archive.* marks, and ingesting one
 // record. Tick wires the live store and database; tests wire a counting or
@@ -225,7 +231,7 @@ func (c *ArchiveCursor) incPass(ctx context.Context, b archiveBackend) {
 			delete(c.retry, id)
 		}
 	}
-	refs, err := b.listSince(c.highWater)
+	refs, err := b.listSince(c.highWater.Add(-archiveLookback))
 	if err != nil {
 		slog.Warn("mirror: list archived", "err", err)
 		return
