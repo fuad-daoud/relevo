@@ -295,6 +295,12 @@ func (m *MemTransport) PublishTraffic(row TrafficRow) (map[string]TrafficRow, er
 	return m.log.publishTraffic(m.origin, row), nil
 }
 
+// ReadTraffic answers with every origin's row, writing nothing: a reader
+// learning the account's total rather than publishing its own month.
+func (m *MemTransport) ReadTraffic() (map[string]TrafficRow, error) {
+	return m.log.readTraffic(), nil
+}
+
 // publishMarks writes one reader's rows. A mark only grows, so a lower repeat is
 // ignored rather than moving back: a stale publish must not rewind the reader.
 func (m *memLog) publishMarks(reader string, marks map[string]int, at time.Time) {
@@ -384,6 +390,18 @@ func (m *memLog) publishTraffic(origin string, row TrafficRow) map[string]Traffi
 	out := make(map[string]TrafficRow, len(m.traffic))
 	for other, held := range m.traffic {
 		out[other] = held
+	}
+	return out
+}
+
+// readTraffic answers with every origin's row as held, writing nothing.
+func (m *memLog) readTraffic() map[string]TrafficRow {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	out := make(map[string]TrafficRow, len(m.traffic))
+	for origin, held := range m.traffic {
+		out[origin] = held
 	}
 	return out
 }

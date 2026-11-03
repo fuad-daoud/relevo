@@ -127,6 +127,21 @@ func (c *Client) PublishTraffic(row synclog.TrafficRow) (map[string]synclog.Traf
 	return trafficRowsFromWire(resp.Traffic), nil
 }
 
+// ReadTraffic answers with every origin's held row, without writing one. An
+// empty reply is a refusal, not an empty account: the worker always answers
+// with the rows it holds, so a missing one did not do what was asked. Read as
+// empty, it would count this machine alone and hide what the account spent.
+func (c *Client) ReadTraffic() (map[string]synclog.TrafficRow, error) {
+	resp, err := c.call(syncworker.Request{Verb: syncworker.VerbReadTraffic})
+	if err != nil {
+		return nil, err
+	}
+	if resp.Traffic == nil {
+		return nil, errors.New("syncpipe: the worker answered read_traffic with no rows")
+	}
+	return trafficRowsFromWire(resp.Traffic), nil
+}
+
 func (c *Client) PullRange(origin string, after, upto int) ([]synclog.Entry, error) {
 	resp, err := c.call(syncworker.Request{Verb: syncworker.VerbPullRange, Origin: origin, AfterSeq: after, Upto: upto})
 	if err != nil {

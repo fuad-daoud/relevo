@@ -129,6 +129,21 @@ func (s *StopTransport) PublishTraffic(row synclog.TrafficRow) (map[string]syncl
 	return p.PublishTraffic(row)
 }
 
+// ReadTraffic answers with every origin's row the log holds. The reader is an
+// optional interface on the transport underneath like the publisher, so a
+// client that carries none is reported with the same sentinel rather than a
+// failure: the guard reads it as no account figure, never as a join failure.
+func (s *StopTransport) ReadTraffic() (map[string]synclog.TrafficRow, error) {
+	if s.stopped.Load() {
+		return nil, ErrStopped
+	}
+	r, ok := s.inner.(synclog.TrafficReader)
+	if !ok {
+		return nil, errTrafficUnsupported
+	}
+	return r.ReadTraffic()
+}
+
 func (s *StopTransport) PullRange(origin string, after, upto int) ([]synclog.Entry, error) {
 	if s.stopped.Load() {
 		return nil, ErrStopped

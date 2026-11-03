@@ -255,6 +255,15 @@ type TrafficPublisher interface {
 	PublishTraffic(row TrafficRow) (map[string]TrafficRow, error)
 }
 
+// TrafficReader answers with every origin's traffic row the log holds, without
+// writing one. It stays optional for the reason TrafficPublisher gives: a
+// caller asks for it with a type assertion and reads the missing publisher as
+// no account figure rather than a failure.
+type TrafficReader interface {
+	// ReadTraffic answers with every origin's row as the log holds it now.
+	ReadTraffic() (map[string]TrafficRow, error)
+}
+
 // LogRowOverhead is the bytes a log row costs beside its body, for the columns
 // the body does not carry.
 const LogRowOverhead = 96

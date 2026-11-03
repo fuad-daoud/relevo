@@ -43,6 +43,45 @@ func TestClientTrafficRefusedByTheWorker(t *testing.T) {
 	if rows, err := c.PublishTraffic(pipeTrafficRow); err == nil {
 		t.Errorf("a refused publish came back as rows %+v", rows)
 	}
+	if rows, err := c.ReadTraffic(); err == nil {
+		t.Errorf("a refused read came back as rows %+v", rows)
+	}
+}
+
+// TestClientReadsTrafficOverAPipe pins the read half: no row crosses over, and
+// the answer comes back as every origin's row the worker holds.
+func TestClientReadsTrafficOverAPipe(t *testing.T) {
+	c, err := startFakeWorker(t, modeNormal, handshake())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	rows, err := c.ReadTraffic()
+	if err != nil {
+		t.Fatalf("ReadTraffic: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("ReadTraffic answered %d rows, want two held rows: %+v", len(rows), rows)
+	}
+	if own := rows["origin-a"]; own.Push != 3 || own.Pull != 4 || !own.At.Equal(pinnedAt) {
+		t.Errorf("own row = %+v, want the worker's held row", own)
+	}
+	if other := rows["origin-b"]; other.Push != 5 || other.Pull != 6 {
+		t.Errorf("other row = %+v, want the worker's other origin", other)
+	}
+}
+
+// TestClientReadTrafficRefusedWhenTheWorkerAnswersWithNoRows pins the reply
+// the client cannot use: the worker always answers with the rows it holds, so
+// a reply with none did not do what was asked. Read as an empty account, it
+// would count this machine alone and hide what the account spent.
+func TestClientReadTrafficRefusedWhenTheWorkerAnswersWithNoRows(t *testing.T) {
+	c, err := startFakeWorker(t, modeNoKeyAnswer, handshake())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if rows, err := c.ReadTraffic(); err == nil {
+		t.Errorf("a read with no rows came back as %+v, want a refusal", rows)
+	}
 }
 
 // TestSupervisorDrivesPublishTraffic pins that the supervisor the daemon holds
@@ -65,5 +104,28 @@ func TestSupervisorDrivesPublishTraffic(t *testing.T) {
 	}
 	if deaths, _ := b.Deaths(); deaths != 0 {
 		t.Errorf("a refused publish counted %d deaths, want none", deaths)
+	}
+}
+
+// TestSupervisorDrivesReadTraffic pins that the supervisor the daemon holds
+// reaches the worker for the read, through the breaker like every call: a
+// worker silent on a read is dead whatever it was doing.
+func TestSupervisorDrivesReadTraffic(t *testing.T) {
+	s := newSupervisor(t, fakeWorkerCfg(modeNormal), breakerOver(newMemKV()))
+	rows, err := s.ReadTraffic()
+	if err != nil {
+		t.Fatalf("ReadTraffic: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Errorf("ReadTraffic answered %+v, want two rows", rows)
+	}
+
+	b := breakerOver(newMemKV())
+	refusing := newSupervisor(t, fakeWorkerCfg(modeRefuseVerbs), b)
+	if _, err := refusing.ReadTraffic(); err == nil {
+		t.Fatal("a refused read came back as a success")
+	}
+	if deaths, _ := b.Deaths(); deaths != 0 {
+		t.Errorf("a refused read counted %d deaths, want none", deaths)
 	}
 }

@@ -131,11 +131,27 @@ func (s *Supervisor) PublishTraffic(row synclog.TrafficRow) (map[string]synclog.
 	return out, err
 }
 
+// ReadTraffic answers with every origin's row, through the breaker for the
+// reason PublishMarks gives.
+func (s *Supervisor) ReadTraffic() (map[string]synclog.TrafficRow, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out map[string]synclog.TrafficRow
+	err := s.drive("read_traffic", func(c *Client) error {
+		var e error
+		out, e = c.ReadTraffic()
+		return e
+	})
+	return out, err
+}
+
 // The traffic publisher is asserted at use, so a lost method would build green
 // while silently stopping publishing; these make that a build error.
 var (
 	_ synclog.TrafficPublisher = (*Supervisor)(nil)
 	_ synclog.TrafficPublisher = (*Client)(nil)
+	_ synclog.TrafficReader    = (*Supervisor)(nil)
+	_ synclog.TrafficReader    = (*Client)(nil)
 )
 
 func (s *Supervisor) ReadMarks() (synclog.MarkState, error) {
