@@ -27,8 +27,8 @@ func TestSettings(t *testing.T) {
 			PolicyRaw: json.RawMessage(raw),
 		}
 		settings := Settings(doc, 22)
-		if len(settings) != 25 {
-			t.Fatalf("len(settings) = %d, want 25", len(settings))
+		if len(settings) != 24 {
+			t.Fatalf("len(settings) = %d, want 24", len(settings))
 		}
 
 		// Rows 1, 2 and 17 are Set (1-based: indices 0, 1, 16)
@@ -63,8 +63,8 @@ func TestSettings(t *testing.T) {
 	t.Run("empty policy", func(t *testing.T) {
 		doc := ConfigDoc{}
 		settings := Settings(doc, 4)
-		if len(settings) != 25 {
-			t.Fatalf("len(settings) = %d, want 25", len(settings))
+		if len(settings) != 24 {
+			t.Fatalf("len(settings) = %d, want 24", len(settings))
 		}
 		for i, s := range settings {
 			if s.Set {
@@ -293,8 +293,8 @@ func TestSettingsCountAndGroupOrder(t *testing.T) {
 	t.Parallel()
 
 	settings := Settings(ConfigDoc{}, 4)
-	if len(settings) != 25 {
-		t.Fatalf("len(settings) = %d, want 25", len(settings))
+	if len(settings) != 24 {
+		t.Fatalf("len(settings) = %d, want 24", len(settings))
 	}
 
 	var groups []string
@@ -323,8 +323,8 @@ func TestSettingsChainRowsRenderValues(t *testing.T) {
 		t.Fatalf("policy.Parse: %v", err)
 	}
 	settings := Settings(ConfigDoc{Policy: p}, 4)
-	if len(settings) != 25 {
-		t.Fatalf("len(settings) = %d, want 25", len(settings))
+	if len(settings) != 24 {
+		t.Fatalf("len(settings) = %d, want 24", len(settings))
 	}
 
 	set := []struct {
@@ -337,9 +337,9 @@ func TestSettingsChainRowsRenderValues(t *testing.T) {
 		{"chain.security", "on", "off"},
 	}
 	for i, w := range set {
-		row := settings[20+i]
+		row := settings[19+i]
 		if row.Key != w.key || row.Group != "chain" || row.Form != "chain" {
-			t.Errorf("row %d = %s / %s / %s, want %s / chain / chain", 21+i, row.Key, row.Group, row.Form, w.key)
+			t.Errorf("row %d = %s / %s / %s, want %s / chain / chain", 20+i, row.Key, row.Group, row.Form, w.key)
 		}
 		if row.Value != w.value || row.Default != w.def || !row.Set {
 			t.Errorf("%s = %q / %q / set %v, want %q / %q / set", w.key, row.Value, row.Default, row.Set, w.value, w.def)
@@ -355,7 +355,7 @@ func TestSettingsChainRowsRenderValues(t *testing.T) {
 	}
 	settings = Settings(ConfigDoc{}, 4)
 	for i, w := range unset {
-		row := settings[20+i]
+		row := settings[19+i]
 		if row.Key != w.key || row.Value != w.value || row.Set {
 			t.Errorf("%s = %q / set %v, want %q / unset", w.key, row.Value, row.Set, w.value)
 		}

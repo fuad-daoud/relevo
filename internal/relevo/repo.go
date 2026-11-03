@@ -38,15 +38,18 @@ func captureRepo(ctx context.Context, rt Runtime, cwd string) *store.RepoRef {
 // the gate rule that reads one entry's `gate` as the tier between the flag and
 // the policy default.
 
-// RepoSettings is one repository's stored settings as the gate, the board and
-// the go-flags paths read them. "" means the repository sets nothing, which
-// every caller reads as the next tier or the default.
+// RepoSettings is one repository's stored settings as the gate, the chain, the
+// board and the go-flags paths read them. "" means the repository sets
+// nothing, which every caller reads as the next tier or the default.
 type RepoSettings struct {
-	Key        string
-	Name       string
-	Gate       string
-	BoardTheme string
-	Trimpath   string
+	Key           string
+	Name          string
+	Gate          string
+	BoardTheme    string
+	Trimpath      string
+	BuilderActor  string
+	ReviewerActor string
+	PlannerActor  string
 }
 
 // TrimpathOn is the effective trimpath setting. ParseRepos leaves Trimpath
@@ -138,7 +141,7 @@ func RepoSettingsFor(ctx context.Context, rt Runtime, dir string) (RepoSettings,
 	if !ok {
 		return out, nil
 	}
-	return RepoSettings{Key: key, Name: entry.Name, Gate: entry.Gate, BoardTheme: entry.BoardTheme, Trimpath: entry.Trimpath}, nil
+	return RepoSettings{Key: key, Name: entry.Name, Gate: entry.Gate, BoardTheme: entry.BoardTheme, Trimpath: entry.Trimpath, BuilderActor: entry.BuilderActor, ReviewerActor: entry.ReviewerActor, PlannerActor: entry.PlannerActor}, nil
 }
 
 // GateLine renders the gate line a bind or an add prints through the notice

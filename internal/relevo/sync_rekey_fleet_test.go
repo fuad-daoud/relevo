@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
@@ -101,7 +100,7 @@ func TestARekeyConvergesOnAPeerEdit(t *testing.T) {
 	c.unlock(t, fleetPass, false)
 
 	// The fleet shares one value at epoch 1.
-	a.setSecret(t, config.SecretTypesafe, "the value before the rekey")
+	a.setSecret(t, relevosync.SecretR2Bucket, "the value before the rekey")
 	a.attempt(t)
 	b.attempt(t)
 	c.attempt(t)
@@ -109,7 +108,7 @@ func TestARekeyConvergesOnAPeerEdit(t *testing.T) {
 	// B edits while the rekey lands. Its edit is a person's write, stamped by
 	// its own clock; the pause keeps the two clocks' stamps in the order the
 	// events happened.
-	b.setSecret(t, config.SecretTypesafe, canarySecret)
+	b.setSecret(t, relevosync.SecretR2Bucket, canarySecret)
 	time.Sleep(2 * time.Millisecond)
 	a.rekey(t, fleetPass, fleetPassNew)
 
@@ -131,7 +130,7 @@ func TestARekeyConvergesOnAPeerEdit(t *testing.T) {
 	a.attemptOut(t)
 
 	for _, m := range []*cfgMachine{a, b, c} {
-		if got := m.secret(t, config.SecretTypesafe); got != canarySecret {
+		if got := m.secret(t, relevosync.SecretR2Bucket); got != canarySecret {
 			t.Errorf("%s holds %q, want B's edit", m.label(t), got)
 		}
 	}
@@ -158,7 +157,7 @@ func TestTwoReSealsConvergeUnderTheKeptStamps(t *testing.T) {
 	b.unlock(t, fleetPass, false)
 
 	// Both hold the same value, and both export states carry it.
-	a.setSecret(t, config.SecretTypesafe, canarySecret)
+	a.setSecret(t, relevosync.SecretR2Bucket, canarySecret)
 	a.attempt(t)
 	b.attempt(t)
 
@@ -170,10 +169,10 @@ func TestTwoReSealsConvergeUnderTheKeptStamps(t *testing.T) {
 	// epoch seals to one envelope.
 	a.attemptOut(t)
 	b.attemptOut(t)
-	if got := b.secret(t, config.SecretTypesafe); got != canarySecret {
+	if got := b.secret(t, relevosync.SecretR2Bucket); got != canarySecret {
 		t.Fatalf("B holds %q after the cross, want the value it started with", got)
 	}
-	if got := a.secret(t, config.SecretTypesafe); got != canarySecret {
+	if got := a.secret(t, relevosync.SecretR2Bucket); got != canarySecret {
 		t.Fatalf("A holds %q after the cross, want the value it started with", got)
 	}
 
@@ -194,7 +193,6 @@ func TestAJoinerAfterTheRekeyVerifiesTheHistoryAndReadsTheSecrets(t *testing.T) 
 	log := synclog.NewMemTransport("x")
 	a := newFleetMachine(t, log)
 	a.unlock(t, fleetPass, true)
-	a.setSecret(t, config.SecretTypesafe, canarySecret)
 	a.setSecret(t, relevosync.SecretR2Endpoint, "https://acct.r2.cloudflarestorage.com")
 	a.setSecret(t, relevosync.SecretR2Bucket, "the-fleet-bucket")
 	a.setSecret(t, relevosync.SecretR2KeyID, "the-fleet-key-id")
@@ -232,9 +230,6 @@ func TestAJoinerAfterTheRekeyVerifiesTheHistoryAndReadsTheSecrets(t *testing.T) 
 	if err != nil || !ok || ring.Epoch != 2 || len(ring.Keys) != 2 {
 		t.Fatalf("the joiner's ring = %+v, (ok %v, err %v); want the whole epoch-2 chain", ring, ok, err)
 	}
-	if got := d.secret(t, config.SecretTypesafe); got != canarySecret {
-		t.Errorf("the joiner's typesafe = %q, want the fleet's value", got)
-	}
 	if got := d.secret(t, relevosync.SecretR2Bucket); got != "the-fleet-bucket" {
 		t.Errorf("the joiner's bucket = %q, want the fleet's value", got)
 	}
@@ -251,7 +246,7 @@ func TestARekeyTheRemoteHoldsButTheStoreDoesNotRecoversThroughUnlock(t *testing.
 	b := newFleetMachine(t, log)
 	a.unlock(t, fleetPass, true)
 	b.unlock(t, fleetPass, false)
-	a.setSecret(t, config.SecretTypesafe, canarySecret)
+	a.setSecret(t, relevosync.SecretR2Bucket, canarySecret)
 	a.attempt(t)
 	b.attempt(t)
 
@@ -279,7 +274,7 @@ func TestARekeyTheRemoteHoldsButTheStoreDoesNotRecoversThroughUnlock(t *testing.
 		t.Fatalf("unlock refused: (%s) %s", res.Code, res.Message)
 	}
 	a.attemptOut(t)
-	if got := a.secret(t, config.SecretTypesafe); got != canarySecret {
+	if got := a.secret(t, relevosync.SecretR2Bucket); got != canarySecret {
 		t.Errorf("A holds %q after the recovery, want the value it rekeyed away from", got)
 	}
 	if state, err := relevosync.KeyState(a.local); err != nil || state != "unlocked" {
@@ -353,7 +348,7 @@ func TestOldKeyForgeryAboveRekeyCutIsRefusedEvenWhenOriginKeepsWriting(t *testin
 	a.unlock(t, fleetPass, true)
 	b.unlock(t, fleetPass, false)
 
-	a.setSecret(t, config.SecretTypesafe, "honest before rekey")
+	a.setSecret(t, relevosync.SecretR2Bucket, "honest before rekey")
 	a.attempt(t)
 	b.attempt(t)
 
@@ -371,7 +366,7 @@ func TestOldKeyForgeryAboveRekeyCutIsRefusedEvenWhenOriginKeepsWriting(t *testin
 	forgeOldKeyEntry(t, log, a.mdb.Origin(), oldKey)
 
 	// A exports again under the new key and runs several further attempts.
-	a.setSecret(t, config.SecretTypesafe, "honest after rekey")
+	a.setSecret(t, relevosync.SecretR2Bucket, "honest after rekey")
 	a.attempt(t)
 	a.attempt(t)
 	a.attempt(t)
@@ -380,7 +375,7 @@ func TestOldKeyForgeryAboveRekeyCutIsRefusedEvenWhenOriginKeepsWriting(t *testin
 	res := b.attemptOut(t)
 
 	// Readers applied A's entries below the forgery:
-	if got := b.secret(t, config.SecretTypesafe); got != "honest before rekey" {
+	if got := b.secret(t, relevosync.SecretR2Bucket); got != "honest before rekey" {
 		t.Errorf("B secret = %q, want honest before rekey", got)
 	}
 
@@ -409,13 +404,13 @@ func TestStaleOriginRecoveryAppliesPreUnlockTailAndRefusesPostUnlockForgery(t *t
 	c.unlock(t, fleetPass, false)
 
 	// All sync initial state at epoch 1.
-	a.setSecret(t, config.SecretTypesafe, "v1")
+	a.setSecret(t, relevosync.SecretR2Bucket, "v1")
 	a.attempt(t)
 	b.attempt(t)
 	c.attempt(t)
 
 	// B writes a secret under the old key (the pre-unlock tail).
-	b.setSecret(t, config.SecretTypesafe, "b-pre-unlock")
+	b.setSecret(t, relevosync.SecretR2Bucket, "b-pre-unlock")
 	ringB, ok, err := relevosync.ReadKeyring(b.local)
 	if err != nil || !ok {
 		t.Fatalf("ReadKeyring: %v", err)
@@ -438,7 +433,7 @@ func TestStaleOriginRecoveryAppliesPreUnlockTailAndRefusesPostUnlockForgery(t *t
 
 	// Reader C attempts: B's pre-unlock tail is applied!
 	c.attemptOut(t)
-	if got := c.secret(t, config.SecretTypesafe); got != "b-pre-unlock" {
+	if got := c.secret(t, relevosync.SecretR2Bucket); got != "b-pre-unlock" {
 		t.Fatalf("C holds %q, want B's pre-unlock tail %q", got, "b-pre-unlock")
 	}
 
@@ -446,7 +441,7 @@ func TestStaleOriginRecoveryAppliesPreUnlockTailAndRefusesPostUnlockForgery(t *t
 	forgeOldKeyEntry(t, log, b.mdb.Origin(), oldKey)
 
 	// B appends more entries under the new key and attempts.
-	b.setSecret(t, config.SecretTypesafe, "b-post-unlock")
+	b.setSecret(t, relevosync.SecretR2Bucket, "b-post-unlock")
 	b.attempt(t)
 	b.attempt(t)
 
@@ -484,12 +479,12 @@ func TestFailedExtensionPublishIsRetriedUpToTargetNotBeyond(t *testing.T) {
 	a.unlock(t, fleetPass, true)
 	b.unlock(t, fleetPass, false)
 
-	a.setSecret(t, config.SecretTypesafe, "v1")
+	a.setSecret(t, relevosync.SecretR2Bucket, "v1")
 	a.attempt(t)
 	b.attempt(t)
 
 	// B writes and exports under old key.
-	b.setSecret(t, config.SecretTypesafe, "b-vouch-target")
+	b.setSecret(t, relevosync.SecretR2Bucket, "b-vouch-target")
 	ringB, ok, err := relevosync.ReadKeyring(b.local)
 	if err != nil || !ok {
 		t.Fatalf("ReadKeyring: %v", err)
@@ -522,7 +517,7 @@ func TestFailedExtensionPublishIsRetriedUpToTargetNotBeyond(t *testing.T) {
 	}
 
 	// B appends more entries under the new key, advancing B's live own head beyond targetHead.
-	b.setSecret(t, config.SecretTypesafe, "b-post-tail-honest")
+	b.setSecret(t, relevosync.SecretR2Bucket, "b-post-tail-honest")
 	ringB2, _, _ := relevosync.ReadKeyring(b.local)
 	newKey := ringB2.Keys[2]
 	exp2 := synclog.NewExporter(b.mdb, b.transport())
@@ -566,10 +561,10 @@ func TestEpoch1FleetSteadyAttemptsWriteNoEpochCutRows(t *testing.T) {
 	b.unlock(t, fleetPass, false)
 
 	for i := 0; i < 3; i++ {
-		a.setSecret(t, config.SecretTypesafe, "a-val")
+		a.setSecret(t, relevosync.SecretR2Bucket, "a-val")
 		a.attempt(t)
 		b.attempt(t)
-		b.setSecret(t, config.SecretTypesafe, "b-val")
+		b.setSecret(t, relevosync.SecretR2Bucket, "b-val")
 		b.attempt(t)
 		a.attempt(t)
 	}

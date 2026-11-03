@@ -303,6 +303,53 @@ func TestChainResumeAppliesOnlyGivenFlags(t *testing.T) {
 	}
 }
 
+// TestChainResumeKeepsStoredActorsDespiteTheRepoEntry pins the resume rule: a
+// resume with no actor flags keeps the stored actors even when the current
+// repository entry names different ones. The entry is seeded after the start,
+// so the start stores the policy actors; reading the entry back on resume
+// would overwrite them, which this test forbids.
+func TestChainResumeKeepsStoredActorsDespiteTheRepoEntry(t *testing.T) {
+	t.Parallel()
+
+	rt, fg := chainRuntime(t)
+	stoppedChain(t, rt, ChainOptions{})
+	before := storedSettings(t, chainStoredRow(t, rt, "shop"))
+	roleOf := func(name string) string {
+		t.Helper()
+		b, err := rt.Store.Load(name)
+		if err != nil {
+			t.Fatalf("Load(%s): %v", name, err)
+		}
+		return b.Role
+	}
+	beforeRoles := map[string]string{
+		"shop":      roleOf("shop"),
+		"shop-rev":  roleOf("shop-rev"),
+		"shop-plan": roleOf("shop-plan"),
+	}
+
+	// The repository entry now names a different actor for every slot.
+	fg.rootCommitSHA = reposRootCommit
+	st := auditStore(t)
+	seedOneRepos(t, st, fmt.Sprintf(`{%q:{"name":"shop","builder_actor":"repo-builder","reviewer_actor":"repo-reviewer","planner_actor":"repo-planner"}}`, reposKeyOf(t)))
+	rt.Config = st
+
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+
+	after := storedSettings(t, chainStoredRow(t, rt, "shop"))
+	if after.ReviewerActor != before.ReviewerActor || after.PlannerActor != before.PlannerActor ||
+		after.SecurityActor != before.SecurityActor {
+		t.Errorf("actors = %+v, want the stored %+v despite the repo entry", after, before)
+	}
+	for name, want := range beforeRoles {
+		if got := roleOf(name); got != want {
+			t.Errorf("member %s role = %q, want the stored %q despite the repo entry", name, got, want)
+		}
+	}
+}
+
 // TestChainResumeGateFlagsUpdateTheBuilder pins the gate flags' half on a
 // workflow chain: an explicit --gate/--regate writes the stored settings and the
 // workflow's params, a --no-gate clears both, and a resume that names none keeps

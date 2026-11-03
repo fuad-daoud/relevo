@@ -57,6 +57,9 @@ type chainServerPlan struct {
 	def workflow.Definition
 	// hasWorkflow reports whether the server advertises FeatureWorkflow.
 	hasWorkflow bool
+	// repoSet is the chain repository's own settings, so the legacy member
+	// list resolves the builder actor on the same tier as the params.
+	repoSet RepoSettings
 }
 
 // chainServerIDs is the client's own identifiers for a server chain: the

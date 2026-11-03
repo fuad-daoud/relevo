@@ -231,6 +231,29 @@ func TestRepoSettingsReadsTheEntryForThisRepositoryOnly(t *testing.T) {
 	}
 }
 
+// TestRepoSettingsCarriesChainActors pins that a stored entry's actor fields
+// come back on RepoSettings, with "" reading as unset like Gate. Blanking one
+// mapped field is the mutation this test catches.
+func TestRepoSettingsCarriesChainActors(t *testing.T) {
+	t.Parallel()
+
+	fg := &fakeGit{rootCommitSHA: reposRootCommit}
+	id := reposKeyOf(t)
+	st := auditStore(t)
+	seedOneRepos(t, st, fmt.Sprintf(`{%q:{"name":"shop","builder_actor":"relevo-builder","reviewer_actor":"relevo-reviewer","planner_actor":"relevo-lite-planner"}}`, id))
+	rt := newTestRuntime(t, fg)
+	rt.Config = st
+
+	set, err := RepoSettingsFor(context.Background(), rt, "/repo")
+	if err != nil {
+		t.Fatalf("RepoSettingsFor: %v", err)
+	}
+	want := RepoSettings{Key: id, Name: "shop", BuilderActor: "relevo-builder", ReviewerActor: "relevo-reviewer", PlannerActor: "relevo-lite-planner"}
+	if set != want {
+		t.Errorf("RepoSettingsFor = %+v, want %+v", set, want)
+	}
+}
+
 // TestBindStoresTheRepoGate pins the create path: a bind in a repository whose
 // settings name a gate stores that gate, and a policy default the repository
 // does not override stays behind it. Passing the zero record at the create's

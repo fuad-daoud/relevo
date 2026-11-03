@@ -56,14 +56,14 @@ func seedRemoteChain(t *testing.T, rt Runtime, name string, opts remoteChainOpts
 	ctx := context.Background()
 	settings := chain.Settings{Gate: "make check", Regate: opts.Regate, MaxCorrections: 2, ReviewerActor: "reviewer", PlannerActor: "lite-planner"}
 	chainOpts := ChainOptions{Name: name, Feature: "auth", MasterMindID: testMasterMindName}
-	members := chainMembersFor(chainOpts, settings)
+	members := chainMembersFor(chainOpts, settings, RepoSettings{})
 
 	repo := t.TempDir()
 	base := chainBase{
 		cwd: repo, worktree: repo, repo: repo, branch: "relevo/" + name,
 		commit: seedRemoteBase, feature: "auth", mastermindID: testMasterMindName,
 	}
-	resolutions, err := chainResolveActors(rt, members)
+	resolutions, err := chainResolveActors(rt, members, nil)
 	if err != nil {
 		t.Fatalf("seedRemoteChain: resolve actors: %v", err)
 	}

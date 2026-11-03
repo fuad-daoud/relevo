@@ -43,8 +43,8 @@ func (s *Store) Secret(name string) ([]byte, bool, error) {
 
 func (s *Store) Version() (int64, error) { return s.db.ConfigVersion() }
 
-// loadSecrets fills the two secrets Load reports. An absent one leaves its
-// field at the zero value, which is how a machine with no client key reads.
+// loadSecrets fills the client key Load reports. An absent one leaves the field
+// at its zero value, which is how a machine with no client key reads.
 func (s *Store) loadSecrets(L *Loaded) error {
 	key, ok, err := s.db.SecretGet(SecretClientKey)
 	if err != nil {
@@ -52,13 +52,6 @@ func (s *Store) loadSecrets(L *Loaded) error {
 	}
 	if ok {
 		L.ClientKey = key
-	}
-	ts, ok, err := s.db.SecretGet(SecretTypesafe)
-	if err != nil {
-		return err
-	}
-	if ok {
-		L.Typesafe = string(ts)
 	}
 	return nil
 }

@@ -94,7 +94,7 @@ Commands:
   config server add|rm|list|key
             this machine's remote-builder identity and server list
   config secret set|rm|list
-            store or forget the typesafe and client.key secrets
+            store or forget the client.key secret
   mastermind  register this MasterMind (or re-attach an existing one), and list, rename or forget records
   gate      list this machine's active gates; gate a provider: relevo gate <token> [--for D] [--reason S];
             clear one: relevo gate --clear <provider|token>; relevo gate --serve [--state DIR] acts on the

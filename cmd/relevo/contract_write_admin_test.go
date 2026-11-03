@@ -237,31 +237,33 @@ func TestContractWriteAdminJSON(t *testing.T) {
 
 	t.Run("config secret set", func(t *testing.T) {
 		docsEnv(t)
-		stdout, stderr, err := runWithStdin(t, "s3cret\n", "config", "secret", "set", "typesafe", "--json")
+		value, leak := cliSecret(t)
+		stdout, stderr, err := runWithStdin(t, value+"\n", "config", "secret", "set", "client.key", "--json")
 		if err != nil {
 			t.Fatalf("config secret set --json: %v (stderr: %s)", err, stderr)
 		}
 		doc := decodeAdminDoc[ConfigSecretDoc](t, stdout, "config secret set")
-		if doc.Name != "typesafe" {
-			t.Errorf("doc = %+v, want typesafe", doc)
+		if doc.Name != "client.key" {
+			t.Errorf("doc = %+v, want client.key", doc)
 		}
-		if strings.Contains(string(stdout), "s3cret") {
+		if strings.Contains(string(stdout), leak) {
 			t.Errorf("stdout carries the value: %s", stdout)
 		}
 	})
 
 	t.Run("config secret rm", func(t *testing.T) {
 		docsEnv(t)
-		if _, _, err := runWithStdin(t, "s3cret\n", "config", "secret", "set", "typesafe"); err != nil {
+		value, _ := cliSecret(t)
+		if _, _, err := runWithStdin(t, value+"\n", "config", "secret", "set", "client.key"); err != nil {
 			t.Fatalf("config secret set: %v", err)
 		}
-		stdout, stderr, err := runWithStdin(t, "", "config", "secret", "rm", "typesafe", "--json")
+		stdout, stderr, err := runWithStdin(t, "", "config", "secret", "rm", "client.key", "--json")
 		if err != nil {
 			t.Fatalf("config secret rm --json: %v (stderr: %s)", err, stderr)
 		}
 		doc := decodeAdminDoc[ConfigSecretDoc](t, stdout, "config secret rm")
-		if doc.Name != "typesafe" {
-			t.Errorf("doc = %+v, want typesafe", doc)
+		if doc.Name != "client.key" {
+			t.Errorf("doc = %+v, want client.key", doc)
 		}
 	})
 
@@ -413,11 +415,18 @@ func initMastermindJSON(t *testing.T, session string) []byte {
 func TestContractWriteAdminHuman(t *testing.T) {
 	docsEnv(t)
 
-	if _, stderr, err := runWithStdin(t, "s3cret\n", "config", "secret", "set", "typesafe"); err != nil {
+	value, _ := cliSecret(t)
+	if _, stderr, err := runWithStdin(t, value+"\n", "config", "secret", "set", "client.key"); err != nil {
 		t.Fatalf("config secret set: %v (stderr: %s)", err, stderr)
 	}
-	assertHumanUnchanged(t, "stored secret typesafe", "config", "secret", "set", "typesafe")
-	assertHumanUnchanged(t, "removed secret typesafe", "config", "secret", "rm", "typesafe")
+	// `config secret set` reads its value from stdin, and a client key the CLI
+	// will not parse leaves nothing to print, so the human line runs with a key
+	// piped in rather than an empty stdin.
+	setStdin := os.Stdin
+	os.Stdin = stdinFile(t, value+"\n")
+	assertHumanUnchanged(t, "stored secret client.key", "config", "secret", "set", "client.key")
+	os.Stdin = setStdin
+	assertHumanUnchanged(t, "removed secret client.key", "config", "secret", "rm", "client.key")
 
 	seedAdminServer(t, "zen", "https://zen.example.test:7777")
 	assertHumanUnchanged(t, "removed server zen", "config", "server", "rm", "zen")

@@ -208,9 +208,6 @@ func Parse(name string, raw []byte) (Policy, []string, error) {
 	if err := validateScanPatterns(path, p.ScanPatterns); err != nil {
 		return Policy{}, warnings, err
 	}
-	if err := validateClassify(path, p.Classify); err != nil {
-		return Policy{}, warnings, err
-	}
 	maxTier, err := parseMaxTier(path, p.MaxTier)
 	if err != nil {
 		return Policy{}, warnings, err
@@ -306,27 +303,6 @@ func validateScanPatterns(path string, patterns []string) error {
 		if _, err := regexp.Compile(pat); err != nil {
 			return fmt.Errorf("%s: scan_patterns[%d]: %w: %w", path, i, err, ErrBadPolicy)
 		}
-	}
-	return nil
-}
-
-func validateClassify(path string, c *Classify) error {
-	if c == nil {
-		return nil
-	}
-	if c.Provider == "" {
-		return fmt.Errorf("%s: classify.provider: required: %w", path, ErrBadPolicy)
-	}
-	if c.Provider != "jev" {
-		return fmt.Errorf("%s: classify.provider: unknown %q (known: jev): %w", path, c.Provider, ErrBadPolicy)
-	}
-	if c.InjectionThreshold != nil {
-		if v := *c.InjectionThreshold; v <= 0 || v > 1 {
-			return fmt.Errorf("%s: classify.injection_threshold: must be in (0, 1], got %v: %w", path, v, ErrBadPolicy)
-		}
-	}
-	if c.TimeoutMS != nil && *c.TimeoutMS <= 0 {
-		return fmt.Errorf("%s: classify.timeout_ms: must be > 0, got %d: %w", path, *c.TimeoutMS, ErrBadPolicy)
 	}
 	return nil
 }

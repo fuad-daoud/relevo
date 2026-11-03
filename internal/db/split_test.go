@@ -51,7 +51,7 @@ func seedSplitFixture(t *testing.T, d *DB) {
 	exec(`INSERT OR REPLACE INTO secret (name, value, updated_at) VALUES (?, ?, ?)`,
 		"client.key", []byte("pem-bytes"), "2026-10-03T09:00:00.000Z")
 	exec(`INSERT OR REPLACE INTO secret (name, value, updated_at) VALUES (?, ?, ?)`,
-		"typesafe", []byte("token"), "2026-10-03T09:00:00.000Z")
+		"vendor.key", []byte("token"), "2026-10-03T09:00:00.000Z")
 	exec(`INSERT OR REPLACE INTO config_doc (name, body, updated_at) VALUES (?, ?, ?)`,
 		"candidates", `{"c":1}`, "2026-10-03T09:00:00.000Z")
 	exec(`INSERT OR REPLACE INTO config_revision (at, source, message, version, changes, snapshot)
@@ -348,7 +348,7 @@ func TestSplitKeepsLocalRowsOverDifferingStrays(t *testing.T) {
 	execShared(`INSERT OR REPLACE INTO secret (name, value, updated_at) VALUES (?, ?, ?)`,
 		"client.key", []byte("stray-bytes"), "2026-10-09T09:00:00.000Z")
 	execShared(`INSERT OR REPLACE INTO secret (name, value, updated_at) VALUES (?, ?, ?)`,
-		"typesafe", []byte("token"), "2026-10-09T10:00:00.000Z")
+		"vendor.key", []byte("token"), "2026-10-09T10:00:00.000Z")
 	execShared(`INSERT OR REPLACE INTO kv (key, value_json, updated_at) VALUES (?, ?, ?)`,
 		"daemon", `{"pid":7}`, "2026-10-09T09:00:00.000Z")
 
