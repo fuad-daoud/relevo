@@ -1,0 +1,388 @@
+package serve
+
+import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"os"
+	"sort"
+	"time"
+
+	"github.com/fuad-daoud/relevo/internal/burst"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/resolve"
+	"github.com/fuad-daoud/relevo/internal/store"
+)
+
+// A sending forward is a claim the node has not answered yet. sendForwards
+// ships each one and confirms it on the node's yes; a refusal returns the
+// round to the local queue, while a transport failure keeps the claim for
+// the next tick. Every network call runs without s.mu, and each answer
+// applies only while the forward still matches, the way the adopt and
+// requeue paths apply theirs.
+
+// sendWork is one sending forward with the binding that claimed it and the
+// ship base the collect pass saw. The ship base rides along because the
+// confirm must not advance past what this pass shipped.
+type sendWork struct {
+	ownerPath string
+	id        remote.ClientID
+	b         store.Binding
+	since     string
+}
+
+// sendForwards ships every sending forward to its node and returns how many
+// the nodes confirmed. Rows that are not verified or not ready take no
+// forward: an unverified node never proved it is the pinned peer, and a
+// draining one is going away.
+func (s *Server) sendForwards(ctx context.Context, now time.Time) int {
+	if !s.burstOn() {
+		return 0
+	}
+	t := s.copyBurstTable()
+	if t == nil {
+		return 0
+	}
+	rows := make(map[string]burst.NodeRow, len(t.Nodes))
+	for _, r := range t.Nodes {
+		rows[r.ID] = r
+	}
+	var pending []sendWork
+	_ = s.walkOwners(func(id remote.ClientID, ownerPath string, bindings []store.Binding) {
+		for _, b := range bindings {
+			f := burstStoredForward(b)
+			if f == nil || f.Phase != "sending" {
+				continue
+			}
+			row, ok := rows[f.Node]
+			if !ok || !row.Verified || row.State != "ready" {
+				continue
+			}
+			var since string
+			if b.Burst != nil {
+				since = b.Burst.Shipped[f.Node]
+			}
+			pending = append(pending, sendWork{ownerPath: ownerPath, id: id, b: b, since: since})
+		}
+	})
+	if len(pending) == 0 {
+		return 0
+	}
+	seen := make(map[string]bool, len(pending))
+	dial := make([]burst.NodeRow, 0, len(pending))
+	for _, p := range pending {
+		n := p.b.Burst.Forward.Node
+		if !seen[n] {
+			seen[n] = true
+			dial = append(dial, rows[n])
+		}
+	}
+	cl, err := s.burstNodeClient(dial)
+	if err != nil {
+		slog.Warn("burst: send skipped, client key unusable", "err", err)
+		return 0
+	}
+	confirmed := 0
+	for _, p := range pending {
+		if s.sendOne(ctx, cl, rows[p.b.Burst.Forward.Node], p, now) {
+			confirmed++
+		}
+	}
+	return confirmed
+}
+
+// sendOne ships one sending forward: the node binding is created when
+// missing and the round starts with the head's own plan, candidate, tier
+// and tags. A started round and an already-started answer both confirm;
+// a refusal requeues, and anything else keeps the claim for the next tick.
+func (s *Server) sendOne(ctx context.Context, cl *client.Client, row burst.NodeRow, w sendWork, now time.Time) bool {
+	fwd := *w.b.Burst.Forward
+	rt := s.runtimeAt(w.ownerPath)
+	ship, ok := s.shipForward(ctx, rt, w.b, fwd, w.since)
+	if !ok {
+		return false
+	}
+	defer func() {
+		if ship.snap.Body != nil {
+			_ = ship.snap.Body.Close()
+		}
+	}()
+	if !s.ensureNodeBinding(ctx, cl, row, w, ship, now) {
+		return false
+	}
+	var bundle io.Reader
+	if !ship.snap.Empty && ship.snap.Body != nil {
+		bundle = ship.snap.Body
+	}
+	_, serr := cl.StartRound(ctx, row.ID, fwd.NodeBinding, fwd.Round, ship.plan,
+		bundle, ship.tier, w.b.BuilderCandidate, false, ship.tags, false, nil)
+	if serr == nil || burstHTTPStatus(serr, http.StatusConflict) {
+		return s.confirmSend(w, row, ship.outSHA, now)
+	}
+	if burstForwardRefused(serr) {
+		slog.Warn("burst: node refused a forward, requeued", "owner", string(w.id),
+			"binding", w.b.Name, "node", fwd.Node, "err", serr)
+		s.requeueOne(w.id, w.ownerPath, w.b.Name, fwd, now)
+		return false
+	}
+	if burstForwardUnreachable(serr) {
+		s.noteNodeUnreachable(now, row)
+	} else {
+		slog.Warn("burst: send forward failed, kept sending", "owner", string(w.id),
+			"binding", w.b.Name, "node", fwd.Node, "err", serr)
+	}
+	return false
+}
+
+// forwardShip is everything one send ships: the round's staged plan, the
+// bundle cut from the out ref since the node last took one, the out ref's
+// own sha the confirm sets as the next base, and the tier and tags the
+// round carries.
+type forwardShip struct {
+	plan   []byte
+	snap   remote.Snapshot
+	outSHA string
+	repoID string
+	tier   string
+	tags   []remote.TagRef
+}
+
+// shipForward reads one forward's ship without touching the network. A
+// binding without repo facts, a missing plan or out ref, unreadable tags
+// or a failed snapshot keeps the forward sending for the next tick; an
+// unknown ship base falls back to the full bundle, the way the client's
+// own send does.
+func (s *Server) shipForward(ctx context.Context, rt relevo.Runtime, b store.Binding, fwd store.Forward, since string) (*forwardShip, bool) {
+	if b.Serve == nil || b.Serve.BareRepo == "" || b.Serve.RepoID == "" {
+		slog.Warn("burst: send forward: binding has no repo facts", "binding", b.Name)
+		return nil, false
+	}
+	plan, err := os.ReadFile(rt.Store.PromptPath(b.Name, fwd.Round))
+	if err != nil {
+		slog.Warn("burst: send forward: plan missing", "binding", b.Name, "round", fwd.Round, "err", err)
+		return nil, false
+	}
+	bare, repoID := b.Serve.BareRepo, b.Serve.RepoID
+	tags, err := forwardTags(ctx, rt, bare)
+	if err != nil {
+		slog.Warn("burst: send forward: tags unreadable", "binding", b.Name, "err", err)
+		return nil, false
+	}
+	outRef := "refs/relevo/" + b.Name + "/out"
+	outSHA, ok, err := rt.Git.RefSHA(ctx, bare, outRef)
+	if err != nil || !ok {
+		slog.Warn("burst: send forward: out ref missing", "binding", b.Name, "ref", outRef, "err", err)
+		return nil, false
+	}
+	// The node absorbs the bundle only into its own out ref, so the head
+	// stages the same tree under the forward's ref before cutting the
+	// bundle. A ref the head neither shipped last nor just staged is
+	// another binding's out ref sharing the name: forwarding never
+	// clobbers it, and the claim waits. The compare-and-swap carries the
+	// read value, so a concurrent writer fails the stage instead of
+	// losing its ref.
+	fwdRef := "refs/relevo/" + fwd.NodeBinding + "/out"
+	cur, ok, err := rt.Git.RefSHA(ctx, bare, fwdRef)
+	if err != nil || (ok && cur != since && cur != outSHA) {
+		slog.Warn("burst: send forward: forward ref not available", "binding", b.Name, "ref", fwdRef, "err", err)
+		return nil, false
+	}
+	old := ""
+	if ok {
+		old = cur
+	}
+	if err := rt.Git.UpdateRef(ctx, bare, fwdRef, outSHA, old); err != nil {
+		slog.Warn("burst: send forward: forward ref not staged", "binding", b.Name, "ref", fwdRef, "err", err)
+		return nil, false
+	}
+	snap, err := rt.Transport.Snapshot(ctx, bare, []string{fwdRef}, since)
+	if errors.Is(err, remote.ErrSinceUnknown) {
+		snap, err = rt.Transport.Snapshot(ctx, bare, []string{fwdRef}, "")
+	}
+	if err != nil {
+		slog.Warn("burst: send forward: snapshot failed", "binding", b.Name, "err", err)
+		return nil, false
+	}
+	return &forwardShip{
+		plan: plan, snap: snap, outSHA: outSHA, repoID: repoID,
+		tier: string(resolve.EffectiveTier(b)), tags: tags,
+	}, true
+}
+
+// forwardTags lists the bare repo's tags for the ship, sorted by name the
+// way the client's own send ships them.
+func forwardTags(ctx context.Context, rt relevo.Runtime, bare string) ([]remote.TagRef, error) {
+	listed, err := rt.Git.ListTags(ctx, bare)
+	if err != nil {
+		return nil, err
+	}
+	tags := make([]remote.TagRef, 0, len(listed))
+	for name, sha := range listed {
+		tags = append(tags, remote.TagRef{Name: name, SHA: sha})
+	}
+	sort.Slice(tags, func(i, j int) bool { return tags[i].Name < tags[j].Name })
+	return tags, nil
+}
+
+// ensureNodeBinding creates the round's binding on the node when it is
+// missing. A present binding is left alone: the start below answers an
+// identical retry without sending twice. A refusal returns the round to
+// the local queue, where it can run instead; a transport failure keeps
+// the claim for the next tick.
+func (s *Server) ensureNodeBinding(ctx context.Context, cl *client.Client, row burst.NodeRow, w sendWork, ship *forwardShip, now time.Time) bool {
+	fwd := *w.b.Burst.Forward
+	_, gerr := cl.GetBinding(ctx, row.ID, fwd.NodeBinding)
+	if gerr == nil {
+		return true
+	}
+	if !burstHTTPStatus(gerr, http.StatusNotFound) {
+		if burstForwardUnreachable(gerr) {
+			s.noteNodeUnreachable(now, row)
+		} else {
+			slog.Warn("burst: node binding check failed, kept sending", "owner", string(w.id),
+				"binding", w.b.Name, "node", fwd.Node, "err", gerr)
+		}
+		return false
+	}
+	req := remote.CreateBindingRequest{
+		Name: fwd.NodeBinding, RepoID: ship.repoID, BaseCommit: ship.outSHA,
+		Candidate: w.b.BuilderCandidate, Tier: ship.tier, Role: w.b.Role,
+	}
+	_, cerr := cl.CreateBinding(ctx, row.ID, req)
+	if cerr == nil || burstHTTPStatus(cerr, http.StatusConflict) {
+		return true
+	}
+	if burstForwardRefused(cerr) {
+		slog.Warn("burst: node refused a forward binding, requeued", "owner", string(w.id),
+			"binding", w.b.Name, "node", fwd.Node, "err", cerr)
+		s.requeueOne(w.id, w.ownerPath, w.b.Name, fwd, now)
+		return false
+	}
+	if burstForwardUnreachable(cerr) {
+		s.noteNodeUnreachable(now, row)
+	} else {
+		slog.Warn("burst: forward binding create failed, kept sending", "owner", string(w.id),
+			"binding", w.b.Name, "node", fwd.Node, "err", cerr)
+	}
+	return false
+}
+
+// confirmSend marks a sent forward running after the node's yes. The
+// binding is re-read and the mark lands only while the forward still
+// matches, so a result for a superseded claim is dropped. The table learns
+// the send after the binding does, each under its own lock: no lock spans
+// both, so a report merging between them still wins the row guard.
+func (s *Server) confirmSend(w sendWork, row burst.NodeRow, outSHA string, now time.Time) bool {
+	fwd := *w.b.Burst.Forward
+	st := s.ownerStore(w.ownerPath)
+	b, err := st.Load(w.b.Name)
+	if err != nil {
+		slog.Warn("burst: confirm forward: load failed", "binding", w.b.Name, "err", err)
+		return false
+	}
+	have := burstStoredForward(b)
+	if have == nil || have.Phase != "sending" || have.Node != fwd.Node || b.Round != fwd.Round {
+		return false
+	}
+	have.Phase = "running"
+	have.SentAt = now
+	if b.Burst.Shipped == nil {
+		b.Burst.Shipped = map[string]string{}
+	}
+	b.Burst.Shipped[have.Node] = outSHA
+	b.Burst.NodeBindings = append(b.Burst.NodeBindings, have.NodeBinding)
+	if err := st.Save(b); err != nil {
+		slog.Warn("burst: confirm forward: save failed", "binding", w.b.Name, "err", err)
+		return false
+	}
+	s.noteForwardSent(row, now)
+	s.clearNodeProblem(row)
+	return true
+}
+
+// burstHTTPStatus reports whether err is an HTTP answer with the given
+// status. Anything else -- a dial failure, a timeout, a local error -- is
+// not an answer at all.
+func burstHTTPStatus(err error, status int) bool {
+	var herr *client.HTTPError
+	return errors.As(err, &herr) && herr.Status == status
+}
+
+// burstForwardRefused reports whether err is a definite refusal: a 4xx that
+// is not a confirm, so the node will not take the round and it waits
+// locally again. Anything else stays sending for the next tick.
+func burstForwardRefused(err error) bool {
+	var herr *client.HTTPError
+	if !errors.As(err, &herr) {
+		return false
+	}
+	return herr.Status >= 400 && herr.Status < 500 && herr.Status != http.StatusConflict
+}
+
+// burstForwardUnreachable reports whether err is a dial failure, a timeout
+// or a server-side failure: the node may still take the round, so the
+// forward stays sending and the row carries unreachable until it answers.
+func burstForwardUnreachable(err error) bool {
+	if errors.Is(err, client.ErrUnreachable) {
+		return true
+	}
+	var herr *client.HTTPError
+	return errors.As(err, &herr) && herr.Status >= 500
+}
+
+// updateBurstRow applies one mark to the row under s.mu. The mark lands
+// only while the row still carries the checked URL and fingerprint, so a
+// report that merged mid-pass wins; the whole table saves after, the way
+// the verify pass saves its own.
+func (s *Server) updateBurstRow(row burst.NodeRow, apply func(*burst.NodeRow)) {
+	s.mu.Lock()
+	t := s.burstTable
+	if t == nil {
+		s.mu.Unlock()
+		return
+	}
+	if r := burstTableRow(t, row.ID); r != nil && r.URL == row.URL && r.Fingerprint == row.Fingerprint {
+		apply(r)
+	}
+	cp := *t
+	cp.Nodes = append([]burst.NodeRow(nil), t.Nodes...)
+	s.mu.Unlock()
+	if err := saveBurstTable(s.cfg.DB.LocalOrSelf(), &cp); err != nil {
+		slog.Warn("burst: node table not saved", "err", err)
+	}
+}
+
+// noteNodeUnreachable records a dial, timeout or server failure on the row.
+// ProblemSince is stamped only on the first failure of the episode: a
+// standing outage keeps the time it started, which is what the lost-node
+// bound measures from.
+func (s *Server) noteNodeUnreachable(now time.Time, row burst.NodeRow) {
+	s.updateBurstRow(row, func(r *burst.NodeRow) {
+		if r.Problem != burst.ReportProblemUnreachable {
+			r.Problem = burst.ReportProblemUnreachable
+			r.ProblemSince = now
+		}
+	})
+}
+
+// clearNodeProblem clears the row's problem after a success: any good
+// answer proves the node reachable again, whatever the last failure was.
+func (s *Server) clearNodeProblem(row burst.NodeRow) {
+	s.updateBurstRow(row, func(r *burst.NodeRow) {
+		r.Problem = ""
+		r.ProblemSince = time.Time{}
+	})
+}
+
+// noteForwardSent stamps the row's forwarded mark after the node took the
+// round, so the next report carries when each node last received one.
+func (s *Server) noteForwardSent(row burst.NodeRow, now time.Time) {
+	at := now
+	s.updateBurstRow(row, func(r *burst.NodeRow) {
+		r.ForwardedAt = &at
+	})
+}

@@ -27,10 +27,10 @@ func (s *Server) burstOn() bool {
 }
 
 // burstTick requeues what dead nodes lost, checks new nodes, places waiting
-// rounds onto live nodes as sending forwards, and reports the load. Callers
-// hold admitMu; the provider and node calls keep it while dropping s.mu, so
-// a hung peer stalls the tick up to its own timeout after local admit
-// already ran.
+// rounds onto live nodes as sending forwards, sends those, and reports the
+// load. Callers hold admitMu; the provider and node calls keep it while
+// dropping s.mu, so a hung peer stalls the tick up to its own timeout after
+// local admit already ran.
 func (s *Server) burstTick(ctx context.Context) {
 	if !s.burstOn() {
 		return
@@ -39,7 +39,8 @@ func (s *Server) burstTick(ctx context.Context) {
 	s.requeueLost(now)
 	s.verifyNodes(ctx)
 	placed := s.placeForwards(now)
-	s.reportCycle(now, placed)
+	confirmed := s.sendForwards(ctx, now)
+	s.reportCycle(now, placed+confirmed)
 }
 
 // requeueLost returns every forward on a dead node to the local queue at the
