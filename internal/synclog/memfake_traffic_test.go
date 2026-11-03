@@ -12,6 +12,43 @@ import (
 // a case compares are about the write rather than about a clock.
 var trafficAt = time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
 
+// TestMemTransportsReadEachOtherTrafficRows pins the read half: a read answers
+// with every origin's row the log holds and writes nothing, so a reader learns
+// the account's total without moving any row. The write-nothing half is what a
+// second handle's read proves: it sees the first handle's row without gaining
+// one of its own.
+func TestMemTransportsReadEachOtherTrafficRows(t *testing.T) {
+	a := NewMemTransport("origin-a")
+	b := a.OnLog("origin-b")
+
+	if rows, err := b.ReadTraffic(); err != nil || len(rows) != 0 {
+		t.Fatalf("a read on an empty log = %+v, %v, want no rows", rows, err)
+	}
+	if _, err := a.PublishTraffic(TrafficRow{Month: "2026-10", Push: 10, Pull: 20, At: trafficAt}); err != nil {
+		t.Fatalf("publish traffic: %v", err)
+	}
+	got, err := b.ReadTraffic()
+	if err != nil {
+		t.Fatalf("read traffic: %v", err)
+	}
+	if len(got) != 1 || got["origin-a"].Push != 10 {
+		t.Fatalf("b's read answered with %+v, want only origin-a's row", got)
+	}
+	if _, ok := got["origin-b"]; ok {
+		t.Errorf("b's read created %+v, want no row for a handle that never published", got["origin-b"])
+	}
+	if _, err := b.PublishTraffic(TrafficRow{Month: "2026-10", Push: 1, Pull: 2, At: trafficAt}); err != nil {
+		t.Fatalf("publish from the second handle: %v", err)
+	}
+	after, err := a.ReadTraffic()
+	if err != nil {
+		t.Fatalf("read after both publishes: %v", err)
+	}
+	if len(after) != 2 || after["origin-b"].Push != 1 {
+		t.Errorf("a's read after both publishes = %+v, want both rows", after)
+	}
+}
+
 // TestMemTransportsSeeEachOtherTrafficRows pins the two rules the fake log
 // carries for traffic: a publish answers with every origin's row as the log
 // holds it after the write, and a handle can move only its own origin's row.

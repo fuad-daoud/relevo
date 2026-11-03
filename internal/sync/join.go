@@ -377,7 +377,7 @@ func (e *Enabler) join(transport synclog.LogTransport, now time.Time) (res Enabl
 		return res, err
 	}
 	if e.Request.Join {
-		est, guarded, err := e.guardJoined()
+		est, guarded, err := e.guardJoined(transport)
 		res.Guarded, res.Estimate = guarded, est
 		if err != nil {
 			return res, err

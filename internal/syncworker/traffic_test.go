@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -351,6 +352,162 @@ func TestPublishTrafficRefusesWhenTheReadBackFails(t *testing.T) {
 	}
 	if rows, err := b.PublishTraffic(trafficRow); err == nil {
 		t.Fatalf("a publish whose read-back failed answered %+v", rows)
+	}
+}
+
+// TestReadTrafficAnswersWithEverySeededRow pins the read's whole job: a
+// request carrying no row is answered with every origin's row as the replica
+// holds it, including rows other machines wrote that this worker never saw in
+// a request.
+func TestReadTrafficAnswersWithEverySeededRow(t *testing.T) {
+	path := tempReplica(t)
+	b := backendFor(t, &localDriver{path: path}, "origin-a")
+	seedTraffic(t, path, trafficPrefix+"origin-y",
+		trafficBody("2026-10", 7, 8, "2026-10-05T00:00:00Z"))
+	seedTraffic(t, path, trafficPrefix+"origin-z",
+		trafficBody("2026-10", 5, 6, "2026-10-05T00:00:00Z"))
+
+	s := startWorker(t, b)
+	if resp := s.ask(helloRequest("h")); !resp.OK {
+		t.Fatalf("hello: %+v", resp)
+	}
+	resp := s.ask(Request{ID: "t1", Verb: VerbReadTraffic})
+	if !resp.OK {
+		t.Fatalf("read_traffic = %+v, want it carried out", resp)
+	}
+	held := resp.Traffic
+	if len(held) != 2 {
+		t.Fatalf("the read answered with %d rows, want both seeded origins: %+v", len(held), held)
+	}
+	if y := held["origin-y"]; y.Push != 7 || y.Pull != 8 || y.Month != "2026-10" {
+		t.Errorf("the answer's origin-y row = %+v, want the row seeded into meta", y)
+	}
+	if z := held["origin-z"]; z.Push != 5 || z.Pull != 6 || z.Month != "2026-10" {
+		t.Errorf("the answer's origin-z row = %+v, want the row seeded into meta", z)
+	}
+}
+
+// TestReadTrafficWritesNothing pins that a read moves no row: the traffic map
+// afterwards is the seeded one, and the engine saw no push.
+func TestReadTrafficWritesNothing(t *testing.T) {
+	path := tempReplica(t)
+	driver := &localDriver{path: path}
+	b := backendFor(t, driver, "origin-a")
+	seedTraffic(t, path, trafficPrefix+"origin-y",
+		trafficBody("2026-10", 7, 8, "2026-10-05T00:00:00Z"))
+	before := trafficKeys(t, path)
+
+	s := startWorker(t, b)
+	if resp := s.ask(helloRequest("h")); !resp.OK {
+		t.Fatalf("hello: %+v", resp)
+	}
+	pushes := driver.pushes
+	if resp := s.ask(Request{ID: "t1", Verb: VerbReadTraffic}); !resp.OK {
+		t.Fatalf("read_traffic = %+v, want it carried out", resp)
+	}
+	if driver.pushes != pushes {
+		t.Errorf("a read pushed %d times, want none: the answer is read off the replica",
+			driver.pushes-pushes)
+	}
+	if resp := s.ask(Request{ID: "bye", Verb: VerbShutdown}); !resp.OK {
+		t.Fatalf("shutdown: %+v", resp)
+	}
+	if err := s.wait(); err != nil {
+		t.Fatalf("the worker ended: %v", err)
+	}
+	if after := trafficKeys(t, path); !reflect.DeepEqual(after, before) {
+		t.Errorf("the replica holds %+v after a read, want the seeded %+v: a read writes nothing",
+			after, before)
+	}
+}
+
+// TestReadTrafficReadsFineWhenAPushWouldFail pins that the answer comes off
+// the replica rather than the remote: a driver whose push is refused still
+// reads, because a read pushes nothing.
+func TestReadTrafficReadsFineWhenAPushWouldFail(t *testing.T) {
+	path := tempReplica(t)
+	driver := &localDriver{path: path}
+	b := backendFor(t, driver, "origin-a")
+	seedTraffic(t, path, trafficPrefix+"origin-y",
+		trafficBody("2026-10", 7, 8, "2026-10-05T00:00:00Z"))
+	driver.pushErr = errors.New("the remote is not answering")
+
+	s := startWorker(t, b)
+	if resp := s.ask(helloRequest("h")); !resp.OK {
+		t.Fatalf("hello: %+v", resp)
+	}
+	before := driver.pushes
+	resp := s.ask(Request{ID: "t1", Verb: VerbReadTraffic})
+	if !resp.OK {
+		t.Fatalf("read_traffic with a failing push = %+v, want it carried out", resp)
+	}
+	if len(resp.Traffic) != 1 {
+		t.Fatalf("the read answered with %d rows, want the seeded one: %+v", len(resp.Traffic), resp.Traffic)
+	}
+	if driver.pushes != before {
+		t.Errorf("a read pushed %d times, want none", driver.pushes-before)
+	}
+}
+
+// TestReadTrafficRefusedWithoutHello pins that the verb needs the handshake:
+// before it the worker holds no replica to read from.
+func TestReadTrafficRefusedWithoutHello(t *testing.T) {
+	b := NewTursoBackend(&localDriver{path: tempReplica(t)})
+	s := startWorker(t, b)
+	resp := s.ask(Request{ID: "a", Verb: VerbReadTraffic})
+	if resp.OK {
+		t.Errorf("read_traffic before hello = %+v, want a refusal", resp)
+	}
+	if resp.Error != ErrNoHello.Error() {
+		t.Errorf("read_traffic before hello = %q, want %q", resp.Error, ErrNoHello)
+	}
+}
+
+// TestReadTrafficReportsNoReplica pins the second gate the publish verb
+// reports: a backend that never opened a replica refuses rather than reading
+// nothing and answering as if the account held no traffic.
+func TestReadTrafficReportsNoReplica(t *testing.T) {
+	b := NewTursoBackend(&localDriver{path: tempReplica(t)})
+	if _, err := b.ReadTraffic(); !errorsIsNoReplica(err) {
+		t.Errorf("ReadTraffic without a replica = %v, want a no-replica refusal", err)
+	}
+}
+
+// TestReadTrafficRefusedByABackendWithoutIt pins that a worker whose backend
+// carries no traffic reader refuses the verb rather than answering with an
+// empty account: an empty answer would read as a machine alone on the log.
+func TestReadTrafficRefusedByABackendWithoutIt(t *testing.T) {
+	s := startWorker(t, &fakeBackend{})
+	s.askHello()
+	resp := s.ask(Request{ID: "t", Verb: VerbReadTraffic})
+	if resp.OK {
+		t.Fatalf("read_traffic on a backend without the reader = %+v, want a refusal", resp)
+	}
+	if !contains(resp.Error, "reads no traffic") {
+		t.Errorf("refusal %q does not say the backend reads no traffic", resp.Error)
+	}
+}
+
+// TestReadTrafficRefusesWhenTheReadFails pins that a read whose replica is
+// gone is a refusal, not an answer with no rows: an empty answer would be
+// stored as an account of this machine alone.
+func TestReadTrafficRefusesWhenTheReadFails(t *testing.T) {
+	path := tempReplica(t)
+	driver := &localDriver{path: path}
+	b := backendFor(t, driver, "origin-a")
+	s := startWorker(t, b)
+	if resp := s.ask(helloRequest("h")); !resp.OK {
+		t.Fatalf("hello: %+v", resp)
+	}
+	before := driver.pushes
+	if err := execOnErr(t, path, "DROP TABLE meta"); err != nil {
+		t.Fatalf("drop meta: %v", err)
+	}
+	if resp := s.ask(Request{ID: "t1", Verb: VerbReadTraffic}); resp.OK {
+		t.Fatalf("a read whose replica is gone answered %+v", resp.Traffic)
+	}
+	if driver.pushes != before {
+		t.Errorf("a failed read pushed %d times, want none", driver.pushes-before)
 	}
 }
 

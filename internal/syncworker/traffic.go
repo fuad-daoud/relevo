@@ -18,6 +18,11 @@ import (
 // every origin's row as the replica holds it after the write.
 const VerbPublishTraffic Verb = "publish_traffic"
 
+// VerbReadTraffic answers with every origin's traffic row without writing or
+// pushing anything: a reader learning the account's total rather than
+// publishing its own month.
+const VerbReadTraffic Verb = "read_traffic"
+
 // trafficPrefix is what a traffic row's meta key begins with. Older builds
 // reach meta only by exact keys or their own prefixes -- floor.,
 // signed_from., epoch_cut., key_wrapped., claim:, and the format row -- so a
@@ -40,6 +45,14 @@ type TrafficRow struct {
 // whole.
 type trafficBackend interface {
 	PublishTraffic(row TrafficRow) (map[string]TrafficRow, error)
+}
+
+// trafficReader is a backend that answers with the traffic rows it holds. It
+// is an optional assertion like trafficBackend, so a worker whose backend
+// carries no traffic refuses the read rather than answering with an empty
+// account.
+type trafficReader interface {
+	ReadTraffic() (map[string]TrafficRow, error)
 }
 
 // PublishTraffic writes this worker's own row, pushes it, and answers with
@@ -65,6 +78,20 @@ func (b *TursoBackend) PublishTraffic(row TrafficRow) (map[string]TrafficRow, er
 		return nil, fmt.Errorf("syncworker: push traffic: %w", markTransferRefusal(err))
 	}
 	rows, err := b.readTrafficRows(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("syncworker: read the traffic rows: %w", markDriverRefusal(err))
+	}
+	return rows, nil
+}
+
+// ReadTraffic answers with every origin's traffic row this replica holds,
+// writing nothing and pushing nothing: the replica is read as it stands, so a
+// reader learns the account's total without moving any origin's row.
+func (b *TursoBackend) ReadTraffic() (map[string]TrafficRow, error) {
+	if err := b.ready(); err != nil {
+		return nil, err
+	}
+	rows, err := b.readTrafficRows(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("syncworker: read the traffic rows: %w", markDriverRefusal(err))
 	}
@@ -178,6 +205,21 @@ func (s *server) publishTraffic(req Request) Response {
 		return refuse(req, fmt.Errorf("%w: this worker's backend publishes no traffic", ErrProtocol))
 	}
 	rows, err := tb.PublishTraffic(*req.Traffic)
+	if err != nil {
+		return refuse(req, err)
+	}
+	return Response{ID: req.ID, OK: true, Traffic: rows}
+}
+
+// readTraffic answers with every origin's traffic row the replica holds. The
+// request carries no row because there is none to write: the origin keying a
+// publish has nothing to key here.
+func (s *server) readTraffic(req Request) Response {
+	tb, ok := s.backend.(trafficReader)
+	if !ok {
+		return refuse(req, fmt.Errorf("%w: this worker's backend reads no traffic", ErrProtocol))
+	}
+	rows, err := tb.ReadTraffic()
 	if err != nil {
 		return refuse(req, err)
 	}

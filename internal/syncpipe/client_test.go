@@ -245,6 +245,15 @@ func (normalBackend) PublishTraffic(row syncworker.TrafficRow) (map[string]syncw
 	}, nil
 }
 
+// ReadTraffic answers with two held rows, without writing: the shape a replica
+// holding two publishers answers a reader with.
+func (normalBackend) ReadTraffic() (map[string]syncworker.TrafficRow, error) {
+	return map[string]syncworker.TrafficRow{
+		"origin-a": {Month: "2026-10", Push: 3, Pull: 4, At: pinnedAt},
+		"origin-b": {Month: "2026-10", Push: 5, Pull: 6, At: pinnedAt},
+	}, nil
+}
+
 func (normalBackend) Stats() (syncworker.Stats, error) {
 	return syncworker.Stats{Entries: 11, Origins: 2, Seq: 9}, nil
 }
@@ -403,6 +412,10 @@ func (r verbsRefusingBackend) Stats() (syncworker.Stats, error) {
 func (r verbsRefusingBackend) PublishMarks(map[string]int, time.Time) error { return r.fail() }
 
 func (r verbsRefusingBackend) PublishTraffic(syncworker.TrafficRow) (map[string]syncworker.TrafficRow, error) {
+	return nil, r.fail()
+}
+
+func (r verbsRefusingBackend) ReadTraffic() (map[string]syncworker.TrafficRow, error) {
 	return nil, r.fail()
 }
 
@@ -773,7 +786,7 @@ func TestCallBoundClassifiesEveryProtocolVerb(t *testing.T) {
 			t.Errorf("callBound(%s) = %s, %v; want the data bound %s", verb, got, err, dataCallTimeout)
 		}
 	}
-	for _, verb := range []syncworker.Verb{syncworker.VerbStats, syncworker.VerbHead, syncworker.VerbShutdown} {
+	for _, verb := range []syncworker.Verb{syncworker.VerbStats, syncworker.VerbHead, syncworker.VerbReadTraffic, syncworker.VerbShutdown} {
 		if got, err := callBound(verb); err != nil || got != controlCallTimeout {
 			t.Errorf("callBound(%s) = %s, %v; want the control bound %s", verb, got, err, controlCallTimeout)
 		}

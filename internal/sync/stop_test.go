@@ -232,3 +232,46 @@ func TestWithinStopsAStepBeforeItsFirstCall(t *testing.T) {
 		t.Errorf("%d calls reached the worker, want none", got)
 	}
 }
+
+// TestStopTransportForwardsReadTraffic pins that a read through the wrapper
+// reaches the log underneath while the work runs.
+func TestStopTransportForwardsReadTraffic(t *testing.T) {
+	t.Parallel()
+	inner := synclog.NewMemTransport("m1")
+	at := time.Now().UTC()
+	if _, err := inner.PublishTraffic(synclog.TrafficRow{Month: "2026-10", Push: 7, Pull: 8, At: at}); err != nil {
+		t.Fatalf("seed the traffic row: %v", err)
+	}
+	got, err := NewStopTransport(inner).ReadTraffic()
+	if err != nil {
+		t.Fatalf("ReadTraffic: %v", err)
+	}
+	if len(got) != 1 || got["m1"].Push != 7 || !got["m1"].At.Equal(at) {
+		t.Errorf("ReadTraffic = %+v, want the row the log holds", got)
+	}
+}
+
+// TestStopTransportRefusesReadTrafficAfterAStop pins that a stop ends the read
+// with the stop rather than the log: a call starting after the flag cannot
+// reach the fresh worker.
+func TestStopTransportRefusesReadTrafficAfterAStop(t *testing.T) {
+	t.Parallel()
+	inner := synclog.NewMemTransport("m1")
+	stop := NewStopTransport(inner)
+	stop.Stop()
+	if _, err := stop.ReadTraffic(); !errors.Is(err, ErrStopped) {
+		t.Errorf("ReadTraffic after a stop = %v, want ErrStopped", err)
+	}
+}
+
+// TestStopTransportWithoutTrafficReaderReportsUnsupported pins that a read over
+// a transport without the reader is the sentinel, not a failure: the publisher
+// is optional, and the guard reads it as no account figure rather than a join
+// failure.
+func TestStopTransportWithoutTrafficReaderReportsUnsupported(t *testing.T) {
+	t.Parallel()
+	stop := NewStopTransport(trafficBlind{synclog.NewMemTransport("m1")})
+	if _, err := stop.ReadTraffic(); !errors.Is(err, errTrafficUnsupported) {
+		t.Errorf("ReadTraffic over a transport without the reader = %v, want the unsupported sentinel", err)
+	}
+}

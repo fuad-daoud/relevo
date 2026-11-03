@@ -169,6 +169,7 @@ var verbHandlers = map[Verb]func(*server, Request) Response{
 	VerbPublishMarks:   (*server).publishMarks,
 	VerbReadMarks:      (*server).readMarks,
 	VerbPublishTraffic: (*server).publishTraffic,
+	VerbReadTraffic:    (*server).readTraffic,
 	VerbPullRange:      (*server).pullRange,
 	VerbCompact:        (*server).compact,
 	VerbKeyMeta:        (*server).keyMeta,
