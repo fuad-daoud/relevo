@@ -62,11 +62,11 @@ defects past rounds shipped, so they fit this repository only.
 Install them with `sh scripts/dev-agents.sh` (it needs `relevo` and `jq`) on
 your machine and on any server that runs your chains, and again after you edit
 a file under `dev/agents`. A server loads the new actors when `relevo serve`
-restarts. A chain runs on them with:
+restarts. The script records them on this repository's entry, so a chain runs
+on them with no actor flags:
 
 ```
-relevo chain ... --param builder=relevo-builder \
-  --planner-actor relevo-lite-planner --reviewer-actor relevo-reviewer
+relevo chain ...
 ```
 
 The generic agents stay the configured defaults, because a chain default applies
