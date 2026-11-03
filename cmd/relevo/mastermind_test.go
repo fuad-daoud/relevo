@@ -570,6 +570,7 @@ func TestMasterMindInitHookLockedDatabaseStillAnswersEmptyFast(t *testing.T) {
 	if cerr := <-holderDone; cerr != nil {
 		t.Fatalf("holder Tx: %v", cerr)
 	}
+	hookWorkers.Wait()
 	if err != nil {
 		t.Fatalf("init = %v, want exit 0", err)
 	}
@@ -1448,6 +1449,7 @@ func TestMasterMindNoticeHook(t *testing.T) {
 		if cerr := <-holderDone; cerr != nil {
 			t.Fatalf("holder Tx: %v", cerr)
 		}
+		hookWorkers.Wait()
 		if err != nil {
 			t.Fatalf("notice = %v, want exit 0", err)
 		}
@@ -1531,6 +1533,7 @@ func TestMasterMindHookOpenFailsFast(t *testing.T) {
 	if cerr := <-holderDone; cerr != nil {
 		t.Fatalf("holder Tx: %v", cerr)
 	}
+	hookWorkers.Wait()
 	if !errors.Is(err, db.ErrBusy) {
 		t.Fatalf("hook Tx = %v, want errors.Is(..., ErrBusy)", err)
 	}
