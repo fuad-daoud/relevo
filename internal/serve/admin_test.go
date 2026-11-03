@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/burst"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -1026,4 +1027,106 @@ func TestRenderGatesSanitizesNote(t *testing.T) {
 	if !strings.Contains(out, "\uFFFD") {
 		t.Errorf("RenderGates = %q, want a replacement rune", out)
 	}
+}
+
+// TestServeStatusJSONBurstBlock pins the additive burst block in `serve
+// status --json`: the block appears with its keys when the head holds a
+// node table, naming the report mark, the last failure, the provider's
+// preparing and denied blocks and every live node with its check marks and
+// load; a gone node the table still keeps is left out.
+// Without a table the key is absent, so a reader that never configured
+// bursting sees today's document -- while a command refused for want of a
+// client key still surfaces that refusal as last_err.
+func TestServeStatusJSONBurstBlock(t *testing.T) {
+	now := time.Date(2026, 11, 2, 9, 30, 0, 0, time.UTC)
+	headKP, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := burstVerifyEnv(t, headKP, nil)
+	since := now.Add(-time.Hour)
+	row := burstRowFor("b1", "https://b1.example", burstTestFingerprint)
+	row.Verified = true
+	row.Problem = burst.ReportProblemUnreachable
+	row.ProblemSince = since
+	gone := burstRowFor("b0", "https://b0.example", burstTestFingerprint)
+	gone.Verified = true
+	gone.Gone = true
+	env.srv.burstTable = &burst.NodeTable{
+		Nodes: []burst.NodeRow{gone, row}, LastReport: now, LastErr: "boom",
+		Preparing: &burst.Preparing{Slots: 2, Since: since},
+		Denied:    &burst.Denied{Reason: "cap", RetryAfter: "30s"},
+	}
+	saveHeadForward(t, env, "a", "b1", burstNodeBinding(env.id, "a"), 1, since)
+
+	doc := StatusDocument(nil, remote.BuildersView{Running: 1, Cap: 2})
+	doc.Burst = env.srv.BurstStatus()
+	blob, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(blob, &m); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	requireKeys(t, m, "runners", "owners", "burst")
+	bm, ok := m["burst"].(map[string]any)
+	if !ok {
+		t.Fatalf("burst is not a JSON object: %T", m["burst"])
+	}
+	requireKeys(t, bm, "last_report_at", "last_err", "preparing", "denied", "nodes")
+	if bm["last_err"] != "boom" {
+		t.Errorf("last_err = %v, want the table's failure", bm["last_err"])
+	}
+	if bm["preparing"].(map[string]any)["slots"] != float64(2) {
+		t.Errorf("preparing = %v, want the provider's slots", bm["preparing"])
+	}
+	if bm["denied"].(map[string]any)["reason"] != "cap" {
+		t.Errorf("denied = %v, want the provider's refusal", bm["denied"])
+	}
+	nodes, ok := bm["nodes"].([]any)
+	if !ok || len(nodes) != 1 {
+		t.Fatalf("nodes = %T %v, want one entry: the gone b0 left out, live b1 kept", bm["nodes"], bm["nodes"])
+	}
+	n0, ok := nodes[0].(map[string]any)
+	if !ok {
+		t.Fatalf("nodes[0] is not a JSON object: %T", nodes[0])
+	}
+	requireKeys(t, n0, "id", "name", "state", "verified", "problem", "running", "cap")
+	if n0["id"] != "b1" || n0["verified"] != true || n0["problem"] != "unreachable" {
+		t.Errorf("node = %v, want b1 verified with problem unreachable", n0)
+	}
+	if n0["running"] != float64(1) || n0["cap"] != float64(2) {
+		t.Errorf("node load = running %v cap %v, want 1 and 2", n0["running"], n0["cap"])
+	}
+
+	t.Run("absent without a table", func(t *testing.T) {
+		s := newAdminServer(t, now)
+		plain := StatusDocument(nil, remote.BuildersView{})
+		plain.Burst = s.BurstStatus()
+		blob, err := json.Marshal(plain)
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		if strings.Contains(string(blob), `"burst"`) {
+			t.Errorf("document without a table names burst:\n%s", blob)
+		}
+	})
+
+	t.Run("refusal without a key is last_err", func(t *testing.T) {
+		off, err := New(Config{
+			DB: testServeDB(t), Root: t.TempDir(), Now: time.Now,
+			Burst: burstTestPolicy(),
+		})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		st := off.BurstStatus()
+		if st == nil || !strings.Contains(st.LastErr, "relevo config server key") {
+			t.Errorf("BurstStatus = %+v, want the refusal naming the enrollment command", st)
+		}
+		if st != nil && st.Nodes == nil {
+			t.Error("Nodes is nil, want an empty list")
+		}
+	})
 }

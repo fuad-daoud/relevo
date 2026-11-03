@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,11 +65,12 @@ func boardCommentsFlagSet(fs *flag.FlagSet) *boardCommentsFlagValues {
 }
 
 type boardCommentFlagValues struct {
-	board *string
-	text  *string
-	x     *float64
-	y     *float64
-	by    *string
+	board  *string
+	text   *string
+	x      *float64
+	y      *float64
+	by     *string
+	asJSON *bool
 }
 
 func boardCommentFlagSet(fs *flag.FlagSet) *boardCommentFlagValues {
@@ -78,6 +80,7 @@ func boardCommentFlagSet(fs *flag.FlagSet) *boardCommentFlagValues {
 	v.x = fs.Float64("x", 0, "the comment's x position, with --y (default: below the scene)")
 	v.y = fs.Float64("y", 0, "the comment's y position, with --x (default: below the scene)")
 	v.by = fs.String("by", "", "the comment's author (default: RELEVO_MASTERMIND, else human)")
+	v.asJSON = fs.Bool("json", false, "print the document the write produced")
 	return v
 }
 
@@ -86,6 +89,7 @@ type boardPromoteFlagValues struct {
 	mastermind *string
 	to         *string
 	force      *bool
+	asJSON     *bool
 }
 
 // boardPromoteFlagSet exists so the registry's parity test finds exactly one
@@ -96,6 +100,7 @@ func boardPromoteFlagSet(fs *flag.FlagSet) *boardPromoteFlagValues {
 	v.mastermind = fs.String("mastermind", "", "the MasterMind whose live board to promote (id or name)")
 	v.to = fs.String("to", "", "the repo board name to write (default: the live board's own name)")
 	v.force = fs.Bool("force", false, "overwrite an existing repo board")
+	v.asJSON = fs.Bool("json", false, "print the document the write produced")
 	return v
 }
 
@@ -112,9 +117,10 @@ func boardTextFlagSet(fs *flag.FlagSet) *boardTextFlagValues {
 }
 
 type boardAnnotateFlagValues struct {
-	text *string
-	x    *float64
-	y    *float64
+	text   *string
+	x      *float64
+	y      *float64
+	asJSON *bool
 }
 
 func boardAnnotateFlagSet(fs *flag.FlagSet) *boardAnnotateFlagValues {
@@ -122,6 +128,7 @@ func boardAnnotateFlagSet(fs *flag.FlagSet) *boardAnnotateFlagValues {
 	v.text = fs.String("text", "", "the text to append")
 	v.x = fs.Float64("x", 0, "the appended element's x coordinate")
 	v.y = fs.Float64("y", 0, "the appended element's y coordinate")
+	v.asJSON = fs.Bool("json", false, "print the document the write produced")
 	return v
 }
 
@@ -255,7 +262,15 @@ func cmdBoardComment(args []string) error {
 	if flagGiven(fs, "y") {
 		in.Y = v.y
 	}
-	return boardRefusal(board.WriteComment(boardDeps(), cwd, in))
+	w, err := board.WriteComment(boardDeps(), cwd, in)
+	if err != nil {
+		return boardRefusal(err)
+	}
+	if *v.asJSON {
+		return printDoc(commentDocOf(w))
+	}
+	fmt.Printf("comment: %s  %s\n", w.ID, w.Path)
+	return nil
 }
 
 // cmdBoardText lists a scene's text elements.
@@ -309,7 +324,15 @@ func cmdBoardAnnotate(args []string) error {
 		return fail(codeInternal, "%v", err)
 	}
 	req := board.AnnotateRequest{Text: *v.text, HasText: textSet, HasX: xSet, HasY: ySet, X: *v.x, Y: *v.y}
-	return boardRefusal(board.AnnotateScene(boardDeps(), cwd, positional[0], req))
+	a, err := board.AnnotateScene(boardDeps(), cwd, positional[0], req)
+	if err != nil {
+		return boardRefusal(err)
+	}
+	if *v.asJSON {
+		return printDoc(annotateDocOf(a))
+	}
+	fmt.Printf("board: annotated %s (id %s)\n", a.Path, a.Element.ID)
+	return nil
 }
 
 func cmdBoardPromote(args []string) error {
@@ -326,7 +349,15 @@ func cmdBoardPromote(args []string) error {
 	if err != nil {
 		return fail(codeInternal, "%v", err)
 	}
-	return boardRefusal(board.PromoteToRepo(boardDeps(), cwd, *v.mastermind, *v.board, *v.to, *v.force))
+	p, err := board.PromoteToRepo(boardDeps(), cwd, *v.mastermind, *v.board, *v.to, *v.force)
+	if err != nil {
+		return boardRefusal(err)
+	}
+	if *v.asJSON {
+		return printDoc(promoteDocOf(p))
+	}
+	fmt.Printf("board: promoted %s -> %s\n", p.Live, p.Dst)
+	return nil
 }
 
 // boardRefusal maps a board package refusal to the catalog code it earns. An

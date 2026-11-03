@@ -132,9 +132,11 @@ func cmdServeStatus(args []string) error {
 		return fail(codeInternal, "%v", err)
 	}
 
+	doc := serve.StatusDocument(owners, builders)
+	doc.Burst = srv.BurstStatus()
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	return enc.Encode(serve.StatusDocument(owners, builders))
+	return enc.Encode(doc)
 }
 
 type serveUIFlagValues struct {

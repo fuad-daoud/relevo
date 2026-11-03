@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -317,6 +318,58 @@ func TestConfigEditSavesChanges(t *testing.T) {
 	}
 	if !strings.Contains(string(stdout), "saved (config version") {
 		t.Errorf("edit stdout = %q, want the saved line", stdout)
+	}
+
+	out, _, err := captureOutput(t, func() error {
+		return run([]string{"config", "get", "candidates"})
+	})
+	if err != nil {
+		t.Fatalf("get after edit: %v", err)
+	}
+	if !strings.Contains(string(out), `"harness": "claude"`) {
+		t.Errorf("get after edit = %q, want the edited value", out)
+	}
+}
+
+// TestConfigEditJSON pins `config edit --json` on the saved path: stdout is
+// one document with empty stderr, and `config get` afterwards shows the edit
+// landed. The stand-in editor is an sh script, never a real editor or harness.
+func TestConfigEditJSON(t *testing.T) {
+	initRoot(t)
+	t.Setenv("VISUAL", "")
+	t.Setenv("EDITOR", writeEditor(t, `printf '%s' '{"candidates":[{"harness":"claude","provider":"p","model":"m"}]}' > "$1"`))
+
+	// The first runtime creation seeds board palettes and logs its startup
+	// lines; run it here so those lines belong to this call's stderr and not
+	// to the captured edit below.
+	if _, _, err := captureOutput(t, func() error { return run([]string{"config", "log"}) }); err != nil {
+		t.Fatalf("warm-up config log: %v", err)
+	}
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"config", "edit", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("edit --json: %v (stderr: %s)", err, stderr)
+	}
+	if len(stderr) != 0 {
+		t.Errorf("stderr = %q, want empty", stderr)
+	}
+	if len(stdout) == 0 || stdout[0] != '{' || !json.Valid(stdout) {
+		t.Fatalf("stdout = %q, want exactly one JSON object", stdout)
+	}
+	var doc struct {
+		Version int64 `json:"version"`
+		Rev     int64 `json:"rev"`
+	}
+	if err := json.Unmarshal(stdout, &doc); err != nil {
+		t.Fatalf("unmarshal %q: %v", stdout, err)
+	}
+	if doc.Version == 0 {
+		t.Error("version is zero, want the config version the edit left")
+	}
+	if doc.Rev == 0 {
+		t.Error("rev is zero, want the revision the edit created")
 	}
 
 	out, _, err := captureOutput(t, func() error {
@@ -702,6 +755,9 @@ func TestConfigRollbackYes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rollback: %v (stderr: %s)", err, stderr)
 	}
+	if !strings.Contains(string(stdout), "rollback to #1 would change:") {
+		t.Errorf("rollback output = %q, want the preview header", stdout)
+	}
 	if !strings.Contains(string(stdout), "rolled back to #1 as #4") {
 		t.Errorf("rollback output = %q, want the rolled-back line", stdout)
 	}
@@ -767,5 +823,114 @@ func TestConfigRollbackRefusesWithoutTerminal(t *testing.T) {
 	}
 	if !strings.Contains(string(stderr), "config rollback needs a terminal to confirm; pass --yes") {
 		t.Errorf("stderr = %q, want the refusal line", stderr)
+	}
+}
+
+// TestConfigRollbackJSON pins `config rollback --json`: stdout is one document
+// with empty stderr, carrying the revision restored, the revision the rollback
+// wrote, and the config version it left -- the same numbers the human line
+// prints. The revision numbers mirror TestConfigRollbackYes: the two sets land
+// at revisions 1 and 3 with the migration at 2, so rolling back to 1 writes 4.
+func TestConfigRollbackJSON(t *testing.T) {
+	initRoot(t)
+
+	for _, body := range []string{revCandidateA, revCandidateB} {
+		if _, stderr, err := captureOutput(t, func() error {
+			return run([]string{"config", "set", "candidates", body, "--force"})
+		}); err != nil {
+			t.Fatalf("set candidates: %v (stderr: %s)", err, stderr)
+		}
+	}
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"config", "rollback", "1", "--yes", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("rollback --json: %v (stderr: %s)", err, stderr)
+	}
+	if len(stderr) != 0 {
+		t.Errorf("stderr = %q, want empty", stderr)
+	}
+	if len(stdout) == 0 || stdout[0] != '{' || !json.Valid(stdout) {
+		t.Fatalf("stdout = %q, want exactly one JSON object", stdout)
+	}
+	var doc struct {
+		Target  int64 `json:"target"`
+		Rev     int64 `json:"rev"`
+		Version int64 `json:"version"`
+	}
+	if err := json.Unmarshal(stdout, &doc); err != nil {
+		t.Fatalf("unmarshal %q: %v", stdout, err)
+	}
+	if doc.Target != 1 || doc.Rev != 4 {
+		t.Errorf("doc = %+v, want the rollback of #1 written as #4", doc)
+	}
+	if doc.Version == 0 {
+		t.Error("version is zero, want the config version the rollback left")
+	}
+
+	out, _, err := captureOutput(t, func() error {
+		return run([]string{"config", "get", "candidates"})
+	})
+	if err != nil {
+		t.Fatalf("get after rollback: %v", err)
+	}
+	if !strings.Contains(string(out), `"model": "m"`) {
+		t.Errorf("candidates after rollback = %q, want revision 1's body", out)
+	}
+}
+
+// TestConfigRollbackNoSuchRevisionIsCoded pins the missing target as a coded
+// failure: an uncoded error never reaches report's JSON envelope, so a script
+// asking --json would read prose where it asked for data.
+func TestConfigRollbackNoSuchRevisionIsCoded(t *testing.T) {
+	initRoot(t)
+
+	err := run([]string{"config", "rollback", "99", "--yes", "--json"})
+	ce := requireCLIError(t, err, codeRevisionNotFound, "relevo config log")
+	if !strings.Contains(ce.message, "no such revision #99") {
+		t.Errorf("message = %q, want it to name revision 99", ce.message)
+	}
+
+	var ec exitCodeErr
+	if !errors.As(err, &ec) || ec.code != catalogExit(codeRevisionNotFound) {
+		t.Errorf("exit = %v, want %d", err, catalogExit(codeRevisionNotFound))
+	}
+
+	var buf bytes.Buffer
+	if code := report(&buf, err, true); code != catalogExit(codeRevisionNotFound) {
+		t.Errorf("report exit = %d, want %d", code, catalogExit(codeRevisionNotFound))
+	}
+	var env struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if jerr := json.Unmarshal(buf.Bytes(), &env); jerr != nil {
+		t.Fatalf("envelope %q: %v", buf.String(), jerr)
+	}
+	if env.Error.Code != string(codeRevisionNotFound) {
+		t.Errorf("code = %q, want %q", env.Error.Code, codeRevisionNotFound)
+	}
+	if env.Error.Message == "" {
+		t.Error("message is empty")
+	}
+}
+
+// TestWriteRollbackMissingRevisionIsCoded pins the write site's own refusal:
+// the CLI reaches a missing revision through the plan first, so the Rollback
+// branch is only reachable on its own, and it must earn the same code --
+// otherwise a failure under --json returns prose where a script reads data.
+func TestWriteRollbackMissingRevisionIsCoded(t *testing.T) {
+	initRoot(t)
+	rt, err := newRuntime()
+	if err != nil {
+		t.Fatalf("newRuntime: %v", err)
+	}
+	writeErr := writeRollback(rt, 99, "", true)
+	ce := requireCLIError(t, writeErr, codeRevisionNotFound, "relevo config log")
+	if !strings.Contains(ce.message, "no such revision #99") {
+		t.Errorf("message = %q, want it to name revision 99", ce.message)
 	}
 }

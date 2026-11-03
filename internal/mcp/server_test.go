@@ -469,16 +469,19 @@ func TestServerPassesCallSessionFromMeta(t *testing.T) {
 
 // TestServerStatusWithoutSessionIsAToolError pins the opencode server's
 // sessionless status: it is a tool error naming the key it looks for, never a
-// silently empty binding list, and the resolver is never called; all:true still
-// lists every binding without any identity.
+// silently empty binding list, and the resolver refuses the empty session;
+// all:true still lists every binding without any identity.
 func TestServerStatusWithoutSessionIsAToolError(t *testing.T) {
 	s := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
 	saveVerbBinding(t, s, store.Binding{Name: "mine", CWD: "/repo/mine", MasterMindID: mcpTestMasterMindA, Round: 1, State: store.StateActive})
 
 	calls := 0
-	verbs := &RelevoVerbs{RT: rt, ResolveSession: func(string) (string, error) {
+	verbs := &RelevoVerbs{RT: rt, ResolveSession: func(session string) (string, error) {
 		calls++
+		if session == "" {
+			return "", errors.New("this call carries no OpenCode session (`_meta ai.opencode/sessionID`); cannot tell which MasterMind it belongs to")
+		}
 		return mcpTestMasterMindA, nil
 	}}
 
@@ -507,8 +510,8 @@ func TestServerStatusWithoutSessionIsAToolError(t *testing.T) {
 	if strings.Contains(text, "bindings") {
 		t.Errorf("a sessionless status must not carry a binding list, got %q", text)
 	}
-	if calls != 0 {
-		t.Errorf("resolver called %d times for a sessionless call, want 0", calls)
+	if calls != 1 {
+		t.Errorf("resolver called %d times for a sessionless call, want 1", calls)
 	}
 
 	out = runServer(t, verbs, []string{

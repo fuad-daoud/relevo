@@ -2,8 +2,10 @@ package main
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 
 	"github.com/fuad-daoud/relevo/internal/tmpdir"
@@ -61,5 +63,23 @@ func TestUnbindRefusesFlagsItsPathDoesNotHonour(t *testing.T) {
 				t.Errorf("binding = %+v, want the seeded active alpha", reloaded)
 			}
 		})
+	}
+}
+
+// TestUnsettledChainsErrorNamesTheChainToClose pins how unbind --done reports
+// a done chain its sweep skipped: no skip is no error, and a skip is a refusal
+// whose next step closes that chain by name, so the leftover members are never
+// silent.
+func TestUnsettledChainsErrorNamesTheChainToClose(t *testing.T) {
+	if err := unsettledChainsError(nil); err != nil {
+		t.Fatalf("unsettledChainsError(nil) = %v, want nil", err)
+	}
+	err := unsettledChainsError(&relevo.ChainsNotSettledError{Failures: []relevo.ChainSettleFailure{
+		{Chain: "ch-a", Err: errors.New("zen: http 500: boom")},
+		{Chain: "ch-b", Err: errors.New("zen unreachable")},
+	}})
+	ce := requireCLIError(t, err, codeRefused, "relevo done ch-a")
+	if msg := ce.Error(); !strings.Contains(msg, "ch-a") || !strings.Contains(msg, "boom") {
+		t.Errorf("error = %q, want it to name ch-a and its cause", msg)
 	}
 }

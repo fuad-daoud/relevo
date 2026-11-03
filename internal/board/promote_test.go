@@ -24,20 +24,19 @@ func promoteEnv(t *testing.T, deps *Deps, name string) (repo, liveBoard string) 
 }
 
 // TestBoardPromoteCopiesTheLiveBoard: the happy path writes
-// <repo>/docs/boards/<slug>/board.html with the live board's bytes.
+// <repo>/docs/boards/<slug>/board.html with the live board's bytes and
+// returns both paths, which is what the CLI prints.
 func TestBoardPromoteCopiesTheLiveBoard(t *testing.T) {
 	deps := testDeps(t)
-	repo, _ := promoteEnv(t, &deps, "api")
+	repo, liveBoard := promoteEnv(t, &deps, "api")
 
-	stdout, _, err := captureOutput(t, func() error {
-		return PromoteToRepo(deps, t.TempDir(), "alpha", "", "", false)
-	})
+	p, err := PromoteToRepo(deps, t.TempDir(), "alpha", "", "", false)
 	if err != nil {
 		t.Fatalf("PromoteToRepo: %v", err)
 	}
 	dst := filepath.Join(repo, "docs", "boards", "api", "board.html")
-	if out := string(stdout); !strings.Contains(out, "board: promoted") || !strings.Contains(out, dst) {
-		t.Errorf("printed %q, want the promoted line naming %s", out, dst)
+	if p.Live != liveBoard || p.Dst != dst {
+		t.Errorf("promotion = %+v, want %s -> %s", p, liveBoard, dst)
 	}
 	got, err := os.ReadFile(dst)
 	if err != nil {
@@ -64,9 +63,7 @@ func TestBoardPromoteHonoursBoardFlagAndTo(t *testing.T) {
 		t.Fatalf("WritePointer: %v", err)
 	}
 
-	if _, _, err := captureOutput(t, func() error {
-		return PromoteToRepo(deps, t.TempDir(), "alpha", "other", "renamed", false)
-	}); err != nil {
+	if _, err := PromoteToRepo(deps, t.TempDir(), "alpha", "other", "renamed", false); err != nil {
 		t.Fatalf("PromoteToRepo: %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(repo, "docs", "boards", "renamed", "board.html"))
@@ -91,7 +88,7 @@ func TestBoardPromoteRefusesAMissingSource(t *testing.T) {
 	_ = withTempRepoRoot(t, &deps)
 	boardHTMLEnv(t)
 
-	err := PromoteToRepo(deps, t.TempDir(), "alpha", "absent", "", false)
+	_, err := PromoteToRepo(deps, t.TempDir(), "alpha", "absent", "", false)
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("PromoteToRepo(missing source) = %v, want ErrNotFound", err)
 	}
@@ -113,7 +110,7 @@ func TestBoardPromoteRefusesAnExistingTarget(t *testing.T) {
 		t.Fatalf("write committed board: %v", err)
 	}
 
-	err := PromoteToRepo(deps, t.TempDir(), "alpha", "", "", false)
+	_, err := PromoteToRepo(deps, t.TempDir(), "alpha", "", "", false)
 	if !errors.Is(err, ErrInvalid) {
 		t.Fatalf("PromoteToRepo(existing target) = %v, want ErrInvalid", err)
 	}
@@ -137,9 +134,7 @@ func TestBoardPromoteForceOverwrites(t *testing.T) {
 		t.Fatalf("write committed board: %v", err)
 	}
 
-	if _, _, err := captureOutput(t, func() error {
-		return PromoteToRepo(deps, t.TempDir(), "alpha", "", "", true)
-	}); err != nil {
+	if _, err := PromoteToRepo(deps, t.TempDir(), "alpha", "", "", true); err != nil {
 		t.Fatalf("PromoteToRepo --force: %v", err)
 	}
 	got, err := os.ReadFile(dst)
@@ -154,7 +149,7 @@ func TestBoardPromoteRefusesABadSlug(t *testing.T) {
 	deps := testDeps(t)
 	repo, _ := promoteEnv(t, &deps, "api")
 
-	err := PromoteToRepo(deps, t.TempDir(), "alpha", "", "Not A Slug", false)
+	_, err := PromoteToRepo(deps, t.TempDir(), "alpha", "", "Not A Slug", false)
 	if !errors.Is(err, ErrUsage) {
 		t.Fatalf("PromoteToRepo(--to bad slug) = %v, want ErrUsage", err)
 	}
@@ -169,7 +164,7 @@ func TestBoardPromoteRefusesOutsideARepository(t *testing.T) {
 	deps := testDeps(t)
 	boardHTMLEnv(t)
 
-	if err := PromoteToRepo(deps, t.TempDir(), "alpha", "", "", false); !errors.Is(err, ErrUsage) {
+	if _, err := PromoteToRepo(deps, t.TempDir(), "alpha", "", "", false); !errors.Is(err, ErrUsage) {
 		t.Errorf("PromoteToRepo(outside repo) = %v, want ErrUsage", err)
 	}
 }

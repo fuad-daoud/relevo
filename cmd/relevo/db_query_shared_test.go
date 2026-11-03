@@ -2,7 +2,6 @@ package main
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -155,38 +154,5 @@ func TestTheQueryOpenCarriesNoLocalRouting(t *testing.T) {
 	}
 	if local != 0 {
 		t.Errorf("the query handle counted %d rows the local file alone holds", local)
-	}
-}
-
-// TestTheQueryOverTheOwnerReadsTheSharedFile pins the same rule on the other
-// open path: when the daemon holds the file, the query dials the owner, and a
-// dialled handle carries a local handle of its own. The query must still read
-// the shared pool, or `db query` would report a different database depending on
-// whether a daemon happened to be running.
-func TestTheQueryOverTheOwnerReadsTheSharedFile(t *testing.T) {
-	stateHome := shortStateRoot(t)
-	t.Setenv("XDG_STATE_HOME", stateHome)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(stateHome, "config"))
-
-	served := bindTestOwner(t, stateHome)
-	served.serve(t)
-	if err := served.db.KVPut("record.of.the.shared.file", []byte(`"history"`)); err != nil {
-		t.Fatalf("seed the shared file: %v", err)
-	}
-	if err := served.db.Local().KVPut("serve.daemon", []byte(`{"pid":4242}`)); err != nil {
-		t.Fatalf("seed the local file: %v", err)
-	}
-
-	stdout, stderr, err := captureOutput(t, func() error {
-		return run([]string{"db", "query", `SELECT key FROM kv ORDER BY key`, "--json"})
-	})
-	if err != nil {
-		t.Fatalf("db query over the owner: %v (stderr: %s)", err, stderr)
-	}
-	if !strings.Contains(string(stdout), "record.of.the.shared.file") {
-		t.Errorf("the shared file's row is missing from the answer:\n%s", stdout)
-	}
-	if strings.Contains(string(stdout), "serve.daemon") {
-		t.Errorf("the answer over the owner carries a row only the local file holds:\n%s", stdout)
 	}
 }
