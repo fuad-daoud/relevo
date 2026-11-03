@@ -9,6 +9,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/remote"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
@@ -42,6 +43,24 @@ func seedSecret(t *testing.T, name, value string) {
 	}
 }
 
+// cliSecret is the value `config secret set client.key` takes, and the one line
+// of it no surface may print. The CLI validates a client key, so the stored
+// value has to be a real key rather than a made-up string, and the line is the
+// key's own secret: a surface that leaked the value would print it.
+func cliSecret(t *testing.T) (value, leak string) {
+	t.Helper()
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatalf("remote.Generate: %v", err)
+	}
+	pem, err := remote.MarshalPrivate(kp)
+	if err != nil {
+		t.Fatalf("remote.MarshalPrivate: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(pem)), "\n")
+	return string(pem), lines[len(lines)/2]
+}
+
 // localOf is the machine-local file the sync package writes its key to.
 func localOf(t *testing.T, d *db.DB) relevosync.Local {
 	t.Helper()
@@ -54,15 +73,18 @@ func localOf(t *testing.T, d *db.DB) relevosync.Local {
 
 // seedConfigAndSecret leaves a machine with a candidate and a secret, which is
 // the smallest state in which every surface below answers rather than refusing
-// for want of configuration.
-func seedConfigAndSecret(t *testing.T) {
+// for want of configuration. It returns the line of the stored secret no surface
+// may print.
+func seedConfigAndSecret(t *testing.T) string {
 	t.Helper()
 	if _, stderr, err := captureOutput(t, func() error {
 		return run([]string{"config", "set", "candidates", secretFixtureCandidates})
 	}); err != nil {
 		t.Fatalf("config set candidates: %v (stderr: %s)", err, stderr)
 	}
-	seedSecret(t, config.SecretTypesafe, canarySecret)
+	value, leak := cliSecret(t)
+	seedSecret(t, config.SecretClientKey, value)
+	return leak
 }
 
 // secretFixtureCandidates is one candidate, so `config get candidates` has
@@ -106,7 +128,7 @@ func surfacesToCheck() []surface {
 // terminal, a log, or a bugreport someone pastes into an issue.
 func TestNoSecretValueIsPrinted(t *testing.T) {
 	initRoot(t)
-	seedConfigAndSecret(t)
+	leak := seedConfigAndSecret(t)
 
 	for _, s := range surfacesToCheck() {
 		out, stderr, err := captureOutput(t, func() error { return run(s.args) })
@@ -121,7 +143,7 @@ func TestNoSecretValueIsPrinted(t *testing.T) {
 				strings.Join(s.args, " "))
 		}
 		for stream, text := range map[string][]byte{"stdout": out, "stderr": stderr} {
-			if strings.Contains(string(text), canarySecret) {
+			if strings.Contains(string(text), leak) {
 				t.Errorf("relevo %s printed the secret on %s:\n%s", strings.Join(s.args, " "), stream, text)
 			}
 		}
@@ -134,7 +156,8 @@ func TestNoSecretValueIsPrinted(t *testing.T) {
 // secret alone.
 func TestTheRevisionLogNamesTheSecretAndNotItsValue(t *testing.T) {
 	initRoot(t)
-	seedSecret(t, config.SecretTypesafe, canarySecret)
+	value, leak := cliSecret(t)
+	seedSecret(t, config.SecretClientKey, value)
 
 	out, stderr, err := captureOutput(t, func() error { return run([]string{"config", "log", "--json"}) })
 	if err != nil {
@@ -146,11 +169,11 @@ func TestTheRevisionLogNamesTheSecretAndNotItsValue(t *testing.T) {
 	}
 	found := false
 	for _, r := range list {
-		if !strings.Contains(string(r.Changes), "secret."+config.SecretTypesafe) {
+		if !strings.Contains(string(r.Changes), "secret."+config.SecretClientKey) {
 			continue
 		}
 		found = true
-		if strings.Contains(string(r.Changes), canarySecret) || strings.Contains(r.Message, canarySecret) {
+		if strings.Contains(string(r.Changes), leak) || strings.Contains(r.Message, leak) {
 			t.Fatalf("revision #%d carries the value: %s", r.Rev, r.Changes)
 		}
 	}
@@ -164,7 +187,7 @@ func TestTheRevisionLogNamesTheSecretAndNotItsValue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config log: %v (stderr: %s)", err, stderr)
 	}
-	if strings.Contains(string(revs), canarySecret) {
+	if strings.Contains(string(revs), leak) {
 		t.Errorf("config log printed the value:\n%s", revs)
 	}
 }
@@ -184,13 +207,13 @@ func TestTheSupersedingRevisionOfASecretCarriesNoValue(t *testing.T) {
 		t.Fatalf("DB: %v", err)
 	}
 	store := config.Open(d)
-	sealed, err := relevosync.SealSecret(relevosync.Keyring{Epoch: 1, Keys: map[int][]byte{1: secretFixtureKey}}, config.SecretTypesafe, []byte(canarySecret))
+	sealed, err := relevosync.SealSecret(relevosync.Keyring{Epoch: 1, Keys: map[int][]byte{1: secretFixtureKey}}, relevosync.SecretR2Bucket, []byte(canarySecret))
 	if err != nil {
 		t.Fatalf("SealSecret: %v", err)
 	}
 	doc := store.SecretsDoc()
 	if err := d.LocalOrSelf().Tx(func(tx *db.Tx) error {
-		return doc.SupersedeIn(tx, config.SecretTypesafe, sealed, "laptop",
+		return doc.SupersedeIn(tx, relevosync.SecretR2Bucket, sealed, "laptop",
 			"an entry stamped 5 from laptop is older than the one applied, stamped 9 from contabo")
 	}); err != nil {
 		t.Fatalf("SupersedeIn: %v", err)
@@ -229,7 +252,7 @@ func TestAnArrivingSecretIsRecordedByNameAndOrigin(t *testing.T) {
 		t.Fatalf("DB: %v", err)
 	}
 	store := config.Open(d)
-	sealed, err := relevosync.SealSecret(relevosync.Keyring{Epoch: 1, Keys: map[int][]byte{1: secretFixtureKey}}, config.SecretTypesafe, []byte(canarySecret))
+	sealed, err := relevosync.SealSecret(relevosync.Keyring{Epoch: 1, Keys: map[int][]byte{1: secretFixtureKey}}, relevosync.SecretR2Bucket, []byte(canarySecret))
 	if err != nil {
 		t.Fatalf("SealSecret: %v", err)
 	}
@@ -240,7 +263,7 @@ func TestAnArrivingSecretIsRecordedByNameAndOrigin(t *testing.T) {
 	}
 	doc := store.SecretsDoc()
 	if err := d.LocalOrSelf().Tx(func(tx *db.Tx) error {
-		refusal, err := doc.ApplyIn(tx, config.SecretTypesafe, sealed, "laptop")
+		refusal, err := doc.ApplyIn(tx, relevosync.SecretR2Bucket, sealed, "laptop")
 		if refusal != nil || err != nil {
 			t.Fatalf("ApplyIn: refusal %v, err %v", refusal, err)
 		}

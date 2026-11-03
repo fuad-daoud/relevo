@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/sync"
 )
 
 func TestImportAllFiles(t *testing.T) {
@@ -51,9 +52,6 @@ func TestImportAllFiles(t *testing.T) {
 	if L.ClientKey == nil {
 		t.Error("ClientKey = nil, want the stored key")
 	}
-	if L.Typesafe != "test-key" {
-		t.Errorf("Typesafe = %q, want test-key", L.Typesafe)
-	}
 
 	wantHooks := HooksMap{
 		"state_changed": {
@@ -70,7 +68,7 @@ func TestImportAllFiles(t *testing.T) {
 
 	for _, name := range []string{
 		"candidates.json", "policy.json", "roles.json", "prices.json",
-		"servers.json", "client.key", "client.pub", "typesafe.key",
+		"servers.json", "client.key", "client.pub",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
 			t.Errorf("%s still present after import (err=%v)", name, err)
@@ -163,6 +161,47 @@ func TestImportLeavesBakFilesAlone(t *testing.T) {
 	}
 }
 
+// TestATypesafeKeyFileIsNeverRead pins the shape of a config dir that holds a
+// typesafe.key: no section of the import consumes it. So the import must neither
+// refuse for the file's sake nor delete a file it never read, and a store must
+// not come to hold a secret nobody wrote it. Load reads the sections around it
+// all the same.
+func TestATypesafeKeyFileIsNeverRead(t *testing.T) {
+	t.Parallel()
+
+	s := openStore(t)
+	dir := filepath.Join(t.TempDir(), "relevo")
+	writeFile(t, filepath.Join(dir, "candidates.json"),
+		`[{"harness":"claude","provider":"anthropic","model":"sonnet","roles":["builder"]}]`, 0o644)
+	writeFile(t, filepath.Join(dir, "typesafe.key"), "a-key-nobody-reads\n", 0o600)
+
+	if _, err := s.ImportFiles(dir, time.Now().UTC()); err != nil {
+		t.Fatalf("ImportFiles: %v", err)
+	}
+	if _, err := s.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "typesafe.key")); err != nil {
+		t.Errorf("the typesafe.key is gone (err=%v), want it left where its owner put it", err)
+	}
+	if _, ok, err := s.Secret("typesafe"); err != nil {
+		t.Fatalf("Secret: %v", err)
+	} else if ok {
+		t.Error("a typesafe secret is stored, though nothing reads the file it would come from")
+	}
+
+	// The dir holds no client key either, so an import that stored a secret from
+	// a file it does not read would show up here as a name with nothing behind it.
+	names, err := s.SecretNames()
+	if err != nil {
+		t.Fatalf("SecretNames: %v", err)
+	}
+	if len(names) != 0 {
+		t.Errorf("stored secrets = %v, want none", names)
+	}
+}
+
 func TestLoadFilesEqualsLoadAfterImport(t *testing.T) {
 	t.Parallel()
 
@@ -202,9 +241,6 @@ func TestLoadFilesEqualsLoadAfterImport(t *testing.T) {
 	}
 	if !reflect.DeepEqual(fromFiles.ClientKey, fromDB.ClientKey) {
 		t.Error("ClientKey differs")
-	}
-	if fromFiles.Typesafe != fromDB.Typesafe {
-		t.Errorf("Typesafe differs: %q vs %q", fromFiles.Typesafe, fromDB.Typesafe)
 	}
 	if !reflect.DeepEqual(fromFiles.Warnings, fromDB.Warnings) {
 		t.Errorf("Warnings differ: %v vs %v", fromFiles.Warnings, fromDB.Warnings)
@@ -410,21 +446,21 @@ func TestSecretDeleteAndNames(t *testing.T) {
 	t.Parallel()
 
 	s := openStore(t)
-	if err := s.PutSecret(SecretTypesafe, []byte("ts-key")); err != nil {
+	if err := s.PutSecret(sync.SecretR2Bucket, []byte("ts-key")); err != nil {
 		t.Fatalf("PutSecret: %v", err)
 	}
 	names, err := s.SecretNames()
 	if err != nil {
 		t.Fatalf("SecretNames: %v", err)
 	}
-	if !reflect.DeepEqual(names, []string{SecretTypesafe}) {
-		t.Errorf("SecretNames = %v, want [%s]", names, SecretTypesafe)
+	if !reflect.DeepEqual(names, []string{sync.SecretR2Bucket}) {
+		t.Errorf("SecretNames = %v, want [%s]", names, sync.SecretR2Bucket)
 	}
 
-	if err := s.SecretDelete(SecretTypesafe); err != nil {
+	if err := s.SecretDelete(sync.SecretR2Bucket); err != nil {
 		t.Fatalf("SecretDelete: %v", err)
 	}
-	if _, ok, err := s.Secret(SecretTypesafe); err != nil || ok {
+	if _, ok, err := s.Secret(sync.SecretR2Bucket); err != nil || ok {
 		t.Errorf("secret after delete = ok %v, err %v, want absent", ok, err)
 	}
 }

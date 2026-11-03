@@ -116,8 +116,7 @@ func parseReportOutcome(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 			st.outcome = fallbackOutcome
 		}
 	}
-	st.scan = scanForInjection(ctx, rt, "report", b, body)
-	st.note = joinNotes(st.note, st.scan.Note)
+	st.scan = scanForInjection(rt, body)
 
 	// The scope verdict: a refusal forces the outcome to halted and
 	// names the path, before the chain event below is built, so a chain
@@ -188,7 +187,7 @@ func appendDiffAndSwitchLines(ctx context.Context, rt Runtime, tx *store.Tx, b s
 		}
 	}
 	if st.scan.Flagged > 0 {
-		pFirst += flaggedParenthetical(st.scan.Flagged, st.scan.Record)
+		pFirst += flaggedParenthetical(st.scan.Flagged)
 	}
 	st.payload = pFirst + st.pRest
 	if verdict.Refused {
@@ -300,7 +299,6 @@ func queueReportEntry(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 		NotDone:      st.tail.NotDone,
 		Flagged:      st.scan.Flagged,
 		FlaggedBy:    st.scan.FlaggedBy,
-		Classify:     st.scan.Record,
 		Gate:         gate,
 	}
 	entry.BuilderSession = builderSessionOf(b)

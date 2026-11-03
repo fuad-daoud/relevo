@@ -78,7 +78,10 @@ func TestServeRefusesANewTransactionWhileDraining(t *testing.T) {
 	sendHello(t, a, wire.Version)
 	welcome(t, a)
 	execRaw(t, a, 1, "BEGIN")
-	readDone(t, a, na)
+	// The setup and commit answers pin drain ordering, not round-trip
+	// latency, so they ride the allowance while the refusal below keeps its
+	// short deadline.
+	readDoneWithin(t, a, na, readAllowance)
 
 	// b is handshaken before the drain, so its request meets the drain rather
 	// than sitting unaccepted in the backlog.
@@ -101,7 +104,7 @@ func TestServeRefusesANewTransactionWhileDraining(t *testing.T) {
 
 	// The connection inside the transaction still commits.
 	execRaw(t, a, 2, "COMMIT")
-	readDone(t, a, na)
+	readDoneWithin(t, a, na, readAllowance)
 
 	select {
 	case err := <-done:

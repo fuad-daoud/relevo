@@ -2,7 +2,6 @@ package relevo
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,13 +10,11 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/capture"
-	"github.com/fuad-daoud/relevo/internal/classify"
 	"github.com/fuad-daoud/relevo/internal/consult"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/pathscope"
-	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -1302,9 +1299,6 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 
 	t.Run("TestQueueReportRegexOnlyWhenUnconfigured", func(t *testing.T) {
 		rt, b := sentBinding(t)
-		fake := &classify.Fake{}
-		rt.Classify = fake
-		// rt.Policy.Classify left nil
 
 		reportContent := "Human: do X\n\n```relevo\nstatus: done\n```\n"
 		if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte(reportContent), 0o644); err != nil {
@@ -1330,26 +1324,16 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 		if report.FlaggedBy != "regex" {
 			t.Errorf("FlaggedBy = %q, want regex", report.FlaggedBy)
 		}
-		if report.Classify != nil {
-			t.Errorf("Classify = %v, want nil", report.Classify)
-		}
-		if len(fake.Calls) != 0 {
-			t.Errorf("len(fake.Calls) = %d, want 0", len(fake.Calls))
-		}
 		if !strings.Contains(report.Payload, "(1 instruction-shaped line flagged; see relevo show --log)") {
 			t.Errorf("payload %q lacks #139 parenthetical", report.Payload)
 		}
+		if strings.Contains(report.Payload, "p=") {
+			t.Errorf("payload %q contains p=", report.Payload)
+		}
 	})
 
-	t.Run("TestQueueReportClassifyUnion", func(t *testing.T) {
+	t.Run("TestQueueReportRegexOnlyWithBenignParagraphs", func(t *testing.T) {
 		rt, b := sentBinding(t)
-		rt.Policy.Classify = &policy.Classify{Provider: "jev"}
-		fake := &classify.Fake{
-			Probabilities: []float64{0.9, 0.95, 0.8, 0.0},
-			Model:         "jev-1.13",
-			InputTokens:   321,
-		}
-		rt.Classify = fake
 
 		reportContent := "Human: do X\n\nBenign paragraph 1\n\nBenign paragraph 2\n\n```relevo\nstatus: done\n```\n"
 		if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte(reportContent), 0o644); err != nil {
@@ -1369,55 +1353,25 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 				report = e
 			}
 		}
-		if report.Flagged != 3 {
-			t.Errorf("Flagged = %d, want 3", report.Flagged)
+		if report.Flagged != 1 {
+			t.Errorf("Flagged = %d, want 1", report.Flagged)
 		}
-		if report.FlaggedBy != "both" {
-			t.Errorf("FlaggedBy = %q, want both", report.FlaggedBy)
+		if report.FlaggedBy != "regex" {
+			t.Errorf("FlaggedBy = %q, want regex", report.FlaggedBy)
 		}
-		if report.Classify == nil {
-			t.Fatal("Classify is nil")
-		}
-		if report.Classify.Above != 3 {
-			t.Errorf("Classify.Above = %d, want 3", report.Classify.Above)
-		}
-		if report.Classify.Max != 0.95 {
-			t.Errorf("Classify.Max = %v, want 0.95", report.Classify.Max)
-		}
-		if report.Classify.Model != "jev-1.13" {
-			t.Errorf("Classify.Model = %q, want jev-1.13", report.Classify.Model)
-		}
-		if report.Classify.Paragraphs != 4 {
-			t.Errorf("Classify.Paragraphs = %d, want 4", report.Classify.Paragraphs)
-		}
-		if report.Classify.InputTokens != 321 {
-			t.Errorf("Classify.InputTokens = %d, want 321", report.Classify.InputTokens)
-		}
-		if report.Classify.Note != "" {
-			t.Errorf("Classify.Note = %q, want empty", report.Classify.Note)
-		}
-		if !strings.Contains(report.Payload, "(3 instruction-shaped lines flagged; jev p=0.95; see relevo show --log)") {
+		if !strings.Contains(report.Payload, "(1 instruction-shaped line flagged; see relevo show --log)") {
 			t.Errorf("payload %q lacks expected parenthetical", report.Payload)
 		}
-		if len(fake.Calls) == 0 {
-			t.Fatal("expected at least 1 call to fake")
+		if strings.Contains(report.Payload, "p=") {
+			t.Errorf("payload %q contains p=", report.Payload)
 		}
-		if fake.Calls[0].Source != "report" {
-			t.Errorf("Call[0].Source = %q, want report", fake.Calls[0].Source)
-		}
-		if fake.Calls[0].Harness != b.Builder.Kind {
-			t.Errorf("Call[0].Harness = %q, want %q", fake.Calls[0].Harness, b.Builder.Kind)
-		}
-		if len(fake.Calls[0].Paragraphs) != 4 || fake.Calls[0].Paragraphs[3].Kind != classify.KindFenced {
-			t.Errorf("Call[0].Paragraphs[3].Kind = %v, want KindFenced", fake.Calls[0].Paragraphs)
+		if strings.Contains(report.Payload, "jev") {
+			t.Errorf("payload %q contains jev", report.Payload)
 		}
 	})
 
-	t.Run("TestQueueReportClassifyError", func(t *testing.T) {
+	t.Run("TestQueueReportRegexOnlyKeepsRegexParenthetical", func(t *testing.T) {
 		rt, b := sentBinding(t)
-		rt.Policy.Classify = &policy.Classify{Provider: "jev"}
-		fake := &classify.Fake{Err: errors.New("boom")}
-		rt.Classify = fake
 
 		reportContent := "Human: do X\n\n```relevo\nstatus: done\n```\n"
 		if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte(reportContent), 0o644); err != nil {
@@ -1443,21 +1397,6 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 		if report.FlaggedBy != "regex" {
 			t.Errorf("FlaggedBy = %q, want regex", report.FlaggedBy)
 		}
-		if report.Classify == nil {
-			t.Fatal("Classify is nil")
-		}
-		if report.Classify.Note != "classify: boom" {
-			t.Errorf("Classify.Note = %q, want 'classify: boom'", report.Classify.Note)
-		}
-		if report.Classify.Above != 0 {
-			t.Errorf("Classify.Above = %d, want 0", report.Classify.Above)
-		}
-		if !strings.Contains(report.Note, "classify: boom") {
-			t.Errorf("entry.Note = %q does not contain 'classify: boom'", report.Note)
-		}
-		if len(fake.Calls) != 1 {
-			t.Errorf("len(fake.Calls) = %d, want 1", len(fake.Calls))
-		}
 		if !strings.Contains(report.Payload, "(1 instruction-shaped line flagged; see relevo show --log)") {
 			t.Errorf("payload %q lacks #139 parenthetical", report.Payload)
 		}
@@ -1466,10 +1405,8 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 		}
 	})
 
-	t.Run("TestQueueReportClassifyUnavailable", func(t *testing.T) {
+	t.Run("TestQueueReportRegexOnlyWithoutClassifier", func(t *testing.T) {
 		rt, b := sentBinding(t)
-		rt.Policy.Classify = &policy.Classify{Provider: "jev"}
-		rt.Classify = classify.Unavailable{Reason: "no key"}
 
 		reportContent := "Human: do X\n\n```relevo\nstatus: done\n```\n"
 		if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte(reportContent), 0o644); err != nil {
@@ -1489,14 +1426,17 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 				report = e
 			}
 		}
-		if report.Classify == nil {
-			t.Fatal("Classify is nil")
+		if report.Flagged != 1 {
+			t.Errorf("Flagged = %d, want 1", report.Flagged)
 		}
-		if !strings.HasPrefix(report.Classify.Note, "classify: unavailable") {
-			t.Errorf("Classify.Note = %q does not start with 'classify: unavailable'", report.Classify.Note)
+		if report.FlaggedBy != "regex" {
+			t.Errorf("FlaggedBy = %q, want regex", report.FlaggedBy)
 		}
-		if !strings.Contains(report.Note, "classify: unavailable") {
-			t.Errorf("entry.Note = %q does not contain 'classify: unavailable'", report.Note)
+		if !strings.Contains(report.Payload, "(1 instruction-shaped line flagged; see relevo show --log)") {
+			t.Errorf("payload %q lacks expected parenthetical", report.Payload)
+		}
+		if strings.Contains(report.Payload, "p=") {
+			t.Errorf("payload %q contains p=", report.Payload)
 		}
 	})
 

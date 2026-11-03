@@ -2,10 +2,10 @@
   "modules": ["./register.ts"],
   "hooks": {
     "SessionStart": [
-      { "hooks": [ { "type": "command", "command": "\"$CLAUDE_PLUGIN_ROOT/scripts/mastermind-init.sh\"" } ] }
+      { "hooks": [ { "type": "command", "command": "\"$CLAUDE_PLUGIN_ROOT/scripts/mastermind-init.sh\"", "timeout": 15 } ] }
     ],
     "UserPromptSubmit": [
-      { "hooks": [ { "type": "command", "command": "\"$CLAUDE_PLUGIN_ROOT/scripts/mastermind-notice.sh\"" } ] }
+      { "hooks": [ { "type": "command", "command": "\"$CLAUDE_PLUGIN_ROOT/scripts/mastermind-notice.sh\"", "timeout": 5 } ] }
     ]
   }
 }

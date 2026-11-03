@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"golang.org/x/sys/unix"
-
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/dbtest"
 )
@@ -57,7 +55,7 @@ func runLockHelper() int {
 			fmt.Fprintln(os.Stderr, "lock helper open lock file:", err)
 			return 1
 		}
-		if err := unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
+		if err := lockFileFlock(f); err != nil {
 			fmt.Fprintln(os.Stderr, "lock helper flock:", err)
 			return 1
 		}

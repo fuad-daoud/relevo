@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
-	"github.com/fuad-daoud/relevo/internal/classify"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/policy"
@@ -74,13 +73,6 @@ func TestRefreshLoadsOnFirstCall(t *testing.T) {
 	src := &fakeSource{version: 1, loaded: loaded(t, pol, nil, nil)}
 	w := NewConfigWatcher(src, "/cfg/relevo", nil)
 
-	resolveCalls := 0
-	cls := &classify.Fake{}
-	w.resolve = func(cfg *policy.Classify, key string, getenv func(string) string) classify.Classifier {
-		resolveCalls++
-		return cls
-	}
-
 	out := w.Refresh(Runtime{})
 
 	if src.importCalls != 1 {
@@ -92,17 +84,11 @@ func TestRefreshLoadsOnFirstCall(t *testing.T) {
 	if src.loadCalls != 1 {
 		t.Errorf("Load calls = %d, want 1", src.loadCalls)
 	}
-	if resolveCalls != 1 {
-		t.Errorf("resolve calls = %d, want 1", resolveCalls)
-	}
 	if out.Candidates != src.loaded.Candidates {
 		t.Errorf("rt.Candidates was not replaced")
 	}
 	if len(out.Policy.Order["builder"]) != 1 || out.Policy.Order["builder"][0] != "agy" {
 		t.Errorf("rt.Policy was not replaced")
-	}
-	if out.Classify != cls {
-		t.Errorf("rt.Classify was not replaced from resolve seam")
 	}
 }
 
@@ -112,20 +98,14 @@ func TestRefreshSkipsWhenVersionUnchanged(t *testing.T) {
 	src := &fakeSource{version: 1, loaded: loaded(t, policy.Policy{}, nil, nil)}
 	w := NewConfigWatcher(src, "/cfg/relevo", nil)
 
-	resolveCalls := 0
-	w.resolve = func(cfg *policy.Classify, key string, getenv func(string) string) classify.Classifier {
-		resolveCalls++
-		return &classify.Fake{}
-	}
-
 	out1 := w.Refresh(Runtime{})
-	if src.loadCalls != 1 || resolveCalls != 1 {
+	if src.loadCalls != 1 {
 		t.Fatalf("first call failed to load")
 	}
 
 	out2 := w.Refresh(out1)
-	if src.loadCalls != 1 || resolveCalls != 1 {
-		t.Errorf("second call loaded despite an unchanged version; loadCalls=%d resolveCalls=%d", src.loadCalls, resolveCalls)
+	if src.loadCalls != 1 {
+		t.Errorf("second call loaded despite an unchanged version; loadCalls=%d", src.loadCalls)
 	}
 	if out2.Candidates != out1.Candidates {
 		t.Errorf("Candidates pointer not equal")
@@ -144,14 +124,8 @@ func TestRefreshReloadsOnVersionChange(t *testing.T) {
 	src := &fakeSource{version: 1, loaded: good}
 	w := NewConfigWatcher(src, "/cfg/relevo", nil)
 
-	resolveCalls := 0
-	w.resolve = func(cfg *policy.Classify, key string, getenv func(string) string) classify.Classifier {
-		resolveCalls++
-		return &classify.Fake{}
-	}
-
 	out1 := w.Refresh(Runtime{})
-	if src.loadCalls != 1 || resolveCalls != 1 {
+	if src.loadCalls != 1 {
 		t.Fatalf("first load failed")
 	}
 
@@ -162,9 +136,6 @@ func TestRefreshReloadsOnVersionChange(t *testing.T) {
 	out2 := w.Refresh(out1)
 	if src.loadCalls != 2 {
 		t.Errorf("Load calls = %d, want 2", src.loadCalls)
-	}
-	if resolveCalls != 2 {
-		t.Errorf("resolve calls = %d, want 2", resolveCalls)
 	}
 	if len(out2.Policy.Order["builder"]) != 1 || out2.Policy.Order["builder"][0] != "claude" {
 		t.Errorf("new Policy.Order not visible, got %v", out2.Policy.Order["builder"])
@@ -178,10 +149,6 @@ func TestRefreshKeepsLastGoodOnBadLoad(t *testing.T) {
 	src := &fakeSource{version: 1, loaded: good}
 	w := NewConfigWatcher(src, "/cfg/relevo", nil)
 
-	goodCls := &classify.Fake{}
-	w.resolve = func(cfg *policy.Classify, key string, getenv func(string) string) classify.Classifier {
-		return goodCls
-	}
 	var warnMsgs []string
 	w.warn = func(msg string, args ...any) { warnMsgs = append(warnMsgs, msg) }
 
@@ -202,9 +169,6 @@ func TestRefreshKeepsLastGoodOnBadLoad(t *testing.T) {
 	}
 	if len(out2.Policy.Order["builder"]) != 1 || out2.Policy.Order["builder"][0] != "good" {
 		t.Errorf("Policy changed on a bad load")
-	}
-	if out2.Classify != goodCls {
-		t.Errorf("Classify changed on a bad load")
 	}
 	if w.version != 1 {
 		t.Errorf("version advanced to %d despite the error, want it to stay at 1", w.version)
@@ -233,9 +197,6 @@ func TestRefreshKeepsLastGoodOnImportError(t *testing.T) {
 	good := loaded(t, policy.Policy{Order: map[string][]string{"builder": {"good"}}}, nil, nil)
 	src := &fakeSource{version: 1, loaded: good}
 	w := NewConfigWatcher(src, "/cfg/relevo", nil)
-	w.resolve = func(cfg *policy.Classify, key string, getenv func(string) string) classify.Classifier {
-		return &classify.Fake{}
-	}
 	var warnMsgs []string
 	w.warn = func(msg string, args ...any) { warnMsgs = append(warnMsgs, msg) }
 
@@ -266,9 +227,6 @@ func TestRefreshWarnsOncePerDistinctError(t *testing.T) {
 
 	src := &fakeSource{version: 1}
 	w := NewConfigWatcher(src, "/cfg/relevo", nil)
-	w.resolve = func(cfg *policy.Classify, key string, getenv func(string) string) classify.Classifier {
-		return &classify.Fake{}
-	}
 
 	var warnMsgs []string
 	w.warn = func(msg string, args ...any) { warnMsgs = append(warnMsgs, msg) }
@@ -316,9 +274,6 @@ func TestRefreshEmptyConfigIsNotAnError(t *testing.T) {
 
 	src := &fakeSource{version: 1, loaded: loaded(t, policy.Policy{}, nil, nil)}
 	w := NewConfigWatcher(src, "/cfg/relevo", nil)
-	w.resolve = func(cfg *policy.Classify, key string, getenv func(string) string) classify.Classifier {
-		return &classify.Fake{}
-	}
 	warnCalls := 0
 	w.warn = func(msg string, args ...any) { warnCalls++ }
 
@@ -365,9 +320,6 @@ func TestRefreshCarriesAndLogsConfigWarnings(t *testing.T) {
 			[]string{"candidates.json: cand warning", "policy.json: policy warning"}),
 	}
 	w := NewConfigWatcher(src, "/cfg/relevo", nil)
-	w.resolve = func(cfg *policy.Classify, key string, getenv func(string) string) classify.Classifier {
-		return &classify.Fake{}
-	}
 
 	var warns []string
 	w.warn = func(msg string, args ...any) { warns = append(warns, msg) }
@@ -402,9 +354,6 @@ func TestRefreshReloadsRegistry(t *testing.T) {
 	}}
 	src := &fakeSource{version: 1, loaded: loaded(t, policy.Policy{}, first, nil)}
 	w := NewConfigWatcher(src, "/cfg/relevo", nil)
-	w.resolve = func(cfg *policy.Classify, key string, getenv func(string) string) classify.Classifier {
-		return &classify.Fake{}
-	}
 
 	out1 := w.Refresh(Runtime{})
 	if out1.Registry == nil || out1.Registry.Source() != roles.SourceFile {
@@ -437,9 +386,6 @@ func TestRefreshLoadsLegacyRegistryWhenNoRolesSection(t *testing.T) {
 
 	src := &fakeSource{version: 1, loaded: loaded(t, policy.Policy{}, nil, nil)}
 	w := NewConfigWatcher(src, "/cfg/relevo", nil)
-	w.resolve = func(cfg *policy.Classify, key string, getenv func(string) string) classify.Classifier {
-		return &classify.Fake{}
-	}
 
 	out := w.Refresh(Runtime{})
 	if out.Registry == nil {
@@ -460,9 +406,6 @@ func TestRefreshInstallsRemoteClientOnServersChange(t *testing.T) {
 	src.loaded.ClientKey = []byte("key")
 
 	w := NewConfigWatcher(src, "/cfg/relevo", nil)
-	w.resolve = func(cfg *policy.Classify, key string, getenv func(string) string) classify.Classifier {
-		return &classify.Fake{}
-	}
 	var handed []remote.Servers
 	w.remoteFor = func(servers remote.Servers, key []byte) (RemoteClient, error) {
 		handed = append(handed, servers)
@@ -508,9 +451,6 @@ func TestRefreshKeepsTheClientWhenServersAreUnchanged(t *testing.T) {
 	src.loaded.Servers = remote.Servers{"zen": {URL: "https://zen:7777", Fingerprint: "sha256:00"}}
 
 	w := NewConfigWatcher(src, "/cfg/relevo", nil)
-	w.resolve = func(cfg *policy.Classify, key string, getenv func(string) string) classify.Classifier {
-		return &classify.Fake{}
-	}
 	calls := 0
 	w.remoteFor = func(servers remote.Servers, key []byte) (RemoteClient, error) {
 		calls++
@@ -541,9 +481,6 @@ func TestRefreshKeepsTheInstalledClientWhenTheBuildFails(t *testing.T) {
 	src.loaded.Servers = remote.Servers{"zen": {URL: "https://zen:7777", Fingerprint: "sha256:00"}}
 
 	w := NewConfigWatcher(src, "/cfg/relevo", nil)
-	w.resolve = func(cfg *policy.Classify, key string, getenv func(string) string) classify.Classifier {
-		return &classify.Fake{}
-	}
 	first := &fakeRemote{}
 	calls := 0
 	w.remoteFor = func(servers remote.Servers, key []byte) (RemoteClient, error) {

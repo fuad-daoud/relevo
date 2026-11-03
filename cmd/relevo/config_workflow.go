@@ -21,10 +21,10 @@ func configWorkflowFlagSet(*flag.FlagSet) {}
 
 // configWorkflow is the workflow half of `relevo config`.
 func configWorkflow(args []string) error {
-	const usage = `usage: relevo config workflow add <file> [--replace] [--force]
-       relevo config workflow rm <name>
+	const usage = `usage: relevo config workflow add <file> [--replace] [--force] [--json]
+       relevo config workflow rm <name> [--json]
        relevo config workflow show <name> [--json]
-       relevo config workflow edit <name>`
+       relevo config workflow edit <name> [--json]`
 
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, usage)
@@ -65,6 +65,7 @@ func formatWorkflows(L config.Loaded) string {
 }
 
 type workflowAddFlagValues struct {
+	asJSON  *bool
 	replace *bool
 	force   *bool
 }
@@ -73,6 +74,7 @@ type workflowAddFlagValues struct {
 // installer per verb.
 func workflowAddFlagSet(fs *flag.FlagSet) *workflowAddFlagValues {
 	v := &workflowAddFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the document the write produced")
 	v.replace = fs.Bool("replace", false, "overwrite a saved workflow of the same name")
 	v.force = fs.Bool("force", false, "allow the name to shadow a shipped workflow")
 	return v
@@ -98,6 +100,9 @@ func cmdWorkflowAdd(args []string) error {
 	if err != nil {
 		return workflowError(err)
 	}
+	if *v.asJSON {
+		return printDoc(configWorkflowAddDocOf(name))
+	}
 	fmt.Printf("stored workflow %s\n", name)
 	return nil
 }
@@ -118,15 +123,23 @@ func workflowError(err error) error {
 	return failWrap(code, err, "%s", err)
 }
 
+type workflowRmFlagValues struct {
+	asJSON *bool
+}
+
 // workflowRmFlagSet exists so the registry's parity test finds exactly one
 // installer per verb.
-func workflowRmFlagSet(*flag.FlagSet) {}
+func workflowRmFlagSet(fs *flag.FlagSet) *workflowRmFlagValues {
+	v := &workflowRmFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the document the write produced")
+	return v
+}
 
 // cmdWorkflowRm removes a saved workflow, leaving the shipped ones alone.
 func cmdWorkflowRm(args []string) error {
 	fs := flag.NewFlagSet("relevo config workflow rm", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	workflowRmFlagSet(fs)
+	v := workflowRmFlagSet(fs)
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -142,6 +155,9 @@ func cmdWorkflowRm(args []string) error {
 	}
 	if err := relevo.WorkflowRemove(rt, name); err != nil {
 		return workflowError(err)
+	}
+	if *v.asJSON {
+		return printDoc(configWorkflowRmDocOf(name))
 	}
 	fmt.Printf("removed workflow %s\n", name)
 	return nil
@@ -203,15 +219,23 @@ func cmdWorkflowShow(args []string) error {
 	return nil
 }
 
+type workflowEditFlagValues struct {
+	asJSON *bool
+}
+
 // workflowEditFlagSet exists so the registry's parity test finds exactly one
 // installer per verb.
-func workflowEditFlagSet(*flag.FlagSet) {}
+func workflowEditFlagSet(fs *flag.FlagSet) *workflowEditFlagValues {
+	v := &workflowEditFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the document the saved edit wrote")
+	return v
+}
 
 // cmdWorkflowEdit opens a saved workflow's source in $EDITOR.
 func cmdWorkflowEdit(args []string) error {
 	fs := flag.NewFlagSet("relevo config workflow edit", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	workflowEditFlagSet(fs)
+	v := workflowEditFlagSet(fs)
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -236,13 +260,15 @@ func cmdWorkflowEdit(args []string) error {
 	if err != nil {
 		return workflowError(err)
 	}
-	return editWorkflowLoop(rt, name, config.StoredWorkflow{Source: source, Definition: def})
+	return editWorkflowLoop(rt, name, config.StoredWorkflow{Source: source, Definition: def}, *v.asJSON)
 }
 
 // editWorkflowLoop is the $EDITOR half of the edit loop: it writes the buffer,
 // runs the editor, and lets WorkflowEditRound decide. The round returns the
-// definition to store, so the saved source and the seed stay in step.
-func editWorkflowLoop(rt relevo.Runtime, name string, saved config.StoredWorkflow) error {
+// definition to store, so the saved source and the seed stay in step. Only the
+// saved path answers with a document under --json: a pass that wrote nothing
+// has nothing to return, so it keeps its human line either way.
+func editWorkflowLoop(rt relevo.Runtime, name string, saved config.StoredWorkflow, asJSON bool) error {
 	actors := rt.RoleRegistry().WorkflowActors()
 	prev := []byte(saved.Source)
 
@@ -300,6 +326,9 @@ func editWorkflowLoop(rt relevo.Runtime, name string, saved config.StoredWorkflo
 		version, err := rt.Config.Version()
 		if err != nil {
 			return fail(codeInternal, "%v", err)
+		}
+		if asJSON {
+			return printDoc(configWorkflowEditDocOf(name, version))
 		}
 		fmt.Printf("saved (config version %d)\n", version)
 		return nil

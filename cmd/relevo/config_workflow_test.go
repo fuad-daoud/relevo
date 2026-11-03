@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -252,4 +254,213 @@ func TestConfigWorkflowEditKeepsEmbeddedFileSeed(t *testing.T) {
 	if got := w.Definition.Steps["build"].Seed; got != seededPrompt {
 		t.Errorf("build seed = %q, want the embedded contents", got)
 	}
+}
+
+// TestConfigWorkflowAddJSON pins `config workflow add --json`: stdout is one
+// document with empty stderr, carrying the stored name.
+func TestConfigWorkflowAddJSON(t *testing.T) {
+	initRoot(t)
+	path := writeWorkflowFile(t, configWorkflowSource)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"config", "workflow", "add", path, "--json"})
+	})
+	if err != nil {
+		t.Fatalf("add --json: %v (stderr: %s)", err, stderr)
+	}
+	if len(stderr) != 0 {
+		t.Errorf("stderr = %q, want empty", stderr)
+	}
+	if len(stdout) == 0 || stdout[0] != '{' || !json.Valid(stdout) {
+		t.Fatalf("stdout = %q, want exactly one JSON object", stdout)
+	}
+	var doc ConfigWorkflowAddDoc
+	if err := json.Unmarshal(stdout, &doc); err != nil {
+		t.Fatalf("unmarshal %q: %v", stdout, err)
+	}
+	if doc.Name != "custom" {
+		t.Errorf("doc = %+v, want the stored name custom", doc)
+	}
+	if _, ok := storedConfig(t).Workflows["custom"]; !ok {
+		t.Error("stored workflows lack custom, want the add to have saved it")
+	}
+}
+
+// TestConfigWorkflowAddHumanUnchanged pins the human default beside the
+// document: the stored line, not JSON.
+func TestConfigWorkflowAddHumanUnchanged(t *testing.T) {
+	initRoot(t)
+	path := writeWorkflowFile(t, configWorkflowSource)
+
+	stdout, _, err := captureOutput(t, func() error {
+		return run([]string{"config", "workflow", "add", path})
+	})
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if !strings.Contains(string(stdout), "stored workflow custom") {
+		t.Errorf("stdout = %q, want the stored line", stdout)
+	}
+	if json.Valid(stdout) {
+		t.Errorf("stdout = %q, want the human line, not a document", stdout)
+	}
+}
+
+// TestConfigWorkflowRmJSON pins `config workflow rm --json`: one document
+// with empty stderr, carrying the removed name.
+func TestConfigWorkflowRmJSON(t *testing.T) {
+	initRoot(t)
+	addConfigWorkflow(t, writeWorkflowFile(t, configWorkflowSource))
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"config", "workflow", "rm", "custom", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("rm --json: %v (stderr: %s)", err, stderr)
+	}
+	if len(stderr) != 0 {
+		t.Errorf("stderr = %q, want empty", stderr)
+	}
+	if len(stdout) == 0 || stdout[0] != '{' || !json.Valid(stdout) {
+		t.Fatalf("stdout = %q, want exactly one JSON object", stdout)
+	}
+	var doc ConfigWorkflowRmDoc
+	if err := json.Unmarshal(stdout, &doc); err != nil {
+		t.Fatalf("unmarshal %q: %v", stdout, err)
+	}
+	if doc.Name != "custom" || !doc.Removed {
+		t.Errorf("doc = %+v, want custom removed", doc)
+	}
+	if _, ok := storedConfig(t).Workflows["custom"]; ok {
+		t.Error("stored workflows still hold custom, want it removed")
+	}
+}
+
+// TestConfigWorkflowRmHumanUnchanged pins the human default beside the
+// document: the removed line, not JSON.
+func TestConfigWorkflowRmHumanUnchanged(t *testing.T) {
+	initRoot(t)
+	addConfigWorkflow(t, writeWorkflowFile(t, configWorkflowSource))
+
+	stdout, _, err := captureOutput(t, func() error {
+		return run([]string{"config", "workflow", "rm", "custom"})
+	})
+	if err != nil {
+		t.Fatalf("rm: %v", err)
+	}
+	if !strings.Contains(string(stdout), "removed workflow custom") {
+		t.Errorf("stdout = %q, want the removed line", stdout)
+	}
+	if json.Valid(stdout) {
+		t.Errorf("stdout = %q, want the human line, not a document", stdout)
+	}
+}
+
+// TestConfigWorkflowEditJSON pins `config workflow edit --json` on the saved
+// path: stdout is one document with empty stderr, carrying the workflow name
+// and the config version. The stand-in editor is an sh script, never a real
+// editor.
+func TestConfigWorkflowEditJSON(t *testing.T) {
+	initRoot(t)
+	addConfigWorkflow(t, writeWorkflowFile(t, configWorkflowSource))
+	t.Setenv("VISUAL", "")
+	t.Setenv("EDITOR", writeEditor(t, appendEditedLine))
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"config", "workflow", "edit", "custom", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("edit --json: %v (stderr: %s)", err, stderr)
+	}
+	if len(stderr) != 0 {
+		t.Errorf("stderr = %q, want empty", stderr)
+	}
+	if len(stdout) == 0 || stdout[0] != '{' || !json.Valid(stdout) {
+		t.Fatalf("stdout = %q, want exactly one JSON object", stdout)
+	}
+	var doc ConfigWorkflowEditDoc
+	if err := json.Unmarshal(stdout, &doc); err != nil {
+		t.Fatalf("unmarshal %q: %v", stdout, err)
+	}
+	if doc.Name != "custom" {
+		t.Errorf("doc = %+v, want the edited name custom", doc)
+	}
+	if doc.Version == 0 {
+		t.Error("version is zero, want the config version the edit left")
+	}
+	if src := storedConfig(t).Workflows["custom"].Source; !strings.Contains(src, "# edited") {
+		t.Errorf("stored source = %q, want the edited line", src)
+	}
+}
+
+// assertWorkflowJSONFailure runs one failing workflow verb under --json and
+// pins the failure contract: nothing on either stream before report, the
+// catalog code and its next hint, and the guide's error document.
+func assertWorkflowJSONFailure(t *testing.T, args []string, code errorCode, next string) {
+	t.Helper()
+	stdout, stderr, runErr := captureOutput(t, func() error { return run(args) })
+	ce := requireCLIError(t, runErr, code, next)
+	var ec exitCodeErr
+	if !errors.As(runErr, &ec) || ec.code != catalogExit(code) {
+		t.Errorf("exit = %v, want %d (code %s)", runErr, catalogExit(code), code)
+	}
+	if len(stdout) != 0 {
+		t.Errorf("stdout = %q, want empty before report", stdout)
+	}
+	if len(stderr) != 0 {
+		t.Errorf("stderr = %q, want empty before report", stderr)
+	}
+	if ce.message == "" {
+		t.Error("message is empty")
+	}
+	var buf bytes.Buffer
+	if got := report(&buf, runErr, true); got != catalogExit(code) {
+		t.Errorf("report exit = %d, want %d", got, catalogExit(code))
+	}
+	var env struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			Next    string `json:"next"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
+		t.Fatalf("envelope %q: %v", buf.String(), err)
+	}
+	if env.Error.Code != string(code) {
+		t.Errorf("code = %q, want %q", env.Error.Code, code)
+	}
+	if env.Error.Message == "" {
+		t.Error("envelope message is empty")
+	}
+	if next != "" && env.Error.Next != next {
+		t.Errorf("next = %q, want %q", env.Error.Next, next)
+	}
+}
+
+// TestConfigWorkflowAddJSONConflict pins the saved-name refusal under --json:
+// a second add without --replace is a conflict with nothing before report.
+func TestConfigWorkflowAddJSONConflict(t *testing.T) {
+	initRoot(t)
+	path := writeWorkflowFile(t, configWorkflowSource)
+	addConfigWorkflow(t, path)
+	assertWorkflowJSONFailure(t,
+		[]string{"config", "workflow", "add", path, "--json"}, codeConflict, "")
+}
+
+// TestConfigWorkflowRmJSONNotSaved pins the unknown-name refusal under --json.
+func TestConfigWorkflowRmJSONNotSaved(t *testing.T) {
+	initRoot(t)
+	assertWorkflowJSONFailure(t,
+		[]string{"config", "workflow", "rm", "nosuch", "--json"},
+		codeConfigPathNotSet, "relevo config export")
+}
+
+// TestConfigWorkflowEditJSONNotSaved pins the unknown-name refusal under
+// --json on the edit path.
+func TestConfigWorkflowEditJSONNotSaved(t *testing.T) {
+	initRoot(t)
+	assertWorkflowJSONFailure(t,
+		[]string{"config", "workflow", "edit", "nosuch", "--json"},
+		codeConfigPathNotSet, "relevo config export")
 }

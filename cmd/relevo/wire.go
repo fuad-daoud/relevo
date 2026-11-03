@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
-	"github.com/fuad-daoud/relevo/internal/classify"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/delivery"
@@ -245,6 +244,13 @@ func openDB(path string) (*db.DB, error) {
 // database is opened with it and runs the same migrations, so the split is a
 // placement decision rather than a schema fork.
 func openDBDirect(path string) (*db.DB, error) {
+	return openDBDirectWith(path, db.Options{})
+}
+
+// openDBDirectWith opens path like openDBDirect, with the busy waits tunable so
+// a caller that must fail fast does not wait out the defaults. The origin is
+// always the installation beside the path, never the caller's.
+func openDBDirectWith(path string, o db.Options) (*db.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("create %s: %w", filepath.Dir(path), err)
 	}
@@ -252,7 +258,8 @@ func openDBDirect(path string) (*db.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	return db.OpenSplit(path, db.Options{Origin: inst.ID})
+	o.Origin = inst.ID
+	return db.OpenSplit(path, o)
 }
 
 // newRuntimePeek constructs the runtime `relevo daemon --preflight` and
@@ -373,8 +380,6 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 	// and the daemon logs each once.
 	configWarnings := L.Warnings
 
-	cls, _ := classify.Resolve(pol.Classify, L.Typesafe, os.Getenv)
-
 	reader, prices := newUsageReader(L.Prices)
 
 	gitClient := git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes)
@@ -411,7 +416,6 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 		Registry:       L.Registry,
 		ConfigWarnings: configWarnings,
 		Scope:          scopeFromPolicy(pol.ScopeFor(false)),
-		Classify:       cls,
 		Usage:          reader,
 		Prices:         prices,
 		Fetcher:        release.NewHTTPFetcher(release.Source(), 5*time.Second),

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/board"
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
@@ -119,6 +120,21 @@ func writeDocFixtures() []struct {
 			Tier:          "edit",
 			PromptHead:    []string{"# plan", "do the thing"},
 		}},
+		// The board writes: the element an annotate appended, the comment id
+		// and scene a comment landed in, and the two paths a promote copied.
+		// The positions and ids here are the literal inputs the builder passes
+		// through; a dropped assignment prints empty and reddens its golden.
+		{"board-annotate-json", annotateDocOf(board.Annotation{
+			Path:    "/repo/docs/boards/api.excalidraw",
+			Element: board.AgentText{ID: "0123456789abcdef0123456789abcdef", X: 5, Y: 6, Text: "hello"},
+		})},
+		{"board-comment-json", commentDocOf(board.CommentWrite{
+			ID: "0123456789abcdef0123456789abcdef", Path: "/state/relevo/boards/mm_aaaaaaaaaaaa/board.excalidraw",
+		})},
+		{"board-promote-json", promoteDocOf(board.Promotion{
+			Live: "/state/relevo/boards/mm_aaaaaaaaaaaa/api/board.html",
+			Dst:  "/repo/docs/boards/api/board.html",
+		})},
 	}
 }
 
@@ -353,7 +369,8 @@ func TestContractWriteNoticeRouting(t *testing.T) {
 func TestContractWriteRegistryExits(t *testing.T) {
 	for _, name := range []string{
 		"bind", "send", "stop", "done", "unbind", "gate",
-		"config agents", "config import", "config init", "config secret rm",
+		"config agents", "config edit", "config import", "config init", "config rollback",
+		"config secret rm",
 		"config secret set", "config server add", "config server rm", "config set",
 		"config unset", "mastermind disable", "mastermind enable", "mastermind forget",
 		"mastermind init", "mastermind rename", "mastermind reset",

@@ -5,7 +5,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -85,59 +84,6 @@ func newScopeFields(doc relevo.ConfigDoc, form string) ([]settingField, string, 
 		return fields, "rounds relevo serve runs use this in place of scope", "serve.scope"
 	}
 	return fields, "every round this machine starts runs in this scope", "scope"
-}
-
-func newClassifyFields(doc relevo.ConfigDoc) ([]settingField, string, string) {
-	cl := doc.Policy.Classify
-
-	providerSel := 0
-	if cl != nil {
-		providerSel = 1
-	}
-	// disabledWhileOff reads the provider chip's live selection, so tab,
-	// validation and sets() all see the same up-to-date on/off state.
-	disabledWhileOff := func(f settingsForm) bool { return f.fields[0].sel == 0 }
-
-	providerField := settingField{
-		label: "provider", path: "classify.provider",
-		chips: []string{"off", "jev"}, sel: providerSel, origSel: providerSel,
-		value: func(sel int) any {
-			if sel == 1 {
-				return "jev"
-			}
-			return nil
-		},
-	}
-
-	var modelOrig, thresholdOrig, timeoutOrig string
-	if cl != nil {
-		modelOrig = cl.Model
-		if cl.InjectionThreshold != nil {
-			thresholdOrig = strconv.FormatFloat(*cl.InjectionThreshold, 'g', -1, 64)
-		}
-		if cl.TimeoutMS != nil {
-			timeoutOrig = relevo.FormatDuration(time.Duration(*cl.TimeoutMS) * time.Millisecond)
-		}
-	}
-
-	textField := func(label, path, orig, hint string, parse func(string) (any, error)) settingField {
-		in := newFormInput(false)
-		in.SetValue(orig)
-		in.CursorEnd()
-		return settingField{
-			label: label, path: path, input: in, orig: orig, hint: hint, parse: parse,
-			disabled: disabledWhileOff,
-		}
-	}
-
-	fields := []settingField{
-		providerField,
-		textField("model", "classify.model", modelOrig, "default jev-latest", parseOptionalText),
-		textField("threshold", "classify.injection_threshold", thresholdOrig, "default 0.7", parseInjectionThreshold),
-		textField("timeout", "classify.timeout_ms", timeoutOrig, "default 4s", parseDuration),
-	}
-
-	return fields, "scores each builder line for prompt injection, beside the pattern scan", "classify"
 }
 
 func newChainFields(doc relevo.ConfigDoc) ([]settingField, string, string) {
@@ -265,18 +211,4 @@ func parseCPUQuota(s string) (any, error) {
 		return nil, errors.New("a percentage like 200%")
 	}
 	return s, nil
-}
-
-// parseInjectionThreshold is classify's threshold parser: "" deletes, else a
-// float in (0, 1].
-func parseInjectionThreshold(s string) (any, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil, nil
-	}
-	f, err := strconv.ParseFloat(s, 64)
-	if err != nil || f <= 0 || f > 1 {
-		return nil, errors.New("a number above 0, up to 1")
-	}
-	return f, nil
 }

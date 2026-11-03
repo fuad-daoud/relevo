@@ -6,7 +6,7 @@ BIN     := $(HOME)/.local/bin/relevo
 BUILD_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo devel)
 LDFLAGS := -X main.version=$(if $(VERSION),$(VERSION),$(BUILD_VERSION))
 
-.PHONY: check check-quick check-affected check-static check-scripts check-test lint build install service uninstall release release-bump release-tag jev board-assets mod-test
+.PHONY: check check-quick check-affected check-static check-scripts check-test lint build install service uninstall release release-bump release-tag board-assets mod-test
 
 # lint runs golangci-lint with .golangci.yml. The binary is not vendored and
 # CI installs it in a setup step, so a machine without it still gets the rest
@@ -38,6 +38,8 @@ check:
 check-static:
 	@test -z "$$(gofmt -l $$(git ls-files --cached --others --exclude-standard -- '*.go'))" || { gofmt -l $$(git ls-files --cached --others --exclude-standard -- '*.go'); exit 1; }
 	go vet ./...
+	CGO_ENABLED=0 GOOS=windows go vet ./...
+	CGO_ENABLED=0 GOOS=darwin go vet ./...
 	$(MAKE) lint
 	sh scripts/check-comments.sh
 	sh scripts/check-filesize.sh
@@ -115,14 +117,6 @@ check-test:
 # of check.
 e2e:
 	go test ./internal/e2e/ -run 'TestHeadlessE2E|TestChainE2E|TestChainTriageE2E|TestChainForkE2E|TestChainRemoteBuilderE2E|TestChainServerE2E' -count=1
-
-# jev runs the classifier fixtures against the real TypeSafe endpoint.
-# Local only: it needs
-# TYPESAFE_API_KEY or ~/.config/relevo/typesafe.key and skips otherwise.
-# Not part of check.
-jev:
-	go vet -tags jev ./internal/classify
-	go test -tags jev -count=1 -run TestJevInjectionFixtures ./internal/classify -v
 
 build: check
 	go build -ldflags "$(LDFLAGS)" -o relevo ./cmd/relevo

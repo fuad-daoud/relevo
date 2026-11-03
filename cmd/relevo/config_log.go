@@ -13,6 +13,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/sanitize"
 )
 
@@ -172,12 +173,14 @@ func sourceWidth(rows []db.RevisionRow) int {
 }
 
 type configRollbackFlagValues struct {
-	yes *bool
-	msg *string
+	asJSON *bool
+	yes    *bool
+	msg    *string
 }
 
 func configRollbackFlagSet(fs *flag.FlagSet) *configRollbackFlagValues {
 	v := &configRollbackFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the document the rollback wrote")
 	v.yes = fs.Bool("yes", false, "skip the confirmation prompt")
 	v.msg = fs.String("m", "", "message for the rollback revision")
 	return v
@@ -189,13 +192,13 @@ func cmdConfigRollback(args []string) error {
 	fs := flag.NewFlagSet("relevo config rollback", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	v := configRollbackFlagSet(fs)
-	yes, msg := v.yes, v.msg
+	yes, msg, asJSON := v.yes, v.msg, v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: relevo config rollback <rev> [--yes] [-m <message>]")
+		fmt.Fprintln(os.Stderr, "usage: relevo config rollback <rev> [--yes] [-m <message>] [--json]")
 		return exitCodeErr{code: 2}
 	}
 	rev, err := strconv.ParseInt(rest[0], 10, 64)
@@ -213,7 +216,7 @@ func cmdConfigRollback(args []string) error {
 	if err != nil {
 		switch {
 		case errors.Is(err, config.ErrNoRevision):
-			return fmt.Errorf("no such revision #%d", rev)
+			return fail(codeRevisionNotFound, "no such revision #%d", rev)
 		case errors.Is(err, config.ErrNoChange):
 			fmt.Printf("config already equals revision #%d\n", rev)
 			return nil
@@ -222,9 +225,13 @@ func cmdConfigRollback(args []string) error {
 		}
 	}
 
-	fmt.Printf("rollback to #%d would change:\n", rev)
-	for _, c := range plan {
-		fmt.Println(config.Describe(c))
+	// Under --json stdout carries the document alone, so the preview stays
+	// out of it.
+	if !*asJSON {
+		fmt.Printf("rollback to #%d would change:\n", rev)
+		for _, c := range plan {
+			fmt.Println(config.Describe(c))
+		}
 	}
 
 	if !*yes {
@@ -240,17 +247,28 @@ func cmdConfigRollback(args []string) error {
 		}
 	}
 
-	row, err := rt.Config.As("rollback", *msg).Rollback(rev)
+	return writeRollback(rt, rev, *msg, *asJSON)
+}
+
+// writeRollback records the rollback as a new revision and renders the result:
+// the document under --json, the human line otherwise. RollbackPlan refuses a
+// missing revision with the same code, and the write keeps it coded so --json
+// never falls back to prose where a script reads data.
+func writeRollback(rt relevo.Runtime, rev int64, msg string, asJSON bool) error {
+	row, err := rt.Config.As("rollback", msg).Rollback(rev)
 	if err != nil {
 		switch {
 		case errors.Is(err, config.ErrNoRevision):
-			return fmt.Errorf("no such revision #%d", rev)
+			return fail(codeRevisionNotFound, "no such revision #%d", rev)
 		case errors.Is(err, config.ErrNoChange):
 			fmt.Printf("config already equals revision #%d\n", rev)
 			return nil
 		default:
 			return err
 		}
+	}
+	if asJSON {
+		return printDoc(configRollbackDocOf(rev, row.Rev, row.Version))
 	}
 	fmt.Printf("rolled back to #%d as #%d (config version %d)\n", rev, row.Rev, row.Version)
 	return nil

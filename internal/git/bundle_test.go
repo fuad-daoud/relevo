@@ -326,13 +326,16 @@ func TestFetchBundleLeavesAutoGcOff(t *testing.T) {
 func TestFetchBundleRefusesNonFastForward(t *testing.T) {
 	ctx := context.Background()
 	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+	// Fixture writes share the machine with the suite, so they get a longer
+	// bound than the refusal under test.
+	setup := NewClient("git", 60*time.Second, DefaultMaxPatchBytes)
 
 	repoA, ref, shas := bundleSource(t, "1\n")
 	c1 := shas[0]
 	bareB := bareRepo(t)
 
 	b1 := filepath.Join(t.TempDir(), "b1.bundle")
-	if _, _, err := client.BundleCreate(ctx, repoA, b1, []string{ref}, ""); err != nil {
+	if _, _, err := setup.BundleCreate(ctx, repoA, b1, []string{ref}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.FetchBundle(ctx, bareB, b1, []string{ref}); err != nil {
@@ -341,11 +344,11 @@ func TestFetchBundleRefusesNonFastForward(t *testing.T) {
 
 	// B's ref moves ahead with a local commit.
 	treeB := strings.TrimSpace(runGit(t, bareB, "rev-parse", c1+"^{tree}"))
-	localCommit, err := client.CommitTree(ctx, bareB, treeB, c1, "local divergence")
+	localCommit, err := setup.CommitTree(ctx, bareB, treeB, c1, "local divergence")
 	if err != nil {
 		t.Fatalf("CommitTree: %v", err)
 	}
-	if err := client.UpdateRef(ctx, bareB, ref, localCommit, c1); err != nil {
+	if err := setup.UpdateRef(ctx, bareB, ref, localCommit, c1); err != nil {
 		t.Fatalf("UpdateRef: %v", err)
 	}
 
@@ -356,7 +359,7 @@ func TestFetchBundleRefusesNonFastForward(t *testing.T) {
 	runGit(t, repoA, "update-ref", ref, mustHead(t, repoA))
 
 	b2 := filepath.Join(t.TempDir(), "b2.bundle")
-	if _, _, err := client.BundleCreate(ctx, repoA, b2, []string{ref}, ""); err != nil {
+	if _, _, err := setup.BundleCreate(ctx, repoA, b2, []string{ref}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.FetchBundle(ctx, bareB, b2, []string{ref}); !errors.Is(err, ErrNotFastForward) {

@@ -13,7 +13,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/capture"
-	"github.com/fuad-daoud/relevo/internal/classify"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/consult"
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -253,11 +252,6 @@ type Runtime struct {
 	// Usage reads what a round consumed from the harness's own record.
 	// Nil means every round records Basis unknown, note "no reader".
 	Usage usage.Reader
-
-	// Classify judges report and dialog paragraphs for instruction-shaped
-	// content beside the regex scan. Nil means no classifier is configured
-	// and the regex result stands alone.
-	Classify classify.Classifier
 
 	// Prices is ~/.config/relevo/prices.json over the embedded default. The
 	// zero value prices nothing, so every estimate is unknown.

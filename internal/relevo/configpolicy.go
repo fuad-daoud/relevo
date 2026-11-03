@@ -20,7 +20,7 @@ type Setting struct {
 	Value   string // the effective value as display text
 	Default string // the default as display text
 	Set     bool   // the key is stored in the policy section
-	Form    string // which editor enter opens: rounds, check, timing, max_builders; or scope, serve.scope, scan_patterns, classify, webhooks (round 2), chain
+	Form    string // which editor enter opens: rounds, check, timing, max_builders; or scope, serve.scope, scan_patterns, webhooks (round 2), chain
 }
 
 // PolicySet is one path-value assignment for policy edits.
@@ -77,12 +77,12 @@ func formatScope(sc *policy.ScopePolicy, defaultText string) string {
 	return strings.Join(parts, " · ")
 }
 
-// Settings returns the 25 policy rows in display order, filled from d.Policy.
+// Settings returns the 24 policy rows in display order, filled from d.Policy.
 func Settings(d ConfigDoc, cpus int) []Setting {
 	p := d.Policy
 	defMaxBuilders := max(1, cpus-1)
 
-	var rows [25]Setting
+	var rows [24]Setting
 
 	roundsSettingsRows(p, rows[:])
 	// 9-14: timing rows
@@ -161,14 +161,7 @@ func scanNotifyChainSettingsRows(p policy.Policy, rows []Setting) {
 	}
 	rows[17] = Setting{Group: "scan", Key: "scan_patterns", Value: spVal,
 		Default: "none", Set: len(p.ScanPatterns) > 0, Form: "scan_patterns"}
-	// 19: scan / classify
-	clVal := "off"
-	if p.Classify != nil && p.Classify.Provider != "" {
-		clVal = p.Classify.Provider
-	}
-	rows[18] = Setting{Group: "scan", Key: "classify", Value: clVal,
-		Default: "off", Set: p.Classify != nil, Form: "classify"}
-	// 20: notify / notify.webhooks
+	// 19: notify / notify.webhooks
 	var nwVal string
 	var nwCount int
 	if p.Notify != nil {
@@ -182,26 +175,26 @@ func scanNotifyChainSettingsRows(p policy.Policy, rows []Setting) {
 	default:
 		nwVal = fmt.Sprintf("%d webhooks", nwCount)
 	}
-	rows[19] = Setting{Group: "notify", Key: "notify.webhooks", Value: nwVal,
+	rows[18] = Setting{Group: "notify", Key: "notify.webhooks", Value: nwVal,
 		Default: "none", Set: p.Notify != nil && len(p.Notify.Webhooks) > 0, Form: "webhooks"}
-	// 21: chain / chain.max_corrections
-	rows[20] = Setting{Group: "chain", Key: "chain.max_corrections", Value: strconv.Itoa(p.ChainMaxCorrections()),
+	// 20: chain / chain.max_corrections
+	rows[19] = Setting{Group: "chain", Key: "chain.max_corrections", Value: strconv.Itoa(p.ChainMaxCorrections()),
 		Default: strconv.Itoa(policy.DefaultChainMaxCorrections), Set: p.Chain != nil && p.Chain.MaxCorrections != nil, Form: "chain"}
-	// 22: chain / chain.reviewer_actor
-	rows[21] = Setting{Group: "chain", Key: "chain.reviewer_actor", Value: p.ChainReviewerActor(),
+	// 21: chain / chain.reviewer_actor
+	rows[20] = Setting{Group: "chain", Key: "chain.reviewer_actor", Value: p.ChainReviewerActor(),
 		Default: policy.DefaultChainReviewerActor, Set: p.Chain != nil && p.Chain.ReviewerActor != "", Form: "chain"}
-	// 23: chain / chain.planner_actor
-	rows[22] = Setting{Group: "chain", Key: "chain.planner_actor", Value: p.ChainPlannerActor(),
+	// 22: chain / chain.planner_actor
+	rows[21] = Setting{Group: "chain", Key: "chain.planner_actor", Value: p.ChainPlannerActor(),
 		Default: policy.DefaultChainPlannerActor, Set: p.Chain != nil && p.Chain.PlannerActor != "", Form: "chain"}
-	// 24: chain / chain.security_actor
-	rows[23] = Setting{Group: "chain", Key: "chain.security_actor", Value: p.ChainSecurityActor(),
+	// 23: chain / chain.security_actor
+	rows[22] = Setting{Group: "chain", Key: "chain.security_actor", Value: p.ChainSecurityActor(),
 		Default: policy.DefaultChainSecurityActor, Set: p.Chain != nil && p.Chain.SecurityActor != "", Form: "chain"}
-	// 25: chain / chain.security
+	// 24: chain / chain.security
 	csVal := "off"
 	if p.ChainSecurityOn() {
 		csVal = "on"
 	}
-	rows[24] = Setting{Group: "chain", Key: "chain.security", Value: csVal,
+	rows[23] = Setting{Group: "chain", Key: "chain.security", Value: csVal,
 		Default: "off", Set: p.Chain != nil && p.Chain.Security != nil, Form: "chain"}
 }
 
@@ -232,8 +225,6 @@ func SettingPaths(key string) []string {
 		return []string{"serve.scope"}
 	case "scan_patterns":
 		return []string{"scan_patterns"}
-	case "classify":
-		return []string{"classify"}
 	case "notify.webhooks":
 		return []string{"notify"}
 	case "chain.max_corrections":

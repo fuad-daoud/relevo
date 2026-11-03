@@ -63,7 +63,7 @@ func TestJoinKeepsOnlyThePeersSecretsBookkeeping(t *testing.T) {
 	passGate(t, shared)
 	self := shared.Origin()
 	if err := local.RecordDocExport(db.DocSignal{Doc: SecretsDocName}, []db.DocExportWrite{
-		{Key: SecretTypesafe, Origin: self, Stamp: "5", Digest: "own"},
+		{Key: SecretR2Endpoint, Origin: self, Stamp: "5", Digest: "own"},
 		{Key: SecretR2Bucket, Origin: "peer", Stamp: "6", Digest: "theirs"},
 	}); err != nil {
 		t.Fatalf("seed the export state: %v", err)
@@ -80,7 +80,7 @@ func TestJoinKeepsOnlyThePeersSecretsBookkeeping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("export state after the join: %v", err)
 	}
-	if _, kept := state[SecretTypesafe]; kept {
+	if _, kept := state[SecretR2Endpoint]; kept {
 		t.Errorf("the row for a value this machine sent to another log survived the join: %+v", state)
 	}
 	if row, kept := state[SecretR2Bucket]; !kept || row.Origin != "peer" || row.Digest != "theirs" {

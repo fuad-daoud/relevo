@@ -3,8 +3,8 @@ package housekeep
 import (
 	"bytes"
 	"regexp"
+	"strings"
 
-	"github.com/fuad-daoud/relevo/internal/classify"
 	"github.com/fuad-daoud/relevo/internal/policy"
 )
 
@@ -15,6 +15,19 @@ var builtInPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`^\s*(Human|Assistant|User):`),
 	regexp.MustCompile(`(?i)ignore (all )?(previous|prior) instructions`),
 	regexp.MustCompile(`(?i)^\s*IMPORTANT:.*you must`),
+}
+
+func IsFence(line string) bool {
+	trimmed := strings.TrimRight(line, " \t")
+	n := 0
+	for n < len(trimmed) && trimmed[n] == '`' {
+		n++
+	}
+	if n < 3 {
+		return false
+	}
+	rest := trimmed[n:]
+	return !strings.Contains(rest, "`")
 }
 
 // ScanLines returns the 1-based line numbers ScanInstructionShaped counts,
@@ -31,7 +44,7 @@ func ScanLines(text []byte, extra []*regexp.Regexp) []int {
 	for i, rawLine := range rawLines {
 		lineNo := i + 1
 		line := string(bytes.TrimRight(rawLine, "\r"))
-		if classify.IsFence(line) {
+		if IsFence(line) {
 			insideFence = !insideFence
 			continue
 		}

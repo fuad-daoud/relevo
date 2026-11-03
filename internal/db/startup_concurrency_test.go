@@ -88,7 +88,7 @@ func TestSplitMovesAWriteThatRacesAMovedTable(t *testing.T) {
 	// A row the pass will have to move: a shared file with nothing to move is a
 	// pass that records its marker and returns without reading a table.
 	if _, err := d.sqlDB.Exec(`INSERT OR REPLACE INTO secret (name, value, updated_at) VALUES (?, ?, ?)`,
-		"typesafe", []byte("token"), "2026-10-03T09:00:00.000Z"); err != nil {
+		"vendor.key", []byte("token"), "2026-10-03T09:00:00.000Z"); err != nil {
 		t.Fatalf("seed the shared secret: %v", err)
 	}
 

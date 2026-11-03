@@ -51,35 +51,31 @@ var sectionFile = map[Section]string{
 
 func FileName(sec Section) string { return sectionFile[sec] }
 
-const (
-	SecretClientKey = "client.key"
-	SecretTypesafe  = "typesafe"
-)
+const SecretClientKey = "client.key"
 
 const (
-	clientKeyFile   = "client.key"
-	typesafeKeyFile = "typesafe.key"
-	clientPubFile   = "client.pub"
-	aliasesFile     = "aliases.json"
+	clientKeyFile = "client.key"
+	clientPubFile = "client.pub"
+	aliasesFile   = "aliases.json"
 )
 
 // Files returns the file names a config dir may hold and ImportFiles consumes, without
 // the hooks directory.
 func Files() []string {
-	files := make([]string, 0, len(Sections)+2)
+	files := make([]string, 0, len(Sections)+1)
 	for _, sec := range Sections {
 		if name := FileName(sec); name != "" {
 			files = append(files, name)
 		}
 	}
-	return append(files, clientKeyFile, typesafeKeyFile)
+	return append(files, clientKeyFile)
 }
 
 type HooksMap map[string][][]string
 
-// Loaded is one consistent read of every section and both secrets. An absent section
-// reads as its missing file would: an empty non-nil collection for candidates and
-// servers, the zero values otherwise.
+// Loaded is one consistent read of every section and the client key. An absent
+// section reads as its missing file would: an empty non-nil collection for
+// candidates and servers, the zero values otherwise.
 type Loaded struct {
 	Candidates *candidate.Set
 	Policy     policy.Policy
@@ -99,7 +95,6 @@ type Loaded struct {
 	// section is an empty map.
 	Themes    map[string]theme.Theme
 	ClientKey []byte
-	Typesafe  string
 	Warnings  []string
 	Version   int64
 	Agents    map[string]roles.AgentEntry

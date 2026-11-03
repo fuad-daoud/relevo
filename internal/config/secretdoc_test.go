@@ -64,10 +64,10 @@ func TestSecretDocNameAndStampKey(t *testing.T) {
 	if Secrets != "secrets" {
 		t.Errorf("Secrets = %q, want %q", Secrets, "secrets")
 	}
-	if got := secretStampKey(SecretTypesafe); got != "secrets/typesafe" {
-		t.Errorf("secretStampKey = %q, want %q", got, "secrets/typesafe")
+	if got := secretStampKey(sync.SecretR2Bucket); got != "secrets/r2.bucket" {
+		t.Errorf("secretStampKey = %q, want %q", got, "secrets/r2.bucket")
 	}
-	if secretStampKey(SecretTypesafe) == SecretTypesafe {
+	if secretStampKey(sync.SecretR2Bucket) == sync.SecretR2Bucket {
 		t.Error("a secret's stamp key is the bare name, which a config section could claim")
 	}
 }
@@ -79,7 +79,7 @@ func TestSecretDocNameAndStampKey(t *testing.T) {
 func TestItemsRefusesOnALockedMachine(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
-	if err := s.PutSecret(SecretTypesafe, canarySecret); err != nil {
+	if err := s.PutSecret(sync.SecretR2Bucket, canarySecret); err != nil {
 		t.Fatalf("PutSecret: %v", err)
 	}
 	if err := sync.DeleteKey(s.db); err != nil {
@@ -102,7 +102,7 @@ func TestItemsRefusesOnALockedMachine(t *testing.T) {
 func TestLockedItemsKeepsTheExportSignal(t *testing.T) {
 	t.Parallel()
 	s := secretStore(t)
-	if err := s.PutSecret(SecretTypesafe, canarySecret); err != nil {
+	if err := s.PutSecret(sync.SecretR2Bucket, canarySecret); err != nil {
 		t.Fatalf("PutSecret: %v", err)
 	}
 	if err := sync.DeleteKey(s.db); err != nil {
@@ -139,14 +139,13 @@ func hasSignal(signals []db.DocSignal, doc string) bool {
 }
 
 // TestItemsExportsTheAllowListAndNothingElse pins both halves of the list at the
-// export: the six shared names travel, and every other name in the table --
-// which is most of it -- does not. A walk by name rather than by list would hand
-// a peer this machine's bearer token and its sync key.
+// export: every name that travels unconditionally is exported, and every other
+// name in the table -- which is most of it -- does not. A walk by name rather
+// than by list would hand a peer this machine's bearer token and its sync key.
 func TestItemsExportsTheAllowListAndNothingElse(t *testing.T) {
 	t.Parallel()
 	s := secretStore(t)
 	shared := map[string][]byte{
-		SecretTypesafe:        canarySecret,
 		sync.SecretR2Endpoint: []byte("https://acct.r2.example"),
 		sync.SecretR2Bucket:   []byte("bkt"),
 		sync.SecretR2KeyID:    []byte("kid"),
@@ -258,16 +257,15 @@ func TestAnUnstampedClientKeyIsNeverExported(t *testing.T) {
 }
 
 // TestPreExistingAllowListedSecretsTravelUnstamped pins the other half: only the
-// client key is conditional. The R2 credentials and typesafe a laptop already
-// held before this document existed must travel on the first unlocked export, or
-// a joiner never gets them and the owner has to re-run enable by hand.
+// client key is conditional. The R2 credentials a laptop already held before this
+// document existed must travel on the first unlocked export, or a joiner never
+// gets them and the owner has to re-run enable by hand.
 func TestPreExistingAllowListedSecretsTravelUnstamped(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	// Written before the store held a key, by the pre-5a path, which left no
 	// write stamp behind.
 	for name, value := range map[string]string{
-		SecretTypesafe:        "ts-pre-existing",
 		sync.SecretR2Endpoint: "https://acct.r2.example",
 		sync.SecretR2Bucket:   "bkt",
 		sync.SecretR2KeyID:    "kid",
@@ -287,8 +285,8 @@ func TestPreExistingAllowListedSecretsTravelUnstamped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Items: %v", err)
 	}
-	if len(items) != 5 {
-		t.Fatalf("exported %d items, want the five pre-existing allow-listed secrets: %v", len(items), sortedKeysOf(items))
+	if len(items) != 4 {
+		t.Fatalf("exported %d items, want the four pre-existing allow-listed secrets: %v", len(items), sortedKeysOf(items))
 	}
 	for name := range items {
 		if _, ok, err := s.SecretsDoc().ItemWriteStamp(name); err != nil {
@@ -309,12 +307,14 @@ func sortedKeysOf(m map[string]json.RawMessage) []string {
 
 // TestApplyRefusesAnOffListName pins the import-side half of the list. A peer
 // that sends a name this document does not carry gets a refusal and nothing
-// else: not the value, not a tombstone, not a revision.
+// else: not the value, not a tombstone, not a revision. The typesafe name is one
+// of them: a fleet that no longer shares it must refuse a peer that still sends
+// it rather than store a value no reader has.
 func TestApplyRefusesAnOffListName(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{sync.SecretKey, sync.SecretToken, "serve.tls.key", "unknown.name", ""} {
+	for _, name := range []string{sync.SecretKey, sync.SecretToken, "serve.tls.key", "typesafe", "unknown.name", ""} {
 		s := secretStore(t)
-		if err := s.PutSecret(SecretTypesafe, canarySecret); err != nil {
+		if err := s.PutSecret(sync.SecretR2Bucket, canarySecret); err != nil {
 			t.Fatalf("PutSecret: %v", err)
 		}
 		before := map[string][]byte{}
@@ -322,7 +322,7 @@ func TestApplyRefusesAnOffListName(t *testing.T) {
 			before[n] = held(t, s, n)
 		}
 		doc := s.SecretsDoc()
-		refusal, err := doc.applyChecked(t, name, sealedFor(t, SecretTypesafe, canarySecret))
+		refusal, err := doc.applyChecked(t, name, sealedFor(t, sync.SecretR2Bucket, canarySecret))
 		// The document's own refusal, not the envelope's: the value is a
 		// perfectly good sealed secret, sealed for an allowed name, and what
 		// stops it is the name it arrived under.
@@ -353,17 +353,17 @@ func TestApplyRefusesEveryUnreadableEnvelope(t *testing.T) {
 	}
 	for name, raw := range cases {
 		s := secretStore(t)
-		if err := s.PutSecret(SecretTypesafe, []byte("what-this-machine-held")); err != nil {
+		if err := s.PutSecret(sync.SecretR2Bucket, []byte("what-this-machine-held")); err != nil {
 			t.Fatalf("PutSecret: %v", err)
 		}
-		refusal, err := s.SecretsDoc().applyChecked(t, SecretTypesafe, json.RawMessage(raw))
+		refusal, err := s.SecretsDoc().applyChecked(t, sync.SecretR2Bucket, json.RawMessage(raw))
 		if !errors.Is(refusal, sync.ErrSecretEnvelope) {
 			t.Errorf("an envelope with %s = %v, %v; want the envelope refusal", name, refusal, err)
 		}
 		if err != nil {
 			t.Errorf("an envelope with %s failed rather than refusing: %v", name, err)
 		}
-		if got := held(t, s, SecretTypesafe); string(got) != "what-this-machine-held" {
+		if got := held(t, s, sync.SecretR2Bucket); string(got) != "what-this-machine-held" {
 			t.Errorf("an envelope with %s changed the stored value to %q", name, got)
 		}
 	}
@@ -391,7 +391,7 @@ func TestApplyRefusesAnUnreadableClientKey(t *testing.T) {
 // this machine holds the key for lands in the secret table.
 func TestApplyWritesAnAllowedSecret(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{SecretTypesafe, sync.SecretR2Bucket, sync.SecretR2Secret} {
+	for _, name := range []string{sync.SecretR2Endpoint, sync.SecretR2Bucket, sync.SecretR2Secret} {
 		s := secretStore(t)
 		refusal, err := s.SecretsDoc().applyChecked(t, name, sealedFor(t, name, canarySecret))
 		if refusal != nil || err != nil {
@@ -409,14 +409,14 @@ func TestApplyWritesAnAllowedSecret(t *testing.T) {
 func TestApplyTombstoneClearsTheSecret(t *testing.T) {
 	t.Parallel()
 	s := secretStore(t)
-	if err := s.PutSecret(SecretTypesafe, canarySecret); err != nil {
+	if err := s.PutSecret(sync.SecretR2Bucket, canarySecret); err != nil {
 		t.Fatalf("PutSecret: %v", err)
 	}
-	refusal, err := s.SecretsDoc().applyChecked(t, SecretTypesafe, nil)
+	refusal, err := s.SecretsDoc().applyChecked(t, sync.SecretR2Bucket, nil)
 	if refusal != nil || err != nil {
 		t.Fatalf("the tombstone = %v, %v; want it to land", refusal, err)
 	}
-	if got := held(t, s, SecretTypesafe); got != nil {
+	if got := held(t, s, sync.SecretR2Bucket); got != nil {
 		t.Fatalf("the secret is still held after a tombstone: %q", got)
 	}
 }
@@ -429,10 +429,10 @@ func TestApplyTombstoneClearsTheSecret(t *testing.T) {
 func TestAnAppliedSecretIsNotStamped(t *testing.T) {
 	t.Parallel()
 	s := secretStore(t)
-	if refusal, err := s.SecretsDoc().applyChecked(t, SecretTypesafe, sealedFor(t, SecretTypesafe, canarySecret)); refusal != nil || err != nil {
+	if refusal, err := s.SecretsDoc().applyChecked(t, sync.SecretR2Bucket, sealedFor(t, sync.SecretR2Bucket, canarySecret)); refusal != nil || err != nil {
 		t.Fatalf("ApplyIn = %v, %v", refusal, err)
 	}
-	if _, ok, err := s.SecretsDoc().ItemWriteStamp(SecretTypesafe); err != nil {
+	if _, ok, err := s.SecretsDoc().ItemWriteStamp(sync.SecretR2Bucket); err != nil {
 		t.Fatalf("ItemWriteStamp: %v", err)
 	} else if ok {
 		t.Fatal("an applied secret carries a write stamp")
@@ -444,7 +444,7 @@ func TestAnAppliedSecretIsNotStamped(t *testing.T) {
 	if hasSignal(signals, Secrets) {
 		t.Error("an applied secret signalled the document, so the peer would receive it straight back")
 	}
-	if got := held(t, s, SecretTypesafe); string(got) != string(canarySecret) {
+	if got := held(t, s, sync.SecretR2Bucket); string(got) != string(canarySecret) {
 		t.Errorf("the applied value = %q, want the sealed one", got)
 	}
 }
@@ -454,10 +454,10 @@ func TestAnAppliedSecretIsNotStamped(t *testing.T) {
 func TestAPersonsEditStampsAndSignals(t *testing.T) {
 	t.Parallel()
 	s := secretStore(t)
-	if err := s.PutSecret(SecretTypesafe, canarySecret); err != nil {
+	if err := s.PutSecret(sync.SecretR2Bucket, canarySecret); err != nil {
 		t.Fatalf("PutSecret: %v", err)
 	}
-	stamp, ok, err := s.SecretsDoc().ItemWriteStamp(SecretTypesafe)
+	stamp, ok, err := s.SecretsDoc().ItemWriteStamp(sync.SecretR2Bucket)
 	if err != nil || !ok {
 		t.Fatalf("a person's edit left no write stamp: ok=%v err=%v", ok, err)
 	}
@@ -479,18 +479,18 @@ func TestAPersonsEditStampsAndSignals(t *testing.T) {
 func TestAPersonsRemovalStampsAndSignals(t *testing.T) {
 	t.Parallel()
 	s := secretStore(t)
-	if err := s.PutSecret(SecretTypesafe, canarySecret); err != nil {
+	if err := s.PutSecret(sync.SecretR2Bucket, canarySecret); err != nil {
 		t.Fatalf("PutSecret: %v", err)
 	}
-	if err := s.SecretDelete(SecretTypesafe); err != nil {
+	if err := s.SecretDelete(sync.SecretR2Bucket); err != nil {
 		t.Fatalf("SecretDelete: %v", err)
 	}
-	if _, ok, err := s.SecretsDoc().ItemWriteStamp(SecretTypesafe); err != nil {
+	if _, ok, err := s.SecretsDoc().ItemWriteStamp(sync.SecretR2Bucket); err != nil {
 		t.Fatalf("ItemWriteStamp: %v", err)
 	} else if !ok {
 		t.Error("a person's removal left no write stamp, so the removal would not travel")
 	}
-	if got := held(t, s, SecretTypesafe); got != nil {
+	if got := held(t, s, sync.SecretR2Bucket); got != nil {
 		t.Errorf("the secret is still held after the removal: %q", got)
 	}
 }
@@ -511,7 +511,6 @@ func TestAnImportedSecretFileStamps(t *testing.T) {
 		t.Fatalf("MarshalPrivate: %v", err)
 	}
 	writeFile(t, filepath.Join(dir, "client.key"), string(pem), 0o600)
-	writeFile(t, filepath.Join(dir, "typesafe.key"), "ts-from-import", 0o600)
 
 	if _, err := s.ImportFiles(dir, time.Unix(0, 0).UTC()); err != nil {
 		t.Fatalf("ImportFiles: %v", err)
@@ -526,15 +525,12 @@ func TestAnImportedSecretFileStamps(t *testing.T) {
 	if _, ok := items[SecretClientKey]; !ok {
 		t.Error("an imported client key was not exported; a file a person dropped in is their edit")
 	}
-	if _, ok := items[SecretTypesafe]; !ok {
-		t.Error("an imported typesafe key was not exported")
-	}
 	// The sections the import wrote stay unstamped, which is the rule the
 	// import's blanket flag exists for.
 	if _, ok, err := s.db.ConfigWriteStamp(string(Candidates)); err != nil {
 		t.Fatalf("ConfigWriteStamp: %v", err)
 	} else if ok {
-		t.Error("the import stamped a config section; only its secret files are a person's edit")
+		t.Error("the import stamped a config section; only its secret file is a person's edit")
 	}
 }
 
@@ -601,9 +597,9 @@ func TestASecondArrivalOfTheSameClientKeyRecordsNoReplacement(t *testing.T) {
 func TestSupersedeInRecordsTheKeyAndTheReasonOnly(t *testing.T) {
 	t.Parallel()
 	s := secretStore(t)
-	env := sealedFor(t, SecretTypesafe, canarySecret)
+	env := sealedFor(t, sync.SecretR2Bucket, canarySecret)
 	if err := s.db.Tx(func(t *db.Tx) error {
-		return s.SecretsDoc().SupersedeIn(t, SecretTypesafe, env, "peer-1",
+		return s.SecretsDoc().SupersedeIn(t, sync.SecretR2Bucket, env, "peer-1",
 			"an entry stamped 5 from peer-1 is older than the one applied, stamped 9 from peer-2")
 	}); err != nil {
 		t.Fatalf("SupersedeIn: %v", err)
@@ -624,7 +620,7 @@ func TestSupersedeInRecordsTheKeyAndTheReasonOnly(t *testing.T) {
 	if strings.Contains(text, strings.Trim(string(env), `"{}`)) {
 		t.Fatalf("the superseding revision carries the envelope:\n%s", text)
 	}
-	if !strings.Contains(string(row.Changes), "secret."+SecretTypesafe) {
+	if !strings.Contains(string(row.Changes), "secret."+sync.SecretR2Bucket) {
 		t.Errorf("the revision does not name the secret: %s", row.Changes)
 	}
 	if !strings.Contains(string(row.Message), "older than") {
@@ -650,7 +646,7 @@ func TestNoRevisionEverCarriesASecretValue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MarshalPrivate: %v", err)
 	}
-	if err := s.PutSecret(SecretTypesafe, canarySecret); err != nil {
+	if err := s.PutSecret(sync.SecretR2Endpoint, canarySecret); err != nil {
 		t.Fatalf("PutSecret: %v", err)
 	}
 	if err := s.PutSecretUnstamped(sync.SecretR2Secret, canarySecret); err != nil {
@@ -659,7 +655,7 @@ func TestNoRevisionEverCarriesASecretValue(t *testing.T) {
 	if refusal, err := s.SecretsDoc().applyChecked(t, sync.SecretR2Bucket, sealedFor(t, sync.SecretR2Bucket, canarySecret)); refusal != nil || err != nil {
 		t.Fatalf("ApplyIn: %v, %v", refusal, err)
 	}
-	if err := s.SecretDelete(SecretTypesafe); err != nil {
+	if err := s.SecretDelete(sync.SecretR2Endpoint); err != nil {
 		t.Fatalf("SecretDelete: %v", err)
 	}
 	if err := s.PutSecret(SecretClientKey, pem); err != nil {
@@ -689,15 +685,15 @@ func TestNoRevisionEverCarriesASecretValue(t *testing.T) {
 func TestSecretNamesStillListNamesOnly(t *testing.T) {
 	t.Parallel()
 	s := secretStore(t)
-	if err := s.PutSecret(SecretTypesafe, canarySecret); err != nil {
+	if err := s.PutSecret(sync.SecretR2Bucket, canarySecret); err != nil {
 		t.Fatalf("PutSecret: %v", err)
 	}
 	names, err := s.SecretNames()
 	if err != nil {
 		t.Fatalf("SecretNames: %v", err)
 	}
-	if len(names) != 3 { // typesafe, the sync key, and the epoch row beside it
-		t.Fatalf("names = %v, want typesafe, the sync key and its epoch row", names)
+	if len(names) != 3 { // r2.bucket, the sync key, and the epoch row beside it
+		t.Fatalf("names = %v, want r2.bucket, the sync key and its epoch row", names)
 	}
 	for _, name := range names {
 		if strings.Contains(name, string(canarySecret)) {
@@ -713,13 +709,13 @@ func TestSecretNamesStillListNamesOnly(t *testing.T) {
 func TestTheStampSurvivesAnUnstampedWrite(t *testing.T) {
 	t.Parallel()
 	s := secretStore(t)
-	if err := s.PutSecret(SecretTypesafe, canarySecret); err != nil {
+	if err := s.PutSecret(sync.SecretR2Bucket, canarySecret); err != nil {
 		t.Fatalf("PutSecret: %v", err)
 	}
-	if err := s.PutSecretUnstamped(SecretTypesafe, []byte("ts-re-marshalled")); err != nil {
+	if err := s.PutSecretUnstamped(sync.SecretR2Bucket, []byte("ts-re-marshalled")); err != nil {
 		t.Fatalf("PutSecretUnstamped: %v", err)
 	}
-	if _, ok, err := s.SecretsDoc().ItemWriteStamp(SecretTypesafe); err != nil || !ok {
+	if _, ok, err := s.SecretsDoc().ItemWriteStamp(sync.SecretR2Bucket); err != nil || !ok {
 		t.Fatalf("the unstamped write cleared the stamp: ok=%v err=%v", ok, err)
 	}
 	signals, err := s.db.DocSignals()
