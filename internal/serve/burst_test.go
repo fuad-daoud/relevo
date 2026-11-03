@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/burst"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // burstTestPolicy is the policy block a head configures to reach the
@@ -143,4 +144,44 @@ type fakeBurstProvider struct{}
 
 func (fakeBurstProvider) Report(burst.ReportRequest) (burst.ReportResponse, []string, error) {
 	return burst.ReportResponse{}, nil, nil
+}
+
+// TestBurstNodeBindingIsValidName pins the node binding name against the
+// store's name rule the node applies: an owner whose hex starts with a digit
+// and a head name long enough to overflow the cap both still give a valid
+// name, and two long names that share a prefix stay distinct.
+func TestBurstNodeBindingIsValidName(t *testing.T) {
+	var digitLed remote.ClientID
+	for i := 0; i < 200 && digitLed == ""; i++ {
+		kp, err := remote.Generate()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c := burstOwner8(remote.IDOf(kp.Public))[0]; c >= '0' && c <= '9' {
+			digitLed = remote.IDOf(kp.Public)
+		}
+	}
+	if digitLed == "" {
+		t.Fatal("no digit-led owner in 200 keys")
+	}
+	long := strings.Repeat("a", store.MaxAgentNameLen)
+	names := map[string]string{}
+	for _, name := range []string{"s2", "a.1", long, long[:31] + "b", strings.Repeat("x", 23)} {
+		for _, owner := range []remote.ClientID{digitLed, ""} {
+			got := burstNodeBinding(owner, name)
+			if err := store.ValidName(got); err != nil {
+				t.Errorf("burstNodeBinding(%q, %q) = %q: %v", owner, name, got, err)
+			}
+			key := string(owner) + "/" + name
+			for k, v := range names {
+				if v == got {
+					t.Errorf("%s and %s both map to %q", k, key, got)
+				}
+			}
+			names[key] = got
+		}
+	}
+	if got := burstNodeBinding(digitLed, "s2"); got != "h"+burstOwner8(digitLed)+"-s2" {
+		t.Errorf("short name = %q, want the plain owner-prefixed form", got)
+	}
 }

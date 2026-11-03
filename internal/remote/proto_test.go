@@ -190,3 +190,40 @@ func TestBindingViewUsageRoundTrip(t *testing.T) {
 		t.Errorf("expected no usage key when Usage is nil, got: %s", string(data))
 	}
 }
+
+// TestBindingViewNodeRoundTrip checks that a view naming the burst node
+// running its round round-trips, and that a view with no node ships no
+// "node" key -- so a local round stays indistinguishable from a view a
+// pre-forwarding server sent.
+func TestBindingViewNodeRoundTrip(t *testing.T) {
+	bv := BindingView{
+		Name:       "api",
+		State:      "active",
+		Round:      3,
+		RoundState: RoundRunning,
+		Node:       "node-7",
+	}
+
+	data, err := json.Marshal(bv)
+	if err != nil {
+		t.Fatalf("Marshal BindingView: %v", err)
+	}
+
+	var got BindingView
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal BindingView: %v", err)
+	}
+	if got.Node != "node-7" {
+		t.Fatalf("Node round-trip = %q, want %q", got.Node, "node-7")
+	}
+
+	// A view with no node ships no "node" key.
+	bv.Node = ""
+	data, err = json.Marshal(bv)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(data), `"node"`) {
+		t.Errorf("expected no node key when Node is empty, got: %s", string(data))
+	}
+}
