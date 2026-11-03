@@ -324,6 +324,11 @@ func TestBurstObserveNeedsYou(t *testing.T) {
 			}
 			b.Burst.Forward.NodeBinding = "nb-api"
 			b.Burst.Forward.Phase = "running"
+			if b.Burst.Shipped == nil {
+				b.Burst.Shipped = map[string]string{}
+			}
+			b.Burst.Shipped["b1"] = strings.Repeat("a", 40)
+			b.Burst.NodeBindings = append(b.Burst.NodeBindings, "nb-api")
 			if err := rt.Store.Save(b); err != nil {
 				t.Fatal(err)
 			}
