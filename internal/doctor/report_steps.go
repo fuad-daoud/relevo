@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
-	"github.com/fuad-daoud/relevo/internal/classify"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire/owner"
@@ -130,7 +129,7 @@ func appendServeScopeRows(rep *Report, rt relevo.Runtime, env Env) {
 }
 
 // appendPolicyRows adds the ledger, policy, role-source, skill,
-// binding-role, classify and refusal rows, and records the builder refusal
+// binding-role and refusal rows, and records the builder refusal
 // on the report. A binding whose role is missing from roles.json fails at
 // round start, so doctor names it. A store error skips the rows silently.
 func appendPolicyRows(rep *Report, rt relevo.Runtime, env Env, L config.Loaded) {
@@ -144,8 +143,6 @@ func appendPolicyRows(rep *Report, rt relevo.Runtime, env Env, L config.Loaded) 
 			return ok
 		})...)
 	}
-	_, st := classify.Resolve(rt.Policy.Classify, L.Typesafe, os.Getenv)
-	rep.Checks = append(rep.Checks, ClassifyCheck(st))
 	refusals := resolve.RoleRefusalsFor(rt.RoleRegistry(), rt.Candidates, rt.Policy, availability.Gates(relevo.AvailabilityDeps(rt)))
 	rep.Checks = append(rep.Checks, refusalChecks(refusals)...)
 	for _, r := range refusals {

@@ -92,8 +92,8 @@ func TestDescribe(t *testing.T) {
 			`+ roles  {"builder":["x"]}`},
 		{Change{Path: "servers", Op: "remove", Before: rm(`{"zen":{"url":"x"}}`)},
 			`- servers  {"zen":{"url":"x"}}`},
-		{Change{Path: "secret.typesafe", Op: "set"},
-			`* secret.typesafe`},
+		{Change{Path: "secret.r2.bucket", Op: "set"},
+			`* secret.r2.bucket`},
 	}
 	for _, tc := range cases {
 		if got := Describe(tc.change); got != tc.want {

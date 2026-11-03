@@ -398,7 +398,7 @@ func outcomeDocFixtures() []struct {
 		{"config-workflow-add-json", configWorkflowAddDocOf("custom")},
 		{"config-workflow-rm-json", configWorkflowRmDocOf("custom")},
 		{"config-workflow-edit-json", configWorkflowEditDocOf("custom", 11)},
-		{"config-secret-set-json", configSecretDocOf("typesafe")},
+		{"config-secret-set-json", configSecretDocOf("client.key")},
 		{"config-secret-rm-json", configSecretDocOf("client.key")},
 		{"mastermind-init-json", mastermindDocOf("pl_aaaaaaaabbbb", "architect-1", "created", "https://github.com/acme/webshop")},
 		{"mastermind-enable-json", mastermindDocOf("pl_aaaaaaaabbbb", "architect-1", "reattached", "https://github.com/acme/webshop")},

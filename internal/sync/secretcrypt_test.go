@@ -120,18 +120,18 @@ func TestSealAndOpenRoundTripEveryAllowedSecret(t *testing.T) {
 // time its document is signalled.
 func TestTheSameSecretUnderOneKeySealsToTheSameEnvelope(t *testing.T) {
 	t.Parallel()
-	first, err := SealSecret(testSyncRing(), SecretTypesafe, canarySecret)
+	first, err := SealSecret(testSyncRing(), SecretR2KeyID, canarySecret)
 	if err != nil {
 		t.Fatalf("SealSecret: %v", err)
 	}
-	second, err := SealSecret(testSyncRing(), SecretTypesafe, canarySecret)
+	second, err := SealSecret(testSyncRing(), SecretR2KeyID, canarySecret)
 	if err != nil {
 		t.Fatalf("SealSecret again: %v", err)
 	}
 	if !bytes.Equal(first, second) {
 		t.Fatal("sealing the same (key, name, value) twice produced two envelopes")
 	}
-	otherValue, err := SealSecret(testSyncRing(), SecretTypesafe, []byte("CANARY-a-different-value"))
+	otherValue, err := SealSecret(testSyncRing(), SecretR2KeyID, []byte("CANARY-a-different-value"))
 	if err != nil {
 		t.Fatalf("SealSecret on another value: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestTheSameSecretUnderOneKeySealsToTheSameEnvelope(t *testing.T) {
 		t.Fatal("the same value under another name sealed to the same envelope")
 	}
 	for _, env := range []json.RawMessage{first, second} {
-		if out, err := OpenSecret(testSyncRing(), SecretTypesafe, env); err != nil || !bytes.Equal(out, canarySecret) {
+		if out, err := OpenSecret(testSyncRing(), SecretR2KeyID, env); err != nil || !bytes.Equal(out, canarySecret) {
 			t.Fatalf("an envelope did not open back to its value: %q %v", out, err)
 		}
 	}
@@ -167,7 +167,7 @@ func TestTheSealingNonceNamesAndValuesApart(t *testing.T) {
 		}
 		return decoded.N
 	}
-	first, err := SealSecret(testSyncRing(), SecretTypesafe, canarySecret)
+	first, err := SealSecret(testSyncRing(), SecretR2KeyID, canarySecret)
 	if err != nil {
 		t.Fatalf("SealSecret: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestTheSealingNonceNamesAndValuesApart(t *testing.T) {
 	if nonceOf(t, first) == nonceOf(t, otherName) {
 		t.Fatal("two secrets sharing a value share a derived nonce")
 	}
-	otherValue, err := SealSecret(testSyncRing(), SecretTypesafe, []byte("CANARY-a-different-value"))
+	otherValue, err := SealSecret(testSyncRing(), SecretR2KeyID, []byte("CANARY-a-different-value"))
 	if err != nil {
 		t.Fatalf("SealSecret on another value: %v", err)
 	}
@@ -210,12 +210,12 @@ func TestOpenReadsAnEnvelopeSealedWithADrawnNonce(t *testing.T) {
 		V: secretEnvelopeVersion,
 		N: base64.RawURLEncoding.EncodeToString(nonce),
 		C: base64.RawURLEncoding.EncodeToString(
-			aead.Seal(nil, nonce, canarySecret, []byte(SecretTypesafe))),
+			aead.Seal(nil, nonce, canarySecret, []byte(SecretR2KeyID))),
 	})
 	if err != nil {
 		t.Fatalf("encode the envelope: %v", err)
 	}
-	out, err := OpenSecret(testSyncRing(), SecretTypesafe, env)
+	out, err := OpenSecret(testSyncRing(), SecretR2KeyID, env)
 	if err != nil {
 		t.Fatalf("OpenSecret: %v", err)
 	}
@@ -234,11 +234,11 @@ func TestTheNonceKeyIsNotTheSealingKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SecretSubkey: %v", err)
 	}
-	first, err := sealNonceKey(sub, SecretTypesafe)
+	first, err := sealNonceKey(sub, SecretR2KeyID)
 	if err != nil {
 		t.Fatalf("sealNonceKey: %v", err)
 	}
-	again, err := sealNonceKey(sub, SecretTypesafe)
+	again, err := sealNonceKey(sub, SecretR2KeyID)
 	if err != nil {
 		t.Fatalf("sealNonceKey again: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestTheNonceKeyIsNotTheSealingKey(t *testing.T) {
 	if bytes.Equal(first, sub) {
 		t.Fatal("the nonce key is the AEAD subkey itself; two uses of one key need their own derivations")
 	}
-	other, err := sealNonceKey([]byte("ffffffffffffffffffffffffffffffff"), SecretTypesafe)
+	other, err := sealNonceKey([]byte("ffffffffffffffffffffffffffffffff"), SecretR2KeyID)
 	if err != nil {
 		t.Fatalf("sealNonceKey under another subkey: %v", err)
 	}
@@ -263,28 +263,28 @@ func TestTheNonceKeyIsNotTheSealingKey(t *testing.T) {
 // secret under a name nobody chose.
 func TestSealedValueIsBoundToItsOwnName(t *testing.T) {
 	t.Parallel()
-	env, err := SealSecret(testSyncRing(), SecretTypesafe, canarySecret)
+	env, err := SealSecret(testSyncRing(), SecretR2KeyID, canarySecret)
 	if err != nil {
 		t.Fatalf("SealSecret: %v", err)
 	}
 	if _, err := OpenSecret(testSyncRing(), SecretClientKey, env); !errors.Is(err, ErrSecretEnvelope) {
-		t.Fatalf("a value sealed for %s opened under %s: %v", SecretTypesafe, SecretClientKey, err)
+		t.Fatalf("a value sealed for %s opened under %s: %v", SecretR2KeyID, SecretClientKey, err)
 	}
 	if _, err := OpenSecret(testSyncRing(), SecretR2Secret, env); !errors.Is(err, ErrSecretEnvelope) {
-		t.Fatalf("a value sealed for %s opened under %s: %v", SecretTypesafe, SecretR2Secret, err)
+		t.Fatalf("a value sealed for %s opened under %s: %v", SecretR2KeyID, SecretR2Secret, err)
 	}
 }
 
 func TestOpenRefusesAnotherMachinesKey(t *testing.T) {
 	t.Parallel()
-	env, err := SealSecret(testSyncRing(), SecretTypesafe, canarySecret)
+	env, err := SealSecret(testSyncRing(), SecretR2KeyID, canarySecret)
 	if err != nil {
 		t.Fatalf("SealSecret: %v", err)
 	}
-	if _, err := OpenSecret(otherRing(), SecretTypesafe, env); !errors.Is(err, ErrSecretEnvelope) {
+	if _, err := OpenSecret(otherRing(), SecretR2KeyID, env); !errors.Is(err, ErrSecretEnvelope) {
 		t.Fatalf("a value sealed under one key opened under another: %v", err)
 	}
-	if _, err := OpenSecret(emptyRing(), SecretTypesafe, env); err == nil {
+	if _, err := OpenSecret(emptyRing(), SecretR2KeyID, env); err == nil {
 		t.Fatal("a locked machine opened a sealed secret")
 	}
 }
@@ -295,7 +295,7 @@ func TestOpenRefusesAnotherMachinesKey(t *testing.T) {
 func TestAllowSecretListsExactlyTheSharedNames(t *testing.T) {
 	t.Parallel()
 	want := []string{
-		SecretClientKey, SecretTypesafe,
+		SecretClientKey,
 		SecretR2Endpoint, SecretR2Bucket, SecretR2KeyID, SecretR2Secret,
 	}
 	sort.Strings(want)
@@ -305,7 +305,7 @@ func TestAllowSecretListsExactlyTheSharedNames(t *testing.T) {
 	}
 	for _, name := range []string{SecretKey, SecretToken, "turso.token", "serve.tls.cert", "agy.chat-1", ""} {
 		if AllowSecret(name) {
-			t.Errorf("%q is allow-listed; only the six shared names travel", name)
+			t.Errorf("%q is allow-listed; only the five shared names travel", name)
 		}
 	}
 	for _, name := range want {
@@ -337,7 +337,7 @@ func TestOffListNamesAreRefusedOnBothSides(t *testing.T) {
 // version this build reads, and it is pinned by its own tests below.
 func TestOpenRefusesAnUnknownEnvelopeVersion(t *testing.T) {
 	t.Parallel()
-	sealed, err := SealSecret(testSyncRing(), SecretTypesafe, canarySecret)
+	sealed, err := SealSecret(testSyncRing(), SecretR2KeyID, canarySecret)
 	if err != nil {
 		t.Fatalf("SealSecret: %v", err)
 	}
@@ -351,7 +351,7 @@ func TestOpenRefusesAnUnknownEnvelopeVersion(t *testing.T) {
 		if err != nil {
 			t.Fatalf("re-encode with v=%s: %v", version, err)
 		}
-		out, err := OpenSecret(testSyncRing(), SecretTypesafe, raw)
+		out, err := OpenSecret(testSyncRing(), SecretR2KeyID, raw)
 		if !errors.Is(err, ErrSecretEnvelope) {
 			t.Fatalf("an envelope at version %s opened (%q): want a refusal", version, out)
 		}
@@ -367,7 +367,7 @@ func TestOpenRefusesAnUnknownEnvelopeVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-encode with v=2 and no epoch: %v", err)
 	}
-	if _, err := OpenSecret(testSyncRing(), SecretTypesafe, raw); !errors.Is(err, ErrSecretEnvelope) {
+	if _, err := OpenSecret(testSyncRing(), SecretR2KeyID, raw); !errors.Is(err, ErrSecretEnvelope) {
 		t.Fatalf("a version-2 envelope with no epoch opened: %v", err)
 	}
 }
@@ -379,7 +379,7 @@ func TestOpenRefusesAnUnknownEnvelopeVersion(t *testing.T) {
 // a version-1 envelope it is refused exactly like a field no version defines.
 func TestOpenRefusesAnUnknownEnvelopeField(t *testing.T) {
 	t.Parallel()
-	sealed, err := SealSecret(testSyncRing(), SecretTypesafe, canarySecret)
+	sealed, err := SealSecret(testSyncRing(), SecretR2KeyID, canarySecret)
 	if err != nil {
 		t.Fatalf("SealSecret: %v", err)
 	}
@@ -409,7 +409,7 @@ func epochEnvelope(t *testing.T, sealed json.RawMessage, field, value string) js
 	if err != nil {
 		t.Fatalf("re-encode with %q: %v", field, err)
 	}
-	if _, err := OpenSecret(testSyncRing(), SecretTypesafe, raw); !errors.Is(err, ErrSecretEnvelope) ||
+	if _, err := OpenSecret(testSyncRing(), SecretR2KeyID, raw); !errors.Is(err, ErrSecretEnvelope) ||
 		!strings.Contains(err.Error(), fmt.Sprintf("%q", field)) {
 		t.Fatalf("the refusal for a key epoch does not name the field: %v", err)
 	}
@@ -431,7 +431,7 @@ func TestOpenRefusesEveryUnreadableEnvelopeShape(t *testing.T) {
 		"a padded nonce":    `{"v":1,"n":"AQEBAQEBAQEBAQEBAQEBAQEBAQE=","c":"AAAA"}`,
 		"a version as text": `{"v":"1","n":"aa","c":"bb"}`,
 	} {
-		if _, err := OpenSecret(testSyncRing(), SecretTypesafe, json.RawMessage(raw)); !errors.Is(err, ErrSecretEnvelope) {
+		if _, err := OpenSecret(testSyncRing(), SecretR2KeyID, json.RawMessage(raw)); !errors.Is(err, ErrSecretEnvelope) {
 			t.Errorf("an envelope with %s opened: want a refusal", name)
 		}
 	}
@@ -442,7 +442,7 @@ func TestOpenRefusesEveryUnreadableEnvelopeShape(t *testing.T) {
 // byte on any log and re-emits nothing.
 func TestV1SealAtEpoch1IsByteIdentical(t *testing.T) {
 	t.Parallel()
-	env, err := SealSecret(testSyncRing(), SecretTypesafe, canarySecret)
+	env, err := SealSecret(testSyncRing(), SecretR2KeyID, canarySecret)
 	if err != nil {
 		t.Fatalf("SealSecret: %v", err)
 	}
@@ -465,7 +465,7 @@ func TestV1SealAtEpoch1IsByteIdentical(t *testing.T) {
 	if shape.V != 1 || shape.E != 0 {
 		t.Fatalf("an epoch-1 seal wrote v=%d e=%d, want v=1 and no epoch", shape.V, shape.E)
 	}
-	out, err := OpenSecret(testSyncRing(), SecretTypesafe, env)
+	out, err := OpenSecret(testSyncRing(), SecretR2KeyID, env)
 	if err != nil || !bytes.Equal(out, canarySecret) {
 		t.Fatalf("the epoch-1 seal did not read back: %q, %v", out, err)
 	}
@@ -479,7 +479,7 @@ func TestV2SealFromEpoch2NamesItsEpoch(t *testing.T) {
 	key1 := []byte("0123456789abcdef0123456789abcdef")
 	key2 := []byte("fedcba9876543210fedcba9876543210")
 	ring := Keyring{Epoch: 2, Keys: map[int][]byte{1: key1, 2: key2}}
-	env, err := SealSecret(ring, SecretTypesafe, canarySecret)
+	env, err := SealSecret(ring, SecretR2KeyID, canarySecret)
 	if err != nil {
 		t.Fatalf("SealSecret: %v", err)
 	}
@@ -495,13 +495,13 @@ func TestV2SealFromEpoch2NamesItsEpoch(t *testing.T) {
 	if shape.V != 2 || shape.E != 2 {
 		t.Fatalf("an epoch-2 seal wrote v=%d e=%d, want v=2 e=2", shape.V, shape.E)
 	}
-	out, err := OpenSecret(ring, SecretTypesafe, env)
+	out, err := OpenSecret(ring, SecretR2KeyID, env)
 	if err != nil || !bytes.Equal(out, canarySecret) {
 		t.Fatalf("the epoch-2 seal did not read back: %q, %v", out, err)
 	}
 	// The seal is deterministic: one plaintext under one epoch seals once, which
 	// is what makes a re-seal converge with the machine that holds the value.
-	again, err := SealSecret(ring, SecretTypesafe, canarySecret)
+	again, err := SealSecret(ring, SecretR2KeyID, canarySecret)
 	if err != nil || !bytes.Equal(again, env) {
 		t.Fatalf("the same value sealed twice differs: %v", err)
 	}
@@ -516,14 +516,14 @@ func TestOpenRefusesAnEpochTheRingDoesNotHold(t *testing.T) {
 	t.Parallel()
 	key2 := []byte("fedcba9876543210fedcba9876543210")
 	key3 := []byte("00112233445566778899aabbccddeeff")
-	env, err := SealSecret(Keyring{Epoch: 3, Keys: map[int][]byte{3: key3}}, SecretTypesafe, canarySecret)
+	env, err := SealSecret(Keyring{Epoch: 3, Keys: map[int][]byte{3: key3}}, SecretR2KeyID, canarySecret)
 	if err != nil {
 		t.Fatalf("SealSecret: %v", err)
 	}
 	// A machine that holds only epoch 2 -- the 5a-direction case: a rekey it
 	// has not learned of, refusing what a current reader reads.
 	old := Keyring{Epoch: 2, Keys: map[int][]byte{2: key2}}
-	if _, err := OpenSecret(old, SecretTypesafe, env); !errors.Is(err, ErrSecretEnvelope) {
+	if _, err := OpenSecret(old, SecretR2KeyID, env); !errors.Is(err, ErrSecretEnvelope) {
 		t.Fatalf("an unheld epoch's envelope opened: %v", err)
 	} else if !strings.Contains(err.Error(), "epoch 3") {
 		t.Errorf("the refusal does not name the epoch: %v", err)
@@ -538,12 +538,12 @@ func TestOpenReadsV1WhileHoldingANewerRing(t *testing.T) {
 	t.Parallel()
 	key1 := []byte("0123456789abcdef0123456789abcdef")
 	key2 := []byte("fedcba9876543210fedcba9876543210")
-	env, err := SealSecret(Keyring{Epoch: 1, Keys: map[int][]byte{1: key1}}, SecretTypesafe, canarySecret)
+	env, err := SealSecret(Keyring{Epoch: 1, Keys: map[int][]byte{1: key1}}, SecretR2KeyID, canarySecret)
 	if err != nil {
 		t.Fatalf("SealSecret: %v", err)
 	}
 	ring := Keyring{Epoch: 2, Keys: map[int][]byte{1: key1, 2: key2}}
-	out, err := OpenSecret(ring, SecretTypesafe, env)
+	out, err := OpenSecret(ring, SecretR2KeyID, env)
 	if err != nil || !bytes.Equal(out, canarySecret) {
 		t.Fatalf("a v1 envelope did not open under the newer ring: %q, %v", out, err)
 	}
@@ -564,7 +564,7 @@ func TestSealRefusesAValueOverTheCap(t *testing.T) {
 	)
 	for n := SecretEnvelopeMax; n > 0; n-- {
 		candidate := bytes.Repeat([]byte("x"), n)
-		sealed, serr := SealSecret(testSyncRing(), SecretTypesafe, candidate)
+		sealed, serr := SealSecret(testSyncRing(), SecretR2KeyID, candidate)
 		if serr == nil {
 			fits, env, err = candidate, sealed, nil
 			break
@@ -581,7 +581,7 @@ func TestSealRefusesAValueOverTheCap(t *testing.T) {
 			len(fits), len(env))
 	}
 	over := append(bytes.Repeat([]byte("x"), len(fits)+1), []byte("y")...)
-	if _, err := SealSecret(testSyncRing(), SecretTypesafe, over); !errors.Is(err, ErrSecretEnvelope) {
+	if _, err := SealSecret(testSyncRing(), SecretR2KeyID, over); !errors.Is(err, ErrSecretEnvelope) {
 		t.Fatalf("an over-cap value sealed: %v", err)
 	} else if !strings.Contains(err.Error(), "cap") {
 		t.Errorf("the over-cap refusal does not name the cap: %v", err)
@@ -592,7 +592,7 @@ func TestOpenRefusesAnOverCapEnvelope(t *testing.T) {
 	t.Parallel()
 	raw := append([]byte(`{"v":1,"n":"aaaa","c":"`), bytes.Repeat([]byte("b"), SecretEnvelopeMax)...)
 	raw = append(raw, []byte(`"}`)...)
-	if _, err := OpenSecret(testSyncRing(), SecretTypesafe, raw); !errors.Is(err, ErrSecretEnvelope) {
+	if _, err := OpenSecret(testSyncRing(), SecretR2KeyID, raw); !errors.Is(err, ErrSecretEnvelope) {
 		t.Fatalf("an over-cap envelope opened: %v", err)
 	} else if !strings.Contains(err.Error(), "cap") {
 		t.Errorf("the over-cap refusal does not name the cap: %v", err)
@@ -604,22 +604,22 @@ func TestOpenRefusesAnOverCapEnvelope(t *testing.T) {
 // ciphertext appears in it, because every refusal ends up in a log line.
 func TestRefusalsNeverCarryTheValue(t *testing.T) {
 	t.Parallel()
-	sealed, err := SealSecret(testSyncRing(), SecretTypesafe, canarySecret)
+	sealed, err := SealSecret(testSyncRing(), SecretR2KeyID, canarySecret)
 	if err != nil {
 		t.Fatalf("SealSecret: %v", err)
 	}
 	refusals := []error{
 		func() error { _, err := OpenSecret(testSyncRing(), SecretR2Secret, sealed); return err }(),
 		func() error {
-			_, err := OpenSecret(otherRing(), SecretTypesafe, sealed)
+			_, err := OpenSecret(otherRing(), SecretR2KeyID, sealed)
 			return err
 		}(),
 		func() error {
-			_, err := OpenSecret(testSyncRing(), SecretTypesafe, []byte(`{"v":9,"n":"aa","c":"bb"}`))
+			_, err := OpenSecret(testSyncRing(), SecretR2KeyID, []byte(`{"v":9,"n":"aa","c":"bb"}`))
 			return err
 		}(),
 		func() error {
-			_, err := OpenSecret(testSyncRing(), SecretTypesafe, append(sealed, ' ', 'z'))
+			_, err := OpenSecret(testSyncRing(), SecretR2KeyID, append(sealed, ' ', 'z'))
 			return err
 		}(),
 	}

@@ -1,24 +1,24 @@
   ◆ relevo    settings                                                                                         v0.13.0-28    14:02  
                                                                                                                                     
-   25 settings   3 set                                                                                                              
+   24 settings   3 set                                                                                                              
+   disk_min_free_gb                                                                5                       5                        
    check ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 3 settings   
    gate.default                                                                    none                    none                     
    gate.timeout                                                                    10m                     10m                      
    gate.regate                                                                     0                       0                        
    timing ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 6 settings   
    limit_gate_default                                                              1h                      1h                       
-   stall_after                                                                     15m                     15m                      
-   silent_after    ╭─ serve.max_builders ───────────────────────────────────────────────────────────────────────╮                   
-   progress_interva│                                                                                            │                   
-   explore_after   │ max_builders                                default 21                                     │                   
-   stale_after     │                                                                                            │                   
-   processes ┈┈┈┈┈┈│  enter  save       tab  next field       esc  cancel                                       │settings · 1 set   
-   scope           ╰────────────────────────────────────────────────────────────────────────────────────────────╯o limits           
+   stall_after     ╭─ serve.max_builders ───────────────────────────────────────────────────────────────────────╮                   
+   silent_after    │                                                                                            │                   
+   progress_interva│ max_builders                                default 21                                     │                   
+   explore_after   │                                                                                            │                   
+   stale_after     │  enter  save       tab  next field       esc  cancel                                       │                   
+   processes ┈┈┈┈┈┈╰────────────────────────────────────────────────────────────────────────────────────────────╯settings · 1 set   
+   scope                                                                           on · no limits          on · no limits           
    serve.max_builders                                                              21                      21                       
    serve.scope                                                                     slice relevo.slice      as scope                 
-   scan ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 2 settings   
+   scan ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 1 setting   
    scan_patterns                                                                   none                    none                     
-   classify                                                                        off                     off                      
    notify ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 1 setting   
    notify.webhooks                                                                 none                    none                     
    chain ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 5 settings   

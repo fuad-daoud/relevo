@@ -125,12 +125,12 @@ func TestEnableRefusesSharedSecrets(t *testing.T) {
 	if err := d.Tx(func(t *Tx) error { return t.SecretPut("client.key", []byte("k"), now) }); err != nil {
 		t.Fatalf("SecretPut: %v", err)
 	}
-	if err := d.Tx(func(t *Tx) error { return t.SecretPut("typesafe", []byte("s"), now) }); err != nil {
+	if err := d.Tx(func(t *Tx) error { return t.SecretPut("vendor.key", []byte("s"), now) }); err != nil {
 		t.Fatalf("SecretPut: %v", err)
 	}
 
 	refusal := refusalFor(t, EnablePreflight(d), checkSharedSecrets)
-	assertWants(t, refusal, "2 secret row(s)", "client.key", "typesafe", "SplitOnce")
+	assertWants(t, refusal, "2 secret row(s)", "client.key", "vendor.key", "SplitOnce")
 
 	if _, _, err := SplitOnce(d, t.TempDir(), now); err != nil {
 		t.Fatalf("SplitOnce: %v", err)
@@ -221,7 +221,7 @@ func TestPreflightReadsTheCompressMarkerWhereThePassWroteIt(t *testing.T) {
 func TestPreflightErrIsARefusalNotAFailure(t *testing.T) {
 	d := directOpenTestDB(t)
 	seedOneEmptyOriginRowPerTable(t, d)
-	for _, name := range []string{"client.key", "typesafe"} {
+	for _, name := range []string{"client.key", "vendor.key"} {
 		if err := d.Tx(func(t *Tx) error { return t.SecretPut(name, []byte(name), time.Now()) }); err != nil {
 			t.Fatalf("SecretPut %s: %v", name, err)
 		}

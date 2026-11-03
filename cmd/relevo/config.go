@@ -26,8 +26,8 @@ const configUsage = `usage: relevo config [--probe [token...]]
        relevo config server rm <name>
        relevo config server list
        relevo config server key
-       relevo config secret set <typesafe|client.key>
-       relevo config secret rm <typesafe|client.key>
+       relevo config secret set <client.key>
+       relevo config secret rm <client.key>
        relevo config secret list
        relevo config workflow add <file> [--replace] [--force] [--json]
        relevo config workflow rm <name> [--json]

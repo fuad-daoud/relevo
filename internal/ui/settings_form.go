@@ -138,7 +138,7 @@ func parseOptionalText(s string) (any, error) {
 
 // newSettingsForm builds the form named form, focused on focusKey's field.
 // form is one of the closed list: rounds, check, timing,
-// max_builders, scope, serve.scope, classify.
+// max_builders, scope, serve.scope.
 func newSettingsForm(env widget.Env, doc relevo.ConfigDoc, form, focusKey string) settingsForm {
 	cpus := numCPU()
 	byKey := func(key string) relevo.Setting { return settingByKey(doc, cpus, key) }
@@ -169,9 +169,6 @@ func newSettingsForm(env widget.Env, doc relevo.ConfigDoc, form, focusKey string
 
 	case "scope", "serve.scope":
 		fields, note, title = newScopeFields(doc, form)
-
-	case "classify":
-		fields, note, title = newClassifyFields(doc)
 
 	case "chain":
 		fields, note, title = newChainFields(doc)
@@ -396,9 +393,7 @@ func (f settingsForm) fieldError(i int) error {
 // is changed when its value differs from its prefill, a chip row when its
 // selection differs from its start. A disabled field is skipped entirely, so
 // a pending edit made before its field became disabled cannot slip through.
-// Turning classify's provider chip off writes classify itself, not
-// classify.provider, so a stored model or threshold does not linger behind
-// it. ok is false when a text field's value fails to parse.
+// ok is false when a text field's value fails to parse.
 func (f settingsForm) validSets() ([]relevo.PolicySet, bool) {
 	var out []relevo.PolicySet
 	ok := true
@@ -409,9 +404,6 @@ func (f settingsForm) validSets() ([]relevo.PolicySet, bool) {
 		if fld.chips != nil {
 			if fld.sel != fld.origSel {
 				path, val := fld.path, fld.value(fld.sel)
-				if path == "classify.provider" && val == nil {
-					path = "classify"
-				}
 				out = append(out, relevo.PolicySet{Path: path, Value: val})
 			}
 			continue

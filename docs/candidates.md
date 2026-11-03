@@ -130,7 +130,6 @@ edit`:
   "explore_after_ms": 1200000,
   "stale_after_ms": 14400000,
   "scan_patterns": ["(?i)<instruction-tag"],
-  "classify": { "provider": "jev", "model": "jev-latest", "injection_threshold": 0.7, "timeout_ms": 4000 },
   "gate": { "default": "make check", "timeout_ms": 600000, "regate": 0 }
 }
 ```
@@ -169,24 +168,10 @@ binding (see [Repair
 rounds](rounds.md#repair-rounds)), absent or `0` meaning none, and must be
 `>= 0` when present.
 
-`classify` configures an optional classifier (TypeSafe's Jev model) to run
-beside the regex scan. When absent, relevo scans with regexes only. The block
-requires `"provider": "jev"`; `model` defaults to `"jev-latest"`,
-`injection_threshold` defaults to `0.7`, and `timeout_ms` defaults to `4000`.
-The API key is read from the `TYPESAFE_API_KEY` environment variable or from
-the `typesafe` secret (`relevo config secret set typesafe` reads the value from
-stdin). The key is stripped from every builder's environment so that agents
-running arbitrary plans never inherit relevo's own secrets. The secret exists
-because the daemon runs as a systemd user unit that inherits no login
-environment (`systemctl --user set-environment TYPESAFE_API_KEY=...` also
-works). `relevo doctor` reports which key source was found or warns if neither
-is set. In `relevo log`, an entry like
-`flagged=3 by=both p=0.94` records the de-duplicated union of regex-hit lines
-and classifier paragraphs at or above the threshold, which judge flagged the
-content (`regex`, `jev`, or `both`), and the maximum probability seen across
-all paragraphs. The 0.7 threshold is provisional pending `make jev`. Model
-output is never altered and delivery is never held: a high probability flags the
-entry for the MasterMind to see, but never halts delivery.
+relevo scans builder output with a regex scan for instruction-shaped
+lines. In `relevo log`, an entry like `flagged=3 by=regex` records how many
+lines matched. Model output is never altered and delivery is never held: a
+match flags the entry for the MasterMind to see, but never halts delivery.
 
 `relevo config` shows what relevo would do right now:
 

@@ -14,7 +14,7 @@ import (
 )
 
 // stagedRows is localState plus every row the secrets document can land on and
-// the join marker, which a refused join has to leave as it found them: the six
+// the join marker, which a refused join has to leave as it found them: the five
 // allow-listed machine-local secrets so a refusal after the pre-pass cannot keep
 // the fleet's values, and the replaced row an arriving client key that lands
 // over a held one writes.
@@ -22,7 +22,7 @@ func stagedRows(t *testing.T, l relevosync.Local) map[string]string {
 	t.Helper()
 	out := localState(t, l)
 	for _, name := range []string{
-		relevosync.SecretClientKey, relevosync.SecretTypesafe,
+		relevosync.SecretClientKey,
 		relevosync.SecretR2Endpoint, relevosync.SecretR2Bucket, relevosync.SecretR2KeyID, relevosync.SecretR2Secret,
 	} {
 		value, present, err := l.SecretGet(name)

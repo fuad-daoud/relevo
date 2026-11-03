@@ -88,7 +88,7 @@ var registryConfigVerbs = []verbEntry{
 	},
 	{
 		Name:    "config secret",
-		Summary: "store or forget the typesafe and client.key secrets",
+		Summary: "store or forget the client.key secret",
 		Args:    "set|rm|list",
 		Flags:   []string{},
 		Exit:    []int{0, 2},
@@ -106,7 +106,7 @@ var registryConfigVerbs = []verbEntry{
 	{
 		Name:    "config secret rm",
 		Summary: "remove a stored secret",
-		Args:    "<typesafe|client.key> [--json]",
+		Args:    "<client.key> [--json]",
 		Flags:   []string{"--json"},
 		Output:  "json:ConfigSecretDoc",
 		Exit:    []int{0, 1, 2},
@@ -115,7 +115,7 @@ var registryConfigVerbs = []verbEntry{
 	{
 		Name:    "config secret set",
 		Summary: "store a secret read from stdin",
-		Args:    "<typesafe|client.key> [--json]",
+		Args:    "<client.key> [--json]",
 		Flags:   []string{"--json"},
 		Output:  "json:ConfigSecretDoc",
 		Exit:    []int{0, 1, 2},

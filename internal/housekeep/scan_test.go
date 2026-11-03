@@ -6,6 +6,33 @@ import (
 	"testing"
 )
 
+func TestIsFence(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{"three backticks", "```", true},
+		{"four backticks", "````", true},
+		{"info string", "```relevo", true},
+		{"info string with trailing spaces", "```go   ", true},
+		{"info string with a space", "``` relevo block", true},
+		{"two backticks", "``", false},
+		{"one backtick", "`", false},
+		{"empty line", "", false},
+		{"leading space is not a fence", "   ```", false},
+		{"backtick inside the info string", "```info`bad", false},
+		{"plain text", "normal text", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsFence(tc.line); got != tc.want {
+				t.Errorf("IsFence(%q) = %v, want %v", tc.line, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestScanInstructionShaped(t *testing.T) {
 	t.Parallel()
 

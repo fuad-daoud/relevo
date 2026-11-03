@@ -34,8 +34,6 @@ type pendingImport struct {
 	sections      []pendingSection
 	clientKey     []byte
 	haveClientKey bool
-	typesafe      string
-	haveTypesafe  bool
 	hooks         HooksMap
 	importHooks   bool
 }
@@ -64,12 +62,6 @@ func (s *Store) ImportFiles(configDir string, now time.Time) (ImportResult, erro
 		return ImportResult{}, err
 	}
 
-	typesafePath := filepath.Join(configDir, typesafeKeyFile)
-	typesafe, haveTypesafe, err := readTypesafeKey(typesafePath)
-	if err != nil {
-		return ImportResult{}, err
-	}
-
 	hooksDir := filepath.Join(configDir, "hooks")
 	hooksStored, err := s.Has(Hooks)
 	if err != nil {
@@ -77,7 +69,7 @@ func (s *Store) ImportFiles(configDir string, now time.Time) (ImportResult, erro
 	}
 	importHooks := dirExists(hooksDir) && !hooksStored
 
-	if len(sections) == 0 && !haveClientKey && !haveTypesafe && !importHooks {
+	if len(sections) == 0 && !haveClientKey && !importHooks {
 		return ImportResult{}, nil
 	}
 
@@ -85,8 +77,6 @@ func (s *Store) ImportFiles(configDir string, now time.Time) (ImportResult, erro
 		sections:      sections,
 		clientKey:     clientKey,
 		haveClientKey: haveClientKey,
-		typesafe:      typesafe,
-		haveTypesafe:  haveTypesafe,
 		importHooks:   importHooks,
 	}
 	if importHooks {
@@ -99,7 +89,7 @@ func (s *Store) ImportFiles(configDir string, now time.Time) (ImportResult, erro
 	if err := s.commitImport(pending, now); err != nil {
 		return ImportResult{}, err
 	}
-	res, err := s.afterImport(configDir, pending, clientKeyPath, typesafePath)
+	res, err := s.afterImport(configDir, pending, clientKeyPath)
 	if err != nil {
 		return ImportResult{}, err
 	}
@@ -164,37 +154,26 @@ func (s *Store) commitImport(p pendingImport, now time.Time) error {
 	})
 }
 
-// commitSecrets stores the secret files the import carried, and returns the
+// commitSecrets stores the secret file the import carried, and returns the
 // changes to record alongside the sections.
 //
 // A secret file in the import stamps and signals as `relevo config secret
 // set` does, though every other write here is unstamped: otherwise an
 // imported client key would sit unstamped and never reach a joiner.
 func (s *Store) commitSecrets(t *db.Tx, p pendingImport, now time.Time) ([]Change, error) {
-	var extra []Change
-	for _, secret := range []struct {
-		name  string
-		value []byte
-		held  bool
-	}{
-		{SecretClientKey, p.clientKey, p.haveClientKey},
-		{SecretTypesafe, []byte(p.typesafe), p.haveTypesafe},
-	} {
-		if !secret.held {
-			continue
-		}
-		if err := t.SecretPut(secret.name, secret.value, now); err != nil {
-			return nil, err
-		}
-		if err := sync.StampSecretWrites(t, []string{secret.name}, s.now); err != nil {
-			return nil, err
-		}
-		extra = append(extra, Change{Path: "secret." + secret.name, Op: "set"})
+	if !p.haveClientKey {
+		return nil, nil
 	}
-	return extra, nil
+	if err := t.SecretPut(SecretClientKey, p.clientKey, now); err != nil {
+		return nil, err
+	}
+	if err := sync.StampSecretWrites(t, []string{SecretClientKey}, s.now); err != nil {
+		return nil, err
+	}
+	return []Change{{Path: "secret." + SecretClientKey, Op: "set"}}, nil
 }
 
-func (s *Store) afterImport(configDir string, p pendingImport, clientKeyPath, typesafePath string) (ImportResult, error) {
+func (s *Store) afterImport(configDir string, p pendingImport, clientKeyPath string) (ImportResult, error) {
 	var res ImportResult
 	remove := func(path string) {
 		err := os.Remove(path)
@@ -214,10 +193,6 @@ func (s *Store) afterImport(configDir string, p pendingImport, clientKeyPath, ty
 	if p.haveClientKey {
 		res.Imported = append(res.Imported, clientKeyFile)
 		remove(clientKeyPath)
-	}
-	if p.haveTypesafe {
-		res.Imported = append(res.Imported, typesafeKeyFile)
-		remove(typesafePath)
 	}
 	if p.importHooks {
 		res.Imported = append(res.Imported, "hooks")
@@ -254,23 +229,6 @@ func readClientKey(path string) (data []byte, ok bool, err error) {
 		return nil, false, fmt.Errorf("%s: %w", path, perr)
 	}
 	return raw, true, nil
-}
-
-// readTypesafeKey rejects a present but blank key file, which would store no
-// key at all.
-func readTypesafeKey(path string) (string, bool, error) {
-	raw, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return "", false, nil
-	}
-	if err != nil {
-		return "", false, fmt.Errorf("%s: %w", path, err)
-	}
-	trimmed := strings.TrimSpace(string(raw))
-	if trimmed == "" {
-		return "", false, fmt.Errorf("%s: %w", path, errors.New("empty key"))
-	}
-	return trimmed, true, nil
 }
 
 // LoadFiles is the read-only file load daemon --preflight and --check use:
@@ -326,12 +284,6 @@ func LoadFiles(configDir string) (Loaded, error) {
 		L.ClientKey = raw
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return Loaded{}, fmt.Errorf("%s: %w", filepath.Join(configDir, clientKeyFile), err)
-	}
-
-	if raw, err := os.ReadFile(filepath.Join(configDir, typesafeKeyFile)); err == nil {
-		L.Typesafe = strings.TrimSpace(string(raw))
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return Loaded{}, fmt.Errorf("%s: %w", filepath.Join(configDir, typesafeKeyFile), err)
 	}
 
 	reg, err := roles.Build(L.RolesFile, L.Candidates, L.Policy)

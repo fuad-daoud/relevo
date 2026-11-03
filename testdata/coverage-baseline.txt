@@ -11,7 +11,6 @@ github.com/fuad-daoud/relevo/internal/candidate 96.3
 github.com/fuad-daoud/relevo/internal/capture 95.5
 github.com/fuad-daoud/relevo/internal/chain 97.5
 github.com/fuad-daoud/relevo/internal/chatlabel 94.7
-github.com/fuad-daoud/relevo/internal/classify 86.0
 github.com/fuad-daoud/relevo/internal/config 82.2
 github.com/fuad-daoud/relevo/internal/consent 69.4
 github.com/fuad-daoud/relevo/internal/consult 20.9
@@ -36,7 +35,7 @@ github.com/fuad-daoud/relevo/internal/mcp 81.5
 github.com/fuad-daoud/relevo/internal/patch 100.0
 github.com/fuad-daoud/relevo/internal/pathscope 86.1
 github.com/fuad-daoud/relevo/internal/pick 48.4
-github.com/fuad-daoud/relevo/internal/policy 97.1
+github.com/fuad-daoud/relevo/internal/policy 97.9
 github.com/fuad-daoud/relevo/internal/proc 88.9
 github.com/fuad-daoud/relevo/internal/refusal 100.0
 github.com/fuad-daoud/relevo/internal/release 87.6
