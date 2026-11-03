@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
@@ -167,7 +168,13 @@ func chainServerCreate(ctx context.Context, rt Runtime, opts ChainOptions, plan 
 	}
 	if err := rt.Git.CreateBranch(ctx, plan.repo, branch, base); err != nil {
 		if errors.Is(err, git.ErrBranchExists) {
-			return ChainResult{}, fmt.Errorf("branch %s exists; delete it or pick another name", branch)
+			err = fmt.Errorf("branch %s exists; delete it or pick another name", branch)
+		}
+		// A taken branch or a deadline classifies as the served create's
+		// own refusal; anything else failed after the server accepted, so
+		// the same command reruns to record the mirror.
+		if mapped := chainServerCreateError(err); errors.Is(mapped, git.ErrBranchExists) || errors.Is(mapped, ErrChainCreateTimeout) {
+			return ChainResult{}, mapped
 		}
 		return localFail(err)
 	}
@@ -218,13 +225,45 @@ func chainMirrorStored(rt Runtime, members []store.Binding) ([]store.Binding, er
 	return out, nil
 }
 
-// chainServerCreateError rebuilds the typed actor refusal from the create's
-// own answer: the wire names unknown_actor for the actor the server cannot
-// resolve. Anything else returns pickRefusalFromWire(err).
+// ErrChainCreateTimeout reports a chain create that hit a deadline cutting
+// the branch or checking out the worktree, on either side of the wire. The
+// create left nothing the retry cannot redo, so the CLI answers not_available
+// with the same command as the way out.
+var ErrChainCreateTimeout = errors.New("chain create timed out")
+
+// chainBranchExistsText is the local wording every branch cut reports when
+// the branch is taken: the cut sites build it without the sentinel, so the
+// classifier below recognises the text instead.
+const chainBranchExistsText = "exists; delete it or pick another name"
+
+// chainServerCreateError rebuilds the typed refusal from the create's own
+// failure: unknown_actor for the actor the server cannot resolve, the
+// server's timeout (or a local deadline) as a retryable timeout, and the
+// served or local branch collision as the branch conflict. Anything else
+// returns pickRefusalFromWire(err).
 func chainServerCreateError(err error) error {
 	var httpErr *client.HTTPError
-	if errors.As(err, &httpErr) && httpErr.Status == http.StatusBadRequest && httpErr.Body.Code == remote.CodeUnknownActor {
-		return refusal.Classed(resolve.ErrUnknownRole, httpErr.Body.Message)
+	if errors.As(err, &httpErr) {
+		switch {
+		case httpErr.Status == http.StatusBadRequest && httpErr.Body.Code == remote.CodeUnknownActor:
+			return refusal.Classed(resolve.ErrUnknownRole, httpErr.Body.Message)
+		case httpErr.Status == http.StatusRequestTimeout:
+			msg := httpErr.Body.Message
+			if msg == "" {
+				msg = httpErr.Error()
+			}
+			return refusal.Classed(ErrChainCreateTimeout, msg)
+		case httpErr.Status == http.StatusConflict && strings.Contains(httpErr.Body.Message, "already exists"):
+			return refusal.Classed(git.ErrBranchExists, httpErr.Body.Message)
+		}
+	}
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return refusal.Classed(ErrChainCreateTimeout, err.Error())
+	case errors.Is(err, git.ErrBranchExists):
+		return err
+	case strings.Contains(err.Error(), chainBranchExistsText):
+		return refusal.Classed(git.ErrBranchExists, err.Error())
 	}
 	return pickRefusalFromWire(err)
 }
