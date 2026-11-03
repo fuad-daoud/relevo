@@ -196,9 +196,6 @@ func manualTraceReason(e ChainTraceEvent) string {
 	if strings.HasPrefix(e.Reason, "manual ") {
 		return e.Reason
 	}
-	if e.Flow != nil && strings.HasPrefix(e.Flow.Reason, "manual ") {
-		return e.Flow.Reason
-	}
 	return ""
 }
 
