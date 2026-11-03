@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -129,6 +130,17 @@ func chainServerResolveGates(ctx context.Context, rt Runtime, opts ChainOptions,
 		if err := chainFreeNames(rt, plan.members); err != nil {
 			return fail(err)
 		}
+	} else if len(opts.Candidates) > 0 {
+		// A pinned workflow create rekeys its part pins by actor, so the
+		// members are resolved read-only here. Unpinned creates skip this:
+		// the server resolves the members authoritatively, and a client
+		// refusal from its own registry must not block them.
+		actors := rt.RoleRegistry().WorkflowActors()
+		planned, err := chain.MemberNames(opts.Name, plan.def, actors)
+		if err != nil {
+			return fail(err)
+		}
+		plan.members = chainWorkflowMembers(plan.def, planned, chain.WriterKeeper(plan.def, workflow.UsedActors(plan.def), actors))
 	}
 	return plan, who, nil
 }

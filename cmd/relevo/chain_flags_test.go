@@ -121,3 +121,78 @@ func TestChainFlagsBuilderActorRefusedOnResume(t *testing.T) {
 		t.Errorf("message = %q, want it to name --builder-actor", ce.message)
 	}
 }
+
+// TestChainFlagsCandidateParsesIntoOptions pins the start arm's mapping: each
+// --candidate part=value lands in ChainOptions.Candidates keyed by part, and
+// a bad entry is a usage error before any runtime is built.
+func TestChainFlagsCandidateParsesIntoOptions(t *testing.T) {
+	opts, err := chainOptionsFrom(t, "--name", "shop", "--plan", chainPlanArg(t), "--no-feature",
+		"--candidate", "builder=opencode/test/m", "--candidate", "reviewer=claude/test/m")
+	if err != nil {
+		t.Fatalf("chainOptions --candidate: %v", err)
+	}
+	if opts.Candidates["builder"] != "opencode/test/m" || opts.Candidates["reviewer"] != "claude/test/m" {
+		t.Errorf("Candidates = %v, want builder and reviewer pins", opts.Candidates)
+	}
+
+	unnamed, err := chainOptionsFrom(t, "--name", "shop", "--plan", chainPlanArg(t), "--no-feature")
+	if err != nil {
+		t.Fatalf("chainOptions without --candidate: %v", err)
+	}
+	if len(unnamed.Candidates) != 0 {
+		t.Errorf("Candidates = %v, want none so every member takes the policy pick", unnamed.Candidates)
+	}
+
+	for _, args := range [][]string{
+		{"--candidate", "writer=opencode/test/m"},
+		{"--candidate", "builder=opencode/test/m", "--candidate", "builder=claude/test/m"},
+		{"--candidate", "builder="},
+	} {
+		full := append([]string{"--name", "shop", "--plan", chainPlanArg(t), "--no-feature"}, args...)
+		_, err := chainOptionsFrom(t, full...)
+		if err == nil {
+			t.Errorf("chainOptions(%v) = nil, want a usage refusal", args)
+			continue
+		}
+		_ = requireCLIError(t, err, codeUsage, "")
+	}
+}
+
+// TestChainFlagsCandidateAcceptedOnResume pins the resume arm's mapping: each
+// --candidate part=value lands in ResumeOptions.Candidates keyed by part, so a
+// resume re-pins that member, and a resume without the flag keeps the pins its
+// start stored.
+func TestChainFlagsCandidateAcceptedOnResume(t *testing.T) {
+	opts, err := chainResumeOptionsFrom(t, "--resume", "--name", "shop",
+		"--candidate", "reviewer=claude/test/m")
+	if err != nil {
+		t.Fatalf("chainResumeOptions --candidate: %v", err)
+	}
+	if opts.Candidates["reviewer"] != "claude/test/m" {
+		t.Errorf("Candidates = %v, want the reviewer pin", opts.Candidates)
+	}
+
+	unnamed, err := chainResumeOptionsFrom(t, "--resume", "--name", "shop")
+	if err != nil {
+		t.Fatalf("chainResumeOptions without --candidate: %v", err)
+	}
+	if len(unnamed.Candidates) != 0 {
+		t.Errorf("Candidates = %v, want none so the resume keeps the stored pins", unnamed.Candidates)
+	}
+}
+
+// TestChainFlagsCandidateRefusedOnResume pins the resume arm's refusal: an
+// unknown part is refused before any runtime is built, naming the parts a pin
+// can take.
+func TestChainFlagsCandidateRefusedOnResume(t *testing.T) {
+	_, err := chainResumeOptionsFrom(t, "--resume", "--name", "shop", "--candidate", "writer=opencode/test/m")
+	if err == nil {
+		t.Fatal("chainResumeOptions(--candidate writer=...) = nil, want a usage refusal")
+	}
+	ce := requireCLIError(t, err, codeUsage, "")
+	for _, want := range []string{`"writer"`, "builder", "reviewer", "planner", "security"} {
+		if !strings.Contains(ce.message, want) {
+			t.Errorf("message = %q, want it to name %q", ce.message, want)
+		}
+	}
+}

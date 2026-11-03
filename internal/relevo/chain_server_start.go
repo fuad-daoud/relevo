@@ -257,7 +257,8 @@ func chainServerBundle(ctx context.Context, rt Runtime, repo, name, base string)
 
 // chainServerRequest is the create a server-chain start posts: the workflow
 // or resolved settings, the plans as text, the labels, the author and the
-// client's ids.
+// client's ids. Pins ride along keyed as the server names the members: by
+// part for a legacy settings create, by actor for a workflow create.
 func chainServerRequest(opts ChainOptions, plan chainServerPlan, ids chainServerIDs) remote.CreateChainRequest {
 	req := remote.CreateChainRequest{
 		Name:               opts.Name,
@@ -275,11 +276,36 @@ func chainServerRequest(opts ChainOptions, plan chainServerPlan, ids chainServer
 		wfJSON, _ := json.Marshal(plan.def)
 		req.Workflow = wfJSON
 		req.ClientActorIDs = ids.byActor
+		req.Candidates = chainWireCandidatesByActor(opts.Candidates, plan.members)
 	} else {
 		req.Settings = chainWireSettings(plan.settings)
 		req.ClientBindingIDs = ids.byPart
+		req.Candidates = opts.Candidates
 	}
 	return req
+}
+
+// chainWireCandidatesByActor rekeys part-keyed pins by actor for a workflow
+// create, so the server matches them against the members it resolves, which
+// it names by actor exactly as the client link ids. A pin naming a part the
+// definition has no member for rides along under its own key; the server's
+// preflight refuses it naming the key, as a resume names its missing member.
+func chainWireCandidatesByActor(pins map[string]string, members []chainMember) map[string]string {
+	if len(pins) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(pins))
+	for part, token := range pins {
+		key := part
+		for _, m := range members {
+			if m.part == part {
+				key = m.actor
+				break
+			}
+		}
+		out[key] = token
+	}
+	return out
 }
 
 // chainServerBindingIDs mints the client's identifiers for the create when

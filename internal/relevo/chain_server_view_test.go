@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -636,4 +637,50 @@ func exactCalls(calls []string, want string) int {
 		}
 	}
 	return n
+}
+
+// TestChainResumeOnAServerChainCarriesPins pins that --candidate reaches the
+// server that drives the chain: pins ride along verbatim under the CLI's part
+// keys for the server to resolve against its own registry, and a resume
+// without pins leaves the field off the wire.
+func TestChainResumeOnAServerChainCarriesPins(t *testing.T) {
+	t.Parallel()
+
+	t.Run("pins ride along", func(t *testing.T) {
+		t.Parallel()
+
+		fr := chainPullFake(chainPullView("shop", string(chain.StatusRunning), 0, 0, 0))
+		rt := chainPullRuntime(t, fr)
+		seedServerChain(t, rt, "shop")
+
+		pins := map[string]string{"reviewer": "claude/test/alt"}
+		if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop", Candidates: pins}); err != nil {
+			t.Fatalf("ChainResume: %v", err)
+		}
+		if !reflect.DeepEqual(fr.chainResumeReq.Candidates, pins) {
+			t.Errorf("candidates = %v, want the part-keyed pins %v", fr.chainResumeReq.Candidates, pins)
+		}
+	})
+
+	t.Run("absent without pins", func(t *testing.T) {
+		t.Parallel()
+
+		fr := chainPullFake(chainPullView("shop", string(chain.StatusRunning), 0, 0, 0))
+		rt := chainPullRuntime(t, fr)
+		seedServerChain(t, rt, "shop")
+
+		if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+			t.Fatalf("ChainResume: %v", err)
+		}
+		if fr.chainResumeReq.Candidates != nil {
+			t.Errorf("candidates = %v, want nil for a resume without pins", fr.chainResumeReq.Candidates)
+		}
+		raw, err := json.Marshal(fr.chainResumeReq)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if bytes.Contains(raw, []byte(`"candidates"`)) {
+			t.Errorf("wire body = %s, want no candidates key for a resume without pins", raw)
+		}
+	})
 }

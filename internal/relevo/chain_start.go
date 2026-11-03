@@ -72,6 +72,10 @@ type ChainOptions struct {
 	// Params overrides the workflow's params, keyed by param name; they win
 	// over every old flag and the policy.
 	Params map[string]string
+	// Candidates pins one candidate per chain member, keyed by part; a part
+	// without a pin resolves by the policy pick. A pin that does not serve
+	// the member's actor refuses the start before anything is created.
+	Candidates map[string]string
 	// Parent names the chain's parent when this is a child of a fork.
 	Parent string
 	// Task is the chain's task input text, already read from --task-file.
@@ -310,8 +314,15 @@ func chainFreeNames(rt Runtime, members []chainMember) error {
 // before anything is created. repoActors lists the parts whose actor the
 // repository entry supplied, so an unknown actor there is refused naming the
 // entry as the source instead of failing on the bare actor; nil leaves the
-// old error standing.
-func chainResolveActors(rt Runtime, members []chainMember, repoActors map[string]string) (map[string]resolve.Resolution, error) {
+// old error standing. pins holds at most one map, the start's per-part
+// candidate pins; a pinned part resolves with its token exactly as a bind
+// with --candidate does, and a part without one takes the policy pick.
+// Callers without pins pass none, so the fork and resume-swap shapes stay.
+func chainResolveActors(rt Runtime, members []chainMember, repoActors map[string]string, pins ...map[string]string) (map[string]resolve.Resolution, error) {
+	var pin map[string]string
+	if len(pins) > 0 {
+		pin = pins[0]
+	}
 	out := make(map[string]resolve.Resolution, len(members))
 	for _, m := range members {
 		shape, err := resolve.ActorShape(rt.RoleRegistry(), m.actor)
@@ -325,7 +336,7 @@ func chainResolveActors(rt Runtime, members []chainMember, repoActors map[string
 			return nil, fmt.Errorf("chain %s actor %q must be a %s actor, not a %s", m.part, m.actor, m.shape, shape)
 		}
 		res, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates,
-			availability.Gates(AvailabilityDeps(rt)), "", store.Binding{Role: resolve.NormRole(m.actor)}.WriterRole(), resolve.PickFor(ResolveDeps(rt)))
+			availability.Gates(AvailabilityDeps(rt)), pin[m.part], store.Binding{Role: resolve.NormRole(m.actor)}.WriterRole(), resolve.PickFor(ResolveDeps(rt)))
 		if err != nil {
 			return nil, err
 		}

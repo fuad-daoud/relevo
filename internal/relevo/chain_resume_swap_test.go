@@ -322,7 +322,7 @@ func TestServedChainResumeSwapKeepsPlacement(t *testing.T) {
 		t.Errorf("Repo = %q, want %q", revAfter.Repo, revBefore.Repo)
 	}
 
-	pick, err := servedActorPick(rt, "assistant")
+	pick, err := servedActorPick(rt, "assistant", "")
 	if err != nil {
 		t.Fatalf("servedActorPick: %v", err)
 	}

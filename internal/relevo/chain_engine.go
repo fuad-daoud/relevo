@@ -174,7 +174,10 @@ func chainFlowSendText(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 	sent, err := chainSendMember(ctx, rt, tx, member, text)
 	if err != nil {
 		next.Status = workflow.StatusHalted
-		next.Reason = fmt.Sprintf("member %s could not start: %v", name, err)
+		// A member whose actor was deleted after the start names the resume
+		// that swaps in another: this reason is the one wait and status print.
+		reason := fmt.Sprintf("member %s could not start: %v", name, err)
+		next.Reason = chainDeletedActorHalt(chain.PartOf(c, name), c.Name, member.WriterRole(), err, reason)
 		return chainTerminalWF(ctx, rt, tx, c, def, before, *next, ev, workflow.Action{Kind: workflow.ActionHalt, Reason: next.Reason})
 	}
 	next.Awaiting.Round = sent.Round
