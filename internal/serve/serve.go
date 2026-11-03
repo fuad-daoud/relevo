@@ -159,6 +159,8 @@ type Server struct {
 	// sweeps lives for one tick, so the pace has to outlive it here.
 	tmpSweptAt sync.Map
 	liveCache  *liveCache
+	// nodeLive is the cached node live view observe fills for ServedLive.
+	nodeLive *liveCache
 	// burstProvider is the head's resolved report provider: nil when
 	// bursting is off, which is either no configured command or a command
 	// refused for want of a client key. With it nil every later burst step
@@ -276,6 +278,7 @@ func New(cfg Config) (*Server, error) {
 		gatesLocal: local,
 		stores:     map[string]*store.Store{},
 		liveCache:  newLiveCache(),
+		nodeLive:   newLiveCache(),
 
 		burstProvider: burstProvider,
 		burstOffErr:   burstOffErr,
@@ -471,6 +474,11 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 		s.applyContainer(root, &rt)
 	}
 	rt.CloseServedRound = CloseServedRound
+	// NodeLive serves the cached node view observe fills.
+	rt.NodeLive = func(b store.Binding) *remote.LiveView {
+		v, _ := s.nodeLive.get(nodeLiveKey(root, b.Name), b.Round, s.cfg.Now())
+		return v
+	}
 	// The remote send runs above the engine: the served runtime ships through
 	// the same uplink functions as the CLI runtime.
 	rt.RemoteSend = relevo.RemoteSendDeps{

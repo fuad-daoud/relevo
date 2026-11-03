@@ -1,0 +1,427 @@
+package serve
+
+import (
+	"context"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/fuad-daoud/relevo/internal/burst"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/store"
+)
+
+// observeTestSetup forwards one round to a real node and confirms it
+// running: the shape observe closes. It returns the head env, the node
+// server and runner, the placed forward and the node owner root.
+func observeTestSetup(t *testing.T, clock time.Time) (*testEnv, *Server, *scriptRunner, store.Forward, string) {
+	t.Helper()
+	headKP, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := forwardEnv(t, headKP)
+	nodeSrv, nodeTS, nodeFP := startBurstNodeWithRunner(t, &headKP)
+	runner, ok := nodeSrv.cfg.Runner.(*scriptRunner)
+	if !ok {
+		t.Fatalf("node runner = %T, want *scriptRunner", nodeSrv.cfg.Runner)
+	}
+	row := stubRow(t, "b1", nodeTS.URL, nodeFP)
+	fwd := queueForward(t, env, "api", row, clock)
+	if got := env.srv.sendForwards(context.Background(), clock); got != 1 {
+		t.Fatalf("confirmed = %d, want 1", got)
+	}
+	headID := remote.IDOf(headKP.Public)
+	dir, ok := headID.Dir()
+	if !ok {
+		t.Fatalf("head id dir: malformed")
+	}
+	nodeRoot := filepath.Join(nodeSrv.cfg.Root, "bindings", dir)
+	return env, nodeSrv, runner, fwd, nodeRoot
+}
+
+// headOwnerPath returns the head owner's store root for observeWork.
+func headOwnerPath(t *testing.T, env *testEnv) string {
+	t.Helper()
+	root, err := env.srv.ownerRoot(env.id)
+	if err != nil {
+		t.Fatalf("ownerRoot: %v", err)
+	}
+	return root
+}
+
+// closeNodeRound commits work on the node's worktree and closes its round
+// through the node's own tick, the way a builder finishing looks.
+func closeNodeRound(t *testing.T, nodeSrv *Server, runner *scriptRunner, nodeRoot, nodeBinding string, round int) string {
+	t.Helper()
+	ctx := context.Background()
+	st := nodeSrv.ownerStore(nodeRoot)
+	b, err := st.Load(nodeBinding)
+	if err != nil {
+		t.Fatalf("load node %s: %v", nodeBinding, err)
+	}
+	if err := os.WriteFile(filepath.Join(b.Worktree, "result.txt"), []byte("node result\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, b.Worktree, "add", "result.txt")
+	runGit(t, b.Worktree, "commit", "-m", "node round result")
+	rt := nodeSrv.runtimeAt(nodeRoot)
+	if err := os.WriteFile(rt.Store.ReportPath(nodeBinding, round), []byte("# Report\nDone.\n\n```relevo\nstatus: done\n```\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rt.Store.DonePath(nodeBinding, round), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner.setAlive(false)
+	if err := nodeSrv.Tick(ctx); err != nil {
+		t.Fatalf("node tick: %v", err)
+	}
+	closed, err := st.Load(nodeBinding)
+	if err != nil {
+		t.Fatalf("reload node %s: %v", nodeBinding, err)
+	}
+	if closed.Serve == nil || closed.Serve.ClosedRound != round {
+		t.Fatalf("node closed = %+v, want ClosedRound %d", closed.Serve, round)
+	}
+	if closed.Serve.ResultCommit == "" {
+		t.Fatalf("node ResultCommit empty after close")
+	}
+	return closed.Serve.ResultCommit
+}
+
+// TestBurstObserveClosesRound pins the closed path: a node round that
+// closes lands on the head through the normal served-close facts, the head
+// branch holds the node commit, the head round closes with the forward
+// cleared and the ack sent, and the next report is due with reason closed.
+func TestBurstObserveClosesRound(t *testing.T) {
+	clock := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	env, nodeSrv, runner, fwd, nodeRoot := observeTestSetup(t, clock)
+	_ = nodeSrv
+	nodeCommit := closeNodeRound(t, nodeSrv, runner, nodeRoot, fwd.NodeBinding, 1)
+
+	ctx := context.Background()
+	if got := env.srv.observeForwards(ctx); got != 1 {
+		t.Fatalf("observe closed = %d, want 1", got)
+	}
+	rt := env.runtime(t)
+	back, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.Serve == nil || back.Serve.ClosedRound != 1 {
+		t.Fatalf("head closed = %+v, want ClosedRound 1", back.Serve)
+	}
+	if back.Round != 2 {
+		t.Errorf("head Round = %d, want 2 after the close", back.Round)
+	}
+	if burstStoredForward(back) != nil {
+		t.Errorf("head forward = %+v, want it cleared after the ack", back.Burst.Forward)
+	}
+	headSHA, ok, err := env.srv.cfg.Git.RefSHA(ctx, back.Serve.BareRepo, "refs/heads/relevo/api")
+	if err != nil || !ok || headSHA != nodeCommit {
+		t.Errorf("head branch = %q (ok=%v err=%v), want node commit %q", headSHA, ok, err, nodeCommit)
+	}
+	for _, kind := range []string{"report", "diff", "stream"} {
+		var path string
+		switch kind {
+		case "report":
+			path = rt.Store.ReportPath("api", 1)
+		case "diff":
+			path = rt.Store.DiffPath("api", 1)
+		default:
+			path = rt.Store.StreamPath("api", 1)
+		}
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("head %s missing: %v", kind, err)
+		}
+	}
+	nodeSt := nodeSrv.ownerStore(nodeRoot)
+	nodeBack, err := nodeSt.Load(fwd.NodeBinding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nodeBack.Serve == nil || nodeBack.Serve.AckedRound != 1 {
+		t.Errorf("node AckedRound = %+v, want 1: the ack did not land", nodeBack.Serve)
+	}
+}
+
+// TestBurstObserveCachesNodeLive pins the live half: a running node round's
+// view is cached, and ServedLive serves it for the forwarded binding
+// without dialling the node again.
+func TestBurstObserveCachesNodeLive(t *testing.T) {
+	clock := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	env, _, _, fwd, _ := observeTestSetup(t, clock)
+	_ = fwd
+	ctx := context.Background()
+	if got := env.srv.observeForwards(ctx); got != 0 {
+		t.Fatalf("observe closed = %d, want 0 for a running round", got)
+	}
+	rt := env.runtime(t)
+	back, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := relevo.ServedLive(ctx, rt, back)
+	if err != nil {
+		t.Fatalf("ServedLive: %v", err)
+	}
+	if got == nil {
+		t.Fatalf("ServedLive = nil, want the cached node view")
+	}
+}
+
+// TestBurstObserveStaleApplyDropped pins the apply-time match: a fetch for a
+// forward the head already moved past applies nothing. Dropping the match
+// check would close the superseded round.
+func TestBurstObserveStaleApplyDropped(t *testing.T) {
+	headKP, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := forwardEnv(t, headKP)
+	clock := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	row := stubRow(t, "b1", closedPortURL(t), burstTestFingerprint)
+	fwd := queueForward(t, env, "api", row, clock)
+	rt := env.runtime(t)
+	b, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Round = 2
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("advance round: %v", err)
+	}
+	fetch := &observeFetch{
+		view:   stubRoundView(fwd.NodeBinding, 1, remote.RoundClosed),
+		report: []byte("# Report\nDone.\n"),
+	}
+	if env.srv.applyObserveClosed(context.Background(), observeWork{ownerPath: headOwnerPath(t, env), name: "api", fwd: fwd}, fetch, clock) {
+		t.Fatalf("stale apply applied, want it dropped")
+	}
+	back, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.Serve != nil && back.Serve.ClosedRound == 1 {
+		t.Errorf("head closed = %+v, want no close for a superseded forward", back.Serve)
+	}
+	if have := burstStoredForward(back); have == nil {
+		t.Errorf("head forward cleared, want the superseded claim kept")
+	}
+}
+
+// TestBurstObserveNeedsYou pins the waiting path: a node that waits on its
+// human parks the head binding in NEEDS YOU with the node's reason and
+// report, and clears the forward.
+func TestBurstObserveNeedsYou(t *testing.T) {
+	clock := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	headKP, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := forwardEnv(t, headKP)
+	script := &nodeScript{
+		getStatus: http.StatusOK,
+		getView: remote.BindingView{
+			Name: "nb-api", Round: 1, RoundState: remote.RoundNeedsYou,
+			Halt: "node needs a human: bad base",
+		},
+	}
+	url, fp := startStubNode(t, script.serve())
+	env.srv.burstTable = &burst.NodeTable{Nodes: []burst.NodeRow{stubRow(t, "b1", url, fp)}}
+	since := clock.Add(-time.Minute)
+	saveHeadForward(t, env, "api", "b1", "nb-api", 1, since)
+	rt := env.runtime(t)
+	b, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Burst.Forward.NodeBinding = "nb-api"
+	b.Burst.Forward.Phase = "running"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if got := env.srv.observeForwards(context.Background()); got != 0 {
+		t.Fatalf("observe closed = %d, want 0 for a waiting round", got)
+	}
+	back, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.State != store.StateNeedsYou {
+		t.Errorf("head state = %q, want needs_you", back.State)
+	}
+	if !strings.Contains(back.Halt, "node needs a human") {
+		t.Errorf("head halt = %q, want the node's reason", back.Halt)
+	}
+	if burstStoredForward(back) != nil {
+		t.Errorf("head forward = %+v, want it cleared", back.Burst.Forward)
+	}
+}
+
+// TestBurstObserveAckFailureKeepsClosed pins the ack retry: a failed ack
+// keeps Phase closed so the next cycle retries, and the next ack clears the
+// forward.
+func TestBurstObserveAckFailureKeepsClosed(t *testing.T) {
+	headKP, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := forwardEnv(t, headKP)
+	clock := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	failHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusInternalServerError, remote.ErrorBody{Code: remote.Code("internal"), Message: "boom"})
+	})
+	failURL, failFP := startStubNode(t, failHandler)
+	env.srv.burstTable = &burst.NodeTable{Nodes: []burst.NodeRow{stubRow(t, "b1", failURL, failFP)}}
+	since := clock.Add(-time.Minute)
+	saveHeadForward(t, env, "api", "b1", "nb-api", 1, since)
+	rt := env.runtime(t)
+	b, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Round = 2
+	if b.Serve == nil {
+		b.Serve = &store.ServeFacts{}
+	}
+	b.Serve.ClosedRound = 1
+	b.Burst.Forward.Phase = "closed"
+	b.Burst.Forward.NodeBinding = "nb-api"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	w := observeWork{ownerPath: headOwnerPath(t, env), name: "api", fwd: *burstStoredForward(b)}
+	failCl, err := env.srv.burstNodeClient([]burst.NodeRow{stubRow(t, "b1", failURL, failFP)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env.srv.ackObserveClosed(context.Background(), failCl, w) {
+		t.Fatalf("failing ack cleared, want Phase closed kept")
+	}
+	kept, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if have := burstStoredForward(kept); have == nil || have.Phase != "closed" {
+		t.Fatalf("head forward = %+v, want Phase closed kept for retry", kept.Burst)
+	}
+	okHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, stubRoundView("nb-api", 1, remote.RoundClosed))
+	})
+	okURL, okFP := startStubNode(t, okHandler)
+	okCl, err := env.srv.burstNodeClient([]burst.NodeRow{stubRow(t, "b1", okURL, okFP)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !env.srv.ackObserveClosed(context.Background(), okCl, w) {
+		t.Fatalf("retry ack did not clear, want the forward gone")
+	}
+	cleared, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if burstStoredForward(cleared) != nil {
+		t.Errorf("head forward = %+v, want it cleared after the ack", cleared.Burst.Forward)
+	}
+}
+
+// TestBurstObserveUnreachableMarked pins the reachability half: a node down
+// during observe marks the row unreachable, and a success clears it.
+func TestBurstObserveUnreachableMarked(t *testing.T) {
+	headKP, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := forwardEnv(t, headKP)
+	clock := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	row := stubRow(t, "b1", closedPortURL(t), burstTestFingerprint)
+	env.srv.burstTable = &burst.NodeTable{Nodes: []burst.NodeRow{row}}
+	since := clock.Add(-time.Minute)
+	saveHeadForward(t, env, "api", "b1", "nb-api", 1, since)
+	rt := env.runtime(t)
+	b, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Burst.Forward.NodeBinding = "nb-api"
+	b.Burst.Forward.Phase = "running"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if got := env.srv.observeForwards(context.Background()); got != 0 {
+		t.Fatalf("observe closed = %d, want 0 when the node is down", got)
+	}
+	if got := env.srv.copyBurstTable().Nodes[0].Problem; got != burst.ReportProblemUnreachable {
+		t.Errorf("Problem = %q, want unreachable while the node is down", got)
+	}
+	env.srv.clearNodeProblem(row)
+	if got := env.srv.copyBurstTable().Nodes[0].Problem; got != "" {
+		t.Errorf("Problem = %q, want a success to clear it", got)
+	}
+}
+
+// TestBurstClosedForwardLeavesNextRoundAdmissible pins the MasterMind
+// amendment: a closed forward still waiting for its ack never blocks the
+// binding's next round. The next queued round admits locally, and placement
+// refuses to forward it until the ack clears the forward.
+func TestBurstClosedForwardLeavesNextRoundAdmissible(t *testing.T) {
+	headKP, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := forwardEnv(t, headKP)
+	clock := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	row := stubRow(t, "b1", closedPortURL(t), burstTestFingerprint)
+	env.srv.burstTable = &burst.NodeTable{Nodes: []burst.NodeRow{row}}
+	since := clock.Add(-time.Minute)
+	saveHeadForward(t, env, "api", "b1", "nb-api", 1, since)
+	rt := env.runtime(t)
+	b, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Round = 2
+	if b.Serve == nil {
+		b.Serve = &store.ServeFacts{}
+	}
+	b.Serve.ClosedRound = 1
+	b.Burst.Forward.Phase = "closed"
+	b.Burst.Forward.NodeBinding = "nb-api"
+	b.QueuedAt = clock
+	b.State = store.StateActive
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if got := env.srv.placeForwards(clock); got != 0 {
+		t.Errorf("placed = %d, want 0: a closed forward is never overwritten", got)
+	}
+	after, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if have := burstStoredForward(after); have == nil || have.Phase != "closed" {
+		t.Fatalf("forward = %+v, want the closed forward kept", after.Burst)
+	}
+	entries, _ := rt.Store.ReadLog("api")
+	if got := relevo.ServedView(after, entries, "", "").Node; got != "" {
+		t.Errorf("ServedView.Node = %q, want empty while the forward is closed", got)
+	}
+	if err := env.srv.admitLocked(context.Background()); err != nil {
+		t.Fatalf("admit: %v", err)
+	}
+	admitted, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if admitted.Builder.PID == 0 {
+		t.Errorf("next round not admitted locally, want a local process despite the unacked forward")
+	}
+	if have := burstStoredForward(admitted); have == nil || have.Phase != "closed" {
+		t.Errorf("forward = %+v, want the closed forward kept across the local admit", admitted.Burst)
+	}
+}

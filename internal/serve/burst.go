@@ -27,10 +27,10 @@ func (s *Server) burstOn() bool {
 }
 
 // burstTick requeues what dead nodes lost, checks new nodes, places waiting
-// rounds onto live nodes as sending forwards, sends those, and reports the
-// load. Callers hold admitMu; the provider and node calls keep it while
-// dropping s.mu, so a hung peer stalls the tick up to its own timeout after
-// local admit already ran.
+// rounds onto live nodes as sending forwards, sends and observes those, and
+// reports the load. Callers hold admitMu; the provider and node calls keep
+// it while dropping s.mu, so a hung peer stalls the tick up to its own
+// timeout after local admit already ran.
 func (s *Server) burstTick(ctx context.Context) {
 	if !s.burstOn() {
 		return
@@ -40,7 +40,8 @@ func (s *Server) burstTick(ctx context.Context) {
 	s.verifyNodes(ctx)
 	placed := s.placeForwards(now)
 	confirmed := s.sendForwards(ctx, now)
-	s.reportCycle(now, placed+confirmed)
+	closed := s.observeForwards(ctx)
+	s.reportCycle(now, placed+confirmed, closed)
 }
 
 // requeueLost returns every forward on a dead node to the local queue at the
@@ -190,7 +191,7 @@ func (s *Server) placeOne(q queuedRound, nodeID string, now time.Time) bool {
 // the provider runs with no lock held; the answer applies under s.mu only
 // while the table still carries the snapshot's mark, so a report that raced
 // another is dropped instead of merged twice.
-func (s *Server) reportCycle(now time.Time, placed int) {
+func (s *Server) reportCycle(now time.Time, forwarded, closed int) {
 	t := s.copyBurstTable()
 	if t == nil {
 		return
@@ -200,7 +201,9 @@ func (s *Server) reportCycle(now time.Time, placed int) {
 	forwards := s.burstForwards()
 	reason := burst.ReportReasonInterval
 	switch {
-	case placed > 0:
+	case closed > 0:
+		reason = burst.ReportReasonClosed
+	case forwarded > 0:
 		reason = burst.ReportReasonForwarded
 	case t.LastReport.IsZero():
 		reason = burst.ReportReasonStartup
