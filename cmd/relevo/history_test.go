@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/histq"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 )
 
 // TestHistoryPlainListsRounds pins the bug this round fixes: `relevo history`
@@ -72,6 +74,34 @@ func TestHistoryPlainListsRounds(t *testing.T) {
 		if strings.Contains(string(stdout), "no rounds") {
 			t.Errorf("run %v: stdout = %q, must not say no rounds", args, string(stdout))
 		}
+	}
+}
+
+// TestHistoryFilterCodeBadWindowIsUsage pins that a bogus --since or --until
+// value maps to usage, not internal: ParseSince wraps histq.ErrBadSince and
+// the Filter mapping keeps that code, leaving the wording untouched.
+func TestHistoryFilterCodeBadWindowIsUsage(t *testing.T) {
+	_, err := histq.ParseSince("bogus", time.Now())
+	if err == nil {
+		t.Fatal("ParseSince(bogus) = nil, want the bad-window error")
+	}
+	if got := historyFilterCode(err); got != codeUsage {
+		t.Errorf("historyFilterCode(ParseSince error) = %q, want %q", got, codeUsage)
+	}
+	if !strings.Contains(err.Error(), "24h") {
+		t.Errorf("ParseSince error = %q, want the valid-forms wording kept", err)
+	}
+}
+
+// TestHistoryFilterCodeBadFlagIsUsage pins that a bad flag value, such as an
+// unknown --by axis, maps to usage, while a failure that is relevo's own
+// stays internal.
+func TestHistoryFilterCodeBadFlagIsUsage(t *testing.T) {
+	if got := historyFilterCode(refusal.BadInputf("--by %q: want one of %s", "builder", "ticket")); got != codeUsage {
+		t.Errorf("historyFilterCode(bad input) = %q, want %q", got, codeUsage)
+	}
+	if got := historyFilterCode(errors.New("boom")); got != codeInternal {
+		t.Errorf("historyFilterCode(unrelated error) = %q, want %q", got, codeInternal)
 	}
 }
 

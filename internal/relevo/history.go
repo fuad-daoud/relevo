@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/histq"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 )
 
 // ErrNoDatabase is Bindings's error when rt.DB is nil: the caller has no
@@ -187,7 +188,7 @@ func applyFlagOverrides(o *HistoryOptions, q *histq.Query, f *db.Filter, note fu
 	if o.By != "" {
 		a, ok := histq.ParseAxis(o.By)
 		if !ok {
-			return fmt.Errorf("--by %q: want one of %s", o.By, axisList())
+			return refusal.BadInputf("--by %q: want one of %s", o.By, axisList())
 		}
 		if q.By != histq.AxisNone && string(q.By) != o.By {
 			note("by", string(q.By))

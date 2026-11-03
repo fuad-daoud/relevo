@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/histq"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
@@ -88,6 +89,20 @@ func historyFlagSet(fs *flag.FlagSet) *historyFlagValues {
 	return v
 }
 
+// historyFilterCode maps a Filter failure to its catalog code: a bad query,
+// a bad window, or a bad flag value is the caller's usage error, anything
+// else an internal failure.
+func historyFilterCode(err error) errorCode {
+	var eq histq.ErrQuery
+	if errors.As(err, &eq) {
+		return codeUsage
+	}
+	if errors.Is(err, histq.ErrBadSince) || errors.Is(err, refusal.ErrBadInput) {
+		return codeUsage
+	}
+	return codeInternal
+}
+
 // cmdHistory prints history as JSON across every binding, newest first.
 func cmdHistory(args []string) error {
 	fs := flag.NewFlagSet("history", flag.ContinueOnError)
@@ -138,11 +153,7 @@ func cmdHistory(args []string) error {
 
 	f, notes, ferr := opts.Filter(context.Background(), rt, time.Now())
 	if ferr != nil {
-		var eq histq.ErrQuery
-		if errors.As(ferr, &eq) {
-			return fail(codeUsage, "%v", ferr)
-		}
-		return fail(codeInternal, "%v", ferr)
+		return fail(historyFilterCode(ferr), "%v", ferr)
 	}
 	for _, n := range notes {
 		fmt.Fprintln(os.Stderr, n)
