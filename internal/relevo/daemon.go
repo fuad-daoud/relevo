@@ -276,9 +276,13 @@ func (d *Daemon) Tick(ctx context.Context) error {
 		}
 		housekeep.SweepTick(ctx, HousekeepDeps(d.rt), bindings, &d.tmpSweptAt, d.rt.Now())
 	})
-	// Before the first tick of this process, every archived record the mirror
-	// has not seen is ingested.
-	archivedMirrorOnce.Do(func() { mirrorArchived(ctx, d.rt) })
+	// Every archived record the mirror has not seen is ingested, on every
+	// tick: the ingested.archive.* marks make the pass cheap (one ListArchived
+	// plus one KVGet per record, ingest only for unmarked records), and the
+	// live ingest below never sees archived records. It stays before the
+	// no-bindings early return, so a machine with only archived records still
+	// mirrors.
+	mirrorArchived(ctx, d.rt)
 	// A running chain whose members have left the binding list still has to be
 	// swept: a member's record can be gone while the chain row says running,
 	// and then there is no binding left to reconcile it on.

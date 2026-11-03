@@ -3,7 +3,6 @@ package relevo
 import (
 	"context"
 	"log/slog"
-	"sync"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/ingest"
@@ -111,12 +110,11 @@ func (d *Daemon) prefetchRemote(ctx context.Context, b store.Binding) *remoteFet
 	return &f
 }
 
-var archivedMirrorOnce sync.Once
-
 // mirrorArchived feeds every archived record the mirror has not seen into the
-// database. Each record is keyed by the kv row
+// database. It runs on every tick; each record is keyed by the kv row
 // "ingested.archive.<recordID>", put only after a successful ingest, so a
-// failure is logged and retried by the next process rather than lost.
+// seen record costs one KVGet and a failure is logged and retried on the next
+// tick rather than lost.
 func mirrorArchived(ctx context.Context, rt Runtime) {
 	if rt.DB == nil {
 		return
