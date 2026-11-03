@@ -154,9 +154,12 @@ func startOrQueueSendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b
 		started, err := startRound(ctx, rt, tx, cur, prompt, false)
 		if err != nil {
 			// The plan is staged and the round is open; nothing was started.
-			// NEEDS YOU says so in status, as Send's spawn failure does.
+			// NEEDS YOU says so in status, as Send's spawn failure does. A
+			// member whose actor was deleted after the chain started names
+			// the resume that swaps in another instead.
 			cur.State = store.StateNeedsYou
-			cur.Halt = spawnHaltText(err)
+			part, chainName := chainDeletedActorPart(tx, cur.Name)
+			cur.Halt = chainDeletedActorHalt(part, chainName, cur.WriterRole(), err, spawnHaltText(err))
 			cur.HaltAt = rt.Now().UTC()
 			if saveErr := tx.SaveWithLog(cur, pending...); saveErr != nil {
 				return b, fmt.Errorf("%s: %w; saving NEEDS YOU failed: %w", name, err, saveErr)
