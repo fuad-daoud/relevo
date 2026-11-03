@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -141,5 +142,34 @@ func TestChainDeletedActorPartKeepsFallbackForNonMember(t *testing.T) {
 	fallback := "builder spawn failed: " + err.Error()
 	if got := chainDeletedActorHalt(part, chainName, "ghost", err, fallback); got != fallback {
 		t.Errorf("non-member halt = %q, want the input %q unchanged", got, fallback)
+	}
+}
+
+// TestChainHaltNamesResumeWhenReviewerActorIsGone drives the workflow engine
+// to the review with the reviewer's actor deleted after the start: the
+// chain's own halt reason, the one wait and status print, names the resume
+// that swaps in another actor.
+func TestChainHaltNamesResumeWhenReviewerActorIsGone(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{ReviewerActor: "assistant"})
+
+	rows := chainRows()
+	delete(rows, "assistant")
+	rt.Registry = rolesFileRegistry(t, rt.Candidates, rt.Policy, rows)
+
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+	row := chainStoredRow(t, rt, "shop")
+	if row.Status != string(chain.StatusHalted) {
+		t.Fatalf("chain status = %q (%q), want halted on the reviewer's start", row.Status, row.Reason)
+	}
+	want := "relevo chain --resume --name shop --reviewer-actor <other>"
+	if !strings.Contains(row.Reason, want) {
+		t.Errorf("halt reason = %q, want it to name %q", row.Reason, want)
+	}
+	if !strings.Contains(row.Reason, "member shop-rev could not start") {
+		t.Errorf("halt reason = %q, want it to keep the member that could not start", row.Reason)
 	}
 }

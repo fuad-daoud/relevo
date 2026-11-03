@@ -127,8 +127,8 @@ type ChainDoc struct {
 type ChainMemberDoc struct {
 	Name  string `json:"name"`
 	Actor string `json:"actor"`
-	// Candidate is the token the member's pin resolved to; empty when the
-	// member runs the policy pick, so a consumer reads absence as unpinned.
+	// Candidate is the candidate the member runs: its pin when one was
+	// given, the policy pick otherwise.
 	Candidate string `json:"candidate"`
 	// Placement names where the member runs: "local", or the server a remote
 	// member runs on.

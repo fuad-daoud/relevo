@@ -231,9 +231,9 @@ naming the actor and the resume that swaps in another, e.g. `relevo chain
 --resume --name shop --reviewer-actor <other>` (the builder's swap is
 `--param builder=<other>`, since a resume refuses `--builder-actor`).
 
-The JSON document (`--json`) carries each member's pin as `candidate`, empty
-when the member runs the policy pick; the start and resume text prints it as
-`actor (candidate)` on the member's row.
+The JSON document (`--json`) carries the candidate each member runs as
+`candidate`: its pin, or the policy pick when it has none. The start and
+resume text prints it as `actor (candidate)` on the member's row.
 
 ## Stopping a round
 
