@@ -18,12 +18,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/resolve"
+	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -978,18 +981,69 @@ func TestServedResumeCarriesTheFromTarget(t *testing.T) {
 	}
 }
 
+// shippedWorkflowRegistry is a roles.json where every actor the shipped
+// default workflow names is defined with its full contract: the built-in
+// builder and reviewer, plus the file-mode planner and security actors whose
+// shipped agents expose the outputs the workflow's steps match on (a plan
+// artifact, a findings count). A resume that merges params validates the
+// definition against the server's registry, so nothing but the refusal under
+// test can refuse the resume.
+func shippedWorkflowRegistry(t *testing.T, set *candidate.Set) *roles.Registry {
+	t.Helper()
+	reader := "reader"
+	reg, err := roles.Build(&roles.File{Rows: map[string]roles.Row{
+		"builder":  {Candidates: []string{"claude/anthropic/haiku"}},
+		"reviewer": {Candidates: []string{"claude/anthropic/haiku"}},
+		"lite-planner": {
+			Shape:       &reader,
+			Candidates:  []string{"claude/anthropic/haiku"},
+			Definitions: map[string]roles.DefRow{"claude": {Agent: "architect"}},
+		},
+		"security": {
+			Shape:       &reader,
+			Candidates:  []string{"claude/anthropic/haiku"},
+			Definitions: map[string]roles.DefRow{"claude": {Agent: "security-reviewer"}},
+		},
+	}}, set, policy.Policy{})
+	if err != nil {
+		t.Fatalf("roles.Build: %v", err)
+	}
+	return reg
+}
+
 // TestServedResumeRefusesAGateChangeOnAPlacedWriter pins the wire half of the
-// refusal: a gate built by resumeOptionsFromWire is refused as a usage error
-// when the chain's writer member runs on a server, because relevo has no route
-// that updates a served binding's gate.
+// placed-writer gate refusal: a gate built by resumeOptionsFromWire is refused
+// as a usage error when the chain's writer runs on a server whose whoami lacks
+// the check feature -- the gate route that would take the change lives on that
+// server, so a client-written gate would be silently ignored there. The env
+// defines every actor the shipped workflow names, so the resume can only be
+// refused by this refusal, which fires when the resume's gate check first asks
+// the writer's server what it can do. The placement is written to the store
+// because a create already refuses a checkless server up front: only the
+// resume's probe stands between such a server and a gate it never heard.
 func TestServedResumeRefusesAGateChangeOnAPlacedWriter(t *testing.T) {
-	env := setupTestEnv(t, func(c *Config) { c.MaxBuilders = 1 })
+	set, err := builderCandidateSet(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := setupTestEnv(t, func(c *Config) {
+		c.MaxBuilders = 1
+		c.Candidates = set
+		c.Registry = shippedWorkflowRegistry(t, set)
+	})
 
 	// Occupy the single builder slot so the chain's plan 1 stays queued, and
-	// stop the chain so the resume route is reachable.
+	// stop the chain so the resume route is reachable. The create pins the
+	// shipped default's own planner actor: the definition the resume validates
+	// must resolve every actor against the registry's full contracts, not
+	// leave a second refusal for a member the env never defined.
 	resp, body := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "decoy", "# Decoy")
 	requireCreated(t, resp, body, "decoy")
-	resp, body = createChain(t, env, "shop")
+	req := chainWireRequest("shop", env.repoID, env.headSHA)
+	req.Settings.PlannerActor = "lite-planner"
+	bundle := chainBundle(t, env, env.clientDir, env.headSHA, "shop")
+	form, ct := makeChainForm(t, req, bundle)
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/chains", form, ct)
 	requireStatus(t, resp, body, http.StatusCreated)
 	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/chains/shop/stop", nil, "")
 	requireStatus(t, resp, body, http.StatusOK)
@@ -1005,15 +1059,39 @@ func TestServedResumeRefusesAGateChangeOnAPlacedWriter(t *testing.T) {
 		t.Fatalf("place the writer remotely: %v", err)
 	}
 
+	// The resume reads the writer's server through the runtime's own remote
+	// client, so the client's server table is what decides a server's
+	// features: this one answers the chain-era tokens but not the check token
+	// the gate route needs.
+	zen := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/whoami" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		who := remote.WhoAmI{
+			ServerVersion: remote.Version,
+			Transports:    []string{"git-bundle"},
+			Features:      []string{remote.FeatureChain, remote.FeatureChainMember, remote.FeatureWorkflow},
+		}
+		_ = json.NewEncoder(w).Encode(who)
+	}))
+	t.Cleanup(zen.Close)
+	rt.Remote = client.New(remote.Servers{"zen": {URL: zen.URL, Insecure: true}}, env.kp, time.Now)
+
 	gate := "make test"
 	opts, bad := resumeOptionsFromWire("shop", remote.ChainResumeRequest{Gate: &gate})
 	if bad != "" {
 		t.Fatalf("resumeOptionsFromWire = %q, want no refusal", bad)
 	}
-	if _, err := relevo.ChainResume(context.Background(), rt, opts); err == nil {
-		t.Fatal("ChainResume with a wire gate on a placed writer = nil, want the refusal")
-	} else if !errors.Is(err, refusal.ErrRefused) {
+	_, err = relevo.ChainResume(context.Background(), rt, opts)
+	if err == nil {
+		t.Fatal("ChainResume with a wire gate on a placed writer = nil, want the gate refusal")
+	}
+	if !errors.Is(err, refusal.ErrRefused) {
 		t.Errorf("ChainResume = %v, want refusal.ErrRefused", err)
+	}
+	if !strings.Contains(err.Error(), "zen") || !strings.Contains(err.Error(), `"check"`) {
+		t.Errorf("refusal = %q, want it to name server zen and the \"check\" feature it lacks", err)
 	}
 }
 
