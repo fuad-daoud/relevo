@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/blobstore"
+	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
 // ErrJoinOverQuota reports a join estimated past the month's left Turso traffic.
@@ -128,19 +129,72 @@ func (l *limitedWriter) Write(p []byte) (int, error) {
 	return l.w.Write(p)
 }
 
-// GuardJoin refuses a join whose known estimate tops the quota left; exactly equal
-// fits.
+// GuardJoin refuses a join whose known estimate tops this machine's quota left;
+// exactly equal fits. The remainder is this machine's alone: the account total
+// is not visible on this path, and the refusal says whose figures they are.
 func GuardJoin(est JoinEstimate, quota, usedThisMonth int64) error {
 	left := quota - usedThisMonth
 	if !est.Known || est.TursoBytes <= left {
 		return nil
 	}
-	return fmt.Errorf("%w: it would read about %s from Turso, %s is left of this month's %s quota; pass --yes to join anyway",
+	return fmt.Errorf("%w: it would read about %s from Turso, %s is left for this machine of this month's %s quota; pass --yes to join anyway",
 		ErrJoinOverQuota, humanBytes(est.TursoBytes), humanBytes(max(left, 0)), humanBytes(quota))
 }
 
+// GuardJoinAccount refuses a join whose known estimate tops the account's quota
+// left: quota minus the AccountTraffic fold over the transport's rows, with this
+// machine's live counters standing in for its own unpublished row. Exactly equal
+// fits, and an unknown estimate proves nothing, the rule JoinEstimate states.
+func GuardJoinAccount(est JoinEstimate, quota int64, rows map[string]synclog.TrafficRow, own ByteCounters, origin string, now time.Time) error {
+	if !est.Known {
+		return nil
+	}
+	account := AccountTraffic(AccountSnapshot{Rows: rows}, own, origin, now)
+	left := quota - account.Total
+	if est.TursoBytes <= left {
+		return nil
+	}
+	return fmt.Errorf("%w: it would read about %s from Turso, %s is left of this month's %s account quota across %s; pass --yes to join anyway",
+		ErrJoinOverQuota, humanBytes(est.TursoBytes), humanBytes(max(left, 0)), humanBytes(quota), Machines(account.Machines))
+}
+
+// noAccountNote states plainly that the account's traffic cannot be seen, naming
+// the newest local snapshot's month and age when one exists. The newest is the
+// maximum Month over the snapshot's rows, which is chronological for the
+// "2006-01" spelling; the age is now minus the snapshot's reading. A local
+// remainder is never quoted as an account figure here: without the transport's
+// rows there is no account to quote.
+func noAccountNote(snap AccountSnapshot, now time.Time) string {
+	newest := ""
+	for _, row := range snap.Rows {
+		if row.Month > newest {
+			newest = row.Month
+		}
+	}
+	if newest == "" {
+		return "the account's traffic cannot be seen from this machine"
+	}
+	age := now.Sub(snap.ReadAt)
+	if age < 0 {
+		age = 0
+	}
+	return fmt.Sprintf("the account's traffic cannot be seen from this machine; newest local snapshot is %s, read %s ago", newest, age)
+}
+
+// withNoAccount carries a local refusal with the note that the account could not
+// be seen. A snapshot that will not parse reads as none: it names no month
+// either way, and the refusal already says the account is not visible.
+func withNoAccount(local Local, refuse error, now time.Time) error {
+	snap, serr := ReadAccount(local)
+	if serr != nil {
+		snap = AccountSnapshot{}
+	}
+	return fmt.Errorf("%w; %s", refuse, noAccountNote(snap, now))
+}
+
 // guard estimates the join, refusing when it does not fit, reporting whether a
-// bucket was consulted at all.
+// bucket was consulted at all. The transport is not open yet on this path, so the
+// figures are this machine's, with the note that the account could not be seen.
 func (e *Enabler) guard(plan EnablePlan, now time.Time) (JoinEstimate, bool, error) {
 	if e.Blobs == nil {
 		return JoinEstimate{}, false, nil
@@ -162,20 +216,94 @@ func (e *Enabler) guard(plan EnablePlan, now time.Time) (JoinEstimate, bool, err
 	if err != nil {
 		return est, true, err
 	}
-	return est, true, GuardJoin(est, settings.TursoSyncQuota(), used.TursoPush+used.TursoPull)
+	if err := GuardJoin(est, settings.TursoSyncQuota(), used.TursoPush+used.TursoPull); err != nil {
+		return est, true, withNoAccount(e.Request.Local, err, now)
+	}
+	return est, true, nil
 }
 
 // guardJoined is the guard a join runs after its document import, against the
 // imported credentials rather than the command's: same rule and refusal on a later
 // reading, since no bucket estimates before the secrets document applies. A machine
 // with no bucket store consults nothing and is not guarded: no installed store means
-// no bucket to overrun.
-func (e *Enabler) guardJoined() (JoinEstimate, bool, error) {
+// no bucket to overrun. The transport's rows then judge the same estimate against
+// the account total; when they name no account the local figures stand, with the
+// note that the account could not be seen. The read publishes nothing: the account
+// markers move only on a successful publish.
+func (e *Enabler) guardJoined(transport synclog.LogTransport) (JoinEstimate, bool, error) {
 	stored, err := ReadR2(e.Request.Local)
 	if err != nil {
 		return JoinEstimate{}, false, err
 	}
-	return e.guard(EnablePlan{Remote: "", R2: stored}, e.now())
+	now := e.now()
+	est, guarded, err := e.guard(EnablePlan{Remote: "", R2: stored}, now)
+	if err != nil || !guarded {
+		return est, guarded, err
+	}
+	// Yes joins past the guard's refusal, whichever figures it was read against.
+	if e.Request.Yes {
+		return est, guarded, nil
+	}
+	rows, ok := readAccountRows(transport, now)
+	if !ok {
+		return est, guarded, nil
+	}
+	settings, err := ReadSettings(e.Request.Local)
+	if err != nil {
+		return est, guarded, err
+	}
+	used, err := ReadBytes(e.Request.Local, now)
+	if err != nil {
+		return est, guarded, err
+	}
+	return est, guarded, GuardJoinAccount(est, settings.TursoSyncQuota(), rows, used, e.Request.Shared.Origin(), now)
+}
+
+// readAccountRows answers with the transport's traffic rows when they name the
+// account: the month holding now must appear, because a joiner's own row is
+// unpublished and an answer of one is no account at all. Anything less -- no
+// transport, no reader, a read error -- is no account figure rather than a
+// failure, the rule TrafficReader states.
+func readAccountRows(transport synclog.LogTransport, now time.Time) (map[string]synclog.TrafficRow, bool) {
+	if transport == nil {
+		return nil, false
+	}
+	reader, ok := transport.(synclog.TrafficReader)
+	if !ok {
+		return nil, false
+	}
+	rows, err := readTrafficBounded(reader, guardTimeout)
+	if err != nil {
+		return nil, false
+	}
+	month := now.UTC().Format("2006-01")
+	for _, row := range rows {
+		if row.Month == month {
+			return rows, true
+		}
+	}
+	return nil, false
+}
+
+// readTrafficBounded runs one traffic read under a bound. The reader takes no
+// context, so the wait is what is bounded; the channel is buffered so a read
+// that outlives the bound still lands instead of stranding its sender.
+func readTrafficBounded(reader synclog.TrafficReader, bound time.Duration) (map[string]synclog.TrafficRow, error) {
+	type result struct {
+		rows map[string]synclog.TrafficRow
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		rows, err := reader.ReadTraffic()
+		done <- result{rows: rows, err: err}
+	}()
+	select {
+	case r := <-done:
+		return r.rows, r.err
+	case <-time.After(bound):
+		return nil, errors.New("sync: enable: read the account traffic: timed out")
+	}
 }
 
 // ownBodiesJoined is ownBodies for a join, against the document-brought credentials,
