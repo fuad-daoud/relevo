@@ -576,10 +576,18 @@ func TestBurstAckStuckFiresOncePerEpisode(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	for i := 0; i < 3; i++ {
-		if env.srv.ackObserveClosed(ctx, failCl, w) {
-			t.Fatalf("failing ack %d cleared the forward", i+1)
-		}
+	if env.srv.ackObserveClosed(ctx, failCl, w) {
+		t.Fatal("failing ack 1 cleared the forward")
+	}
+	if env.srv.ackObserveClosed(ctx, failCl, w) {
+		t.Fatal("failing ack 2 cleared the forward")
+	}
+	// b1 still holds the closed forward, so the observe pass's forget must
+	// keep its standing count: only an arm that checks the holding set can
+	// tell this from a forward that left, and the streak has to survive.
+	env.srv.burstHealth.forgetAckEpisodes(map[string]bool{"b1": true})
+	if env.srv.ackObserveClosed(ctx, failCl, w) {
+		t.Fatal("failing ack 3 cleared the forward")
 	}
 	if got := hookEvents.count(hooks.EventBurstAckStuck); got != 1 {
 		t.Fatalf("burst_ack_stuck = %d, want exactly one after three failing cycles", got)
