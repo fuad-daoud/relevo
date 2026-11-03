@@ -2,6 +2,8 @@ package serve
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"log/slog"
 	"os"
 	"runtime"
@@ -314,7 +316,17 @@ func burstOwner8(owner remote.ClientID) string {
 	return "unknown"
 }
 
-// burstNodeBinding names the round's binding on its node.
+// burstNodeBinding names the round's binding on its node. The node holds it
+// to the binding-name rule, so the name leads with a letter whatever the
+// owner hex starts with, and stays within the length cap: a head name too
+// long to fit is cut and given a short hash of the whole name, so two long
+// names sharing a prefix still land on different node bindings.
 func burstNodeBinding(owner remote.ClientID, name string) string {
-	return burstOwner8(owner) + "-" + name
+	prefix := "h" + burstOwner8(owner) + "-"
+	if len(prefix)+len(name) <= store.MaxAgentNameLen {
+		return prefix + name
+	}
+	sum := sha256.Sum256([]byte(name))
+	tag := "-" + hex.EncodeToString(sum[:3])
+	return prefix + name[:store.MaxAgentNameLen-len(prefix)-len(tag)] + tag
 }

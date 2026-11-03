@@ -427,31 +427,16 @@ func saveNodeOpenRound(t *testing.T, nodeSrv *Server, owner remote.ClientID, nam
 	}
 }
 
-// burstLetterKey generates a head key whose owner half of a node binding
-// name starts with a letter: the store's name rule refuses a digit-led
-// name, and the node binding under test is saved through the store.
-func burstLetterKey(t *testing.T) remote.Keypair {
-	t.Helper()
-	for i := 0; i < 100; i++ {
-		kp, err := remote.Generate()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if c := burstOwner8(remote.IDOf(kp.Public))[0]; c >= 'a' && c <= 'z' {
-			return kp
-		}
-	}
-	t.Fatal("no letter-led owner in 100 keys")
-	return remote.Keypair{}
-}
-
 // TestBurstAdoptSending pins the restart resolve: a forward the node still
 // holds turns running, while a forward the node never took and one naming
 // an unknown node return to the local queue at their FIFO place. The node
 // is a real serve server over httptest TLS, reached through the production
 // client; only the classify half below runs without the network.
 func TestBurstAdoptSending(t *testing.T) {
-	headKP := burstLetterKey(t)
+	headKP, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
 	env := burstVerifyEnv(t, headKP, nil, nil)
 	nodeSrv, nodeTS, nodeFP := startBurstNode(t, &headKP)
 	env.srv.burstTable = &burst.NodeTable{Nodes: []burst.NodeRow{

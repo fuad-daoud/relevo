@@ -64,9 +64,8 @@ func forwardEnv(t *testing.T, headKP remote.Keypair) *testEnv {
 // placeForward sends one round through the head so it queues behind the full
 // local seat, then places it as a sending forward: the shape placeForwards
 // writes before the send, with a real plan file, bare repo and out ref
-// behind it. The node binding is renamed to a fixed valid name because the
-// placed owner hash may start with a digit, which the node's name rule
-// refuses.
+// behind it. The node binding is renamed to a fixed name so a scripted node
+// can answer to it whatever owner key the test generated.
 func placeForward(t *testing.T, env *testEnv, name string, now time.Time) store.Forward {
 	t.Helper()
 	saveBurstBinding(t, env.runtime(t), "zz", time.Time{}, 4242)
