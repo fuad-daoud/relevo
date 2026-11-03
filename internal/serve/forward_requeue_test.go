@@ -295,11 +295,12 @@ func TestBurstRequeueLostHonoursConfiguredBound(t *testing.T) {
 	})
 }
 
-// TestBurstRequeueLostStopsUnackedCount pins the never-acked close: a closed
-// forward whose node's ack never arrived counted unacked in every report.
-// Once the node has stayed unreachable ten minutes it counts as lost, the
-// requeue clears the forward, and the next report counts nothing while the
-// round waits queued on the head again.
+// TestBurstRequeueLostStopsUnackedCount pins the never-acked close. The head
+// closed the round from the node's result and moved to the next round, but
+// the node never took the ack, so the forward counted unacked in every
+// report. Once the node has stayed unreachable past the bound it is lost:
+// the forward clears, the next report counts nothing, and the finished
+// round is not queued to run again.
 func TestBurstRequeueLostStopsUnackedCount(t *testing.T) {
 	clock := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
 	since := clock.Add(-time.Hour)
@@ -310,6 +311,12 @@ func TestBurstRequeueLostStopsUnackedCount(t *testing.T) {
 	row.ProblemSince = clock.Add(-10 * time.Minute)
 	env.srv.burstTable = &burst.NodeTable{Nodes: []burst.NodeRow{row}}
 	saveLostForward(t, env, "fq", "b1", "closed", 1, since)
+	rt := env.runtime(t)
+	b := loadBurstBinding(t, rt, "fq")
+	b.Round = 2
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
 
 	before := env.srv.burstForwards()
 	if len(before) != 1 || before[0].State != burst.ForwardUnacked || before[0].NodeID != "b1" {
@@ -322,10 +329,12 @@ func TestBurstRequeueLostStopsUnackedCount(t *testing.T) {
 		t.Errorf("forwards after = %+v, want none counted unacked", got)
 	}
 	back := loadBurstBinding(t, env.runtime(t), "fq")
-	if burstStoredForward(back) != nil || !back.QueuedAt.Equal(since) {
-		t.Fatalf("fq = forward %+v queuedAt %v, want cleared and back at %v", back.Burst, back.QueuedAt, since)
+	if burstStoredForward(back) != nil {
+		t.Fatalf("fq forward = %+v, want cleared", back.Burst)
 	}
-	requireRoundState(t, env.runtime(t), "fq", remote.RoundQueued)
+	if !back.QueuedAt.IsZero() || back.Round != 2 {
+		t.Fatalf("fq = round %d queuedAt %v, want round 2 not queued: the closed round must not run again", back.Round, back.QueuedAt)
+	}
 }
 
 // TestBurstNodeLostHookFiresOncePerLostNode pins the hook: one

@@ -47,6 +47,10 @@ func (s *Server) requeueLost(ctx context.Context, now time.Time) {
 			if !burstRowDead(rows, fwd.Node, now, lostAfter) {
 				continue
 			}
+			if fwd.Phase == "closed" {
+				s.dropLostAck(id, ownerPath, b.Name, *fwd)
+				continue
+			}
 			if !s.requeueOne(id, ownerPath, b.Name, *fwd, now) {
 				continue
 			}
@@ -76,6 +80,31 @@ func burstRowDead(rows map[string]burst.NodeRow, node string, now time.Time, los
 		return true
 	}
 	return row.Problem == burst.ReportProblemUnreachable && now.Sub(row.ProblemSince) >= lostAfter
+}
+
+// dropLostAck clears a closed forward whose node is lost. The head already
+// holds that round's result, so there is nothing to run again; only the ack
+// is owed, and a lost node can never take it. Left in place, the forward
+// would count unacked forever and keep the binding from bursting again.
+func (s *Server) dropLostAck(id remote.ClientID, ownerPath, name string, fwd store.Forward) {
+	st := s.ownerStore(ownerPath)
+	cur, err := st.Load(name)
+	if err != nil {
+		slog.Warn("burst: drop lost ack: load failed", "owner", string(id), "binding", name, "err", err)
+		return
+	}
+	if !observeClosedAckMatches(cur, fwd) {
+		return
+	}
+	cur.Burst.Forward = nil
+	if len(cur.Burst.Shipped) == 0 && len(cur.Burst.NodeBindings) == 0 {
+		cur.Burst = nil
+	}
+	if err := st.Save(cur); err != nil {
+		slog.Warn("burst: drop lost ack: save failed", "owner", string(id), "binding", name, "err", err)
+		return
+	}
+	slog.Info("burst: dropped the ack a lost node owed", "owner", string(id), "binding", name, "node", fwd.Node)
 }
 
 // requeueOne returns the named round to the queue at its FIFO place. The
