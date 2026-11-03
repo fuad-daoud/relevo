@@ -26,11 +26,11 @@ var chainResumePostWriteHook func(tx *store.Tx, c db.ChainRow) error
 // to the stored definition, creates the members the params brought in, and
 // runs the resumed action.
 func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts ResumeOptions) (ChainResult, error) {
-	def, before, from, set, merged, err := chainResumePreflight(ctx, rt, c, opts)
+	def, before, from, set, merged, repins, err := chainResumePreflight(ctx, rt, c, opts)
 	if err != nil {
 		return ChainResult{}, err
 	}
-	out, err := chainResumeCommitWorkflow(ctx, rt, opts, def, before, from, set, merged)
+	out, err := chainResumeCommitWorkflow(ctx, rt, opts, def, before, from, set, merged, repins)
 	if err != nil {
 		return ChainResult{}, err
 	}
@@ -40,9 +40,9 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 // chainResumePreflight runs every refusal and resolution a resume needs before
 // writing: the gates, the row's definition and state, the settings, the
 // merged params, and the reroute. Nothing is written.
-func chainResumePreflight(ctx context.Context, rt Runtime, c db.ChainRow, opts ResumeOptions) (workflow.Definition, workflow.State, string, chain.Settings, map[string]string, error) {
-	fail := func(err error) (workflow.Definition, workflow.State, string, chain.Settings, map[string]string, error) {
-		return workflow.Definition{}, workflow.State{}, "", chain.Settings{}, nil, err
+func chainResumePreflight(ctx context.Context, rt Runtime, c db.ChainRow, opts ResumeOptions) (workflow.Definition, workflow.State, string, chain.Settings, map[string]string, chainResumeRepins, error) {
+	fail := func(err error) (workflow.Definition, workflow.State, string, chain.Settings, map[string]string, chainResumeRepins, error) {
+		return workflow.Definition{}, workflow.State{}, "", chain.Settings{}, nil, chainResumeRepins{}, err
 	}
 	if err := resumeRefusal(c); err != nil {
 		return fail(err)
@@ -83,6 +83,12 @@ func chainResumePreflight(ctx context.Context, rt Runtime, c db.ChainRow, opts R
 	if err := chainForkResumeRefusal(c, before); err != nil {
 		return fail(err)
 	}
+	// A parent's resume answers the earned join by running the merge, which
+	// discards re-pins, so a pin would be silently ignored. It is refused
+	// instead, before anything is written.
+	if len(opts.Candidates) > 0 && len(before.Awaiting.Children) > 0 {
+		return fail(refusal.New("chain %s is halted at the fork join %q: --candidate on a fork-parent resume is refused; the pin was not applied", c.Name, before.Awaiting.Step))
+	}
 	// The old flags fill the params exactly as a start's do, so a resume can
 	// replace the check or the budgets the chain runs under.
 	flagParams, err := chainResumeFlagParams(def, rt, opts)
@@ -105,6 +111,13 @@ func chainResumePreflight(ctx context.Context, rt Runtime, c db.ChainRow, opts R
 			return fail(err)
 		}
 	}
+	// A re-pin resolves against the merged definition, so a pin given
+	// alongside an actor flag serves the resumed actor. The resolution is
+	// read-only; the overlay waits for the commit under the state lock.
+	repins, err := resolveChainResumeRepins(rt, c, def, opts)
+	if err != nil {
+		return fail(err)
+	}
 	// A resume replacing the check on a zero-budget repair-arm halt goes back
 	// to that arm's check, so the check runs again under the new command. The
 	// refusal lands here, before the delivery below is superseded and before
@@ -116,15 +129,15 @@ func chainResumePreflight(ctx context.Context, rt Runtime, c db.ChainRow, opts R
 	// A human has looked at the plan: every budget starts fresh, as a resume
 	// resets the correction count on the fixed state machine.
 	before.Visits = map[string]int{}
-	return def, before, from, set, merged, nil
+	return def, before, from, set, merged, repins, nil
 }
 
 // chainResumeCommitWorkflow applies the resumed engine step under the state
 // lock.
-func chainResumeCommitWorkflow(ctx context.Context, rt Runtime, opts ResumeOptions, def workflow.Definition, before workflow.State, from string, set chain.Settings, merged map[string]string) (ChainResult, error) {
+func chainResumeCommitWorkflow(ctx context.Context, rt Runtime, opts ResumeOptions, def workflow.Definition, before workflow.State, from string, set chain.Settings, merged map[string]string, repins chainResumeRepins) (ChainResult, error) {
 	var out ChainResult
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
-		res, lerr := chainResumeLocked(ctx, rt, tx, opts, def, before, from, set, merged)
+		res, lerr := chainResumeLocked(ctx, rt, tx, opts, def, before, from, set, merged, repins)
 		if lerr != nil {
 			return lerr
 		}
@@ -184,9 +197,13 @@ type chainResumePrepared struct {
 	acts      []workflow.Action
 	snap      *chainResumeSnapshot
 	toConfirm []pendingDelivery
+	// manualRound is the newer builder round a resume reviews, 0 when the
+	// resume re-runs the halted step instead: the trace names it so a later
+	// read tells a reviewed human round from a re-send.
+	manualRound int
 }
 
-func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, opts ResumeOptions, def workflow.Definition, before workflow.State, from string, set chain.Settings, merged map[string]string) (ChainResult, error) {
+func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, opts ResumeOptions, def workflow.Definition, before workflow.State, from string, set chain.Settings, merged map[string]string, repins chainResumeRepins) (ChainResult, error) {
 	prep, handled, res, err := chainResumePrepareLocked(ctx, rt, tx, opts, def, before, from, set, merged)
 	if err != nil {
 		return ChainResult{}, err
@@ -194,7 +211,7 @@ func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, opts Resum
 	if handled {
 		return res, nil
 	}
-	if prep, err = chainResumeCommitLocked(ctx, rt, tx, prep, def, before, set, merged); err != nil {
+	if prep, err = chainResumeCommitLocked(ctx, rt, tx, prep, def, before, set, merged, repins); err != nil {
 		return ChainResult{}, err
 	}
 	return chainResumeApplyActionsLocked(ctx, rt, tx, opts, prep, def, before)
@@ -202,7 +219,8 @@ func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, opts Resum
 
 // chainResumePrepareLocked loads the row and resolves the resumed engine
 // state, still inside the caller's lock. Nothing is written yet, so its
-// errors return plain.
+// errors return plain — except the fork-parent handled path, which answers
+// the earned join through chainForkResumeParent before returning handled=true.
 func chainResumePrepareLocked(ctx context.Context, rt Runtime, tx *store.Tx, opts ResumeOptions, def workflow.Definition, before workflow.State, from string, set chain.Settings, merged map[string]string) (chainResumePrepared, bool, ChainResult, error) {
 	fail := func(err error) (chainResumePrepared, bool, ChainResult, error) {
 		return chainResumePrepared{}, false, ChainResult{}, err
@@ -247,19 +265,30 @@ func chainResumePrepareLocked(ctx context.Context, rt Runtime, tx *store.Tx, opt
 	if err != nil {
 		return fail(refusal.New("%v", err))
 	}
-	return chainResumePrepared{row: row, resumed: resumed, acts: acts, snap: snap, toConfirm: toConfirm}, false, ChainResult{}, nil
+	manualRound := 0
+	if closed != nil && !sameRound {
+		manualRound = closed.Round
+	}
+	return chainResumePrepared{row: row, resumed: resumed, acts: acts, snap: snap, toConfirm: toConfirm, manualRound: manualRound}, false, ChainResult{}, nil
 }
 
 // chainResumeCommitLocked writes the resumed row, still inside the caller's
 // lock: the added members, the raised caps, and the committed engine state.
 // Every error goes through snap.restore.
-func chainResumeCommitLocked(ctx context.Context, rt Runtime, tx *store.Tx, prep chainResumePrepared, def workflow.Definition, before workflow.State, set chain.Settings, merged map[string]string) (chainResumePrepared, error) {
+func chainResumeCommitLocked(ctx context.Context, rt Runtime, tx *store.Tx, prep chainResumePrepared, def workflow.Definition, before workflow.State, set chain.Settings, merged map[string]string, repins chainResumeRepins) (chainResumePrepared, error) {
 	row := prep.row
 	if len(merged) > 0 {
 		var err error
 		if row, err = chainResumeAddMembers(ctx, rt, tx, row, def, prep.snap); err != nil {
 			return chainResumePrepared{}, prep.snap.restore(tx, err)
 		}
+	}
+	// The re-pin lands after the adds and swaps, so a pin given alongside
+	// an actor flag or a phase flag wins over the policy pick the sync
+	// stored. It touches re-pinned parts only; the rest keep their stored
+	// candidate verbatim.
+	if err := chainResumeApplyRepins(ctx, rt, tx, row, repins, set, len(before.Iter["plans"].Items), prep.snap); err != nil {
+		return chainResumePrepared{}, prep.snap.restore(tx, err)
 	}
 	if err := chainResumeRaiseCaps(tx, row, len(before.Iter["plans"].Items), set); err != nil {
 		return chainResumePrepared{}, prep.snap.restore(tx, err)
@@ -295,7 +324,7 @@ func chainResumeApplyActionsLocked(ctx context.Context, rt Runtime, tx *store.Tx
 	resumed := prep.resumed
 	gateChanged := chainResumeChangesGate(opts)
 	for _, act := range prep.acts {
-		if err := chainResumeRunAction(ctx, rt, tx, row, def, before, &resumed, act, gateChanged); err != nil {
+		if err := chainResumeRunAction(ctx, rt, tx, row, def, before, &resumed, act, gateChanged, prep.manualRound); err != nil {
 			return ChainResult{}, prep.snap.restore(tx, err)
 		}
 	}
@@ -440,7 +469,12 @@ func memberReportEntry(tx *store.Tx, name string, round int) (store.LogEntry, bo
 // the stopped-on round re-hands that round's staged prompt, so the member sees
 // the bytes already given; anything else is the engine's ordinary action.
 // gateChanged walks a stale repair prompt back to the step's own seed.
-func chainResumeRunAction(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before workflow.State, next *workflow.State, act workflow.Action, gateChanged bool) error {
+func chainResumeRunAction(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before workflow.State, next *workflow.State, act workflow.Action, gateChanged bool, manualRound int) error {
+	if manualRound > 0 {
+		// A reviewed human round is named on the trace row, so a later read
+		// tells it from a re-send: the send's own reason is otherwise empty.
+		act.Reason = fmt.Sprintf("manual r%d", manualRound)
+	}
 	if act.Kind == workflow.ActionSend {
 		if name, text, ok := chainResumeStagedText(rt, tx, c, before, act, gateChanged); ok {
 			ev := workflow.Event{Kind: workflow.EventNeedsYou, Step: next.At}

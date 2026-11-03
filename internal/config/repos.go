@@ -17,23 +17,28 @@ import (
 // field set to "" stores as absent, and an entry with no field left stores
 // nothing. Name is a display label only; gate is the acceptance command the
 // repository's bindings take with no --gate; board_theme is an opaque string
-// the board round owns; trimpath is on or off, unset meaning on. The unset
-// default never stores as itself -- an entry holding only it would drop as
-// empty -- so an entry wanting on beside nothing else stores `on` explicitly.
+// the board round owns; trimpath is on or off, unset meaning on; the actor
+// fields name the chain members' actors, unset meaning the policy default.
+// The unset default never stores as itself -- an entry holding only it would
+// drop as empty -- so an entry wanting on beside nothing else stores `on`
+// explicitly.
 type RepoEntry struct {
-	Name       string `json:"name,omitempty"`
-	Gate       string `json:"gate,omitempty"`
-	BoardTheme string `json:"board_theme,omitempty"`
-	Trimpath   string `json:"trimpath,omitempty"`
+	Name          string `json:"name,omitempty"`
+	Gate          string `json:"gate,omitempty"`
+	BoardTheme    string `json:"board_theme,omitempty"`
+	Trimpath      string `json:"trimpath,omitempty"`
+	BuilderActor  string `json:"builder_actor,omitempty"`
+	ReviewerActor string `json:"reviewer_actor,omitempty"`
+	PlannerActor  string `json:"planner_actor,omitempty"`
 }
 
 // repoEntryFields is the field vocabulary one entry carries. A field beyond
-// these four is refused by name rather than ignored, so a typo'd key never
+// these seven is refused by name rather than ignored, so a typo'd key never
 // silently stores nothing.
-var repoEntryFields = []string{"name", "gate", "board_theme", "trimpath"}
+var repoEntryFields = []string{"name", "gate", "board_theme", "trimpath", "builder_actor", "reviewer_actor", "planner_actor"}
 
 // ParseRepos reads and checks the repos body: an object keyed by repository
-// identity, each value an object carrying at most the four known string
+// identity, each value an object carrying at most the seven known string
 // fields, trimpath restricted to on and off. A non-object body, a non-object
 // entry (null included), an unknown field and a non-string value are each
 // refused, naming section and entry. Empty fields drop, and an entry left
@@ -86,7 +91,7 @@ func parseRepoEntry(key string, fields map[string]json.RawMessage) (RepoEntry, e
 	var out RepoEntry
 	for _, name := range names {
 		if !slices.Contains(repoEntryFields, name) {
-			return RepoEntry{}, fmt.Errorf("%s: %s: unknown field %q; a repos entry takes name, gate, board_theme and trimpath", Repos, key, name)
+			return RepoEntry{}, fmt.Errorf("%s: %s: unknown field %q; a repos entry takes name, gate, board_theme, trimpath, builder_actor, reviewer_actor and planner_actor", Repos, key, name)
 		}
 		value := fields[name]
 		if len(value) == 0 || string(value) == "null" {
@@ -108,6 +113,12 @@ func parseRepoEntry(key string, fields map[string]json.RawMessage) (RepoEntry, e
 				return RepoEntry{}, fmt.Errorf("%s: %s: trimpath is %q, want on or off", Repos, key, s)
 			}
 			out.Trimpath = s
+		case "builder_actor":
+			out.BuilderActor = s
+		case "reviewer_actor":
+			out.ReviewerActor = s
+		case "planner_actor":
+			out.PlannerActor = s
 		}
 	}
 	return out, nil

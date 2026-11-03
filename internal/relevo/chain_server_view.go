@@ -214,6 +214,11 @@ func chainServerResume(ctx context.Context, rt Runtime, c db.ChainRow, opts Resu
 	// review the human asked for.
 	req.From = opts.From
 	req.Params = opts.Params
+	// Pins ride along verbatim under the CLI's part keys; the server matches
+	// each pin against the resumed definition's members and resolves it
+	// against its own registry, so a served resume needs no client-side
+	// member computation.
+	req.Candidates = opts.Candidates
 	if opts.Gate != "" || opts.NoGate {
 		// The gate flags win over every lower tier, so a resume reads no
 		// repository settings here.

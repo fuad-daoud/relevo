@@ -577,7 +577,7 @@ func TestChainResumedTextNamesPlacement(t *testing.T) {
 		},
 	}
 	stdout, _, err := captureOutput(t, func() error {
-		chainResumedText(res)
+		chainResumedText(relevo.Runtime{}, res)
 		return nil
 	})
 	if err != nil {
@@ -589,6 +589,99 @@ func TestChainResumedTextNamesPlacement(t *testing.T) {
 	}
 	if !strings.Contains(out, "local") {
 		t.Errorf("stdout = %q, want the local reader's placement", out)
+	}
+}
+
+// TestChainStartedOutputNamesResolvedActors pins that a started chain's human
+// and JSON output name the resolved builder, reviewer and planner actors: the
+// member rows carry them, so a builder the repository entry supplied renders as
+// that actor rather than the generic, with no harness and no network.
+func TestChainStartedOutputNamesResolvedActors(t *testing.T) {
+	res := relevo.ChainResult{
+		Chain: db.ChainRow{Name: "shop", Builder: "shop", Reviewer: "shop-rev", Planner: "shop-plan", Status: "running", Step: "building"},
+		Members: []store.Binding{
+			{Name: "shop", Role: "repo-builder"},
+			{Name: "shop-rev", Role: "repo-reviewer"},
+			{Name: "shop-plan", Role: "repo-planner"},
+		},
+		Plans: 1,
+	}
+	doc := chainDocOf(res)
+	want := map[string]string{"shop": "repo-builder", "shop-rev": "repo-reviewer", "shop-plan": "repo-planner"}
+	if len(doc.Members) != len(want) {
+		t.Fatalf("members = %d, want %d", len(doc.Members), len(want))
+	}
+	for _, m := range doc.Members {
+		if m.Actor != want[m.Name] {
+			t.Errorf("member %q actor = %q, want %q", m.Name, m.Actor, want[m.Name])
+		}
+	}
+	stdout, _, err := captureOutput(t, func() error {
+		chainStartedText(relevo.Runtime{}, res)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("chainStartedText: %v", err)
+	}
+	for _, actor := range []string{"repo-builder", "repo-reviewer", "repo-planner"} {
+		if !strings.Contains(string(stdout), actor) {
+			t.Errorf("stdout = %q, want it to name the resolved actor %q", stdout, actor)
+		}
+	}
+}
+
+// TestChainDocCarriesCandidate pins the document's candidate field: the pinned
+// member's resolved token, and empty when the member runs the policy pick, so
+// a consumer reads absence as unpinned. Pure rendering: no harness, no network.
+func TestChainDocCarriesCandidate(t *testing.T) {
+	res := relevo.ChainResult{
+		Chain: db.ChainRow{Builder: "shop", Reviewer: "review"},
+		Members: []store.Binding{
+			{Name: "shop", BuilderCandidate: "claude/pick"},
+			{Name: "review", Role: "reviewer"},
+		},
+	}
+	doc := chainDocOf(res)
+	if len(doc.Members) != 2 {
+		t.Fatalf("members = %d, want 2", len(doc.Members))
+	}
+	if got := doc.Members[0].Candidate; got != "claude/pick" {
+		t.Errorf("members[0].Candidate = %q, want the pinned token", got)
+	}
+	if got := doc.Members[1].Candidate; got != "" {
+		t.Errorf("members[1].Candidate = %q, want empty for the unpinned member", got)
+	}
+}
+
+// TestChainResumedTextNamesCandidate pins the resume human text: a pinned
+// member prints actor (candidate), and an unpinned one prints the bare actor,
+// exactly as the start text prints them. Pure rendering: no harness, no network.
+func TestChainResumedTextNamesCandidate(t *testing.T) {
+	res := relevo.ChainResult{
+		Chain: db.ChainRow{Name: "shop", Builder: "shop", Reviewer: "review"},
+		Members: []store.Binding{
+			{Name: "shop", BuilderCandidate: "claude/pick"},
+			{Name: "review", Role: "reviewer"},
+		},
+	}
+	stdout, _, err := captureOutput(t, func() error {
+		chainResumedText(relevo.Runtime{}, res)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("chainResumedText: %v", err)
+	}
+	out := string(stdout)
+	if !strings.Contains(out, "builder (claude/pick)") {
+		t.Errorf("stdout = %q, want the pinned member as actor (candidate)", out)
+	}
+	for _, row := range strings.Split(out, "\n") {
+		if !strings.Contains(row, "review") || strings.Contains(row, "resumed chain") {
+			continue
+		}
+		if strings.Contains(row, "(") {
+			t.Errorf("stdout = %q, want the unpinned reviewer row bare, got %q", out, row)
+		}
 	}
 }
 

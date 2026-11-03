@@ -33,6 +33,17 @@ func (p *paramSlice) Set(val string) error {
 	return nil
 }
 
+// candidateSlice collects the repeatable --candidate part=value flag: one
+// pinned candidate per chain member part.
+type candidateSlice []string
+
+func (p *candidateSlice) String() string { return strings.Join(*p, ",") }
+
+func (p *candidateSlice) Set(val string) error {
+	*p = append(*p, val)
+	return nil
+}
+
 type chainFlagValues struct {
 	name           *string
 	plans          *planSlice
@@ -45,6 +56,7 @@ type chainFlagValues struct {
 	noGate         *bool
 	regate         *int
 	maxCorrections *int
+	builderActor   *string
 	reviewerActor  *string
 	plannerActor   *string
 	securityActor  *string
@@ -55,6 +67,7 @@ type chainFlagValues struct {
 	server         *string
 	workflow       *string
 	params         *paramSlice
+	candidates     *candidateSlice
 	task           *string
 	taskFile       *string
 	dryRun         *bool
@@ -77,6 +90,7 @@ func chainFlagSet(fs *flag.FlagSet) *chainFlagValues {
 	v.noGate = fs.Bool("no-gate", false, "opt the builder out of config policy's gate.default")
 	v.regate = fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: config policy gate.regate)")
 	v.maxCorrections = fs.Int("max-corrections", -1, "correction rounds allowed per plan before NEEDS YOU; 0 halts on the first changes (default: config policy chain.max_corrections)")
+	v.builderActor = fs.String("builder-actor", "", "the actor the builder member runs (default: config repo builder_actor)")
 	v.reviewerActor = fs.String("reviewer-actor", "", "the actor the reviewer member runs (default: config policy chain.reviewer_actor)")
 	v.plannerActor = fs.String("planner-actor", "", "the actor that writes correction and fix plans (default: config policy chain.planner_actor)")
 	v.securityActor = fs.String("security-actor", "", "the actor the security member runs (default: config policy chain.security_actor)")
@@ -88,6 +102,8 @@ func chainFlagSet(fs *flag.FlagSet) *chainFlagValues {
 	v.workflow = fs.String("workflow", "", "run this workflow: a saved or shipped name, or a YAML/JSON file")
 	v.params = &paramSlice{}
 	fs.Var(v.params, "param", "fill a workflow param as key=value; repeatable")
+	v.candidates = &candidateSlice{}
+	fs.Var(v.candidates, "candidate", "pin one chain member to a candidate as part=value (parts: builder, reviewer, planner, security); repeatable")
 	v.task = fs.String("task", "", "the chain's task input text")
 	v.taskFile = fs.String("task-file", "", "read the chain's task input from this file")
 	v.dryRun = fs.Bool("dry-run", false, "resolve and validate the workflow and print its graph; start nothing")
@@ -111,6 +127,9 @@ type ChainDoc struct {
 type ChainMemberDoc struct {
 	Name  string `json:"name"`
 	Actor string `json:"actor"`
+	// Candidate is the candidate the member runs: its pin when one was
+	// given, the policy pick otherwise.
+	Candidate string `json:"candidate"`
 	// Placement names where the member runs: "local", or the server a remote
 	// member runs on.
 	Placement string `json:"placement"`
@@ -144,7 +163,7 @@ func cmdChain(args []string) error {
 		if *v.asJSON {
 			return printDoc(chainDocOf(res))
 		}
-		chainResumedText(res)
+		chainResumedText(rt, res)
 		return nil
 	}
 
@@ -190,6 +209,10 @@ func chainStartOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ChainOption
 	if err != nil {
 		return relevo.ChainOptions{}, err
 	}
+	candidates, err := relevo.ParseChainCandidates([]string(*v.candidates))
+	if err != nil {
+		return relevo.ChainOptions{}, fail(codeUsage, "%v", err)
+	}
 	if *v.server != "" && (*v.workflow != "" || *v.task != "" || *v.taskFile != "" || *v.from != "") {
 		return relevo.ChainOptions{}, fail(codeUsage, "relevo chain --server does not take --workflow, --task or --from: the server's workflow feature is not available yet")
 	}
@@ -220,6 +243,7 @@ func chainStartOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ChainOption
 		NoGate:         *v.noGate,
 		Regate:         regate,
 		MaxCorrections: maxCorrections,
+		BuilderActor:   *v.builderActor,
 		ReviewerActor:  *v.reviewerActor,
 		PlannerActor:   *v.plannerActor,
 		SecurityActor:  *v.securityActor,
@@ -227,6 +251,7 @@ func chainStartOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ChainOption
 		Server:         *v.server,
 		Workflow:       *v.workflow,
 		Params:         params,
+		Candidates:     candidates,
 		Task:           task,
 		DryRun:         *v.dryRun,
 	}
@@ -323,7 +348,7 @@ func chainResumeOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ResumeOpti
 	// A start's own flags have nothing to act on in a resume, so each is
 	// refused by name before any runtime is built: silently ignoring one would
 	// leave the caller believing it took effect.
-	for _, name := range []string{"plan", "base", "ticket", "feature", "no-feature", "mastermind", "workflow", "task", "task-file", "dry-run"} {
+	for _, name := range []string{"plan", "base", "builder-actor", "ticket", "feature", "no-feature", "mastermind", "workflow", "task", "task-file", "dry-run"} {
 		if flagGiven(fs, name) {
 			return relevo.ResumeOptions{}, fail(codeUsage, "relevo chain --resume does not take --%s: a resume continues the chain it names, which already holds its plans, label, workflow and mastermind", name)
 		}
@@ -331,6 +356,10 @@ func chainResumeOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ResumeOpti
 	params, err := parseChainParams(v.params)
 	if err != nil {
 		return relevo.ResumeOptions{}, err
+	}
+	candidates, err := relevo.ParseChainCandidates([]string(*v.candidates))
+	if err != nil {
+		return relevo.ResumeOptions{}, fail(codeUsage, "%v", err)
 	}
 	maxCorrections, err := chainIntFlag(fs, "max-corrections", *v.maxCorrections)
 	if err != nil {
@@ -352,6 +381,7 @@ func chainResumeOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ResumeOpti
 		Regate:         regate,
 		From:           *v.from,
 		Params:         params,
+		Candidates:     candidates,
 	}
 	// --security/--no-security are exclusive (refused above), so an explicit
 	// value is whichever flag was given; neither leaves the stored setting.
@@ -385,6 +415,7 @@ func chainDocOf(res relevo.ChainResult) ChainDoc {
 		doc.Members = append(doc.Members, ChainMemberDoc{
 			Name:      m.Name,
 			Actor:     m.WriterRole(),
+			Candidate: m.BuilderCandidate,
 			Placement: chainMemberPlacement(m),
 		})
 	}
@@ -419,10 +450,7 @@ func chainStartedText(rt relevo.Runtime, res relevo.ChainResult) {
 		res.Chain.Name, res.Plans, res.Chain.Status)
 	builderPlacement := ""
 	for _, m := range res.Members {
-		actor := m.WriterRole()
-		if m.BuilderCandidate != "" {
-			actor = fmt.Sprintf("%s (%s)", actor, candidateLabel(rt, m.BuilderCandidate))
-		}
+		actor := chainMemberActor(rt, m)
 		placement := chainMemberPlacement(m)
 		if m.Name == res.Chain.Builder {
 			builderPlacement = placement
@@ -448,13 +476,24 @@ func chainCheckText(check string) string {
 	return check
 }
 
+// chainMemberActor is the member row's actor: the writer role, with the pinned
+// candidate's label when the member runs a pin, exactly as the start text
+// prints it, so the resume text cannot drift from it.
+func chainMemberActor(rt relevo.Runtime, m store.Binding) string {
+	actor := m.WriterRole()
+	if m.BuilderCandidate != "" {
+		actor = fmt.Sprintf("%s (%s)", actor, candidateLabel(rt, m.BuilderCandidate))
+	}
+	return actor
+}
+
 // chainResumedText is what a resume prints for a human.
-func chainResumedText(res relevo.ChainResult) {
+func chainResumedText(rt relevo.Runtime, res relevo.ChainResult) {
 	c := res.Chain
 	fmt.Printf("resumed chain %s: status %s, step %s\n",
 		c.Name, c.Status, c.Step)
 	for _, m := range res.Members {
-		fmt.Printf("  %-8s %-16s %-8s %s\n", chainPartOf(c, m.Name), m.Name, chainMemberPlacement(m), m.WriterRole())
+		fmt.Printf("  %-8s %-16s %-8s %s\n", chainPartOf(c, m.Name), m.Name, chainMemberPlacement(m), chainMemberActor(rt, m))
 	}
 	fmt.Printf("  awaiting %s round %d\n", c.AwaitingMember, c.AwaitingRound)
 	fmt.Printf("  relevo wait --name %s\n", c.Name)

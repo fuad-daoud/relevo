@@ -67,6 +67,12 @@ agent relevo-reviewer reviewer '{"findings":"artifact","verdict":{"one-of":["pas
 agent relevo-lite-planner lite-planner '{"plan":"artifact"}'
 agent relevo-planner lite-planner '{"design":"artifact"}'
 
+# This checkout runs its chains on the agents above, so record them on the
+# repository's own entry; a chain flag still beats the entry.
+run config repo set builder_actor relevo-builder
+run config repo set reviewer_actor relevo-reviewer
+run config repo set planner_actor relevo-lite-planner
+
 if [ "$dry" -eq 0 ]; then
 	echo "dev-agents: installed relevo-builder, relevo-reviewer, relevo-lite-planner, relevo-planner"
 	echo "dev-agents: a served machine loads new actors when relevo serve restarts"

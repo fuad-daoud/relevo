@@ -21,8 +21,9 @@ import (
 
 // chainWFStart is everything a workflow start resolved before anything existed.
 type chainWFStart struct {
-	def      workflow.Definition
-	settings chain.Settings
+	def        workflow.Definition
+	settings   chain.Settings
+	repoActors map[string]string
 	// gateRes is the gate resolution the settings were built from, so the
 	// start's ChainResult names the tier that supplied the check.
 	gateRes      resolve.GateResolution
@@ -102,6 +103,11 @@ func chainResolveWorkflowBase(ctx context.Context, rt Runtime, opts ChainOptions
 		settings: chainSettings(rt.Policy, opts, checks, repoSet),
 		gateRes:  resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, checks, repoSet),
 	}
+	// An unknown entry actor is refused naming the entry before validation.
+	plan.repoActors, err = chainRepoActorsOrRefuse(rt, def, opts, repoSet)
+	if err != nil {
+		return chainWFStart{}, err
+	}
 	if err := chainRefuseReaderBuilder(def, rt.RoleRegistry().WorkflowActors()); err != nil {
 		return chainWFStart{}, err
 	}
@@ -146,7 +152,7 @@ func chainResolveWorkflowMembers(ctx context.Context, rt Runtime, opts ChainOpti
 	if err := chainFreeNames(rt, plan.members); err != nil {
 		return chainWFStart{}, err
 	}
-	if plan.resolutions, err = chainResolveActors(rt, plan.members); err != nil {
+	if plan.resolutions, err = chainResolveActors(rt, plan.members, plan.repoActors, opts.Candidates); err != nil {
 		return chainWFStart{}, err
 	}
 	return plan, nil

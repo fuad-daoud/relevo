@@ -209,6 +209,32 @@ A `--workflow` runs a saved workflow instead of the shipped
 build-review-correct graph; `relevo config workflow` lists, adds and edits the
 saved ones. `relevo help --json chain` lists every flag.
 
+Pin one member to a candidate without creating one actor per model, where
+`<token>` is a [candidate](candidates.md#choosing-a-candidate) token:
+
+```
+relevo chain --name shop --plan plan-a.md --no-feature --candidate builder=<token>
+```
+
+`--candidate <part>=<candidate>` is repeatable, one pin per part: `builder`,
+`reviewer`, `planner`, `security`. A pin resolves exactly as `bind
+--candidate` does: the token must serve the member's actor or the start is
+refused, and a part without a pin takes the policy pick. `relevo chain
+--resume --candidate reviewer=<token>` re-pins that member and keeps every
+other member's stored pin; a pin naming a part the chain has no member for is
+refused, as is a re-pin on a resume halted at a fork join or on a member that
+runs on a server. A served chain (`--server`) resolves every pin against the
+server's own candidates.
+
+When a member's actor was removed after the chain started, the chain halts
+naming the actor and the resume that swaps in another, e.g. `relevo chain
+--resume --name shop --reviewer-actor <other>` (the builder's swap is
+`--param builder=<other>`, since a resume refuses `--builder-actor`).
+
+The JSON document (`--json`) carries the candidate each member runs as
+`candidate`: its pin, or the policy pick when it has none. The start and
+resume text prints it as `actor (candidate)` on the member's row.
+
 ## Stopping a round
 
 `relevo stop` ends an open round on purpose. The builder runs with no stdin, so

@@ -66,6 +66,11 @@ type ServedChainRequest struct {
 	// ClientActorIDs are the client's link facts, keyed by actor name, written
 	// onto each member as its Link.
 	ClientActorIDs map[string]string
+	// Candidates pins one candidate per chain member: keyed by part for a
+	// settings create, by actor for a workflow create, as the wire carries
+	// them. Each pin resolves against this server's registry, never the
+	// client's.
+	Candidates map[string]string
 }
 
 // servedPick is one member's resolved launch: the server registry's candidate
@@ -133,12 +138,17 @@ func ServedChainPreflight(rt Runtime, req ServedChainRequest) (ServedChainPlan, 
 	}
 	settings := chainSettingsFromWire(req.Settings)
 	opts := ChainOptions{Name: req.Name, BuilderActor: req.BuilderActor, Feature: req.Feature, Ticket: req.Ticket}
-	members := chainMembersFor(opts, settings)
+	// The wire settings already carry the client's repository tier, so the
+	// server applies none of its own.
+	members := chainMembersFor(opts, settings, RepoSettings{})
 	def, err := servedChainDefinition(req)
 	if err != nil {
 		return ServedChainPlan{}, err
 	}
 	if err := chainFreeNames(rt, members); err != nil {
+		return ServedChainPlan{}, err
+	}
+	if err := servedPinKeys(req.Name, members, req.Candidates, false); err != nil {
 		return ServedChainPlan{}, err
 	}
 	picks := make(map[string]servedPick, len(members))
@@ -150,7 +160,7 @@ func ServedChainPreflight(rt Runtime, req ServedChainRequest) (ServedChainPlan, 
 		if shape != m.shape {
 			return ServedChainPlan{}, fmt.Errorf("chain %s actor %q must be a %s actor, not a %s", m.part, m.actor, m.shape, shape)
 		}
-		pick, err := servedActorPick(rt, m.actor)
+		pick, err := servedActorPick(rt, m.actor, req.Candidates[m.part])
 		if err != nil {
 			return ServedChainPlan{}, err
 		}
@@ -190,15 +200,38 @@ func servedChainPreflightWorkflow(rt Runtime, req ServedChainRequest) (ServedCha
 	if err := chainFreeNames(rt, members); err != nil {
 		return ServedChainPlan{}, err
 	}
+	if err := servedPinKeys(req.Name, members, req.Candidates, true); err != nil {
+		return ServedChainPlan{}, err
+	}
 	picks := make(map[string]servedPick, len(members))
 	for _, m := range members {
-		pick, err := servedActorPick(rt, m.actor)
+		pick, err := servedActorPick(rt, m.actor, req.Candidates[m.actor])
 		if err != nil {
 			return ServedChainPlan{}, err
 		}
 		picks[m.part] = pick
 	}
 	return ServedChainPlan{req: req, def: def, settings: chainSettingsFromWire(req.Settings), members: members, picks: picks}, nil
+}
+
+// servedPinKeys refuses a pin that names no member of the create: a pin for
+// a part the chain does not run would otherwise be silently ignored. byActor
+// reads workflow pins, which the wire keys by actor; a settings create reads
+// them by part.
+func servedPinKeys(name string, members []chainMember, pins map[string]string, byActor bool) error {
+	for key := range pins {
+		found := false
+		for _, m := range members {
+			if (!byActor && m.part == key) || (byActor && m.actor == key) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return refusal.New("chain %s has no %s member to pin", name, key)
+		}
+	}
+	return nil
 }
 
 // ServedChainCreate creates the chain a preflight resolved, all-or-none
@@ -326,18 +359,21 @@ func servedMemberLink(key, installation string, ids map[string]string) *store.Re
 }
 
 // servedActorPick resolves one member's candidate and tier from the server's
-// own registry, the calls serve.pickServedTier makes: no client candidate,
-// and the actor's placement list ignored. The empty
-// builder role resolves as "builder", as a served create resolves it. A
-// gating refusal returns as this pick's error, propagated as the create's
-// refusal, as the local start answers with chainResolveActors' error.
-func servedActorPick(rt Runtime, actor string) (servedPick, error) {
+// own registry, the calls serve.pickServedTier makes: an explicit pin
+// resolves exactly as a bind with --candidate does, and an empty pin takes
+// the role's ranked pick, with the actor's placement list ignored in both
+// cases. The empty builder role resolves as "builder", as a served create
+// resolves it. A gating refusal, or a pin no candidate serves, returns as
+// this pick's error, propagated as the create's refusal, as the local start
+// answers with chainResolveActors' error: an explicit pin is never swapped
+// for the default pick.
+func servedActorPick(rt Runtime, actor, pin string) (servedPick, error) {
 	role := resolve.NormRole(actor)
 	roleName := role
 	if roleName == "" {
 		roleName = "builder"
 	}
-	token, kind, err := PickServedCandidateFor(rt, roleName, "")
+	token, kind, err := PickServedCandidateFor(rt, roleName, pin)
 	if err != nil {
 		return servedPick{}, err
 	}

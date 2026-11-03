@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/resolve"
+	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -309,7 +310,7 @@ func TestServedMemberNamesMatchClientMirror(t *testing.T) {
 		engineNames[m.Name] = m.Actor
 	}
 	mirrorNames := map[string]string{}
-	for _, m := range chainMembersFor(ChainOptions{Name: "shop"}, chainSettingsFromWire(req.Settings)) {
+	for _, m := range chainMembersFor(ChainOptions{Name: "shop"}, chainSettingsFromWire(req.Settings), RepoSettings{}) {
 		mirrorNames[m.name] = m.actor
 	}
 	if !reflect.DeepEqual(engineNames, mirrorNames) {
@@ -864,5 +865,293 @@ steps:
 
 	if !reflect.DeepEqual(plan.members, wantMembers) {
 		t.Errorf("plan.members = %+v, want %+v", plan.members, wantMembers)
+	}
+}
+
+// servedPinRuntime is servedChainRuntime with the pin fixture's candidates:
+// opencode and claude serve builder, claude and alt serve reviewer, so a
+// builder pin and a reviewer re-pin each have a token to name.
+func servedPinRuntime(t *testing.T) Runtime {
+	t.Helper()
+
+	rt, _, _ := servedChainRuntime(t)
+	rt.Candidates = candidateSet(t, chainPinCandidatesJSON)
+	rows := chainRows()
+	rows["builder"] = roles.Row{Candidates: []string{"opencode/test/m", "claude/test/m"}}
+	rows["reviewer"] = roles.Row{Candidates: []string{"claude/test/m", "claude/test/alt"}}
+	rt.Registry = rolesFileRegistry(t, rt.Candidates, rt.Policy, rows)
+	return rt
+}
+
+// TestServedChainPreflightPinsMemberCandidate pins the served pin: a valid pin
+// stores its token on the member, while a part without one keeps the server's
+// own default pick.
+func TestServedChainPreflightPinsMemberCandidate(t *testing.T) {
+	t.Parallel()
+
+	rt := servedPinRuntime(t)
+	req := servedChainRequest("shop")
+	req.Candidates = map[string]string{"builder": "opencode/test/m", "reviewer": "claude/test/alt"}
+	servedChainStart(t, rt, req)
+
+	if got := chainBinding(t, rt, "shop").BuilderCandidate; got != "opencode/test/m" {
+		t.Errorf("builder candidate = %q, want the pinned opencode/test/m", got)
+	}
+	if got := chainBinding(t, rt, "shop-rev").BuilderCandidate; got != "claude/test/alt" {
+		t.Errorf("reviewer candidate = %q, want the pinned claude/test/alt", got)
+	}
+	if got := chainBinding(t, rt, "shop-plan").BuilderCandidate; got != testClaudeRef {
+		t.Errorf("planner candidate = %q, want the server's default pick %q", got, testClaudeRef)
+	}
+}
+
+// TestServedChainPreflightPinsWorkflowMemberCandidate pins the workflow
+// create's actor-keyed pins: the pin stored on the member is the one keyed by
+// its actor.
+func TestServedChainPreflightPinsWorkflowMemberCandidate(t *testing.T) {
+	t.Parallel()
+
+	rt := servedPinRuntime(t)
+	const customYAML = `name: custom-flow
+inputs:
+  plans: required
+start: b
+steps:
+  b:
+    run: builder
+    on:
+      done: r
+  r:
+    run: reviewer
+    on:
+      verdict=pass: done
+      else: done
+`
+	req := servedChainRequest("custom")
+	req.Workflow = []byte(customYAML)
+	req.Candidates = map[string]string{"reviewer": "claude/test/alt"}
+	servedChainStart(t, rt, req)
+
+	if got := chainBinding(t, rt, "custom-reviewer").BuilderCandidate; got != "claude/test/alt" {
+		t.Errorf("reviewer candidate = %q, want the pinned claude/test/alt", got)
+	}
+	if got := chainBinding(t, rt, "custom").BuilderCandidate; got == "claude/test/alt" {
+		t.Errorf("builder candidate = %q, want the server's default pick, not the reviewer pin", got)
+	}
+}
+
+// TestServedChainPreflightRefusesAnUnknownPin pins the served refusal: a pin
+// serving only another actor refuses the preflight with bind's own wording,
+// and nothing is created -- the default pick is never silently substituted.
+func TestServedChainPreflightRefusesAnUnknownPin(t *testing.T) {
+	t.Parallel()
+
+	rt := servedPinRuntime(t)
+	req := servedChainRequest("shop")
+	req.Candidates = map[string]string{"builder": "claude/test/alt"}
+
+	_, err := ServedChainPreflight(rt, req)
+	if err == nil {
+		t.Fatal("ServedChainPreflight(cross-part pin) = nil, want a refusal")
+	}
+	if !strings.Contains(err.Error(), `does not serve actor "builder"`) {
+		t.Errorf("err = %q, want bind's does-not-serve-actor wording", err.Error())
+	}
+	assertServedChainAbsent(t, rt, "shop")
+}
+
+// TestServedChainPreflightRefusesAPinWithoutMember pins the unknown-key
+// refusal: a pin naming a part no member fills is refused before anything is
+// created, on both the settings and the workflow preflight.
+func TestServedChainPreflightRefusesAPinWithoutMember(t *testing.T) {
+	t.Parallel()
+
+	t.Run("settings create", func(t *testing.T) {
+		t.Parallel()
+
+		rt := servedPinRuntime(t)
+		req := servedChainRequest("shop")
+		req.Candidates = map[string]string{"security": "claude/test/m"}
+
+		_, err := ServedChainPreflight(rt, req)
+		if err == nil {
+			t.Fatal("ServedChainPreflight(security pin without a member) = nil, want a refusal")
+		}
+		if !strings.Contains(err.Error(), "has no security member to pin") {
+			t.Errorf("err = %q, want it to name the missing security member", err.Error())
+		}
+		assertServedChainAbsent(t, rt, "shop")
+	})
+
+	t.Run("workflow create", func(t *testing.T) {
+		t.Parallel()
+
+		rt := servedPinRuntime(t)
+		const customYAML = `name: custom-flow
+inputs:
+  plans: required
+start: b
+steps:
+  b:
+    run: builder
+    on:
+      done: r
+  r:
+    run: reviewer
+    on:
+      verdict=pass: done
+      else: done
+`
+		req := servedChainRequest("custom")
+		req.Workflow = []byte(customYAML)
+		req.Candidates = map[string]string{"security": "claude/test/m"}
+
+		_, err := ServedChainPreflight(rt, req)
+		if err == nil {
+			t.Fatal("ServedChainPreflight(security pin without a member) = nil, want a refusal")
+		}
+		if !strings.Contains(err.Error(), "has no security member to pin") {
+			t.Errorf("err = %q, want it to name the missing security member", err.Error())
+		}
+		assertServedChainAbsent(t, rt, "custom")
+	})
+}
+
+// haltServedChain leaves a served chain halted with its builder on round 2,
+// the shape a collected close leaves for a resume to re-send.
+func haltServedChain(t *testing.T, rt Runtime, name string) {
+	t.Helper()
+
+	builder := chainBinding(t, rt, name)
+	builder.Round = 2
+	if err := rt.Store.Save(builder); err != nil {
+		t.Fatalf("advance the builder: %v", err)
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		row, err := tx.Chain(name)
+		if err != nil {
+			return err
+		}
+		row.Status = string(chain.StatusHalted)
+		var st workflow.State
+		if err := json.Unmarshal(row.StateJSON, &st); err != nil {
+			return err
+		}
+		st.Status = workflow.StatusHalted
+		stateJSON, err := json.Marshal(st)
+		if err != nil {
+			return err
+		}
+		row.StateJSON = stateJSON
+		return tx.ChainPut(row)
+	}); err != nil {
+		t.Fatalf("halt the chain: %v", err)
+	}
+}
+
+// servedCandidates snapshots every served member's stored candidate.
+func servedCandidates(t *testing.T, rt Runtime) map[string]string {
+	t.Helper()
+
+	out := map[string]string{}
+	for _, name := range []string{"shop", "shop-rev", "shop-plan"} {
+		out[name] = chainBinding(t, rt, name).BuilderCandidate
+	}
+	return out
+}
+
+// TestServedChainResumeRepinsReviewerCandidate pins the served re-pin: a
+// resume with --candidate reviewer=<alt> stores the alt token on the served
+// reviewer, while the other members keep their stored candidate, and the
+// chain runs again.
+func TestServedChainResumeRepinsReviewerCandidate(t *testing.T) {
+	t.Parallel()
+
+	rt := servedPinRuntime(t)
+	servedChainStart(t, rt, servedChainRequest("shop"))
+	before := servedCandidates(t, rt)
+	haltServedChain(t, rt, "shop")
+
+	res, err := ChainResume(context.Background(), rt, ResumeOptions{
+		Name:       "shop",
+		Candidates: map[string]string{"reviewer": "claude/test/alt"},
+	})
+	if err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+	if res.Chain.Status != string(chain.StatusRunning) {
+		t.Errorf("result chain status = %q, want running", res.Chain.Status)
+	}
+
+	if got := chainBinding(t, rt, "shop-rev").BuilderCandidate; got != "claude/test/alt" {
+		t.Errorf("reviewer candidate = %q, want the re-pinned claude/test/alt", got)
+	}
+	after := servedCandidates(t, rt)
+	for _, name := range []string{"shop", "shop-plan"} {
+		if after[name] != before[name] {
+			t.Errorf("%s candidate = %q, want the stored %q", name, after[name], before[name])
+		}
+	}
+}
+
+// TestServedChainResumeWithoutCandidateKeepsStoredCandidates pins the served
+// default: a resume without --candidate keeps every stored candidate
+// byte-for-byte.
+func TestServedChainResumeWithoutCandidateKeepsStoredCandidates(t *testing.T) {
+	t.Parallel()
+
+	rt := servedPinRuntime(t)
+	servedChainStart(t, rt, servedChainRequest("shop"))
+	before := servedCandidates(t, rt)
+	haltServedChain(t, rt, "shop")
+
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+
+	if after := servedCandidates(t, rt); !reflect.DeepEqual(after, before) {
+		t.Errorf("candidates = %v, want the stored %v", after, before)
+	}
+}
+
+// TestServedChainResumeBadPinRefusesBeforeAnyWrite pins the served bad pin: a
+// builder pin that serves only the reviewer refuses the resume with the
+// server's own error, and the member rows and stored candidates are
+// unchanged.
+func TestServedChainResumeBadPinRefusesBeforeAnyWrite(t *testing.T) {
+	t.Parallel()
+
+	rt := servedPinRuntime(t)
+	servedChainStart(t, rt, servedChainRequest("shop"))
+	before := servedCandidates(t, rt)
+	rowsBefore, err := rt.Store.ChainMembers("shop")
+	if err != nil {
+		t.Fatalf("ChainMembers before: %v", err)
+	}
+	haltServedChain(t, rt, "shop")
+
+	_, err = ChainResume(context.Background(), rt, ResumeOptions{
+		Name:       "shop",
+		Candidates: map[string]string{"builder": "claude/test/alt"},
+	})
+	if err == nil {
+		t.Fatal("ChainResume(cross-part pin) = nil, want a refusal")
+	}
+	if !strings.Contains(err.Error(), `does not serve actor "builder"`) {
+		t.Errorf("err = %q, want bind's does-not-serve-actor wording", err.Error())
+	}
+
+	if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusHalted) {
+		t.Errorf("chain status = %q, want it still halted", row.Status)
+	}
+	rowsAfter, err := rt.Store.ChainMembers("shop")
+	if err != nil {
+		t.Fatalf("ChainMembers after: %v", err)
+	}
+	if !reflect.DeepEqual(rowsAfter, rowsBefore) {
+		t.Errorf("member rows = %+v, want untouched %+v", rowsAfter, rowsBefore)
+	}
+	if after := servedCandidates(t, rt); !reflect.DeepEqual(after, before) {
+		t.Errorf("candidates = %v, want untouched %v", after, before)
 	}
 }

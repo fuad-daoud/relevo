@@ -71,7 +71,9 @@ func chainStartChildPlan(ctx context.Context, rt Runtime, tx *store.Tx, parent d
 	if err := chainFreeNames(rt, members); err != nil {
 		return ChainOptions{}, chainWFStart{}, nil, err
 	}
-	resolutions, err := chainResolveActors(rt, members)
+	// A fork's members come from the child's own definition, never the
+	// repository entry, so no part is entry-supplied here.
+	resolutions, err := chainResolveActors(rt, members, nil)
 	if err != nil {
 		return ChainOptions{}, chainWFStart{}, nil, err
 	}

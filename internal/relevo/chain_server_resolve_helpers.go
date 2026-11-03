@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -60,6 +61,7 @@ func chainServerResolveBodies(ctx context.Context, rt Runtime, opts ChainOptions
 		settings: chainSettings(rt.Policy, opts, checks, repoSet),
 		gateRes:  resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, checks, repoSet),
 		server:   opts.Server,
+		repoSet:  repoSet,
 	}
 	plan.repo = repo
 	// From the same repository value, not a second working-directory probe.
@@ -124,10 +126,21 @@ func chainServerResolveGates(ctx context.Context, rt Runtime, opts ChainOptions,
 		return fail(fmt.Errorf("server %s does not take --param: the server's workflow feature is not available yet; upgrade it, or start the chain without --server", opts.Server))
 	}
 	if !hasWorkflow {
-		plan.members = chainMembersFor(opts, plan.settings)
+		plan.members = chainMembersFor(opts, plan.settings, plan.repoSet)
 		if err := chainFreeNames(rt, plan.members); err != nil {
 			return fail(err)
 		}
+	} else if len(opts.Candidates) > 0 {
+		// A pinned workflow create rekeys its part pins by actor, so the
+		// members are resolved read-only here. Unpinned creates skip this:
+		// the server resolves the members authoritatively, and a client
+		// refusal from its own registry must not block them.
+		actors := rt.RoleRegistry().WorkflowActors()
+		planned, err := chain.MemberNames(opts.Name, plan.def, actors)
+		if err != nil {
+			return fail(err)
+		}
+		plan.members = chainWorkflowMembers(plan.def, planned, chain.WriterKeeper(plan.def, workflow.UsedActors(plan.def), actors))
 	}
 	return plan, who, nil
 }

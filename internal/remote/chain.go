@@ -56,6 +56,14 @@ type CreateChainRequest struct {
 	ClientBindingIDs   map[string]string `json:"client_binding_ids,omitempty"`
 	Workflow           json.RawMessage   `json:"workflow,omitempty"`
 	ClientActorIDs     map[string]string `json:"client_actor_ids,omitempty"`
+	// Candidates pins one candidate per chain member. It is keyed by part
+	// for a legacy settings create, whose members the server names by part,
+	// and by actor for a workflow create, whose members it names by actor,
+	// mirroring ClientBindingIDs and ClientActorIDs. An unknown key or a
+	// token the server's registry refuses fails the create; nothing is
+	// silently replaced. Absent from clients older than the field, which
+	// older servers also ignore.
+	Candidates map[string]string `json:"candidates,omitempty"`
 }
 
 // ClosedRoundView is one closed member round's facts: the facts BindingView
@@ -159,6 +167,13 @@ type ChainResumeRequest struct {
 	From string `json:"from,omitempty"`
 	// Params overrides the workflow's params, keyed by param name.
 	Params map[string]string `json:"params,omitempty"`
+	// Candidates re-pins one candidate per chain member, keyed by part as
+	// the CLI names it; the server matches each pin against the resumed
+	// definition's members. An unknown key or a token the server's registry
+	// refuses fails the resume; a part without a pin keeps its stored
+	// candidate. Absent from clients older than the field, which older
+	// servers also ignore.
+	Candidates map[string]string `json:"candidates,omitempty"`
 }
 
 type ChainStopResponse struct {

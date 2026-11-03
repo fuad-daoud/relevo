@@ -47,6 +47,29 @@ func overlaySwapBinding(existing, fresh store.Binding, m chainMember) store.Bind
 	return existing
 }
 
+// applyServedRepin overlays one served member's stored binding with its
+// re-pin's pick from the server's own registry, inside the caller's lock.
+// The pin's token comes from the preflight's resolution, which already
+// refused a pin no candidate serves, and the pick re-resolves it so the
+// member's kind and tier match the pinned candidate. A refused pick leaves
+// the member rows unchanged through the caller's snapshot restore.
+func applyServedRepin(rt Runtime, tx *store.Tx, m chainMember, repins chainResumeRepins, snap *chainResumeSnapshot) error {
+	existing, err := tx.Load(m.name)
+	if err != nil {
+		return err
+	}
+	token := repins.resolutions[m.part].Candidate.Ref().String()
+	pick, err := servedActorPick(rt, m.actor, token)
+	if err != nil {
+		return err
+	}
+	snap.recordSwapped(existing)
+	if err := tx.Save(overlayServedSwapBinding(existing, m, pick)); err != nil {
+		return err
+	}
+	return nil
+}
+
 // overlayServedSwapBinding mutates a served binding with the server's pick,
 // preserving placement and link.
 func overlayServedSwapBinding(existing store.Binding, m chainMember, pick servedPick) store.Binding {
@@ -80,7 +103,7 @@ func validateServedSwapActors(rt Runtime, members []chainMember) (map[string]ser
 		if shape != m.shape {
 			return nil, fmt.Errorf("chain %s actor %q must be a %s actor, not a %s", m.part, m.actor, m.shape, shape)
 		}
-		pick, err := servedActorPick(rt, m.actor)
+		pick, err := servedActorPick(rt, m.actor, "")
 		if err != nil {
 			return nil, err
 		}
@@ -170,11 +193,13 @@ func chainResumeSwapLocal(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 	if err := validateSwapOpenRounds(tx, c, swap); err != nil {
 		return c, err
 	}
-	swapRes, err := chainResolveActors(rt, swap)
+	// Swapped and added members keep their stored actors, never the
+	// repository entry, so no part is entry-supplied here.
+	swapRes, err := chainResolveActors(rt, swap, nil)
 	if err != nil {
 		return c, err
 	}
-	addRes, err := chainResolveActors(rt, add)
+	addRes, err := chainResolveActors(rt, add, nil)
 	if err != nil {
 		return c, err
 	}

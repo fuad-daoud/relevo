@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -70,6 +71,12 @@ func readHookInput(hookKind, event string) (mastermind.HookInput, error) {
 // keeps the start far below Claude's 30 s hook cutoff.
 var mastermindInitTimeout = 5 * time.Second
 
+// hookWorkers counts the hook workers still running, the ones a deadline
+// abandoned included. A process exits past them, but a test runs the next
+// command in the same process, so it joins them first: an abandoned worker
+// otherwise reads the globals that command's run rewrites.
+var hookWorkers sync.WaitGroup
+
 // mastermindInitHook runs `relevo mastermind init --hook claude|muse`. It never
 // returns an error and never exits non-zero: blocking a session because relevo
 // could not read its own state is worse than an unregistered mastermind.
@@ -92,7 +99,9 @@ func mastermindInitHook(nameFlag, hookKind string) error {
 	// so a late answer cannot land in the session; the channel holds one, so
 	// the loser never blocks sending it.
 	done := make(chan mastermindNoticeResult, 1)
+	hookWorkers.Add(1)
 	go func() {
+		defer hookWorkers.Done()
 		stdout, err := mastermindInitRun(nameFlag, hookKind, in)
 		done <- mastermindNoticeResult{stdout: stdout, err: err}
 	}()
@@ -253,7 +262,9 @@ func mastermindNoticeHook(hookKind string) error {
 	// so a late answer cannot land in the next prompt; the channel holds one,
 	// so the loser never blocks sending it.
 	done := make(chan mastermindNoticeResult, 1)
+	hookWorkers.Add(1)
 	go func() {
+		defer hookWorkers.Done()
 		stdout, err := mastermindNoticeRun(hookKind, in)
 		done <- mastermindNoticeResult{stdout: stdout, err: err}
 	}()

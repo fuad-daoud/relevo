@@ -87,7 +87,7 @@ var registryBindChain = []verbEntry{
 		Summary: "start a chain: build, review and correct across a list of plans",
 		Args:    "--name <n> (--plan <file> [--plan <file>...] (--feature <label>|--no-feature) | --resume) [--workflow <name|path>] [--param k=v] [--task <text>|--task-file <path>] [--dry-run] [--json]",
 		Flags: []string{
-			"--base", "--dry-run", "--feature", "--from", "--gate", "--json", "--mastermind", "--max-corrections",
+			"--base", "--builder-actor", "--candidate", "--dry-run", "--feature", "--from", "--gate", "--json", "--mastermind", "--max-corrections",
 			"--name", "--no-feature", "--no-gate", "--no-security", "--param", "--plan", "--planner-actor", "--regate",
 			"--resume", "--reviewer-actor", "--security", "--security-actor", "--server", "--task", "--task-file",
 			"--ticket", "--workflow",

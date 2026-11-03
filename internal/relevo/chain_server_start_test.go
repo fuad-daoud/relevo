@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -96,7 +97,7 @@ func seedServerChain(t *testing.T, rt Runtime, name string) store.Binding {
 	ctx := context.Background()
 	opts := ChainOptions{Name: name, Feature: "auth", MasterMindID: testMasterMindName}
 	settings := chainSettings(rt.Policy, opts, false, RepoSettings{})
-	members := chainMembersFor(opts, settings)
+	members := chainMembersFor(opts, settings, RepoSettings{})
 	repo := rt.Store.Dir(name)
 	repoRef := captureRepo(ctx, rt, repo)
 	built := make([]store.Binding, 0, len(members))
@@ -926,4 +927,173 @@ func TestServerChainMembersComeFromView(t *testing.T) {
 	if _, err := rt.Store.Load("shop-tester"); err != nil {
 		t.Errorf("load shop-tester from store: %v", err)
 	}
+}
+
+// TestChainServerRequestCarriesPinsByPart pins the legacy create's pins: a
+// settings create carries the CLI's part-keyed pins verbatim, and an unpinned
+// one carries none.
+func TestChainServerRequestCarriesPinsByPart(t *testing.T) {
+	t.Parallel()
+
+	pins := map[string]string{"builder": "opencode/test/m", "reviewer": "claude/test/m"}
+	opts := ChainOptions{Name: "shop", Feature: "auth", Candidates: pins}
+	plan := chainServerPlan{repoID: strings.Repeat("a", 64), base: seedRemoteBase}
+	req := chainServerRequest(opts, plan, chainServerIDs{})
+	if !reflect.DeepEqual(req.Candidates, pins) {
+		t.Errorf("candidates = %v, want the part-keyed pins %v", req.Candidates, pins)
+	}
+	if len(req.Workflow) != 0 {
+		t.Errorf("workflow = %s, want empty for a settings create", req.Workflow)
+	}
+
+	bare := chainServerRequest(ChainOptions{Name: "shop"}, plan, chainServerIDs{})
+	if bare.Candidates != nil {
+		t.Errorf("candidates = %v, want nil for an unpinned create", bare.Candidates)
+	}
+	raw, err := json.Marshal(bare)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if bytes.Contains(raw, []byte(`"candidates"`)) {
+		t.Errorf("wire body = %s, want no candidates key for an unpinned create", raw)
+	}
+}
+
+// TestChainServerRequestRekeysPinsByActor pins the workflow create's pins: a
+// workflow create carries them keyed by actor, as the server names the
+// members, with an unknown part riding along for the preflight to refuse.
+func TestChainServerRequestRekeysPinsByActor(t *testing.T) {
+	t.Parallel()
+
+	members := []chainMember{
+		{part: chain.MemberBuilder, name: "shop", actor: "builder"},
+		{part: chain.MemberReviewer, name: "shop-rev", actor: "reviewer"},
+		{part: chain.MemberPlanner, name: "shop-plan", actor: "lite-planner"},
+	}
+	pins := map[string]string{
+		"builder":  "opencode/test/m",
+		"planner":  "claude/test/m",
+		"security": "claude/test/m",
+	}
+	opts := ChainOptions{Name: "shop", Feature: "auth", Candidates: pins}
+	plan := chainServerPlan{
+		hasWorkflow: true, def: workflow.Definition{Name: "custom"},
+		repoID: strings.Repeat("a", 64), base: seedRemoteBase, members: members,
+	}
+	req := chainServerRequest(opts, plan, chainServerIDs{byActor: map[string]string{"builder": "id-1"}})
+	want := map[string]string{
+		"builder":      "opencode/test/m",
+		"lite-planner": "claude/test/m",
+		"security":     "claude/test/m",
+	}
+	if !reflect.DeepEqual(req.Candidates, want) {
+		t.Errorf("candidates = %v, want the actor-keyed pins %v", req.Candidates, want)
+	}
+}
+
+// TestServerChainCreateCarriesPinsToTheServer pins the whole pinned start: a
+// workflow create posts actor-keyed pins and a settings create part-keyed
+// ones, each resolved without a client-side registry refusal.
+func TestServerChainCreateCarriesPinsToTheServer(t *testing.T) {
+	t.Parallel()
+
+	t.Run("workflow create keys pins by actor", func(t *testing.T) {
+		t.Parallel()
+
+		fr := chainServerFake()
+		fr.whoAmIResp.Features = append(fr.whoAmIResp.Features, remote.FeatureWorkflow)
+		rt, _, ft := chainServerRuntime(t, fr)
+		ft.snapshotResp = remote.Snapshot{
+			Heads: map[string]string{"refs/relevo/shop/out": seedRemoteBase},
+			Body:  io.NopCloser(strings.NewReader("bundle-bytes")),
+		}
+
+		opts := chainServerOpts(t)
+		opts.Candidates = map[string]string{"builder": "opencode/test/m", "planner": "claude/test/m"}
+		if _, err := ChainStart(context.Background(), rt, opts); err != nil {
+			t.Fatalf("ChainStart: %v", err)
+		}
+		want := map[string]string{"builder": "opencode/test/m", "lite-planner": "claude/test/m"}
+		if !reflect.DeepEqual(fr.createChainReq.Candidates, want) {
+			t.Errorf("candidates = %v, want the actor-keyed pins %v", fr.createChainReq.Candidates, want)
+		}
+		if len(fr.createChainReq.ClientActorIDs) == 0 {
+			t.Error("client actor ids are empty, want one per member")
+		}
+	})
+
+	t.Run("settings create keys pins by part", func(t *testing.T) {
+		t.Parallel()
+
+		fr := chainServerFake()
+		rt, _, ft := chainServerRuntime(t, fr)
+		ft.snapshotResp = remote.Snapshot{
+			Heads: map[string]string{"refs/relevo/shop/out": seedRemoteBase},
+			Body:  io.NopCloser(strings.NewReader("bundle-bytes")),
+		}
+
+		opts := chainServerOpts(t)
+		opts.Candidates = map[string]string{"builder": "opencode/test/m"}
+		if _, err := ChainStart(context.Background(), rt, opts); err != nil {
+			t.Fatalf("ChainStart: %v", err)
+		}
+		want := map[string]string{"builder": "opencode/test/m"}
+		if !reflect.DeepEqual(fr.createChainReq.Candidates, want) {
+			t.Errorf("candidates = %v, want the part-keyed pins %v", fr.createChainReq.Candidates, want)
+		}
+	})
+}
+
+// TestServerChainPinnedCreateRefusesAnUnknownActor pins the guarded member
+// computation: a pinned workflow create whose definition names an actor the
+// client does not configure is refused before anything is posted, while the
+// same unpinned create skips the computation and posts.
+func TestServerChainPinnedCreateRefusesAnUnknownActor(t *testing.T) {
+	t.Parallel()
+
+	runtimeWithoutPlanner := func(t *testing.T, fr *fakeRemote) (Runtime, *fakeTransport) {
+		t.Helper()
+		rt, _, ft := chainServerRuntime(t, fr)
+		fr.whoAmIResp.Features = append(fr.whoAmIResp.Features, remote.FeatureWorkflow)
+		rows := chainRemoteRows()
+		delete(rows, "lite-planner")
+		rt.Registry = rolesFileRegistry(t, rt.Candidates, rt.Policy, rows)
+		ft.snapshotResp = remote.Snapshot{
+			Heads: map[string]string{"refs/relevo/shop/out": seedRemoteBase},
+			Body:  io.NopCloser(strings.NewReader("bundle-bytes")),
+		}
+		return rt, ft
+	}
+
+	t.Run("pinned", func(t *testing.T) {
+		t.Parallel()
+
+		fr := chainServerFake()
+		rt, _ := runtimeWithoutPlanner(t, fr)
+		opts := chainServerOpts(t)
+		opts.Candidates = map[string]string{"builder": "opencode/test/m"}
+		_, err := ChainStart(context.Background(), rt, opts)
+		if err == nil {
+			t.Fatal("ChainStart = nil, want the unknown-actor refusal")
+		}
+		if !strings.Contains(err.Error(), "lite-planner") {
+			t.Errorf("err = %q, want it to name the unconfigured actor", err.Error())
+		}
+		if len(fr.createChainReq.Plans) != 0 {
+			t.Errorf("create = %+v, want nothing posted after the refusal", fr.createChainReq)
+		}
+	})
+
+	t.Run("unpinned", func(t *testing.T) {
+		t.Parallel()
+
+		fr := chainServerFake()
+		rt, _ := runtimeWithoutPlanner(t, fr)
+		if _, err := ChainStart(context.Background(), rt, chainServerOpts(t)); err != nil {
+			t.Fatalf("ChainStart(unpinned) = %v, want the server to resolve the members", err)
+		}
+		if len(fr.createChainReq.Plans) == 0 {
+			t.Error("create carries no plans, want the posted create")
+		}
+	})
 }

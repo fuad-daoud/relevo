@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // ResumeOptions is what one `relevo chain --resume` was asked for: the chain
@@ -40,6 +41,11 @@ type ResumeOptions struct {
 	From string
 	// Params overrides the workflow's params, keyed by param name.
 	Params map[string]string
+	// Candidates re-pins one candidate per chain member, keyed by part; a
+	// part without a pin keeps the stored candidate. A pin that does not
+	// serve the member's actor refuses the resume before anything is
+	// written, exactly as a bind with --candidate does.
+	Candidates map[string]string
 }
 
 // ChainResume continues a chain a human has looked at. The flags override the
@@ -69,6 +75,111 @@ func ChainResume(ctx context.Context, rt Runtime, opts ResumeOptions) (ChainResu
 		return ChainResult{}, err
 	}
 	return out, nil
+}
+
+// chainResumeRepins is what a --candidate resume carries between its
+// preflight and its commit: the pinned members with the actors the resumed
+// definition runs, and each pinned part's resolution.
+type chainResumeRepins struct {
+	members     []chainMember
+	resolutions map[string]resolve.Resolution
+}
+
+// resolveChainResumeRepins resolves a resume's --candidate pins against the
+// actors the resumed definition runs, read-only and before anything is
+// written. It reuses chainResolveActors, so a pin that does not serve the
+// member's actor refuses with bind's own wording.
+//
+// A re-pin keeps the member's actor, so it is not a swap: it never goes
+// through splitPlannedMembers, which divides planned members into added and
+// actor-swapped ones. Unpinned parts resolve nothing here and keep their
+// stored candidate verbatim.
+func resolveChainResumeRepins(rt Runtime, c db.ChainRow, def workflow.Definition, opts ResumeOptions) (chainResumeRepins, error) {
+	if len(opts.Candidates) == 0 {
+		return chainResumeRepins{}, nil
+	}
+	actors := rt.RoleRegistry().WorkflowActors()
+	planned, err := chain.MemberNames(c.Name, def, actors)
+	if err != nil {
+		return chainResumeRepins{}, err
+	}
+	keeper := chain.WriterKeeper(def, workflow.UsedActors(def), actors)
+	var pinned []chainMember
+	for _, m := range chainWorkflowMembers(def, planned, keeper) {
+		if _, ok := opts.Candidates[m.part]; ok {
+			pinned = append(pinned, m)
+		}
+	}
+	for part := range opts.Candidates {
+		found := false
+		for _, m := range pinned {
+			if m.part == part {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return chainResumeRepins{}, refusal.New("chain %s has no %s member to pin", c.Name, part)
+		}
+	}
+	resolutions, err := chainResolveActors(rt, pinned, nil, opts.Candidates)
+	if err != nil {
+		return chainResumeRepins{}, err
+	}
+	return chainResumeRepins{members: pinned, resolutions: resolutions}, nil
+}
+
+// chainResumeApplyRepins overlays the re-pinned members' stored bindings
+// with their pin's candidate, account, endpoint and tier, inside the
+// caller's lock. Every error goes through snap.restore, so a refused pin
+// leaves the member rows unchanged.
+func chainResumeApplyRepins(ctx context.Context, rt Runtime, tx *store.Tx, row db.ChainRow, repins chainResumeRepins, set chain.Settings, plans int, snap *chainResumeSnapshot) error {
+	if len(repins.members) == 0 {
+		return nil
+	}
+	builder, err := tx.Load(row.Builder)
+	if err != nil {
+		return fmt.Errorf("chain %s has no builder member to place the re-pinned members beside: %w", row.Name, err)
+	}
+	base := chainBase{
+		cwd: builder.CWD, mastermind: builder.MasterMind, mastermindID: row.MasterMindID,
+		repo: builder.Repo, repoRef: builder.RepoRef, feature: row.Feature, ticket: row.Ticket,
+		subdir:   builder.Subdir,
+		worktree: builder.CWD,
+	}
+	built, err := chainBuildMembers(ctx, rt, repins.members, repins.resolutions, base, set, plans)
+	if err != nil {
+		return err
+	}
+	for i, m := range repins.members {
+		existing, err := tx.Load(m.name)
+		if err != nil {
+			return err
+		}
+		if existing.Serve != nil {
+			// The serving machine re-pins its own served member against
+			// its own registry. A mirror never carries Serve facts, so
+			// this arm cannot fire on a client.
+			if err := applyServedRepin(rt, tx, m, repins, snap); err != nil {
+				return err
+			}
+			continue
+		}
+		if existing.Owner != "" || existing.Builder.Remote() {
+			return refusal.New("chain %s member %s runs on a server: --candidate re-pins a local member only", row.Name, m.name)
+		}
+		snap.recordSwapped(existing)
+		updated := existing
+		updated.BuilderCandidate = built[i].BuilderCandidate
+		updated.BuilderAccount = built[i].BuilderAccount
+		updated.BuilderPinned = built[i].BuilderPinned
+		updated.Builder = built[i].Builder
+		updated.Tier = built[i].Tier
+		if err := tx.Save(updated); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // resumeRefusal is the one refusal a resume makes on its own chain: running
