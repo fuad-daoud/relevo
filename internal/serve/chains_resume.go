@@ -90,5 +90,9 @@ func resumeOptionsFromWire(name string, req remote.ChainResumeRequest) (relevo.R
 	if len(params) > 0 {
 		opts.Params = params
 	}
+	// Pins ride along verbatim under the wire's keys; the resume matches
+	// each pin against the resumed definition's members, so unpinned parts
+	// stay nil and keep their stored candidate.
+	opts.Candidates = req.Candidates
 	return opts, ""
 }

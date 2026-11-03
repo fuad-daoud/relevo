@@ -65,12 +65,6 @@ func ChainResume(ctx context.Context, rt Runtime, opts ResumeOptions) (ChainResu
 		return ChainResult{}, err
 	}
 	if chain.OnServer(c) {
-		// A served resume ships no pins: the wire carries no candidate, so
-		// the pin would be silently ignored. It is refused instead, naming
-		// the change that carries served pins.
-		if len(opts.Candidates) > 0 {
-			return ChainResult{}, refusal.New("chain %s runs on server %s: --candidate on a served resume is refused; served resume pins arrive in Plan 3", c.Name, c.Server)
-		}
 		return chainServerResume(ctx, rt, c, opts)
 	}
 	out, err := chainResumeWorkflow(ctx, rt, c, opts)
@@ -161,6 +155,15 @@ func chainResumeApplyRepins(ctx context.Context, rt Runtime, tx *store.Tx, row d
 		existing, err := tx.Load(m.name)
 		if err != nil {
 			return err
+		}
+		if existing.Serve != nil {
+			// The serving machine re-pins its own served member against
+			// its own registry. A mirror never carries Serve facts, so
+			// this arm cannot fire on a client.
+			if err := applyServedRepin(rt, tx, m, repins, snap); err != nil {
+				return err
+			}
+			continue
 		}
 		if existing.Owner != "" || existing.Builder.Remote() {
 			return refusal.New("chain %s member %s runs on a server: --candidate re-pins a local member only", row.Name, m.name)

@@ -233,44 +233,6 @@ func TestChainResumePinOnRemoteMemberRefuses(t *testing.T) {
 	}
 }
 
-// TestChainResumePinOnServedChainRefuses pins the served rule: a --resume
-// --candidate targeting a chain the server runs is refused naming the change
-// that carries served pins, and the mirror stays halted. The pin is locally
-// valid, so the refusal can only come from the served guard.
-func TestChainResumePinOnServedChainRefuses(t *testing.T) {
-	t.Parallel()
-
-	rt := repinRuntime(t)
-	haltedPinnedChain(t, rt)
-	// Plant the mirror marker: the row runs on a server, so the resume
-	// would ship the wire request, which carries no pins.
-	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		row, err := tx.Chain("shop")
-		if err != nil {
-			return err
-		}
-		row.Server = "zen"
-		return tx.ChainPut(row)
-	}); err != nil {
-		t.Fatalf("mark the chain served: %v", err)
-	}
-
-	_, err := ChainResume(context.Background(), rt, ResumeOptions{
-		Name:       "shop",
-		Candidates: map[string]string{"reviewer": "claude/test/alt"},
-	})
-	if err == nil {
-		t.Fatal("ChainResume(pin on a served chain) = nil, want a refusal")
-	}
-	if !strings.Contains(err.Error(), "served resume pins arrive in Plan 3") {
-		t.Errorf("err = %q, want the served-pins refusal", err.Error())
-	}
-
-	if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusHalted) {
-		t.Errorf("chain status = %q, want it still halted", row.Status)
-	}
-}
-
 // TestChainResumePinOnForkParentRefuses pins the fork-parent rule: a resume
 // carrying --candidate on a parent halted at its earned join is refused
 // before anything is written, naming the fork join and the unapplied pin,

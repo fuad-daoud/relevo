@@ -1307,3 +1307,49 @@ func TestWhoAmIAdvertisesWorkflow(t *testing.T) {
 		t.Errorf("Features = %v, want %q", who.Features, remote.FeatureWorkflow)
 	}
 }
+
+// TestServedChainRequestOfCarriesCandidates pins the create mapping: the
+// wire's pins reach the served request verbatim, keyed as the client sent
+// them, and a create without pins leaves the field nil.
+func TestServedChainRequestOfCarriesCandidates(t *testing.T) {
+	t.Parallel()
+
+	pins := map[string]string{"builder": "opencode/test/m", "lite-planner": "claude/test/m"}
+	req := remote.CreateChainRequest{
+		Name: "shop", RepoID: strings.Repeat("a", 64), BaseCommit: "abc",
+		Plans: []string{"build it"}, Candidates: pins,
+	}
+	got := servedChainRequestOf(remote.ClientID("alice"), "/bare/shop.git", req)
+	if !reflect.DeepEqual(got.Candidates, pins) {
+		t.Errorf("candidates = %v, want %v", got.Candidates, pins)
+	}
+
+	bare := servedChainRequestOf(remote.ClientID("alice"), "/bare/shop.git", remote.CreateChainRequest{Name: "shop"})
+	if bare.Candidates != nil {
+		t.Errorf("candidates = %v, want nil for a create without pins", bare.Candidates)
+	}
+}
+
+// TestServedResumeMapsCandidatesToOptions pins the resume mapping: the wire's
+// pins reach the resume options verbatim under the CLI's part keys, and a
+// resume without pins leaves the field nil so stored candidates stand.
+func TestServedResumeMapsCandidatesToOptions(t *testing.T) {
+	t.Parallel()
+
+	pins := map[string]string{"reviewer": "claude/test/alt"}
+	opts, bad := resumeOptionsFromWire("shop", remote.ChainResumeRequest{Candidates: pins})
+	if bad != "" {
+		t.Fatalf("resumeOptionsFromWire = %q, want no refusal", bad)
+	}
+	if !reflect.DeepEqual(opts.Candidates, pins) {
+		t.Errorf("candidates = %v, want %v", opts.Candidates, pins)
+	}
+
+	empty, bad := resumeOptionsFromWire("shop", remote.ChainResumeRequest{})
+	if bad != "" {
+		t.Fatalf("resumeOptionsFromWire(empty) = %q, want no refusal", bad)
+	}
+	if empty.Candidates != nil {
+		t.Errorf("candidates = %v, want nil for a resume without pins", empty.Candidates)
+	}
+}

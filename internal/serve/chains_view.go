@@ -57,6 +57,7 @@ func servedChainRequestOf(caller remote.ClientID, bare string, req remote.Create
 		Owner:    string(caller), Bare: bare, RepoID: req.RepoID, Base: req.BaseCommit,
 		ClientInstallation: req.ClientInstallation, ClientBindingIDs: req.ClientBindingIDs,
 		Workflow: []byte(req.Workflow), ClientActorIDs: req.ClientActorIDs,
+		Candidates: req.Candidates,
 	}
 	if req.Author != nil {
 		out.AuthorName, out.AuthorEmail = req.Author.Name, req.Author.Email
