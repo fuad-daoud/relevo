@@ -93,11 +93,13 @@ func canonicalJSON(data []byte) ([]byte, error) {
 }
 
 // chainRequestMatches reports whether an existing chain is byte-for-byte the
-// request: its base, settings, labels, subdirectory and plan copies. The name
-// and owner are already the same, and the repo id is not part of the
-// comparison. The subdirectory is read from the chain's builder member
+// request: its base, settings, labels, subdirectory, plan copies and member
+// pins. The name and owner are already the same, and the repo id is not part
+// of the comparison. The subdirectory is read from the chain's builder member
 // binding -- the row does not carry it -- so a differing prefix is a
-// conflict, never an identical retry.
+// conflict, never an identical retry. Each pin is read from its member's view
+// the same way, keyed by part or by actor as the wire keys it: a differing
+// pin names a different chain, never a silently dropped retry.
 func chainRequestMatches(rt relevo.Runtime, view remote.ChainView, req remote.CreateChainRequest) bool {
 	if view.Base != req.BaseCommit || view.Feature != req.Feature || view.Ticket != req.Ticket {
 		return false
@@ -126,6 +128,33 @@ func chainRequestMatches(rt relevo.Runtime, view remote.ChainView, req remote.Cr
 	for i, plan := range req.Plans {
 		body, err := rt.Store.ReadFile(rt.Store.ChainPlanPath(req.Name, i+1))
 		if err != nil || string(body) != plan {
+			return false
+		}
+	}
+	if len(req.Candidates) > 0 && !chainPinsMatch(view, req.Candidates) {
+		return false
+	}
+	return true
+}
+
+// chainPinsMatch reports whether every wire pin names a member -- by part for
+// a settings create, by actor for a workflow create, as the wire keys it --
+// whose stored candidate equals the pin. A pin naming no member, or naming
+// one whose candidate differs, names a different chain, so the retry is a
+// conflict rather than a silently dropped pin.
+func chainPinsMatch(view remote.ChainView, pins map[string]string) bool {
+	for key, pin := range pins {
+		matched := false
+		for _, m := range view.Members {
+			if m.Part != key && m.Actor != key {
+				continue
+			}
+			if m.View.Candidate == pin {
+				matched = true
+				break
+			}
+		}
+		if !matched {
 			return false
 		}
 	}

@@ -544,6 +544,72 @@ func TestChainRequestMatchesComparesTheSubdirectory(t *testing.T) {
 	}
 }
 
+// TestChainRequestMatchesComparesCandidatePins pins the retry rule on pins:
+// identical pins answer the chain, while a differing token or an unknown key
+// is a conflict. Each pin is read from its member's view, the candidate the
+// create stored, keyed by part or by actor as the wire keys it. A differing
+// pin names a different chain, so answering the stored chain would silently
+// drop the retry's pins.
+func TestChainRequestMatchesComparesCandidatePins(t *testing.T) {
+	s, _ := newTestServer(t, 0)
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := remote.IDOf(kp.Public)
+	if _, err := s.clients.Add("user", remote.MarshalPublic(kp.Public, "user"), "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	rt := testRuntime(t, s, id)
+
+	base := remote.CreateChainRequest{
+		Name:   "shop",
+		RepoID: strings.Repeat("a", 64),
+	}
+	view := remote.ChainView{Name: "shop", Members: []remote.ChainMemberView{
+		{Part: "builder", Name: "shop", Actor: "builder", View: remote.BindingView{Candidate: "agy/test/m"}},
+		{Part: "reviewer", Name: "shop-rev", Actor: "reviewer", View: remote.BindingView{Candidate: "claude/test/m"}},
+	}}
+	b := store.Binding{Name: "shop", CWD: "/bare", Subdir: "src/api", Round: 1}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	unpinned := base
+	unpinned.Subdir = "src/api"
+	if !chainRequestMatches(rt, view, unpinned) {
+		t.Fatal("a retry without pins did not match")
+	}
+
+	partKeyed := base
+	partKeyed.Subdir = "src/api"
+	partKeyed.Candidates = map[string]string{"builder": "agy/test/m"}
+	if !chainRequestMatches(rt, view, partKeyed) {
+		t.Fatal("identical part-keyed pins did not match")
+	}
+
+	actorKeyed := base
+	actorKeyed.Subdir = "src/api"
+	actorKeyed.Candidates = map[string]string{"reviewer": "claude/test/m"}
+	if !chainRequestMatches(rt, view, actorKeyed) {
+		t.Fatal("identical actor-keyed pins did not match")
+	}
+
+	retokened := base
+	retokened.Subdir = "src/api"
+	retokened.Candidates = map[string]string{"builder": "agy/test/other"}
+	if chainRequestMatches(rt, view, retokened) {
+		t.Fatal("a differing pin matched, want a conflict")
+	}
+
+	unknown := base
+	unknown.Subdir = "src/api"
+	unknown.Candidates = map[string]string{"ghost": "agy/test/m"}
+	if chainRequestMatches(rt, view, unknown) {
+		t.Fatal("an unknown pin key matched, want a conflict")
+	}
+}
+
 // TestDuplicateChainCreateIsAtomicPerOwner pins the exclusion chainFinishCreate
 // takes: two identical concurrent creates for one owner yield one 201 and one
 // 200 retry, the chain row the winner wrote is the one that survives, and the
