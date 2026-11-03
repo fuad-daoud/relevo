@@ -257,7 +257,7 @@ type TrafficPublisher interface {
 
 // TrafficReader answers with every origin's traffic row the log holds, without
 // writing one. It stays optional for the reason TrafficPublisher gives: a
-// caller asks for it with a type assertion and reads the missing publisher as
+// caller asks for it with a type assertion and reads the missing reader as
 // no account figure rather than a failure.
 type TrafficReader interface {
 	// ReadTraffic answers with every origin's row as the log holds it now.
