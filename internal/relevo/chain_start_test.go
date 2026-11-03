@@ -842,6 +842,33 @@ func TestChainResolveActorsNamesRepoEntry(t *testing.T) {
 	}
 }
 
+// TestChainValidateWorkflowPrefersUnknownActor pins the start refusal when a
+// workflow step names an actor the config lacks: validation sorts the missing
+// actor's own problem behind the fallout its absence causes on another step,
+// so the refusal still has to name the actor and its fix. Returning the first
+// problem instead names the fallout with no ErrUnknownRole, and this test
+// goes red.
+func TestChainValidateWorkflowPrefersUnknownActor(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	rows := chainRows()
+	delete(rows, "lite-planner")
+	rt.Registry = rolesFileRegistry(t, rt.Candidates, rt.Policy, rows)
+	err := chainValidateWorkflow(rt, workflow.Default(), workflow.Given{Plans: true})
+	if err == nil {
+		t.Fatal("chainValidateWorkflow without lite-planner = nil, want a refusal naming the actor")
+	}
+	if !errors.Is(err, resolve.ErrUnknownRole) {
+		t.Errorf("err = %v, want errors.Is(err, resolve.ErrUnknownRole)", err)
+	}
+	for _, want := range []string{"correct", `"lite-planner"`, "relevo config set actors."} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %q, want it to name %q", err.Error(), want)
+		}
+	}
+}
+
 // chainPinCandidatesJSON is three candidates on distinct tokens: opencode
 // serves builder only, claude serves builder and reviewer, and alt serves
 // reviewer only, so a pin and a cross-part pin each have a token to name.
