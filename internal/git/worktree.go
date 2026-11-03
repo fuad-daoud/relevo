@@ -8,6 +8,17 @@ import (
 	"strings"
 )
 
+// clearWorktreeRegistration drops the admin entry and directory of a worktree
+// whose add failed or never finished. A killed add leaves the entry locked,
+// which prune skips; removing with double force is what clears a locked
+// entry, while the half-checked-out directory still falls to os.RemoveAll.
+// Cleanup never reports: the caller already failed, and a lost temp
+// directory must not replace its error.
+func (c *Client) clearWorktreeRegistration(ctx context.Context, dir, absPath string) {
+	_, _ = c.run(ctx, dir, nil, "worktree", "remove", "--force", "--force", absPath)
+	_ = os.RemoveAll(absPath)
+}
+
 // AddWorktree creates a worktree at path, checking out a NEW branch at commit.
 // On any error nothing is left behind at path.
 func (c *Client) AddWorktree(ctx context.Context, dir, path, branch, commit string) (retErr error) {
@@ -22,7 +33,7 @@ func (c *Client) AddWorktree(ctx context.Context, dir, path, branch, commit stri
 	}
 	defer func() {
 		if retErr != nil && !pathExisted {
-			_ = os.RemoveAll(absPath)
+			c.clearWorktreeRegistration(ctx, dir, absPath)
 			_, _ = c.run(ctx, dir, nil, "worktree", "prune")
 		}
 	}()
@@ -47,6 +58,16 @@ func (c *Client) AddWorktree(ctx context.Context, dir, path, branch, commit stri
 			strings.Contains(errStr, "is already checked out") {
 			return ErrBranchExists
 		}
+		// The add creates the branch before checking out, so a kill leaves a
+		// branch a retry would refuse. A present branch is ours: the check
+		// above refused a pre-existing one, and the race maps to
+		// ErrBranchExists. Clear the entry first — git refuses to delete a
+		// branch still checked out in a worktree — then the branch; the
+		// deferred cleanup repeats the clearing harmlessly.
+		c.clearWorktreeRegistration(ctx, dir, absPath)
+		if existsNow, berr := c.BranchExists(ctx, dir, branchName); berr == nil && existsNow {
+			_ = c.DeleteBranch(ctx, dir, branchName)
+		}
 		return err
 	}
 
@@ -68,7 +89,7 @@ func (c *Client) AddDetachedWorktree(ctx context.Context, dir, path, commit stri
 	}
 	defer func() {
 		if retErr != nil && !pathExisted {
-			_ = os.RemoveAll(absPath)
+			c.clearWorktreeRegistration(ctx, dir, absPath)
 			_, _ = c.run(ctx, dir, nil, "worktree", "prune")
 		}
 	}()
@@ -95,7 +116,7 @@ func (c *Client) CheckoutWorktree(ctx context.Context, dir, path, branch string)
 	}
 	defer func() {
 		if retErr != nil && !pathExisted {
-			_ = os.RemoveAll(absPath)
+			c.clearWorktreeRegistration(ctx, dir, absPath)
 			_, _ = c.run(ctx, dir, nil, "worktree", "prune")
 		}
 	}()
@@ -125,8 +146,10 @@ func (c *Client) RemoveWorktree(ctx context.Context, dir, path string, force boo
 	}
 
 	// Already gone is success: prune the stale entry so the branch is no longer
-	// "checked out" there and can be deleted.
+	// "checked out" there and can be deleted. A killed add leaves the entry
+	// locked, which prune skips, so clear it the way a failed add does first.
 	if _, statErr := os.Stat(absPath); errors.Is(statErr, os.ErrNotExist) {
+		c.clearWorktreeRegistration(ctx, dir, absPath)
 		if _, err := c.run(ctx, dir, nil, "worktree", "prune"); errors.Is(err, ErrNotRepo) || errors.Is(err, ErrGitUnavailable) {
 			return err
 		}

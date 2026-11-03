@@ -131,6 +131,112 @@ func TestAddWorktreeCleansUpOnError(t *testing.T) {
 	}
 }
 
+// slowCheckoutRepo is a repo whose checkouts stall: a smudge filter sleeps,
+// so a short-timeout client kills worktree add mid-checkout and leaves the
+// locked initializing registration the cleanup must clear.
+func slowCheckoutRepo(t *testing.T) string {
+	t.Helper()
+	dir := initRepo(t)
+	script := filepath.Join(t.TempDir(), "slow-smudge.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nsleep 5\nexec cat\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "config", "filter.slow.smudge", script)
+	runGit(t, dir, "config", "filter.slow.clean", "cat")
+	writeGitFile(t, dir, ".gitattributes", "*.slow filter=slow\n")
+	writeGitFile(t, dir, "data.slow", "payload\n")
+	runGit(t, dir, "add", ".gitattributes", "data.slow")
+	runGit(t, dir, "commit", "-m", "first")
+	return dir
+}
+
+func TestAddWorktreeTimeoutRemovesLockedRegistrationAndBranch(t *testing.T) {
+	ctx := context.Background()
+	repoDir := slowCheckoutRepo(t)
+	client := NewClient("git", time.Second, 0)
+
+	wtDir := filepath.Join(resolvedTempDir(t), "wt1")
+	branch := "relevo/timeout-wt"
+	err := client.AddWorktree(ctx, repoDir, wtDir, branch, "HEAD")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("AddWorktree err = %v, want a deadline", err)
+	}
+	if list := runGit(t, repoDir, "worktree", "list", "--porcelain"); strings.Contains(list, wtDir) {
+		t.Fatalf("locked registration still listed after failed AddWorktree:\n%s", list)
+	}
+	if exists, err := client.BranchExists(ctx, repoDir, branch); err != nil || exists {
+		t.Fatalf("BranchExists(%q) = %v, %v, want false, nil", branch, exists, err)
+	}
+}
+
+func TestAddDetachedWorktreeTimeoutRemovesLockedRegistration(t *testing.T) {
+	ctx := context.Background()
+	repoDir := slowCheckoutRepo(t)
+	client := NewClient("git", time.Second, 0)
+
+	wtDir := filepath.Join(resolvedTempDir(t), "wt2")
+	if err := client.AddDetachedWorktree(ctx, repoDir, wtDir, "HEAD"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("AddDetachedWorktree err = %v, want a deadline", err)
+	}
+	if list := runGit(t, repoDir, "worktree", "list", "--porcelain"); strings.Contains(list, wtDir) {
+		t.Fatalf("locked registration still listed after failed AddDetachedWorktree:\n%s", list)
+	}
+}
+
+func TestCheckoutWorktreeTimeoutRemovesLockedRegistration(t *testing.T) {
+	ctx := context.Background()
+	repoDir := slowCheckoutRepo(t)
+	runGit(t, repoDir, "branch", "feature")
+	client := NewClient("git", time.Second, 0)
+
+	wtDir := filepath.Join(resolvedTempDir(t), "wt3")
+	if err := client.CheckoutWorktree(ctx, repoDir, wtDir, "feature"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("CheckoutWorktree err = %v, want a deadline", err)
+	}
+	if list := runGit(t, repoDir, "worktree", "list", "--porcelain"); strings.Contains(list, wtDir) {
+		t.Fatalf("locked registration still listed after failed CheckoutWorktree:\n%s", list)
+	}
+	// The checkout creates no branch, so the fix must not delete one either.
+	if exists, err := client.BranchExists(ctx, repoDir, "feature"); err != nil || !exists {
+		t.Fatalf("BranchExists(%q) = %v, %v, want true, nil", "feature", exists, err)
+	}
+}
+
+// TestRemoveWorktreeMissingButLockedPrunesRegistration is the interrupted-add
+// leftover with its directory removed by hand: prune alone skips the locked
+// entry, so RemoveWorktree must clear it for DeleteBranch to succeed.
+func TestRemoveWorktreeMissingButLockedPrunesRegistration(t *testing.T) {
+	ctx := context.Background()
+	repoDir := slowCheckoutRepo(t)
+	client := NewClient("git", time.Second, 0)
+
+	wtDir := filepath.Join(resolvedTempDir(t), "wt")
+	branch := "relevo/missing-locked"
+	// A killer that does not clean up: raw worktree add dies mid-checkout and
+	// leaves a locked initializing entry, as a crashed helper would.
+	killCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	killCmd := exec.CommandContext(killCtx, "git", "worktree", "add", "-b", branch, wtDir, "HEAD")
+	killCmd.Dir = repoDir
+	_ = killCmd.Run()
+	if !errors.Is(killCtx.Err(), context.DeadlineExceeded) {
+		t.Fatalf("setup kill did not time out: %v", killCtx.Err())
+	}
+	if list := runGit(t, repoDir, "worktree", "list", "--porcelain"); !strings.Contains(list, "locked") {
+		t.Fatalf("setup left no locked entry:\n%s", list)
+	}
+	if err := os.RemoveAll(wtDir); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := client.RemoveWorktree(ctx, repoDir, wtDir, true); err != nil {
+		t.Fatalf("RemoveWorktree on a missing but locked path = %v, want nil", err)
+	}
+	if err := client.DeleteBranch(ctx, repoDir, branch); err != nil {
+		t.Fatalf("DeleteBranch after removing a missing but locked worktree = %v, want nil", err)
+	}
+}
+
 func TestCheckoutWorktree(t *testing.T) {
 	ctx := context.Background()
 	repoDir, _ := initRepoWithCommit(t, "file.txt", "v1\n")
