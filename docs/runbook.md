@@ -120,8 +120,11 @@ This is an ops step, not code.
   `RELEVO_BASE` (the bind's base) to a round and to its gate, so
   `--gate 'make check-affected'` tests only the affected packages on a served
   worktree too; `BASE=<sha>` still overrides.
-- After a halt, finish with manual rounds on the chain's builder, then
-  `relevo chain --resume`.
+- After a halt, send one manual round to the chain's builder with
+  `relevo send --name <member> --file <prompt>` (`<member>` is the builder
+  binding, `<prompt>` is the plan file), then
+  `relevo chain --resume --name <chain>` reviews that round instead of
+  re-running the halted step.
 - Fetch a served head with `git fetch zen:<served worktree> HEAD:refs/heads/X`.
   Served worktrees live at
   `~/.local/state/relevo-serve/serve/bindings/*/.worktrees/<name>`.
