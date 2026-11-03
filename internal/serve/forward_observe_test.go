@@ -148,6 +148,22 @@ func TestBurstObserveClosesRound(t *testing.T) {
 	if err != nil || !ok || headSHA != nodeCommit {
 		t.Errorf("head branch = %q (ok=%v err=%v), want node commit %q", headSHA, ok, err, nodeCommit)
 	}
+	// The round ran on the node, so the close facts are the node's: its
+	// commit is the result, and the head's untouched worktree is not read as
+	// uncommitted work undoing it. That stale worktree is gone, for the next
+	// served round to check out again from the branch.
+	if back.Serve.ResultCommit != nodeCommit || back.Serve.DirtyCommit != "" {
+		t.Errorf("head close facts = result %q dirty %q, want result %q and no dirty commit", back.Serve.ResultCommit, back.Serve.DirtyCommit, nodeCommit)
+	}
+	if _, ok, _ := env.srv.cfg.Git.RefSHA(ctx, back.Serve.BareRepo, "refs/relevo/api/round-1"); ok {
+		t.Error("head wrote an uncommitted-work ref for a round the node ran")
+	}
+	if back.Worktree == "" {
+		t.Fatal("head binding has no worktree path to check")
+	}
+	if _, err := os.Stat(back.Worktree); !os.IsNotExist(err) {
+		t.Errorf("head worktree %s still present (err=%v), want it removed", back.Worktree, err)
+	}
 	for _, kind := range []string{"report", "diff", "stream"} {
 		var path string
 		switch kind {
@@ -641,5 +657,52 @@ func TestBurstAckStuckFiresOncePerEpisode(t *testing.T) {
 	}
 	if got := hookEvents.count(hooks.EventBurstAckStuck); got != 3 {
 		t.Errorf("burst_ack_stuck after the forward left = %d, want 3: leaving ends the episode too", got)
+	}
+}
+
+// TestBurstObserveKeepsNodeUncommittedWork pins the other close fact: work
+// the node's builder left uncommitted reaches the head as the round's
+// uncommitted-work commit, the node's own snapshot, not one taken from the
+// head worktree.
+func TestBurstObserveKeepsNodeUncommittedWork(t *testing.T) {
+	clock := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	env, nodeSrv, runner, fwd, nodeRoot := observeTestSetup(t, clock)
+	nb, err := nodeSrv.ownerStore(nodeRoot).Load(fwd.NodeBinding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nb.Worktree, "leftover.txt"), []byte("not committed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	closeNodeRound(t, nodeSrv, runner, nodeRoot, fwd.NodeBinding, 1)
+
+	fake, ok := env.srv.burstProvider.(*recordingBurstProvider)
+	if !ok {
+		t.Fatalf("provider = %T, want the recording fake", env.srv.burstProvider)
+	}
+	tab := env.srv.copyBurstTable().Nodes[0]
+	fake.resp = burst.ReportResponse{
+		Version: burst.ReportVersion,
+		Nodes: []burst.ReportNodeOut{{
+			ID: "b1", Name: "b1", URL: tab.URL, Fingerprint: tab.Fingerprint, Cap: 2, State: "ready",
+		}},
+		ReportEvery: "30s",
+	}
+	ctx := context.Background()
+	env.srv.burstTick(ctx)
+
+	back, err := env.runtime(t).Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.Serve == nil || back.Serve.ClosedRound != 1 || back.Serve.DirtyCommit == "" {
+		t.Fatalf("head close = %+v, want round 1 closed with the node's uncommitted work", back.Serve)
+	}
+	side, ok, err := env.srv.cfg.Git.RefSHA(ctx, back.Serve.BareRepo, "refs/relevo/api/round-1")
+	if err != nil || !ok || side != back.Serve.DirtyCommit {
+		t.Errorf("head side ref = %q (ok=%v err=%v), want the dirty commit %q", side, ok, err, back.Serve.DirtyCommit)
+	}
+	if _, ok, err := env.srv.cfg.Git.BlobAt(ctx, back.Serve.BareRepo, back.Serve.DirtyCommit, "leftover.txt"); err != nil || !ok {
+		t.Errorf("dirty commit lacks the node's leftover.txt (ok=%v err=%v)", ok, err)
 	}
 }

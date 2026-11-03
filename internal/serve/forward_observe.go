@@ -389,8 +389,7 @@ func (s *Server) fetchObserveBundle(ctx context.Context, cl *client.Client, row 
 }
 
 // applyObserveClosed absorbs the bundle and writes the head-store round
-// files, then closes through CloseServedRound with Phase kept closed until
-// the ack lands. False means the forward moved and nothing applied.
+// files, then records the close with Phase kept closed until the ack lands. False means the forward moved and nothing applied.
 func (s *Server) applyObserveClosed(ctx context.Context, w observeWork, fetch *observeFetch, now time.Time) bool {
 	st := s.ownerStore(w.ownerPath)
 	cur, err := st.Load(w.name)
@@ -418,8 +417,7 @@ func (s *Server) applyObserveClosed(ctx context.Context, w observeWork, fetch *o
 		return false
 	}
 	next.Round = w.fwd.Round + 1
-	next = CloseServedRound(ctx, rt, next)
-	if next.Serve == nil || next.Serve.ClosedRound != w.fwd.Round {
+	if !closeForwardedRound(ctx, rt, &next, w.fwd, fetch.view.DirtyCommit != "") {
 		return false
 	}
 	have := burstStoredForward(next)
