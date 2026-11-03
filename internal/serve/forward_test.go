@@ -538,8 +538,11 @@ func TestBurstSendRefusalRestoresForwardRef(t *testing.T) {
 	if err := rt.Git.UpdateRef(ctx, b.Serve.BareRepo, "refs/relevo/api/out", next, outSHA); err != nil {
 		t.Fatalf("advance out ref: %v", err)
 	}
+	// A new round queues at its own time; the refusal hold names round 1's
+	// stamp, so it does not hold round 2.
 	round2 := loadBurstBinding(t, rt, "api")
 	round2.Round = 2
+	round2.QueuedAt = clock.Add(30 * time.Second)
 	if err := rt.Store.Save(round2); err != nil {
 		t.Fatalf("advance round: %v", err)
 	}
