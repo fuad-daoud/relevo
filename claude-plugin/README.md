@@ -54,7 +54,6 @@ relevo has no telemetry or analytics, and nothing is sent to its developer.
 - **Builders.** relevo starts the AI coding agents you configure: `opencode`, `codex`, `agy` and `claude`. Each sends your plans and code to its own model provider, under that provider's policy. relevo records the output of the agents it starts, including headless `claude -p` runs, to show you their transcripts and token usage. It never reads Claude Code's own session files.
 - **GitHub, automatically.** The relevo daemon checks `api.github.com` for the latest release on a timer. This is an ordinary HTTPS request that carries nothing about you or your code.
 - **GitHub, when you ask.** `relevo update` downloads the new release from GitHub.
-- **`api.typesafe.ai`.** Only when `TYPESAFE_API_KEY` is set: the jev classifier sends it the text being classified.
 - **Webhooks and `relevo serve` servers.** Only when you configure them. relevo sends lifecycle events, or a round's work, to the endpoints and servers you chose.
 
 Privacy policy: https://relevo.sh/privacy

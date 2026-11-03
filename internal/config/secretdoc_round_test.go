@@ -103,7 +103,7 @@ func TestAppliedSecretsEntriesExportNothing(t *testing.T) {
 	a := newSecretMachine(t, "a", log)
 	b := newSecretMachine(t, "b", log)
 
-	if err := a.s.PutSecret(SecretTypesafe, canarySecret); err != nil {
+	if err := a.s.PutSecret(relevosync.SecretR2KeyID, canarySecret); err != nil {
 		t.Fatalf("PutSecret on A: %v", err)
 	}
 	if err := a.s.PutSecret(relevosync.SecretR2Bucket, []byte("bucket-one")); err != nil {
@@ -124,10 +124,10 @@ func TestAppliedSecretsEntriesExportNothing(t *testing.T) {
 }
 
 // TestAnUnrelatedStampedWriteDoesNotReExportTheWaitingValue pins the
-// lost-update shape: B holds an applied typesafe it has not pulled a newer
+// lost-update shape: B holds an applied r2.key_id it has not pulled a newer
 // one over, and an unrelated stamped write on its side signals its document.
-// The export carries that one name and not typesafe, because re-exporting the
-// applied value under this machine's stamp would beat the newer entry in the
+// The export carries that one name and not the waiting one, because re-exporting
+// the applied value under this machine's stamp would beat the newer entry in the
 // wings and spread a stale value through the fleet as an edit.
 func TestAnUnrelatedStampedWriteDoesNotReExportTheWaitingValue(t *testing.T) {
 	t.Parallel()
@@ -135,7 +135,7 @@ func TestAnUnrelatedStampedWriteDoesNotReExportTheWaitingValue(t *testing.T) {
 	a := newSecretMachine(t, "a", log)
 	b := newSecretMachine(t, "b", log)
 
-	if err := a.s.PutSecret(SecretTypesafe, canarySecret); err != nil {
+	if err := a.s.PutSecret(relevosync.SecretR2KeyID, canarySecret); err != nil {
 		t.Fatalf("PutSecret on A: %v", err)
 	}
 	a.exportSecrets(t)
@@ -149,6 +149,6 @@ func TestAnUnrelatedStampedWriteDoesNotReExportTheWaitingValue(t *testing.T) {
 	}
 	got := b.sentSecrets(t, "a")
 	if len(got) != 1 || got[0] != relevosync.SecretR2Bucket {
-		t.Errorf("B's export named %v, want exactly %s and not typesafe", got, relevosync.SecretR2Bucket)
+		t.Errorf("B's export named %v, want exactly %s and not the waiting name", got, relevosync.SecretR2Bucket)
 	}
 }

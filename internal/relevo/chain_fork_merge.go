@@ -144,13 +144,9 @@ func chainWriteMergeConflict(ctx context.Context, rt Runtime, tx *store.Tx, c db
 		return "", err
 	}
 	body := out.report()
-	binding, lerr := tx.Load(member)
-	if lerr != nil {
-		return "", lerr
-	}
-	sc := scanForInjection(ctx, rt, "report", binding, []byte(body))
+	sc := scanForInjection(rt, []byte(body))
 	if sc.Flagged > 0 {
-		caveat := flaggedParenthetical(sc.Flagged, sc.Record)
+		caveat := flaggedParenthetical(sc.Flagged)
 		*flagged = caveat
 		body += strings.TrimRight(caveat, " ") + "\n"
 	}

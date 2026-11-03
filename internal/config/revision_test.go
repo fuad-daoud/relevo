@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/dbtest"
+	"github.com/fuad-daoud/relevo/internal/sync"
 )
 
 func TestPutRecordsRevision(t *testing.T) {
@@ -196,9 +197,9 @@ func TestSecretRevisionHasNoValue(t *testing.T) {
 	t.Parallel()
 
 	s := openStore(t).WithClock(atTime(revAt))
-	value := []byte("super-secret-typesafe-value")
+	value := []byte("super-secret-shared-value")
 
-	if err := s.As("cli", "config secret set typesafe").PutSecret(SecretTypesafe, value); err != nil {
+	if err := s.As("cli", "config secret set r2.bucket").PutSecret(sync.SecretR2Bucket, value); err != nil {
 		t.Fatalf("PutSecret: %v", err)
 	}
 
@@ -210,7 +211,7 @@ func TestSecretRevisionHasNoValue(t *testing.T) {
 		t.Fatalf("Log = %d rows, want 1", len(rows))
 	}
 	cs := revChanges(t, rows[0])
-	want := []Change{{Path: "secret.typesafe", Op: "set"}}
+	want := []Change{{Path: "secret." + sync.SecretR2Bucket, Op: "set"}}
 	if !reflect.DeepEqual(cs, want) {
 		t.Errorf("changes = %#v, want %#v", cs, want)
 	}
@@ -391,8 +392,8 @@ func TestImportFilesRecordsImport(t *testing.T) {
 			got[c.Path] = c.Op
 		}
 	}
-	if got["secret."+SecretClientKey] != "set" || got["secret."+SecretTypesafe] != "set" {
-		t.Errorf("secret changes = %v, want both secrets set", got)
+	if len(got) != 1 || got["secret."+SecretClientKey] != "set" {
+		t.Errorf("secret changes = %v, want the client key set and nothing else", got)
 	}
 }
 

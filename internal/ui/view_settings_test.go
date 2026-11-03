@@ -377,111 +377,6 @@ func TestSettingsScopeFormBadMemoryMax(t *testing.T) {
 	}
 }
 
-// d. classify form on a policy without classify: moving provider to jev and
-// pressing enter writes classify.provider = "jev" and nothing else under
-// classify.
-func TestSettingsClassifyFormTurnsOn(t *testing.T) {
-	fa := &fakeActions{doc: settingsFixtureDoc(t)}
-	env := candActionEnv(fa, view.Report{})
-	v := settingsFixtureView(t, fa)
-	v.cur = 18 // classify
-
-	f := settingsFormFrom(t, v, env)
-	if f.title != "classify" {
-		t.Fatalf("title = %q, want classify", f.title)
-	}
-	next, _, _ := f.update(tea.KeyMsg{Type: tea.KeyRight}) // off -> jev
-	f = next.(settingsForm)
-
-	_, cmd, closed := f.update(tea.KeyMsg{Type: tea.KeyEnter})
-	if !closed {
-		t.Fatal("a valid submit must close the form")
-	}
-	runCmd(t, cmd)
-
-	if len(fa.configEdits) != 1 {
-		t.Fatalf("configEdits = %d, want one", len(fa.configEdits))
-	}
-	body := string(fa.configEdits[0].Sections[config.Policy])
-	var m map[string]any
-	if err := json.Unmarshal([]byte(body), &m); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	cl, ok := m["classify"].(map[string]any)
-	if !ok {
-		t.Fatalf("classify is not a map: %v", m["classify"])
-	}
-	if len(cl) != 1 || cl["provider"] != "jev" {
-		t.Errorf("classify = %v, want only provider jev", cl)
-	}
-}
-
-// e. classify form on a policy with classify.provider = "jev": a pending edit
-// to model, made while it is enabled, is dropped once provider moves to off,
-// and the whole classify block is deleted. M1: skip the disabled-fields
-// exclusion in validSets and the model edit survives, so classify reappears
-// (EditPolicy's own set-after-delete recreates it) and this test fails.
-func TestSettingsClassifyFormTurnsOffIgnoresPendingFields(t *testing.T) {
-	doc := settingsFixtureDoc(t)
-	raw := `{"max_switches":2,"max_tier":"yolo","serve":{"scope":{"slice":"relevo.slice"}},"classify":{"provider":"jev"}}`
-	p, _, err := policy.Parse(config.FileName(config.Policy), []byte(raw))
-	if err != nil {
-		t.Fatalf("policy.Parse: %v", err)
-	}
-	doc.Policy = p
-	doc.PolicyRaw = json.RawMessage(raw)
-
-	fa := &fakeActions{doc: doc}
-	env := candActionEnv(fa, view.Report{})
-	v := settingsFixtureView(t, fa)
-	v.cur = 18 // classify
-
-	f := settingsFormFrom(t, v, env)
-	if f.fields[0].sel != 1 {
-		t.Fatalf("provider sel = %d, want 1 (jev)", f.fields[0].sel)
-	}
-	f = f.setFocus(1) // model, enabled while provider is jev
-	f = settingsFormType(f, "should-be-ignored")
-	f = f.setFocus(0)
-	next, _, _ := f.update(tea.KeyMsg{Type: tea.KeyLeft}) // jev -> off
-	f = next.(settingsForm)
-
-	_, cmd, closed := f.update(tea.KeyMsg{Type: tea.KeyEnter})
-	if !closed {
-		t.Fatal("a valid submit must close the form")
-	}
-	runCmd(t, cmd)
-
-	if len(fa.configEdits) != 1 {
-		t.Fatalf("configEdits = %d, want one", len(fa.configEdits))
-	}
-	body := string(fa.configEdits[0].Sections[config.Policy])
-	if strings.Contains(body, "classify") {
-		t.Errorf("body = %s, must not contain classify", body)
-	}
-	if strings.Contains(body, "should-be-ignored") {
-		t.Errorf("body = %s, must not contain the pending model edit", body)
-	}
-}
-
-// f. classify form, provider off: tab never focuses model, threshold or
-// timeout, all disabled while provider stays off.
-func TestSettingsClassifyFormTabSkipsDisabledFields(t *testing.T) {
-	fa := &fakeActions{doc: settingsFixtureDoc(t)}
-	env := candActionEnv(fa, view.Report{})
-	v := settingsFixtureView(t, fa)
-	v.cur = 18 // classify
-
-	f := settingsFormFrom(t, v, env)
-	for i := 0; i < 5; i++ {
-		next, _, _ := f.update(tea.KeyMsg{Type: tea.KeyTab})
-		f = next.(settingsForm)
-		if f.focus != 0 {
-			t.Fatalf("tab %d landed on focus %d (%s), want to stay on provider (0)", i, f.focus, f.fields[f.focus].label)
-		}
-	}
-}
-
 // g. r on max_tier is refused in plain words: builder and reviewer run at
 // yolo, above the edit default a reset would restore. M2: remove
 // HumanPolicyError's tier rule and this test fails.
@@ -531,7 +426,7 @@ func TestSettingsChainFormTurnsSecurityOn(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 24 // chain.security
+	v.cur = 23 // chain.security
 
 	f := settingsFormFrom(t, v, env)
 	if f.title != "chain" {
@@ -572,7 +467,7 @@ func TestSettingsChainFormSetsMaxCorrections(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 20 // chain.max_corrections
+	v.cur = 19 // chain.max_corrections
 
 	f := settingsFormFrom(t, v, env)
 	if f.title != "chain" {
@@ -605,7 +500,7 @@ func TestSettingsChainFormRejectsANegativeCount(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 20 // chain.max_corrections
+	v.cur = 19 // chain.max_corrections
 
 	f := settingsFormFrom(t, v, env)
 	f = f.setFocus(1) // max_corrections
@@ -634,7 +529,7 @@ func TestSettingsChainFormBadActorText(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 21 // chain.reviewer_actor
+	v.cur = 20 // chain.reviewer_actor
 
 	f := settingsFormFrom(t, v, env)
 	f = f.setFocus(2) // reviewer_actor

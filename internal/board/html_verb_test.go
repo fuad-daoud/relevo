@@ -235,7 +235,7 @@ func TestCmdBoardPromoteIsDispatched(t *testing.T) {
 	// The verb gets past dispatch and flag parsing and reaches its own slug
 	// check, which is what proves it was dispatched as the subverb rather than
 	// treated as a scene path.
-	err := PromoteToRepo(deps, t.TempDir(), "", "", "API", false)
+	_, err := PromoteToRepo(deps, t.TempDir(), "", "", "API", false)
 	if !errors.Is(err, ErrUsage) {
 		t.Fatalf("promote --to API = %v, want the slug refusal", err)
 	}

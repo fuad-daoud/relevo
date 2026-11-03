@@ -92,7 +92,6 @@ func seedConfigDir(t *testing.T, dir string) {
 	}
 	writeFile(t, filepath.Join(dir, "client.key"), string(pem), 0o600)
 	writeFile(t, filepath.Join(dir, "client.pub"), "ed25519 fake\n", 0o644)
-	writeFile(t, filepath.Join(dir, "typesafe.key"), "  test-key  \n", 0o600)
 
 	writeFile(t, filepath.Join(dir, "hooks", "state_changed.d", "10-first"), "#!/bin/sh\n", 0o755)
 	writeFile(t, filepath.Join(dir, "hooks", "state_changed.d", "05-zero"), "#!/bin/sh\n", 0o755)

@@ -47,7 +47,7 @@ func (m *cfgMachine) secret(t *testing.T, name string) string {
 }
 
 // TestSteadyAttemptCarriesASharedSecretToAPeer is the whole point of the
-// document: one machine's typesafe key, set by a person, reaches the peer and
+// document: one machine's shared secret, set by a person, reaches the peer and
 // the peer holds the plaintext.
 func TestSteadyAttemptCarriesASharedSecretToAPeer(t *testing.T) {
 	t.Parallel()
@@ -55,12 +55,12 @@ func TestSteadyAttemptCarriesASharedSecretToAPeer(t *testing.T) {
 	a := newCfgMachine(t, log, cfgSyncKey, true)
 	b := newCfgMachine(t, log, cfgSyncKey, true)
 
-	a.setSecret(t, config.SecretTypesafe, canarySecret)
+	a.setSecret(t, relevosync.SecretR2Bucket, canarySecret)
 	a.attempt(t)
 	b.attempt(t)
 
-	if got := b.secret(t, config.SecretTypesafe); got != canarySecret {
-		t.Errorf("B's typesafe = %q, want A's value", got)
+	if got := b.secret(t, relevosync.SecretR2Bucket); got != canarySecret {
+		t.Errorf("B's r2.bucket = %q, want A's value", got)
 	}
 }
 
@@ -73,7 +73,7 @@ func TestTheLogCarriesTheSealedValueNotThePlaintext(t *testing.T) {
 	a := newCfgMachine(t, log, cfgSyncKey, true)
 	b := newCfgMachine(t, log, cfgSyncKey, true)
 
-	a.setSecret(t, config.SecretTypesafe, canarySecret)
+	a.setSecret(t, relevosync.SecretR2Bucket, canarySecret)
 	a.attempt(t)
 	b.attempt(t)
 
@@ -222,11 +222,11 @@ func TestAPeerDoesNotHandASecretBack(t *testing.T) {
 	a := newCfgMachine(t, log, cfgSyncKey, true)
 	b := newCfgMachine(t, log, cfgSyncKey, true)
 
-	a.setSecret(t, config.SecretTypesafe, canarySecret)
+	a.setSecret(t, relevosync.SecretR2Bucket, canarySecret)
 	a.attempt(t)
 	b.attempt(t)
 
-	if _, ok := b.writeStamp(t, "secrets/"+config.SecretTypesafe); ok {
+	if _, ok := b.writeStamp(t, "secrets/"+relevosync.SecretR2Bucket); ok {
 		t.Error("the applying machine stamped an applied secret")
 	}
 	b.attempt(t)
@@ -405,9 +405,9 @@ func TestTwoMachinesWithDifferentGeneratedKeysBothKeepTheirOwn(t *testing.T) {
 }
 
 // TestSecretsHeldBeforeThisDocumentExistedTravelOnTheFirstExport pins C2. A
-// laptop has held its R2 credentials and its typesafe key since before the
-// secrets document existed, so neither has ever been stamped: nothing in this
-// build ever wrote them through an entry point that claims a person chose them.
+// laptop has held its R2 credentials since before the secrets document existed,
+// so they have never been stamped: nothing in this build wrote them through an
+// entry point that claims a person chose them.
 // They still have to reach a joiner, who has no way of being told otherwise --
 // so a value with no write stamp takes its stamp at export time and travels on
 // the first unlocked export, the way a pre-existing config section did in 3b.
@@ -432,16 +432,10 @@ func TestSecretsHeldBeforeThisDocumentExistedTravelOnTheFirstExport(t *testing.T
 			t.Fatalf("the fixture already stamps %s, so it proves nothing about a pre-existing value", name)
 		}
 	}
-	if err := a.cfg.PutSecretUnstamped(config.SecretTypesafe, []byte(canarySecret)); err != nil {
-		t.Fatalf("PutSecretUnstamped(typesafe): %v", err)
-	}
 
 	a.attempt(t)
 	b.attempt(t)
 
-	if got := b.secret(t, config.SecretTypesafe); got != canarySecret {
-		t.Errorf("B's typesafe = %q, want the value A held before this document existed", got)
-	}
 	got, err := relevosync.ReadR2(b.local)
 	if err != nil {
 		t.Fatalf("ReadR2 on B: %v", err)
@@ -458,7 +452,7 @@ func TestSecretsHeldBeforeThisDocumentExistedTravelOnTheFirstExport(t *testing.T
 	if err != nil {
 		t.Fatalf("DocExportState: %v", err)
 	}
-	for _, name := range append(r2NamesWithoutStamping(t, a), config.SecretTypesafe) {
+	for _, name := range r2NamesWithoutStamping(t, a) {
 		row, ok := state[name]
 		if !ok {
 			t.Errorf("%s has no export state, so it was never sent", name)
@@ -555,7 +549,6 @@ func TestAJoinerReceivesTheR2Credentials(t *testing.T) {
 	if err := relevosync.SetR2(a.local, verbFixtureR2, time.Unix(0, 0).UTC()); err != nil {
 		t.Fatalf("SetR2 on A: %v", err)
 	}
-	a.setSecret(t, config.SecretTypesafe, canarySecret)
 	a.attempt(t)
 
 	b.join(t)
@@ -568,9 +561,6 @@ func TestAJoinerReceivesTheR2Credentials(t *testing.T) {
 		if b.secret(t, name) == "" {
 			t.Errorf("B holds no %s after the join", name)
 		}
-	}
-	if got := b.secret(t, config.SecretTypesafe); got != canarySecret {
-		t.Errorf("B's typesafe = %q, want A's value", got)
 	}
 }
 
@@ -657,20 +647,20 @@ func TestASecretRemovalTravels(t *testing.T) {
 	a := newCfgMachine(t, log, cfgSyncKey, true)
 	b := newCfgMachine(t, log, cfgSyncKey, true)
 
-	a.setSecret(t, config.SecretTypesafe, canarySecret)
+	a.setSecret(t, relevosync.SecretR2Bucket, canarySecret)
 	a.attempt(t)
 	b.attempt(t)
-	if b.secret(t, config.SecretTypesafe) == "" {
+	if b.secret(t, relevosync.SecretR2Bucket) == "" {
 		t.Fatal("B never held the value to lose")
 	}
 
-	if err := a.cfg.SecretDelete(config.SecretTypesafe); err != nil {
+	if err := a.cfg.SecretDelete(relevosync.SecretR2Bucket); err != nil {
 		t.Fatalf("SecretDelete: %v", err)
 	}
 	a.attempt(t)
 	b.attempt(t)
 
-	if got := b.secret(t, config.SecretTypesafe); got != "" {
+	if got := b.secret(t, relevosync.SecretR2Bucket); got != "" {
 		t.Errorf("B still holds the removed secret: %q", got)
 	}
 }
@@ -685,11 +675,11 @@ func TestALockedPeerParksTheSecrets(t *testing.T) {
 	a := newCfgMachine(t, log, cfgSyncKey, true)
 	b := newCfgMachine(t, log, nil, true)
 
-	a.setSecret(t, config.SecretTypesafe, canarySecret)
+	a.setSecret(t, relevosync.SecretR2Bucket, canarySecret)
 	a.attempt(t)
 	b.attempt(t)
 
-	if got := b.secret(t, config.SecretTypesafe); got != "" {
+	if got := b.secret(t, relevosync.SecretR2Bucket); got != "" {
 		t.Fatalf("the locked machine applied the secret %q, want it parked", got)
 	}
 	parked, err := b.mdb.PendingDocs()
@@ -712,8 +702,8 @@ func TestALockedPeerParksTheSecrets(t *testing.T) {
 	if _, err := relevosync.DrainParkedDocs(b.mdb, b.local, b.log.OnLog(b.mdb.Origin())); err != nil {
 		t.Fatalf("DrainParkedDocs: %v", err)
 	}
-	if got := b.secret(t, config.SecretTypesafe); got != canarySecret {
-		t.Errorf("after the unlock B's typesafe = %q, want the parked value", got)
+	if got := b.secret(t, relevosync.SecretR2Bucket); got != canarySecret {
+		t.Errorf("after the unlock B's r2.bucket = %q, want the parked value", got)
 	}
 }
 
@@ -789,14 +779,14 @@ func TestAnUnreadableSecretIsDroppedWithoutTheValue(t *testing.T) {
 	b := newCfgMachine(t, log, cfgSyncKey, true)
 
 	sealed, err := relevosync.SealSecret(relevosync.Keyring{Epoch: 1, Keys: map[int][]byte{1: []byte("ffffffffffffffffffffffffffffffff")}},
-		config.SecretTypesafe, []byte(canarySecret))
+		relevosync.SecretR2Bucket, []byte(canarySecret))
 	if err != nil {
 		t.Fatalf("SealSecret: %v", err)
 	}
-	forgeSecretEntry(t, log, a, config.SecretTypesafe, sealed)
+	forgeSecretEntry(t, log, a, relevosync.SecretR2Bucket, sealed)
 	b.pull(t)
 
-	if got := b.secret(t, config.SecretTypesafe); got != "" {
+	if got := b.secret(t, relevosync.SecretR2Bucket); got != "" {
 		t.Fatalf("B applied a value sealed under another key: %q", got)
 	}
 	for _, text := range b.revisionText(t) {

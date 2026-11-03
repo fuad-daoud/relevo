@@ -6,9 +6,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/classify"
 	"github.com/fuad-daoud/relevo/internal/config"
-	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
 )
 
@@ -46,7 +44,6 @@ type ConfigWatcher struct {
 	key     []byte
 
 	// seams; production values set by NewConfigWatcher, tests replace them
-	resolve   func(cfg *policy.Classify, key string, getenv func(string) string) classify.Classifier
 	remoteFor func(remote.Servers, []byte) (RemoteClient, error) // nil leaves rt.Remote untouched
 	warn      func(msg string, args ...any)                      // slog.Warn
 
@@ -72,28 +69,23 @@ func sameServers(a, b remote.Servers) bool {
 }
 
 // NewConfigWatcher returns a watcher over source, importing from configDir.
-// Its production seams are classify.Resolve (first return only), the
-// NewRemoteClient rule for the servers section and the client key, and
-// slog.Warn. It does not read anything yet.
+// Its production seams are the NewRemoteClient rule for the servers section
+// and the client key, and slog.Warn. It does not read anything yet.
 func NewConfigWatcher(source ConfigSource, configDir string, getenv func(string) string) *ConfigWatcher {
 	return &ConfigWatcher{
 		source:    source,
 		configDir: configDir,
 		getenv:    getenv,
-		resolve: func(cfg *policy.Classify, key string, getenv func(string) string) classify.Classifier {
-			cls, _ := classify.Resolve(cfg, key, getenv)
-			return cls
-		},
 		remoteFor: NewRemoteClient,
 		warn:      slog.Warn,
 	}
 }
 
 // Refresh imports any pending config file, then returns rt with Candidates,
-// Policy, Registry, Classify and ConfigWarnings replaced when the store's
-// version differs from the version at the last successful load, or when no
-// load has happened yet through this watcher. An unchanged version returns rt
-// as given (no load).
+// Policy, Registry and ConfigWarnings replaced when the store's version
+// differs from the version at the last successful load, or when no load has
+// happened yet through this watcher. An unchanged version returns rt as given
+// (no load).
 //
 // A load whose servers section or client key differs from the installed
 // client's rebuilds rt.Remote through the construction seam: a successful
@@ -132,9 +124,6 @@ func (w *ConfigWatcher) Refresh(rt Runtime) Runtime {
 	rt.Registry = L.Registry
 	rt.ConfigWarnings = L.Warnings
 	w.logWarnings(rt.ConfigWarnings)
-	if w.resolve != nil {
-		rt.Classify = w.resolve(L.Policy.Classify, L.Typesafe, w.getenv)
-	}
 
 	if w.remoteFor != nil && (!sameServers(w.servers, L.Servers) || !bytes.Equal(w.key, L.ClientKey)) {
 		client, cerr := w.remoteFor(L.Servers, L.ClientKey)

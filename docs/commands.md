@@ -154,8 +154,8 @@
   `config repo set <name|gate|board_theme|trimpath> <value>` stores one field,
   `config repo unset <key>` clears it, and `config repo list` prints one row
   per repository that has settings.
-- `relevo config secret set|rm|list` — store, forget or list the `typesafe`
-  and `client.key` secrets (the value is read from stdin).
+- `relevo config secret set|rm|list` — store, forget or list the `client.key`
+  secret (the value is read from stdin).
 - `relevo gate` — list this machine's active gates.
 - `relevo gate <harness/provider/model> [--for D] [--reason S]` — record
   that a candidate's provider is rate-limited; gates every candidate on that

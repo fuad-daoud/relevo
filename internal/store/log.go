@@ -192,10 +192,6 @@ type LogEntry struct {
 	Flagged   int    `json:"flagged,omitempty"`
 	FlaggedBy string `json:"flagged_by,omitempty"`
 
-	// Classify is nil when no classifier was configured. Note set means the
-	// classifier did not answer and the counts are zero.
-	Classify *ClassifyRecord `json:"classify,omitempty"`
-
 	// BuilderSession is nil when the round's stream named none -- never
 	// guessed.
 	BuilderSession *BuilderSession `json:"runner_session,omitempty"`
@@ -245,18 +241,6 @@ type AbandonedSession struct {
 	Kind     string `json:"kind"`
 	ID       string `json:"id"`
 	Attempts int    `json:"attempts,omitempty"`
-}
-
-type ClassifyRecord struct {
-	Provider    string  `json:"provider"`
-	Model       string  `json:"model,omitempty"`
-	Threshold   float64 `json:"threshold"`
-	Paragraphs  int     `json:"paragraphs"`
-	Partial     bool    `json:"partial,omitempty"`
-	Above       int     `json:"above"`
-	Max         float64 `json:"injection_max"`
-	InputTokens int     `json:"input_tokens,omitempty"`
-	Note        string  `json:"note,omitempty"`
 }
 
 // GateRecord is the acceptance check's result, on report entries of a gated
