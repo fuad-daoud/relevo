@@ -819,6 +819,35 @@ func TestMirrorTakesWorkflowAndStateFromView(t *testing.T) {
 	}
 }
 
+// TestChainRowFromViewKeepsTheServersZeroAwaitingRound pins that a view
+// carrying workflow and state owns the awaited round: a check-await parks
+// with no member round, so the server's 0 projects verbatim instead of
+// falling back to the mirror's older round. Plan and Plans keep the
+// fallback: a 0 there is an absent count, not a real value.
+func TestChainRowFromViewKeepsTheServersZeroAwaitingRound(t *testing.T) {
+	t.Parallel()
+
+	v := chainServerView("shop", seedRemoteBase)
+	v.Plan, v.Plans, v.AwaitingRound = 0, 0, 0
+	v.Workflow = []byte(`{"name":"custom-wf","steps":{"special_step":{"run":"builder"}}}`)
+	v.State = []byte(`{"step":"special_step_unreachable_by_legacy","status":"running"}`)
+
+	baseRow := db.ChainRow{
+		Name: "shop", Plan: 2, Plans: 3,
+		AwaitingMember: chain.MemberBuilder, AwaitingRound: 3,
+	}
+	pulled, err := chainRowFromView(baseRow, v, time.Now())
+	if err != nil {
+		t.Fatalf("chainRowFromView: %v", err)
+	}
+	if pulled.AwaitingRound != 0 {
+		t.Errorf("chainRowFromView AwaitingRound = %d, want the server's 0, not the mirror's 3", pulled.AwaitingRound)
+	}
+	if pulled.Plan != 2 || pulled.Plans != 3 {
+		t.Errorf("chainRowFromView Plan/Plans = %d/%d, want the mirror's 2/3: a 0 count still falls back", pulled.Plan, pulled.Plans)
+	}
+}
+
 // TestChainRowFromViewFallsBackToLegacy pins that a server view without workflow
 // or state falls back to converting the row via workflow.FromLegacy.
 func TestChainRowFromViewFallsBackToLegacy(t *testing.T) {
