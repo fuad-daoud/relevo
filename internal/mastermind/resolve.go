@@ -148,6 +148,21 @@ func museHostIdent(ident Ident, detected bool, in ResolveInput) Ident {
 	return ident
 }
 
+// ErrUnknownMasterMindEnv is an unknown mastermind ref read from the
+// environment: which variable held it, and the ref it held. The variable
+// travels with the error so the CLI can name the unset that fixes it; the
+// unwrap keeps the ref matchable by value.
+type ErrUnknownMasterMindEnv struct {
+	Var string
+	Ref string
+}
+
+func (e ErrUnknownMasterMindEnv) Error() string {
+	return fmt.Sprintf("unknown mastermind %q from $%s: no mastermind record has that id or name", e.Ref, e.Var)
+}
+
+func (e ErrUnknownMasterMindEnv) Unwrap() error { return ErrUnknownMasterMind{Ref: e.Ref} }
+
 // resolveFromEnv is Resolve's env step: $RELEVO_MASTERMIND first, then
 // $RELEVO_PLANNER, because a live session's $CLAUDE_ENV_FILE may already export
 // the old name. ok is false when neither variable names anything, in which case
@@ -160,6 +175,10 @@ func resolveFromEnv(reg Registry, env func(string) string, in ResolveInput) (Rec
 		}
 		rec, err := lookupRef(reg, ref)
 		if err != nil {
+			var unknown ErrUnknownMasterMind
+			if errors.As(err, &unknown) {
+				return Record{}, "", false, ErrUnknownMasterMindEnv{Var: name, Ref: unknown.Ref}
+			}
 			return Record{}, "", false, err
 		}
 		rec, res, err := hit(reg, rec, ResolutionEnv, in, env)

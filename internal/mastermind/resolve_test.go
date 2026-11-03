@@ -679,3 +679,51 @@ func checkResolveOpencodeEnvWins(t *testing.T, reg Registry, ocRec Record) {
 		t.Fatal("finder was called even though RELEVO_MASTERMIND was set")
 	}
 }
+
+// TestResolveEnvUnknownNamesVariable pins the env step's wrapper: an unknown
+// ref from $RELEVO_MASTERMIND or $RELEVO_PLANNER carries the variable and the
+// ref, still unwraps to ErrUnknownMasterMind, and still matches the old struct
+// value, while the --mastermind form stays bare.
+func TestResolveEnvUnknownNamesVariable(t *testing.T) {
+	reg := testRegistry(t)
+	for _, variable := range []string{"RELEVO_MASTERMIND", "RELEVO_PLANNER"} {
+		t.Run(variable, func(t *testing.T) {
+			_, _, err := Resolve(reg, ResolveInput{
+				Env:       envFunc(map[string]string{variable: "nope"}),
+				PPID:      999,
+				ProcStart: procStartAt(0),
+			})
+			if err == nil {
+				t.Fatal("Resolve = nil, want an unknown-mastermind error")
+			}
+			var wrapped ErrUnknownMasterMindEnv
+			if !errors.As(err, &wrapped) {
+				t.Fatalf("Resolve = %v (%T), want it to carry the variable", err, err)
+			}
+			if wrapped.Var != variable || wrapped.Ref != "nope" {
+				t.Errorf("wrapped = %+v, want Var %q Ref %q", wrapped, variable, "nope")
+			}
+			var unknown ErrUnknownMasterMind
+			if !errors.As(err, &unknown) || unknown.Ref != "nope" {
+				t.Errorf("errors.As(ErrUnknownMasterMind) = %+v, want Ref nope", unknown)
+			}
+			if !errors.Is(err, ErrUnknownMasterMind{Ref: "nope"}) {
+				t.Errorf("errors.Is(%v, ErrUnknownMasterMind{Ref: nope}) = false, want the old value match", err)
+			}
+			if got := err.Error(); !strings.Contains(got, "$"+variable) || !strings.Contains(got, `"nope"`) {
+				t.Errorf("message = %q, want it to name $%s and \"nope\"", got, variable)
+			}
+		})
+	}
+
+	_, _, err := Resolve(reg, ResolveInput{
+		Flag:      "nope",
+		Env:       envFunc(map[string]string{}),
+		PPID:      999,
+		ProcStart: procStartAt(0),
+	})
+	var wrapped ErrUnknownMasterMindEnv
+	if errors.As(err, &wrapped) {
+		t.Errorf("flag form = %v, want the bare error without a variable", err)
+	}
+}

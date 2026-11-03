@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
@@ -255,8 +256,16 @@ func writeErrorUsage(err error) (error, bool) {
 }
 
 // writeErrorMissing classifies the not-found family: the named thing is gone.
+// An unknown mastermind ref names the unset when it came from the
+// environment, and the record listing when it came from --mastermind.
 func writeErrorMissing(err error) (error, bool) {
+	var unknownEnv mastermind.ErrUnknownMasterMindEnv
+	var unknown mastermind.ErrUnknownMasterMind
 	switch {
+	case errors.As(err, &unknownEnv):
+		return failNext(codeMastermindNotFound, "unset "+unknownEnv.Var+" or relevo mastermind list", "%v", err), true
+	case errors.As(err, &unknown):
+		return fail(codeMastermindNotFound, "%v", err), true
 	case errors.Is(err, refusal.ErrRoundNotFound):
 		return fail(codeRoundNotFound, "%v", err), true
 	case errors.Is(err, store.ErrNotFound):

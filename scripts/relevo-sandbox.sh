@@ -388,7 +388,10 @@ sb_relevo() {
 }
 
 # write_env_sh writes the export recipe that is the sandbox. Ten exports: nine
-# paths, all under the sandbox root, plus the RELEVO_SANDBOX marker.
+# paths, all under the sandbox root, plus the RELEVO_SANDBOX marker, and two
+# unsets: the parent session's mastermind ref never enters the sandbox, whose
+# database cannot know it, so every sandboxed verb would resolve it to a
+# record that is not there.
 # XDG_STATE_HOME is what store.DefaultRoot reads, the other three XDG_ roots
 # follow the same base, CLAUDE_CONFIG_DIR and CODEX_HOME are the two
 # per-process homes, HOME catches every path built from the home directory
@@ -423,6 +426,7 @@ write_env_sh() {
 			# harnesses still resolve. It must reach env.sh unexpanded.
 			# shellcheck disable=SC2016
 			printf 'export PATH=%s/bin:$PATH\n' "$_sb"
+			printf 'unset RELEVO_MASTERMIND RELEVO_PLANNER\n'
 		} > "$_sb/env.sh"
 		chmod 0600 "$_sb/env.sh"
 	fi
