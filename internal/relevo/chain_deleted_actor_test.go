@@ -116,3 +116,30 @@ func TestChainSendNamesResumeWhenMemberActorIsGone(t *testing.T) {
 		t.Errorf("halt = %q, want it to say the actor was removed after the chain started", b.Halt)
 	}
 }
+
+// TestChainDeletedActorPartKeepsFallbackForNonMember pins that a name in no
+// chain reads as no part, so its halt keeps the bare spawn failure instead
+// of naming a resume for a part it cannot prove.
+func TestChainDeletedActorPartKeepsFallbackForNonMember(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+
+	var part, chainName string
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		part, chainName = chainDeletedActorPart(tx, "no-such-member")
+		return nil
+	}); err != nil {
+		t.Fatalf("WithLock: %v", err)
+	}
+	if part != "" || chainName != "" {
+		t.Fatalf("chainDeletedActorPart(non-member) = (%q, %q), want (%q, %q)", part, chainName, "", "")
+	}
+
+	err := fmt.Errorf("binding %q builder: %w", "no-such-member", resolve.ErrUnknownRole)
+	fallback := "builder spawn failed: " + err.Error()
+	if got := chainDeletedActorHalt(part, chainName, "ghost", err, fallback); got != fallback {
+		t.Errorf("non-member halt = %q, want the input %q unchanged", got, fallback)
+	}
+}
