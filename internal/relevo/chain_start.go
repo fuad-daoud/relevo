@@ -32,8 +32,9 @@ type ChainOptions struct {
 	// Plans are the ordered source paths, at least one; each is readable,
 	// non-empty, and copied into the chain's directory at start.
 	Plans []string
-	// BuilderActor names the actor the builder member runs. No flag exposes
-	// it; it stays a field so the member's writer check is the one call every
+	// BuilderActor names the actor the builder member runs: --builder-actor,
+	// or the repository entry's builder_actor when the flag is empty. It
+	// stays a field so the member's writer check is the one call every
 	// part's shape goes through.
 	BuilderActor string
 	// Feature, NoFeature and Ticket label every member, exactly as on bind.

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"strings"
 	"testing"
 )
@@ -77,5 +78,46 @@ func TestChainFlagsParamsParseIntoOptions(t *testing.T) {
 
 	if _, err := chainOptionsFrom(t, "--name", "shop", "--param", "reviewer"); err == nil {
 		t.Error("chainOptions(--param reviewer) = nil error, want a usage refusal")
+	}
+}
+
+// TestChainFlagsBuilderActorParsesIntoOptions pins the start arm's mapping:
+// --builder-actor lands in ChainOptions.BuilderActor, an unnamed builder stays
+// empty for the repository entry, and the flag's help names its default the
+// way the reviewer and planner actors' do.
+func TestChainFlagsBuilderActorParsesIntoOptions(t *testing.T) {
+	opts, err := chainOptionsFrom(t, "--name", "shop", "--plan", chainPlanArg(t), "--no-feature", "--builder-actor", "custom-builder")
+	if err != nil {
+		t.Fatalf("chainOptions --builder-actor: %v", err)
+	}
+	if opts.BuilderActor != "custom-builder" {
+		t.Errorf("BuilderActor = %q, want custom-builder", opts.BuilderActor)
+	}
+
+	unnamed, err := chainOptionsFrom(t, "--name", "shop", "--plan", chainPlanArg(t), "--no-feature")
+	if err != nil {
+		t.Fatalf("chainOptions without --builder-actor: %v", err)
+	}
+	if unnamed.BuilderActor != "" {
+		t.Errorf("BuilderActor = %q, want empty so the repository entry stands", unnamed.BuilderActor)
+	}
+
+	fs := flag.NewFlagSet("relevo chain", flag.ContinueOnError)
+	chainFlagSet(fs)
+	if got := fs.Lookup("builder-actor").Usage; !strings.Contains(got, "(default:") {
+		t.Errorf("usage = %q, want it to name a default like the other actor flags", got)
+	}
+}
+
+// TestChainFlagsBuilderActorRefusedOnResume pins that --builder-actor is a
+// start-only flag: a resume naming it is refused before any runtime is built,
+// so a resumed chain keeps the builder it started with.
+func TestChainFlagsBuilderActorRefusedOnResume(t *testing.T) {
+	_, _, err := captureOutput(t, func() error {
+		return run([]string{"chain", "--resume", "--name", "shop", "--builder-actor", "custom-builder"})
+	})
+	ce := requireCLIError(t, err, codeUsage, "")
+	if !strings.Contains(ce.message, "--builder-actor") {
+		t.Errorf("message = %q, want it to name --builder-actor", ce.message)
 	}
 }

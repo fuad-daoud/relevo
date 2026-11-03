@@ -592,6 +592,44 @@ func TestChainResumedTextNamesPlacement(t *testing.T) {
 	}
 }
 
+// TestChainStartedOutputNamesResolvedActors pins that a started chain's human
+// and JSON output name the resolved builder, reviewer and planner actors: the
+// member rows carry them, so a builder the repository entry supplied renders as
+// that actor rather than the generic, with no harness and no network.
+func TestChainStartedOutputNamesResolvedActors(t *testing.T) {
+	res := relevo.ChainResult{
+		Chain: db.ChainRow{Name: "shop", Builder: "shop", Reviewer: "shop-rev", Planner: "shop-plan", Status: "running", Step: "building"},
+		Members: []store.Binding{
+			{Name: "shop", Role: "repo-builder"},
+			{Name: "shop-rev", Role: "repo-reviewer"},
+			{Name: "shop-plan", Role: "repo-planner"},
+		},
+		Plans: 1,
+	}
+	doc := chainDocOf(res)
+	want := map[string]string{"shop": "repo-builder", "shop-rev": "repo-reviewer", "shop-plan": "repo-planner"}
+	if len(doc.Members) != len(want) {
+		t.Fatalf("members = %d, want %d", len(doc.Members), len(want))
+	}
+	for _, m := range doc.Members {
+		if m.Actor != want[m.Name] {
+			t.Errorf("member %q actor = %q, want %q", m.Name, m.Actor, want[m.Name])
+		}
+	}
+	stdout, _, err := captureOutput(t, func() error {
+		chainStartedText(relevo.Runtime{}, res)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("chainStartedText: %v", err)
+	}
+	for _, actor := range []string{"repo-builder", "repo-reviewer", "repo-planner"} {
+		if !strings.Contains(string(stdout), actor) {
+			t.Errorf("stdout = %q, want it to name the resolved actor %q", stdout, actor)
+		}
+	}
+}
+
 // TestChainServerFlag pins --server at the CLI edge: a start carries it into
 // ChainOptions, and a resume refuses it because the chain already names its
 // server. Parse-only: no state is opened and no harness needs to run.
