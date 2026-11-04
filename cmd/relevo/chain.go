@@ -54,6 +54,9 @@ type chainFlagValues struct {
 	base           *string
 	gate           *string
 	noGate         *bool
+	cleanup        *string
+	noCleanup      *bool
+	cleanupAfter   *string
 	regate         *int
 	maxCorrections *int
 	builderActor   *string
@@ -96,6 +99,9 @@ func chainFlagSet(fs *flag.FlagSet) *chainFlagValues {
 	v.securityActor = fs.String("security-actor", "", "the actor the security member runs (default: config policy chain.security_actor)")
 	v.security = fs.Bool("security", false, "run the chain's security phase")
 	v.noSecurity = fs.Bool("no-security", false, "do not run the chain's security phase")
+	v.cleanup = fs.String("cleanup", "", "cleanup command the chain runs after builder rounds and at chain end (default: config repo cleanup)")
+	v.noCleanup = fs.Bool("no-cleanup", false, "run no cleanup even when the repository sets one")
+	v.cleanupAfter = fs.String("cleanup-after", "", "when the cleanup runs: round, chain or both (default: config repo cleanup_after, else chain)")
 	v.mastermind = fs.String("mastermind", "", "act as this mastermind (id or name; default: $RELEVO_MASTERMIND, else this session's host)")
 	v.asJSON = fs.Bool("json", false, "print the chain as a JSON document")
 	v.server = fs.String("server", "", "run the whole chain on this server; it continues when this machine is off")
@@ -241,6 +247,9 @@ func chainStartOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ChainOption
 		Base:           *v.base,
 		Gate:           *v.gate,
 		NoGate:         *v.noGate,
+		Cleanup:        *v.cleanup,
+		NoCleanup:      *v.noCleanup,
+		CleanupAfter:   *v.cleanupAfter,
 		Regate:         regate,
 		MaxCorrections: maxCorrections,
 		BuilderActor:   *v.builderActor,
@@ -348,7 +357,7 @@ func chainResumeOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ResumeOpti
 	// A start's own flags have nothing to act on in a resume, so each is
 	// refused by name before any runtime is built: silently ignoring one would
 	// leave the caller believing it took effect.
-	for _, name := range []string{"plan", "base", "builder-actor", "ticket", "feature", "no-feature", "mastermind", "workflow", "task", "task-file", "dry-run"} {
+	for _, name := range []string{"plan", "base", "builder-actor", "cleanup", "no-cleanup", "cleanup-after", "ticket", "feature", "no-feature", "mastermind", "workflow", "task", "task-file", "dry-run"} {
 		if flagGiven(fs, name) {
 			return relevo.ResumeOptions{}, fail(codeUsage, "relevo chain --resume does not take --%s: a resume continues the chain it names, which already holds its plans, label, workflow and mastermind", name)
 		}
@@ -458,6 +467,7 @@ func chainStartedText(rt relevo.Runtime, res relevo.ChainResult) {
 		fmt.Printf("  %-8s %-16s %-8s %s\n", chainPartOf(res.Chain, m.Name), m.Name, placement, actor)
 	}
 	fmt.Printf("  %s\n", relevo.CheckLine(res.Check, res.CheckSource))
+	fmt.Printf("  %s\n", relevo.CleanupReportLine(res.Cleanup, res.CleanupSource, res.CleanupAfter))
 	if res.Chain.Worktree != "" {
 		fmt.Printf("  worktree %s on %s (from %s)\n", res.Chain.Worktree, res.Chain.Branch, res.Chain.Base)
 	} else {

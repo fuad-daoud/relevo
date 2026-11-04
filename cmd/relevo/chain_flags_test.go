@@ -181,6 +181,63 @@ func TestChainFlagsCandidateAcceptedOnResume(t *testing.T) {
 	}
 }
 
+// TestChainFlagsCleanupParsesIntoOptions pins the start arm's mapping: each
+// cleanup flag lands in ChainOptions, and an unnamed cleanup stays empty for
+// the repository entry.
+func TestChainFlagsCleanupParsesIntoOptions(t *testing.T) {
+	opts, err := chainOptionsFrom(t, "--name", "shop", "--plan", chainPlanArg(t), "--no-feature",
+		"--cleanup", "make clean", "--cleanup-after", "both")
+	if err != nil {
+		t.Fatalf("chainOptions --cleanup: %v", err)
+	}
+	if opts.Cleanup != "make clean" {
+		t.Errorf("Cleanup = %q, want make clean", opts.Cleanup)
+	}
+	if opts.CleanupAfter != "both" {
+		t.Errorf("CleanupAfter = %q, want both", opts.CleanupAfter)
+	}
+	if opts.NoCleanup {
+		t.Errorf("NoCleanup = true, want false without --no-cleanup")
+	}
+
+	cleared, err := chainOptionsFrom(t, "--name", "shop", "--plan", chainPlanArg(t), "--no-feature", "--no-cleanup")
+	if err != nil {
+		t.Fatalf("chainOptions --no-cleanup: %v", err)
+	}
+	if !cleared.NoCleanup {
+		t.Errorf("NoCleanup = false, want true")
+	}
+
+	unnamed, err := chainOptionsFrom(t, "--name", "shop", "--plan", chainPlanArg(t), "--no-feature")
+	if err != nil {
+		t.Fatalf("chainOptions without cleanup flags: %v", err)
+	}
+	if unnamed.Cleanup != "" || unnamed.CleanupAfter != "" || unnamed.NoCleanup {
+		t.Errorf("Cleanup, CleanupAfter, NoCleanup = %q, %q, %v, want empty so the repository entry stands",
+			unnamed.Cleanup, unnamed.CleanupAfter, unnamed.NoCleanup)
+	}
+}
+
+// TestChainFlagsCleanupRefusedOnResume pins that the cleanup flags are
+// start-only: a resume naming one is refused before any runtime is built, so
+// a resumed chain keeps the cleanup it started with.
+func TestChainFlagsCleanupRefusedOnResume(t *testing.T) {
+	for _, args := range [][]string{
+		{"--cleanup", "make clean"},
+		{"--no-cleanup"},
+		{"--cleanup-after", "both"},
+	} {
+		full := append([]string{"--resume", "--name", "shop"}, args...)
+		_, _, err := captureOutput(t, func() error {
+			return run(append([]string{"chain"}, full...))
+		})
+		ce := requireCLIError(t, err, codeUsage, "")
+		if !strings.Contains(ce.message, args[0]) {
+			t.Errorf("message = %q, want it to name %s", ce.message, args[0])
+		}
+	}
+}
+
 // TestChainFlagsCandidateRefusedOnResume pins the resume arm's refusal: an
 // unknown part is refused before any runtime is built, naming the parts a pin
 // can take.

@@ -95,14 +95,16 @@ type CleanupResolution struct {
 	After   string
 }
 
-// resolveCleanupFor applies the cleanup resolution rule: the flag wins over
-// the repository's own entry, and there is no policy tier behind them -- an
-// unset flag with an unset entry takes no cleanup. The after word resolves
-// beside the command with the same precedence, defaulting to chain, so a
-// caller never reimplements the fallback.
-func resolveCleanupFor(cleanup, after string, repo RepoSettings) (CleanupResolution, error) {
+// resolveCleanupFor applies the cleanup resolution rule: --no-cleanup clears
+// everything, the flag wins over the repository's own entry, and there is no
+// policy tier behind them -- an unset flag with an unset entry takes no
+// cleanup. The after word resolves beside the command with the same
+// precedence, defaulting to chain, so a caller never reimplements the
+// fallback.
+func resolveCleanupFor(cleanup string, noCleanup bool, after string, repo RepoSettings) (CleanupResolution, error) {
 	var res CleanupResolution
 	switch {
+	case noCleanup:
 	case cleanup != "":
 		res.Command = cleanup
 		res.Source = "--cleanup"
@@ -198,6 +200,17 @@ func CheckLine(cmd, source string) string { return resolutionLine("check", cmd, 
 
 // CleanupLine is the cleanup line's own rule under the "cleanup" prefix.
 func CleanupLine(cmd, source string) string { return resolutionLine("cleanup", cmd, source) }
+
+// CleanupReportLine renders the cleanup line a chain start prints: the
+// cleanup line with the when word bracketed behind it, or the bare cleanup
+// line when no cleanup runs.
+func CleanupReportLine(cmd, source, after string) string {
+	line := CleanupLine(cmd, source)
+	if cmd == "" || after == "" {
+		return line
+	}
+	return line + " [" + after + "]"
+}
 
 func resolutionLine(prefix, cmd, source string) string {
 	if cmd == "" {

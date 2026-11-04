@@ -125,3 +125,91 @@ func TestCheckReportNamesTheCheckSource(t *testing.T) {
 		})
 	}
 }
+
+// TestCleanupCommandsListsDistinctRenderedCommands pins the collection: every
+// non-empty cleanup step renders once, in sorted step order, with params
+// expanded and duplicates dropped.
+func TestCleanupCommandsListsDistinctRenderedCommands(t *testing.T) {
+	t.Parallel()
+
+	def := workflow.Definition{
+		Params: map[string]workflow.Param{
+			"cleanup_round": {Kind: workflow.ParamString, Str: "make clean"},
+		},
+		Steps: map[string]workflow.Step{
+			"b-cleanup": {Cleanup: "go clean ./..."},
+			"a-cleanup": {Cleanup: "{{params.cleanup_round}}"},
+			"dup":       {Cleanup: "go clean ./..."},
+			"empty":     {Cleanup: ""},
+			"run":       {Run: "echo hi"},
+		},
+	}
+	got := CleanupCommands(def)
+	want := []string{"make clean", "go clean ./..."}
+	if len(got) != len(want) {
+		t.Fatalf("CleanupCommands = %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("CleanupCommands = %q, want %q", got, want)
+		}
+	}
+}
+
+// TestCleanupReportNamesTheCleanupSource pins the start line's cleanup: a
+// cleanup given through --param is named as such, a resolved cleanup keeps
+// its source and when word, several commands join under the workflow, and an
+// unmatched single command falls back to the workflow.
+func TestCleanupReportNamesTheCleanupSource(t *testing.T) {
+	t.Parallel()
+
+	withCleanup := func(round, chain string) workflow.Definition {
+		return workflow.Definition{
+			Params: map[string]workflow.Param{
+				"cleanup_round": {Kind: workflow.ParamString, Str: round},
+				"cleanup_chain": {Kind: workflow.ParamString, Str: chain},
+			},
+			Steps: map[string]workflow.Step{
+				"cleanup-round": {Cleanup: "{{params.cleanup_round}}"},
+				"cleanup-chain": {Cleanup: "{{params.cleanup_chain}}"},
+			},
+		}
+	}
+	cases := []struct {
+		name                          string
+		def                           workflow.Definition
+		cmd, source, after            string
+		params                        map[string]string
+		wantCmd, wantSource, wantWhen string
+	}{
+		{"--param cleanup_round", withCleanup("go clean ./...", ""), "", "", "",
+			map[string]string{"cleanup_round": "go clean ./..."}, "go clean ./...", "--param cleanup_round", "round"},
+		{"flag round", withCleanup("make clean", ""), "make clean", "--cleanup", "round",
+			nil, "make clean", "--cleanup", "round"},
+		{"repo chain", withCleanup("", "make clean"), "make clean", "repo setting", "chain",
+			nil, "make clean", "repo setting", "chain"},
+		{"both", withCleanup("make clean", "make clean"), "make clean", "--cleanup", "both",
+			nil, "make clean", "--cleanup", "both"},
+		{"several commands join", withCleanup("make clean", "go clean ./..."), "", "", "both",
+			nil, "go clean ./...; make clean", "workflow", "both"},
+		{"unmatched single falls back", withCleanup("make clean", ""), "other", "--cleanup", "round",
+			nil, "make clean", "workflow", "round"},
+		{"literal keeps the after word", workflow.Definition{
+			Steps: map[string]workflow.Step{
+				"sweep": {Cleanup: "make clean", On: map[string]workflow.Target{"done": workflow.DoneTarget()}},
+			},
+		}, "", "", "chain", nil, "make clean", "workflow", "chain"},
+		{"no cleanup", withCleanup("", ""), "", "", "chain",
+			nil, "", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			cmd, source, when := CleanupReport(c.def, c.cmd, c.source, c.after, c.params)
+			if cmd != c.wantCmd || source != c.wantSource || when != c.wantWhen {
+				t.Errorf("CleanupReport = %q (%q) [%q], want %q (%q) [%q]",
+					cmd, source, when, c.wantCmd, c.wantSource, c.wantWhen)
+			}
+		})
+	}
+}

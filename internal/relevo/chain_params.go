@@ -1,6 +1,7 @@
 package relevo
 
 import (
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,15 +26,17 @@ type chainParamFlag struct {
 // workflow's own defaults, then the repository's own actors and gate, then
 // policy for the shipped default, then the old flags, then --param. It
 // returns only the params it overrides; the caller merges them with
-// workflow.WithParams. A flag the workflow has no slot for is refused,
-// naming the params it takes.
+// workflow.WithParams. It also returns the cleanup resolution the mapping
+// used, so the caller reports the start line's cleanup from the same tiers.
+// A flag the workflow has no slot for is refused, naming the params it
+// takes.
 //
 // Policy fills slots only for the shipped default: a custom workflow's own
 // defaults are the human's intent, so policy never overwrites them. The
 // repository's own actors and gate sit exactly where the policy tier sat,
 // behind the flags; the old flags and --param override either. The builder
 // slot has no policy default, so only the repository fills it here.
-func chainParamsFor(def workflow.Definition, pol policy.Policy, opts ChainOptions, repo RepoSettings) (map[string]string, error) {
+func chainParamsFor(def workflow.Definition, pol policy.Policy, opts ChainOptions, repo RepoSettings) (map[string]string, CleanupResolution, error) {
 	out := map[string]string{}
 
 	// Policy fills only the shipped default's slots: a custom workflow keeps
@@ -74,12 +77,20 @@ func chainParamsFor(def workflow.Definition, pol policy.Policy, opts ChainOption
 		}
 	}
 
+	// Cleanup fills the cleanup_round/cleanup_chain slots, then --param wins
+	// per-param below.
+	cleanupValues, cleanup, err := chainCleanupParams(def, opts, repo)
+	if err != nil {
+		return nil, CleanupResolution{}, err
+	}
+	maps.Copy(out, cleanupValues)
+
 	for _, f := range chainParamFlags(opts) {
 		if !f.given {
 			continue
 		}
 		if !chain.HasParam(def, f.param) {
-			return nil, refusal.New("%s: workflow %q has no param %q; it takes: %s",
+			return nil, CleanupResolution{}, refusal.New("%s: workflow %q has no param %q; it takes: %s",
 				f.flag, def.Name, f.param, strings.Join(chainParamNames(def), ", "))
 		}
 		out[f.param] = f.value
@@ -89,7 +100,41 @@ func chainParamsFor(def workflow.Definition, pol policy.Policy, opts ChainOption
 	for key, value := range opts.Params {
 		out[key] = value
 	}
-	return out, nil
+	return out, cleanup, nil
+}
+
+// chainCleanupParams maps the resolved cleanup onto the cleanup_round and
+// cleanup_chain slots for any workflow that carries them: the resolved
+// command goes to the round slot, the chain slot, or both, per the resolved
+// after word. Empty fills neither, so a chain with no cleanup keeps the
+// workflow's own defaults. A flag naming a slot the workflow lacks is
+// refused, exactly as an old flag is. It also returns the resolution, so the
+// caller reports the start line's cleanup from the same tiers.
+func chainCleanupParams(def workflow.Definition, opts ChainOptions, repo RepoSettings) (map[string]string, CleanupResolution, error) {
+	out := map[string]string{}
+	cleanup, err := resolveCleanupFor(opts.Cleanup, opts.NoCleanup, opts.CleanupAfter, repo)
+	if err != nil {
+		return nil, CleanupResolution{}, refusal.New("%v", err)
+	}
+	if cleanup.Command != "" {
+		var targets []string
+		switch cleanup.After {
+		case "round":
+			targets = []string{"cleanup_round"}
+		case "chain":
+			targets = []string{"cleanup_chain"}
+		case "both":
+			targets = []string{"cleanup_round", "cleanup_chain"}
+		}
+		for _, param := range targets {
+			if !chain.HasParam(def, param) {
+				return nil, CleanupResolution{}, refusal.New("--cleanup: workflow %q has no param %q; it takes: %s",
+					def.Name, param, strings.Join(chainParamNames(def), ", "))
+			}
+			out[param] = cleanup.Command
+		}
+	}
+	return out, cleanup, nil
 }
 
 // chainParamFlags are the old flags that fill workflow params, each carrying

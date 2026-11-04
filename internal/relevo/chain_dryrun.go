@@ -14,14 +14,17 @@ import (
 )
 
 // DryRunDoc is what a dry run resolved: workflow, params, step graph,
-// members and every validation problem. Rendering it starts nothing and
-// writes nothing.
+// members, cleanup and every validation problem. Rendering it starts nothing
+// and writes nothing.
 type DryRunDoc struct {
 	Workflow string
 	Origin   string
 	Params   []DryRunParam
 	Steps    []DryRunStep
 	Members  []DryRunMember
+	// Cleanup is every cleanup step that runs a command, in step order; empty
+	// when the chain runs no cleanup.
+	Cleanup []DryRunCleanup
 	// Cap is the longest chain name the members allow.
 	Cap int
 	// Problems is every validation failure, one line each, in validator order.
@@ -49,6 +52,17 @@ type DryRunMember struct {
 	Writer bool
 }
 
+// DryRunCleanup is one cleanup step that runs a command: its resolved
+// command, where the command came from, when it runs, and the step it
+// precedes.
+type DryRunCleanup struct {
+	Step    string
+	Command string
+	Source  string
+	When    string
+	Before  string
+}
+
 // ChainDryRun resolves a chain's workflow without starting anything. A
 // workflow that does not validate comes back in the document, so a caller
 // prints every problem at once rather than only the first.
@@ -68,7 +82,7 @@ func ChainDryRun(ctx context.Context, rt Runtime, opts ChainOptions) (DryRunDoc,
 	if err != nil {
 		return DryRunDoc{}, err
 	}
-	values, err := chainParamsFor(def, rt.Policy, opts, repoSet)
+	values, cleanupRes, err := chainParamsFor(def, rt.Policy, opts, repoSet)
 	if err != nil {
 		return DryRunDoc{}, err
 	}
@@ -77,9 +91,14 @@ func ChainDryRun(ctx context.Context, rt Runtime, opts ChainOptions) (DryRunDoc,
 		return DryRunDoc{}, refusal.New("%v", err)
 	}
 
+	// The graph renders pruned: a chain with no cleanup prints the shape an
+	// old binary reads, while a chain with one shows the cleanup steps. The
+	// problems still read the unpruned definition, as before.
+	pruned := workflow.PruneEmptyCleanup(applied)
 	actors := rt.RoleRegistry().WorkflowActors()
-	doc := DryRunDoc{Workflow: applied.Name, Origin: origin, Params: dryRunParams(applied)}
-	doc.Steps = dryRunSteps(applied, actors, rt, opts)
+	doc := DryRunDoc{Workflow: pruned.Name, Origin: origin, Params: dryRunParams(pruned)}
+	doc.Steps = dryRunSteps(pruned, actors, rt, opts)
+	doc.Cleanup = dryRunCleanup(pruned, cleanupRes, opts.Params)
 	for _, p := range workflow.Validate(applied, dryRunEnv(rt, opts)) {
 		doc.Problems = append(doc.Problems, p.String())
 	}
@@ -245,6 +264,103 @@ func dryRunPlacement(rt Runtime, actor string) string {
 	return resolve.LocalPlacement
 }
 
+// dryRunCleanup lists every cleanup step that runs a command, in step order:
+// its resolved command, the tier that supplied it, when it runs, and the
+// step it precedes.
+func dryRunCleanup(def workflow.Definition, cleanupRes CleanupResolution, optParams map[string]string) []DryRunCleanup {
+	ids := make([]string, 0, len(def.Steps))
+	for id, step := range def.Steps {
+		if step.Cleanup == "" {
+			continue
+		}
+		if workflow.RenderParams(def, step.Cleanup) == "" {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	var out []DryRunCleanup
+	for _, id := range ids {
+		step := def.Steps[id]
+		cmd := workflow.RenderParams(def, step.Cleanup)
+		out = append(out, DryRunCleanup{
+			Step:    id,
+			Command: cmd,
+			Source:  dryRunCleanupSource(step, cmd, cleanupRes, optParams),
+			When:    dryRunCleanupWhen(step, cleanupRes.After),
+			Before:  dryRunCleanupBefore(step),
+		})
+	}
+	return out
+}
+
+// dryRunCleanupSource names the tier that supplied a cleanup step's command:
+// a --param override wins, then the resolved cleanup, then the workflow's
+// own default or literal. A literal step never takes the resolution's
+// source, since it runs whatever it names.
+func dryRunCleanupSource(step workflow.Step, cmd string, cleanupRes CleanupResolution, optParams map[string]string) string {
+	refs, err := workflow.Refs(step.Cleanup)
+	if err != nil {
+		return "workflow"
+	}
+	seen := false
+	for _, ref := range refs {
+		if ref.Root != "params" || (ref.Attr != "cleanup_round" && ref.Attr != "cleanup_chain") {
+			continue
+		}
+		seen = true
+		if v, ok := optParams[ref.Attr]; ok && v == cmd {
+			return "--param " + ref.Attr
+		}
+	}
+	if seen && cleanupRes.Command == cmd {
+		return cleanupRes.Source
+	}
+	return "workflow"
+}
+
+// dryRunCleanupWhen names when a cleanup step runs: the phase its cleanup
+// param fills, or the resolution's own after word for a literal step.
+func dryRunCleanupWhen(step workflow.Step, after string) string {
+	refs, err := workflow.Refs(step.Cleanup)
+	if err != nil {
+		return after
+	}
+	round, chain := false, false
+	for _, ref := range refs {
+		if ref.Root != "params" {
+			continue
+		}
+		switch ref.Attr {
+		case "cleanup_round":
+			round = true
+		case "cleanup_chain":
+			chain = true
+		}
+	}
+	switch {
+	case round && chain:
+		return "both"
+	case round:
+		return "round"
+	case chain:
+		return "chain"
+	}
+	return after
+}
+
+// dryRunCleanupBefore names the step a cleanup precedes: its done edge, or
+// its else when done is absent.
+func dryRunCleanupBefore(step workflow.Step) string {
+	if t, ok := step.On["done"]; ok {
+		return dryRunTarget(t)
+	}
+	if t, ok := step.On["else"]; ok {
+		return dryRunTarget(t)
+	}
+	return ""
+}
+
 // RenderChainDryRun renders a dry-run document as text. The name carries
 // "Chain" because the send verb's RenderDryRun owns the plain name.
 func RenderChainDryRun(doc DryRunDoc) string {
@@ -272,6 +388,16 @@ func RenderChainDryRun(doc DryRunDoc) string {
 			line += " edges=" + strings.Join(s.Edges, " ")
 		}
 		b.WriteString(line + "\n")
+	}
+	if len(doc.Cleanup) > 0 {
+		b.WriteString("cleanup:\n")
+		for _, c := range doc.Cleanup {
+			line := "  " + c.Step + ": " + c.Command + " (" + c.Source + ") [" + c.When
+			if c.Before != "" {
+				line += ", before " + c.Before
+			}
+			b.WriteString(line + "]\n")
+		}
 	}
 	if len(doc.Members) > 0 {
 		fmt.Fprintf(&b, "members (chain name cap %d):\n", doc.Cap)

@@ -50,6 +50,15 @@ type ChainOptions struct {
 	// NoGate opts the builder member out of policy.gate.default; it wins over
 	// Gate, exactly as bind's --no-gate.
 	NoGate bool
+	// Cleanup is the chain's cleanup command, from --cleanup; "" takes the
+	// repository entry's cleanup, and no entry takes no cleanup.
+	Cleanup string
+	// NoCleanup runs no cleanup even when the repository entry names one; it
+	// wins over Cleanup, exactly as --no-gate wins over --gate.
+	NoCleanup bool
+	// CleanupAfter is when the cleanup runs -- round, chain or both; "" takes
+	// the repository entry's cleanup_after, defaulting to chain.
+	CleanupAfter string
 	// Regate is the builder member's repair-round budget after a failing gate;
 	// nil takes policy.gate.regate.
 	Regate *int
@@ -97,6 +106,15 @@ type ChainResult struct {
 	// setting" or "policy.gate.default". "" leaves the line without a
 	// parenthetical, the shape a result read back off a mirror prints.
 	CheckSource string
+	// Cleanup is the chain's resolved cleanup command; "" means none.
+	Cleanup string
+	// CleanupSource names the tier that supplied Cleanup -- "--cleanup", a
+	// "--param cleanup_..." override, "repo setting" or "workflow". "" leaves
+	// the line without a parenthetical.
+	CleanupSource string
+	// CleanupAfter is when the cleanup runs -- round, chain or both. "" means
+	// no cleanup runs.
+	CleanupAfter string
 	// ManualRound is the newer builder round a resume reviewed; 0 means the
 	// resume re-ran the halted step instead.
 	ManualRound int

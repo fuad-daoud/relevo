@@ -48,7 +48,7 @@ func chainServerResolveLocal(ctx context.Context, rt Runtime, opts ChainOptions)
 // bodies read-only: a custom workflow takes any plan count, the shipped
 // default takes at least one --plan.
 func chainServerResolveBodies(ctx context.Context, rt Runtime, opts ChainOptions, def workflow.Definition, origin, repo string, repoSet RepoSettings) (chainServerPlan, error) {
-	values, err := chainParamsFor(def, rt.Policy, opts, repoSet)
+	values, _, err := chainParamsFor(def, rt.Policy, opts, repoSet)
 	if err != nil {
 		return chainServerPlan{}, err
 	}

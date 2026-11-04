@@ -462,18 +462,21 @@ func TestResolveCleanupPrefersFlagOverRepo(t *testing.T) {
 	cases := []struct {
 		name             string
 		cleanup, after   string
+		noCleanup        bool
 		repo             RepoSettings
 		cmd, source, aft string
 	}{
-		{"the flag wins over the repo", "make tidy", "", RepoSettings{Cleanup: "make clean", CleanupAfter: "round"}, "make tidy", "--cleanup", "round"},
-		{"the flag after wins over the repo after", "", "both", RepoSettings{Cleanup: "make clean", CleanupAfter: "round"}, "make clean", resolve.GateSourceRepo, "both"},
-		{"the repo beats empty", "", "", RepoSettings{Cleanup: "make clean", CleanupAfter: "round"}, "make clean", resolve.GateSourceRepo, "round"},
-		{"the repo after beats empty", "make tidy", "", RepoSettings{CleanupAfter: "round"}, "make tidy", "--cleanup", "round"},
-		{"empty after reads chain", "", "", RepoSettings{Cleanup: "make clean"}, "make clean", resolve.GateSourceRepo, "chain"},
-		{"none when the repo sets nothing", "", "", RepoSettings{}, "", "", "chain"},
+		{"the flag wins over the repo", "make tidy", "", false, RepoSettings{Cleanup: "make clean", CleanupAfter: "round"}, "make tidy", "--cleanup", "round"},
+		{"the flag after wins over the repo after", "", "both", false, RepoSettings{Cleanup: "make clean", CleanupAfter: "round"}, "make clean", resolve.GateSourceRepo, "both"},
+		{"the repo beats empty", "", "", false, RepoSettings{Cleanup: "make clean", CleanupAfter: "round"}, "make clean", resolve.GateSourceRepo, "round"},
+		{"the repo after beats empty", "make tidy", "", false, RepoSettings{CleanupAfter: "round"}, "make tidy", "--cleanup", "round"},
+		{"empty after reads chain", "", "", false, RepoSettings{Cleanup: "make clean"}, "make clean", resolve.GateSourceRepo, "chain"},
+		{"none when the repo sets nothing", "", "", false, RepoSettings{}, "", "", "chain"},
+		{"no-cleanup beats the flag", "make tidy", "", true, RepoSettings{Cleanup: "make clean", CleanupAfter: "round"}, "", "", "round"},
+		{"no-cleanup beats the repo", "", "", true, RepoSettings{Cleanup: "make clean", CleanupAfter: "round"}, "", "", "round"},
 	}
 	for _, tc := range cases {
-		got, err := resolveCleanupFor(tc.cleanup, tc.after, tc.repo)
+		got, err := resolveCleanupFor(tc.cleanup, tc.noCleanup, tc.after, tc.repo)
 		if err != nil {
 			t.Errorf("%s: resolveCleanupFor = %v, want no error", tc.name, err)
 			continue
@@ -498,7 +501,7 @@ func TestResolveCleanupRefusesABadAfter(t *testing.T) {
 		{"a bad flag after", "make clean", "weekly", RepoSettings{}},
 		{"a bad repo after", "", "", RepoSettings{Cleanup: "make clean", CleanupAfter: "weekly"}},
 	} {
-		_, err := resolveCleanupFor(tc.cleanup, tc.after, tc.repo)
+		_, err := resolveCleanupFor(tc.cleanup, false, tc.after, tc.repo)
 		if err == nil {
 			t.Errorf("%s: resolveCleanupFor = nil error, want a refusal", tc.name)
 			continue
@@ -526,6 +529,28 @@ func TestCleanupLineNamesTheSource(t *testing.T) {
 	for _, tc := range cases {
 		if got := CleanupLine(tc.cmd, tc.source); got != tc.want {
 			t.Errorf("CleanupLine(%q, %q) = %q, want %q", tc.cmd, tc.source, got, tc.want)
+		}
+	}
+}
+
+// TestCleanupReportLineAddsTheWhen pins the start line's cleanup rendering:
+// the cleanup line with the when word bracketed behind it, and the bare line
+// when no cleanup runs. Dropping the when word is the mutation this test
+// catches.
+func TestCleanupReportLineAddsTheWhen(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct{ cmd, source, after, want string }{
+		{"make clean", "--cleanup", "both", "cleanup: make clean (--cleanup) [both]"},
+		{"make clean", resolve.GateSourceRepo, "chain", "cleanup: make clean (repo setting) [chain]"},
+		{"make clean", "", "", "cleanup: make clean"},
+		{"", "", "", "cleanup: none"},
+		{"", resolve.GateSourceRepo, "chain", "cleanup: none"},
+	}
+	for _, tc := range cases {
+		if got := CleanupReportLine(tc.cmd, tc.source, tc.after); got != tc.want {
+			t.Errorf("CleanupReportLine(%q, %q, %q) = %q, want %q",
+				tc.cmd, tc.source, tc.after, got, tc.want)
 		}
 	}
 }

@@ -22,6 +22,8 @@ func TestDefaultIsTheSpecDefault(t *testing.T) {
 		"security":        {Kind: ParamString, Str: "security"},
 		"scan":            {Kind: ParamBool, Bool: true},
 		"gate":            {Kind: ParamString, Str: ""},
+		"cleanup_round":   {Kind: ParamString, Str: ""},
+		"cleanup_chain":   {Kind: ParamString, Str: ""},
 		"regate":          {Kind: ParamInt, Int: 1},
 		"max_corrections": {Kind: ParamInt, Int: 3},
 	}
@@ -30,8 +32,8 @@ func TestDefaultIsTheSpecDefault(t *testing.T) {
 	}
 	wantSteps := []string{
 		"plans", "build", "check", "repair", "review", "correct", "build-fix",
-		"scan-gate", "scan", "fix-plan", "fix-build", "fix-check", "fix-repair",
-		"fix-review", "fix-correct", "fix-rebuild",
+		"cleanup-round", "scan-gate", "scan", "fix-plan", "fix-build", "fix-check", "fix-repair",
+		"fix-review", "fix-correct", "fix-rebuild", "fix-cleanup-round", "cleanup-chain",
 	}
 	for _, name := range wantSteps {
 		if _, ok := def.Steps[name]; !ok {
@@ -83,6 +85,68 @@ func TestDefaultCheckRoutesGreenToReviewAndRedToRepair(t *testing.T) {
 		"red":   StepTarget("fix-repair"),
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("fix-check on = %+v, want %+v", got, want)
+	}
+}
+
+// TestDefaultCleanupPlacement pins where the cleanup steps sit: builder closes
+// flow through the round cleanup before the check, fix closes through the fix
+// round cleanup before the fix check, and every edge that finished the chain
+// flows through the chain cleanup first. Pointing build's done edge straight
+// at check is the mutation this test catches.
+func TestDefaultCleanupPlacement(t *testing.T) {
+	for _, param := range []string{"cleanup_round", "cleanup_chain"} {
+		p, ok := Default().Params[param]
+		if !ok || p != (Param{Kind: ParamString}) {
+			t.Errorf("param %s = %+v, want an empty string param", param, p)
+		}
+	}
+	def := Default()
+	edge := func(step, match string) Target {
+		t.Helper()
+		on, ok := def.Steps[step].On[match]
+		if !ok {
+			t.Fatalf("step %s has no %s edge", step, match)
+		}
+		return on
+	}
+	for _, step := range []string{"build", "repair", "build-fix"} {
+		if got := edge(step, "done"); got != StepTarget("cleanup-round") {
+			t.Errorf("%s done = %+v, want the round cleanup", step, got)
+		}
+	}
+	if got := edge("cleanup-round", "done"); got != StepTarget("check") {
+		t.Errorf("cleanup-round done = %+v, want check", got)
+	}
+	for _, step := range []string{"fix-build", "fix-rebuild", "fix-repair"} {
+		if got := edge(step, "done"); got != StepTarget("fix-cleanup-round") {
+			t.Errorf("%s done = %+v, want the fix round cleanup", step, got)
+		}
+	}
+	if got := edge("fix-cleanup-round", "done"); got != StepTarget("fix-check") {
+		t.Errorf("fix-cleanup-round done = %+v, want fix-check", got)
+	}
+	for _, tc := range [][2]string{{"scan-gate", "false"}, {"scan", "findings=0"}, {"fix-review", "verdict=pass"}} {
+		if got := edge(tc[0], tc[1]); got != StepTarget("cleanup-chain") {
+			t.Errorf("%s %s = %+v, want the chain cleanup", tc[0], tc[1], got)
+		}
+	}
+	if got := edge("cleanup-chain", "done"); got != DoneTarget() {
+		t.Errorf("cleanup-chain done = %+v, want done", got)
+	}
+	for id, step := range def.Steps {
+		for match, target := range step.On {
+			switch {
+			case target == StepTarget("check") && id != "cleanup-round":
+				t.Errorf("%s %s targets check past the round cleanup", id, match)
+			case target == StepTarget("fix-check") && id != "fix-cleanup-round":
+				t.Errorf("%s %s targets fix-check past the fix round cleanup", id, match)
+			case target == DoneTarget() && id != "cleanup-chain":
+				t.Errorf("%s %s finishes past the chain cleanup", id, match)
+			}
+		}
+	}
+	if problems := Validate(def, shippedEnv()); len(problems) != 0 {
+		t.Errorf("default validates with %v, want clean", problems)
 	}
 }
 
