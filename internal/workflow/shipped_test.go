@@ -162,7 +162,7 @@ func TestDirectFixOverflowsToCorrectAfterOneVisit(t *testing.T) {
 	s = stepClose(t, def, s, "review", "reviewer", map[string]string{"verdict": "changes"}, "fix-direct")
 	s = advance(t, def, s, Event{Kind: EventStepClosed, Step: "fix-direct", Member: "builder", Status: "done"}, ActionRunCheck, "check")
 	s = checkRun(t, def, s, "check", 2, "green", "review")
-	s = stepClose(t, def, s, "review", "reviewer", map[string]string{"verdict": "changes"}, "correct")
+	stepClose(t, def, s, "review", "reviewer", map[string]string{"verdict": "changes"}, "correct")
 }
 
 func TestDefaultWithNoGateGoesFromBuildToReview(t *testing.T) {
