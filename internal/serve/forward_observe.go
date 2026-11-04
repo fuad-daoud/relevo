@@ -74,6 +74,7 @@ func (s *Server) observeForwards(ctx context.Context) int {
 		}
 	}
 	s.burstHealth.forgetAckEpisodes(holdingClosed)
+	s.burstHealth.forgetStopMarks(stoppingForwards(work))
 	if len(work) == 0 {
 		return 0
 	}
@@ -116,6 +117,9 @@ func (s *Server) observeForwards(ctx context.Context) int {
 func (s *Server) observeOne(ctx context.Context, cl *client.Client, row burst.NodeRow, w observeWork, now time.Time) bool {
 	view, err := cl.GetBinding(ctx, w.fwd.Node, w.fwd.NodeBinding)
 	if err != nil {
+		if isObserveNotFound(err) {
+			return s.observeBindingGone(ctx, cl, w, now)
+		}
 		if burstForwardUnreachable(err) {
 			s.noteNodeUnreachable(now, row)
 		} else {

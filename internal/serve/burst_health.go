@@ -208,3 +208,25 @@ func (h *burstHealth) noteStopDone(key string) {
 	defer h.mu.Unlock()
 	h.stopDone[key] = true
 }
+
+// forgetStopMarks drops every stop mark outside open, so a server that lives
+// for months does not keep one per round ever stopped. A round's forward
+// never comes back once its stop closed it, so a dropped mark is never asked
+// for again.
+func (h *burstHealth) forgetStopMarks(open map[string]bool) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for key := range h.stopLast {
+		if !open[key] {
+			delete(h.stopLast, key)
+		}
+	}
+	for key := range h.stopDone {
+		if !open[key] {
+			delete(h.stopDone, key)
+		}
+	}
+}

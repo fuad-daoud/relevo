@@ -307,12 +307,12 @@ func (s *nodeScript) serve() http.Handler {
 				writeJSON(w, s.stopStatus, s.stopView)
 			}
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/unavailable":
-			s.unavailableHits.Add(1)
 			var req remote.UnavailableRequest
 			if body, err := io.ReadAll(r.Body); err == nil {
 				_ = json.Unmarshal(body, &req)
 			}
 			s.recordGate(gateSeen{token: req.Token, reason: req.Reason})
+			s.unavailableHits.Add(1)
 			if s.unavailableWait != nil {
 				select {
 				case <-s.unavailableWait:
@@ -329,12 +329,12 @@ func (s *nodeScript) serve() http.Handler {
 				writeJSON(w, status, map[string]any{})
 			}
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/available":
-			s.availableHits.Add(1)
 			var req remote.AvailableRequest
 			if body, err := io.ReadAll(r.Body); err == nil {
 				_ = json.Unmarshal(body, &req)
 			}
 			s.recordGate(gateSeen{token: req.Subject})
+			s.availableHits.Add(1)
 			if s.availableWait != nil {
 				select {
 				case <-s.availableWait:

@@ -214,6 +214,9 @@ func forgetShipFacts(b *store.Binding) {
 	}
 	b.Burst.Shipped = nil
 	b.Burst.NodeBindings = nil
+	if b.Burst.Forward == nil {
+		b.Burst = nil
+	}
 }
 
 func doneSettleWorktree(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, remoteKept, remoteReason string) (DoneResult, error) {

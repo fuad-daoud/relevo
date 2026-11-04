@@ -130,6 +130,18 @@ func (s *Server) requeueOne(ctx context.Context, id remote.ClientID, ownerPath, 
 		if have == nil || have.Node != fwd.Node || cur.Round != fwd.Round {
 			return nil
 		}
+		if cur.State == store.StateDone {
+			// A released binding takes no new round: its forward just ends,
+			// so nothing counts against the node any more.
+			cur.Burst.Forward = nil
+			if len(cur.Burst.Shipped) == 0 && len(cur.Burst.NodeBindings) == 0 {
+				cur.Burst = nil
+			}
+			if err := tx.Save(cur); err != nil {
+				slog.Warn("burst: released binding's forward not cleared", "owner", string(id), "binding", name, "err", err)
+			}
+			return nil
+		}
 		if have.StopRequested {
 			how := "gone"
 			if have.Phase == "sending" {

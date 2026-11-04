@@ -59,6 +59,34 @@ func (s *Server) ackObserveClosed(ctx context.Context, cl *client.Client, w obse
 	return true
 }
 
+// stoppingForwards names the stop episodes still open in work: the marks the
+// next pass may read.
+func stoppingForwards(work []observeWork) map[string]bool {
+	keys := make(map[string]bool)
+	for _, w := range work {
+		if w.fwd.StopRequested {
+			keys[stopMarkKey(w.fwd)] = true
+		}
+	}
+	return keys
+}
+
+// observeBindingGone ends a forward whose node no longer holds its binding: a
+// release fanned out to the node, or the node dropped it. Left standing, the
+// forward would answer 404 on every pass and count against the node for as
+// long as the head runs, keeping a paid node alive. A closed round is already
+// home, so only its receipt goes. A live one has nothing left to watch and
+// comes back the way a lost node's round does. True means a closed forward
+// cleared.
+func (s *Server) observeBindingGone(ctx context.Context, cl *client.Client, w observeWork, now time.Time) bool {
+	if w.fwd.Phase == "closed" {
+		return s.ackObserveClosed(ctx, cl, w)
+	}
+	slog.Info("burst: node no longer holds a forwarded binding", "binding", w.name, "node", w.fwd.Node)
+	s.requeueOne(ctx, w.id, w.ownerPath, w.name, w.fwd, now)
+	return false
+}
+
 // observeNeedsYou parks a head binding the node waits on a human for. The
 // head takes the node's halt reason and report, clears the forward, and
 // leaves the round open: the local tick owns what happens next.
