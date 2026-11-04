@@ -339,8 +339,8 @@ func TestBlobBytesAreCountedInStats(t *testing.T) {
 	if stats.Entries != 3 {
 		t.Errorf("the log's own size was lost: %+v", stats)
 	}
-	// The store still holds nothing under the fetch key, which is what makes the
-	// zero above the right answer rather than an accident.
+	// The refused fetch added nothing: the store still holds nothing under its
+	// key, so the R2Get count above comes from the successful fetch alone.
 	if has, _ := store.Has(t.Context(), keyForFetch); has {
 		t.Error("the fetch key is in the store before anything fetched it")
 	}
