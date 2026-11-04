@@ -341,7 +341,10 @@ func serveAdminConfigWithPolicy(root string, d *db.DB) (serve.Config, error) {
 // when bursting would be on, and the status document's burst block is read
 // from that table: without them the block never reaches the provider.
 func serveStatusConfigFrom(root string, d *db.DB, L config.Loaded) serve.Config {
-	cfg := withIsolation(serveAdminConfigFrom(root, d, L), L.Policy.ServeIsolation())
+	return withServeBurst(withIsolation(serveAdminConfigFrom(root, d, L), L.Policy.ServeIsolation()), L)
+}
+
+func withServeBurst(cfg serve.Config, L config.Loaded) serve.Config {
 	if L.Policy.Serve != nil {
 		cfg.Burst = L.Policy.Serve.Burst
 	}
@@ -361,9 +364,15 @@ func serveAdminConfigWithCandidates(root string, d *db.DB) (serve.Config, error)
 	if L.Candidates.Len() == 0 {
 		return serve.Config{}, errors.New("no candidates configured")
 	}
+	return serveGateConfigFrom(root, d, L), nil
+}
+
+// serveGateConfigFrom is the gate verbs' config. A gate recorded here reaches
+// the head's nodes too, and that needs the node table and the key to dial them.
+func serveGateConfigFrom(root string, d *db.DB, L config.Loaded) serve.Config {
 	cfg := serveAdminConfigFrom(root, d, L)
 	cfg.Candidates = L.Candidates
-	return cfg, nil
+	return withServeBurst(cfg, L)
 }
 
 func cmdServeRun(args []string) error {

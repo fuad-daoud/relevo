@@ -543,6 +543,13 @@ func AdminUnavailable(s *Server, token string, until time.Time, reason string) (
 	return provider, nil
 }
 
+// AdminWaitFanout holds an admin verb until the node sends it started have
+// landed: its process exits right after, which would end them. Every attempt
+// carries its own timeout, so a dead node bounds this at fanoutTimeout.
+func AdminWaitFanout(s *Server) {
+	s.fanout.Wait()
+}
+
 // RenderGates formats `relevo serve gates`.
 func RenderGates(gates []availability.Gate, now time.Time) string {
 	if len(gates) == 0 {
