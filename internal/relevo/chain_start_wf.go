@@ -282,8 +282,8 @@ func chainPlanBodiesFor(opts ChainOptions) ([][]byte, error) {
 	return chainPlanBodies(opts.Plans)
 }
 
-// chainValidateWorkflow validates a workflow against the runtime's actors and
-// the inputs given, refusing with the first problem.
+// chainValidateWorkflow validates a workflow against the runtime's actors,
+// refusing with a missing actor's problem ahead of the first problem.
 func chainValidateWorkflow(rt Runtime, def workflow.Definition, given workflow.Given) error {
 	env := workflow.Env{
 		Actors: rt.RoleRegistry().WorkflowActors(),
@@ -295,12 +295,13 @@ func chainValidateWorkflow(rt Runtime, def workflow.Definition, given workflow.G
 		},
 	}
 	problems := workflow.Validate(def, env)
-	if len(problems) > 0 {
-		p := problems[0]
+	for _, p := range problems {
 		if p.Rule == workflow.RuleKind && strings.Contains(p.Detail, "unknown actor") {
-			return refusal.Classed(resolve.ErrUnknownRole, p.String())
+			return refusal.Classed(resolve.ErrUnknownRole, fmt.Sprintf("%s (define it with: relevo config set actors.%s ...)", p, workflow.RenderParams(def, def.Steps[p.Step].Run)))
 		}
-		return refusal.New("%s", p)
+	}
+	if len(problems) > 0 {
+		return refusal.New("%s", problems[0])
 	}
 	return nil
 }

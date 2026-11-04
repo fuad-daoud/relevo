@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/histq"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 )
 
 func ptr[T any](v T) *T { return &v }
@@ -447,6 +449,25 @@ func TestHistoryOptionsTicketFlagOverridesQuery(t *testing.T) {
 	}
 	if want := "note: --ticket overrides ticket:#1 from -q"; notes[0] != want {
 		t.Errorf("note = %q, want %q", notes[0], want)
+	}
+}
+
+// TestHistoryOptionsUnknownByIsBadInput pins that an unknown --by fails as
+// the caller's own bad input, with the valid axes in the message, so the CLI
+// maps it to usage instead of internal.
+func TestHistoryOptionsUnknownByIsBadInput(t *testing.T) {
+	t.Parallel()
+
+	opts := HistoryOptions{By: "builder"}
+
+	_, _, err := opts.Filter(context.Background(), Runtime{}, time.Now())
+	if !errors.Is(err, refusal.ErrBadInput) {
+		t.Fatalf("Filter error = %v, want refusal.ErrBadInput", err)
+	}
+	for _, want := range []string{"ticket", "candidate"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Filter error = %q, want it to list the axes (missing %q)", err, want)
+		}
 	}
 }
 
