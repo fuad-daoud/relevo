@@ -78,13 +78,14 @@ func chainApply(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 // chainSeedView builds one send's inputs: the plan copies the chain holds and
 // the members' artifacts for the round that just closed. Every path it names
 // is made seed-openable by chainSeedInput, so a seed never names a round_file
-// key a runner cannot open. The reviewer and correction seeds name the judged
-// builder round -- the closing round itself when the builder closed it, the
-// builder's newest closed round when the reviewer did -- and carry that
-// round's gate, the plan's cumulative diff, and the round's own prompt when it
-// differs from the plan copy. The correction and fixes seeds name a reader's
-// own output file rather than the flat NNN-report.md no reader writes. The
-// security and fixes seeds name the whole branch diff and render no gate.
+// key a runner cannot open. The reviewer, correction and fix-direct seeds name
+// the judged builder round -- the closing round itself when the builder closed
+// it, the builder's newest closed round when the reviewer did -- and carry
+// that round's gate, the plan's cumulative diff, and the round's own prompt
+// when it differs from the plan copy. The correction, fix-direct and fixes
+// seeds name a reader's own output file rather than the flat NNN-report.md no
+// reader writes. The security and fixes seeds name the whole branch diff and
+// render no gate.
 func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act chain.Action, closedRound int) (workflow.SeedView, error) {
 	v := workflow.SeedView{
 		Plan: s.Plan, Plans: s.Plans, Corrections: s.Corrections,
@@ -97,7 +98,7 @@ func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act c
 	// failed lookup reads like any other missing input, never a failed close.
 	reviewerOutput, securityOutput := "", ""
 	switch act.Seed {
-	case chain.SeedCorrection:
+	case chain.SeedCorrection, chain.SeedDirectFix:
 		if p, err := chain.MemberReportPath(tx, c.Reviewer, closedRound); err != nil {
 			reviewerOutput = chain.SeedMissing(err)
 		} else {
@@ -112,12 +113,12 @@ func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act c
 	}
 
 	switch act.Seed {
-	case chain.SeedReviewer, chain.SeedCorrection:
+	case chain.SeedReviewer, chain.SeedCorrection, chain.SeedDirectFix:
 		// The judged builder round: the reviewer's own close judged
-		// `closedRound`; a correction is seeded from the reviewer's close, so
-		// it names the builder's newest closed round.
+		// `closedRound`; a correction or fix-direct is seeded from the
+		// reviewer's close, so it names the builder's newest closed round.
 		builderRound := closedRound
-		if act.Seed == chain.SeedCorrection {
+		if act.Seed == chain.SeedCorrection || act.Seed == chain.SeedDirectFix {
 			builderRound = chain.NewestClosedRound(tx, c.Builder)
 		}
 		v.ReportPath = chainSeedInput(rt, c, rt.Store.ReportPath(c.Builder, builderRound))
@@ -136,7 +137,7 @@ func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act c
 		v.RoundPromptPath = chainSeedInput(rt, c, chainRoundPromptPath(rt, v.PlanPath, c.Builder, builderRound))
 		v.BuilderRoundKind, v.BuilderRoundOn, v.BuilderRounds, v.DiffFrom =
 			chainBuilderPlanView(rt, tx, c, s, act, c.Builder, builderRound)
-		if act.Seed == chain.SeedCorrection {
+		if act.Seed == chain.SeedCorrection || act.Seed == chain.SeedDirectFix {
 			v.OutputPath = reviewerOutput
 		}
 	case chain.SeedSecurity, chain.SeedFixes:
