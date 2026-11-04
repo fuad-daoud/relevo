@@ -175,7 +175,7 @@ func TestBurstObserveClosesRound(t *testing.T) {
 		default:
 			path = rt.Store.StreamPath("api", 1)
 		}
-		if _, err := os.Stat(path); err != nil {
+		if _, err := rt.Store.ReadFile(path); err != nil {
 			t.Errorf("head %s missing: %v", kind, err)
 		}
 	}
