@@ -236,5 +236,19 @@ func (s *Server) adoptRunning(ownerPath, name string, fwd store.Forward) {
 		slog.Warn("burst: adopt confirm failed: save failed", "binding", name, "err", err)
 		return
 	}
+	// The adopted round ran on the node, so it is not a local start: the
+	// note says as much, at the claim time the node's answer proves -- the
+	// adopt itself happens after the fact, and now would place the start
+	// long after the round really began. "adopted" names a start whose kind
+	// nobody measured: it was never a warm or cold send this head confirmed.
+	rt := s.runtimeAt(ownerPath)
+	if err := rt.Store.AppendLog(name, store.LogEntry{
+		TS: fwd.ClaimedAt, Round: fwd.Round, Direction: store.DirToMasterMind,
+		Kind: store.KindQueue, Confirmed: true,
+		Note: store.ForwardedNotePrefix + fwd.Node + " (adopted)",
+	}); err != nil {
+		slog.Warn("burst: adopt confirm: send note not appended", "binding", name,
+			"round", fwd.Round, "node", fwd.Node, "err", err)
+	}
 	slog.Info("burst: adopt confirmed a forward its node holds", "binding", name, "node", fwd.Node)
 }

@@ -416,6 +416,9 @@ func (s *Server) applyObserveClosed(ctx context.Context, w observeWork, fetch *o
 	if !observeMatches(next, w.fwd) {
 		return false
 	}
+	if !appendForwardedCloseFacts(rt, w.name, w.fwd, fetch, now) {
+		return false
+	}
 	next.Round = w.fwd.Round + 1
 	if !closeForwardedRound(ctx, rt, &next, w.fwd, fetch.view.DirtyCommit != "") {
 		return false
