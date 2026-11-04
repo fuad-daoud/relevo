@@ -248,7 +248,7 @@ func stagePlanAndStart(ctx context.Context, rt Runtime, tx *store.Tx, name strin
 		return store.Binding{}, "", nil, 0, fmt.Errorf("stage plan at %s: %w", planPath, err)
 	}
 
-	text := composePrompt(rt, b, planPath, reportPath, donePath)
+	text := composePrompt(rt, tx, b, planPath, reportPath, donePath)
 
 	deferred := opts.Defer
 
