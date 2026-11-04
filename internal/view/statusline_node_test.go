@@ -5,7 +5,7 @@ import (
 )
 
 // TestStatusLineNodeSuffix pins the burst node suffix: a forwarded round reads
-// "opencode@contabo->b12" on both Harness and On, and a round with no node
+// "opencode@contabo→b12" on both Harness and On, and a round with no node
 // reads exactly as before.
 func TestStatusLineNodeSuffix(t *testing.T) {
 	t.Parallel()
