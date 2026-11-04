@@ -37,6 +37,9 @@ type scriptedMover struct {
 	// unstage keeps the verdicts but swallows the files they claim, standing
 	// for a mover that says it wrote a body it did not leave.
 	unstage bool
+	// verdictErr rides beside the verdicts, the way the pipe client returns the
+	// batch's refusal or a breaker write that failed with every key answered.
+	verdictErr error
 }
 
 func newScriptedMover() *scriptedMover {
@@ -51,7 +54,11 @@ func (m *scriptedMover) PutBlobs(items []BlobBatchItem) ([]BlobBatchResult, erro
 	if m.callErr != nil {
 		return nil, m.callErr
 	}
-	return m.MemBlobMover.PutBlobs(items)
+	results, err := m.MemBlobMover.PutBlobs(items)
+	if err != nil {
+		return results, err
+	}
+	return results, m.verdictErr
 }
 
 func (m *scriptedMover) GetBlobs(items []BlobBatchItem) ([]BlobBatchResult, error) {
@@ -73,7 +80,10 @@ func (m *scriptedMover) GetBlobs(items []BlobBatchItem) ([]BlobBatchResult, erro
 			}
 		}
 	}
-	return results, err
+	if err != nil {
+		return results, err
+	}
+	return results, m.verdictErr
 }
 
 // callsOf is the shape of recorded mover calls: keys per call, in order.
@@ -425,11 +435,8 @@ func TestFetchNamesTheRowOfOneMissingKey(t *testing.T) {
 	assertEmptyStaging(t, dir, "after a batch with one missing key")
 }
 
-// Several failed keys are decided by the first in order, not by a later
-// permanent one: the mover answers its batch in order, and a report that
-// skipped ahead would make a repeated import name a row the first attempt
-// never mentioned. (Preferring the permanent failure is the supervisor's
-// settle, before the mover's caller ever sees the order.)
+// Several failed keys with no missing body among them are decided by the first
+// in order, so a repeated import names what the first attempt named.
 func TestFetchNamesTheFirstFailedKeyInOrder(t *testing.T) {
 	t.Parallel()
 	firstErr := errors.New("synclog: the bucket answered 503")
@@ -452,6 +459,57 @@ func TestFetchNamesTheFirstFailedKeyInOrder(t *testing.T) {
 	if errors.As(err, &missing) {
 		t.Errorf("per-key failures collapsed into a row verdict: %+v, want a stall instead", missing)
 	}
+}
+
+// A missing body decides the batch's row even behind an earlier key's transient
+// failure. The real client returns the missing key's refusal as the call's
+// error, so a report keyed on the first failure would tell the operator to
+// restore a body that is still in the store.
+func TestFetchNamesTheMissingRowPastAnEarlierFailure(t *testing.T) {
+	t.Parallel()
+	mover := newScriptedMover()
+	first := incompressible(BlobRefThreshold + 1)
+	batch := []Entry{
+		storedBody(t, mover, "first", first),
+		refEntryFor(t, "lost", RefFor(incompressible(BlobRefThreshold+99), 0)),
+	}
+	mover.getFails = map[string]error{
+		blobstore.Key("A", RefFor(first, 0).SHA256): errors.New("synclog: the bucket answered 503"),
+	}
+	mover.verdictErr = fmt.Errorf("refused: %w", ErrBlobMissing)
+	err := resolveRefs(mover, t.TempDir(), batch)
+	var missing *missingBlob
+	if !errors.As(err, &missing) {
+		t.Fatalf("resolveRefs = %v, want the missing row named", err)
+	}
+	if missing.entry.PK != batch[1].PK {
+		t.Errorf("named row %s, want the lost one %s", missing.entry.PK, batch[1].PK)
+	}
+}
+
+// With every key answered, the call can still report that the breaker could not
+// record the success. That failure reaches the caller on both directions, so a
+// write the breaker lost is retried rather than passed over.
+func TestABreakerWriteFailureOnACleanBatchReachesTheCaller(t *testing.T) {
+	t.Parallel()
+	lost := errors.New("the breaker could not write")
+
+	put := newScriptedMover()
+	put.verdictErr = lost
+	dir := t.TempDir()
+	if err := uploadPending(put, dir, []pendingBlob{pendingFor("m1", incompressible(BlobRefThreshold+1))}); !errors.Is(err, lost) {
+		t.Errorf("uploadPending = %v, want the breaker's failure", err)
+	}
+	assertEmptyStaging(t, dir, "after a clean put the breaker lost")
+
+	get := newScriptedMover()
+	batch := []Entry{storedBody(t, get, "first", incompressible(BlobRefThreshold+1))}
+	get.verdictErr = lost
+	dir = t.TempDir()
+	if err := resolveRefs(get, dir, batch); !errors.Is(err, lost) {
+		t.Errorf("resolveRefs = %v, want the breaker's failure", err)
+	}
+	assertEmptyStaging(t, dir, "after a clean fetch the breaker lost")
 }
 
 // A chunk that failed decides the batch: no later chunk is sent, so a store

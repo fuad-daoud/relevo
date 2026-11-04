@@ -295,6 +295,9 @@ func uploadChunk(m BlobMover, stagingDir string, uniq []pendingBlob, chunk []int
 				uniq[chunk[n]].Key, errors.Join(callErr, r.Err))
 		}
 	}
+	if callErr != nil {
+		return fmt.Errorf("synclog: upload %s: %w", uniq[chunk[0]].Key, callErr)
+	}
 	return nil
 }
 

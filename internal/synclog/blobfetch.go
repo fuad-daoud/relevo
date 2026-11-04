@@ -215,8 +215,9 @@ func fetchAll(m BlobMover, stagingDir string, batch []Entry, slots []refSlot) ([
 // fetchChunk moves one chunk of distinct keys through one batch call and
 // reads the bodies back, gating each on the length and digest its ref declares
 // before it enters the batch. The staged files are removed whether their body
-// passed or not, and the first failed key in the chunk decides the batch's
-// error, so a repeated import names the same row.
+// passed or not, and decidingFailure picks the key the batch's error names, so a
+// repeated import names the same row. The call's own error rides with it, and
+// fails a chunk whose keys all answered, since it says the breaker lost a write.
 func fetchChunk(m BlobMover, stagingDir string, batch []Entry, slots []refSlot,
 	first map[string]int, order []string, got [][]byte, chunk []int) error {
 	items := make([]BlobBatchItem, len(chunk))
@@ -243,30 +244,40 @@ func fetchChunk(m BlobMover, stagingDir string, batch []Entry, slots []refSlot,
 		i := chunk[0]
 		return failedFetch(batch, slots[first[order[i]]], fetchWrap(order[i], callErr))
 	}
-	var failed error
-	failedAt := -1
-	for n, r := range results {
+	if n := decidingFailure(results); n >= 0 {
 		i := chunk[n]
-		if r.Err != nil {
-			if failed == nil {
-				failedAt, failed = i, fetchWrap(order[i], errors.Join(callErr, r.Err))
-			}
-			continue
-		}
-		if failed != nil {
-			continue // the batch is already decided; the file goes with the rest
-		}
+		return failedFetch(batch, slots[first[order[i]]], fetchWrap(order[i], errors.Join(callErr, results[n].Err)))
+	}
+	if callErr != nil {
+		return fetchWrap(order[chunk[0]], callErr)
+	}
+	for n, i := range chunk {
 		body, err := readStagedRef(order[i], items[n].Staging, slots[first[order[i]]].ref)
 		if err != nil {
-			failedAt, failed = i, err
-			continue
+			return failedFetch(batch, slots[first[order[i]]], err)
 		}
 		got[i] = body
 	}
-	if failed != nil {
-		return failedFetch(batch, slots[first[order[failedAt]]], failed)
-	}
 	return nil
+}
+
+// decidingFailure picks the result a failed chunk is reported against, or -1
+// when no key failed: the first missing body, since that is the row the importer
+// names and the operator must restore, otherwise the first failed key.
+func decidingFailure(results []BlobBatchResult) int {
+	first := -1
+	for n, r := range results {
+		if r.Err == nil {
+			continue
+		}
+		if errors.Is(r.Err, ErrBlobMissing) || errors.Is(r.Err, blobstore.ErrNotFound) {
+			return n
+		}
+		if first < 0 {
+			first = n
+		}
+	}
+	return first
 }
 
 // failedFetch names the row of a missing object, leaving other failures as is.
