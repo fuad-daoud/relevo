@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/config"
@@ -424,6 +425,109 @@ func TestChainDryRunFillsGateFromTheRepo(t *testing.T) {
 		}
 	}
 	t.Fatalf("the dry run took no params gate: %+v", doc.Params)
+}
+
+// TestRepoSettingsCarriesCleanup pins that a stored entry's cleanup fields
+// come back on RepoSettings, with "" reading as unset like Gate. Blanking one
+// mapped field is the mutation this test catches.
+func TestRepoSettingsCarriesCleanup(t *testing.T) {
+	t.Parallel()
+
+	fg := &fakeGit{rootCommitSHA: reposRootCommit}
+	id := reposKeyOf(t)
+	st := auditStore(t)
+	seedOneRepos(t, st, fmt.Sprintf(`{%q:{"name":"shop","cleanup":"make clean","cleanup_after":"both"}}`, id))
+	rt := newTestRuntime(t, fg)
+	rt.Config = st
+
+	set, err := RepoSettingsFor(context.Background(), rt, "/repo")
+	if err != nil {
+		t.Fatalf("RepoSettingsFor: %v", err)
+	}
+	want := RepoSettings{Key: id, Name: "shop", Cleanup: "make clean", CleanupAfter: "both"}
+	if set != want {
+		t.Errorf("RepoSettingsFor = %+v, want %+v", set, want)
+	}
+}
+
+// TestResolveCleanupPrefersFlagOverRepo pins the three living tiers with no
+// policy behind them: an explicit --cleanup is used as given, an unset flag
+// takes the repository's own cleanup, and a tree with no settings takes no
+// cleanup. The after word resolves beside the command with the same
+// precedence, defaulting to chain. Swapping the flag and repo tiers, or
+// falling back to a policy, is the mutation this test catches.
+func TestResolveCleanupPrefersFlagOverRepo(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name             string
+		cleanup, after   string
+		repo             RepoSettings
+		cmd, source, aft string
+	}{
+		{"the flag wins over the repo", "make tidy", "", RepoSettings{Cleanup: "make clean", CleanupAfter: "round"}, "make tidy", "--cleanup", "round"},
+		{"the flag after wins over the repo after", "", "both", RepoSettings{Cleanup: "make clean", CleanupAfter: "round"}, "make clean", resolve.GateSourceRepo, "both"},
+		{"the repo beats empty", "", "", RepoSettings{Cleanup: "make clean", CleanupAfter: "round"}, "make clean", resolve.GateSourceRepo, "round"},
+		{"the repo after beats empty", "make tidy", "", RepoSettings{CleanupAfter: "round"}, "make tidy", "--cleanup", "round"},
+		{"empty after reads chain", "", "", RepoSettings{Cleanup: "make clean"}, "make clean", resolve.GateSourceRepo, "chain"},
+		{"none when the repo sets nothing", "", "", RepoSettings{}, "", "", "chain"},
+	}
+	for _, tc := range cases {
+		got, err := resolveCleanupFor(tc.cleanup, tc.after, tc.repo)
+		if err != nil {
+			t.Errorf("%s: resolveCleanupFor = %v, want no error", tc.name, err)
+			continue
+		}
+		if got.Command != tc.cmd || got.Source != tc.source || got.After != tc.aft {
+			t.Errorf("%s: resolveCleanupFor = %+v, want {%q %q %q}", tc.name, got, tc.cmd, tc.source, tc.aft)
+		}
+	}
+}
+
+// TestResolveCleanupRefusesABadAfter pins the refusal: an after word outside
+// round, chain or both is refused naming the want, whether it came from the
+// flag or the repository. Accepting it is the mutation this test catches.
+func TestResolveCleanupRefusesABadAfter(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name           string
+		cleanup, after string
+		repo           RepoSettings
+	}{
+		{"a bad flag after", "make clean", "weekly", RepoSettings{}},
+		{"a bad repo after", "", "", RepoSettings{Cleanup: "make clean", CleanupAfter: "weekly"}},
+	} {
+		_, err := resolveCleanupFor(tc.cleanup, tc.after, tc.repo)
+		if err == nil {
+			t.Errorf("%s: resolveCleanupFor = nil error, want a refusal", tc.name)
+			continue
+		}
+		for _, want := range []string{`cleanup_after is "weekly"`, "round, chain or both"} {
+			if got := err.Error(); !strings.Contains(got, want) {
+				t.Errorf("%s: error = %q, want it to name %q", tc.name, got, want)
+			}
+		}
+	}
+}
+
+// TestCleanupLineNamesTheSource pins the three renderings the CLI prints: the
+// cleanup line with each tier's parenthetical, and the bare form a source
+// with no word renders.
+func TestCleanupLineNamesTheSource(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct{ cmd, source, want string }{
+		{"make clean", "--cleanup", "cleanup: make clean (--cleanup)"},
+		{"make clean", resolve.GateSourceRepo, "cleanup: make clean (repo setting)"},
+		{"", resolve.GateSourceRepo, "cleanup: none"},
+		{"make clean", "", "cleanup: make clean"},
+	}
+	for _, tc := range cases {
+		if got := CleanupLine(tc.cmd, tc.source); got != tc.want {
+			t.Errorf("CleanupLine(%q, %q) = %q, want %q", tc.cmd, tc.source, got, tc.want)
+		}
+	}
 }
 
 // TestGateLineNamesTheSource pins all five renderings the CLI prints: the

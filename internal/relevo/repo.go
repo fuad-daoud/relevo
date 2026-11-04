@@ -50,6 +50,8 @@ type RepoSettings struct {
 	BuilderActor  string
 	ReviewerActor string
 	PlannerActor  string
+	Cleanup       string
+	CleanupAfter  string
 }
 
 // TrimpathOn is the effective trimpath setting. ParseRepos leaves Trimpath
@@ -81,6 +83,47 @@ func resolveGateFor(gate string, noGate bool, pol policy.Policy, roleChecks bool
 		return resolve.GateResolution{}
 	}
 	return resolve.GateResolution{Command: cmd, Source: resolve.GateSourcePolicy}
+}
+
+// CleanupResolution is the cleanup command a chain start resolved and the
+// tier that supplied it, plus when it runs. After is one of round, chain or
+// both, never empty: an unset flag and an unset repository both read as chain,
+// so every caller shares one default without repeating it.
+type CleanupResolution struct {
+	Command string
+	Source  string
+	After   string
+}
+
+// resolveCleanupFor applies the cleanup resolution rule: the flag wins over
+// the repository's own entry, and there is no policy tier behind them -- an
+// unset flag with an unset entry takes no cleanup. The after word resolves
+// beside the command with the same precedence, defaulting to chain, so a
+// caller never reimplements the fallback.
+func resolveCleanupFor(cleanup, after string, repo RepoSettings) (CleanupResolution, error) {
+	var res CleanupResolution
+	switch {
+	case cleanup != "":
+		res.Command = cleanup
+		res.Source = "--cleanup"
+	case repo.Cleanup != "":
+		res.Command = repo.Cleanup
+		res.Source = resolve.GateSourceRepo
+	}
+	effective := after
+	if effective == "" {
+		effective = repo.CleanupAfter
+	}
+	if effective == "" {
+		effective = "chain"
+	}
+	switch effective {
+	case "round", "chain", "both":
+		res.After = effective
+	default:
+		return CleanupResolution{}, fmt.Errorf("cleanup_after is %q, want round, chain or both", effective)
+	}
+	return res, nil
 }
 
 // RepoKey returns dir's repository identity: remote.RepoID over the root
@@ -141,7 +184,7 @@ func RepoSettingsFor(ctx context.Context, rt Runtime, dir string) (RepoSettings,
 	if !ok {
 		return out, nil
 	}
-	return RepoSettings{Key: key, Name: entry.Name, Gate: entry.Gate, BoardTheme: entry.BoardTheme, Trimpath: entry.Trimpath, BuilderActor: entry.BuilderActor, ReviewerActor: entry.ReviewerActor, PlannerActor: entry.PlannerActor}, nil
+	return RepoSettings{Key: key, Name: entry.Name, Gate: entry.Gate, BoardTheme: entry.BoardTheme, Trimpath: entry.Trimpath, BuilderActor: entry.BuilderActor, ReviewerActor: entry.ReviewerActor, PlannerActor: entry.PlannerActor, Cleanup: entry.Cleanup, CleanupAfter: entry.CleanupAfter}, nil
 }
 
 // GateLine renders the gate line a bind or an add prints through the notice
@@ -152,6 +195,9 @@ func GateLine(cmd, source string) string { return resolutionLine("gate", cmd, so
 
 // CheckLine is the gate line's own rule under the "check" prefix.
 func CheckLine(cmd, source string) string { return resolutionLine("check", cmd, source) }
+
+// CleanupLine is the cleanup line's own rule under the "cleanup" prefix.
+func CleanupLine(cmd, source string) string { return resolutionLine("cleanup", cmd, source) }
 
 func resolutionLine(prefix, cmd, source string) string {
 	if cmd == "" {

@@ -19,7 +19,7 @@ func TestReposEntryRoundTripsEveryField(t *testing.T) {
 	t.Parallel()
 
 	in := map[string]RepoEntry{
-		reposTestKey: {Name: "laptop", Gate: "make check", BoardTheme: "midnight", BuilderActor: "relevo-builder", ReviewerActor: "relevo-reviewer", PlannerActor: "relevo-lite-planner"},
+		reposTestKey: {Name: "laptop", Gate: "make check", BoardTheme: "midnight", BuilderActor: "relevo-builder", ReviewerActor: "relevo-reviewer", PlannerActor: "relevo-lite-planner", Cleanup: "make clean", CleanupAfter: "both"},
 	}
 	body, err := EncodeRepos(in)
 	if err != nil {
@@ -81,6 +81,57 @@ func TestParseReposTrimpath(t *testing.T) {
 	}
 	if _, ok := out[reposTestKey]; !ok {
 		t.Errorf("an entry holding only trimpath on dropped: %+v, want it stored (on is stored explicitly for exactly this reason)", out)
+	}
+}
+
+// TestParseReposCleanup pins the two cleanup keys: a command with
+// cleanup_after both round-trips through EncodeRepos, each of round, chain
+// and both parses, and a value outside the three is refused naming the want.
+// Dropping one's case arm is the mutation this test catches.
+func TestParseReposCleanup(t *testing.T) {
+	t.Parallel()
+
+	body := `{"` + reposTestKey + `":{"cleanup":"make clean","cleanup_after":"both"}}`
+	out, err := ParseRepos([]byte(body))
+	if err != nil {
+		t.Fatalf("ParseRepos(%s): %v", body, err)
+	}
+	if got := out[reposTestKey].Cleanup; got != "make clean" {
+		t.Errorf("cleanup = %q, want %q", got, "make clean")
+	}
+	if got := out[reposTestKey].CleanupAfter; got != "both" {
+		t.Errorf("cleanup_after = %q, want %q", got, "both")
+	}
+	encoded, err := EncodeRepos(out)
+	if err != nil {
+		t.Fatalf("EncodeRepos(%+v): %v", out, err)
+	}
+	round, err := ParseRepos(encoded)
+	if err != nil {
+		t.Fatalf("ParseRepos(%s): %v", encoded, err)
+	}
+	if got := round[reposTestKey]; got.Cleanup != "make clean" || got.CleanupAfter != "both" {
+		t.Errorf("round trip = %+v, want cleanup and cleanup_after kept", got)
+	}
+
+	for _, after := range []string{"round", "chain", "both"} {
+		out, err := ParseRepos([]byte(`{"` + reposTestKey + `":{"cleanup_after":"` + after + `"}}`))
+		if err != nil {
+			t.Fatalf("ParseRepos(cleanup_after %s): %v", after, err)
+		}
+		if got := out[reposTestKey].CleanupAfter; got != after {
+			t.Errorf("cleanup_after = %q, want %q", got, after)
+		}
+	}
+
+	_, err = ParseRepos([]byte(`{"` + reposTestKey + `":{"cleanup_after":"weekly"}}`))
+	if err == nil {
+		t.Fatal("ParseRepos(weekly) = nil error, want a refusal")
+	}
+	for _, want := range []string{string(Repos), reposTestKey, `cleanup_after is "weekly"`, "round, chain or both"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to name %q", err, want)
+		}
 	}
 }
 
