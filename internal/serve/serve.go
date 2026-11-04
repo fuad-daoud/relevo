@@ -158,7 +158,11 @@ type Server struct {
 	// tmpSweptAt maps an owner root to its last tmp sweep. The Daemon that
 	// sweeps lives for one tick, so the pace has to outlive it here.
 	tmpSweptAt sync.Map
-	liveCache  *liveCache
+	// archivedCursors maps an owner root to its archived mirror's cursor. The
+	// Daemon that mirrors lives for one tick, so the cursor has to outlive
+	// it here, the same as the tmp sweep's pace.
+	archivedCursors sync.Map
+	liveCache       *liveCache
 	// nodeLive is the cached node live view observe fills for ServedLive.
 	nodeLive *liveCache
 	// burstProvider is the head's resolved report provider: nil when

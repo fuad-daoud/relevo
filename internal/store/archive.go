@@ -32,6 +32,38 @@ func (t *Tx) SealAll(name string) (int, error) {
 	return total, nil
 }
 
+// ArchivedRef is one archived record's identity for the mirror's cursor: the
+// record without its binding, so a tick that only looks for new archives
+// decodes nothing.
+type ArchivedRef struct {
+	RecordID   string
+	Name       string
+	ArchivedAt time.Time
+}
+
+// ListArchivedSince returns the identity of every record archived at or after
+// since, oldest archived_at first. Rows sharing a stamp are all listed: the
+// caller tells a new row from an already mirrored one.
+func (s *Store) ListArchivedSince(since time.Time) ([]ArchivedRef, error) {
+	d, err := s.dbForRead()
+	if err != nil {
+		return nil, err
+	}
+	if d == nil {
+		return nil, nil
+	}
+	recs, err := d.RecordListArchivedSince(s.owner, since)
+	if err != nil {
+		return nil, fmt.Errorf("read archived records since: %w", err)
+	}
+
+	out := make([]ArchivedRef, 0, len(recs))
+	for _, rec := range recs {
+		out = append(out, ArchivedRef{RecordID: rec.ID, Name: rec.Name, ArchivedAt: rec.ArchivedAt})
+	}
+	return out, nil
+}
+
 // ListArchived returns every archived record, oldest archived_at first.
 func (s *Store) ListArchived() ([]ArchivedBinding, error) {
 	d, err := s.dbForRead()

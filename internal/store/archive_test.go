@@ -101,6 +101,50 @@ func TestReadFileResolvesTheMostRecentlyArchivedRecord(t *testing.T) {
 	}
 }
 
+// TestListArchivedSinceListsIdentities pins the mirror cursor's store read:
+// the identity of every record archived at or after since, oldest first,
+// carrying no binding. Rows sharing a stamp are all listed, so a same-
+// millisecond archive is never hidden from the caller.
+func TestListArchivedSinceListsIdentities(t *testing.T) {
+	s := New(t.TempDir())
+	for _, name := range []string{"first", "second"} {
+		if err := s.Save(newBinding(name, "/repo")); err != nil {
+			t.Fatalf("Save %s: %v", name, err)
+		}
+		if _, err := s.Archive(name); err != nil {
+			t.Fatalf("Archive %s: %v", name, err)
+		}
+	}
+	archived, err := s.ListArchived()
+	if err != nil || len(archived) != 2 {
+		t.Fatalf("ListArchived = %+v, %v; want both records", archived, err)
+	}
+
+	got, err := s.ListArchivedSince(archived[0].ArchivedAt)
+	if err != nil {
+		t.Fatalf("ListArchivedSince: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("ListArchivedSince(first stamp) = %+v, want both records", got)
+	}
+	for i := range got {
+		if got[i].RecordID != archived[i].RecordID || got[i].Name != archived[i].Binding.Name {
+			t.Errorf("ref %d = %+v, want %s/%s", i, got[i], archived[i].RecordID, archived[i].Binding.Name)
+		}
+		if !got[i].ArchivedAt.Equal(archived[i].ArchivedAt) {
+			t.Errorf("ref %d stamp = %v, want %v", i, got[i].ArchivedAt, archived[i].ArchivedAt)
+		}
+	}
+
+	got, err = s.ListArchivedSince(time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("ListArchivedSince in the future: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("ListArchivedSince in the future = %+v, want none", got)
+	}
+}
+
 // TestArchivedLogDecodesEntries pins ArchivedLog against a stored record:
 // entry_json is authoritative and Seq, Confirmed, DeliveredAt and Route come
 // from the promoted columns.
