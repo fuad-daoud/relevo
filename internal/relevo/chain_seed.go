@@ -151,11 +151,15 @@ func chainBuilderPlanView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State
 }
 
 // chainBuilderRoundKind names the closing builder round: repair when its
-// prompt entry says so, else correction or fix-plan when it ran the planner's
-// newest plan, else human-sent.
+// prompt entry says so, else direct-fix when it ran the fix-direct seed, else
+// correction or fix-plan when it ran the planner's newest plan, else
+// human-sent.
 func chainBuilderRoundKind(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, builder string, builderRound int) string {
 	if chainBuilderRoundIsRepair(rt, tx, builder, builderRound) {
 		return workflow.BuilderRoundRepair
+	}
+	if chainBuilderRoundIsFixDirect(rt, builder, builderRound) {
+		return workflow.BuilderRoundDirectFix
 	}
 	if chainBuilderRanThePlannerPlan(rt, tx, c, builder, builderRound) {
 		if s.Phase == chain.PhaseSecurity {
@@ -164,6 +168,23 @@ func chainBuilderRoundKind(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.Stat
 		return workflow.BuilderRoundCorrection
 	}
 	return workflow.BuilderRoundHuman
+}
+
+// fixDirectPlanPrefix is the first line the rendered fix-direct seed writes.
+// The prompt bytes are relevo's own, so the prefix identifies a direct-fix
+// round to a seed that must tell one from a plan, repair, correction or fix
+// text. It mirrors the shipped seed's own first line.
+const fixDirectPlanPrefix = "Fix the reviewer's findings directly, without a new plan."
+
+// chainBuilderRoundIsFixDirect reports whether the builder's prompt entry for
+// the round carries a fix-direct send: only that send stages the rendered
+// fix-direct seed.
+func chainBuilderRoundIsFixDirect(rt Runtime, builder string, round int) bool {
+	staged, err := rt.Store.ReadFile(rt.Store.PromptPath(builder, round))
+	if err != nil {
+		return false
+	}
+	return strings.HasPrefix(string(staged), fixDirectPlanPrefix)
 }
 
 // chainBuilderRoundIsRepair reports whether the builder's prompt entry for the

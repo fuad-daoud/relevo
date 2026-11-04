@@ -190,6 +190,26 @@ func TestLegacyViewMapsEveryStep(t *testing.T) {
 	}
 }
 
+// TestLegacyViewMapsFixDirectToBuilding pins the direct-fix projection: a state
+// at the builder's fix-direct step reads the build phase's building step, with
+// the builder as the awaited member.
+func TestLegacyViewMapsFixDirectToBuilding(t *testing.T) {
+	def, ok := Shipped("direct-fix")
+	if !ok {
+		t.Fatal("Shipped(direct-fix): want true")
+	}
+	s := State{
+		Status: StatusRunning, At: "fix-direct", Visits: map[string]int{},
+		Iter:     map[string]Iter{"plans": {Index: 0, Items: []string{"p"}}},
+		Awaiting: Awaiting{Step: "fix-direct", Member: "builder"},
+	}
+	got := LegacyView(def, s)
+	if got.Phase != "build" || got.Step != "building" || got.AwaitingMember != "builder" {
+		t.Errorf("LegacyView(fix-direct) = %q/%q/%q, want build/building/builder",
+			got.Phase, got.Step, got.AwaitingMember)
+	}
+}
+
 // TestLegacyViewClampsCorrections pins the guard: a correct step a state has
 // not counted reads as no spent corrections rather than a negative count.
 func TestLegacyViewClampsCorrections(t *testing.T) {

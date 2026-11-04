@@ -14,9 +14,9 @@ import (
 )
 
 // ResolveWorkflow finds the workflow nameOrPath names: an existing file path
-// first, with its file: seeds embedded; then a saved workflow; then the shipped
-// default. origin is "file", "saved" or "shipped", so a caller can say where the
-// definition came from.
+// first, with its file: seeds embedded; then a saved workflow; then a shipped
+// workflow. origin is "file", "saved" or "shipped", so a caller can say where
+// the definition came from.
 func ResolveWorkflow(cfg *config.Store, nameOrPath string) (workflow.Definition, string, error) {
 	if nameOrPath == "" {
 		return workflow.Definition{}, "", refusal.New("workflow: no name or path given")
@@ -37,8 +37,8 @@ func ResolveWorkflow(cfg *config.Store, nameOrPath string) (workflow.Definition,
 			return w.Definition, "saved", nil
 		}
 	}
-	if nameOrPath == workflow.Default().Name {
-		return workflow.Default(), "shipped", nil
+	if def, ok := workflow.Shipped(nameOrPath); ok {
+		return def, "shipped", nil
 	}
 	return workflow.Definition{}, "", refusal.New("workflow: %q is not a file, a saved workflow or a shipped workflow", nameOrPath)
 }

@@ -54,6 +54,37 @@ func TestDryRunPrintsGraphActorsPlacementRefs(t *testing.T) {
 	}
 }
 
+// TestDryRunDirectFixResolvesShipped pins the direct-fix dry run: the shipped
+// name resolves with origin shipped, the graph carries a fix-direct step, and
+// the shipped seeds validate with no problems.
+func TestDryRunDirectFixResolvesShipped(t *testing.T) {
+	rt, _ := chainRuntime(t)
+
+	doc, err := ChainDryRun(context.Background(), rt, ChainOptions{
+		Name:     "shop",
+		Plans:    []string{filepath.Join(t.TempDir(), "plan-1.md")},
+		Workflow: "direct-fix",
+	})
+	if err != nil {
+		t.Fatalf("ChainDryRun: %v", err)
+	}
+	if doc.Workflow != "direct-fix" || doc.Origin != "shipped" {
+		t.Errorf("workflow = (%q, %q), want (direct-fix, shipped)", doc.Workflow, doc.Origin)
+	}
+	if len(doc.Problems) != 0 {
+		t.Errorf("problems = %v, want none", doc.Problems)
+	}
+	found := false
+	for _, s := range doc.Steps {
+		if s.ID == "fix-direct" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("steps = %v, want a fix-direct row", doc.Steps)
+	}
+}
+
 // TestDryRunStartsNothing pins that a dry run creates nothing: no chain row, no
 // member binding and no worktree.
 func TestDryRunStartsNothing(t *testing.T) {

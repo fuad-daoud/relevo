@@ -38,6 +38,97 @@ func haltFlowChain(t *testing.T, rt Runtime) {
 	flowAdvance(t, rt, workflow.Event{Kind: workflow.EventStepClosed, Step: "review", Member: "assistant", Round: 1, Status: "halted", Reason: "no"})
 }
 
+// haltDirectFixFlowChain halts shop's direct-fix chain on its build step: a
+// halted build close, so a resume has a halted chain to continue. The builder's
+// round is planted closed -- its report entry and a dead process, as a closed
+// local round leaves behind -- so the resume can open the next one.
+func haltDirectFixFlowChain(t *testing.T, rt Runtime) {
+	t.Helper()
+	startedChain(t, rt, ChainOptions{Workflow: "direct-fix"})
+	flowAdvance(t, rt, workflow.Event{Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: "halted", Reason: "no"})
+	if got := flowChainRow(t, rt); got.Status != string(workflow.StatusHalted) {
+		t.Fatalf("status = %s (%q), want halted", got.Status, got.Reason)
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		if err := tx.AppendLog("shop", store.LogEntry{TS: baseTime, Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md"}); err != nil {
+			return err
+		}
+		b, err := tx.Load("shop")
+		if err != nil {
+			return err
+		}
+		b.Builder = clearProcess(b.Builder)
+		return tx.Save(b)
+	}); err != nil {
+		t.Fatalf("close builder round: %v", err)
+	}
+}
+
+// TestWorkflowResumeKeepsTheDirectFixWorkflow pins that a resume keeps the
+// stored workflow: a halted direct-fix chain resumed without --from re-enters
+// its halt step on the direct-fix definition it stored at start.
+func TestWorkflowResumeKeepsTheDirectFixWorkflow(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	haltDirectFixFlowChain(t, rt)
+
+	res, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"})
+	if err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+	if res.Chain.Status != string(workflow.StatusRunning) {
+		t.Fatalf("resumed status = %s (%q), want running", res.Chain.Status, res.Chain.Reason)
+	}
+	def, err := chain.WorkflowDef(res.Chain)
+	if err != nil {
+		t.Fatalf("chain.WorkflowDef: %v", err)
+	}
+	if def.Name != "direct-fix" {
+		t.Errorf("resumed workflow = %q, want direct-fix: the resume reloads the stored definition", def.Name)
+	}
+	st, err := chain.WorkflowState(res.Chain)
+	if err != nil {
+		t.Fatalf("chain.WorkflowState: %v", err)
+	}
+	if st.Awaiting.Step != "build" || st.Awaiting.Member != "builder" {
+		t.Errorf("awaiting = %+v, want build/builder: the resume re-enters the halt step", st.Awaiting)
+	}
+}
+
+// TestWorkflowResumeFromFixDirect pins the --from target: a halted direct-fix
+// chain resumes from the fix-direct step, sending the builder a round with the
+// fix-direct seed. No step list gates the target beyond the workflow's own
+// steps.
+func TestWorkflowResumeFromFixDirect(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	haltDirectFixFlowChain(t, rt)
+
+	res, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop", From: "fix-direct"})
+	if err != nil {
+		t.Fatalf("ChainResume --from fix-direct: %v", err)
+	}
+	if res.Chain.Status != string(workflow.StatusRunning) {
+		t.Fatalf("resumed status = %s (%q), want running", res.Chain.Status, res.Chain.Reason)
+	}
+	st, err := chain.WorkflowState(res.Chain)
+	if err != nil {
+		t.Fatalf("chain.WorkflowState: %v", err)
+	}
+	if st.Awaiting.Step != "fix-direct" || st.Awaiting.Member != "builder" {
+		t.Fatalf("awaiting = %+v, want fix-direct/builder", st.Awaiting)
+	}
+	prompt, err := rt.Store.ReadFile(rt.Store.PromptPath("shop", st.Awaiting.Round))
+	if err != nil {
+		t.Fatalf("read the fix-direct prompt: %v", err)
+	}
+	if !strings.Contains(string(prompt), "Fix the reviewer's findings directly, without a new plan.") {
+		t.Errorf("resumed fix-direct prompt does not render the fix-direct seed:\n%s", prompt)
+	}
+}
+
 // TestWorkflowResumeUnknownStepListsSteps pins the unknown-step refusal: a
 // resume --from a step the workflow does not have names the step and lists the
 // ones it does.

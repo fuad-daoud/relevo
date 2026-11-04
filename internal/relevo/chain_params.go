@@ -23,12 +23,12 @@ type chainParamFlag struct {
 
 // chainParamsFor resolves a workflow's params in precedence order: the
 // workflow's own defaults, then the repository's own actors and gate, then
-// policy for the shipped default, then the old flags, then --param. It
+// policy for a shipped workflow, then the old flags, then --param. It
 // returns only the params it overrides; the caller merges them with
 // workflow.WithParams. A flag the workflow has no slot for is refused,
 // naming the params it takes.
 //
-// Policy fills slots only for the shipped default: a custom workflow's own
+// Policy fills slots only for a shipped workflow: a custom workflow's own
 // defaults are the human's intent, so policy never overwrites them. The
 // repository's own actors and gate sit exactly where the policy tier sat,
 // behind the flags; the old flags and --param override either. The builder
@@ -36,9 +36,9 @@ type chainParamFlag struct {
 func chainParamsFor(def workflow.Definition, pol policy.Policy, opts ChainOptions, repo RepoSettings) (map[string]string, error) {
 	out := map[string]string{}
 
-	// Policy fills only the shipped default's slots: a custom workflow keeps
+	// Policy fills only a shipped workflow's slots: a custom workflow keeps
 	// its own defaults.
-	if def.Name == workflow.Default().Name {
+	if workflow.IsShipped(def) {
 		// The actor and gate params take the repository's own values before
 		// the policy defaults: the repo tier sits exactly where the policy
 		// tier sat. The builder slot has no policy default, so the entry
@@ -120,14 +120,14 @@ func chainParamFlags(opts ChainOptions) []chainParamFlag {
 }
 
 // chainRepoSuppliedActors lists the member parts whose actor the repository
-// entry supplied to the shipped default's definition: the entry's actor for
+// entry supplied to a shipped workflow's definition: the entry's actor for
 // a slot with no flag or --param override, and only when the definition
 // actually carries that value. A custom workflow keeps its own defaults, so the entry
 // supplies nothing there. The unknown-actor refusal reads this, so a start
 // names the entry as the source instead of failing on the bare actor.
 func chainRepoSuppliedActors(def workflow.Definition, opts ChainOptions, repo RepoSettings) map[string]string {
 	out := map[string]string{}
-	if def.Name != workflow.Default().Name {
+	if !workflow.IsShipped(def) {
 		return out
 	}
 	for _, tc := range []struct {

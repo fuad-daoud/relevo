@@ -96,6 +96,55 @@ func TestResolveWorkflowOrder(t *testing.T) {
 	}
 }
 
+// TestResolveWorkflowResolvesEveryShippedName pins that each shipped file
+// resolves with origin shipped, and that an unknown name is still refused.
+func TestResolveWorkflowResolvesEveryShippedName(t *testing.T) {
+	cs := workflowStore(t)
+	for _, name := range []string{"default", "direct-fix"} {
+		def, origin, err := ResolveWorkflow(cs, name)
+		if err != nil {
+			t.Fatalf("ResolveWorkflow(%q): %v", name, err)
+		}
+		if origin != "shipped" || def.Name != name {
+			t.Errorf("shipped resolution = (%q, %q), want (%q, shipped)", def.Name, origin, name)
+		}
+	}
+	if _, _, err := ResolveWorkflow(cs, "no-such-workflow"); !errors.Is(err, refusal.ErrRefused) {
+		t.Errorf("unknown workflow error = %v, want refusal.ErrRefused", err)
+	}
+}
+
+// TestResolveWorkflowSavedAndFileBeatShipped pins the precedence when a saved
+// workflow or a file carries a shipped name: the file wins first, then the
+// saved entry, and the shipped file only when neither names it.
+func TestResolveWorkflowSavedAndFileBeatShipped(t *testing.T) {
+	cs := workflowStore(t)
+	saveTestWorkflow(t, cs, "direct-fix", `name: direct-fix
+params: { scan: true }
+start: gate
+steps:
+  gate: { when: "{{params.scan}}", on: { true: done, false: done } }
+`)
+	if _, origin, err := ResolveWorkflow(cs, "direct-fix"); err != nil {
+		t.Fatalf("ResolveWorkflow(direct-fix): %v", err)
+	} else if origin != "saved" {
+		t.Errorf("saved direct-fix resolution origin = %q, want saved: the saved entry beats the shipped file", origin)
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "direct-fix")
+	if err := os.WriteFile(path, []byte(resolveSource), 0o644); err != nil {
+		t.Fatalf("write workflow file: %v", err)
+	}
+	def, origin, err := ResolveWorkflow(cs, path)
+	if err != nil {
+		t.Fatalf("ResolveWorkflow(file): %v", err)
+	}
+	if origin != "file" || def.Name != "custom" {
+		t.Errorf("file resolution = (%q, %q), want (custom, file): the file beats the saved and shipped names", def.Name, origin)
+	}
+}
+
 func TestEmbedFileSeedsRelative(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "prompt.txt"), []byte("hello seed\n"), 0o644); err != nil {

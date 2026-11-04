@@ -121,6 +121,13 @@ func chainServerResolveGates(ctx context.Context, rt Runtime, opts ChainOptions,
 		return fail(fmt.Errorf("server %s cannot run workflow %s (missing the %s)",
 			opts.Server, opts.Workflow, remote.ChainFeatureList([]string{remote.FeatureWorkflow})))
 	}
+	// A shipped workflow other than the default rides the workflow wire path,
+	// so a server without the feature would silently run the default from
+	// legacy settings instead of the named graph.
+	if origin == "shipped" && !hasWorkflow && plan.def.Name != "" && plan.def.Name != "default" {
+		return fail(fmt.Errorf("server %s cannot run workflow %s (missing the %s)",
+			opts.Server, opts.Workflow, remote.ChainFeatureList([]string{remote.FeatureWorkflow})))
+	}
 	plan.hasWorkflow = hasWorkflow
 	if len(opts.Params) > 0 && !hasWorkflow {
 		return fail(fmt.Errorf("server %s does not take --param: the server's workflow feature is not available yet; upgrade it, or start the chain without --server", opts.Server))

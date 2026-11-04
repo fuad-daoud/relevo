@@ -134,7 +134,7 @@ func legacyStepAt(l Legacy) string {
 
 func legacyActorOfStep(def Definition, at string) string {
 	switch at {
-	case "plans", "build", "build-fix", "check", "repair", "fix-build", "fix-rebuild", "fix-check", "fix-repair":
+	case "plans", "build", "build-fix", "fix-direct", "check", "repair", "fix-build", "fix-rebuild", "fix-check", "fix-repair":
 		return def.Params["builder"].Str
 	case "review", "fix-review":
 		return def.Params["reviewer"].Str
@@ -216,7 +216,7 @@ func legacyColumnsOf(at string) (phase, step string) {
 
 func legacyStepWord(at string) string {
 	switch at {
-	case "build", "build-fix", "repair", "check", "plans", "fix-build", "fix-rebuild", "fix-repair", "fix-check":
+	case "build", "build-fix", "fix-direct", "repair", "check", "plans", "fix-build", "fix-rebuild", "fix-repair", "fix-check":
 		return legacyStepBuilding
 	case "review", "fix-review":
 		return legacyStepReviewing
