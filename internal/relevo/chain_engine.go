@@ -236,11 +236,18 @@ func chainCheckID(run int) string {
 
 // chainFlowCheck starts one check run for a check step: via the check route
 // on a server with check support, from the writer's newest closed round's
-// gate record without it, and through the gate runner locally.
+// gate record without it, and through the gate runner locally. A cleanup
+// step runs through the same runner locally, but a placed writer's cleanup
+// is skipped with a trace warning instead of a check route call: only the
+// chain owner can run a cleanup in its worktree, and a missing runner must
+// warn, never halt.
 func chainFlowCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before workflow.State, next *workflow.State, ev workflow.Event, act workflow.Action) error {
 	member, err := chainFlowWriterMember(tx, c)
 	if err == nil {
 		if b, lerr := tx.Load(member); lerr == nil && b.Builder.Remote() {
+			if isCleanupStep(def, act.Step) {
+				return chainSkipPlacedCleanup(ctx, rt, tx, c, def, before, next, ev, act, member, b.Builder.Server)
+			}
 			if rt.Remote != nil {
 				who, werr := rt.Remote.WhoAmI(ctx, b.Builder.Server)
 				if werr == nil && remote.HasFeature(who, remote.FeatureCheck) {
@@ -261,6 +268,14 @@ func chainFlowCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow
 			}
 			return chainFlowPullCheck(ctx, rt, tx, c, def, before, next, ev, act, member)
 		}
+	}
+	if isCleanupStep(def, act.Step) {
+		run, rerr := chainStartOrAdoptCleanup(ctx, rt, tx, c, act.Step, act.Command)
+		if rerr != nil {
+			return chainSkipPlacedCleanup(ctx, rt, tx, c, def, before, next, ev, act, member, "")
+		}
+		next.Awaiting.Run = run
+		return chainSaveFlow(rt, tx, c, def, before, *next, ev, act, member)
 	}
 	run, err := chainStartOrAdoptCheck(ctx, rt, tx, c, act.Step, act.Command)
 	if err != nil {
@@ -317,8 +332,17 @@ func chainRepeatSameItem(rt Runtime, c db.ChainRow, before workflow.State, step 
 // chainFlowPullCheck answers a placed writer's check from its newest closed
 // round's gate record. No record yet leaves the chain awaiting, for a later
 // tick. It records no run id: the next check step would inherit it and ask
-// the server for a run that was never created.
+// the server for a run that was never created. A cleanup never answers from
+// a gate record: the record is the check the round ran, not the cleanup.
 func chainFlowPullCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before workflow.State, next *workflow.State, ev workflow.Event, act workflow.Action, member string) error {
+	if isCleanupStep(def, act.Step) {
+		b, lerr := tx.Load(member)
+		server := ""
+		if lerr == nil {
+			server = b.Builder.Server
+		}
+		return chainSkipPlacedCleanup(ctx, rt, tx, c, def, before, next, ev, act, member, server)
+	}
 	round := chain.NewestClosedRound(tx, member)
 	rec, err := chain.RoundGate(tx, member, round)
 	if err != nil {

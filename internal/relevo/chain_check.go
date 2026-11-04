@@ -315,7 +315,9 @@ func tickChainChecks(ctx context.Context, rt Runtime) {
 // chainAdvanceOneCheck advances the chain's oldest unsettled check and feeds
 // its end to the engine. Runs are contiguous, so the list stops at the first
 // unrecorded run. A terminal chain, and one whose engine is not waiting on a
-// check, are skipped before any row lookup.
+// check, are skipped before any row lookup. A cleanup run settles to done on
+// any exit code and never feeds the repeat-red rule, so a failing cleanup
+// advances past its done edge instead of buying a repair.
 //
 // A chain with no workflow never started a check, so it is left alone; one
 // with no check row may still await a placed writer's check, retried here.
@@ -338,6 +340,10 @@ func chainAdvanceOneCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 	if st.Awaiting.Step == "" || st.Awaiting.Member != "" {
 		return nil
 	}
+	def, err := chain.WorkflowDef(c)
+	if err != nil {
+		return err
+	}
 	for run := 1; ; run++ {
 		row, err := tx.ChainCheck(c.Name, run)
 		if errors.Is(err, store.ErrNotFound) {
@@ -348,6 +354,9 @@ func chainAdvanceOneCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 		}
 		if chainCheckSettled(row) {
 			continue
+		}
+		if isCleanupStep(def, row.Step) {
+			return chainAdvanceOneCleanup(ctx, rt, tx, c, run)
 		}
 		result, logKey, err := chainAdvanceCheck(ctx, rt, tx, c, run)
 		if err != nil {
@@ -380,7 +389,9 @@ func chainAdvanceOneCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 
 // chainTickPlacedCheck advances a placed writer's check run: with a run id
 // it polls GetCheck for the awaited run; without one it answers from the
-// writer's newest closed round's gate record once pulled.
+// writer's newest closed round's gate record once pulled. A placed writer's
+// cleanup never polls: it is skipped with a trace warning, so the tick never
+// reads a gate record or a check run for it.
 func chainTickPlacedCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow) error {
 	if len(c.WorkflowJSON) == 0 || c.Status != string(chain.StatusRunning) {
 		return nil
@@ -396,6 +407,9 @@ func chainTickPlacedCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 	def, err := chain.WorkflowDef(c)
 	if err != nil {
 		return err
+	}
+	if handled, herr := chainTickPlacedCleanup(ctx, rt, tx, c, def, st); handled || herr != nil {
+		return herr
 	}
 	step, ok := def.Steps[st.Awaiting.Step]
 	if !ok || step.Check == "" {

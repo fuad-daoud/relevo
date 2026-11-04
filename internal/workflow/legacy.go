@@ -77,7 +77,8 @@ func FromLegacy(l Legacy) (Definition, State, error) {
 
 // legacyDefinition is the shipped default with the row's settings resolved onto
 // its params: the actor names only when the row named one, so a blank setting
-// keeps the default's own value.
+// keeps the default's own value. A legacy row never names a cleanup, so the
+// result is pruned to today's no-cleanup shape.
 func legacyDefinition(l Legacy) (Definition, error) {
 	values := map[string]string{
 		"scan":            strconv.FormatBool(l.Settings.Security),
@@ -97,7 +98,11 @@ func legacyDefinition(l Legacy) (Definition, error) {
 	if l.Settings.SecurityActor != "" {
 		values["security"] = l.Settings.SecurityActor
 	}
-	return WithParams(Default(), values)
+	def, err := WithParams(Default(), values)
+	if err != nil {
+		return Definition{}, err
+	}
+	return PruneEmptyCleanup(def), nil
 }
 
 // legacyStepAt is the workflow step a legacy row's step migrates to. A row that

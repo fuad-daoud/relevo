@@ -113,7 +113,7 @@ func (s *Server) handleWhoAmI(w http.ResponseWriter, r *http.Request) {
 		InstallationLabel: s.cfg.Installation.Label,
 	}
 	if rt, err := s.runtime(caller); err == nil {
-		who.Features = []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels, remote.FeatureReaders, remote.FeatureOrigin, remote.FeatureForce, remote.FeaturePlacement, remote.FeatureAccounts, remote.FeatureChainMember, remote.FeatureChain, remote.FeatureIsolation, remote.FeatureSubdir, remote.FeatureWorkflow, remote.FeatureCheck}
+		who.Features = []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels, remote.FeatureReaders, remote.FeatureOrigin, remote.FeatureForce, remote.FeaturePlacement, remote.FeatureAccounts, remote.FeatureChainMember, remote.FeatureChain, remote.FeatureIsolation, remote.FeatureSubdir, remote.FeatureWorkflow, remote.FeatureCheck, remote.FeatureCleanup}
 		who.BuilderTier = string(relevo.ServedBuilderTier(rt))
 		who.MaxTier = string(rt.Policy.MaxTierOrDefault())
 		c, _ := s.census()

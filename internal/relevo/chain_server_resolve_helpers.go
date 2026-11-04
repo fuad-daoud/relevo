@@ -46,22 +46,26 @@ func chainServerResolveLocal(ctx context.Context, rt Runtime, opts ChainOptions)
 
 // chainServerResolveBodies computes the workflow params and reads the plan
 // bodies read-only: a custom workflow takes any plan count, the shipped
-// default takes at least one --plan.
+// default takes at least one --plan. A chain with no cleanup posts the
+// pruned shape an old server parses, while one with a cleanup keeps the new
+// keys only a server with cleanup support accepts.
 func chainServerResolveBodies(ctx context.Context, rt Runtime, opts ChainOptions, def workflow.Definition, origin, repo string, repoSet RepoSettings) (chainServerPlan, error) {
-	values, _, err := chainParamsFor(def, rt.Policy, opts, repoSet)
+	values, cleanupRes, err := chainParamsFor(def, rt.Policy, opts, repoSet)
 	if err != nil {
 		return chainServerPlan{}, err
 	}
 	if def, err = workflow.WithParams(def, values); err != nil {
 		return chainServerPlan{}, refusal.New("%v", err)
 	}
+	def = workflow.PruneEmptyCleanup(def)
 	checks := resolve.RoleChecks(rt.RoleRegistry(), "builder")
 	plan := chainServerPlan{
-		def:      def,
-		settings: chainSettings(rt.Policy, opts, checks, repoSet),
-		gateRes:  resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, checks, repoSet),
-		server:   opts.Server,
-		repoSet:  repoSet,
+		def:        def,
+		settings:   chainSettings(rt.Policy, opts, checks, repoSet),
+		gateRes:    resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, checks, repoSet),
+		cleanupRes: cleanupRes,
+		server:     opts.Server,
+		repoSet:    repoSet,
 	}
 	plan.repo = repo
 	// From the same repository value, not a second working-directory probe.
@@ -122,6 +126,13 @@ func chainServerResolveGates(ctx context.Context, rt Runtime, opts ChainOptions,
 			opts.Server, opts.Workflow, remote.ChainFeatureList([]string{remote.FeatureWorkflow})))
 	}
 	plan.hasWorkflow = hasWorkflow
+	// A server without cleanup support never sees the cleanup: the client
+	// clears its params and prunes, warning on the start line naming the
+	// server, so the chain runs without cleanup and is never refused for it.
+	if hasCleanupCommand(plan.def) && !remote.HasFeature(who, remote.FeatureCleanup) {
+		plan.def = clearCleanupParams(plan.def)
+		plan.cleanupWarning = chainCleanupWarning(opts.Server)
+	}
 	if len(opts.Params) > 0 && !hasWorkflow {
 		return fail(fmt.Errorf("server %s does not take --param: the server's workflow feature is not available yet; upgrade it, or start the chain without --server", opts.Server))
 	}

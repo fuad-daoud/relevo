@@ -61,6 +61,12 @@ type chainServerPlan struct {
 	// repoSet is the chain repository's own settings, so the legacy member
 	// list resolves the builder actor on the same tier as the params.
 	repoSet RepoSettings
+	// cleanupRes is the cleanup resolution the params were built from, so a
+	// server without cleanup support can warn naming itself.
+	cleanupRes CleanupResolution
+	// cleanupWarning names a server without cleanup support that the chain
+	// runs without: "" means the server runs the cleanup as posted.
+	cleanupWarning string
 }
 
 // chainServerIDs is the client's own identifiers for a server chain: the
@@ -208,7 +214,10 @@ func chainServerCreate(ctx context.Context, rt Runtime, opts ChainOptions, plan 
 	if err != nil {
 		return ChainResult{}, err
 	}
-	return ChainResult{Chain: row, Members: stored, Plans: len(plan.bodies), Check: chain.BuilderCheck(stored, name), CheckSource: plan.gateRes.Source}, nil
+	cleanup, cleanupSource, cleanupAfter := chain.CleanupReport(plan.def,
+		plan.cleanupRes.Command, plan.cleanupRes.Source, plan.cleanupRes.After, opts.Params)
+	return ChainResult{Chain: row, Members: stored, Plans: len(plan.bodies), Check: chain.BuilderCheck(stored, name), CheckSource: plan.gateRes.Source,
+		Cleanup: cleanup, CleanupSource: cleanupSource, CleanupAfter: cleanupAfter, CleanupWarning: plan.cleanupWarning}, nil
 }
 
 // chainMirrorStored loads the mirror bindings from the store, so the result

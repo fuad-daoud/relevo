@@ -468,6 +468,9 @@ func chainStartedText(rt relevo.Runtime, res relevo.ChainResult) {
 	}
 	fmt.Printf("  %s\n", relevo.CheckLine(res.Check, res.CheckSource))
 	fmt.Printf("  %s\n", relevo.CleanupReportLine(res.Cleanup, res.CleanupSource, res.CleanupAfter))
+	if res.CleanupWarning != "" {
+		fmt.Printf("  warning: %s\n", res.CleanupWarning)
+	}
 	if res.Chain.Worktree != "" {
 		fmt.Printf("  worktree %s on %s (from %s)\n", res.Chain.Worktree, res.Chain.Branch, res.Chain.Base)
 	} else {

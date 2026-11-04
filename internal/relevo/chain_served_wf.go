@@ -14,7 +14,8 @@ import (
 
 // servedChainDefinition resolves the shipped default with a served create's
 // wire settings on its params. internal/remote does not import
-// internal/workflow, so the values are assembled here.
+// internal/workflow, so the values are assembled here. A settings create
+// never carries a cleanup, so the result is pruned to today's shape.
 func servedChainDefinition(req ServedChainRequest) (workflow.Definition, error) {
 	s := req.Settings
 	values := map[string]string{
@@ -35,7 +36,7 @@ func servedChainDefinition(req ServedChainRequest) (workflow.Definition, error) 
 	if err != nil {
 		return workflow.Definition{}, refusal.New("%v", err)
 	}
-	return def, nil
+	return workflow.PruneEmptyCleanup(def), nil
 }
 
 // servedChainEngineCreate writes the engine half of a served create: the
@@ -44,6 +45,7 @@ func servedChainDefinition(req ServedChainRequest) (workflow.Definition, error) 
 // queued for the server's admit. It returns the row as the store now holds
 // it.
 func servedChainEngineCreate(ctx context.Context, rt Runtime, plan ServedChainPlan, row db.ChainRow, built []store.Binding, planPaths []string) (db.ChainRow, error) {
+	plan.def = workflow.PruneEmptyCleanup(plan.def)
 	defJSON, err := json.Marshal(plan.def)
 	if err != nil {
 		return row, fmt.Errorf("encode chain workflow: %w", err)

@@ -115,6 +115,9 @@ type ChainResult struct {
 	// CleanupAfter is when the cleanup runs -- round, chain or both. "" means
 	// no cleanup runs.
 	CleanupAfter string
+	// CleanupWarning names a server that cannot run the chain's cleanup: the
+	// chain runs without it. "" means no warning.
+	CleanupWarning string
 	// ManualRound is the newer builder round a resume reviewed; 0 means the
 	// resume re-ran the halted step instead.
 	ManualRound int

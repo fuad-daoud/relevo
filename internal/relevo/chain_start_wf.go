@@ -99,6 +99,7 @@ func chainResolveWorkflowBase(ctx context.Context, rt Runtime, opts ChainOptions
 	if def, err = workflow.WithParams(def, values); err != nil {
 		return chainWFStart{}, refusal.New("%v", err)
 	}
+	def = workflow.PruneEmptyCleanup(def)
 	checks := resolve.RoleChecks(rt.RoleRegistry(), "builder")
 	plan := chainWFStart{
 		def:        def,
