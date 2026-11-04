@@ -8,6 +8,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/burst"
 	"github.com/fuad-daoud/relevo/internal/hooks"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -51,7 +52,7 @@ func (s *Server) requeueLost(ctx context.Context, now time.Time) {
 				s.dropLostAck(id, ownerPath, b.Name, *fwd)
 				continue
 			}
-			if !s.requeueOne(id, ownerPath, b.Name, *fwd, now) {
+			if !s.requeueOne(ctx, id, ownerPath, b.Name, *fwd, now) {
 				continue
 			}
 			if _, seen := names[fwd.Node]; !seen {
@@ -107,37 +108,58 @@ func (s *Server) dropLostAck(id remote.ClientID, ownerPath, name string, fwd sto
 	slog.Info("burst: dropped the ack a lost node owed", "owner", string(id), "binding", name, "node", fwd.Node)
 }
 
-// requeueOne returns the named round to the queue at its FIFO place. The
-// binding is re-read and the requeue lands only while the forward still
-// matches, so a late result for a superseded forward never applies. It
-// reports whether the round came back, so a caller naming what a lost node
-// gave up lists only rounds it actually returned.
-func (s *Server) requeueOne(id remote.ClientID, ownerPath, name string, fwd store.Forward, now time.Time) bool {
+// requeueOne returns the named round to the queue at its FIFO place, unless
+// a stop was requested: then the round closes as stopped instead of running
+// again -- gone when its node is lost with it, dequeued when it never
+// started. The binding is re-read and everything lands under one store lock
+// hold, so a stop stamped in between still wins over the queue and admit
+// cannot start the round in between. It reports whether the round came back,
+// so a caller naming what a lost node gave up lists only rounds it actually
+// returned.
+func (s *Server) requeueOne(ctx context.Context, id remote.ClientID, ownerPath, name string, fwd store.Forward, now time.Time) bool {
 	st := s.ownerStore(ownerPath)
-	cur, err := st.Load(name)
-	if err != nil {
-		slog.Warn("burst: requeue lost round: load failed", "owner", string(id), "binding", name, "err", err)
-		return false
+	rt := s.runtimeAt(ownerPath)
+	requeued := false
+	if err := st.WithLock(func(tx *store.Tx) error {
+		cur, err := tx.Load(name)
+		if err != nil {
+			slog.Warn("burst: requeue lost round: load failed", "owner", string(id), "binding", name, "err", err)
+			return nil
+		}
+		have := burstStoredForward(cur)
+		if have == nil || have.Node != fwd.Node || cur.Round != fwd.Round {
+			return nil
+		}
+		if have.StopRequested {
+			how := "gone"
+			if have.Phase == "sending" {
+				how = "dequeued"
+			}
+			if _, cerr := relevo.CloseStopRequestedForward(ctx, rt, tx, name, fwd, how); cerr != nil {
+				slog.Warn("burst: stop-requested forward not closed", "owner", string(id), "binding", name, "node", fwd.Node, "err", cerr)
+			}
+			return nil
+		}
+		since := have.QueuedSince
+		if since.IsZero() {
+			since = now
+		}
+		cur.QueuedAt = since
+		cur.Burst.Forward = nil
+		if len(cur.Burst.Shipped) == 0 && len(cur.Burst.NodeBindings) == 0 {
+			cur.Burst = nil
+		}
+		if err := tx.Save(cur); err != nil {
+			slog.Warn("burst: requeue lost round: save failed", "owner", string(id), "binding", name, "err", err)
+			return nil
+		}
+		slog.Info("burst: requeued a forwarded round", "owner", string(id), "binding", name, "node", fwd.Node)
+		requeued = true
+		return nil
+	}); err != nil {
+		slog.Warn("burst: requeue lost round: lock failed", "owner", string(id), "binding", name, "err", err)
 	}
-	have := burstStoredForward(cur)
-	if have == nil || have.Node != fwd.Node || cur.Round != fwd.Round {
-		return false
-	}
-	since := have.QueuedSince
-	if since.IsZero() {
-		since = now
-	}
-	cur.QueuedAt = since
-	cur.Burst.Forward = nil
-	if len(cur.Burst.Shipped) == 0 && len(cur.Burst.NodeBindings) == 0 {
-		cur.Burst = nil
-	}
-	if err := st.Save(cur); err != nil {
-		slog.Warn("burst: requeue lost round: save failed", "owner", string(id), "binding", name, "err", err)
-		return false
-	}
-	slog.Info("burst: requeued a forwarded round", "owner", string(id), "binding", name, "node", fwd.Node)
-	return true
+	return requeued
 }
 
 // adoptSending resolves every forward a crash left in sending: a forward
@@ -187,7 +209,7 @@ func (s *Server) adoptSending(ctx context.Context) {
 	}
 	for _, p := range work {
 		if _, ok := rows[p.fwd.Node]; !ok {
-			s.requeueOne(p.id, p.ownerPath, p.name, p.fwd, now)
+			s.requeueOne(ctx, p.id, p.ownerPath, p.name, p.fwd, now)
 			continue
 		}
 		view, ferr := cl.GetBinding(ctx, p.fwd.Node, p.fwd.NodeBinding)
@@ -197,7 +219,7 @@ func (s *Server) adoptSending(ctx context.Context) {
 			if ferr != nil {
 				slog.Info("burst: adopt requeues an unconfirmed forward", "binding", p.name, "node", p.fwd.Node, "err", ferr)
 			}
-			s.requeueOne(p.id, p.ownerPath, p.name, p.fwd, now)
+			s.requeueOne(ctx, p.id, p.ownerPath, p.name, p.fwd, now)
 		}
 	}
 }

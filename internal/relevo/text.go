@@ -67,6 +67,8 @@ func StopText(name string, res StopResult) string {
 		return fmt.Sprintf("%s round %d stopped: its runner was already gone and nothing was left running; round closed %s unless one was on disk", name, res.Round, clause)
 	case "dequeued":
 		return fmt.Sprintf("%s round %d stopped: dropped from the server queue before it started; round closed %s", name, res.Round, clause)
+	case "stopping":
+		return fmt.Sprintf("%s round %d stop requested; the round is still open and closes as stopped", name, res.Round)
 	default:
 		return fmt.Sprintf("%s has no open round; nothing to stop", name)
 	}

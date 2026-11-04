@@ -171,7 +171,17 @@ type nodeScript struct {
 	startView    remote.BindingView
 	startCode    remote.Code
 	startMsg     string
-	redirect     string
+	stopStatus   int
+	stopView     remote.BindingView
+	stopCode     remote.Code
+	stopMsg      string
+	// stopWait, when non-nil, holds the stop answer until the test closes
+	// it, so the head's return can be observed before the node answers.
+	stopWait chan struct{}
+	// stopHits counts the stop answers, apart from every other hit, so a
+	// test can say exactly how many stops the node saw.
+	stopHits atomic.Int64
+	redirect string
 }
 
 func (s *nodeScript) serve() http.Handler {
@@ -199,6 +209,16 @@ func (s *nodeScript) serve() http.Handler {
 				writeJSON(w, s.startStatus, remote.ErrorBody{Code: s.startCode, Message: s.startMsg})
 			} else {
 				writeJSON(w, s.startStatus, s.startView)
+			}
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/stop"):
+			s.stopHits.Add(1)
+			if s.stopWait != nil {
+				<-s.stopWait
+			}
+			if s.stopStatus >= 400 {
+				writeJSON(w, s.stopStatus, remote.ErrorBody{Code: s.stopCode, Message: s.stopMsg})
+			} else {
+				writeJSON(w, s.stopStatus, s.stopView)
 			}
 		default:
 			http.NotFound(w, r)

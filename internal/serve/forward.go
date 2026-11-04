@@ -58,6 +58,10 @@ func (s *Server) sendForwards(ctx context.Context, now time.Time) int {
 			if f == nil || f.Phase != "sending" {
 				continue
 			}
+			if f.StopRequested {
+				s.closeStopRequestedSend(ctx, ownerPath, b.Name, *f)
+				continue
+			}
 			row, ok := rows[f.Node]
 			if !ok || !row.Verified || row.State != "ready" {
 				continue
@@ -133,7 +137,7 @@ func (s *Server) sendOne(ctx context.Context, cl *client.Client, row burst.NodeR
 		return false
 	}
 	if burstForwardRefused(serr) {
-		s.refuseForward(w, fwd, now, "burst: node refused a forward, requeued", serr)
+		s.refuseForward(ctx, w, fwd, now, "burst: node refused a forward, requeued", serr)
 		restoreForwardStage(ctx, rt, stage)
 		return false
 	}
@@ -145,6 +149,27 @@ func (s *Server) sendOne(ctx context.Context, cl *client.Client, row burst.NodeR
 	}
 	restoreForwardStage(ctx, rt, stage)
 	return false
+}
+
+// closeStopRequestedSend closes a sending forward the stop reached before
+// the send: the head never contacts the node and the round closes the way
+// stopping a queued local round closes it. The match is re-checked under the
+// store lock, so a result that landed in between wins instead.
+func (s *Server) closeStopRequestedSend(ctx context.Context, ownerPath, name string, fwd store.Forward) {
+	st := s.ownerStore(ownerPath)
+	rt := s.runtimeAt(ownerPath)
+	if err := st.WithLock(func(tx *store.Tx) error {
+		closed, err := relevo.CloseStopRequestedForward(ctx, rt, tx, name, fwd, "dequeued")
+		if err != nil {
+			return err
+		}
+		if !closed {
+			slog.Info("burst: stop-requested send already moved", "binding", name, "node", fwd.Node)
+		}
+		return nil
+	}); err != nil {
+		slog.Warn("burst: stop-requested send not closed", "binding", name, "node", fwd.Node, "err", err)
+	}
 }
 
 // forwardShip is everything one send ships: the round's staged plan, the
@@ -283,7 +308,7 @@ func (s *Server) ensureNodeBinding(ctx context.Context, cl *client.Client, row b
 	}
 	if !burstHTTPStatus(gerr, http.StatusNotFound) {
 		if burstForwardRefused(gerr) {
-			s.refuseForward(w, fwd, now, "burst: node refused a forward binding, requeued", gerr)
+			s.refuseForward(ctx, w, fwd, now, "burst: node refused a forward binding, requeued", gerr)
 			return false, false
 		}
 		if burstForwardUnreachable(gerr) {
@@ -308,7 +333,7 @@ func (s *Server) ensureNodeBinding(ctx context.Context, cl *client.Client, row b
 		return false, true
 	}
 	if burstForwardRefused(cerr) {
-		s.refuseForward(w, fwd, now, "burst: node refused a forward binding, requeued", cerr)
+		s.refuseForward(ctx, w, fwd, now, "burst: node refused a forward binding, requeued", cerr)
 		return false, false
 	}
 	if burstForwardUnreachable(cerr) {
@@ -461,14 +486,14 @@ func (s *Server) noteForwardSent(row burst.NodeRow, now time.Time) {
 // refuseForward returns a round a node refused to the queue and holds it out
 // of placement for a while, so the next tick does not claim it for the same
 // refusal again.
-func (s *Server) refuseForward(w sendWork, fwd store.Forward, now time.Time, msg string, err error) {
+func (s *Server) refuseForward(ctx context.Context, w sendWork, fwd store.Forward, now time.Time, msg string, err error) {
 	slog.Warn(msg, "owner", string(w.id), "binding", w.b.Name, "node", fwd.Node, "err", err)
 	since := fwd.QueuedSince
 	if since.IsZero() {
 		since = now
 	}
 	s.burstHealth.noteRefused(burstRefusalKey(string(w.id)+"/"+w.b.Name, since), now)
-	s.requeueOne(w.id, w.ownerPath, w.b.Name, fwd, now)
+	s.requeueOne(ctx, w.id, w.ownerPath, w.b.Name, fwd, now)
 }
 
 // withoutHeldRefusals drops from placement every waiting round a node
