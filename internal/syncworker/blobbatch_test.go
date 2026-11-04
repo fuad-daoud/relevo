@@ -453,6 +453,9 @@ func TestPutBlobsRetryStoresExactlyTheBatchBodies(t *testing.T) {
 	if first.Results[1].Error == "" {
 		t.Fatal("the first pass stored everything, leaving nothing for the retry to prove")
 	}
+	if first.Results[1].Code != "" {
+		t.Errorf("results[1].code = %q, want none: a fault a retry can get past", first.Results[1].Code)
+	}
 	if inner.Puts != 2 {
 		t.Fatalf("the first pass stored %d bodies, want the two its failure did not touch", inner.Puts)
 	}

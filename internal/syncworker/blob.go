@@ -286,11 +286,11 @@ func fanOut(n int, work func(slot int)) {
 	for slot := 0; slot < n; slot++ {
 		wg.Add(1)
 		sem <- struct{}{}
-		go func() {
+		go func(slot int) {
 			defer wg.Done()
 			defer func() { <-sem }()
 			work(slot)
-		}()
+		}(slot)
 	}
 	wg.Wait()
 }
