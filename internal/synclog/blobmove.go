@@ -261,7 +261,8 @@ func uploadPending(m BlobMover, stagingDir string, blobs []pendingBlob) error {
 // file whether the put lands or not: a failed put appends no entry, so the file
 // would only fill the folder with untaken bodies. The first failed key decides
 // the batch's error, and the call's own error rides with it -- a refusal the
-// mover's accounting could not record is still a failure the caller hears.
+// mover's accounting could not record is still a failure the caller hears. A
+// removal failing after the put landed is not a failed export.
 func uploadChunk(m BlobMover, stagingDir string, uniq []pendingBlob, chunk []int) error {
 	items := make([]BlobBatchItem, len(chunk))
 	for n, i := range chunk {
