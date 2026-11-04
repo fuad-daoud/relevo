@@ -145,6 +145,8 @@ func (s *Server) observeOne(ctx context.Context, cl *client.Client, row burst.No
 	case remote.RoundNeedsYou, remote.RoundBroken:
 		s.observeNeedsYou(ctx, cl, row, w, view, now)
 		return false
+	case remote.RoundIdle:
+		return s.observeBindingGone(ctx, cl, w, now)
 	default:
 		slog.Warn("burst: observe answered an unexpected state", "binding", w.name, "node", w.fwd.Node, "state", view.RoundState)
 		return false

@@ -91,6 +91,33 @@ func TestObserveRunningForwardRequeuesWhenNodeBindingGone(t *testing.T) {
 	}
 }
 
+func TestObserveRunningForwardRequeuesWhenNodeSitsIdle(t *testing.T) {
+	since := time.Now().UTC().Add(-time.Minute)
+	script := &nodeScript{getStatus: http.StatusOK, getView: stubRoundView("nb-api", 1, remote.RoundIdle)}
+	env, _ := gateFanoutEnv(t, []*nodeScript{script}, &since)
+	saveHeadForward(t, env, "api", "b1", "nb-api", 2, since)
+	rt := env.runtime(t)
+	b, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Burst.Forward.Phase = "running"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	env.srv.observeForwards(context.Background())
+	b, err = rt.Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := burstStoredForward(b); f != nil {
+		t.Errorf("forward = %+v, want it cleared: the node has no such round", f)
+	}
+	if !b.QueuedAt.Equal(since) {
+		t.Errorf("QueuedAt = %v, want %v", b.QueuedAt, since)
+	}
+}
+
 func TestObserveStopRequestedForwardClosesWhenNodeBindingGone(t *testing.T) {
 	env, rt, _ := bindingGoneEnv(t, "running", time.Now().UTC().Add(-time.Minute))
 	b, err := rt.Store.Load("api")

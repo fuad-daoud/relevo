@@ -71,10 +71,10 @@ func stoppingForwards(work []observeWork) map[string]bool {
 	return keys
 }
 
-// observeBindingGone ends a forward whose node no longer holds its binding: a
-// release fanned out to the node, or the node dropped it. Left standing, the
-// forward would answer 404 on every pass and count against the node for as
-// long as the head runs, keeping a paid node alive. A closed round is already
+// observeBindingGone ends a forward whose node holds no such round: a release
+// fanned out to the node, the node dropped its binding, or its binding sits
+// idle. Left standing, the forward would wait on every pass and count against
+// the node for as long as the head runs, keeping a paid node alive. A closed round is already
 // home, so only its receipt goes. A live one has nothing left to watch and
 // comes back the way a lost node's round does. True means a closed forward
 // cleared.

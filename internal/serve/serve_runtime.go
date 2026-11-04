@@ -98,6 +98,7 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 		if len(ids) == 0 {
 			return
 		}
+		forgetForwardRef(rt, ownerIDOf(root), b)
 		s.fanoutUnbindAsync(ownerIDOf(root), b.Name, ids)
 	}
 	// The remote send runs above the engine: the served runtime ships through

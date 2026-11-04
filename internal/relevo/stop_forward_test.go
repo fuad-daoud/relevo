@@ -564,6 +564,25 @@ func TestCloseStopRequestedForwardClosesSendingAsDequeued(t *testing.T) {
 func TestCloseStopRequestedForwardLeavesOthersAlone(t *testing.T) {
 	t.Parallel()
 
+	t.Run("a round that moved on", func(t *testing.T) {
+		t.Parallel()
+
+		rt, fwd, _ := stoppedForwardFixture(t, newFakeRunner())
+		fwd.Round++
+		if err := rt.Store.WithLock(func(tx *store.Tx) error {
+			closed, err := CloseStopRequestedForward(context.Background(), rt, tx, "api", fwd, "dequeued")
+			if err != nil {
+				return err
+			}
+			if closed {
+				t.Error("closed = true, want nothing closed for another round")
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("WithLock: %v", err)
+		}
+	})
+
 	t.Run("without the flag", func(t *testing.T) {
 		t.Parallel()
 

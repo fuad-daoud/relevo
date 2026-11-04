@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/burst"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -172,6 +173,22 @@ func unbindFanoutTargets(b store.Binding) []string {
 		}
 	}
 	return ids
+}
+
+// forgetForwardRef drops the ref the released binding's sends staged. A later
+// send has no ship base to recognise it by, and would take it for another
+// binding's ref and wait forever. It runs before the release answers, so a
+// resumed round finds it gone.
+func forgetForwardRef(rt relevo.Runtime, owner remote.ClientID, b store.Binding) {
+	if b.Serve == nil || b.Serve.BareRepo == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), fanoutTimeout)
+	defer cancel()
+	ref := "refs/relevo/" + burstNodeBinding(owner, b.Name) + "/out"
+	if err := rt.Git.DeleteRef(ctx, b.Serve.BareRepo, ref); err != nil {
+		slog.Warn("burst: released forward ref not removed", "binding", b.Name, "ref", ref, "err", err)
+	}
 }
 
 // fanoutUnbindAsync sends one node unbind per target node, each on its own

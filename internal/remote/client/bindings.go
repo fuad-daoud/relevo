@@ -98,6 +98,16 @@ func (c *Client) Ack(ctx context.Context, server, name string, round int) (remot
 	return postNoBody[remote.BindingView](c, ctx, server, path, "decode binding view")
 }
 
+// AlignRound moves a binding on server up to round, the number the next start
+// will carry. A burst head numbers its own rounds and sends only some of them
+// to any one node, so a node's count trails it. It never moves a count down.
+func (c *Client) AlignRound(ctx context.Context, server, name string, round int) (remote.BindingView, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	path := fmt.Sprintf("/v1/bindings/%s/rounds/%d/align", url.PathEscape(name), round)
+	return postNoBody[remote.BindingView](c, ctx, server, path, "decode binding view")
+}
+
 func (c *Client) Unavailable(ctx context.Context, server, name, token, reason string) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()

@@ -99,10 +99,18 @@ func (s *Server) sendForwards(ctx context.Context, now time.Time) int {
 	return confirmed
 }
 
+// forwardShipPatience bounds a claim the head cannot ship. Most causes clear by
+// the next tick, but one that does not would hold the node's seat for as long
+// as the head runs.
+const forwardShipPatience = 5 * time.Minute
+
+var errForwardNotShipped = errors.New("nothing to ship")
+
 // sendOne ships one sending forward: the node binding is created when
-// missing and the round starts with the head's own plan, candidate, tier
-// and tags. A started round and an already-started answer both confirm;
-// a refusal requeues, and anything else keeps the claim for the next tick.
+// missing, its round count moved up to the head's, and the round starts with
+// the head's own plan, candidate, tier and tags. A started round confirms, and
+// so does a conflict when the node holds this very round. A refusal requeues,
+// and anything else keeps the claim for the next tick.
 // A send that never confirms restores the staged forward ref, so the next
 // send stages fresh instead of wedging on this attempt's leftover.
 func (s *Server) sendOne(ctx context.Context, cl *client.Client, row burst.NodeRow, w sendWork, now time.Time) bool {
@@ -111,6 +119,9 @@ func (s *Server) sendOne(ctx context.Context, cl *client.Client, row burst.NodeR
 	ship, stage, ok := s.shipForward(ctx, rt, w.b, fwd, w.since)
 	if !ok {
 		restoreForwardStage(ctx, rt, stage)
+		if now.Sub(fwd.ClaimedAt) > forwardShipPatience {
+			s.refuseForward(ctx, w, fwd, now, "burst: forward could not ship, requeued", errForwardNotShipped)
+		}
 		return false
 	}
 	defer func() {
@@ -127,28 +138,56 @@ func (s *Server) sendOne(ctx context.Context, cl *client.Client, row burst.NodeR
 	if !ship.snap.Empty && ship.snap.Body != nil {
 		bundle = ship.snap.Body
 	}
+	if _, aerr := cl.AlignRound(ctx, row.ID, fwd.NodeBinding, fwd.Round); aerr != nil {
+		s.noteSendFailure(ctx, row, w, fwd, now, aerr)
+		restoreForwardStage(ctx, rt, stage)
+		return false
+	}
 	_, serr := cl.StartRound(ctx, row.ID, fwd.NodeBinding, fwd.Round, ship.plan,
 		bundle, ship.tier, w.b.BuilderCandidate, false, ship.tags, false, nil)
-	if serr == nil || burstHTTPStatus(serr, http.StatusConflict) {
+	if burstHTTPStatus(serr, http.StatusConflict) {
+		serr = conflictUnlessHeld(ctx, cl, row, fwd, serr)
+	}
+	if serr == nil {
 		if s.confirmSend(w, row, ship.outSHA, now, created) {
 			return true
 		}
 		restoreForwardStage(ctx, rt, stage)
 		return false
 	}
-	if burstForwardRefused(serr) {
-		s.refuseForward(ctx, w, fwd, now, "burst: node refused a forward, requeued", serr)
-		restoreForwardStage(ctx, rt, stage)
-		return false
-	}
-	if burstForwardUnreachable(serr) {
-		s.noteNodeUnreachable(now, row)
-	} else {
-		slog.Warn("burst: send forward failed, kept sending", "owner", string(w.id),
-			"binding", w.b.Name, "node", fwd.Node, "err", serr)
-	}
+	s.noteSendFailure(ctx, row, w, fwd, now, serr)
 	restoreForwardStage(ctx, rt, stage)
 	return false
+}
+
+// conflictUnlessHeld reads what a conflict on a start means. It is the answer
+// to a resend of a round the node already took, and just as much to a round it
+// will never run, and only the first may confirm: a forward believed running
+// on a node that has no such round waits forever and holds the node open.
+func conflictUnlessHeld(ctx context.Context, cl *client.Client, row burst.NodeRow, fwd store.Forward, conflict error) error {
+	view, err := cl.GetBinding(ctx, row.ID, fwd.NodeBinding)
+	if err != nil {
+		return err
+	}
+	if observeRoundAgrees(view, observeWork{fwd: fwd}) {
+		return nil
+	}
+	return conflict
+}
+
+// noteSendFailure sorts a send the node did not take: a refusal or a conflict
+// requeues, and anything else keeps the claim for the next tick.
+func (s *Server) noteSendFailure(ctx context.Context, row burst.NodeRow, w sendWork, fwd store.Forward, now time.Time, err error) {
+	if burstForwardRefused(err) || burstHTTPStatus(err, http.StatusConflict) {
+		s.refuseForward(ctx, w, fwd, now, "burst: node refused a forward, requeued", err)
+		return
+	}
+	if burstForwardUnreachable(err) {
+		s.noteNodeUnreachable(now, row)
+		return
+	}
+	slog.Warn("burst: send forward failed, kept sending", "owner", string(w.id),
+		"binding", w.b.Name, "node", fwd.Node, "err", err)
 }
 
 // closeStopRequestedSend closes a sending forward the stop reached before

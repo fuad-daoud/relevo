@@ -60,7 +60,7 @@ func finishNodeRound(t *testing.T, st *store.Store, runner *scriptRunner, name s
 		t.Fatalf("finish node round: write work file: %v", err)
 	}
 	runGit(t, worktree, "add", "node-result.txt")
-	runGit(t, worktree, "commit", "-m", "node round result")
+	runGit(t, worktree, "commit", "--allow-empty", "-m", "node round result")
 	sha := strings.TrimSpace(runGit(t, worktree, "rev-parse", "HEAD"))
 
 	const reportText = "# Round 1 Report\n\nnode-report-E2E round 1 done\n\n```relevo\nstatus: done\nchanged_paths: [node-result.txt]\n```\n"
@@ -306,4 +306,48 @@ func TestForwardedRoundE2E(t *testing.T) {
 	if strings.Contains(rendered.On, "→") {
 		t.Errorf("laptop row on = %q after the close, want no node arrow", rendered.On)
 	}
+
+	forwardLaterRoundAfterRelease(t, ctx, rt, planFile, repo, nodeHeadStore, nodeBinding, nodeRunner, func() {
+		_ = headSrv.Tick(ctx)
+		_ = nodeSrv.Tick(ctx)
+		_ = clientDaemon.Tick(ctx)
+	})
+}
+
+// forwardLaterRoundAfterRelease sends the head's round 2 to a node whose
+// binding starts its count over, because done released the old one.
+func forwardLaterRoundAfterRelease(t *testing.T, ctx context.Context, rt relevo.Runtime, planFile, repo string, nodeStore *store.Store, nodeBinding string, nodeRunner *scriptRunner, tick func()) {
+	t.Helper()
+	if _, err := relevo.Done(ctx, rt, "api"); err != nil {
+		t.Fatalf("Done(api): %v", err)
+	}
+	tickUntil(t, 30*time.Second, func() bool {
+		_, err := nodeStore.Load(nodeBinding)
+		return err != nil
+	})
+	if _, err := relevo.Bind(ctx, rt, relevo.BindOptions{Name: "api", CWD: repo, Resume: true}); err != nil {
+		t.Fatalf("resume api: %v", err)
+	}
+	if _, err := relevo.Send(ctx, rt, "api", planFile, relevo.SendOptions{}); err != nil {
+		t.Fatalf("relevo.Send(api) round 2: %v", err)
+	}
+	tickUntil(t, 90*time.Second, func() bool {
+		tick()
+		b, err := nodeStore.Load(nodeBinding)
+		return err == nil && b.Round == 2
+	})
+	finishNodeRound(t, nodeStore, nodeRunner, nodeBinding, 2)
+	tickUntil(t, 90*time.Second, func() bool {
+		tick()
+		entries, err := rt.Store.ReadLog("api")
+		if err != nil {
+			return false
+		}
+		for _, e := range entries {
+			if e.Kind == store.KindReport && e.Round == 2 {
+				return true
+			}
+		}
+		return false
+	})
 }

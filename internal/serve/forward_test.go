@@ -185,6 +185,11 @@ type nodeScript struct {
 	// stopHits counts the stop answers, apart from every other hit, so a
 	// test can say exactly how many stops the node saw.
 	stopHits atomic.Int64
+	// alignStatus answers the round alignment; zero answers 200.
+	alignStatus int
+	alignCode   remote.Code
+	alignHits   atomic.Int64
+	startHits   atomic.Int64
 	// unavailableStatus answers the node-side unavailable; zero answers 200.
 	// unavailableWait, when non-nil, holds the answer until the test closes
 	// it, so a gate's return can be observed before the node answers. The
@@ -288,7 +293,19 @@ func (s *nodeScript) serve() http.Handler {
 			} else {
 				writeJSON(w, status, map[string]any{})
 			}
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/align"):
+			s.alignHits.Add(1)
+			status := s.alignStatus
+			if status == 0 {
+				status = http.StatusOK
+			}
+			if status >= 400 {
+				writeJSON(w, status, remote.ErrorBody{Code: s.alignCode, Message: "align refused"})
+			} else {
+				writeJSON(w, status, s.getView)
+			}
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/rounds"):
+			s.startHits.Add(1)
 			body, _ := io.ReadAll(r.Body)
 			s.recordStart(body)
 			if s.startStatus >= 400 {
@@ -481,18 +498,35 @@ func requireStillSending(t *testing.T, env *testEnv, name string) {
 }
 
 // TestBurstSendAnswers pins every StartRound and create answer: a started
-// round and an already-started answer both confirm, a definite refusal
+// round confirms, so does a conflict over a round the node holds, a definite
+// refusal or a conflict over anything else
 // requeues to the FIFO place with the node's message logged, and a failure
 // or a redirect keeps the claim for the next tick.
 func TestBurstSendAnswers(t *testing.T) {
 	clock := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
 	running := stubRoundView("nb-api", 1, remote.RoundRunning)
 
-	t.Run("409 started confirms", func(t *testing.T) {
+	t.Run("a claim that cannot ship gives up its seat", func(t *testing.T) {
+		script := &nodeScript{getStatus: http.StatusOK, getView: running, startStatus: http.StatusCreated, startView: running}
+		env, _, fwd := answerSetup(t, script, clock)
+		rt := env.runtime(t)
+		if err := os.Remove(rt.Store.PromptPath("api", fwd.Round)); err != nil {
+			t.Fatal(err)
+		}
+		if got := env.srv.sendForwards(context.Background(), fwd.ClaimedAt.Add(forwardShipPatience)); got != 0 {
+			t.Fatalf("confirmed = %d, want 0", got)
+		}
+		requireStillSending(t, env, "api")
+		if got := env.srv.sendForwards(context.Background(), fwd.ClaimedAt.Add(forwardShipPatience+time.Second)); got != 0 {
+			t.Fatalf("confirmed = %d, want 0", got)
+		}
+		requireRequeued(t, env, fwd)
+	})
+
+	t.Run("409 on a round the node holds requeues nothing", func(t *testing.T) {
 		script := &nodeScript{
-			getStatus: http.StatusNotFound, getCode: remote.CodeNotFound, getMsg: "not found",
-			createStatus: http.StatusCreated,
-			startStatus:  http.StatusConflict, startCode: remote.CodeRoundStarted, startMsg: "round 1 already started",
+			getStatus: http.StatusOK, getView: running,
+			startStatus: http.StatusConflict, startCode: remote.CodeRoundStarted, startMsg: "round 1 already started",
 		}
 		env, _, fwd := answerSetup(t, script, clock)
 		if got := env.srv.sendForwards(context.Background(), clock); got != 1 {
@@ -505,6 +539,48 @@ func TestBurstSendAnswers(t *testing.T) {
 		}
 		if back.Burst == nil || back.Burst.Shipped["b1"] == "" || len(back.Burst.NodeBindings) != 1 || back.Burst.NodeBindings[0] != fwd.NodeBinding {
 			t.Errorf("Burst = %+v, want the ship base and node binding recorded", back.Burst)
+		}
+	})
+
+	t.Run("409 on a round the node does not hold requeues", func(t *testing.T) {
+		script := &nodeScript{
+			getStatus: http.StatusOK, getView: stubRoundView("nb-api", 1, remote.RoundIdle),
+			startStatus: http.StatusConflict, startCode: remote.CodeRoundStarted, startMsg: "round 1 already started",
+		}
+		env, _, fwd := answerSetup(t, script, clock)
+		if got := env.srv.sendForwards(context.Background(), clock); got != 0 {
+			t.Fatalf("confirmed = %d, want 0: the node has no such round", got)
+		}
+		requireRequeued(t, env, fwd)
+	})
+
+	t.Run("the count moves up before the start", func(t *testing.T) {
+		script := &nodeScript{
+			getStatus: http.StatusOK, getView: stubRoundView("nb-api", 1, remote.RoundIdle),
+			startStatus: http.StatusCreated, startView: running,
+		}
+		env, _, _ := answerSetup(t, script, clock)
+		if got := env.srv.sendForwards(context.Background(), clock); got != 1 {
+			t.Fatalf("confirmed = %d, want 1", got)
+		}
+		if got := script.alignHits.Load(); got != 1 {
+			t.Errorf("align hits = %d, want 1", got)
+		}
+	})
+
+	t.Run("a refused count requeues without a start", func(t *testing.T) {
+		script := &nodeScript{
+			getStatus: http.StatusOK, getView: stubRoundView("nb-api", 1, remote.RoundRunning),
+			alignStatus: http.StatusConflict, alignCode: remote.CodeRoundOpen,
+			startStatus: http.StatusCreated, startView: running,
+		}
+		env, _, fwd := answerSetup(t, script, clock)
+		if got := env.srv.sendForwards(context.Background(), clock); got != 0 {
+			t.Fatalf("confirmed = %d, want 0", got)
+		}
+		requireRequeued(t, env, fwd)
+		if got := script.startHits.Load(); got != 0 {
+			t.Errorf("start hits = %d, want 0", got)
 		}
 	})
 
