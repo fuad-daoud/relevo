@@ -56,9 +56,10 @@ type Daemon struct {
 
 	// archived is the archived mirror's progress: the first tick's pass is
 	// full, and every later tick lists only records archived since the pass
-	// before. It is daemon state on purpose, carried across serve's one-tick
-	// daemons: a restart heals through a full pass, and a failed record is
-	// retried, never dropped, until one succeeds.
+	// before. It is daemon state on purpose: a restart heals through a full
+	// pass, and a failed record is retried, never dropped, until one
+	// succeeds. A served runtime has no mirror database, so serve's one-tick
+	// daemons never use it.
 	archived ArchiveCursor
 	// archiveBackend is the archived mirror's collaborator. Nil means the
 	// live store and database; tests set it to count or fail backend calls.
@@ -174,15 +175,6 @@ func (d *Daemon) WithUpgrade(f func(ctx context.Context) bool) *Daemon {
 func (d *Daemon) TmpSweptAt() time.Time { return d.tmpSweptAt }
 
 func (d *Daemon) SetTmpSweptAt(t time.Time) { d.tmpSweptAt = t }
-
-// ArchivedCursor and SetArchivedCursor carry the archived mirror's progress
-// across Daemons the way the tmp sweep's pace is carried: serve builds one
-// Daemon per tick, so without the carry every one of its ticks would run the
-// full first pass. The maps are shared with the stored copy, so a Daemon must
-// not tick concurrently with another holding the same cursor.
-func (d *Daemon) ArchivedCursor() ArchiveCursor { return d.archived }
-
-func (d *Daemon) SetArchivedCursor(c ArchiveCursor) { d.archived = c }
 
 // WaitSyncSlot runs fn with this daemon's sync to itself, waiting its turn
 // rather than dropping the work. It takes the same guard the seal hook and

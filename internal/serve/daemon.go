@@ -44,14 +44,10 @@ func (s *Server) Tick(ctx context.Context) error {
 		if at, ok := s.tmpSweptAt.Load(owner.root); ok {
 			d.SetTmpSweptAt(at.(time.Time))
 		}
-		if cur, ok := s.archivedCursors.Load(owner.root); ok {
-			d.SetArchivedCursor(cur.(relevo.ArchiveCursor))
-		}
 		if err := d.Tick(ctx); err != nil {
 			slog.Error("tick owner failed", "owner", owner.id, "err", err)
 		}
 		s.tmpSweptAt.Store(owner.root, d.TmpSweptAt())
-		s.archivedCursors.Store(owner.root, d.ArchivedCursor())
 	}
 
 	// Every owner is reconciled, so admit can start queued rounds into the slots
