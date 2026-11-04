@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/delivery"
+	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -270,6 +271,21 @@ func writeErrorMissing(err error) (error, bool) {
 	}
 }
 
+// writeErrorChainCreate classifies the chain create's own failures: a
+// deadline on either side of the wire is transient, and a taken branch is a
+// conflict with a way out. Both arrive as the classifier's sentinels, so
+// this stays beside the other families instead of growing writeError.
+func writeErrorChainCreate(err error) (error, bool) {
+	switch {
+	case errors.Is(err, relevo.ErrChainCreateTimeout):
+		return failNext(codeNotAvailable, "run the same relevo chain command again", "%v", err), true
+	case errors.Is(err, git.ErrBranchExists):
+		return failNext(codeConflict, "delete the branch or pick another name", "%v", err), true
+	default:
+		return nil, false
+	}
+}
+
 // writeError classifies a failure out of the relevo write paths into the
 // frame's catalog code: the sentinels relevo and store export are the only
 // distinctions, and anything else is internal. Coded errors pass through.
@@ -281,14 +297,14 @@ func writeError(err error) error {
 	if errors.As(err, &ce) {
 		return err
 	}
-	if out, ok := writeErrorBusy(err); ok {
-		return out
-	}
-	if out, ok := writeErrorUsage(err); ok {
-		return out
-	}
-	if out, ok := writeErrorMissing(err); ok {
-		return out
+	// Each family classifies its own sentinels first, so the switch below
+	// stays about the write paths' own errors.
+	for _, family := range []func(error) (error, bool){
+		writeErrorBusy, writeErrorUsage, writeErrorMissing, writeErrorChainCreate,
+	} {
+		if out, ok := family(err); ok {
+			return out
+		}
 	}
 	var openMember *relevo.RoundOpenError
 	var candOpen *relevo.CandidateRoundOpenError

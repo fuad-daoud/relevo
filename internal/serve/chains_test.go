@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -449,6 +450,122 @@ func TestCreateChainUnwindsTheWorktree(t *testing.T) {
 	}
 	if _, ok, err := env.gitClient.RefSHA(ctx, bare, "refs/relevo/shop/out"); err != nil || ok {
 		t.Errorf("out ref = (ok %v, err %v), want none", ok, err)
+	}
+}
+
+// deadlineCheckoutGit performs the real checkout, then locks the new worktree
+// and removes its directory before failing with a deadline: the locked
+// registration with no directory is what a checkout killed mid-flight leaves
+// behind, planted deterministically instead of by racing a real timeout.
+type deadlineCheckoutGit struct {
+	relevo.Git
+	t *testing.T
+}
+
+func (f *deadlineCheckoutGit) CheckoutWorktree(ctx context.Context, dir, path, branch string) error {
+	if err := f.Git.CheckoutWorktree(ctx, dir, path, branch); err != nil {
+		return err
+	}
+	lock := exec.Command("git", "worktree", "lock", path)
+	lock.Dir = dir
+	if out, err := lock.CombinedOutput(); err != nil {
+		f.t.Fatalf("lock checked-out worktree: %v\n%s", err, out)
+	}
+	if err := os.RemoveAll(path); err != nil {
+		f.t.Fatalf("remove locked worktree dir: %v", err)
+	}
+	return fmt.Errorf("git worktree add %s %s: %w", path, branch, context.DeadlineExceeded)
+}
+
+// deadlineUpdateRefGit fails the branch cut with a deadline, as a request
+// whose context expires between the existence check and the write does.
+type deadlineUpdateRefGit struct {
+	relevo.Git
+}
+
+func (f *deadlineUpdateRefGit) UpdateRef(ctx context.Context, dir, ref, newSHA, oldSHA string) error {
+	return fmt.Errorf("git update-ref %s %s: %w", ref, newSHA, context.DeadlineExceeded)
+}
+
+// bareWithOutRef clones the test repo bare and points the chain's out ref at
+// base: the state the absorb leaves behind before the branch is cut.
+func bareWithOutRef(t *testing.T, env *testEnv, name string) string {
+	t.Helper()
+	root := t.TempDir()
+	bare := filepath.Join(root, "repo.git")
+	runGit(t, root, "-c", "maintenance.auto=false", "clone", "--bare", env.clientDir, bare)
+	runGit(t, bare, "update-ref", "refs/relevo/"+name+"/out", env.headSHA)
+	return bare
+}
+
+// TestCreateChainCheckoutTimeoutUnwindsWorktreeAndBranch pins the checkout
+// failure's unwind order: the worktree registration goes before the branch
+// delete, because a locked entry still pointing at the branch refuses the
+// delete with "used by worktree". A branch-first unwind leaves the branch
+// behind and answers 500; the fixed one leaves nothing and answers 408.
+func TestCreateChainCheckoutTimeoutUnwindsWorktreeAndBranch(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+	bare := bareWithOutRef(t, env, "shop")
+	worktree := filepath.Join(t.TempDir(), "wt-shop")
+
+	rec := httptest.NewRecorder()
+	shim := &deadlineCheckoutGit{Git: env.gitClient, t: t}
+	if env.srv.cutChainWorktree(ctx, rec, shim, bare, "shop", "refs/relevo/shop/out", "relevo/shop", worktree, env.headSHA) {
+		t.Fatal("cutChainWorktree with a checkout deadline = true, want false")
+	}
+	if rec.Code != http.StatusRequestTimeout {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusRequestTimeout)
+	}
+	errBody := decodeErrorBody(t, rec.Body.Bytes())
+	if errBody.Code != remote.CodeInvalid {
+		t.Errorf("code = %q, want %q", errBody.Code, remote.CodeInvalid)
+	}
+	if !strings.Contains(errBody.Message, "timed out") {
+		t.Errorf("message = %q, want it to name the timeout", errBody.Message)
+	}
+
+	// The main worktree itself is always listed; the chain's entry must be
+	// gone, locked or otherwise.
+	if list := runGit(t, bare, "worktree", "list", "--porcelain"); strings.Contains(list, worktree) || strings.Contains(list, "locked") {
+		t.Errorf("worktree list = %q, want no chain worktree left", list)
+	}
+	if _, ok, err := env.gitClient.RefSHA(ctx, bare, "refs/heads/relevo/shop"); err != nil || ok {
+		t.Errorf("branch relevo/shop = (ok %v, err %v), want none", ok, err)
+	}
+	if _, ok, err := env.gitClient.RefSHA(ctx, bare, "refs/relevo/shop/out"); err != nil || ok {
+		t.Errorf("out ref = (ok %v, err %v), want none after the unwind", ok, err)
+	}
+}
+
+// TestCreateChainBranchCutTimeoutIsCoded pins the branch cut's deadline: it
+// answers 408 with a code, never an uncoded 500, and unwinds the out ref.
+func TestCreateChainBranchCutTimeoutIsCoded(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+	bare := bareWithOutRef(t, env, "shop")
+	worktree := filepath.Join(t.TempDir(), "wt-shop")
+
+	rec := httptest.NewRecorder()
+	shim := &deadlineUpdateRefGit{Git: env.gitClient}
+	if env.srv.cutChainWorktree(ctx, rec, shim, bare, "shop", "refs/relevo/shop/out", "relevo/shop", worktree, env.headSHA) {
+		t.Fatal("cutChainWorktree with a branch-cut deadline = true, want false")
+	}
+	if rec.Code != http.StatusRequestTimeout {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusRequestTimeout)
+	}
+	errBody := decodeErrorBody(t, rec.Body.Bytes())
+	if errBody.Code != remote.CodeInvalid {
+		t.Errorf("code = %q, want %q", errBody.Code, remote.CodeInvalid)
+	}
+	if !strings.Contains(errBody.Message, "timed out") {
+		t.Errorf("message = %q, want it to name the timeout", errBody.Message)
+	}
+	if _, ok, err := env.gitClient.RefSHA(ctx, bare, "refs/heads/relevo/shop"); err != nil || ok {
+		t.Errorf("branch relevo/shop = (ok %v, err %v), want none", ok, err)
+	}
+	if _, ok, err := env.gitClient.RefSHA(ctx, bare, "refs/relevo/shop/out"); err != nil || ok {
+		t.Errorf("out ref = (ok %v, err %v), want none after the unwind", ok, err)
 	}
 }
 
