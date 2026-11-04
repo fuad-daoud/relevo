@@ -460,6 +460,24 @@ func TestRoundFactsSendNoteWithoutAcceptKeepsWaitNil(t *testing.T) {
 	checkPtr(t, "StartKind", r.StartKind, "cold")
 }
 
+func TestRoundFactsSendNoteBeforeAcceptKeepsKindWithoutWait(t *testing.T) {
+	accept := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
+	events := []store.LogEntry{
+		{TS: accept, Round: 1, Kind: store.KindQueue, Note: "queued (3/4 builders busy)"},
+		// A send stamped before the accept cannot end its wait, but the
+		// kind it claims is still the round's own fact.
+		{TS: accept.Add(-time.Minute), Round: 1, Kind: store.KindQueue, Note: "forwarded to b1 (cold)"},
+		{TS: accept.Add(4 * time.Minute), Round: 1, Kind: store.KindReport, Outcome: "done"},
+	}
+
+	r := roundFacts(events, 1, false)
+
+	checkPtr(t, "StartKind", r.StartKind, "cold")
+	if r.QueueWaitMS != nil {
+		t.Errorf("QueueWaitMS = %v, want nil: a send before the accept ends no wait", *r.QueueWaitMS)
+	}
+}
+
 func TestRoundFactsRemoteRowIgnoresSendNotes(t *testing.T) {
 	queued := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
 	events := []store.LogEntry{

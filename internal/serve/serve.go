@@ -442,6 +442,7 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 		GatesLocal: s.gatesLocal, // plus this host's own ledger row: served picks and switches honour `relevo gate` here
 		InFlight:   s.inFlightFor(root),
 		History:    s.cfg.DB,
+		DB:         s.cfg.DB,
 		Usage:      cfg.Usage,
 		Prices:     cfg.Prices,
 		Now:        cfg.Now,

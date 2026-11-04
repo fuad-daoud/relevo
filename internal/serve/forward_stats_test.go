@@ -10,8 +10,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/ingest"
-	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -233,7 +231,7 @@ func TestBurstSendFailedNoteAppendStillConfirms(t *testing.T) {
 	}
 }
 
-// TestBurstAdoptRunningWritesAdoptedNote pins amendment's restart claim: a
+// TestBurstAdoptRunningWritesAdoptedNote pins the restart claim: a
 // round the node held across a restart is not a local start, so the adopt
 // writes "forwarded to <node> (adopted)" at the claim time the node's answer
 // proves. A superseded claim applies nothing and writes nothing.
@@ -438,10 +436,29 @@ func TestForwardedRoundStatsEndToEnd(t *testing.T) {
 		t.Errorf("web log = %+v, want nothing: entries land in the forwarding owner's store", entriesBob)
 	}
 
-	// The same call the owner daemon makes per changed binding, over the
-	// shared machine database the head's store writes to.
-	if _, err := ingest.Ingest(ctx, ingest.StoreSource(rt.Store, "api"), env.srv.cfg.DB, relevo.IngestDeps(rt)); err != nil {
-		t.Fatalf("ingest: %v", err)
+	// The wiring the tick depends on: the forwarding owner's runtime
+	// carries the shared machine database the head's store writes to.
+	if rt := env.srv.runtimeAt(headOwnerPath(t, env)); rt.DB != env.srv.cfg.DB {
+		t.Fatal("owner runtime DB is not the shared machine database: the tick would ingest nothing")
+	}
+	// The production call chain: the owner daemon's tick ingests every live
+	// binding over the now-wired runtime.
+	if err := env.srv.Tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	// The tick's non-ingest phases must not move the flow: the rounds stay
+	// closed, no new send lands, both reports still exist.
+	if back := loadBurstBinding(t, rt, "api"); back.Round != 3 {
+		t.Errorf("head Round = %d, want 3 after the tick", back.Round)
+	}
+	if notes := forwardedNotes(t, env, "api"); len(notes) != 2 {
+		t.Errorf("send notes after tick = %+v, want still the cold and warm ones", notes)
+	}
+	if entries, err := rt.Store.ReadLog("api"); err != nil {
+		t.Fatalf("read log after tick: %v", err)
+	} else {
+		requireOneReport(t, entries, 1)
+		requireOneReport(t, entries, 2)
 	}
 	rows, err := env.srv.cfg.DB.Query(db.Filter{Binding: "api"})
 	if err != nil {
