@@ -214,6 +214,120 @@ func isUnbindGone(err error) bool {
 	return burstHTTPStatus(err, http.StatusNotFound)
 }
 
+// A server-wide gate the head records reaches every verified live node
+// best-effort: the request never waits for it and a failure only logs.
+// The attempt carries the gate as the head received it, so the node resolves
+// it against its own candidates the way the head did -- an account key keeps
+// its account scope there. A node verified after the gate hears nothing;
+// its own builder gates itself on its next limit instead.
+
+// gateRowFor resolves a node a gate fan-out may dial: the stop filter plus
+// problem-free, the placement eligibility a gate needs -- a node the head
+// already marked unreachable takes no new gate traffic, the same way it
+// takes no new round.
+func gateRowFor(t *burst.NodeTable, node string) *burst.NodeRow {
+	row := stopRowFor(t, node)
+	if row == nil || row.Problem != "" {
+		return nil
+	}
+	return row
+}
+
+// gateFanoutTargets snapshots the rows a gate fan-out may dial: every
+// verified live node the table holds, in table order.
+func (s *Server) gateFanoutTargets() []burst.NodeRow {
+	t := s.copyBurstTable()
+	if t == nil {
+		return nil
+	}
+	var out []burst.NodeRow
+	for _, r := range t.Nodes {
+		if gateRowFor(t, r.ID) == nil {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// fanoutGateUnavailableAsync sends one unavailable per live node, each on
+// its own goroutine the drain waits for. The empty name is the server-wide
+// route: the node records the gate on its own ledger.
+func (s *Server) fanoutGateUnavailableAsync(token, reason string) {
+	s.fanoutGate(targetGateUnavailable{token: token, reason: reason})
+}
+
+// fanoutGateAvailableAsync sends one available per live node, each on its
+// own goroutine the drain waits for.
+func (s *Server) fanoutGateAvailableAsync(subject string) {
+	s.fanoutGate(targetGateAvailable{subject: subject})
+}
+
+// targetGate is one gate a fan-out carries to a node: the verb and what it
+// sends. The two verbs share the detached send and the log-only failure;
+// only the call differs.
+type targetGate interface {
+	send(ctx context.Context, cl *client.Client, node string) error
+	kind() string
+}
+
+// targetGateUnavailable carries an unavailable to one node.
+type targetGateUnavailable struct {
+	token  string
+	reason string
+}
+
+func (g targetGateUnavailable) kind() string { return "unavailable" }
+
+func (g targetGateUnavailable) send(ctx context.Context, cl *client.Client, node string) error {
+	return cl.Unavailable(ctx, node, "", g.token, g.reason)
+}
+
+// targetGateAvailable carries an available to one node.
+type targetGateAvailable struct {
+	subject string
+}
+
+func (g targetGateAvailable) kind() string { return "available" }
+
+func (g targetGateAvailable) send(ctx context.Context, cl *client.Client, node string) error {
+	_, err := cl.Available(ctx, node, g.subject)
+	return err
+}
+
+// fanoutGate dials every verified live node with gate, one detached attempt
+// per node. The caller already answered, so each attempt carries a detached
+// timeout; a failure only logs with the node id, never failing the gate the
+// head already recorded.
+func (s *Server) fanoutGate(gate targetGate) {
+	rows := s.gateFanoutTargets()
+	if len(rows) == 0 {
+		return
+	}
+	cl, err := s.burstNodeClient(rows)
+	if err != nil {
+		slog.Warn("burst: gate fan-out skipped, client key unusable", "gate", gate.kind(), "err", err)
+		return
+	}
+	hook := s.gateFanoutHook
+	for _, row := range rows {
+		s.fanoutDetached(hook, func() error { return s.gateOnNode(cl, row.ID, gate) })
+	}
+}
+
+// gateOnNode sends one gate to one node. A failure only logs: the gate is
+// recorded on the head either way, and the node's own builder gates itself
+// on its next limit.
+func (s *Server) gateOnNode(cl *client.Client, node string, gate targetGate) error {
+	callCtx, cancel := context.WithTimeout(context.Background(), fanoutTimeout)
+	defer cancel()
+	if err := gate.send(callCtx, cl, node); err != nil {
+		slog.Warn("burst: gate fan-out failed", "gate", gate.kind(), "node", node, "err", err)
+		return err
+	}
+	return nil
+}
+
 // fanoutClearedStop sends the node stop for a forward the head has already
 // cleared and saved: the round parked on a waiting node came home without
 // its builder finishing, so the node's round must end and nothing on the

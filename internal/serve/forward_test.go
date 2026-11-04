@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
@@ -184,6 +185,30 @@ type nodeScript struct {
 	// stopHits counts the stop answers, apart from every other hit, so a
 	// test can say exactly how many stops the node saw.
 	stopHits atomic.Int64
+	// unavailableStatus answers the node-side unavailable; zero answers 200.
+	// unavailableWait, when non-nil, holds the answer until the test closes
+	// it, so a gate's return can be observed before the node answers. The
+	// hold also ends when the request's context does, so a test that fails
+	// before releasing never wedges the stub's close in cleanup.
+	unavailableStatus int
+	unavailableMsg    string
+	unavailableWait   chan struct{}
+	// unavailableHits counts the unavailable answers, apart from every
+	// other hit, so a test can say exactly how many gates the node saw.
+	unavailableHits atomic.Int64
+	// availableStatus answers the node-side available; zero answers 200.
+	// availableWait ends with the request's context too, for the same
+	// cleanup reason as unavailableWait.
+	availableStatus int
+	availableMsg    string
+	availableWait   chan struct{}
+	// availableHits counts the available answers, apart from every other
+	// hit.
+	availableHits atomic.Int64
+	// gateMu guards gates, the gates a scripted node received in arrival
+	// order, so a test can say the head forwarded the gate it recorded.
+	gateMu sync.Mutex
+	gates  []gateSeen
 	// unbindStatus answers the node-side unbind; zero answers 200.
 	unbindStatus int
 	unbindCode   remote.Code
@@ -205,6 +230,28 @@ func (s *nodeScript) recordStart(body []byte) {
 	s.startMu.Lock()
 	defer s.startMu.Unlock()
 	s.startBodies = append(s.startBodies, body)
+}
+
+// gateSeen is one gate a scripted node received: the token the unavailable
+// carried, or the subject the available carried with an empty reason.
+type gateSeen struct {
+	token  string
+	reason string
+}
+
+// recordGate keeps one received gate for value assertions: the head
+// forwards the gate it recorded, not just a knock on the node's door.
+func (s *nodeScript) recordGate(seen gateSeen) {
+	s.gateMu.Lock()
+	defer s.gateMu.Unlock()
+	s.gates = append(s.gates, seen)
+}
+
+// gateTokens reports every gate the node received, in arrival order.
+func (s *nodeScript) gateTokens() []gateSeen {
+	s.gateMu.Lock()
+	defer s.gateMu.Unlock()
+	return append([]gateSeen(nil), s.gates...)
 }
 
 func (s *nodeScript) serve() http.Handler {
@@ -258,6 +305,50 @@ func (s *nodeScript) serve() http.Handler {
 				writeJSON(w, s.stopStatus, remote.ErrorBody{Code: s.stopCode, Message: s.stopMsg})
 			} else {
 				writeJSON(w, s.stopStatus, s.stopView)
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/unavailable":
+			s.unavailableHits.Add(1)
+			var req remote.UnavailableRequest
+			if body, err := io.ReadAll(r.Body); err == nil {
+				_ = json.Unmarshal(body, &req)
+			}
+			s.recordGate(gateSeen{token: req.Token, reason: req.Reason})
+			if s.unavailableWait != nil {
+				select {
+				case <-s.unavailableWait:
+				case <-r.Context().Done():
+				}
+			}
+			status := s.unavailableStatus
+			if status == 0 {
+				status = http.StatusOK
+			}
+			if status >= 400 {
+				writeJSON(w, status, remote.ErrorBody{Message: s.unavailableMsg})
+			} else {
+				writeJSON(w, status, map[string]any{})
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/available":
+			s.availableHits.Add(1)
+			var req remote.AvailableRequest
+			if body, err := io.ReadAll(r.Body); err == nil {
+				_ = json.Unmarshal(body, &req)
+			}
+			s.recordGate(gateSeen{token: req.Subject})
+			if s.availableWait != nil {
+				select {
+				case <-s.availableWait:
+				case <-r.Context().Done():
+				}
+			}
+			status := s.availableStatus
+			if status == 0 {
+				status = http.StatusOK
+			}
+			if status >= 400 {
+				writeJSON(w, status, remote.ErrorBody{Message: s.availableMsg})
+			} else {
+				writeJSON(w, status, remote.AvailableResponse{})
 			}
 		default:
 			http.NotFound(w, r)
