@@ -527,7 +527,7 @@ func TestStopRetriedAfterFailure(t *testing.T) {
 // TestBurstObserveClosesStoppedForward pins the unchanged close: a node
 // round the node itself stopped closes on the head through the normal
 // observe path, needing no report file -- the node's stopped view carries
-// it -- and the head records no stop of its own.
+// it -- and the head's log holds the one stop the view reports.
 func TestBurstObserveClosesStoppedForward(t *testing.T) {
 	clock := time.Now().UTC()
 	env, nodeSrv, _, fwd, nodeRoot := observeTestSetup(t, clock)
@@ -574,10 +574,14 @@ func TestBurstObserveClosesStoppedForward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var stops []string
 	for _, e := range entries {
 		if e.Kind == store.KindStop {
-			t.Errorf("head stop entry = %+v, want none: the stop happened on the node", e)
+			stops = append(stops, e.Note)
 		}
+	}
+	if len(stops) != 1 || stops[0] != "stopped/killed" {
+		t.Errorf("head stop entries = %q, want the one the node's view reports", stops)
 	}
 }
 
