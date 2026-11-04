@@ -15,7 +15,8 @@ Builder rounds of this plan:
 {{range .PlanFiles}}- {{.Name}}: {{.Path}}
 {{end}}{{end}}{{if .PlanPaths}}Plan set:
 {{range .PlanPaths}}- {{.}}
-{{end}}{{end}}{{if .GateLogPath}}Check result: {{.GateResult}}; its output: {{.GateLogPath}}.{{else}}No check ran for this round.{{end}}
+{{end}}{{end}}{{if .GateLogPath}}Check result: {{.GateResult}}; its output: {{.GateLogPath}}.
+Don't re-run the full suite; reproduce only what you need to judge a finding.{{else}}No check ran for this round.{{end}}
 
 Read the plan, the round's prompt when it is named, the report and the diffs.
 You review plan {{.Plan}} of {{.Plans}} as a whole against the plan text: the plan's cumulative diff is the primary input and this round's diff is its latest increment.

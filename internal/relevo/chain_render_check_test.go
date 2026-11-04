@@ -46,6 +46,9 @@ func TestReviewerSeedNamesTheEngineCheckOverAMemberGate(t *testing.T) {
 	if !strings.Contains(got, "Check result: green") {
 		t.Errorf("seed does not say the engine's check was green:\n%s", got)
 	}
+	if !strings.Contains(got, "Don't re-run the full suite; reproduce only what you need to judge a finding.") {
+		t.Errorf("seed does not tell the reviewer to leave the full suite alone:\n%s", got)
+	}
 	if !strings.Contains(got, "engine-check.log") || strings.Contains(got, "001-gate.log") {
 		t.Errorf("seed does not name only the engine check's log:\n%s", got)
 	}

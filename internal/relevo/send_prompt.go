@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -129,15 +131,58 @@ func absoluteOr(path string) string {
 	return path
 }
 
+// gateLineFor names the check relevo runs after the round, so the builder
+// runs only the tests its change touches instead of the full suite.
+func gateLineFor(cmd string) string {
+	return fmt.Sprintf("relevo runs `%s` after this round, outside your shell, so don't run the full suite yourself; run the tests of what you touched.", cmd)
+}
+
+// promptGateCommand is the check the round's prompt names: the binding's own
+// gate, or for a chain's writer member the workflow's one check command when
+// it renders exactly one. A local chain writer carries no gate of its own, so
+// the stored definition is what names its check. No command means the round
+// runs no check, so the prompt carries no line.
+func promptGateCommand(rt Runtime, tx *store.Tx, b store.Binding) string {
+	if b.Gate != "" {
+		return b.Gate
+	}
+	row, err := promptChainRow(rt, tx, b.Name)
+	if err != nil || row.Builder != b.Name {
+		return ""
+	}
+	def, err := chain.WorkflowDef(row)
+	if err != nil {
+		return ""
+	}
+	return chain.SingleCheckCommand(def)
+}
+
+// promptChainRow reads the chain a member belongs to: under the caller's lock
+// when it holds one, straight from the store for a lock-free preflight.
+func promptChainRow(rt Runtime, tx *store.Tx, member string) (db.ChainRow, error) {
+	if tx != nil {
+		return tx.ChainByMember(member)
+	}
+	if rt.Store == nil {
+		return db.ChainRow{}, store.ErrNotFound
+	}
+	return rt.Store.ChainByMember(member)
+}
+
 // composePrompt renders this round's handoff prompt: the reader template for a
-// reader binding, the builder template for a writer. rt names a reader's
-// scratch tree, artifact dir and output label.
-func composePrompt(rt Runtime, b store.Binding, promptPath, reportPath, donePath string) string {
+// reader binding, the builder template for a writer. tx is the caller's lock
+// when it holds one, nil for a lock-free preflight; a writer prompt names the
+// gate relevo runs after the round when the binding or its chain carries one.
+func composePrompt(rt Runtime, tx *store.Tx, b store.Binding, promptPath, reportPath, donePath string) string {
 	origin := delivery.OriginLine(b.Name, b.Round, store.DirToBuilder, store.KindPrompt)
 	if b.Shape == store.ShapeReader {
 		return origin + "\n\n" + readerPromptFor(rt, b, promptPath, donePath)
 	}
 	body := fmt.Sprintf(builderPrompt, b.CWD, promptPath, reportPath, donePath)
+	if cmd := promptGateCommand(rt, tx, b); cmd != "" {
+		const closing = "Reply here with only the report path."
+		body = strings.TrimSuffix(body, closing) + gateLineFor(cmd) + "\n" + closing
+	}
 	return origin + "\n\n" + body
 }
 
@@ -151,7 +196,7 @@ func composeChainReaderPrompt(rt Runtime, b store.Binding, promptPath, donePath,
 // a relaunch after a daemon restart -- so a chain member's reader round gets the
 // chain's own block wherever the round actually starts.
 func roundPrompt(rt Runtime, tx *store.Tx, b store.Binding, promptPath, reportPath, donePath string) string {
-	prompt := composePrompt(rt, b, promptPath, reportPath, donePath)
+	prompt := composePrompt(rt, tx, b, promptPath, reportPath, donePath)
 	if b.Shape == store.ShapeReader {
 		if block, ok := chainMemberBlock(rt, tx, b); ok {
 			prompt = composeChainReaderPrompt(rt, b, promptPath, donePath, block)

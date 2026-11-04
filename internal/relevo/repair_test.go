@@ -116,7 +116,7 @@ func repairPlanGolden() string {
 		"FAIL: one",
 		"FAIL: two",
 		"```",
-		"When done: run the same check yourself in the foreground, then write your report and create the done marker as before.",
+		"When done: relevo re-runs the check after your round, so run only the tests your fix touches, then write your report and create the done marker as before.",
 	}, "\n") + "\n"
 }
 

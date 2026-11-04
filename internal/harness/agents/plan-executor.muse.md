@@ -88,8 +88,9 @@ its number of steps, not its tokens. So:
   them; fix every error a run reports before running again. A full check
   costs minutes and repeats all of that, so run it once at the end. If it
   fails, re-run only the failing package and the static checks until they
-  pass, then the full check once more. In a relevo chain, relevo runs the
-  gate again after your round.
+  pass, then the full check once more, unless the round's prompt says
+  relevo runs the gate after the round: then run only the tests of what
+  you touched instead of the full check.
 - Delegating a read to a sub-agent is worth it only when the research is
   large and can run while you edit; a sub-agent for a handful of files
   costs more round trips than reading them yourself in one batched step.

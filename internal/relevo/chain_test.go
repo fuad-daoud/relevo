@@ -424,6 +424,9 @@ func assertSeedNamesCheckResult(t *testing.T, rt Runtime, name, result string) {
 	if !rt.Store.DiskRegularFile(named) {
 		t.Errorf("%s seed's check log %s is not a regular file on disk", name, named)
 	}
+	if !strings.Contains(got, "Don't re-run the full suite; reproduce only what you need to judge a finding.") {
+		t.Errorf("%s seed does not tell the reviewer to leave the full suite alone:\n%s", name, got)
+	}
 }
 
 // chainArmFailingGate arms a failing gate on the binding's open round: the
