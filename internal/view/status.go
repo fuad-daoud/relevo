@@ -135,6 +135,9 @@ type BindingStatus struct {
 	RoundUsage       *usage.Usage `json:"round_usage,omitempty"`
 	RoundPriorTokens usage.Tokens `json:"round_prior_tokens,omitzero"`
 	Server           string       `json:"server,omitempty"`
+	// Node is the burst node carrying the round; "" when the round runs
+	// here, so a consumer reads a local round exactly as before.
+	Node string `json:"node,omitempty"`
 	// Dirty means the newest close left the tree dirty and no newer round
 	// has been sent, so the uncommitted work is still what the tree holds.
 	// False once a round is running -- a dirty tree is then the expected

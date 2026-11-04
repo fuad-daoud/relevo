@@ -516,20 +516,7 @@ func statusLineRowOf(b BindingStatus, now time.Time) StatusLineRow {
 	if b.Chain != nil {
 		return statusLineRowOfChain(b)
 	}
-	harness := harnessSegment(b.BuilderCandidate)
-	if b.Server != "" {
-		harness += "@" + b.Server
-	}
-	var on string
-	if b.BuilderCandidate != "" {
-		on = b.BuilderName
-		if on == "" {
-			on = harnessSegment(b.BuilderCandidate)
-		}
-		if b.Server != "" {
-			on += "@" + b.Server
-		}
-	}
+	harness, on := statusLineHarnessOn(b)
 	var lastKind, lastTS string
 	if b.LastPayload != nil {
 		lastKind = string(b.LastPayload.Kind)

@@ -5,9 +5,10 @@ import (
 	"fmt"
 )
 
-// BindingFormat is the format of the Binding JSON this binary writes: 19 drops
-// burst forward facts, so an older relevo that loses them would requeue a
-// forwarded round locally and double-run it. 18 drops
+// BindingFormat is the format of the Binding JSON this binary writes: 20 drops
+// remote_node, so an older relevo that drops it loses only the node suffix on
+// the row. 19 drops burst forward facts, so an older relevo that loses them
+// would requeue a forwarded round locally and double-run it. 18 drops
 // round_repo_baseline_tree, so an older relevo judges that round's close
 // against a plain dirty check and halts on a worktree escape that never
 // happened. 17 drops subdir, so an older relevo runs the round at the tree
@@ -36,7 +37,7 @@ import (
 // are written, not just one tracked fact. Stamping a field would lock that
 // older relevo out of loading the binding. Bump BindingFormat whenever
 // Binding's JSON shape changes in a way that must lock an older relevo out.
-const BindingFormat = 19
+const BindingFormat = 20
 
 // recordFormat is the format to write b at. Every record is written at the
 // current format: the binary writes and migrates the out/ layout, which an

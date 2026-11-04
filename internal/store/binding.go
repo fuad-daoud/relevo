@@ -212,7 +212,7 @@ type Forward struct {
 	// Node is the node id the round was placed on.
 	Node string `json:"node"`
 	// NodeBinding is the round's binding name on that node,
-	// "<owner8>-<name>": the node-side namespace two owners cannot collide in.
+	// "h<owner8>-<name>": the node-side namespace two owners cannot collide in.
 	NodeBinding string `json:"node_binding"`
 	// Round is the head-side round number the forward carries.
 	Round int `json:"round"`

@@ -1,4 +1,4 @@
-format 19
+format 20
 abandoned_sessions[].attempts
 abandoned_sessions[].id
 abandoned_sessions[].kind
@@ -74,6 +74,7 @@ consults[].endpoint.remote_live.usage.tokens.cache_write
 consults[].endpoint.remote_live.usage.tokens.in
 consults[].endpoint.remote_live.usage.tokens.out
 consults[].endpoint.remote_live.usage.tool_calls
+consults[].endpoint.remote_node
 consults[].endpoint.remote_queue.ahead
 consults[].endpoint.remote_queue.cap
 consults[].endpoint.remote_queue.position
@@ -183,6 +184,7 @@ planner.remote_live.usage.tokens.cache_write
 planner.remote_live.usage.tokens.in
 planner.remote_live.usage.tokens.out
 planner.remote_live.usage.tool_calls
+planner.remote_node
 planner.remote_queue.ahead
 planner.remote_queue.cap
 planner.remote_queue.position
@@ -274,6 +276,7 @@ runner.remote_live.usage.tokens.cache_write
 runner.remote_live.usage.tokens.in
 runner.remote_live.usage.tokens.out
 runner.remote_live.usage.tool_calls
+runner.remote_node
 runner.remote_queue.ahead
 runner.remote_queue.cap
 runner.remote_queue.position
