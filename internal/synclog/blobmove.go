@@ -4,6 +4,7 @@ package synclog
 // writers ask refColumns and upload before appending, so the rule lives once here.
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,15 +16,87 @@ import (
 // BlobMover is where a body goes when it stops travelling through the log: the
 // daemon's pipe client in production, a MemBlobStore mover in tests, so neither
 // writer needs a bucket to pin its behaviour. A mover works through a staging file
-// since the pipe carries requests, not bodies.
+// since the pipe carries requests, not bodies, and it moves them in batches: one
+// call per chunk of a batch, so a worker round trip is paid per chunk rather than
+// per body.
 type BlobMover interface {
-	// PutBlob uploads the body at staging under key. skipped is true when the
-	// store already held it under the same digest: not a failure, the entry may
-	// still be appended.
-	PutBlob(key, staging string) (bytes int64, skipped bool, err error)
-	// GetBlob writes the body under key to staging, refusing one longer than
-	// max before it is all downloaded.
-	GetBlob(key, staging string, max int64) (int64, error)
+	// PutBlobs uploads the staged bodies under their keys. Results answer every
+	// item, in item order; skipped is true for a key whose body the store already
+	// held under the same digest: not a failure, the entry may still be appended.
+	PutBlobs(items []BlobBatchItem) ([]BlobBatchResult, error)
+	// GetBlobs writes the bodies under the items' keys to the staging files the
+	// items name, refusing one longer than its item's max before it is all
+	// downloaded.
+	GetBlobs(items []BlobBatchItem) ([]BlobBatchResult, error)
+}
+
+// BlobBatchItem is one body of a mover batch: the object key, the staging file it
+// is read from or written to, and for a fetch the most bytes it may be -- the
+// length the ref declares. A put ignores max, since the staged file's own length
+// is what it moves.
+type BlobBatchItem struct {
+	Key     string
+	Staging string
+	Max     int64
+}
+
+// BlobBatchResult is what one key of a mover batch came to: the bytes it moved,
+// whether a put skipped it because the store already held the body, and the
+// reason it did not move when it failed. Every item gets a verdict even when a
+// sibling fails: one key's refusal is no verdict on the rest of its batch.
+type BlobBatchResult struct {
+	Key     string
+	Bytes   int64
+	Skipped bool
+	Err     error
+}
+
+// errNoVerdict reports a mover that answered a batch without answering any of
+// its keys. Bodies are in the store or they are not, so a call that left that
+// unknown cannot be treated as one that succeeded.
+var errNoVerdict = errors.New("synclog: the mover answered the batch with no verdict per key")
+
+// The bounds of one mover call. Sixteen keys and 64 MiB of declared body bytes
+// keep a call well inside the pipe's data-call bound, and bound the worker's
+// memory because its store buffers each whole body; the key bound stops a long
+// batch of small bodies from arriving as one request that outstays it.
+const (
+	moveBatchMaxKeys  = 16
+	moveBatchMaxBytes = 64 << 20
+)
+
+// batchBody is one body's shape for chunking: the object key and the bytes it
+// declares. Chunking reads nothing but these, so the split is one function both
+// directions and their tests share rather than two rules that can drift.
+type batchBody struct {
+	key  string
+	size int64
+}
+
+// batchChunk splits a batch's distinct bodies into mover calls of at most
+// moveBatchMaxKeys keys and moveBatchMaxBytes declared bytes, in the order the
+// bodies were given. A body bigger than the whole byte cap travels alone: no
+// other body fits beside it without breaking the cap. Such a body cannot
+// actually reach a batch -- the per-row ceiling (MaxBlobBytes) equals the cap,
+// and rows and refs are checked against it first -- so the alone rule is what
+// keeps the split honest for the sizes a caller declares, not a lane a live
+// upload takes.
+func batchChunk(bodies []batchBody) [][]int {
+	var chunks [][]int
+	var cur []int
+	var curBytes int64
+	for n, b := range bodies {
+		if len(cur) > 0 && (len(cur) == moveBatchMaxKeys || curBytes+b.size > moveBatchMaxBytes) {
+			chunks = append(chunks, cur)
+			cur, curBytes = nil, 0
+		}
+		cur = append(cur, n)
+		curBytes += b.size
+	}
+	if len(cur) > 0 {
+		chunks = append(chunks, cur)
+	}
+	return chunks
 }
 
 // BlobTransport is a LogTransport that can also move bodies. Exporter and
@@ -155,33 +228,71 @@ func columnIndex(columns []db.ExchangeColumn, name string) int {
 	return -1
 }
 
-// uploadPending writes each value to the staging folder and hands it to the
-// mover, in batch order. The file is written under the digest the key names and
-// removed whether the put lands or not: a failed put appends no entry, so the
-// file would only fill the folder with untaken bodies.
+// uploadPending stages every distinct pending body and puts them in bounded
+// batches, in batch order. Bodies are deduped by digest before staging: staging
+// files are named by digest, so two equal bodies would otherwise collide on disk
+// within one batch -- the same reason fetchAll dedupes downloads.
 func uploadPending(m BlobMover, stagingDir string, blobs []pendingBlob) error {
+	uniq := make([]pendingBlob, 0, len(blobs))
+	seen := make(map[string]bool, len(blobs))
 	for _, b := range blobs {
-		if err := uploadOne(m, stagingDir, b); err != nil {
+		if seen[b.Ref.SHA256] {
+			continue
+		}
+		seen[b.Ref.SHA256] = true
+		uniq = append(uniq, b)
+	}
+	if len(uniq) == 0 {
+		return nil
+	}
+	bodies := make([]batchBody, len(uniq))
+	for n, b := range uniq {
+		bodies[n] = batchBody{key: b.Key, size: int64(len(b.Bytes))}
+	}
+	for _, chunk := range batchChunk(bodies) {
+		if err := uploadChunk(m, stagingDir, uniq, chunk); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// uploadOne stages one value and puts it. A removal failing after a successful put
-// is not a failed export.
-func uploadOne(m BlobMover, stagingDir string, b pendingBlob) error {
-	path := filepath.Join(stagingDir, b.Ref.SHA256)
-	// The folder holds bodies existing nowhere else until the put lands, so the
-	// file is owner-only even inside the 0700 folder: it outlives this call, and
-	// its mode is what a folder listing shows.
-	if err := os.WriteFile(path, b.Bytes, 0o600); err != nil {
-		return fmt.Errorf("synclog: stage %s: %w", path, err)
+// uploadChunk stages one chunk's bodies, puts them, and removes every staged
+// file whether the put lands or not: a failed put appends no entry, so the file
+// would only fill the folder with untaken bodies. The first failed key decides
+// the batch's error, and the call's own error rides with it -- a refusal the
+// mover's accounting could not record is still a failure the caller hears.
+func uploadChunk(m BlobMover, stagingDir string, uniq []pendingBlob, chunk []int) error {
+	items := make([]BlobBatchItem, len(chunk))
+	for n, i := range chunk {
+		b := uniq[i]
+		path := filepath.Join(stagingDir, b.Ref.SHA256)
+		// The folder holds bodies existing nowhere else until the put lands, so
+		// the file is owner-only even inside the 0700 folder: it outlives this
+		// call, and its mode is what a folder listing shows.
+		if err := os.WriteFile(path, b.Bytes, 0o600); err != nil {
+			for _, staged := range items[:n] {
+				_ = os.Remove(staged.Staging)
+			}
+			return fmt.Errorf("synclog: stage %s: %w", path, err)
+		}
+		items[n] = BlobBatchItem{Key: b.Key, Staging: path}
 	}
-	_, _, putErr := m.PutBlob(b.Key, path)
-	_ = os.Remove(path)
-	if putErr != nil {
-		return fmt.Errorf("synclog: upload %s: %w", b.Key, putErr)
+	results, callErr := m.PutBlobs(items)
+	for _, item := range items {
+		_ = os.Remove(item.Staging)
+	}
+	if len(results) != len(items) {
+		if callErr == nil {
+			callErr = errNoVerdict
+		}
+		return fmt.Errorf("synclog: upload %s: %w", uniq[chunk[0]].Key, callErr)
+	}
+	for n, r := range results {
+		if r.Err != nil {
+			return fmt.Errorf("synclog: upload %s: %w",
+				uniq[chunk[n]].Key, errors.Join(callErr, r.Err))
+		}
 	}
 	return nil
 }

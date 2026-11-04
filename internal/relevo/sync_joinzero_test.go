@@ -48,25 +48,25 @@ type bodyLog struct {
 
 func (l *bodyLog) BlobStagingDir() string { return l.staging }
 
-// PutBlob and GetBlob are the mover the exporter and importer take off the
-// transport, so bodies are staged through a file and removed again exactly as
+// PutBlobs and GetBlobs are the mover the exporter and importer take off the
+// transport, so bodies are staged through files and removed again exactly as
 // they are in production rather than handed over as bytes.
-func (l *bodyLog) PutBlob(key, staging string) (int64, bool, error) {
-	return l.mover.PutBlob(key, staging)
+func (l *bodyLog) PutBlobs(items []synclog.BlobBatchItem) ([]synclog.BlobBatchResult, error) {
+	return l.mover.PutBlobs(items)
 }
 
-func (l *bodyLog) GetBlob(key, staging string, max int64) (int64, error) {
+func (l *bodyLog) GetBlobs(items []synclog.BlobBatchItem) ([]synclog.BlobBatchResult, error) {
 	if l.local != nil {
 		r2, err := relevosync.ReadR2(l.local)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		if !r2.Complete() {
-			return 0, fmt.Errorf("the worker this handle stands for was started with no bucket: %w",
+			return nil, fmt.Errorf("the worker this handle stands for was started with no bucket: %w",
 				relevosync.ErrNoR2)
 		}
 	}
-	return l.mover.GetBlob(key, staging, max)
+	return l.mover.GetBlobs(items)
 }
 
 var _ synclog.BlobTransport = (*bodyLog)(nil)

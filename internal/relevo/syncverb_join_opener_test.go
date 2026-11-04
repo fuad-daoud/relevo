@@ -33,8 +33,8 @@ import (
 // it.
 type noBucketLog struct{ *bodyLog }
 
-func (l *noBucketLog) GetBlob(key, staging string, max int64) (int64, error) {
-	return 0, fmt.Errorf("the worker this handle stands for was started with no bucket: %w",
+func (l *noBucketLog) GetBlobs(items []synclog.BlobBatchItem) ([]synclog.BlobBatchResult, error) {
+	return nil, fmt.Errorf("the worker this handle stands for was started with no bucket: %w",
 		relevosync.ErrNoR2)
 }
 

@@ -3,11 +3,14 @@ package sync
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
@@ -91,6 +94,87 @@ func TestStopTransportRefusesEveryCallAfterAStop(t *testing.T) {
 	}
 	if got := inner.cancels.Load(); got != 1 {
 		t.Errorf("the stop cancelled the worker %d times, want once", got)
+	}
+}
+
+// TestStopTransportRefusesBatchBlobCallsAfterAStop pins the batch half of the
+// stop's forward: a stopped export cannot upload or fetch bodies either, and
+// nothing reaches the mover underneath to be stopped late.
+func TestStopTransportRefusesBatchBlobCallsAfterAStop(t *testing.T) {
+	t.Parallel()
+	inner := blobLog{
+		MemTransport: synclog.NewMemTransport("m1"),
+		MemBlobMover: synclog.NewMemBlobMover(),
+		staging:      t.TempDir(),
+	}
+	stop := NewStopTransport(inner)
+	stop.Stop()
+
+	items := []synclog.BlobBatchItem{{Key: "m1/deadbeef", Staging: filepath.Join(inner.staging, "deadbeef")}}
+	if _, err := stop.PutBlobs(items); !errors.Is(err, ErrStopped) {
+		t.Errorf("PutBlobs after a stop = %v, want ErrStopped", err)
+	}
+	if _, err := stop.GetBlobs(items); !errors.Is(err, ErrStopped) {
+		t.Errorf("GetBlobs after a stop = %v, want ErrStopped", err)
+	}
+	if inner.Puts != 0 || inner.Gets != 0 {
+		t.Errorf("the mover saw %d puts and %d gets after a stop, want neither", inner.Puts, inner.Gets)
+	}
+}
+
+// TestStopTransportReportsAClientThatMovesNoBodies pins that a transport with
+// no mover under it is a refusal the exporter can act on, on both sides of the
+// batch: bodies cannot move, and a quiet success would append entries naming
+// objects nobody stored.
+func TestStopTransportReportsAClientThatMovesNoBodies(t *testing.T) {
+	t.Parallel()
+	stop := NewStopTransport(newRestartLog("m1"))
+	items := []synclog.BlobBatchItem{{Key: "m1/deadbeef", Staging: "/nonexistent/deadbeef", Max: 64 << 20}}
+	if _, err := stop.PutBlobs(items); !errors.Is(err, db.ErrInvalid) {
+		t.Errorf("PutBlobs with no mover = %v, want the invalid-client error", err)
+	}
+	if _, err := stop.GetBlobs(items); !errors.Is(err, db.ErrInvalid) {
+		t.Errorf("GetBlobs with no mover = %v, want the invalid-client error", err)
+	}
+}
+
+// TestStopTransportForwardsBatchedBodies pins that the batch forward is real:
+// a staged body reaches the mover through the wrapper and the fetched body
+// comes back with its verdict, so the wrapper adds the stop rule and nothing
+// else to a batch call.
+func TestStopTransportForwardsBatchedBodies(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	body := []byte("a body moved through the stop wrapper")
+	staged := filepath.Join(dir, "staged")
+	if err := os.WriteFile(staged, body, 0o600); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	inner := blobLog{
+		MemTransport: synclog.NewMemTransport("m1"),
+		MemBlobMover: synclog.NewMemBlobMover(),
+		staging:      dir,
+	}
+	stop := NewStopTransport(inner)
+
+	results, err := stop.PutBlobs([]synclog.BlobBatchItem{{Key: "m1/whatever", Staging: staged}})
+	if err != nil {
+		t.Fatalf("PutBlobs: %v", err)
+	}
+	if len(results) != 1 || results[0].Err != nil || results[0].Bytes != int64(len(body)) {
+		t.Fatalf("PutBlobs verdicts = %+v, want the staged body moved", results)
+	}
+	out := filepath.Join(dir, "fetched")
+	results, err = stop.GetBlobs([]synclog.BlobBatchItem{{Key: "m1/whatever", Staging: out, Max: int64(len(body))}})
+	if err != nil {
+		t.Fatalf("GetBlobs: %v", err)
+	}
+	if results[0].Err != nil || results[0].Bytes != int64(len(body)) {
+		t.Fatalf("GetBlobs verdicts = %+v, want the body back", results)
+	}
+	got, err := os.ReadFile(out)
+	if err != nil || string(got) != string(body) {
+		t.Errorf("the forwarded fetch is not the body that went in (err %v)", err)
 	}
 }
 
