@@ -1,6 +1,8 @@
 package serve
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -420,5 +422,28 @@ func TestForwardedCloseFactsRoundTrip(t *testing.T) {
 	b2.Serve.ClosedRound = 1
 	if got := relevo.ServedView(b2, entries2, "", "").Stopped; got != "killed" {
 		t.Errorf("round trip stopped = %q, want killed", got)
+	}
+}
+
+// TestBurstObserveCloseStoresDiffAsARow: the diff that came home is the one a
+// show reads, and no file sits at its row-only name for every walk to warn about.
+func TestBurstObserveCloseStoresDiffAsARow(t *testing.T) {
+	clock := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	env, nodeSrv, runner, fwd, nodeRoot := observeTestSetup(t, clock)
+	closeNodeRound(t, nodeSrv, runner, nodeRoot, fwd.NodeBinding, 1)
+
+	env.srv.observeForwards(context.Background())
+
+	rt := env.runtime(t)
+	path := rt.Store.DiffPath("api", 1)
+	body, err := rt.Store.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read the forwarded diff: %v", err)
+	}
+	if !strings.Contains(string(body), "diff --git") {
+		t.Errorf("forwarded diff = %q, want the node's patch", body)
+	}
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("Lstat(%s) = %v, want no file at a row-only name", path, err)
 	}
 }

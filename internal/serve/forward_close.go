@@ -55,6 +55,23 @@ func closeForwardedRound(ctx context.Context, rt relevo.Runtime, b *store.Bindin
 	return true
 }
 
+// putForwardedDiff files the node's patch where a local close files its own. A
+// diff is a row-only name: on disk it is no record at all, so a show would find
+// no diff, and every walk of the round's files would warn about a stray.
+func putForwardedDiff(rt relevo.Runtime, name string, round int, body []byte) bool {
+	if body == nil {
+		return true
+	}
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		return tx.PutRoundFile(name, round, rt.Store.DiffPath(name, round), body)
+	})
+	if err != nil {
+		slog.Warn("burst: observe close: diff not stored", "binding", name, "round", round, "err", err)
+		return false
+	}
+	return true
+}
+
 // appendForwardedCloseFacts writes into the head log the entries a local
 // close of this round would have written: one diff entry, one report entry,
 // one switch entry per switch the node took, and the stop entry when the node
