@@ -159,6 +159,7 @@ type SeedKind string
 const (
 	SeedReviewer   SeedKind = "reviewer"
 	SeedCorrection SeedKind = "correction"
+	SeedDirectFix  SeedKind = "direct-fix"
 	SeedSecurity   SeedKind = "security"
 	SeedFixes      SeedKind = "fixes"
 )

@@ -10,11 +10,11 @@ import (
 // The shipped seed texts, one per member role. A member's prompt is a rendered
 // template, so the wording lives beside the engine that chose it.
 //
-//go:embed seeds/review.md seeds/correct.md seeds/scan.md seeds/fix.md seeds/repair.md
+//go:embed seeds/review.md seeds/correct.md seeds/scan.md seeds/fix.md seeds/repair.md seeds/fix-direct.md
 var seedFS embed.FS
 
 var seedTemplates = template.Must(template.ParseFS(seedFS,
-	"seeds/review.md", "seeds/correct.md", "seeds/scan.md", "seeds/fix.md", "seeds/repair.md"))
+	"seeds/review.md", "seeds/correct.md", "seeds/scan.md", "seeds/fix.md", "seeds/repair.md", "seeds/fix-direct.md"))
 
 // SeedRound is one builder round the reviewer's plan view lists: the round
 // number and the openable paths of its prompt and report.
@@ -70,6 +70,7 @@ type SeedView struct {
 const (
 	BuilderRoundRepair     = "a repair round after a red check"
 	BuilderRoundCorrection = "a correction round"
+	BuilderRoundDirectFix  = "a direct-fix round"
 	BuilderRoundFix        = "a fix-plan round"
 	BuilderRoundHuman      = "a round a human sent"
 )

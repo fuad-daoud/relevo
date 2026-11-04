@@ -125,13 +125,13 @@ func MemberNames(name string, def workflow.Definition, actors map[string]workflo
 	return out, nil
 }
 
-// DefaultParts maps each actor the shipped default names to the part its
+// DefaultParts maps each actor a shipped workflow names to the part its
 // member fills: the reviewer, planner and security params, in the order a
 // legacy row's columns walk them. The first part an actor fills wins, so an
 // actor named by two parts keeps the reviewer. Any other definition has no
 // legacy parts, so every one of its members keeps its actor as its part.
 func DefaultParts(def workflow.Definition) map[string]string {
-	if def.Name != workflow.Default().Name {
+	if !workflow.IsShipped(def) {
 		return nil
 	}
 	parts := map[string]string{}
@@ -147,7 +147,7 @@ func DefaultParts(def workflow.Definition) map[string]string {
 	return parts
 }
 
-// defaultSuffix is the name suffix a default workflow's part carries.
+// defaultSuffix is the name suffix a shipped workflow's part carries.
 func defaultSuffix(part string) string {
 	switch part {
 	case MemberReviewer:

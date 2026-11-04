@@ -416,6 +416,9 @@ func (s *Server) applyObserveClosed(ctx context.Context, w observeWork, fetch *o
 	if !observeMatches(next, w.fwd) {
 		return false
 	}
+	if !appendForwardedCloseFacts(rt, w.name, w.fwd, fetch, now) {
+		return false
+	}
 	next.Round = w.fwd.Round + 1
 	if !closeForwardedRound(ctx, rt, &next, w.fwd, fetch.view.DirtyCommit != "") {
 		return false
@@ -484,12 +487,14 @@ func (s *Server) absorbObserveBundle(ctx context.Context, rt relevo.Runtime, cur
 // writeObserveFiles writes the fetched round files into the head store. A
 // nil body is absent, not a failure, and leaves any existing file alone.
 func writeObserveFiles(rt relevo.Runtime, name string, round int, fetch *observeFetch) bool {
+	if !putForwardedDiff(rt, name, round, fetch.diff) {
+		return false
+	}
 	for _, item := range []struct {
 		body []byte
 		path string
 	}{
 		{fetch.report, rt.Store.ReportPath(name, round)},
-		{fetch.diff, rt.Store.DiffPath(name, round)},
 		{fetch.log, rt.Store.BuilderLogPath(name, round)},
 		{fetch.stream, rt.Store.StreamPath(name, round)},
 	} {

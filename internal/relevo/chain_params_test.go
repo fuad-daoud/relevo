@@ -1,6 +1,7 @@
 package relevo
 
 import (
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -10,6 +11,17 @@ import (
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
+
+// directFixDef returns the shipped direct-fix definition the funding tests
+// compare against the default.
+func directFixDef(t *testing.T) workflow.Definition {
+	t.Helper()
+	def, ok := workflow.Shipped("direct-fix")
+	if !ok {
+		t.Fatal("workflow.Shipped(direct-fix) = false, want the shipped definition")
+	}
+	return def
+}
 
 // TestChainParamsPrecedence pins the order chainParamsFor resolves a param in:
 // the workflow default, then the repository entry, then policy, then an old
@@ -78,6 +90,32 @@ func TestChainParamsPrecedence(t *testing.T) {
 	if got["reviewer"] != "param-reviewer" {
 		t.Errorf("param tier: reviewer = %q, want param-reviewer (--param must beat the flag)", got["reviewer"])
 	}
+
+	// The shipped direct-fix workflow resolves every tier to the same values
+	// as the default: funding follows the shipped set, not the name.
+	directFix := directFixDef(t)
+	fundCases := []struct {
+		opts ChainOptions
+		repo RepoSettings
+	}{
+		{ChainOptions{}, RepoSettings{}},
+		{ChainOptions{}, repo},
+		{ChainOptions{ReviewerActor: "flag-reviewer"}, repo},
+		{ChainOptions{ReviewerActor: "flag-reviewer", Params: map[string]string{"reviewer": "param-reviewer"}}, repo},
+	}
+	for _, tc := range fundCases {
+		want, err := chainParamsFor(def, pol, tc.opts, tc.repo)
+		if err != nil {
+			t.Fatalf("chainParamsFor(default %+v): %v", tc.opts, err)
+		}
+		funded, err := chainParamsFor(directFix, pol, tc.opts, tc.repo)
+		if err != nil {
+			t.Fatalf("chainParamsFor(direct-fix %+v): %v", tc.opts, err)
+		}
+		if !reflect.DeepEqual(funded, want) {
+			t.Errorf("chainParamsFor(direct-fix %+v) = %v, want the default's %v", tc.opts, funded, want)
+		}
+	}
 }
 
 // TestChainParamsFlagWithoutSlotListsParams pins the refusal an old flag earns
@@ -100,21 +138,24 @@ func TestChainParamsFlagWithoutSlotListsParams(t *testing.T) {
 }
 
 // TestChainParamsNoGateRendersEmpty pins --no-gate: the gate param resolves to
-// the empty string, so the check step renders no command.
+// the empty string, so the check step renders no command, on the default and
+// on direct-fix alike.
 func TestChainParamsNoGateRendersEmpty(t *testing.T) {
-	got, err := chainParamsFor(workflow.Default(), policy.Policy{}, ChainOptions{NoGate: true}, RepoSettings{})
-	if err != nil {
-		t.Fatalf("chainParamsFor(--no-gate): %v", err)
-	}
-	if got["gate"] != "" {
-		t.Fatalf("gate = %q, want empty", got["gate"])
-	}
-	applied, err := workflow.WithParams(workflow.Default(), got)
-	if err != nil {
-		t.Fatalf("WithParams: %v", err)
-	}
-	if rendered := workflow.RenderParams(applied, "{{params.gate}}"); rendered != "" {
-		t.Errorf("{{params.gate}} renders %q, want empty", rendered)
+	for _, def := range []workflow.Definition{workflow.Default(), directFixDef(t)} {
+		got, err := chainParamsFor(def, policy.Policy{}, ChainOptions{NoGate: true}, RepoSettings{})
+		if err != nil {
+			t.Fatalf("chainParamsFor(%s --no-gate): %v", def.Name, err)
+		}
+		if got["gate"] != "" {
+			t.Fatalf("%s gate = %q, want empty", def.Name, got["gate"])
+		}
+		applied, err := workflow.WithParams(def, got)
+		if err != nil {
+			t.Fatalf("WithParams(%s): %v", def.Name, err)
+		}
+		if rendered := workflow.RenderParams(applied, "{{params.gate}}"); rendered != "" {
+			t.Errorf("%s {{params.gate}} renders %q, want empty", def.Name, rendered)
+		}
 	}
 }
 
@@ -126,7 +167,7 @@ func TestChainParamsNoGateRendersEmpty(t *testing.T) {
 // resolves the same flag, then the entry, then the builder default.
 func TestChainParamsMatchChainSettings(t *testing.T) {
 	rt, _ := chainRuntime(t)
-	def := workflow.Default()
+	defs := []workflow.Definition{workflow.Default(), directFixDef(t)}
 	repoActors := RepoSettings{BuilderActor: "repo-builder", ReviewerActor: "repo-reviewer", PlannerActor: "repo-planner"}
 	cases := []struct {
 		opts ChainOptions
@@ -144,40 +185,42 @@ func TestChainParamsMatchChainSettings(t *testing.T) {
 		{opts: ChainOptions{}, repo: repoActors},
 		{opts: ChainOptions{ReviewerActor: "flag-reviewer", PlannerActor: "flag-planner", BuilderActor: "flag-builder"}, repo: repoActors},
 	}
-	for _, tc := range cases {
-		opts, repo := tc.opts, tc.repo
-		values, err := chainParamsFor(def, rt.Policy, opts, repo)
-		if err != nil {
-			t.Fatalf("chainParamsFor(%+v): %v", opts, err)
-		}
-		applied, err := workflow.WithParams(def, values)
-		if err != nil {
-			t.Fatalf("WithParams(%+v): %v", opts, err)
-		}
-		set := chainSettings(rt.Policy, opts, resolve.RoleChecks(rt.RoleRegistry(), "builder"), repo)
-		render := func(param string) string {
-			return workflow.RenderParams(applied, "{{params."+param+"}}")
-		}
-		checks := map[string]string{
-			"reviewer":        set.ReviewerActor,
-			"planner":         set.PlannerActor,
-			"security":        set.SecurityActor,
-			"gate":            set.Gate,
-			"regate":          strconv.Itoa(set.Regate),
-			"max_corrections": strconv.Itoa(set.MaxCorrections),
-			"scan":            strconv.FormatBool(set.Security),
-		}
-		for param, want := range checks {
-			if got := render(param); got != want {
-				t.Errorf("%+v repo %+v: param %s = %q, want the settings' %q", opts, repo, param, got, want)
+	for _, def := range defs {
+		for _, tc := range cases {
+			opts, repo := tc.opts, tc.repo
+			values, err := chainParamsFor(def, rt.Policy, opts, repo)
+			if err != nil {
+				t.Fatalf("%s chainParamsFor(%+v): %v", def.Name, opts, err)
 			}
-		}
-		builder := chainMembersFor(opts, set, repo)[0]
-		if builder.part != chain.MemberBuilder {
-			t.Fatalf("%+v repo %+v: first legacy member is part %q, want the builder", opts, repo, builder.part)
-		}
-		if got := render("builder"); got != builder.actor {
-			t.Errorf("%+v repo %+v: param builder = %q, want the legacy member's %q", opts, repo, got, builder.actor)
+			applied, err := workflow.WithParams(def, values)
+			if err != nil {
+				t.Fatalf("%s WithParams(%+v): %v", def.Name, opts, err)
+			}
+			set := chainSettings(rt.Policy, opts, resolve.RoleChecks(rt.RoleRegistry(), "builder"), repo)
+			render := func(param string) string {
+				return workflow.RenderParams(applied, "{{params."+param+"}}")
+			}
+			checks := map[string]string{
+				"reviewer":        set.ReviewerActor,
+				"planner":         set.PlannerActor,
+				"security":        set.SecurityActor,
+				"gate":            set.Gate,
+				"regate":          strconv.Itoa(set.Regate),
+				"max_corrections": strconv.Itoa(set.MaxCorrections),
+				"scan":            strconv.FormatBool(set.Security),
+			}
+			for param, want := range checks {
+				if got := render(param); got != want {
+					t.Errorf("%s %+v repo %+v: param %s = %q, want the settings' %q", def.Name, opts, repo, param, got, want)
+				}
+			}
+			builder := chainMembersFor(opts, set, repo)[0]
+			if builder.part != chain.MemberBuilder {
+				t.Fatalf("%s %+v repo %+v: first legacy member is part %q, want the builder", def.Name, opts, repo, builder.part)
+			}
+			if got := render("builder"); got != builder.actor {
+				t.Errorf("%s %+v repo %+v: param builder = %q, want the legacy member's %q", def.Name, opts, repo, got, builder.actor)
+			}
 		}
 	}
 }

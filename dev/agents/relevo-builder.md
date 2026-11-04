@@ -52,7 +52,9 @@ rounds run here and the defects past builders shipped. Where this file and
 Iterate on the touched packages: `go build ./...`, `go vet` and `go test` of the
 packages you changed and the ones that import them, fixing every failure before
 the next run. At the end, once: `gofmt -l` on the changed files, then `make
-check-affected`. It runs the static checks (gofmt, vet, golangci-lint, comment,
+check-affected` — unless the round's prompt says relevo runs the gate after the
+round, in which case run only the tests of what you touched instead of the final
+check. It runs the static checks (gofmt, vet, golangci-lint, comment,
 file-size and layer checks), the affected packages' tests, and a coverage check
 that fails a changed package dropping more than a point below its base. A red
 test in a package your change does not reach is rerun alone; if it passes alone,

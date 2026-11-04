@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -126,6 +127,14 @@ func (s *Server) Run(ctx context.Context) error {
 	// before the first tick can place anything new: a confirmed forward
 	// stays out, anything else waits locally again.
 	s.adoptSending(ctx)
+
+	var mirror sync.WaitGroup
+	mirror.Add(1)
+	go func() {
+		defer mirror.Done()
+		s.mirrorLoop(ctx)
+	}()
+	defer mirror.Wait()
 
 	ticks := 0
 	for {

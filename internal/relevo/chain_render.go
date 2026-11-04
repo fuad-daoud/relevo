@@ -132,10 +132,11 @@ func chainSeedListFile(rt Runtime, c db.ChainRow, ref workflow.Ref, items []stri
 // shippedSeedKinds names the shipped seed templates rendering from a
 // member-round view, keyed by a workflow's "shipped:<name>".
 var shippedSeedKinds = map[string]chain.SeedKind{
-	"review":  chain.SeedReviewer,
-	"correct": chain.SeedCorrection,
-	"scan":    chain.SeedSecurity,
-	"fix":     chain.SeedFixes,
+	"review":     chain.SeedReviewer,
+	"correct":    chain.SeedCorrection,
+	"fix-direct": chain.SeedDirectFix,
+	"scan":       chain.SeedSecurity,
+	"fix":        chain.SeedFixes,
 }
 
 // chainRenderShippedSeed renders one shipped seed template for an engine
@@ -158,6 +159,8 @@ func chainRenderShippedSeed(rt Runtime, tx *store.Tx, c db.ChainRow, def workflo
 	case chain.SeedReviewer:
 		closedRound = chain.NewestClosedRound(tx, c.Builder)
 	case chain.SeedCorrection:
+		closedRound = chain.NewestClosedRound(tx, c.Reviewer)
+	case chain.SeedDirectFix:
 		closedRound = chain.NewestClosedRound(tx, c.Reviewer)
 	case chain.SeedFixes:
 		closedRound = chain.NewestClosedRound(tx, c.Security)

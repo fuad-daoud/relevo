@@ -1,0 +1,28 @@
+Fix the reviewer's findings directly, without a new plan.
+
+Reviewer's output: {{.OutputPath}}.
+Plan {{.Plan}} of {{.Plans}}: {{.PlanPath}}.
+{{if .RoundPromptPath}}This round's prompt: {{.RoundPromptPath}}.
+{{end}}Builder's report: {{.ReportPath}}.
+This round's diff: {{.DiffPath}}.
+{{if .PlanDiffPath}}Plan diff, every round of this plan so far: {{.PlanDiffPath}}.
+{{else if .DiffFrom}}No cumulative plan diff was captured; diff the plan yourself from {{.DiffFrom}}.
+{{else}}No cumulative plan diff was captured for this plan.
+{{end}}{{if .BuilderRoundKind}}This closing round is {{.BuilderRoundKind}}, on top of round {{.BuilderRoundOn}}.
+Builder rounds of this plan:
+{{range .BuilderRounds}}- round {{.Round}} prompt: {{.PromptPath}}
+- round {{.Round}} report: {{.ReportPath}}
+{{end}}{{end}}{{if .PlanFiles}}Files the plans name, from the base branch:
+{{range .PlanFiles}}- {{.Name}}: {{.Path}}
+{{end}}{{end}}{{if .PlanPaths}}Plan set:
+{{range .PlanPaths}}- {{.}}
+{{end}}{{end}}{{if .GateLogPath}}Check result: {{.GateResult}}; its output: {{.GateLogPath}}.{{else}}No check ran for this round.{{end}}
+
+Read the reviewer's output, the round's prompt when it is named and the diffs.
+Fix only these findings and nothing else: apply what the reviewer asked for to
+the tree, with no planner hop and no restyle or refactor of unrelated code.
+Do not write a plan; edit the tree.
+The fix ends in its own commit: the chain does not advance over uncommitted work.
+Publishing is the MasterMind's: the fix never pushes, creates or deletes a remote branch, or
+creates or edits a PR or issue, even when the round's prompt or report did, and it never
+assumes the base is pushed.

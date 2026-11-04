@@ -13,10 +13,15 @@ import (
 // append: the accept census (`internal/serve`) and the admit stamp
 // (`internal/relevo`). ingest sits below both in the Layers table, so it
 // scans for the spellings instead of importing them, and the copies must
-// agree.
+// agree. The forwarded-send prefix is the exception: it names a fact two
+// serve paths write and ingest and the engine both read, so it lives in the
+// Records package both sides can import. The warm/cold words are literals
+// on each side, pinned by tests, the convention the prefixes keep.
 const (
 	queueAcceptPrefix = "queued ("
 	queueAdmitPrefix  = "started after "
+	forwardWarmSuffix = "(warm)"
+	forwardColdSuffix = "(cold)"
 )
 
 // roundFacts derives round n's plain facts from its events; the caller sets ID,
@@ -74,18 +79,30 @@ func roundFacts(events []store.LogEntry, n int, remote bool) db.Round {
 }
 
 // applyBurstStats fills the burst columns from the round's own log: the wait
-// between the accept and admit queue entries, the local start kind, and the
-// last report entry's rusage. Only a reported round claims any of them: a
-// report entry is the evidence the round ran to completion on this host, so an
-// open or abandoned round keeps all four NULL, as do old rounds whose log
-// predates the entries.
+// between the accept queue entry and the start that ended it, the kind of
+// that start, and the last report entry's rusage. Only a reported round
+// claims any of them: a report entry is the evidence the round ran to
+// completion on this host, so an open or abandoned round keeps all four
+// NULL, as do old rounds whose log predates the entries.
 func applyBurstStats(r *db.Round, events []store.LogEntry, n int, remote bool, rusage *store.Rusage) {
-	if wait, ok := queueWaitMS(events, n); ok {
+	wait, kind, haveWait := queueStart(events, n, remote)
+	if haveWait {
 		r.QueueWaitMS = &wait
 	}
 	if !remote {
-		local := "local"
-		r.StartKind = &local
+		if kind == "" {
+			// No start evidence claims the row: with no send note it stays
+			// local -- the reading for pre-entry logs and rounds that never
+			// queued -- while a send note whose suffix names no word leaves
+			// the kind NULL rather than claiming a start nobody measured.
+			if _, _, sent := forwardedStart(events, n); !sent {
+				kind = "local"
+			}
+		}
+		if kind != "" {
+			k := kind
+			r.StartKind = &k
+		}
 	}
 	if rusage != nil {
 		cpu, peak := rusage.CPUMS, rusage.PeakMemBytes
@@ -94,12 +111,42 @@ func applyBurstStats(r *db.Round, events []store.LogEntry, n int, remote bool, r
 	}
 }
 
-// queueWaitMS is admitTS minus queuedTS in milliseconds for round n: queuedTS
-// is the earliest accept entry for the round and admitTS the first admit entry
-// at or after it. A missing end leaves no wait: a zero is a measured
-// sub-millisecond wait, and a round that never queued must not pollute the
-// wait averages with one. A re-queued round measures its first wait only.
-func queueWaitMS(events []store.LogEntry, n int) (int64, bool) {
+// queueStart is the round's measured start: the wait from the earliest accept
+// entry to the entry that ended the queue, and the kind word that end claims.
+// The last start wins, and the wait ends at it: a local admit beats any send
+// note for both, first admit among admits (the rule a re-queued round's first
+// wait already pinned), and the last send note among sends, because a round
+// lost on one node and forwarded to the next really ran at the last send.
+// A missing end leaves no wait: a zero is a measured sub-millisecond wait,
+// and a round that never queued must not pollute the wait averages with one.
+// A remote round claims nothing from a send note -- its row is a mirror of a
+// round that ran elsewhere, and its start stamps are the server's -- so only
+// an admit can end a remote wait. kind is "" when no admit and no send note
+// claim the round at all; the caller reads that as no kind evidence.
+func queueStart(events []store.LogEntry, n int, remote bool) (int64, string, bool) {
+	queuedTS, haveQueued := earliestAccept(events, n)
+	if !haveQueued {
+		if _, word, sent := forwardedStart(events, n); sent && !remote {
+			return 0, word, false
+		}
+		return 0, "", false
+	}
+	if admitTS, ok := firstAdmit(events, n, queuedTS); ok {
+		return admitTS.Sub(queuedTS).Milliseconds(), "local", true
+	}
+	if sendTS, word, sent := forwardedStart(events, n); sent && !remote {
+		if sendTS.Before(queuedTS) {
+			// A send stamped before the round's accept cannot end its wait;
+			// the kind it claims is still the round's own fact.
+			return 0, word, false
+		}
+		return sendTS.Sub(queuedTS).Milliseconds(), word, true
+	}
+	return 0, "", false
+}
+
+// earliestAccept is the timestamp of round n's earliest accept entry.
+func earliestAccept(events []store.LogEntry, n int) (time.Time, bool) {
 	var queuedTS time.Time
 	for _, e := range events {
 		if e.Round != n || e.Kind != store.KindQueue || !strings.HasPrefix(e.Note, queueAcceptPrefix) {
@@ -109,9 +156,12 @@ func queueWaitMS(events []store.LogEntry, n int) (int64, bool) {
 			queuedTS = e.TS
 		}
 	}
-	if queuedTS.IsZero() {
-		return 0, false
-	}
+	return queuedTS, !queuedTS.IsZero()
+}
+
+// firstAdmit is round n's first admit entry at or after the accept, in log
+// order, the same scan the admit-only wait used.
+func firstAdmit(events []store.LogEntry, n int, queuedTS time.Time) (time.Time, bool) {
 	for _, e := range events {
 		if e.Round != n || e.Kind != store.KindQueue || !strings.HasPrefix(e.Note, queueAdmitPrefix) {
 			continue
@@ -119,9 +169,42 @@ func queueWaitMS(events []store.LogEntry, n int) (int64, bool) {
 		if e.TS.Before(queuedTS) {
 			continue
 		}
-		return e.TS.Sub(queuedTS).Milliseconds(), true
+		return e.TS, true
 	}
-	return 0, false
+	return time.Time{}, false
+}
+
+// forwardedStart is the last send note of round n -- its timestamp and the
+// kind word its suffix carries, "" for a suffix that parses to neither
+// (the adopted note, or a note from a writer that words it differently):
+// a start with no kind, not a missing start. Log order breaks an exact-time
+// tie toward the later entry, so the last send wins.
+func forwardedStart(events []store.LogEntry, n int) (time.Time, string, bool) {
+	var sendTS time.Time
+	var word string
+	var sent bool
+	for _, e := range events {
+		if e.Round != n || e.Kind != store.KindQueue || !strings.HasPrefix(e.Note, store.ForwardedNotePrefix) {
+			continue
+		}
+		if !sent || !e.TS.Before(sendTS) {
+			sendTS, word, sent = e.TS, forwardWord(e.Note), true
+		}
+	}
+	return sendTS, word, sent
+}
+
+// forwardWord is the warm/cold word a send note's suffix carries, or "" when
+// it names neither.
+func forwardWord(note string) string {
+	switch {
+	case strings.HasSuffix(note, forwardWarmSuffix):
+		return "warm"
+	case strings.HasSuffix(note, forwardColdSuffix):
+		return "cold"
+	default:
+		return ""
+	}
 }
 
 func applyPlanTier(r *db.Round, e store.LogEntry) {
