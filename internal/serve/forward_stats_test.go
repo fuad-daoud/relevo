@@ -436,15 +436,13 @@ func TestForwardedRoundStatsEndToEnd(t *testing.T) {
 		t.Errorf("web log = %+v, want nothing: entries land in the forwarding owner's store", entriesBob)
 	}
 
-	// The wiring the tick depends on: the forwarding owner's runtime
-	// carries the shared machine database the head's store writes to.
-	if rt := env.srv.runtimeAt(headOwnerPath(t, env)); rt.DB != env.srv.cfg.DB {
-		t.Fatal("owner runtime DB is not the shared machine database: the tick would ingest nothing")
-	}
-	// The production call chain: the owner daemon's tick ingests every live
-	// binding over the now-wired runtime.
+	// A reconcile tick keeps out of the mirror: its Daemon lives for that one
+	// tick, so running ingest there would repeat for every binding every tick.
 	if err := env.srv.Tick(ctx); err != nil {
 		t.Fatalf("tick: %v", err)
+	}
+	if _, found, err := env.srv.cfg.DB.Binding("api"); err != nil || found {
+		t.Fatalf("mirror Binding after a tick: found=%v err=%v; want no row before the mirror's pass", found, err)
 	}
 	// The tick's non-ingest phases must not move the flow: the rounds stay
 	// closed, no new send lands, both reports still exist.
@@ -460,6 +458,7 @@ func TestForwardedRoundStatsEndToEnd(t *testing.T) {
 		requireOneReport(t, entries, 1)
 		requireOneReport(t, entries, 2)
 	}
+	mirrorOnce(env)
 	rows, err := env.srv.cfg.DB.Query(db.Filter{Binding: "api"})
 	if err != nil {
 		t.Fatal(err)

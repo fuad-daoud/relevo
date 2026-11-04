@@ -175,8 +175,9 @@ type Server struct {
 	// response order, which placement's tie-break reads.
 	burstTable  *burst.NodeTable
 	burstHealth *burstHealth
-	// tickFn, when non-nil, replaces Tick in Run.
-	tickFn func(context.Context) error
+	// tickFn and mirrorEvery, when set, replace Tick and ownerMirrorInterval.
+	tickFn      func(context.Context) error
+	mirrorEvery time.Duration
 }
 
 // EnsureStateRoot creates the state root's bindings directory, the directory
@@ -442,7 +443,6 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 		GatesLocal: s.gatesLocal, // plus this host's own ledger row: served picks and switches honour `relevo gate` here
 		InFlight:   s.inFlightFor(root),
 		History:    s.cfg.DB,
-		DB:         s.cfg.DB,
 		Usage:      cfg.Usage,
 		Prices:     cfg.Prices,
 		Now:        cfg.Now,
