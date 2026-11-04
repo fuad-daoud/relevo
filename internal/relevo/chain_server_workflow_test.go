@@ -170,10 +170,14 @@ func TestServerChainMixedVersionRefusesDirectFix(t *testing.T) {
 		if !strings.Contains(err.Error(), "fix-direct") {
 			t.Errorf("err = %q, want it to name the refused fix-direct seed", err.Error())
 		}
+		called := false
 		for _, c := range fr.calls {
 			if strings.HasPrefix(c, "CreateChain") {
-				continue
+				called = true
 			}
+		}
+		if !called {
+			t.Errorf("CreateChain not called: %v, want the posted definition refused", fr.calls)
 		}
 		if len(fg.createBranchCalls) != 0 {
 			t.Errorf("a refused create must cut no local branch: %v", fg.createBranchCalls)
