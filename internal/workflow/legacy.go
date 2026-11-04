@@ -1,6 +1,9 @@
 package workflow
 
-import "strconv"
+import (
+	"strconv"
+	"strings"
+)
 
 // Legacy is a chain as a database row: the fixed phase/step/plan columns, the
 // settings its params resolve from, and the builder it names. It mirrors what the
@@ -133,6 +136,10 @@ func legacyStepAt(l Legacy) string {
 }
 
 func legacyActorOfStep(def Definition, at string) string {
+	// A cleanup runs a command, not an actor, so it never appears as a stage.
+	if strings.HasPrefix(at, "cleanup-") {
+		return ""
+	}
 	switch at {
 	case "plans", "build", "build-fix", "check", "repair", "fix-build", "fix-rebuild", "fix-check", "fix-repair":
 		return def.Params["builder"].Str
@@ -207,6 +214,10 @@ func legacyCorrections(phase, step string, s State) int {
 // legacyColumnsOf maps a workflow step id back to the legacy phase and step
 // words. An unknown step reads as the build phase's building step.
 func legacyColumnsOf(at string) (phase, step string) {
+	// A skipped cleanup leaves no stage, so it reads as building work.
+	if strings.HasPrefix(at, "cleanup-") {
+		return "build", legacyStepBuilding
+	}
 	phase = "build"
 	if legacySecurityStep(at) {
 		phase = legacyPhaseSecurity
@@ -215,6 +226,11 @@ func legacyColumnsOf(at string) (phase, step string) {
 }
 
 func legacyStepWord(at string) string {
+	// A cleanup is building work whatever its suffix, so it never surfaces a
+	// stage of its own.
+	if strings.HasPrefix(at, "cleanup-") {
+		return legacyStepBuilding
+	}
 	switch at {
 	case "build", "build-fix", "repair", "check", "plans", "fix-build", "fix-rebuild", "fix-repair", "fix-check":
 		return legacyStepBuilding
