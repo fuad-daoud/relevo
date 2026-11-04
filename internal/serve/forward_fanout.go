@@ -345,35 +345,10 @@ func (s *Server) gateOnNode(cl *client.Client, node string, gate targetGate) err
 	return nil
 }
 
-// fanoutClearedStop sends the node stop for a forward the head has already
-// cleared and saved: the round parked on a waiting node came home without
-// its builder finishing, so the node's round must end and nothing on the
-// head still names it. The stop goes out only once that save landed -- a
-// failed save would have stopped a node round the head still thinks is
-// running. There is no stored forward to match and no retry mark to keep:
-// the observe pass no longer walks this forward, and a node that needs a
-// human needs one on its own side. The attempt lands or only logs, on the
-// same drained goroutine the stop hook reports through.
-func (s *Server) fanoutClearedStop(name string, fwd store.Forward) {
-	hook := s.stopFanoutHook
-	s.fanoutDetached(hook, func() error { return s.clearedStopOnNode(name, fwd) })
-}
-
-func (s *Server) clearedStopOnNode(name string, fwd store.Forward) error {
-	row := stopRowFor(s.copyBurstTable(), fwd.Node)
-	if row == nil {
-		return nil
-	}
-	cl, err := s.burstNodeClient([]burst.NodeRow{*row})
-	if err != nil {
-		return err
-	}
-	callCtx, cancel := context.WithTimeout(context.Background(), fanoutTimeout)
-	defer cancel()
-	_, serr := cl.Stop(callCtx, row.ID, fwd.NodeBinding)
-	if serr == nil || isStopNothingToStop(serr) {
-		return nil
-	}
-	slog.Warn("burst: waiting-round stop fan-out failed", "binding", name, "node", fwd.Node, "err", serr)
-	return serr
+// fanoutParkedRelease releases the node binding of a round the head has parked
+// and saved. It goes out only once that save landed: a failed save would have
+// ended a node round the head still thinks is running.
+func (s *Server) fanoutParkedRelease(name string, fwd store.Forward) {
+	hook := s.unbindFanoutHook
+	s.fanoutDetached(hook, func() error { return s.unbindNode(name, fwd.NodeBinding, fwd.Node) })
 }

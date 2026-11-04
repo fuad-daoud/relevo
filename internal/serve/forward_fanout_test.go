@@ -902,10 +902,10 @@ func TestLiveForwardKeepsOpenRoundRule(t *testing.T) {
 }
 
 // TestNeedsYouStopsNodeAfterSave pins the ordering: clearing a NEEDS YOU
-// forward stops the node's round, but only once the head's save landed. A
+// forward releases the node's binding, but only once the head's save landed. A
 // save that failed must leave the node untouched -- the head still thinks
 // the round runs -- while the parked shape that did save dials exactly one
-// stop for the cleared forward's (node, binding, round).
+// forced unbind and forgets what it shipped there.
 func TestNeedsYouStopsNodeAfterSave(t *testing.T) {
 	needsYouSetup := func(t *testing.T, script *nodeScript) (*testEnv, relevo.Runtime) {
 		t.Helper()
@@ -932,7 +932,7 @@ func TestNeedsYouStopsNodeAfterSave(t *testing.T) {
 		return env, rt
 	}
 
-	t.Run("the parked save lands and the node sees one stop", func(t *testing.T) {
+	t.Run("the parked save lands and the node sees one release", func(t *testing.T) {
 		script := &nodeScript{
 			getStatus: http.StatusOK,
 			getView: remote.BindingView{Name: "nb-api", Round: 1,
@@ -941,18 +941,24 @@ func TestNeedsYouStopsNodeAfterSave(t *testing.T) {
 		}
 		env, rt := needsYouSetup(t, script)
 		join := &hookJoin{}
-		env.srv.stopFanoutHook = join.hook
+		env.srv.unbindFanoutHook = join.hook
 		if got := env.srv.observeForwards(context.Background()); got != 0 {
 			t.Fatalf("observe closed = %d, want 0 for a parked round", got)
 		}
-		tickUntil(t, join.fired, "the parked round's stop fan-out landed")
+		tickUntil(t, join.fired, "the parked round's release landed")
 		if !join.allNil() {
-			t.Errorf("fan-out err = %v, want the stop landed", join.first())
+			t.Errorf("fan-out err = %v, want the release landed", join.first())
 		}
-		if got := script.stopHits.Load(); got != 1 {
-			t.Errorf("node stop hits = %d, want exactly one", got)
+		if got := script.unbindHits.Load(); got != 1 {
+			t.Errorf("node unbind hits = %d, want exactly one", got)
+		}
+		if !script.unbindForced.Load() {
+			t.Error("node unbind was not forced: the node's round is open")
 		}
 		back := loadBurstBinding(t, rt, "api")
+		if back.Burst != nil && back.Burst.Shipped["b1"] != "" {
+			t.Errorf("Shipped = %v, want b1 forgotten with its binding", back.Burst.Shipped)
+		}
 		if back.State != store.StateNeedsYou {
 			t.Errorf("head state = %q, want needs_you", back.State)
 		}
@@ -961,7 +967,7 @@ func TestNeedsYouStopsNodeAfterSave(t *testing.T) {
 		}
 	})
 
-	t.Run("a save that fails stops nothing", func(t *testing.T) {
+	t.Run("a save that fails releases nothing", func(t *testing.T) {
 		script := &nodeScript{
 			getStatus: http.StatusOK,
 			getView: remote.BindingView{Name: "nb-api", Round: 1,
@@ -983,8 +989,8 @@ func TestNeedsYouStopsNodeAfterSave(t *testing.T) {
 		ctx := context.Background()
 		env.srv.observeForwards(ctx)
 		env.srv.observeForwards(ctx)
-		if got := script.stopHits.Load(); got != 0 {
-			t.Errorf("node stop hits = %d, want none: a failed save must not stop a round the head still tracks", got)
+		if got := script.unbindHits.Load(); got != 0 {
+			t.Errorf("node unbind hits = %d, want none: a failed save must not end a round the head still tracks", got)
 		}
 		kept := loadBurstBinding(t, rt, "api")
 		if f := burstStoredForward(kept); f == nil || f.Phase != "running" {
@@ -994,9 +1000,8 @@ func TestNeedsYouStopsNodeAfterSave(t *testing.T) {
 }
 
 // TestNeedsYouNextRoundSameNode pins the goal's other half against a real
-// node: after the parked round is cleared and stopped there, the head
-// answers and places its next round on the same node -- whose binding
-// takes the round despite the stopped prior one.
+// node: after the parked round is cleared and its binding released there, the
+// head answers and places its next round on the same node, on a clean binding.
 func TestNeedsYouNextRoundSameNode(t *testing.T) {
 	clock := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
 	env, nodeSrv, _, fwd, nodeRoot := observeTestSetup(t, clock)
@@ -1020,9 +1025,9 @@ func TestNeedsYouNextRoundSameNode(t *testing.T) {
 		return burstStoredForward(loadBurstBinding(t, rt, "api")) == nil
 	}, "the head parked and cleared the forward")
 	tickUntil(t, func() bool {
-		c, err := nst.Load(fwd.NodeBinding)
-		return err == nil && c.Serve != nil && c.Serve.ClosedRound >= 1
-	}, "the node closed the round the stop reached")
+		_, err := nst.Load(fwd.NodeBinding)
+		return err != nil
+	}, "the node released the parked round's binding")
 
 	if _, err := relevo.Stop(ctx, rt, "api", relevo.StopOptions{}); err != nil {
 		t.Fatalf("head stop: %v", err)
@@ -1034,17 +1039,8 @@ func TestNeedsYouNextRoundSameNode(t *testing.T) {
 	if got := env.srv.placeForwards(clock.Add(time.Minute)); got != 1 {
 		t.Fatalf("placed = %d, want 1: the next round claims the same node", got)
 	}
-	// The claim names its binding the placement rule does; the node's
-	// standing binding carries the renamed one the setup sent it under.
-	claimed := loadBurstBinding(t, rt, "api")
-	cf := burstStoredForward(claimed)
-	cf.NodeBinding = fwd.NodeBinding
-	claimed.Burst.Forward = cf
-	if err := rt.Store.Save(claimed); err != nil {
-		t.Fatal(err)
-	}
 	if got := env.srv.sendForwards(ctx, clock.Add(2*time.Minute)); got != 1 {
-		t.Fatalf("confirmed = %d, want 1: the node binding takes the round after its stopped one", got)
+		t.Fatalf("confirmed = %d, want 1: a clean node binding takes the round", got)
 	}
 	f := burstStoredForward(loadBurstBinding(t, rt, "api"))
 	if f == nil || f.Round != 2 || f.Phase != "running" || f.Node != "b1" {

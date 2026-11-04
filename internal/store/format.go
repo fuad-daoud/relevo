@@ -7,7 +7,8 @@ import (
 
 // BindingFormat is the format of the Binding JSON this binary writes: 20 drops
 // remote_node, so an older relevo that drops it loses only the node suffix on
-// the row. 19 drops burst forward facts, so an older relevo that loses them
+// the row, and burst staged, so a send it makes to a new node waits out its
+// patience on a ref it no longer knows. 19 drops burst forward facts, so an older relevo that loses them
 // would requeue a forwarded round locally and double-run it. 18 drops
 // round_repo_baseline_tree, so an older relevo judges that round's close
 // against a plain dirty check and halts on a worktree escape that never

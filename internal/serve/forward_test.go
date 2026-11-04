@@ -185,6 +185,8 @@ type nodeScript struct {
 	// stopHits counts the stop answers, apart from every other hit, so a
 	// test can say exactly how many stops the node saw.
 	stopHits atomic.Int64
+	// unbindForced says whether the last unbind asked for force.
+	unbindForced atomic.Bool
 	// alignStatus answers the round alignment; zero answers 200.
 	alignStatus int
 	alignCode   remote.Code
@@ -280,6 +282,7 @@ func (s *nodeScript) serve() http.Handler {
 				writeJSON(w, s.createStatus, s.getView)
 			}
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/unbind"):
+			s.unbindForced.Store(r.URL.Query().Get("force") != "")
 			s.unbindHits.Add(1)
 			if s.unbindWait != nil {
 				<-s.unbindWait
@@ -550,6 +553,20 @@ func TestBurstSendAnswers(t *testing.T) {
 		env, _, fwd := answerSetup(t, script, clock)
 		if got := env.srv.sendForwards(context.Background(), clock); got != 0 {
 			t.Fatalf("confirmed = %d, want 0: the node has no such round", got)
+		}
+		requireRequeued(t, env, fwd)
+	})
+
+	t.Run("409 on a round the node closed requeues", func(t *testing.T) {
+		closed := stubRoundView("nb-api", 2, remote.RoundClosed)
+		closed.ClosedRound = 1
+		script := &nodeScript{
+			getStatus: http.StatusOK, getView: closed,
+			startStatus: http.StatusConflict, startCode: remote.CodeRoundStarted, startMsg: "round 1 already started",
+		}
+		env, _, fwd := answerSetup(t, script, clock)
+		if got := env.srv.sendForwards(context.Background(), clock); got != 0 {
+			t.Fatalf("confirmed = %d, want 0: that close ran another plan", got)
 		}
 		requireRequeued(t, env, fwd)
 	})
@@ -1486,5 +1503,51 @@ func TestBurstRefusalHoldKeys(t *testing.T) {
 	nilHealth.noteRefused(k, at)
 	if nilHealth.refusalHeld(k, at) {
 		t.Error("nil health holds a round")
+	}
+}
+
+// A round moving to a node it never shipped to has no ship base there, and the
+// forward ref still holds what the last node took. That ref is this binding's
+// own, and the send must take it over once the out ref has moved on.
+func TestBurstSendToANewNodeKnowsItsStagedRef(t *testing.T) {
+	clock := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+	script := &nodeScript{
+		getStatus: http.StatusOK, getView: stubRoundView("nb-api", 1, remote.RoundRunning),
+		startStatus: http.StatusCreated, startView: stubRoundView("nb-api", 1, remote.RoundRunning),
+	}
+	env, rt, _ := answerSetup(t, script, clock)
+	if got := env.srv.sendForwards(ctx, clock); got != 1 {
+		t.Fatalf("confirmed = %d, want 1", got)
+	}
+	b := loadBurstBinding(t, rt, "api")
+	outSHA, ok, err := env.srv.cfg.Git.RefSHA(ctx, b.Serve.BareRepo, "refs/relevo/api/out")
+	if err != nil || !ok {
+		t.Fatalf("out ref: %v, ok=%v", err, ok)
+	}
+	tree := strings.TrimSpace(runGit(t, b.Serve.BareRepo, "rev-parse", outSHA+"^{tree}"))
+	next, err := rt.Git.CommitTree(ctx, b.Serve.BareRepo, tree, outSHA, "round 2 work")
+	if err != nil {
+		t.Fatalf("CommitTree: %v", err)
+	}
+	if err := rt.Git.UpdateRef(ctx, b.Serve.BareRepo, "refs/relevo/api/out", next, outSHA); err != nil {
+		t.Fatalf("advance out ref: %v", err)
+	}
+	b.Round = 2
+	b.Burst.Shipped = nil
+	b.Burst.Forward.Round = 2
+	b.Burst.Forward.Phase = "sending"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	writeHeadPlan(t, env, "api", 2)
+	script.getView = stubRoundView("nb-api", 2, remote.RoundRunning)
+	script.startView = stubRoundView("nb-api", 2, remote.RoundRunning)
+	if got := env.srv.sendForwards(ctx, clock.Add(time.Minute)); got != 1 {
+		t.Fatalf("confirmed = %d, want 1: the forward ref is this binding's own", got)
+	}
+	cur, ok, err := env.srv.cfg.Git.RefSHA(ctx, b.Serve.BareRepo, "refs/relevo/nb-api/out")
+	if err != nil || !ok || cur != next {
+		t.Errorf("forward ref = %q ok=%v err=%v, want the new out commit %s", cur, ok, err, next)
 	}
 }

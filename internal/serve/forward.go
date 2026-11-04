@@ -160,16 +160,17 @@ func (s *Server) sendOne(ctx context.Context, cl *client.Client, row burst.NodeR
 	return false
 }
 
-// conflictUnlessHeld reads what a conflict on a start means. It is the answer
-// to a resend of a round the node already took, and just as much to a round it
-// will never run, and only the first may confirm: a forward believed running
-// on a node that has no such round waits forever and holds the node open.
+// conflictUnlessHeld reads what a conflict on a start means. Only a node running
+// this very round may confirm it. A forward believed running on a node that has
+// no such round waits forever and holds the node open, and a round the node
+// closed under this number ran some other plan, since an identical resend of it
+// is answered as a success.
 func conflictUnlessHeld(ctx context.Context, cl *client.Client, row burst.NodeRow, fwd store.Forward, conflict error) error {
 	view, err := cl.GetBinding(ctx, row.ID, fwd.NodeBinding)
 	if err != nil {
 		return err
 	}
-	if observeRoundAgrees(view, observeWork{fwd: fwd}) {
+	if (view.RoundState == remote.RoundQueued || view.RoundState == remote.RoundRunning) && view.Round == fwd.Round {
 		return nil
 	}
 	return conflict
@@ -294,7 +295,7 @@ func (s *Server) shipForward(ctx context.Context, rt relevo.Runtime, b store.Bin
 	// losing its ref.
 	fwdRef := "refs/relevo/" + fwd.NodeBinding + "/out"
 	cur, ok, err := rt.Git.RefSHA(ctx, bare, fwdRef)
-	if err != nil || (ok && cur != since && cur != outSHA) {
+	if err != nil || (ok && cur != since && cur != outSHA && cur != b.Burst.Staged) {
 		slog.Warn("burst: send forward: forward ref not available", "binding", b.Name, "ref", fwdRef, "err", err)
 		return nil, nil, false
 	}
@@ -413,6 +414,7 @@ func (s *Server) confirmSend(w sendWork, row burst.NodeRow, outSHA string, now t
 		b.Burst.Shipped = map[string]string{}
 	}
 	b.Burst.Shipped[have.Node] = outSHA
+	b.Burst.Staged = outSHA
 	b.Burst.NodeBindings = append(b.Burst.NodeBindings, have.NodeBinding)
 	if err := st.Save(b); err != nil {
 		slog.Warn("burst: confirm forward: save failed", "binding", w.b.Name, "err", err)

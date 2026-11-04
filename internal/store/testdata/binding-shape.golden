@@ -18,6 +18,7 @@ burst.forward.sent_at
 burst.forward.stop_requested
 burst.node_bindings[]
 burst.shipped{}
+burst.staged
 candidate
 check_run.attempt
 check_run.command

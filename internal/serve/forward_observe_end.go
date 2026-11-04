@@ -89,7 +89,9 @@ func (s *Server) observeBindingGone(ctx context.Context, cl *client.Client, w ob
 
 // observeNeedsYou parks a head binding the node waits on a human for. The
 // head takes the node's halt reason and report, clears the forward, and
-// leaves the round open: the local tick owns what happens next.
+// leaves the round open: the local tick owns what happens next. The node's
+// binding goes too, so its builder stops and the round's next send starts on
+// a clean one instead of meeting this round's number there.
 func (s *Server) observeNeedsYou(ctx context.Context, cl *client.Client, row burst.NodeRow, w observeWork, view remote.BindingView, now time.Time) {
 	if view.Round != w.fwd.Round {
 		slog.Warn("burst: observe answered another waiting round", "binding", w.name, "node", w.fwd.Node, "want", w.fwd.Round, "got", view.Round)
@@ -129,6 +131,7 @@ func (s *Server) observeNeedsYou(ctx context.Context, cl *client.Client, row bur
 		cur.Halt = "the node waits on its human"
 	}
 	cur.Burst.Forward = nil
+	delete(cur.Burst.Shipped, w.fwd.Node)
 	if len(cur.Burst.Shipped) == 0 && len(cur.Burst.NodeBindings) == 0 {
 		cur.Burst = nil
 	}
@@ -136,5 +139,5 @@ func (s *Server) observeNeedsYou(ctx context.Context, cl *client.Client, row bur
 		slog.Warn("burst: observe needs_you save failed", "binding", w.name, "err", err)
 		return
 	}
-	s.fanoutClearedStop(w.name, w.fwd)
+	s.fanoutParkedRelease(w.name, w.fwd)
 }
