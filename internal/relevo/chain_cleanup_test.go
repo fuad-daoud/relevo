@@ -202,6 +202,61 @@ func TestChainCleanupPullNeverAnswersFromGate(t *testing.T) {
 	}
 }
 
+// TestChainFlowPullCheckSkipsCleanupWithoutGateRead pins the Pull guard
+// itself: a cleanup answered straight through chainFlowPullCheck still skips
+// without reading the writer's gate record, closing done with no log.
+func TestChainFlowPullCheckSkipsCleanupWithoutGateRead(t *testing.T) {
+	t.Parallel()
+
+	fr := chainCheckFake()
+	rt, _, _ := chainRemoteRuntime(t, fr)
+	stubRemoteSend(&rt)
+	startFlowChain(t, rt, cleanupFlow)
+	chainSetWorkflowState(t, rt, func(st *workflow.State) {
+		st.Awaiting = workflow.Awaiting{Step: "cleanup-round", Run: 0}
+	})
+	chainPulledGate(t, rt, "fail")
+	ctx := context.Background()
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		c, err := tx.Chain("shop")
+		if err != nil {
+			return err
+		}
+		def, err := chain.WorkflowDef(c)
+		if err != nil {
+			return err
+		}
+		st, err := chain.WorkflowState(c)
+		if err != nil {
+			return err
+		}
+		member, err := chainFlowWriterMember(tx, c)
+		if err != nil {
+			return err
+		}
+		act := workflow.Action{Kind: workflow.ActionRunCheck, Step: "cleanup-round",
+			Command: workflow.RenderParams(def, def.Steps["cleanup-round"].Cleanup)}
+		return chainFlowPullCheck(ctx, rt, tx, c, def, st, &st, workflow.Event{}, act, member)
+	}); err != nil {
+		t.Fatalf("chainFlowPullCheck: %v", err)
+	}
+
+	if got := cleanupAwaitedStep(t, rt); got != "check" {
+		t.Fatalf("awaiting = %q, want the check past a Pull-skipped cleanup", got)
+	}
+	row := chainLastCheckClosed(t, rt, "cleanup-round")
+	ev, err := workflow.DecodeEvent(row.Event)
+	if err != nil {
+		t.Fatalf("DecodeEvent: %v", err)
+	}
+	if ev.Result != "done" {
+		t.Errorf("Pull-skipped cleanup result = %q, want done, never the gate's word", ev.Result)
+	}
+	if ev.Log != "" {
+		t.Errorf("Pull-skipped cleanup log = %q, want empty: never the gate record", ev.Log)
+	}
+}
+
 // TestChainCleanupPlacedSkipsWithoutGate pins the placed-writer skip: a
 // cleanup on a remote writer never reads the writer's gate record and never
 // posts a check run for the cleanup step, advancing past it with a trace
