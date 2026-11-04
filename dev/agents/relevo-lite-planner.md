@@ -67,7 +67,9 @@ Put these in the plan, in one short "Rules" list, because builders do not reliab
 read `CLAUDE.md` before acting:
 
 - Iterate with the touched packages' tests; run `gofmt -l` on changed files and
-  `make check-affected` **once, at the end**, in the foreground. Never `make
+  `make check-affected` **once, at the end**, in the foreground — unless the
+  round's prompt says relevo runs the gate after the round, in which case the
+  final step is only the tests of what was touched. Never `make
   check`, `go test ./...`, a whole-repo `-race` run or `make install`: the builder
   shares its server with other gates.
 - `make check-affected` fails a changed package whose coverage drops more than a

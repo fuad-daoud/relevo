@@ -145,7 +145,7 @@ func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 	}
 
 	baseline, head := capture.Baseline(ctx, captureDeps(rt), b)
-	prompt := composePrompt(rt, b, planPath, rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round))
+	prompt := composePrompt(rt, tx, b, planPath, rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round))
 
 	// A repair round must not be handed to a candidate the configured set does
 	// not hold: pick again first, exactly as a switch does.

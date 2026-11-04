@@ -117,7 +117,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	promptPath := rt.Store.PromptPath(name, b.Round)
 	reportPath := rt.Store.ReportPath(name, b.Round)
 	donePath := rt.Store.DonePath(name, b.Round)
-	prompt := composePrompt(rt, b, promptPath, reportPath, donePath)
+	prompt := composePrompt(rt, nil, b, promptPath, reportPath, donePath)
 
 	pf := preflight{
 		b: b, body: body, tier: tier, tierFrom: tierFrom,
