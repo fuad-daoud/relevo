@@ -511,3 +511,56 @@ func requireOneReport(t *testing.T, entries []store.LogEntry, n int) store.LogEn
 	}
 	return report
 }
+
+// TestBurstSendSecondRoundWhenTheNodeLostItsBinding: a head that shipped to this
+// node before can still start cold, when the node no longer has the binding and
+// this send creates it. A create that loses a race to another send made nothing,
+// so it stays warm.
+func TestBurstSendSecondRoundWhenTheNodeLostItsBinding(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		createStatus int
+		createCode   remote.Code
+		want         string
+	}{
+		{name: "this send created it", createStatus: http.StatusCreated, want: "forwarded to b1 (cold)"},
+		{name: "another send created it", createStatus: http.StatusConflict, createCode: remote.CodeInvalid, want: "forwarded to b1 (warm)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clock := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+			script := &nodeScript{
+				getStatus: http.StatusNotFound, getCode: remote.CodeNotFound, getMsg: "not found",
+				createStatus: http.StatusCreated,
+				startStatus:  http.StatusCreated, startView: stubRoundView("nb-api", 1, remote.RoundRunning),
+			}
+			env, _, _ := answerSetup(t, script, clock)
+			ctx := context.Background()
+			if got := env.srv.sendForwards(ctx, clock); got != 1 {
+				t.Fatalf("confirmed = %d, want 1", got)
+			}
+			rt := env.runtime(t)
+			b := loadBurstBinding(t, rt, "api")
+			if b.Burst.Shipped["b1"] == "" {
+				t.Fatalf("Shipped = %v, want the first send recorded", b.Burst.Shipped)
+			}
+			b.Burst.Forward = nil
+			b.Round = 2
+			b.QueuedAt = clock.Add(2 * time.Minute)
+			if err := rt.Store.Save(b); err != nil {
+				t.Fatalf("advance to round 2: %v", err)
+			}
+			writeHeadPlan(t, env, "api", 2)
+			if got := env.srv.placeForwards(clock.Add(2 * time.Minute)); got != 1 {
+				t.Fatalf("placed = %d, want 1", got)
+			}
+			script.createStatus, script.createCode, script.createMsg = tc.createStatus, tc.createCode, "binding exists"
+			if got := env.srv.sendForwards(ctx, clock.Add(3*time.Minute)); got != 1 {
+				t.Fatalf("confirmed round 2 = %d, want 1", got)
+			}
+			notes := forwardedNotes(t, env, "api")
+			if len(notes) != 2 || notes[1].Note != tc.want {
+				t.Errorf("send notes = %+v, want the second to read %q", notes, tc.want)
+			}
+		})
+	}
+}
