@@ -1516,7 +1516,8 @@ func TestBurstSendToANewNodeKnowsItsStagedRef(t *testing.T) {
 		getStatus: http.StatusOK, getView: stubRoundView("nb-api", 1, remote.RoundRunning),
 		startStatus: http.StatusCreated, startView: stubRoundView("nb-api", 1, remote.RoundRunning),
 	}
-	env, rt, _ := answerSetup(t, script, clock)
+	env, _, _ := answerSetup(t, script, clock)
+	rt := env.runtime(t)
 	if got := env.srv.sendForwards(ctx, clock); got != 1 {
 		t.Fatalf("confirmed = %d, want 1", got)
 	}
