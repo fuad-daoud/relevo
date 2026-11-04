@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
+	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -231,7 +232,7 @@ func TestWorkflowDirectFixChangesSendsFixDirectWithFindings(t *testing.T) {
 	startedChain(t, rt, ChainOptions{Workflow: "direct-fix"})
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 
-	chainReaderClose(t, rt, "shop-reviewer", chainVerdictBody("changes"))
+	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("changes"))
 
 	builder := chainBinding(t, rt, "shop")
 	if builder.Round != 2 {
@@ -245,8 +246,8 @@ func TestWorkflowDirectFixChangesSendsFixDirectWithFindings(t *testing.T) {
 	if !strings.Contains(text, "Fix the reviewer's findings directly, without a new plan.") {
 		t.Errorf("fix-direct prompt does not render the fix-direct seed:\n%s", text)
 	}
-	rev := chainBinding(t, rt, "shop-reviewer")
-	output := seedCopy(t, rt, rt.Store.OutputPath("shop-reviewer", 1, rev.WriterRole(), readerOutputLabel(rt, rev)))
+	rev := chainBinding(t, rt, "shop-rev")
+	output := seedCopy(t, rt, rt.Store.OutputPath("shop-rev", 1, rev.WriterRole(), readerOutputLabel(rt, rev)))
 	if !strings.Contains(text, "Reviewer's output: "+output+".") {
 		t.Errorf("fix-direct prompt does not name the reviewer's output %s:\n%s", output, text)
 	}
@@ -255,7 +256,7 @@ func TestWorkflowDirectFixChangesSendsFixDirectWithFindings(t *testing.T) {
 	// reviewer judges again; a second changes spends the one fix-direct visit
 	// the plan allows and reaches the correct step.
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
-	chainReaderClose(t, rt, "shop-reviewer", chainVerdictBody("changes"))
+	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("changes"))
 
 	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
@@ -264,10 +265,10 @@ func TestWorkflowDirectFixChangesSendsFixDirectWithFindings(t *testing.T) {
 	if st.Awaiting.Step != "correct" {
 		t.Errorf("awaiting = %+v, want the correct step after two changes on one plan", st.Awaiting)
 	}
-	if planner := chainBinding(t, rt, "shop-lite-planner"); planner.Round != 1 {
+	if planner := chainBinding(t, rt, "shop-plan"); planner.Round != 1 {
 		t.Errorf("planner round = %d, want the correct round 1", planner.Round)
 	}
-	reviewPrompt, err := rt.Store.ReadFile(rt.Store.PromptPath("shop-reviewer", 2))
+	reviewPrompt, err := rt.Store.ReadFile(rt.Store.PromptPath("shop-rev", 2))
 	if err != nil {
 		t.Fatalf("read the second review prompt: %v", err)
 	}
@@ -461,5 +462,41 @@ func TestWorkflowUnclosedStatusBlockCloseReachesCheck(t *testing.T) {
 	}
 	if c.Status == string(workflow.StatusHalted) {
 		t.Errorf("chain halted: %q", c.Reason)
+	}
+}
+
+// TestWorkflowDirectFixCustomActorsReachTheirSeeds pins the shipped workflow
+// with actors not named after their parts, the way a repository with its own
+// agents runs it: the fix-direct seed must still name the reviewer's output,
+// and the correct step's plan must still reach the builder.
+func TestWorkflowDirectFixCustomActorsReachTheirSeeds(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	rows := chainRows()
+	rows["team-reviewer"] = roles.Row{
+		Shape:       ptr("reader"),
+		Candidates:  []string{testClaudeRef},
+		Definitions: map[string]roles.DefRow{"claude": {Agent: "reviewer"}},
+	}
+	rows["team-planner"] = rows["lite-planner"]
+	rt.Registry = rolesFileRegistry(t, rt.Candidates, rt.Policy, rows)
+	startedChain(t, rt, ChainOptions{Workflow: "direct-fix", ReviewerActor: "team-reviewer", PlannerActor: "team-planner"})
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("changes"))
+
+	row := flowChainRow(t, rt)
+	if row.Reviewer != "shop-rev" || row.Planner != "shop-plan" {
+		t.Fatalf("chain columns reviewer=%q planner=%q, want shop-rev and shop-plan", row.Reviewer, row.Planner)
+	}
+	builder := chainBinding(t, rt, "shop")
+	prompt, err := rt.Store.ReadFile(rt.Store.PromptPath("shop", builder.Round))
+	if err != nil {
+		t.Fatalf("read the fix-direct prompt: %v", err)
+	}
+	rev := chainBinding(t, rt, "shop-rev")
+	output := seedCopy(t, rt, rt.Store.OutputPath("shop-rev", 1, rev.WriterRole(), readerOutputLabel(rt, rev)))
+	if !strings.Contains(string(prompt), "Reviewer's output: "+output+".") {
+		t.Errorf("fix-direct prompt does not name the reviewer's output %s:\n%s", output, prompt)
 	}
 }

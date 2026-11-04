@@ -3,6 +3,7 @@ package relevo
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -171,7 +172,7 @@ func TestServerChainMixedVersionRefusesDirectFix(t *testing.T) {
 		if !strings.Contains(err.Error(), "fix-direct") {
 			t.Errorf("err = %q, want it to name the refused fix-direct seed", err.Error())
 		}
-		if !refusal.Is(err) {
+		if !errors.Is(err, refusal.ErrRefused) {
 			t.Errorf("err = %v, want a refusal: an old server's answer is not an internal failure", err)
 		}
 		if !strings.Contains(err.Error(), "upgrade the server") {
