@@ -279,6 +279,32 @@ func TestFixesSeedSaysToDiffFromTheBaseWhenNoBranchDiffWasCaptured(t *testing.T)
 	}
 }
 
+// TestFixDirectSeedNamesTheFindingsAndTheJudgedRound pins the direct-fix
+// template: it names the reviewer's output and the judged builder round's
+// prompt, report and diff, fixes only those findings with no planner hop, and
+// keeps publishing with the MasterMind.
+func TestFixDirectSeedNamesTheFindingsAndTheJudgedRound(t *testing.T) {
+	t.Parallel()
+	v := sampleSeedView()
+	out := assertSeedNames(t, "fix-direct", v,
+		v.OutputPath,
+		"This round's prompt: "+v.RoundPromptPath,
+		"Builder's report: "+v.ReportPath,
+		"This round's diff: "+v.DiffPath,
+		"Fix only these findings",
+		"no planner hop",
+		"Publishing is the MasterMind's",
+		"PR or issue",
+		"This closing round is "+v.BuilderRoundKind+", on top of round 1.",
+		"- round 1 prompt: "+v.BuilderRounds[0].PromptPath,
+		"- round 2 report: "+v.BuilderRounds[1].ReportPath,
+		"Check result:",
+	)
+	if strings.Contains(out, "Write a correction plan") {
+		t.Errorf("direct-fix seed writes a plan rather than fixing directly:\n%s", out)
+	}
+}
+
 func TestSeedRejectsAnUnknownKind(t *testing.T) {
 	t.Parallel()
 	if _, err := RenderShipped("bogus", sampleSeedView()); err == nil {
