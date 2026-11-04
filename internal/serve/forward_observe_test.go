@@ -3,6 +3,7 @@ package serve
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -67,7 +68,7 @@ func closeNodeRound(t *testing.T, nodeSrv *Server, runner *scriptRunner, nodeRoo
 	if err != nil {
 		t.Fatalf("load node %s: %v", nodeBinding, err)
 	}
-	if err := os.WriteFile(filepath.Join(b.Worktree, "result.txt"), []byte("node result\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(b.Worktree, "result.txt"), []byte(fmt.Sprintf("node result %d\n", round)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	runGit(t, b.Worktree, "add", "result.txt")
@@ -174,7 +175,7 @@ func TestBurstObserveClosesRound(t *testing.T) {
 		default:
 			path = rt.Store.StreamPath("api", 1)
 		}
-		if _, err := os.Stat(path); err != nil {
+		if _, err := rt.Store.ReadFile(path); err != nil {
 			t.Errorf("head %s missing: %v", kind, err)
 		}
 	}

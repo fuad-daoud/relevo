@@ -175,8 +175,9 @@ type Server struct {
 	// response order, which placement's tie-break reads.
 	burstTable  *burst.NodeTable
 	burstHealth *burstHealth
-	// tickFn, when non-nil, replaces Tick in Run.
-	tickFn func(context.Context) error
+	// tickFn and mirrorEvery, when set, replace Tick and ownerMirrorInterval.
+	tickFn      func(context.Context) error
+	mirrorEvery time.Duration
 }
 
 // EnsureStateRoot creates the state root's bindings directory, the directory
