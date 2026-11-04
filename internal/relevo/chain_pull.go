@@ -528,6 +528,9 @@ func chainRowFromView(c db.ChainRow, v remote.ChainView, now time.Time) (db.Chai
 
 	if len(v.Workflow) > 0 && len(v.State) > 0 {
 		c.WorkflowJSON, c.StateJSON = v.Workflow, v.State
+		// The carried state owns the awaited round: a check-await parks with
+		// no member round, so 0 is the server's real value, not an absent one.
+		c.AwaitingRound = v.AwaitingRound
 		return c, nil
 	}
 

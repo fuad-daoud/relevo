@@ -81,6 +81,7 @@ func resumeClosed(def Definition, s State, opts ResumeOpts, e Event) (State, []A
 	}
 	s = ensureMaps(s)
 	s.Status = StatusRunning
+	s.Reason = ""
 	s.Awaiting = Awaiting{Step: s.At, Member: actor, Round: e.Round}
 	state, actions := Next(def, s, e)
 	return state, actions, nil

@@ -97,6 +97,9 @@ type ChainResult struct {
 	// setting" or "policy.gate.default". "" leaves the line without a
 	// parenthetical, the shape a result read back off a mirror prints.
 	CheckSource string
+	// ManualRound is the newer builder round a resume reviewed; 0 means the
+	// resume re-ran the halted step instead.
+	ManualRound int
 }
 
 // chainMember is one part of a chain: which part it fills, the binding name it

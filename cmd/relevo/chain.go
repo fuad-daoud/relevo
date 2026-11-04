@@ -495,6 +495,6 @@ func chainResumedText(rt relevo.Runtime, res relevo.ChainResult) {
 	for _, m := range res.Members {
 		fmt.Printf("  %-8s %-16s %-8s %s\n", chainPartOf(c, m.Name), m.Name, chainMemberPlacement(m), chainMemberActor(rt, m))
 	}
-	fmt.Printf("  awaiting %s round %d\n", c.AwaitingMember, c.AwaitingRound)
+	fmt.Printf("  %s\n", relevo.ResumeAwaitingText(res.Chain, res.ManualRound))
 	fmt.Printf("  relevo wait --name %s\n", c.Name)
 }
