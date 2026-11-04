@@ -10,6 +10,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/resolve"
@@ -277,6 +278,37 @@ func TestWriteErrorClassifiesUserSideRefusals(t *testing.T) {
 			code, next, ok := codedOf(t, writeError(c.err))
 			if !ok || code != c.code || next != c.next {
 				t.Fatalf("writeError = (%q, %q, %v), want (%q, %q)", code, next, ok, c.code, c.next)
+			}
+		})
+	}
+}
+
+// TestWriteErrorChainCreateFailuresAreCoded pins the served chain create's
+// coded failures: a deadline on either side of the wire is not_available
+// with the same command as the retry, and a taken branch is a conflict with
+// the cleanup, never an internal failure in either case.
+func TestWriteErrorChainCreateFailuresAreCoded(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		name string
+		err  error
+		code errorCode
+		next string
+	}{
+		{"timeout", refusal.Classed(relevo.ErrChainCreateTimeout, "chain shop create timed out: context deadline exceeded"), codeNotAvailable, "run the same relevo chain command again"},
+		{"served branch exists", refusal.Classed(git.ErrBranchExists, "branch relevo/shop already exists"), codeConflict, "delete the branch or pick another name"},
+		{"local branch exists", git.ErrBranchExists, codeConflict, "delete the branch or pick another name"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			code, next, ok := codedOf(t, writeError(c.err))
+			if !ok || code != c.code || next != c.next {
+				t.Fatalf("writeError = (%q, %q, %v), want (%q, %q)", code, next, ok, c.code, c.next)
+			}
+			if e := catalogExit(code); e != 1 {
+				t.Errorf("exit = %d, want 1", e)
 			}
 		})
 	}

@@ -496,6 +496,7 @@ func chainCheckSpec(rt Runtime, c db.ChainRow, run int, command, logPath string)
 		LogPath:  logPath,
 		UnitName: scopeUnitNameFor(scopeGate, c.Owner, c.Name+"-check", run, ""),
 		Timeout:  rt.Policy.GateTimeout(),
+		Env:      chainBaseEnvEntry(c.Base),
 	}
 }
 

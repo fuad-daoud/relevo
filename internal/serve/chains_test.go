@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -18,12 +19,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/resolve"
+	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -449,6 +453,122 @@ func TestCreateChainUnwindsTheWorktree(t *testing.T) {
 	}
 	if _, ok, err := env.gitClient.RefSHA(ctx, bare, "refs/relevo/shop/out"); err != nil || ok {
 		t.Errorf("out ref = (ok %v, err %v), want none", ok, err)
+	}
+}
+
+// deadlineCheckoutGit performs the real checkout, then locks the new worktree
+// and removes its directory before failing with a deadline: the locked
+// registration with no directory is what a checkout killed mid-flight leaves
+// behind, planted deterministically instead of by racing a real timeout.
+type deadlineCheckoutGit struct {
+	relevo.Git
+	t *testing.T
+}
+
+func (f *deadlineCheckoutGit) CheckoutWorktree(ctx context.Context, dir, path, branch string) error {
+	if err := f.Git.CheckoutWorktree(ctx, dir, path, branch); err != nil {
+		return err
+	}
+	lock := exec.Command("git", "worktree", "lock", path)
+	lock.Dir = dir
+	if out, err := lock.CombinedOutput(); err != nil {
+		f.t.Fatalf("lock checked-out worktree: %v\n%s", err, out)
+	}
+	if err := os.RemoveAll(path); err != nil {
+		f.t.Fatalf("remove locked worktree dir: %v", err)
+	}
+	return fmt.Errorf("git worktree add %s %s: %w", path, branch, context.DeadlineExceeded)
+}
+
+// deadlineUpdateRefGit fails the branch cut with a deadline, as a request
+// whose context expires between the existence check and the write does.
+type deadlineUpdateRefGit struct {
+	relevo.Git
+}
+
+func (f *deadlineUpdateRefGit) UpdateRef(ctx context.Context, dir, ref, newSHA, oldSHA string) error {
+	return fmt.Errorf("git update-ref %s %s: %w", ref, newSHA, context.DeadlineExceeded)
+}
+
+// bareWithOutRef clones the test repo bare and points the chain's out ref at
+// base: the state the absorb leaves behind before the branch is cut.
+func bareWithOutRef(t *testing.T, env *testEnv, name string) string {
+	t.Helper()
+	root := t.TempDir()
+	bare := filepath.Join(root, "repo.git")
+	runGit(t, root, "-c", "maintenance.auto=false", "clone", "--bare", env.clientDir, bare)
+	runGit(t, bare, "update-ref", "refs/relevo/"+name+"/out", env.headSHA)
+	return bare
+}
+
+// TestCreateChainCheckoutTimeoutUnwindsWorktreeAndBranch pins the checkout
+// failure's unwind order: the worktree registration goes before the branch
+// delete, because a locked entry still pointing at the branch refuses the
+// delete with "used by worktree". A branch-first unwind leaves the branch
+// behind and answers 500; the fixed one leaves nothing and answers 408.
+func TestCreateChainCheckoutTimeoutUnwindsWorktreeAndBranch(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+	bare := bareWithOutRef(t, env, "shop")
+	worktree := filepath.Join(t.TempDir(), "wt-shop")
+
+	rec := httptest.NewRecorder()
+	shim := &deadlineCheckoutGit{Git: env.gitClient, t: t}
+	if env.srv.cutChainWorktree(ctx, rec, shim, bare, "shop", "refs/relevo/shop/out", "relevo/shop", worktree, env.headSHA) {
+		t.Fatal("cutChainWorktree with a checkout deadline = true, want false")
+	}
+	if rec.Code != http.StatusRequestTimeout {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusRequestTimeout)
+	}
+	errBody := decodeErrorBody(t, rec.Body.Bytes())
+	if errBody.Code != remote.CodeInvalid {
+		t.Errorf("code = %q, want %q", errBody.Code, remote.CodeInvalid)
+	}
+	if !strings.Contains(errBody.Message, "timed out") {
+		t.Errorf("message = %q, want it to name the timeout", errBody.Message)
+	}
+
+	// The main worktree itself is always listed; the chain's entry must be
+	// gone, locked or otherwise.
+	if list := runGit(t, bare, "worktree", "list", "--porcelain"); strings.Contains(list, worktree) || strings.Contains(list, "locked") {
+		t.Errorf("worktree list = %q, want no chain worktree left", list)
+	}
+	if _, ok, err := env.gitClient.RefSHA(ctx, bare, "refs/heads/relevo/shop"); err != nil || ok {
+		t.Errorf("branch relevo/shop = (ok %v, err %v), want none", ok, err)
+	}
+	if _, ok, err := env.gitClient.RefSHA(ctx, bare, "refs/relevo/shop/out"); err != nil || ok {
+		t.Errorf("out ref = (ok %v, err %v), want none after the unwind", ok, err)
+	}
+}
+
+// TestCreateChainBranchCutTimeoutIsCoded pins the branch cut's deadline: it
+// answers 408 with a code, never an uncoded 500, and unwinds the out ref.
+func TestCreateChainBranchCutTimeoutIsCoded(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+	bare := bareWithOutRef(t, env, "shop")
+	worktree := filepath.Join(t.TempDir(), "wt-shop")
+
+	rec := httptest.NewRecorder()
+	shim := &deadlineUpdateRefGit{Git: env.gitClient}
+	if env.srv.cutChainWorktree(ctx, rec, shim, bare, "shop", "refs/relevo/shop/out", "relevo/shop", worktree, env.headSHA) {
+		t.Fatal("cutChainWorktree with a branch-cut deadline = true, want false")
+	}
+	if rec.Code != http.StatusRequestTimeout {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusRequestTimeout)
+	}
+	errBody := decodeErrorBody(t, rec.Body.Bytes())
+	if errBody.Code != remote.CodeInvalid {
+		t.Errorf("code = %q, want %q", errBody.Code, remote.CodeInvalid)
+	}
+	if !strings.Contains(errBody.Message, "timed out") {
+		t.Errorf("message = %q, want it to name the timeout", errBody.Message)
+	}
+	if _, ok, err := env.gitClient.RefSHA(ctx, bare, "refs/heads/relevo/shop"); err != nil || ok {
+		t.Errorf("branch relevo/shop = (ok %v, err %v), want none", ok, err)
+	}
+	if _, ok, err := env.gitClient.RefSHA(ctx, bare, "refs/relevo/shop/out"); err != nil || ok {
+		t.Errorf("out ref = (ok %v, err %v), want none after the unwind", ok, err)
 	}
 }
 
@@ -978,18 +1098,69 @@ func TestServedResumeCarriesTheFromTarget(t *testing.T) {
 	}
 }
 
+// shippedWorkflowRegistry is a roles.json where every actor the shipped
+// default workflow names is defined with its full contract: the built-in
+// builder and reviewer, plus the file-mode planner and security actors whose
+// shipped agents expose the outputs the workflow's steps match on (a plan
+// artifact, a findings count). A resume that merges params validates the
+// definition against the server's registry, so nothing but the refusal under
+// test can refuse the resume.
+func shippedWorkflowRegistry(t *testing.T, set *candidate.Set) *roles.Registry {
+	t.Helper()
+	reader := "reader"
+	reg, err := roles.Build(&roles.File{Rows: map[string]roles.Row{
+		"builder":  {Candidates: []string{"claude/anthropic/haiku"}},
+		"reviewer": {Candidates: []string{"claude/anthropic/haiku"}},
+		"lite-planner": {
+			Shape:       &reader,
+			Candidates:  []string{"claude/anthropic/haiku"},
+			Definitions: map[string]roles.DefRow{"claude": {Agent: "architect"}},
+		},
+		"security": {
+			Shape:       &reader,
+			Candidates:  []string{"claude/anthropic/haiku"},
+			Definitions: map[string]roles.DefRow{"claude": {Agent: "security-reviewer"}},
+		},
+	}}, set, policy.Policy{})
+	if err != nil {
+		t.Fatalf("roles.Build: %v", err)
+	}
+	return reg
+}
+
 // TestServedResumeRefusesAGateChangeOnAPlacedWriter pins the wire half of the
-// refusal: a gate built by resumeOptionsFromWire is refused as a usage error
-// when the chain's writer member runs on a server, because relevo has no route
-// that updates a served binding's gate.
+// placed-writer gate refusal: a gate built by resumeOptionsFromWire is refused
+// as a usage error when the chain's writer runs on a server whose whoami lacks
+// the check feature -- the gate route that would take the change lives on that
+// server, so a client-written gate would be silently ignored there. The env
+// defines every actor the shipped workflow names, so the resume can only be
+// refused by this refusal, which fires when the resume's gate check first asks
+// the writer's server what it can do. The placement is written to the store
+// because a create already refuses a checkless server up front: only the
+// resume's probe stands between such a server and a gate it never heard.
 func TestServedResumeRefusesAGateChangeOnAPlacedWriter(t *testing.T) {
-	env := setupTestEnv(t, func(c *Config) { c.MaxBuilders = 1 })
+	set, err := builderCandidateSet(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := setupTestEnv(t, func(c *Config) {
+		c.MaxBuilders = 1
+		c.Candidates = set
+		c.Registry = shippedWorkflowRegistry(t, set)
+	})
 
 	// Occupy the single builder slot so the chain's plan 1 stays queued, and
-	// stop the chain so the resume route is reachable.
+	// stop the chain so the resume route is reachable. The create pins the
+	// shipped default's own planner actor: the definition the resume validates
+	// must resolve every actor against the registry's full contracts, not
+	// leave a second refusal for a member the env never defined.
 	resp, body := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "decoy", "# Decoy")
 	requireCreated(t, resp, body, "decoy")
-	resp, body = createChain(t, env, "shop")
+	req := chainWireRequest("shop", env.repoID, env.headSHA)
+	req.Settings.PlannerActor = "lite-planner"
+	bundle := chainBundle(t, env, env.clientDir, env.headSHA, "shop")
+	form, ct := makeChainForm(t, req, bundle)
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/chains", form, ct)
 	requireStatus(t, resp, body, http.StatusCreated)
 	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/chains/shop/stop", nil, "")
 	requireStatus(t, resp, body, http.StatusOK)
@@ -1005,15 +1176,39 @@ func TestServedResumeRefusesAGateChangeOnAPlacedWriter(t *testing.T) {
 		t.Fatalf("place the writer remotely: %v", err)
 	}
 
+	// The resume reads the writer's server through the runtime's own remote
+	// client, so the client's server table is what decides a server's
+	// features: this one answers the chain-era tokens but not the check token
+	// the gate route needs.
+	zen := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/whoami" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		who := remote.WhoAmI{
+			ServerVersion: remote.Version,
+			Transports:    []string{"git-bundle"},
+			Features:      []string{remote.FeatureChain, remote.FeatureChainMember, remote.FeatureWorkflow},
+		}
+		_ = json.NewEncoder(w).Encode(who)
+	}))
+	t.Cleanup(zen.Close)
+	rt.Remote = client.New(remote.Servers{"zen": {URL: zen.URL, Insecure: true}}, env.kp, time.Now)
+
 	gate := "make test"
 	opts, bad := resumeOptionsFromWire("shop", remote.ChainResumeRequest{Gate: &gate})
 	if bad != "" {
 		t.Fatalf("resumeOptionsFromWire = %q, want no refusal", bad)
 	}
-	if _, err := relevo.ChainResume(context.Background(), rt, opts); err == nil {
-		t.Fatal("ChainResume with a wire gate on a placed writer = nil, want the refusal")
-	} else if !errors.Is(err, refusal.ErrRefused) {
+	_, err = relevo.ChainResume(context.Background(), rt, opts)
+	if err == nil {
+		t.Fatal("ChainResume with a wire gate on a placed writer = nil, want the gate refusal")
+	}
+	if !errors.Is(err, refusal.ErrRefused) {
 		t.Errorf("ChainResume = %v, want refusal.ErrRefused", err)
+	}
+	if !strings.Contains(err.Error(), "zen") || !strings.Contains(err.Error(), `"check"`) {
+		t.Errorf("refusal = %q, want it to name server zen and the \"check\" feature it lacks", err)
 	}
 }
 

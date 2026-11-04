@@ -114,6 +114,46 @@ func TestResumeTreatsANewerManualRoundAsTheClose(t *testing.T) {
 	}
 }
 
+func TestResumeNewerManualCloseClearsTheHaltReason(t *testing.T) {
+	def := tdef("review", map[string]Step{
+		"review":  {Run: "reviewer", On: map[string]Target{"verdict=pass": DoneTarget(), "verdict=changes": StepTarget("correct")}},
+		"correct": {Run: "planner"},
+	})
+	s := haltedRun("review", "reviewer", 2)
+	closed := Event{Kind: EventStepClosed, Step: "review", Member: "reviewer", Round: 3, Status: "done",
+		Outcomes: map[string]string{"verdict": "changes"}}
+	got, actions, err := Resume(def, s, ResumeOpts{Closed: &closed})
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if got.Status != StatusRunning || got.Reason != "" {
+		t.Fatalf("status %q reason %q, want running with no reason", got.Status, got.Reason)
+	}
+	if a := only(t, actions); a.Kind != ActionSend || a.Step != "correct" {
+		t.Fatalf("action = %+v", a)
+	}
+}
+
+func TestResumeManualCloseToDoneClearsTheHaltReason(t *testing.T) {
+	def := tdef("review", map[string]Step{
+		"review":  {Run: "reviewer", On: map[string]Target{"verdict=pass": DoneTarget(), "verdict=changes": StepTarget("correct")}},
+		"correct": {Run: "planner"},
+	})
+	s := haltedRun("review", "reviewer", 2)
+	closed := Event{Kind: EventStepClosed, Step: "review", Member: "reviewer", Round: 3, Status: "done",
+		Outcomes: map[string]string{"verdict": "pass"}}
+	got, actions, err := Resume(def, s, ResumeOpts{Closed: &closed})
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if got.Status != StatusDone || got.Reason != "" {
+		t.Fatalf("status %q reason %q, want done with no reason", got.Status, got.Reason)
+	}
+	if a := only(t, actions); a.Kind != ActionFinish {
+		t.Fatalf("action = %+v", a)
+	}
+}
+
 func TestResumeRejectsAnOlderOrForeignClose(t *testing.T) {
 	def := tdef("review", map[string]Step{
 		"review":  {Run: "reviewer", On: map[string]Target{"done": DoneTarget()}},

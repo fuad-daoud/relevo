@@ -17,6 +17,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
@@ -230,6 +231,106 @@ func TestChainStartServerRetypesAnUnknownActor(t *testing.T) {
 		t.Errorf("a refused create must cut no local branch: %v", fg.createBranchCalls)
 	}
 	assertNothingCreated(t, rt, fg, "shop")
+}
+
+// TestChainServerCreateErrorTimeoutAndBranchExists pins the served create's
+// error mapping: a deadline on either side of the wire is a retryable
+// timeout, and a taken branch on either side is the branch conflict. The
+// unknown-actor and pick-refusal rows pin what the mapping must not disturb.
+func TestChainServerCreateErrorTimeoutAndBranchExists(t *testing.T) {
+	t.Parallel()
+
+	timeoutMsg := "chain shop create timed out checking out the worktree: git worktree add: context deadline exceeded"
+	servedTimeout := &client.HTTPError{Status: http.StatusRequestTimeout, Body: remote.ErrorBody{Code: remote.CodeInvalid, Message: timeoutMsg}}
+	servedBranch := &client.HTTPError{Status: http.StatusConflict, Body: remote.ErrorBody{Code: remote.CodeInvalid, Message: "branch relevo/shop already exists"}}
+	localTimeout := fmt.Errorf("git create branch relevo/shop deadbeef: %w", context.DeadlineExceeded)
+	localWorded := errors.New("branch relevo/shop exists; delete it or pick another name")
+	gated := &client.HTTPError{Status: http.StatusUnprocessableEntity, Body: remote.ErrorBody{Code: remote.CodeInvalid, Message: `every candidate serving "builder" is gated: x: every candidate serving the actor is gated`}}
+
+	for _, tc := range []struct {
+		name string
+		err  error
+		want error
+		text string
+	}{
+		{"served timeout", servedTimeout, ErrChainCreateTimeout, timeoutMsg},
+		{"served timeout without a body", &client.HTTPError{Status: http.StatusRequestTimeout}, ErrChainCreateTimeout, "http 408"},
+		{"local deadline", localTimeout, ErrChainCreateTimeout, "context deadline exceeded"},
+		{"served branch exists", servedBranch, git.ErrBranchExists, "branch relevo/shop already exists"},
+		{"local branch sentinel", git.ErrBranchExists, git.ErrBranchExists, "branch already exists"},
+		{"local branch wording", localWorded, git.ErrBranchExists, "branch relevo/shop exists; delete it or pick another name"},
+		{"unknown actor still", &client.HTTPError{Status: http.StatusBadRequest, Body: remote.ErrorBody{Code: remote.CodeUnknownActor, Message: `unknown actor "ghost"`}}, resolve.ErrUnknownRole, `unknown actor "ghost"`},
+		{"pick refusal still", gated, resolve.ErrAllGated, "gated"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := chainServerCreateError(tc.err)
+			if !errors.Is(got, tc.want) {
+				t.Errorf("err = %v, want errors.Is(err, %v)", got, tc.want)
+			}
+			if !strings.Contains(got.Error(), tc.text) {
+				t.Errorf("err = %q, want it to keep %q", got.Error(), tc.text)
+			}
+		})
+	}
+
+	// Anything else passes through unchanged, so a future caller sees the
+	// error it sent. Both directions: a wrap still matches one way, so a
+	// single errors.Is would pass while the passthrough is broken.
+	for _, other := range []error{errors.New("boom")} {
+		if got := chainServerCreateError(other); !errors.Is(got, other) || !errors.Is(other, got) {
+			t.Errorf("chainServerCreateError(%v) = %v, want it unchanged", other, got)
+		}
+	}
+}
+
+// TestChainStartServerLocalBranchExistsIsAConflict pins the local branch cut:
+// a taken branch keeps its wording but classifies as the branch conflict, so
+// the CLI names the cleanup instead of reporting an internal failure.
+func TestChainStartServerLocalBranchExistsIsAConflict(t *testing.T) {
+	t.Parallel()
+
+	fr := chainServerFake()
+	rt, fg, _ := chainServerRuntime(t, fr)
+	fg.createBranchErr = git.ErrBranchExists
+
+	_, err := ChainStart(context.Background(), rt, chainServerOpts(t))
+	if err == nil {
+		t.Fatal("ChainStart with a taken branch = nil, want the conflict")
+	}
+	if !errors.Is(err, git.ErrBranchExists) {
+		t.Errorf("err = %v, want errors.Is(err, git.ErrBranchExists)", err)
+	}
+	if !strings.Contains(err.Error(), "branch relevo/shop exists; delete it or pick another name") {
+		t.Errorf("err = %q, want the branch wording kept", err.Error())
+	}
+	if len(fg.deleteBranchCalls) != 0 {
+		t.Errorf("DeleteBranch calls = %+v, want none: the branch is not ours", fg.deleteBranchCalls)
+	}
+}
+
+// TestChainStartServerLocalDeadlineIsATimeout pins the local branch cut's
+// deadline: the server already accepted the create, so the error is the
+// retryable timeout asking for the same command again, not an internal
+// failure.
+func TestChainStartServerLocalDeadlineIsATimeout(t *testing.T) {
+	t.Parallel()
+
+	fr := chainServerFake()
+	rt, fg, _ := chainServerRuntime(t, fr)
+	fg.createBranchErr = fmt.Errorf("git create branch relevo/shop: %w", context.DeadlineExceeded)
+
+	_, err := ChainStart(context.Background(), rt, chainServerOpts(t))
+	if err == nil {
+		t.Fatal("ChainStart with a branch-cut deadline = nil, want the timeout")
+	}
+	if !errors.Is(err, ErrChainCreateTimeout) {
+		t.Errorf("err = %v, want errors.Is(err, ErrChainCreateTimeout)", err)
+	}
+	if len(fg.deleteBranchCalls) != 0 {
+		t.Errorf("DeleteBranch calls = %+v, want none: the branch was never cut", fg.deleteBranchCalls)
+	}
 }
 
 // TestChainStartServerPostsOneCreateAndRecordsTheMirror pins the whole start:
@@ -816,6 +917,35 @@ func TestMirrorTakesWorkflowAndStateFromView(t *testing.T) {
 	}
 	if !bytes.Equal(pulled.StateJSON, customState) {
 		t.Errorf("chainRowFromView StateJSON = %s, want %s", pulled.StateJSON, customState)
+	}
+}
+
+// TestChainRowFromViewKeepsTheServersZeroAwaitingRound pins that a view
+// carrying workflow and state owns the awaited round: a check-await parks
+// with no member round, so the server's 0 projects verbatim instead of
+// falling back to the mirror's older round. Plan and Plans keep the
+// fallback: a 0 there is an absent count, not a real value.
+func TestChainRowFromViewKeepsTheServersZeroAwaitingRound(t *testing.T) {
+	t.Parallel()
+
+	v := chainServerView("shop", seedRemoteBase)
+	v.Plan, v.Plans, v.AwaitingRound = 0, 0, 0
+	v.Workflow = []byte(`{"name":"custom-wf","steps":{"special_step":{"run":"builder"}}}`)
+	v.State = []byte(`{"step":"special_step_unreachable_by_legacy","status":"running"}`)
+
+	baseRow := db.ChainRow{
+		Name: "shop", Plan: 2, Plans: 3,
+		AwaitingMember: chain.MemberBuilder, AwaitingRound: 3,
+	}
+	pulled, err := chainRowFromView(baseRow, v, time.Now())
+	if err != nil {
+		t.Fatalf("chainRowFromView: %v", err)
+	}
+	if pulled.AwaitingRound != 0 {
+		t.Errorf("chainRowFromView AwaitingRound = %d, want the server's 0, not the mirror's 3", pulled.AwaitingRound)
+	}
+	if pulled.Plan != 2 || pulled.Plans != 3 {
+		t.Errorf("chainRowFromView Plan/Plans = %d/%d, want the mirror's 2/3: a 0 count still falls back", pulled.Plan, pulled.Plans)
 	}
 }
 

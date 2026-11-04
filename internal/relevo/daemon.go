@@ -54,6 +54,17 @@ type Daemon struct {
 	// one bounded dial per backoff window instead of one per binding per tick.
 	backoff remoteBackoff
 
+	// archived is the archived mirror's progress: the first tick's pass is
+	// full, and every later tick lists only records archived since the pass
+	// before. It is daemon state on purpose: a restart heals through a full
+	// pass, and a failed record is retried, never dropped, until one
+	// succeeds. A served runtime has no mirror database, so serve's one-tick
+	// daemons never use it.
+	archived ArchiveCursor
+	// archiveBackend is the archived mirror's collaborator. Nil means the
+	// live store and database; tests set it to count or fail backend calls.
+	archiveBackend archiveBackend
+
 	// syncMu guards the two fields below, which are the whole of the state a
 	// sync trigger shares between the two goroutines that can start one.
 	syncMu sync.Mutex
@@ -276,9 +287,12 @@ func (d *Daemon) Tick(ctx context.Context) error {
 		}
 		housekeep.SweepTick(ctx, HousekeepDeps(d.rt), bindings, &d.tmpSweptAt, d.rt.Now())
 	})
-	// Before the first tick of this process, every archived record the mirror
-	// has not seen is ingested.
-	archivedMirrorOnce.Do(func() { mirrorArchived(ctx, d.rt) })
+	// Every archived record the mirror has not seen is ingested: the first
+	// tick's pass is full, and every later tick costs only the records
+	// archived since the pass before. The live ingest below never sees
+	// archived records. It stays before the no-bindings early return, so a
+	// machine with only archived records still mirrors.
+	d.mirrorArchived(ctx)
 	// A running chain whose members have left the binding list still has to be
 	// swept: a member's record can be gone while the chain row says running,
 	// and then there is no binding left to reconcile it on.

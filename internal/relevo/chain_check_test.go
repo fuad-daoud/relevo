@@ -140,6 +140,31 @@ func TestChainCheckGreenOnExitZero(t *testing.T) {
 	}
 }
 
+// TestChainCheckEnvCarriesChainBase pins that the gate process a chain check
+// starts sees RELEVO_BASE with the chain's base commit, so the check's diff
+// scripts cut the chain's span instead of falling back to every package.
+func TestChainCheckEnvCarriesChainBase(t *testing.T) {
+	t.Parallel()
+
+	rt, fr, c := chainCheckFixture(t)
+	c.Base = "0123456789abcdef0123456789abcdef01234567"
+	chainStartCheckForTest(t, rt, c, "check", "make check")
+
+	if len(fr.specs) != 1 {
+		t.Fatalf("starts = %d, want 1", len(fr.specs))
+	}
+	want := "RELEVO_BASE=" + c.Base
+	found := false
+	for _, e := range fr.specs[0].Env {
+		if e == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("Env = %v, want it to carry %q", fr.specs[0].Env, want)
+	}
+}
+
 func TestChainCheckRedOnFail(t *testing.T) {
 	t.Parallel()
 

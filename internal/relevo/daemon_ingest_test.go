@@ -79,3 +79,134 @@ func TestIngestLiveBindingsSkipsUnchanged(t *testing.T) {
 		t.Errorf("ingestSeen = %v after a tick with no bindings, want empty", daemon.ingestSeen)
 	}
 }
+
+// archiveTickRuntime is the rig for the archive-mirror tests: a runtime over
+// a temp store and a temp shared file, with the daemon reading both.
+func archiveTickRuntime(t *testing.T) (Runtime, *db.DB, *Daemon) {
+	t.Helper()
+	rt := newRuntime(t)
+	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	rt.DB = d
+	return rt, d, NewDaemon(rt, time.Second)
+}
+
+// seedLiveWebshop saves an active headless binding with one prompt line, a
+// shape a tick reconciles without starting work.
+func seedLiveWebshop(t *testing.T, rt Runtime) {
+	t.Helper()
+	if err := rt.Store.Save(store.Binding{
+		Name: "webshop", CWD: "/repo", State: store.StateActive, Round: 1,
+		MasterMind: store.Endpoint{Kind: "claude", SessionID: "sess-architect"},
+		Builder:    store.Endpoint{Kind: "agy", Mode: store.ModeHeadless},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := rt.Store.AppendLog("webshop", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+}
+
+// TestTickMirrorsNewlyArchivedBinding pins the history symptom: after Save, a
+// log line and Archive, one Tick leaves the row in the mirror with ArchivedAt
+// set and history reporting the binding as archived. The mirrored row keeps
+// the record's own state: the record is authoritative, and marking it done
+// here would land unverified work in stats.
+func TestTickMirrorsNewlyArchivedBinding(t *testing.T) {
+	rt, d, daemon := archiveTickRuntime(t)
+	seedLiveWebshop(t, rt)
+	if _, err := rt.Store.Archive("webshop"); err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+
+	if err := daemon.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	row, found, err := d.Binding("webshop")
+	if err != nil || !found {
+		t.Fatalf("mirror Binding: found=%v err=%v", found, err)
+	}
+	if row.ArchivedAt == nil {
+		t.Error("mirrored row has no ArchivedAt, want the archive stamp")
+	}
+	final := ""
+	if row.FinalState != nil {
+		final = *row.FinalState
+	}
+	if final != string(store.StateActive) {
+		t.Errorf("mirrored FinalState = %q, want the record's own %q", final, string(store.StateActive))
+	}
+
+	history, err := Bindings(context.Background(), rt, "")
+	if err != nil {
+		t.Fatalf("Bindings: %v", err)
+	}
+	var hb *HistoryBinding
+	for i := range history {
+		if history[i].Name == "webshop" {
+			hb = &history[i]
+			break
+		}
+	}
+	if hb == nil {
+		t.Fatalf("history holds %d bindings, none named webshop", len(history))
+	}
+	if !hb.Archived {
+		t.Error("history reports webshop as live, want archived")
+	}
+}
+
+// TestTickMirrorsArchiveLandingAfterAnEarlierTick pins the every-tick
+// cadence: an archive that lands after a tick is mirrored by the next tick,
+// with no restart in between.
+func TestTickMirrorsArchiveLandingAfterAnEarlierTick(t *testing.T) {
+	rt, d, daemon := archiveTickRuntime(t)
+	seedLiveWebshop(t, rt)
+
+	if err := daemon.Tick(context.Background()); err != nil {
+		t.Fatalf("first Tick: %v", err)
+	}
+	if _, err := rt.Store.Archive("webshop"); err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+	if err := daemon.Tick(context.Background()); err != nil {
+		t.Fatalf("second Tick: %v", err)
+	}
+
+	row, found, err := d.Binding("webshop")
+	if err != nil || !found {
+		t.Fatalf("mirror Binding after the second tick: found=%v err=%v", found, err)
+	}
+	if row.ArchivedAt == nil {
+		t.Error("mirrored row has no ArchivedAt after the archive landed between ticks")
+	}
+}
+
+// TestTickMirrorsBindingArchivedBeforeAnyTick pins the missing-binding case:
+// a record archived with no log lines before its first tick still reaches the
+// mirror on that tick, without ever needing a live sighting.
+func TestTickMirrorsBindingArchivedBeforeAnyTick(t *testing.T) {
+	rt, d, daemon := archiveTickRuntime(t)
+	if err := rt.Store.Save(store.Binding{Name: "webshop", CWD: "/repo", State: store.StateActive, Round: 1}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := rt.Store.Archive("webshop"); err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+
+	if err := daemon.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	row, found, err := d.Binding("webshop")
+	if err != nil || !found {
+		t.Fatalf("mirror Binding: found=%v err=%v", found, err)
+	}
+	if row.ArchivedAt == nil {
+		t.Error("mirrored row has no ArchivedAt, want the archive stamp")
+	}
+}

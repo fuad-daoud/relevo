@@ -13,7 +13,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/delivery"
+	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
@@ -255,8 +257,16 @@ func writeErrorUsage(err error) (error, bool) {
 }
 
 // writeErrorMissing classifies the not-found family: the named thing is gone.
+// An unknown mastermind ref names the unset when it came from the
+// environment, and the record listing when it came from --mastermind.
 func writeErrorMissing(err error) (error, bool) {
+	var unknownEnv mastermind.ErrUnknownMasterMindEnv
+	var unknown mastermind.ErrUnknownMasterMind
 	switch {
+	case errors.As(err, &unknownEnv):
+		return failNext(codeMastermindNotFound, "unset "+unknownEnv.Var+" or relevo mastermind list", "%v", err), true
+	case errors.As(err, &unknown):
+		return fail(codeMastermindNotFound, "%v", err), true
 	case errors.Is(err, refusal.ErrRoundNotFound):
 		return fail(codeRoundNotFound, "%v", err), true
 	case errors.Is(err, store.ErrNotFound):
@@ -265,6 +275,21 @@ func writeErrorMissing(err error) (error, bool) {
 		return fail(codePushSeqNotFound, "%v", err), true
 	case errors.Is(err, delivery.ErrAckNoClaim):
 		return fail(codePushNoClaim, "%v", err), true
+	default:
+		return nil, false
+	}
+}
+
+// writeErrorChainCreate classifies the chain create's own failures: a
+// deadline on either side of the wire is transient, and a taken branch is a
+// conflict with a way out. Both arrive as the classifier's sentinels, so
+// this stays beside the other families instead of growing writeError.
+func writeErrorChainCreate(err error) (error, bool) {
+	switch {
+	case errors.Is(err, relevo.ErrChainCreateTimeout):
+		return failNext(codeNotAvailable, "run the same relevo chain command again", "%v", err), true
+	case errors.Is(err, git.ErrBranchExists):
+		return failNext(codeConflict, "delete the branch or pick another name", "%v", err), true
 	default:
 		return nil, false
 	}
@@ -281,14 +306,14 @@ func writeError(err error) error {
 	if errors.As(err, &ce) {
 		return err
 	}
-	if out, ok := writeErrorBusy(err); ok {
-		return out
-	}
-	if out, ok := writeErrorUsage(err); ok {
-		return out
-	}
-	if out, ok := writeErrorMissing(err); ok {
-		return out
+	// Each family classifies its own sentinels first, so the switch below
+	// stays about the write paths' own errors.
+	for _, family := range []func(error) (error, bool){
+		writeErrorBusy, writeErrorUsage, writeErrorMissing, writeErrorChainCreate,
+	} {
+		if out, ok := family(err); ok {
+			return out
+		}
 	}
 	var openMember *relevo.RoundOpenError
 	var candOpen *relevo.CandidateRoundOpenError

@@ -203,6 +203,48 @@ func (d *DB) RecordListArchived(owner string) ([]Record, error) {
 	return out, nil
 }
 
+// ArchivedRef is one archived row's identity for the mirror's cursor: the row
+// without its JSON, so a tick that only looks for new archives reads no
+// binding documents.
+type ArchivedRef struct {
+	ID         string
+	Name       string
+	ArchivedAt time.Time
+}
+
+// RecordListArchivedSince returns the identity of every archived row stamped
+// at or after since, oldest first and by name within one stamp. The stamp
+// comparison is on the stored text, which orders chronologically. A since
+// equal to a row's stamp still lists the row: rows sharing a stamp are told
+// apart by the caller's seen set, not by the query.
+func (d *DB) RecordListArchivedSince(owner string, since time.Time) ([]ArchivedRef, error) {
+	rows, err := d.sqlDB.QueryContext(context.Background(),
+		`SELECT id, name, archived_at FROM binding_record WHERE `+writerScope+` AND owner = ? AND archived_at IS NOT NULL AND archived_at >= ?
+			ORDER BY archived_at ASC, name ASC`, d.origin, owner, formatTime(since))
+	if err != nil {
+		return nil, fmt.Errorf("db: record list archived since: %w", mapBusy(err))
+	}
+	out, err := collectRows(rows, scanArchivedRef)
+	if err != nil {
+		return nil, fmt.Errorf("db: record list archived since: %w", mapBusy(err))
+	}
+	return out, nil
+}
+
+func scanArchivedRef(s rowScanner) (ArchivedRef, error) {
+	var r ArchivedRef
+	var at string
+	if err := s.Scan(&r.ID, &r.Name, &at); err != nil {
+		return ArchivedRef{}, err
+	}
+	t, err := parseTime(at)
+	if err != nil {
+		return ArchivedRef{}, fmt.Errorf("parse archived_at: %w", err)
+	}
+	r.ArchivedAt = t
+	return r, nil
+}
+
 // RecordListUnlinked returns every remote binding row that carries no link at
 // all -- both link columns NULL. Name-ordered.
 //

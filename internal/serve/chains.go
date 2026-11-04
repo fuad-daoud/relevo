@@ -369,11 +369,22 @@ func (s *Server) cutChainWorktree(ctx context.Context, w http.ResponseWriter, g 
 	// overwriting a branch another create cut between the check above and here.
 	if err := g.UpdateRef(ctx, bare, "refs/heads/"+branch, base, zeroSHA); err != nil {
 		unwind(false, false)
+		if errors.Is(err, context.DeadlineExceeded) {
+			writeErr(w, http.StatusRequestTimeout, remote.CodeInvalid, "chain "+name+" create timed out cutting the branch: "+err.Error())
+			return false
+		}
 		writeErr(w, http.StatusInternalServerError, "", err.Error())
 		return false
 	}
 	if err := g.CheckoutWorktree(ctx, bare, worktree, branch); err != nil {
-		unwind(false, true)
+		// The worktree goes first: a failed checkout can leave a locked
+		// registration behind, and the branch delete fails while one points
+		// at the branch.
+		unwind(true, true)
+		if errors.Is(err, context.DeadlineExceeded) {
+			writeErr(w, http.StatusRequestTimeout, remote.CodeInvalid, "chain "+name+" create timed out checking out the worktree: "+err.Error())
+			return false
+		}
 		writeErr(w, http.StatusInternalServerError, "", err.Error())
 		return false
 	}

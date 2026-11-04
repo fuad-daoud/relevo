@@ -18,3 +18,15 @@ func TestBaseEnvEntry(t *testing.T) {
 		t.Errorf("baseEnvEntry = %v, want %v", got, want)
 	}
 }
+
+func TestChainBaseEnvEntry(t *testing.T) {
+	t.Parallel()
+
+	if got := chainBaseEnvEntry(""); got != nil {
+		t.Errorf("chainBaseEnvEntry(empty base) = %v, want nil", got)
+	}
+	want := []string{"RELEVO_BASE=abc123"}
+	if got := chainBaseEnvEntry("abc123"); !reflect.DeepEqual(got, want) {
+		t.Errorf("chainBaseEnvEntry = %v, want %v", got, want)
+	}
+}

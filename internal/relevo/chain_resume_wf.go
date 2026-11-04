@@ -341,7 +341,7 @@ func chainResumeApplyActionsLocked(ctx context.Context, rt Runtime, tx *store.Tx
 	if err := chainForkParentReopen(rt, tx, row); err != nil {
 		return ChainResult{}, prep.snap.restore(tx, err)
 	}
-	return ChainResult{Chain: row, Members: members, Plans: len(before.Iter["plans"].Items)}, nil
+	return ChainResult{Chain: row, Members: members, Plans: len(before.Iter["plans"].Items), ManualRound: prep.manualRound}, nil
 }
 
 // chainResumeFlagParams translates a resume's old flags into workflow params,
