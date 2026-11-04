@@ -90,6 +90,16 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 		}
 		s.fanoutStopAsync(root, b.Name, *b.Burst.Forward)
 	}
+	// UnbindNodes fans a settled release's unbinds out to every node the
+	// record's ship facts name, on the owner's node-side binding name. A
+	// release of a binding that never forwarded dials nothing.
+	rt.UnbindNodes = func(b store.Binding) {
+		ids := unbindFanoutTargets(b)
+		if len(ids) == 0 {
+			return
+		}
+		s.fanoutUnbindAsync(ownerIDOf(root), b.Name, ids)
+	}
 	// The remote send runs above the engine: the served runtime ships through
 	// the same uplink functions as the CLI runtime.
 	rt.RemoteSend = relevo.RemoteSendDeps{

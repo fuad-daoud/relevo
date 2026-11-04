@@ -13,33 +13,40 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// A stop the head records for a forwarded round reaches the node
-// best-effort: the request never waits for it, a failure only logs, and the
-// observe retry below carries on. fanoutStopAsync is the hook's detached
-// send; retryForwardStop is the tick's backup for a stamp the send missed or
-// a send that failed. Both record into the same stop marks beside
-// burstHealth, so the first landed stop ends the episode.
+// A stop or an unbind the head decides for a forwarded round reaches the
+// nodes best-effort: the request never waits for it, a failure only logs,
+// and for stops the observe retry carries on. The *Async helpers queue a
+// detached attempt on the goroutine the drain waits for; the attempt itself
+// dials, records and logs. Stop attempts share the stop marks beside
+// burstHealth, so the first landed stop ends the episode; unbind and
+// cleared-forward stops are one-shot best efforts with no marks behind
+// them.
 
-// stopFanoutTimeout bounds one node-stop attempt. The client's own Stop
-// carries the same bound; the outer one states it here so the goroutine can
-// never outlive the drain that waits for it.
-const stopFanoutTimeout = 30 * time.Second
+// fanoutTimeout bounds one node-stop or node-unbind attempt. The client's
+// own verbs carry the same bound; the outer one states it here so the
+// goroutine can never outlive the drain that waits for it.
+const fanoutTimeout = 30 * time.Second
 
-// fanoutStopAsync sends Stop to the node running a stop-requested forward on
-// a goroutine the drain waits for. The caller's context is already gone by
-// the time the hook runs -- the handler answered -- so the attempt carries a
-// detached timeout instead. It never holds s.mu or admitMu, and its outcome
-// lands only while the stored forward still matches.
-func (s *Server) fanoutStopAsync(ownerPath, name string, fwd store.Forward) {
-	hook := s.stopFanoutHook
+// fanoutDetached queues one best-effort node attempt on the goroutine the
+// server's drain waits for and reports its outcome to the join hook when
+// the attempt lands. The caller's context is already gone by the time a
+// fan-out runs -- the handler answered -- so each attempt carries a
+// detached timeout instead, and no fan-out ever holds s.mu or admitMu.
+func (s *Server) fanoutDetached(hook func(error), attempt func() error) {
 	s.fanout.Add(1)
 	go func() {
 		defer s.fanout.Done()
-		err := s.stopForwardOnNode(ownerPath, name, fwd)
+		err := attempt()
 		if hook != nil {
 			hook(err)
 		}
 	}()
+}
+
+// fanoutStopAsync sends Stop to the node running a stop-requested forward.
+func (s *Server) fanoutStopAsync(ownerPath, name string, fwd store.Forward) {
+	hook := s.stopFanoutHook
+	s.fanoutDetached(hook, func() error { return s.stopForwardOnNode(ownerPath, name, fwd) })
 }
 
 // stopForwardOnNode sends one node stop for a stop-requested forward. A
@@ -63,7 +70,7 @@ func (s *Server) stopForwardOnNode(ownerPath, name string, fwd store.Forward) er
 	if err != nil {
 		return err
 	}
-	callCtx, cancel := context.WithTimeout(context.Background(), stopFanoutTimeout)
+	callCtx, cancel := context.WithTimeout(context.Background(), fanoutTimeout)
 	defer cancel()
 	_, serr := cl.Stop(callCtx, row.ID, fwd.NodeBinding)
 	if serr == nil || isStopNothingToStop(serr) {
@@ -101,8 +108,9 @@ func (s *Server) retryForwardStop(ctx context.Context, cl *client.Client, row bu
 
 // stopRowFor resolves the node a fan-out may dial: a verified row that is
 // still taking work. Anything else -- missing, unverified, draining or gone
-// -- takes no new stop traffic, so the stop waits for the observe retry
-// instead.
+// -- takes no new fan-out traffic: a stop waits for the observe retry
+// instead, and an unbind leaves that node's binding to the node's own
+// release.
 func stopRowFor(t *burst.NodeTable, node string) *burst.NodeRow {
 	if t == nil {
 		return nil
@@ -132,4 +140,109 @@ func forwardStopMatches(cur store.Binding, fwd store.Forward) bool {
 func isStopNothingToStop(err error) bool {
 	var herr *client.HTTPError
 	return errors.As(err, &herr) && herr.Status == http.StatusConflict && herr.Body.Code == remote.CodeNothingToStop
+}
+
+// A released head binding leaves node bindings behind unless the release
+// dials every node it shipped to. The head record is the only list of
+// those nodes, and it changes with the release, so the fan-out runs on the
+// record captured before the settle: Done and UnbindWith call the
+// UnbindNodes hook with it once the local step landed, never under the
+// store lock, and failures only log -- the node's own release cleans up
+// whatever this missed.
+
+// unbindFanoutTargets names every node the record may still hold a binding
+// on: each node it shipped to, plus the node of a forward still live --
+// a sending claim has no ship entry yet, and a forced release of it must
+// reach that node too. The node binding repeats one name per node, so the
+// ship map's keys and the forward's node drive this, deduplicated; a closed
+// forward's node is already in the ship map.
+func unbindFanoutTargets(b store.Binding) []string {
+	if b.Burst == nil {
+		return nil
+	}
+	live := b.Burst.Forward != nil &&
+		(b.Burst.Forward.Phase == "sending" || b.Burst.Forward.Phase == "running")
+	ids := make([]string, 0, len(b.Burst.Shipped)+1)
+	for node := range b.Burst.Shipped {
+		ids = append(ids, node)
+	}
+	if live {
+		if _, shipped := b.Burst.Shipped[b.Burst.Forward.Node]; !shipped {
+			ids = append(ids, b.Burst.Forward.Node)
+		}
+	}
+	return ids
+}
+
+// fanoutUnbindAsync sends one node unbind per target node, each on its own
+// goroutine the drain waits for. The node binding carries the head's own
+// name under the node-side namespace, the one name every target shares.
+func (s *Server) fanoutUnbindAsync(owner remote.ClientID, headName string, nodeIDs []string) {
+	hook := s.unbindFanoutHook
+	nodeBinding := burstNodeBinding(owner, headName)
+	for _, id := range nodeIDs {
+		s.fanoutDetached(hook, func() error { return s.unbindNode(headName, nodeBinding, id) })
+	}
+}
+
+// unbindNode releases one node's copy of a head binding, forced: the head
+// has decided, and the node may hold an open round the release must not
+// wait on. A 404 is the node's answer that the binding is already gone --
+// unbound by this release through another route -- so it lands, not fails.
+func (s *Server) unbindNode(headName, nodeBinding, nodeID string) error {
+	row := stopRowFor(s.copyBurstTable(), nodeID)
+	if row == nil {
+		return nil
+	}
+	cl, err := s.burstNodeClient([]burst.NodeRow{*row})
+	if err != nil {
+		return err
+	}
+	callCtx, cancel := context.WithTimeout(context.Background(), fanoutTimeout)
+	defer cancel()
+	uerr := cl.Unbind(callCtx, row.ID, nodeBinding, true)
+	if uerr == nil || isUnbindGone(uerr) {
+		return nil
+	}
+	slog.Warn("burst: node unbind fan-out failed", "binding", headName, "node", nodeID, "err", uerr)
+	return uerr
+}
+
+// isUnbindGone reports whether err is the node's 404 for a binding that is
+// no longer there: there is nothing left to unbind, so the fan-out landed.
+func isUnbindGone(err error) bool {
+	return burstHTTPStatus(err, http.StatusNotFound)
+}
+
+// fanoutClearedStop sends the node stop for a forward the head has already
+// cleared and saved: the round parked on a waiting node came home without
+// its builder finishing, so the node's round must end and nothing on the
+// head still names it. The stop goes out only once that save landed -- a
+// failed save would have stopped a node round the head still thinks is
+// running. There is no stored forward to match and no retry mark to keep:
+// the observe pass no longer walks this forward, and a node that needs a
+// human needs one on its own side. The attempt lands or only logs, on the
+// same drained goroutine the stop hook reports through.
+func (s *Server) fanoutClearedStop(name string, fwd store.Forward) {
+	hook := s.stopFanoutHook
+	s.fanoutDetached(hook, func() error { return s.clearedStopOnNode(name, fwd) })
+}
+
+func (s *Server) clearedStopOnNode(name string, fwd store.Forward) error {
+	row := stopRowFor(s.copyBurstTable(), fwd.Node)
+	if row == nil {
+		return nil
+	}
+	cl, err := s.burstNodeClient([]burst.NodeRow{*row})
+	if err != nil {
+		return err
+	}
+	callCtx, cancel := context.WithTimeout(context.Background(), fanoutTimeout)
+	defer cancel()
+	_, serr := cl.Stop(callCtx, row.ID, fwd.NodeBinding)
+	if serr == nil || isStopNothingToStop(serr) {
+		return nil
+	}
+	slog.Warn("burst: waiting-round stop fan-out failed", "binding", name, "node", fwd.Node, "err", serr)
+	return serr
 }

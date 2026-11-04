@@ -220,6 +220,16 @@ type Runtime struct {
 	// no node fan-out is wired, so the stamp stands without a send.
 	StopForward func(b store.Binding)
 
+	// UnbindNodes fans an unbind out to every burst node the record's ship
+	// facts name, so a released binding leaves no node binding running a
+	// round nobody can read back. Done and UnbindWith call it with the
+	// record as it stood before the settle -- the ship entries and the live
+	// forward are gone from the store by then -- only after the local step
+	// landed, and never under the store lock. A refused release calls it
+	// nothing. Like StopForward the hook starts best-effort sends at most;
+	// nil means no node fan-out is wired, so a release dials no node.
+	UnbindNodes func(b store.Binding)
+
 	// InFlight counts the live rounds per candidate token across every binding
 	// the resolver knows, leaving out the binding named by its argument. Nil
 	// means a walk over Store.

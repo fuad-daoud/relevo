@@ -176,15 +176,19 @@ type Server struct {
 	// tickFn and mirrorEvery, when set, replace Tick and ownerMirrorInterval.
 	tickFn      func(context.Context) error
 	mirrorEvery time.Duration
-	// fanout tracks in-flight burst fan-outs (node stops), so the drain can
-	// wait for them inside the shutdown budget instead of returning while a
-	// node stop is still in flight.
+	// fanout tracks in-flight burst fan-outs (node stops and unbinds), so
+	// the drain can wait for them inside the shutdown budget instead of
+	// returning while one is still in flight.
 	fanout sync.WaitGroup
 	// stopFanoutHook, when non-nil, runs when one node-stop fan-out lands
 	// its answer, carrying the attempt's error (nil when the stop landed or
 	// the row took no new traffic). Tests set it to join the detached
 	// goroutine without ever sleeping.
 	stopFanoutHook func(err error)
+	// unbindFanoutHook joins node-unbind fan-outs the way stopFanoutHook
+	// joins stops: it runs once per target node when that node's attempt
+	// lands.
+	unbindFanoutHook func(err error)
 }
 
 // EnsureStateRoot creates the state root's bindings directory, the directory

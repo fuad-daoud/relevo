@@ -459,6 +459,13 @@ func (s *Server) handleUnbind(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, remote.CodeWorktreeKept, err.Error())
 		return
 	}
+	// A live forward reads as an open round here too: the forward owns it,
+	// so the unbind answers with the same refusal a local open round gets
+	// and fans out nothing. Force releases it and fans the unbind out.
+	if errors.Is(err, relevo.ErrForwardRunning) {
+		writeErr(w, http.StatusConflict, remote.CodeRoundOpen, err.Error())
+		return
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "", err.Error())
 		return

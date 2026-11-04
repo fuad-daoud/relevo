@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -166,6 +167,277 @@ func TestChainStopForwardedMemberFansOut(t *testing.T) {
 	}
 	if back.Round != round {
 		t.Errorf("Round = %d, want %d: the member's round stays open", back.Round, round)
+	}
+}
+
+// attachRelease records b's burst ship facts on webshop: a forward at the
+// given phase onto the first named node plus a ship entry for every named
+// node, and the node binding name the ship repeats per node.
+func attachRelease(t *testing.T, rt Runtime, phase string, nodes ...string) store.BurstFacts {
+	t.Helper()
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fwd := &store.Forward{
+		Node: nodes[0], NodeBinding: "deadbeef-webshop", Round: b.Round, Phase: phase,
+	}
+	shipped := make(map[string]string, len(nodes))
+	names := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		shipped[n] = strings.Repeat("a", 40)
+		names = append(names, "deadbeef-webshop")
+	}
+	bf := store.BurstFacts{Forward: fwd, Shipped: shipped, NodeBindings: names}
+	b.Burst = &bf
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	return bf
+}
+
+// TestDoneFansOutPreSettleRecordAndClearsShipFacts pins the release seam:
+// Done hands the hook the record as it stood before the settle -- ship
+// facts and all -- only after the settle landed, and the settled record
+// keeps a closed forward while the ship facts it just released are gone.
+// The next forward after a resume then ships a full bundle again.
+//
+// Mutation check: clear after the save and the saved record keeps Shipped;
+// hand the hook the post-save record and its Shipped is already empty;
+// clear the forward too and a closed round loses its ack.
+func TestDoneFansOutPreSettleRecordAndClearsShipFacts(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, _ := sentHeadless(t, fr)
+	attachRelease(t, rt, "closed", "b1", "b2")
+	var hooked []store.Binding
+	rt.UnbindNodes = func(got store.Binding) {
+		hooked = append(hooked, got)
+	}
+
+	if _, err := Done(context.Background(), rt, "webshop"); err != nil {
+		t.Fatalf("Done: %v", err)
+	}
+
+	if len(hooked) != 1 {
+		t.Fatalf("hook calls = %d, want the one released binding", len(hooked))
+	}
+	got := hooked[0]
+	if got.Burst == nil || len(got.Burst.Shipped) != 2 {
+		t.Errorf("hooked record burst = %+v, want both ship entries", got.Burst)
+	}
+
+	back, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.State != store.StateDone {
+		t.Errorf("State = %q, want done", back.State)
+	}
+	if back.Burst == nil || len(back.Burst.Shipped) != 0 || len(back.Burst.NodeBindings) != 0 {
+		t.Errorf("settled burst = %+v, want the ship facts cleared", back.Burst)
+	}
+	if f := back.Burst.Forward; f == nil || f.Phase != "closed" {
+		t.Errorf("settled forward = %+v, want the closed one kept for its ack", back.Burst.Forward)
+	}
+}
+
+// TestDoneWithoutShipFactsSkipsNodeFanOut pins the guard: a binding that
+// never forwarded settles without a hook call, so no release dials a node.
+func TestDoneWithoutShipFactsSkipsNodeFanOut(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, _ := sentHeadless(t, fr)
+	hits := 0
+	rt.UnbindNodes = func(store.Binding) { hits++ }
+
+	if _, err := Done(context.Background(), rt, "webshop"); err != nil {
+		t.Fatalf("Done: %v", err)
+	}
+	if hits != 0 {
+		t.Errorf("hook calls = %d, want none for a binding that never shipped", hits)
+	}
+}
+
+// TestDoneRefusedFansOutNothing pins that a refused done releases nothing
+// locally and dials nothing: the hook runs only on the settled record.
+func TestDoneRefusedFansOutNothing(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, _ := sentHeadless(t, fr)
+	attachRelease(t, rt, "closed", "b1")
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Owner = "alice"
+	b.QueuedAt = rt.Now()
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	hits := 0
+	rt.UnbindNodes = func(store.Binding) { hits++ }
+
+	if _, err := Done(context.Background(), rt, "webshop"); err == nil {
+		t.Fatal("Done = nil error, want the queued refusal")
+	}
+	if hits != 0 {
+		t.Errorf("hook calls = %d, want none on a refused done", hits)
+	}
+}
+
+// TestUnbindRefusesLiveForwardWithoutForce pins the open-round rule at the
+// engine seam: a round the forward owns cannot be released by an
+// unforced unbind, and the refusal dials nothing.
+func TestUnbindRefusesLiveForwardWithoutForce(t *testing.T) {
+	t.Parallel()
+
+	for _, phase := range []string{"sending", "running"} {
+		t.Run(phase, func(t *testing.T) {
+			t.Parallel()
+
+			fr := newFakeRunner()
+			rt, _ := sentHeadless(t, fr)
+			attachRelease(t, rt, phase, "b1")
+			hits := 0
+			rt.UnbindNodes = func(store.Binding) { hits++ }
+
+			_, err := Unbind(context.Background(), rt, "webshop", true)
+			if !errors.Is(err, ErrForwardRunning) {
+				t.Fatalf("Unbind err = %v, want ErrForwardRunning", err)
+			}
+			if hits != 0 {
+				t.Errorf("hook calls = %d, want none on a refused unbind", hits)
+			}
+			if _, err := rt.Store.Load("webshop"); err != nil {
+				t.Errorf("load after refusal: %v, want the record kept", err)
+			}
+		})
+	}
+}
+
+// TestUnbindForceFansOutShippedAndForwardNodes pins the forced release of
+// a live forward: it archives and the hook carries the record whose ship
+// entries and forward node are all named -- the forward's node included,
+// or the node keeps running a round nobody can read.
+func TestUnbindForceFansOutShippedAndForwardNodes(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, _ := sentHeadless(t, fr)
+	// b2 holds the ship entry, b1 the sending claim that has none yet.
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fwd := store.Forward{Node: "b2", NodeBinding: "deadbeef-webshop", Round: b.Round, Phase: "sending"}
+	b.Burst = &store.BurstFacts{
+		Forward:      &fwd,
+		Shipped:      map[string]string{"b1": strings.Repeat("a", 40)},
+		NodeBindings: []string{"deadbeef-webshop"},
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	var hooked []store.Binding
+	rt.UnbindNodes = func(got store.Binding) {
+		hooked = append(hooked, got)
+	}
+
+	res, err := UnbindWith(context.Background(), rt, "webshop", true, true)
+	if err != nil {
+		t.Fatalf("UnbindWith force: %v", err)
+	}
+	if !res.Archived {
+		t.Errorf("Archived = false, want the forced release archived")
+	}
+	if len(hooked) != 1 || hooked[0].Burst == nil {
+		t.Fatalf("hook calls = %+v, want the one released record", hooked)
+	}
+	if _, ok := hooked[0].Burst.Shipped["b1"]; !ok {
+		t.Errorf("hooked shipped = %+v, want the ship entry", hooked[0].Burst.Shipped)
+	}
+	if f := hooked[0].Burst.Forward; f == nil || f.Node != "b2" {
+		t.Errorf("hooked forward = %+v, want the forward's own node named", hooked[0].Burst.Forward)
+	}
+}
+
+// TestUnbindClosedForwardReleasesAndFansOut pins that a closed forward is
+// not a live one: the unforced release settles and the hook carries the
+// record, because the round came home and only the node's receipt is owed.
+func TestUnbindClosedForwardReleasesAndFansOut(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, _ := sentHeadless(t, fr)
+	attachRelease(t, rt, "closed", "b1")
+	var hooked []store.Binding
+	rt.UnbindNodes = func(got store.Binding) {
+		hooked = append(hooked, got)
+	}
+
+	if _, err := Unbind(context.Background(), rt, "webshop", true); err != nil {
+		t.Fatalf("Unbind: %v", err)
+	}
+	if len(hooked) != 1 {
+		t.Fatalf("hook calls = %d, want the one released binding", len(hooked))
+	}
+}
+
+// TestChainDoneFansOutMemberShipFacts pins the chain path: chain done
+// releases each member through the same Done seam, so a member holding
+// ship facts fans its nodes out per member, not once for the chain.
+func TestChainDoneFansOutMemberShipFacts(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startFlowChain(t, rt, flowReviewWorkflow)
+	if _, err := ChainStop(context.Background(), rt, "shop"); err != nil {
+		t.Fatalf("ChainStop: %v", err)
+	}
+
+	member := ""
+	bindings, err := rt.Store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range bindings {
+		member = b.Name
+		break
+	}
+	if member == "" {
+		t.Fatal("chain left no member binding")
+	}
+	b, err := rt.Store.Load(member)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Burst = &store.BurstFacts{
+		Shipped:      map[string]string{"b1": strings.Repeat("a", 40)},
+		NodeBindings: []string{"deadbeef-" + member},
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	var hooked []store.Binding
+	rt.UnbindNodes = func(got store.Binding) {
+		hooked = append(hooked, got)
+	}
+
+	if _, err := ChainDone(context.Background(), rt, "shop"); err != nil {
+		t.Fatalf("ChainDone: %v", err)
+	}
+	found := false
+	for _, got := range hooked {
+		if got.Name == member {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("hooked = %+v, want the shipped member among them", hooked)
 	}
 }
 

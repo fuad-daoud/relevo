@@ -1,9 +1,11 @@
 package serve
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -11,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -181,7 +184,27 @@ type nodeScript struct {
 	// stopHits counts the stop answers, apart from every other hit, so a
 	// test can say exactly how many stops the node saw.
 	stopHits atomic.Int64
-	redirect string
+	// unbindStatus answers the node-side unbind; zero answers 200.
+	unbindStatus int
+	unbindCode   remote.Code
+	unbindMsg    string
+	// unbindWait, when non-nil, holds the unbind answer until the test
+	// closes it, so a release's non-blocking can be observed.
+	unbindWait chan struct{}
+	// unbindHits counts the unbind answers, apart from every other hit.
+	unbindHits atomic.Int64
+	// startBodies records the bytes each round start carried, so a test can
+	// tell a full bundle from an incremental or empty one.
+	startMu     sync.Mutex
+	startBodies [][]byte
+	redirect    string
+}
+
+// recordStart keeps one start request's body for bundle assertions.
+func (s *nodeScript) recordStart(body []byte) {
+	s.startMu.Lock()
+	defer s.startMu.Unlock()
+	s.startBodies = append(s.startBodies, body)
 }
 
 func (s *nodeScript) serve() http.Handler {
@@ -204,7 +227,23 @@ func (s *nodeScript) serve() http.Handler {
 			} else {
 				writeJSON(w, s.createStatus, s.getView)
 			}
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/unbind"):
+			s.unbindHits.Add(1)
+			if s.unbindWait != nil {
+				<-s.unbindWait
+			}
+			status := s.unbindStatus
+			if status == 0 {
+				status = http.StatusOK
+			}
+			if status >= 400 {
+				writeJSON(w, status, remote.ErrorBody{Code: s.unbindCode, Message: s.unbindMsg})
+			} else {
+				writeJSON(w, status, map[string]any{})
+			}
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/rounds"):
+			body, _ := io.ReadAll(r.Body)
+			s.recordStart(body)
 			if s.startStatus >= 400 {
 				writeJSON(w, s.startStatus, remote.ErrorBody{Code: s.startCode, Message: s.startMsg})
 			} else {
@@ -224,6 +263,18 @@ func (s *nodeScript) serve() http.Handler {
 			http.NotFound(w, r)
 		}
 	})
+}
+
+// lastStartHasBundle reports whether the newest recorded start carried a
+// bundle part: the ship's full cut rides the form, an empty incremental one
+// does not.
+func (s *nodeScript) lastStartHasBundle() bool {
+	s.startMu.Lock()
+	defer s.startMu.Unlock()
+	if len(s.startBodies) == 0 {
+		return false
+	}
+	return bytes.Contains(s.startBodies[len(s.startBodies)-1], []byte("bundle.bundle"))
 }
 
 // stubRoundView is the minimal view a scripted node answers.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -24,14 +25,21 @@ import (
 // unacked; it is also the node's ack episode, counted and flagged once when
 // a reachable node refuses three in a row. A failure never marks the node
 // unreachable and never requeues: the round is home, only its receipt is
-// missing. True means the ack landed and the forward cleared.
+// missing. A 404 is not a refusal: the node has no binding left to ack --
+// this head released it and the unbind fan-out reached the node -- so the
+// forward clears with no failure counted and no ack-stuck episode. True
+// means the ack landed and the forward cleared.
 func (s *Server) ackObserveClosed(ctx context.Context, cl *client.Client, w observeWork) bool {
 	if _, err := cl.Ack(ctx, w.fwd.Node, w.fwd.NodeBinding, w.fwd.Round); err != nil {
-		slog.Warn("burst: observe ack failed, keeping closed", "binding", w.name, "node", w.fwd.Node, "err", err)
-		s.noteAckStuck(ctx, w)
-		return false
+		if !burstHTTPStatus(err, http.StatusNotFound) {
+			slog.Warn("burst: observe ack failed, keeping closed", "binding", w.name, "node", w.fwd.Node, "err", err)
+			s.noteAckStuck(ctx, w)
+			return false
+		}
+		slog.Info("burst: observe ack found no node binding, clearing the forward", "binding", w.name, "node", w.fwd.Node)
+	} else {
+		s.burstHealth.clearAckFails(w.fwd.Node)
 	}
-	s.burstHealth.clearAckFails(w.fwd.Node)
 	st := s.ownerStore(w.ownerPath)
 	cur, err := st.Load(w.name)
 	if err != nil {
@@ -98,5 +106,7 @@ func (s *Server) observeNeedsYou(ctx context.Context, cl *client.Client, row bur
 	}
 	if err := st.Save(cur); err != nil {
 		slog.Warn("burst: observe needs_you save failed", "binding", w.name, "err", err)
+		return
 	}
+	s.fanoutClearedStop(w.name, w.fwd)
 }
