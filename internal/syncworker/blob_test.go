@@ -243,14 +243,17 @@ func TestBlobVerbsRefuseWithoutR2Settings(t *testing.T) {
 	}
 }
 
-// TestBlobBytesAreCountedInStats pins that what the two verbs move reaches the
-// stats reply, and that a skip adds nothing: the month is billed for bytes that
-// were sent, and an upload of a body another machine already had sent none.
+// TestBlobBytesAreCountedInStats pins that what the verbs move reaches the
+// stats reply, single and batched alike, and that a skip adds nothing: the
+// month is billed for bytes that were sent, and an upload of a body another
+// machine already had sent none.
 func TestBlobBytesAreCountedInStats(t *testing.T) {
 	store := withStore(t)
 	dir := t.TempDir()
 	body := []byte("a body counted once")
 	path, key := staged(t, dir, "one", body)
+	other := []byte("a second body, counted in a batch")
+	otherPath, otherKey := staged(t, dir, "two", other)
 	keyForFetch := blobstore.Key("origin-a", hexSHA("a different body to fetch"))
 
 	backend := &fakeBackend{stats: Stats{Entries: 3, Origins: 1, Seq: 2}}
@@ -258,15 +261,30 @@ func TestBlobBytesAreCountedInStats(t *testing.T) {
 		Request{ID: "1", Verb: VerbHello, Version: ProtocolVersion, Origin: "origin-a", URL: "libsql://x", Token: "t", R2: &R2Config{}},
 		Request{ID: "2", Verb: VerbPutBlob, Key: key, Staging: path},
 		Request{ID: "3", Verb: VerbPutBlob, Key: key, Staging: path},
-		Request{ID: "4", Verb: VerbGetBlob, Key: keyForFetch, Staging: filepath.Join(dir, "fetched"), Max: 64 << 20},
-		Request{ID: "5", Verb: VerbStats},
+		Request{ID: "4", Verb: VerbPutBlobs, Blobs: []BlobItem{{Key: key, Staging: path}, {Key: otherKey, Staging: otherPath}}},
+		Request{ID: "5", Verb: VerbGetBlobs, Blobs: []BlobItem{{Key: keyForFetch, Staging: filepath.Join(dir, "fetched"), Max: 64 << 20}}},
+		Request{ID: "6", Verb: VerbStats},
 	)
-	stats := replies[4].Stats
+	batch := replies[3]
+	if !batch.OK {
+		t.Fatalf("put_blobs refused: %s", batch.Error)
+	}
+	if len(batch.Results) != 2 || !batch.Results[0].Skipped || batch.Results[1].Skipped {
+		t.Errorf("put_blobs results = %+v, want a skip then an upload", batch.Results)
+	}
+	fetch := replies[4]
+	if !fetch.OK {
+		t.Fatalf("get_blobs refused the whole call: %s", fetch.Error)
+	}
+	if len(fetch.Results) != 1 || fetch.Results[0].Code != CodeBlobMissing {
+		t.Errorf("get_blobs results = %+v, want one missing body", fetch.Results)
+	}
+	stats := replies[5].Stats
 	if stats == nil {
 		t.Fatal("the stats reply carried no stats")
 	}
-	if stats.R2Put != int64(len(body)) {
-		t.Errorf("r2_put = %d, want %d: the skip must add nothing", stats.R2Put, len(body))
+	if stats.R2Put != int64(len(body)+len(other)) {
+		t.Errorf("r2_put = %d, want %d: the skips must add nothing", stats.R2Put, len(body)+len(other))
 	}
 	if stats.R2Get != 0 {
 		t.Errorf("r2_get = %d, want 0 for a fetch that was refused", stats.R2Get)

@@ -127,6 +127,35 @@ func blobRequestWireCases() []wireCase {
 			wire: `{"id":"8","verb":"get_blob","key":"origin-b/` + strings.Repeat("b", 64) +
 				`","staging":"/state/sync-blobs/` + strings.Repeat("b", 64) + `"}`,
 		},
+		{
+			name: "request put_blobs",
+			value: Request{
+				ID: "9", Verb: VerbPutBlobs,
+				Blobs: []BlobItem{
+					{
+						Key:     "origin-a/" + strings.Repeat("a", 64),
+						Staging: "/state/sync-blobs/" + strings.Repeat("a", 64),
+					},
+				},
+			},
+			wire: `{"id":"9","verb":"put_blobs","blobs":[{"key":"origin-a/` + strings.Repeat("a", 64) +
+				`","staging":"/state/sync-blobs/` + strings.Repeat("a", 64) + `"}]}`,
+		},
+		{
+			name: "request get_blobs",
+			value: Request{
+				ID: "10", Verb: VerbGetBlobs,
+				Blobs: []BlobItem{
+					{
+						Key:     "origin-b/" + strings.Repeat("b", 64),
+						Staging: "/state/sync-blobs/" + strings.Repeat("b", 64),
+						Max:     64 << 20,
+					},
+				},
+			},
+			wire: `{"id":"10","verb":"get_blobs","blobs":[{"key":"origin-b/` + strings.Repeat("b", 64) +
+				`","staging":"/state/sync-blobs/` + strings.Repeat("b", 64) + `","max":67108864}]}`,
+		},
 	}
 }
 
@@ -143,7 +172,7 @@ func logRequestWireCases() []wireCase {
 					Bucket:   "relevo-sync", KeyID: "key-1", Secret: "s",
 				},
 			},
-			wire: `{"id":"1","verb":"hello","version":4,"origin":"origin-a",` +
+			wire: `{"id":"1","verb":"hello","version":5,"origin":"origin-a",` +
 				`"token":"t","url":"libsql://remote.example","r2":{` +
 				`"endpoint":"https://acct.r2.cloudflarestorage.com",` +
 				`"bucket":"relevo-sync","key_id":"key-1","secret":"s"}}`,
@@ -157,7 +186,7 @@ func logRequestWireCases() []wireCase {
 				ID: "1", Verb: VerbHello, Version: ProtocolVersion, Origin: "origin-a",
 				Token: "t", URL: "libsql://remote.example",
 			},
-			wire: `{"id":"1","verb":"hello","version":4,"origin":"origin-a",` +
+			wire: `{"id":"1","verb":"hello","version":5,"origin":"origin-a",` +
 				`"token":"t","url":"libsql://remote.example"}`,
 		},
 		{
@@ -254,6 +283,21 @@ func responseWireCases() []wireCase {
 			wire:  `{"id":"8","ok":false,"error":"not in the store","code":"blob_missing"}`,
 		},
 		{
+			// A batch reply stays OK where one key failed: the failure rides
+			// in its own result, and a skipped put carries no bytes, as with
+			// the single verb.
+			name: "response carrying a batch of per-key results",
+			value: Response{ID: "9", OK: true, Results: []BlobResult{
+				{Key: "origin-a/" + strings.Repeat("a", 64), Bytes: 5},
+				{Key: "origin-a/" + strings.Repeat("c", 64), Skipped: true},
+				{Key: "origin-b/" + strings.Repeat("b", 64), Error: "not in the store", Code: CodeBlobMissing},
+			}},
+			wire: `{"id":"9","ok":true,"results":[` +
+				`{"key":"origin-a/` + strings.Repeat("a", 64) + `","bytes":5},` +
+				`{"key":"origin-a/` + strings.Repeat("c", 64) + `","skipped":true},` +
+				`{"key":"origin-b/` + strings.Repeat("b", 64) + `","error":"not in the store","code":"blob_missing"}]}`,
+		},
+		{
 			// Every map is set and one mark carries its reader, because the
 			// reply is read by a caller deciding what the log may drop: an
 			// empty map and a missing one would look the same here and are not
@@ -310,5 +354,30 @@ func assertRoundTrip(t *testing.T, v any) {
 	}
 	if !reflect.DeepEqual(v, back.Elem().Interface()) {
 		t.Errorf("%T did not survive the wire:\n sent %#v\n read %#v", v, v, back.Elem().Interface())
+	}
+}
+
+// TestHelloRefusesTheVersionBeforeBatches pins the handshake gate for the
+// batch verbs: a daemon speaking the previous version is refused, because it
+// would read a batch answer in a vocabulary without per-key results. The
+// version this worker speaks still opens.
+func TestHelloRefusesTheVersionBeforeBatches(t *testing.T) {
+	previous := ProtocolVersion - 1
+	resp := (&server{backend: &fakeBackend{}}).dispatch(Request{
+		ID: "1", Verb: VerbHello, Version: previous,
+		Origin: "origin-a", URL: "libsql://x", Token: "t",
+	})
+	if resp.OK {
+		t.Fatalf("version %d was accepted, want a refusal", previous)
+	}
+	if !strings.Contains(resp.Error, "pipe version") {
+		t.Errorf("refusal %q does not name what arrived", resp.Error)
+	}
+	open := (&server{backend: &fakeBackend{}}).dispatch(Request{
+		ID: "1", Verb: VerbHello, Version: ProtocolVersion,
+		Origin: "origin-a", URL: "libsql://x", Token: "t",
+	})
+	if !open.OK {
+		t.Errorf("version %d was refused: %s", ProtocolVersion, open.Error)
 	}
 }
