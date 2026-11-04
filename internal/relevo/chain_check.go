@@ -438,33 +438,7 @@ func chainTickPlacedCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 		}
 		return nil
 	}
-	if view.Result == "" {
-		return nil
-	}
-	logTarget, round, err := chainCheckLogTarget(tx, c)
-	if err != nil {
-		return err
-	}
-	logKey := rt.Store.CheckLogPath(logTarget, round, st.Awaiting.Run)
-	if err := tx.PutRoundFile(logTarget, round, logKey, []byte(partialCheckNote(view, b.Builder.Server)+view.LogTail)); err != nil {
-		return err
-	}
-	saved, err := tx.Chain(c.Name)
-	if err != nil {
-		return err
-	}
-	before, err := chain.WorkflowState(saved)
-	if err != nil {
-		return err
-	}
-	return chainAdvance(ctx, rt, tx, saved, workflow.Event{
-		Kind:      workflow.EventCheckClosed,
-		Step:      st.Awaiting.Step,
-		Run:       st.Awaiting.Run,
-		Result:    chainCheckResult(view.Result),
-		Log:       logKey,
-		RepeatRed: chainRepeatRedCheck(rt, saved, before, st.Awaiting.Step, logKey),
-	})
+	return chainSettlePlacedCheck(ctx, rt, tx, c, st, b, view)
 }
 
 // chainPlacedCheckMiss answers a GetCheck that found nothing under the awaited

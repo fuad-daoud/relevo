@@ -370,6 +370,40 @@ func chainFlowPullCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chai
 	})
 }
 
+// chainSettlePlacedCheck closes a placed writer's check from its answered
+// remote run: the served tail is sealed under the round's log and the close
+// feeds the engine, so a repeat red still refuses another repair for the
+// same output.
+func chainSettlePlacedCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, st workflow.State, b store.Binding, view remote.CheckView) error {
+	if view.Result == "" {
+		return nil
+	}
+	logTarget, round, err := chainCheckLogTarget(tx, c)
+	if err != nil {
+		return err
+	}
+	logKey := rt.Store.CheckLogPath(logTarget, round, st.Awaiting.Run)
+	if err := tx.PutRoundFile(logTarget, round, logKey, []byte(partialCheckNote(view, b.Builder.Server)+view.LogTail)); err != nil {
+		return err
+	}
+	saved, err := tx.Chain(c.Name)
+	if err != nil {
+		return err
+	}
+	before, err := chain.WorkflowState(saved)
+	if err != nil {
+		return err
+	}
+	return chainAdvance(ctx, rt, tx, saved, workflow.Event{
+		Kind:      workflow.EventCheckClosed,
+		Step:      st.Awaiting.Step,
+		Run:       st.Awaiting.Run,
+		Result:    chainCheckResult(view.Result),
+		Log:       logKey,
+		RepeatRed: chainRepeatRedCheck(rt, saved, before, st.Awaiting.Step, logKey),
+	})
+}
+
 // chainFlowWriterMember names the member whose tree a check runs on: the
 // keeper writer, or the first member when the workflow has none.
 func chainFlowWriterMember(tx *store.Tx, c db.ChainRow) (string, error) {
