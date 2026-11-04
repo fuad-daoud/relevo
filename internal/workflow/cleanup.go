@@ -41,6 +41,19 @@ func PruneEmptyCleanup(def Definition) Definition {
 	if _, ok := dropped[def.Start]; ok {
 		if t := resolveDroppedTarget(StepTarget(def.Start), dropped); t.Kind == TargetStep {
 			out.Start = t.Step
+		} else {
+			// Start must name a step, so when the start's chain leaves
+			// no step the emptied start step stays with its edges
+			// retargeted past the drop; its cleanup key keeps the params.
+			step := def.Steps[def.Start]
+			step.On = retargetOn(step.On, dropped)
+			if step.Budget != nil {
+				budget := *step.Budget
+				budget.Then = resolveDroppedTarget(budget.Then, dropped)
+				step.Budget = &budget
+			}
+			out.Steps[def.Start] = step
+			dropParams = false
 		}
 	}
 	if dropParams {

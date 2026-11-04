@@ -146,7 +146,7 @@ func TestValidateCleanupRejectsNonDoneMatches(t *testing.T) {
 		rule string
 	}{
 		{"a green match is not valid", "name: sample\nstart: c\nsteps:\n  c: { cleanup: make clean, on: { green: done, done: done } }", RuleMatch},
-		{"no done and no else is uncovered", "name: sample\nstart: c\nsteps:\n  c: { cleanup: make clean, on: { else: done } }", ""},
+		{"else alone covers the step", "name: sample\nstart: c\nsteps:\n  c: { cleanup: make clean, on: { else: done } }", ""},
 	}
 	for _, tc := range cases {
 		problems := Validate(mustParse(t, tc.yaml), env)
@@ -290,6 +290,65 @@ steps:
 	}
 	if _, ok := got.Params["cleanup_tag"]; ok {
 		t.Fatal("the cleanup_tag param survived a prune with no cleanup left")
+	}
+}
+
+func TestPruneEmptyCleanupStartRetargetsPastDropped(t *testing.T) {
+	def := mustParse(t, `
+name: sample
+params: { gate: "" }
+start: c1
+steps:
+  c1: { cleanup: "{{params.gate}}", on: { done: g } }
+  g: { run: builder, on: { done: done } }
+`)
+	got := PruneEmptyCleanup(def)
+	if got.Start != "g" {
+		t.Fatalf("start = %q, want g past the pruned cleanup", got.Start)
+	}
+	if _, ok := got.Steps["c1"]; ok {
+		t.Fatal("the empty start cleanup survived a retargetable prune")
+	}
+}
+
+func TestPruneEmptyCleanupStartToDoneKeepsTheStartStep(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		on   string
+		key  string
+	}{
+		{"done", "{ done: c2 }", "done"},
+		{"else", "{ else: c2 }", "else"},
+	} {
+		def := mustParse(t, `
+name: sample
+params: { gate: "", cleanup_tag: "v1" }
+start: c1
+steps:
+  c1: { cleanup: "{{params.gate}}", on: `+tc.on+` }
+  c2: { cleanup: "{{params.gate}}", on: { done: done } }
+`)
+		got := PruneEmptyCleanup(def)
+		if got.Start != "c1" {
+			t.Fatalf("%s: start = %q, want the kept start step", tc.name, got.Start)
+		}
+		kept, ok := got.Steps["c1"]
+		if !ok {
+			t.Fatalf("%s: the start names a pruned step", tc.name)
+		}
+		if kept.On[tc.key] != DoneTarget() {
+			t.Fatalf("%s: kept edge = %+v, want done past the pruned cleanup", tc.name, kept.On[tc.key])
+		}
+		if _, ok := got.Params["cleanup_tag"]; !ok {
+			t.Fatalf("%s: a cleanup_tag param was dropped while a cleanup remains", tc.name)
+		}
+		s, actions := Start(got, StartInputs{})
+		if s.Status != StatusDone {
+			t.Fatalf("%s: status = %q with %q, want done", tc.name, s.Status, s.Reason)
+		}
+		if a := only(t, actions); a.Kind != ActionFinish {
+			t.Fatalf("%s: action = %+v, want a finish", tc.name, a)
+		}
 	}
 }
 
