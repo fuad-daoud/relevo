@@ -55,28 +55,11 @@ func hasCleanupCommand(def workflow.Definition) bool {
 	return false
 }
 
-// clearCleanupParams empties the cleanup params and prunes, so a chain whose
-// server cannot run cleanup posts and stores the shape an old binary reads.
-func clearCleanupParams(def workflow.Definition) workflow.Definition {
-	out := def
-	if out.Params != nil {
-		out.Params = copyParams(out.Params)
-		for _, name := range []string{"cleanup_round", "cleanup_chain"} {
-			if p, ok := out.Params[name]; ok {
-				p.Str = ""
-				out.Params[name] = p
-			}
-		}
-	}
-	return workflow.PruneEmptyCleanup(out)
-}
-
-func copyParams(in map[string]workflow.Param) map[string]workflow.Param {
-	out := make(map[string]workflow.Param, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
+// chainCleanupStartFailWarning is the trace warning for a cleanup the chain
+// owner could not start. A cleanup never halts a chain, so the step closes
+// done and the start failure has to survive in the trace beside that close.
+func chainCleanupStartFailWarning(err error) string {
+	return fmt.Sprintf("cleanup skipped: the chain owner could not start it: %v", err)
 }
 
 // chainCleanupWarning is the start-line and trace warning naming the server
@@ -233,14 +216,14 @@ func chainTickPlacedCleanup(ctx context.Context, rt Runtime, tx *store.Tx, c db.
 	}
 	step := def.Steps[st.Awaiting.Step]
 	act := workflow.Action{Kind: workflow.ActionRunCheck, Step: st.Awaiting.Step, Command: workflow.RenderParams(def, step.Cleanup)}
-	return true, chainSkipPlacedCleanup(ctx, rt, tx, c, def, st, &st, workflow.Event{}, act, member, server)
+	return true, chainSkipCleanup(ctx, rt, tx, c, def, st, &st, workflow.Event{}, act, member, chainCleanupSkippedWarning(server))
 }
 
-// chainSkipPlacedCleanup closes a placed writer's cleanup without running it:
-// the engine advances past the step's done edge, and the trace row carries
-// the warning that only the chain owner runs cleanup in its worktree.
-func chainSkipPlacedCleanup(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before workflow.State, next *workflow.State, ev workflow.Event, act workflow.Action, member, server string) error {
-	warning := chainCleanupSkippedWarning(server)
+// chainSkipCleanup closes a cleanup as done without running it and carries
+// the caller's warning into the trace: the engine advances past the step's
+// done edge, and the trace row names why the cleanup did not run -- a placed
+// writer only the chain owner could run for, or a cleanup whose start failed.
+func chainSkipCleanup(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before workflow.State, next *workflow.State, ev workflow.Event, act workflow.Action, member, warning string) error {
 	next.Awaiting.Run = 0
 	if err := chainSaveFlow(rt, tx, c, def, before, *next, ev, act, member); err != nil {
 		return err

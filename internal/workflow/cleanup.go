@@ -8,13 +8,33 @@ import "strings"
 // cleanup then stores the shape an old binary reads, while a chain with a
 // cleanup keeps the new keys an old binary refuses as unknown.
 func PruneEmptyCleanup(def Definition) Definition {
+	return dropCleanupSteps(def, func(def Definition, step Step) bool {
+		return RenderParams(def, step.Cleanup) == ""
+	})
+}
+
+// DropCleanup drops every cleanup step whatever its command renders to, and
+// drops the cleanup_ params. An old binary refuses the cleanup key wherever
+// it appears, and an empty render is not its only shape. A definition whose
+// drops leave no other step keeps the start step with its cleanup key, as
+// PruneEmptyCleanup does: such a workflow does no work, and an old server
+// refuses its posting rather than running a cleanup-less one.
+func DropCleanup(def Definition) Definition {
+	return dropCleanupSteps(def, func(Definition, Step) bool { return true })
+}
+
+// dropCleanupSteps drops the cleanup steps dropStep selects, retargets their
+// incoming edges to the dropped steps' done targets, and drops the cleanup_
+// params when no cleanup step was kept. A step with more than one kind has no
+// kindOf and rule 2 refuses it, so no surviving step can carry a cleanup.
+func dropCleanupSteps(def Definition, dropStep func(Definition, Step) bool) Definition {
 	dropped := map[string]Target{}
 	keepCleanup := false
 	for id, step := range def.Steps {
 		if kindOf(step) != "cleanup" {
 			continue
 		}
-		if RenderParams(def, step.Cleanup) != "" {
+		if !dropStep(def, step) {
 			keepCleanup = true
 			continue
 		}

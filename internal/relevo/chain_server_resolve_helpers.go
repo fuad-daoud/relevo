@@ -127,10 +127,10 @@ func chainServerResolveGates(ctx context.Context, rt Runtime, opts ChainOptions,
 	}
 	plan.hasWorkflow = hasWorkflow
 	// A server without cleanup support never sees the cleanup: the client
-	// clears its params and prunes, warning on the start line naming the
+	// drops every cleanup step, warning on the start line naming the
 	// server, so the chain runs without cleanup and is never refused for it.
 	if hasCleanupCommand(plan.def) && !remote.HasFeature(who, remote.FeatureCleanup) {
-		plan.def = clearCleanupParams(plan.def)
+		plan.def = workflow.DropCleanup(plan.def)
 		plan.cleanupWarning = chainCleanupWarning(opts.Server)
 	}
 	if len(opts.Params) > 0 && !hasWorkflow {

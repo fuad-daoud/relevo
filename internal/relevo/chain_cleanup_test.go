@@ -38,6 +38,17 @@ steps:
   repair: { run: builder, seed: shipped:repair, on: { done: done } }
 `
 
+// cleanupLastFlow is a build whose chain-end cleanup is the last work: with
+// no runner to start it, the chain must still close the step and finish.
+const cleanupLastFlow = `name: cleanuperm
+inputs: { plans: required }
+start: plans
+steps:
+  plans: { for-each: plans, on: { next: build, empty: done } }
+  build: { run: builder, seed: "{{plans.current}}", on: { done: cleanup-round } }
+  cleanup-round: { cleanup: "make clean", on: { done: done } }
+`
+
 func cleanupAwaitedStep(t *testing.T, rt Runtime) string {
 	t.Helper()
 	st, err := chain.WorkflowState(flowChainRow(t, rt))
@@ -257,6 +268,39 @@ func TestChainFlowPullCheckSkipsCleanupWithoutGateRead(t *testing.T) {
 	}
 }
 
+// TestChainCleanupOwnerStartFailNamesTheFailure pins the trace where the
+// chain's own cleanup cannot start: the close is done, and its warning names
+// the start failure -- a local chain is no placed writer, and the failure
+// must survive beside the close, not only in the log.
+func TestChainCleanupOwnerStartFailNamesTheFailure(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startFlowChain(t, rt, cleanupLastFlow)
+	// The runner goes after the start: the builder's round is already open,
+	// so only the cleanup start can fail from here.
+	rt.Runner = nil
+	flowAdvance(t, rt, workflow.Event{Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: "done"})
+
+	row := chainLastCheckClosed(t, rt, "cleanup-round")
+	ev, err := workflow.DecodeEvent(row.Event)
+	if err != nil {
+		t.Fatalf("DecodeEvent: %v", err)
+	}
+	if ev.Result != "done" {
+		t.Errorf("start-failed cleanup close result = %q, want done: a cleanup never halts", ev.Result)
+	}
+	if !strings.Contains(ev.Reason, "no runner") {
+		t.Errorf("start-failed cleanup reason = %q, want it to name the start failure", ev.Reason)
+	}
+	if strings.Contains(ev.Reason, "placed writer") {
+		t.Errorf("start-failed cleanup reason = %q, want no placed-writer label on the chain's own tree", ev.Reason)
+	}
+	if got := flowChainRow(t, rt); got.Status != string(workflow.StatusDone) {
+		t.Fatalf("status = %s (%q), want the chain done past the skipped cleanup", got.Status, got.Reason)
+	}
+}
+
 // TestChainCleanupPlacedSkipsWithoutGate pins the placed-writer skip: a
 // cleanup on a remote writer never reads the writer's gate record and never
 // posts a check run for the cleanup step, advancing past it with a trace
@@ -470,9 +514,11 @@ func TestClientPruneNoCleanupMatchesTodayShape(t *testing.T) {
 	}
 }
 
-// TestClientCleanupWarnsAndPrunesOnOldServer pins the fallback: with a
-// cleanup set, a server without FeatureCleanup gets a pruned definition and
-// a start-line warning naming it, and the chain runs without cleanup.
+// TestClientCleanupWarnsAndPrunesOnOldServer pins the fallback: a server
+// without FeatureCleanup gets a definition with every cleanup step dropped,
+// whether the cleanup came from a --cleanup flag or from the workflow's own
+// literal steps, and a start-line warning naming it, so the chain runs
+// without cleanup.
 func TestClientCleanupWarnsAndPrunesOnOldServer(t *testing.T) {
 	t.Parallel()
 
@@ -505,6 +551,43 @@ func TestClientCleanupWarnsAndPrunesOnOldServer(t *testing.T) {
 	raw, _ := json.Marshal(chainServerRequest(opts, gated, chainServerIDs{}).Workflow)
 	if strings.Contains(string(raw), "cleanup") {
 		t.Errorf("posted workflow = %s, want no cleanup key for the old server", raw)
+	}
+
+	// A custom workflow's literal cleanup has no --cleanup flag and no
+	// cleanup params: the step alone must trigger the drop, the warning
+	// must still name the server, and no cleanup key may reach the wire.
+	// The workflow's name avoids the asserted string, so the unquoted
+	// substring match reads as the key alone.
+	const customServerCleanup = `name: cleanserve
+inputs: { plans: required }
+start: plans
+steps:
+  plans: { for-each: plans, on: { next: build, empty: done } }
+  build: { run: builder, seed: "{{plans.current}}", on: { done: cleanup-round } }
+  cleanup-round: { cleanup: "make clean", on: { done: done } }
+`
+	custom, cerr := workflow.Parse([]byte(customServerCleanup))
+	if cerr != nil {
+		t.Fatalf("parse custom cleanup: %v", cerr)
+	}
+	customOpts := chainServerOpts(t)
+	customPlan, perr := chainServerResolveBodies(context.Background(), rt, customOpts, custom, "custom", t.TempDir(), RepoSettings{})
+	if perr != nil {
+		t.Fatalf("ResolveBodies custom: %v", perr)
+	}
+	customGated, _, gerr := chainServerResolveGates(context.Background(), rt, customOpts, customPlan, "custom")
+	if gerr != nil {
+		t.Fatalf("ResolveGates custom: %v", gerr)
+	}
+	if customGated.cleanupWarning == "" || !strings.Contains(customGated.cleanupWarning, "zen") {
+		t.Errorf("custom warning = %q, want it to name the server", customGated.cleanupWarning)
+	}
+	if hasCleanupCommand(customGated.def) {
+		t.Error("pruned custom def still carries a cleanup, want it cleared for the old server")
+	}
+	customRaw, _ := json.Marshal(chainServerRequest(customOpts, customGated, chainServerIDs{}).Workflow)
+	if strings.Contains(string(customRaw), "cleanup") {
+		t.Errorf("posted custom workflow = %s, want no cleanup key for the old server", customRaw)
 	}
 }
 

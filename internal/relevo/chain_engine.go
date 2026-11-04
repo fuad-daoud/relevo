@@ -239,14 +239,15 @@ func chainCheckID(run int) string {
 // gate record without it, and through the gate runner locally. A cleanup
 // step runs through the same runner locally, but a placed writer's cleanup
 // is skipped with a trace warning instead of a check route call: only the
-// chain owner can run a cleanup in its worktree, and a missing runner must
-// warn, never halt.
+// chain owner can run a cleanup in its worktree, and a missing runner
+// warns, never halts. A cleanup the owner cannot start closes as done
+// naming that start failure.
 func chainFlowCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before workflow.State, next *workflow.State, ev workflow.Event, act workflow.Action) error {
 	member, err := chainFlowWriterMember(tx, c)
 	if err == nil {
 		if b, lerr := tx.Load(member); lerr == nil && b.Builder.Remote() {
 			if isCleanupStep(def, act.Step) {
-				return chainSkipPlacedCleanup(ctx, rt, tx, c, def, before, next, ev, act, member, b.Builder.Server)
+				return chainSkipCleanup(ctx, rt, tx, c, def, before, next, ev, act, member, chainCleanupSkippedWarning(b.Builder.Server))
 			}
 			if rt.Remote != nil {
 				who, werr := rt.Remote.WhoAmI(ctx, b.Builder.Server)
@@ -272,7 +273,7 @@ func chainFlowCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow
 	if isCleanupStep(def, act.Step) {
 		run, rerr := chainStartOrAdoptCleanup(ctx, rt, tx, c, act.Step, act.Command)
 		if rerr != nil {
-			return chainSkipPlacedCleanup(ctx, rt, tx, c, def, before, next, ev, act, member, "")
+			return chainSkipCleanup(ctx, rt, tx, c, def, before, next, ev, act, member, chainCleanupStartFailWarning(rerr))
 		}
 		next.Awaiting.Run = run
 		return chainSaveFlow(rt, tx, c, def, before, *next, ev, act, member)
@@ -341,7 +342,7 @@ func chainFlowPullCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chai
 		if lerr == nil {
 			server = b.Builder.Server
 		}
-		return chainSkipPlacedCleanup(ctx, rt, tx, c, def, before, next, ev, act, member, server)
+		return chainSkipCleanup(ctx, rt, tx, c, def, before, next, ev, act, member, chainCleanupSkippedWarning(server))
 	}
 	round := chain.NewestClosedRound(tx, member)
 	rec, err := chain.RoundGate(tx, member, round)

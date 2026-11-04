@@ -378,6 +378,141 @@ func TestPruneEmptyCleanupMatchesTheShippedShape(t *testing.T) {
 	}
 }
 
+func TestDropCleanupDropsEveryCleanupStep(t *testing.T) {
+	cases := []struct {
+		name      string
+		yaml      string
+		wantStart string
+	}{
+		{"literal command", `
+name: sample
+params: { cleanup_tag: "v1" }
+start: a
+steps:
+  a: { run: builder, on: { done: c1 } }
+  c1: { cleanup: "make clean", on: { done: done } }
+`, "a"},
+		{"param command", `
+name: sample
+params: { gate: "make check", cleanup_tag: "v1" }
+start: a
+steps:
+  a: { run: builder, on: { done: c1 } }
+  c1: { cleanup: "{{params.gate}}", on: { done: done } }
+`, "a"},
+		{"foreign param", `
+name: sample
+params: { msg: "hello", cleanup_tag: "v1" }
+start: a
+steps:
+  a: { run: builder, on: { done: c1 } }
+  c1: { cleanup: "{{params.msg}}", on: { done: done } }
+`, "a"},
+		{"empty command", `
+name: sample
+params: { gate: "", cleanup_tag: "v1" }
+start: a
+steps:
+  a: { run: builder, on: { done: c1 } }
+  c1: { cleanup: "{{params.gate}}", on: { done: done } }
+`, "a"},
+		{"two cleanups in a row", `
+name: sample
+params: { cleanup_tag: "v1" }
+start: a
+steps:
+  a: { run: builder, on: { done: c1 } }
+  c1: { cleanup: "make clean", on: { done: c2 } }
+  c2: { cleanup: "{{params.cleanup_tag}}", on: { done: done } }
+`, "a"},
+		{"cleanup start with a later step", `
+name: sample
+params: { cleanup_tag: "v1" }
+start: c1
+steps:
+  c1: { cleanup: "make clean", on: { done: g } }
+  g: { run: builder, on: { done: done } }
+`, "g"},
+	}
+	env := shippedEnv()
+	for _, tc := range cases {
+		got := DropCleanup(mustParse(t, tc.yaml))
+		for id, step := range got.Steps {
+			if kindOf(step) == "cleanup" || step.Cleanup != "" {
+				t.Fatalf("%s: step %q survived the drop with cleanup %q (kind %q)", tc.name, id, step.Cleanup, kindOf(step))
+			}
+		}
+		if problems := Validate(got, env); len(problems) != 0 {
+			t.Fatalf("%s: the dropped definition fails the validator: %v", tc.name, problems)
+		}
+		if got.Start != tc.wantStart {
+			t.Fatalf("%s: start = %q, want %q", tc.name, got.Start, tc.wantStart)
+		}
+		for id, step := range got.Steps {
+			for key, target := range step.On {
+				if target.Kind == TargetStep {
+					if _, ok := got.Steps[target.Step]; !ok {
+						t.Fatalf("%s: %s on %q targets dropped step %q", tc.name, id, key, target.Step)
+					}
+				}
+			}
+			if step.Budget != nil && step.Budget.Then.Kind == TargetStep {
+				if _, ok := got.Steps[step.Budget.Then.Step]; !ok {
+					t.Fatalf("%s: %s budget then targets dropped step %q", tc.name, id, step.Budget.Then.Step)
+				}
+			}
+		}
+		for name := range got.Params {
+			if strings.HasPrefix(name, "cleanup_") {
+				t.Fatalf("%s: param %q survived the drop", tc.name, name)
+			}
+		}
+	}
+}
+
+// TestDropCleanupStartToDoneKeepsTheStartStep pins the accepted shape: a
+// definition of nothing but cleanup steps keeps the start step and its
+// cleanup key, so the old server refuses the posting instead of running the
+// chain without a cleanup. A workflow of only cleanup steps does no work,
+// and the refusal is no loss.
+func TestDropCleanupStartToDoneKeepsTheStartStep(t *testing.T) {
+	def := mustParse(t, `
+name: sample
+params: { cleanup_tag: "v1" }
+start: c1
+steps:
+  c1: { cleanup: "make clean", on: { done: c2 } }
+  c2: { cleanup: "rm build", on: { done: done } }
+`)
+	got := DropCleanup(def)
+	if got.Start != "c1" {
+		t.Fatalf("start = %q, want the kept start step", got.Start)
+	}
+	step, ok := got.Steps["c1"]
+	if !ok {
+		t.Fatal("the start names no surviving step")
+	}
+	if step.Cleanup != "make clean" {
+		t.Fatalf("kept start cleanup = %q, want its command: the retained key is what the old server refuses", step.Cleanup)
+	}
+	if step.On["done"] != DoneTarget() {
+		t.Fatalf("kept edge = %+v, want done past the dropped step", step.On["done"])
+	}
+	if _, ok := got.Steps["c2"]; ok {
+		t.Fatal("c2 survived a drop of every cleanup step")
+	}
+	if _, ok := got.Params["cleanup_tag"]; !ok {
+		t.Fatal("the cleanup_tag param was dropped while the kept start step carries its cleanup key")
+	}
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"cleanup"`) {
+		t.Fatalf("posted definition = %s, want the kept start step's cleanup key", raw)
+	}
+}
+
 // frozenDefaultYAML is today's shipped default, frozen so the prune test pins
 // the stored shape a chain with no cleanup keeps.
 const frozenDefaultYAML = `name: default
