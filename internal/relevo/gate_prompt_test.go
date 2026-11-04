@@ -108,6 +108,31 @@ func TestChainWithoutGatePromptNamesNoCheck(t *testing.T) {
 	}
 }
 
+// TestChainNonBuilderWriterPromptNamesNoCheck pins whose promise the line is:
+// the chain's check judges its builder's tree, so another writer member of the
+// same chain would read a promise about a tree that is not its own.
+func TestChainNonBuilderWriterPromptNamesNoCheck(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{Gate: "make check"})
+
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		b, err := tx.Load("shop-rev")
+		if err != nil {
+			return err
+		}
+		b.Shape = store.ShapeWriter
+		if got := composePrompt(rt, tx, b, "p", "r", "d"); strings.Contains(got, "relevo runs `") {
+			t.Errorf("a writer other than the builder must carry no gate line, got:\n%s", got)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("compose the member prompt: %v", err)
+	}
+}
+
 // TestChainBuildFixRoundPromptNamesTheStoredCheck pins the correction round:
 // after a changes verdict and a correction plan, the builder's build-fix
 // round carries the same line as its plan round.
