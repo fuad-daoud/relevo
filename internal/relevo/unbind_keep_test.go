@@ -112,6 +112,30 @@ func TestUnbindRemoteWorktreeKeptLeavesLocalBinding(t *testing.T) {
 	}
 }
 
+// A forwarded round's refusal is the head's answer, not a fault to report.
+func TestUnbindRemoteForwardedRoundIsARefusal(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	if err := st.Save(remoteBinding("zen")); err != nil {
+		t.Fatal(err)
+	}
+	const message = "round 1 runs on burst node b1; relevo stop api to stop it"
+	fr := &fakeRemote{unbindErr: &client.HTTPError{Status: 409, Body: remote.ErrorBody{Code: remote.CodeRoundOpen, Message: message}}}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	_, err := UnbindWith(context.Background(), rt, "api", false, false)
+	if !errors.Is(err, ErrForwardRunning) {
+		t.Fatalf("err = %v, want ErrForwardRunning", err)
+	}
+	if !strings.Contains(err.Error(), message) {
+		t.Errorf("err = %q, want the server's message", err)
+	}
+	if _, lerr := st.Load("api"); lerr != nil {
+		t.Errorf("binding gone after a refusal: %v", lerr)
+	}
+}
+
 func TestUnbindRemoteForcePassesForce(t *testing.T) {
 	t.Parallel()
 

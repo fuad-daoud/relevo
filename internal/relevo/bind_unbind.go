@@ -123,6 +123,8 @@ func askServerUnbind(ctx context.Context, rt Runtime, b store.Binding, force boo
 			reason := KeptReason(httpErr.Body.Message)
 
 			return newWorktreeKeptWithReason("worktree on "+b.Builder.Server+" kept: "+reason, reason)
+		case httpErr.Status == 409 && httpErr.Body.Code == remote.CodeRoundOpen:
+			return fmt.Errorf("%s: %s: %w", b.Builder.Server, httpErr.Body.Message, ErrForwardRunning)
 		}
 	}
 	if errors.Is(uerr, client.ErrUnreachable) {
