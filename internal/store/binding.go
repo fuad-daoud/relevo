@@ -205,9 +205,7 @@ type BurstFacts struct {
 	// NodeBindings names every node binding this binding has created, so a
 	// release fans the unbind out to all of them, not only visible nodes.
 	NodeBindings []string `json:"node_bindings,omitempty"`
-	// Staged is the commit the last confirmed send staged under the forward
-	// ref, so a send to a node with no ship base still knows that ref as this
-	// binding's own.
+	// Staged is what the last confirmed send put under the forward ref.
 	Staged string `json:"staged,omitempty"`
 }
 

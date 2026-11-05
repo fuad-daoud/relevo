@@ -239,3 +239,33 @@ func TestAdminWaitFanoutHoldsUntilTheNodeAnswers(t *testing.T) {
 		t.Fatal("never returned after the node answered")
 	}
 }
+
+// A node send started just before shutdown still lands.
+func TestDrainWaitsForFanouts(t *testing.T) {
+	clock := time.Now().UTC()
+	env, _ := gateFanoutEnv(t, []*nodeScript{{}}, &clock)
+	runDone := make(chan struct{})
+	close(runDone)
+	release := make(chan struct{})
+	env.srv.fanoutDetached(nil, func() error {
+		<-release
+		return nil
+	})
+	done := make(chan struct{})
+	go func() {
+		env.srv.drainServer(&http.Server{}, runDone)
+		close(done)
+	}()
+	select {
+	case <-done:
+		close(release)
+		t.Fatal("drained while a fan-out was still in flight")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("never drained after the fan-out landed")
+	}
+}

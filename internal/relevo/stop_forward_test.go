@@ -245,6 +245,34 @@ func TestDoneFansOutPreSettleRecordAndClearsShipFacts(t *testing.T) {
 
 // TestDoneWithoutShipFactsSkipsNodeFanOut pins the guard: a binding that
 // never forwarded settles without a hook call, so no release dials a node.
+// Ship facts gone and nothing else out leaves no burst block behind, the same
+// way the other paths that clear a forward leave none.
+func TestDoneLeavesNoEmptyBurstBlock(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, _, _ := stoppedForwardFixture(t, fr)
+	b, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Burst.Forward = nil
+	b.Burst.Shipped = map[string]string{"b1": "abc"}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Done(context.Background(), rt, "api"); err != nil {
+		t.Fatalf("Done: %v", err)
+	}
+	got, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Burst != nil {
+		t.Errorf("Burst = %+v, want none", got.Burst)
+	}
+}
+
 func TestDoneWithoutShipFactsSkipsNodeFanOut(t *testing.T) {
 	t.Parallel()
 
