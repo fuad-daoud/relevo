@@ -248,8 +248,10 @@ const chainBranchExistsText = "exists; delete it or pick another name"
 // chainServerCreateError rebuilds the typed refusal from the create's own
 // failure: unknown_actor for the actor the server cannot resolve, the
 // server's timeout (or a local deadline) as a retryable timeout, and the
-// served or local branch collision as the branch conflict. Anything else
-// returns pickRefusalFromWire(err).
+// served or local branch collision as the branch conflict, and a create the
+// server judged invalid as a refusal, because that is the server's answer and
+// not a failure of relevo's own. Anything else returns
+// pickRefusalFromWire(err).
 func chainServerCreateError(err error) error {
 	var httpErr *client.HTTPError
 	if errors.As(err, &httpErr) {
@@ -264,6 +266,8 @@ func chainServerCreateError(err error) error {
 			return refusal.Classed(ErrChainCreateTimeout, msg)
 		case httpErr.Status == http.StatusConflict && strings.Contains(httpErr.Body.Message, "already exists"):
 			return refusal.Classed(git.ErrBranchExists, httpErr.Body.Message)
+		case httpErr.Status == http.StatusBadRequest && httpErr.Body.Code == remote.CodeInvalid:
+			return refusal.New("the server refused this chain: %s; a server older than this client may not know its workflow, so upgrade the server if it is older", httpErr.Body.Message)
 		}
 	}
 	switch {

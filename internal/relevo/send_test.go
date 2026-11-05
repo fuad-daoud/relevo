@@ -383,7 +383,7 @@ func TestComposePromptNamesPlanReportAndMarkerInOrder(t *testing.T) {
 	t.Parallel()
 
 	b := store.Binding{Name: "webshop", CWD: "/repo/webshop", Round: 3}
-	got := composePrompt(Runtime{}, b, "/s/003-plan.md", "/s/003-report.md", "/s/003-done")
+	got := composePrompt(Runtime{}, nil, b, "/s/003-plan.md", "/s/003-report.md", "/s/003-done")
 
 	wantOrigin := delivery.OriginLine("webshop", 3, store.DirToBuilder, store.KindPrompt)
 	firstLine := strings.SplitN(got, "\n", 2)[0]
@@ -411,6 +411,39 @@ func TestComposePromptNamesPlanReportAndMarkerInOrder(t *testing.T) {
 	}
 }
 
+// TestComposePromptNamesTheGateAfterTheRound pins the gate line: a writer
+// whose binding carries a gate is told relevo runs that check after the
+// round, so it runs only the tests its change touches instead of the full
+// suite.
+func TestComposePromptNamesTheGateAfterTheRound(t *testing.T) {
+	t.Parallel()
+
+	b := store.Binding{Name: "webshop", CWD: "/repo/webshop", Round: 3, Gate: "make check"}
+	got := composePrompt(Runtime{}, nil, b, "/s/003-plan.md", "/s/003-report.md", "/s/003-done")
+
+	want := "relevo runs `make check` after this round, outside your shell, so don't run the full suite yourself; run the tests of what you touched."
+	if !strings.Contains(got, want) {
+		t.Errorf("prompt does not carry the gate line %q:\n%s", want, got)
+	}
+	if !strings.HasSuffix(got, "Reply here with only the report path.") {
+		t.Errorf("the gate line must not move the reply instruction from the end, got:\n%s", got)
+	}
+}
+
+// TestComposePromptWithoutAGateNamesNoCheck pins the trap: a writer with no
+// gate and no chain carries no gate line, so a repo with no check reads no
+// promise relevo cannot keep.
+func TestComposePromptWithoutAGateNamesNoCheck(t *testing.T) {
+	t.Parallel()
+
+	b := store.Binding{Name: "webshop", CWD: "/repo/webshop", Round: 3}
+	got := composePrompt(Runtime{}, nil, b, "/s/003-plan.md", "/s/003-report.md", "/s/003-done")
+
+	if strings.Contains(got, "relevo runs `") {
+		t.Errorf("a gateless prompt must carry no gate line, got:\n%s", got)
+	}
+}
+
 // TestComposePromptReaderNamesTheOutputFile pins the reader handoff: it names
 // the actor's output file and carries no artifact-directory sentence, because
 // the actor writes nothing else in the repository. The prompt orders the reader
@@ -424,7 +457,7 @@ func TestComposePromptReaderNamesTheOutputFile(t *testing.T) {
 	rt := Runtime{Store: st}
 	b := store.Binding{Name: "reader-bind", CWD: "/repo", Round: 1, Shape: store.ShapeReader, Role: "reviewer"}
 
-	got := composePrompt(rt, b, "/s/001-prompt.md", "/s/001-report.md", "/s/001-done")
+	got := composePrompt(rt, nil, b, "/s/001-prompt.md", "/s/001-report.md", "/s/001-done")
 
 	if strings.Contains(got, "Write every file you produce") {
 		t.Errorf("reader prompt still asks the runner to write an artifact directory:\n%s", got)
@@ -462,7 +495,7 @@ func TestComposePromptReaderPutsTheBlockMessageLast(t *testing.T) {
 	rt := Runtime{Store: st}
 	b := store.Binding{Name: "reader-bind", CWD: "/repo", Round: 1, Shape: store.ShapeReader, Role: "reviewer"}
 
-	got := composePrompt(rt, b, "/s/001-prompt.md", "/s/001-report.md", "/s/001-done")
+	got := composePrompt(rt, nil, b, "/s/001-prompt.md", "/s/001-report.md", "/s/001-done")
 
 	for _, want := range []string{
 		"must be the last text you write",
@@ -891,7 +924,7 @@ func TestSendHeadlessNoTierDefaultsToHarness(t *testing.T) {
 	reportPath := rt.Store.ReportPath("webshop", 1)
 	donePath := rt.Store.DonePath("webshop", 1)
 	b, _ := rt.Store.Load("webshop")
-	wantPrompt := composePrompt(rt, b, planPath, reportPath, donePath)
+	wantPrompt := composePrompt(rt, nil, b, planPath, reportPath, donePath)
 	wantArgv := []string{
 		"agy", "-p", wantPrompt, "--model", "m", "--agent", "plan-executor",
 		"--output-format", "stream-json", "--print-timeout", "24h0m0s", "--add-dir", "/repo",

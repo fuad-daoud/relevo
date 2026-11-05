@@ -34,6 +34,11 @@ type DryRunDoc struct {
 type DryRunParam struct {
 	Name  string
 	Value string
+	// Source is the tier the gate's value fell back from, so the printed
+	// line tells a flag's own command from the repository's or the
+	// policy's. Only the gate param carries one, and only when a tier
+	// supplied its value: a custom workflow's own default names no tier.
+	Source string
 }
 
 type DryRunStep struct {
@@ -96,7 +101,13 @@ func ChainDryRun(ctx context.Context, rt Runtime, opts ChainOptions) (DryRunDoc,
 	// problems still read the unpruned definition, as before.
 	pruned := workflow.PruneEmptyCleanup(applied)
 	actors := rt.RoleRegistry().WorkflowActors()
-	doc := DryRunDoc{Workflow: pruned.Name, Origin: origin, Params: dryRunParams(pruned)}
+	// The gate line carries the tier its value fell back from, on the start
+	// line's terms: an explicit --param gate wins and is named as such, and
+	// a value no tier supplied -- a custom workflow's own default, or no
+	// gate at all -- names none. Resolution itself is untouched.
+	checks := resolve.RoleChecks(rt.RoleRegistry(), "builder")
+	gateRes := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, checks, repoSet)
+	doc := DryRunDoc{Workflow: pruned.Name, Origin: origin, Params: dryRunParams(pruned, dryRunGateSource(pruned, opts, gateRes))}
 	doc.Steps = dryRunSteps(pruned, actors, rt, opts)
 	doc.Cleanup = dryRunCleanup(pruned, cleanupRes, opts.Params)
 	for _, p := range workflow.Validate(applied, dryRunEnv(rt, opts)) {
@@ -137,8 +148,10 @@ func dryRunEnv(rt Runtime, opts ChainOptions) workflow.Env {
 	}
 }
 
-// dryRunParams is the workflow's effective params, sorted by name.
-func dryRunParams(def workflow.Definition) []DryRunParam {
+// dryRunParams is the workflow's effective params, sorted by name. The gate
+// param carries the tier its value fell back from; every other param carries
+// none.
+func dryRunParams(def workflow.Definition, gateSource string) []DryRunParam {
 	names := make([]string, 0, len(def.Params))
 	for name := range def.Params {
 		names = append(names, name)
@@ -146,9 +159,34 @@ func dryRunParams(def workflow.Definition) []DryRunParam {
 	sort.Strings(names)
 	out := make([]DryRunParam, 0, len(names))
 	for _, name := range names {
-		out = append(out, DryRunParam{Name: name, Value: workflow.RenderParams(def, "{{params."+name+"}}")})
+		p := DryRunParam{Name: name, Value: workflow.RenderParams(def, "{{params."+name+"}}")}
+		if name == "gate" {
+			p.Source = gateSource
+		}
+		out = append(out, p)
 	}
 	return out
+}
+
+// dryRunGateSource names the tier the dry run's effective gate fell back
+// from, following the start line's precedence: an explicit --param gate is
+// named as such, then the resolved tier when it supplied the value. A gate
+// the workflow's own definition supplied, and no gate at all, name no tier.
+func dryRunGateSource(def workflow.Definition, opts ChainOptions, res resolve.GateResolution) string {
+	if !chain.HasParam(def, "gate") {
+		return ""
+	}
+	gate := workflow.RenderParams(def, "{{params.gate}}")
+	if gate == "" {
+		return ""
+	}
+	if param, ok := opts.Params["gate"]; ok && param == gate {
+		return "--param gate"
+	}
+	if gate == res.Command {
+		return res.Source
+	}
+	return ""
 }
 
 // dryRunSteps lists every step of the resolved graph, sorted by id.
@@ -369,6 +407,10 @@ func RenderChainDryRun(doc DryRunDoc) string {
 	if len(doc.Params) > 0 {
 		b.WriteString("params:\n")
 		for _, p := range doc.Params {
+			if p.Source != "" {
+				fmt.Fprintf(&b, "  %s=%s (%s)\n", p.Name, p.Value, p.Source)
+				continue
+			}
 			fmt.Fprintf(&b, "  %s=%s\n", p.Name, p.Value)
 		}
 	}

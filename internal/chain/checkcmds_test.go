@@ -112,6 +112,7 @@ func TestCheckReportNamesTheCheckSource(t *testing.T) {
 	}{
 		{"--param gate", withGate("go test ./..."), resolve.GateResolution{}, map[string]string{"gate": "go test ./..."}, "go test ./...", "--param gate"},
 		{"policy default", withGate("make check"), resolve.GateResolution{Command: "make check", Source: resolve.GateSourcePolicy}, nil, "make check", resolve.GateSourcePolicy},
+		{"repo setting", withGate("make check"), resolve.GateResolution{Command: "make check", Source: resolve.GateSourceRepo}, nil, "make check", resolve.GateSourceRepo},
 		{"several commands join", multi, resolve.GateResolution{}, nil, "make check; go test ./...", "workflow"},
 		{"unmatched single falls back", withGate("make check"), resolve.GateResolution{Command: "other", Source: resolve.GateSourcePolicy}, nil, "make check", "workflow"},
 	}

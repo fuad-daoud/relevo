@@ -22,6 +22,38 @@ func TestChainFlagsServerRefusesWorkflow(t *testing.T) {
 	}
 }
 
+// TestChainFlagsServerTakesShippedWorkflow pins that --server accepts shipped
+// workflow names: the definition rides the workflow wire path, so the flags
+// parse into a start carrying both.
+func TestChainFlagsServerTakesShippedWorkflow(t *testing.T) {
+	for _, name := range []string{"default", "direct-fix"} {
+		opts, err := chainOptionsFrom(t, "--name", "shop", "--plan", chainPlanArg(t), "--no-feature", "--server", "zen", "--workflow", name)
+		if err != nil {
+			t.Fatalf("chainOptions(--server zen --workflow %s): %v", name, err)
+		}
+		if opts.Server != "zen" || opts.Workflow != name {
+			t.Errorf("Server/Workflow = %q/%q, want zen/%s", opts.Server, opts.Workflow, name)
+		}
+	}
+}
+
+// TestChainFlagsServerStillRefusesTaskFrom pins that --server still refuses the
+// inputs no server carries yet, naming the flag and the workflow feature.
+func TestChainFlagsServerStillRefusesTaskFrom(t *testing.T) {
+	for _, args := range [][]string{
+		{"--task", "build it"},
+		{"--task-file", chainPlanArg(t)},
+		{"--from", "review"},
+	} {
+		full := append([]string{"chain", "--name", "shop", "--server", "zen"}, args...)
+		_, _, err := captureOutput(t, func() error { return run(full) })
+		ce := requireCLIError(t, err, codeUsage, "")
+		if !strings.Contains(ce.message, args[0]) || !strings.Contains(ce.message, "workflow feature") {
+			t.Errorf("message = %q, want it to name %s and the workflow feature", ce.message, args[0])
+		}
+	}
+}
+
 // TestChainFlagsTaskExclusive pins that --task and --task-file are refused
 // together, before either is read.
 func TestChainFlagsTaskExclusive(t *testing.T) {

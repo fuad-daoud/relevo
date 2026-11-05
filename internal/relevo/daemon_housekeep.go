@@ -182,6 +182,9 @@ func (d *Daemon) ingestLiveBindings(ctx context.Context, bindings []store.Bindin
 	deps := IngestDeps(d.rt)
 	seen := make(map[string]string, len(bindings))
 	for _, b := range bindings {
+		if ctx.Err() != nil {
+			return
+		}
 		rev, rerr := d.rt.Store.Revision(b.Name)
 		if errors.Is(rerr, store.ErrNotFound) {
 			continue

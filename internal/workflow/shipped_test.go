@@ -46,9 +46,43 @@ func TestDefaultIsTheSpecDefault(t *testing.T) {
 }
 
 func TestShippedSeeds(t *testing.T) {
-	want := []string{"repair", "review", "correct", "scan", "fix"}
+	want := []string{"repair", "review", "correct", "scan", "fix", "fix-direct"}
 	if got := ShippedSeeds(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ShippedSeeds = %v, want %v", got, want)
+	}
+}
+
+func TestShippedReturnsTheNamedWorkflow(t *testing.T) {
+	t.Parallel()
+
+	def, ok := Shipped("default")
+	if !ok || def.Name != "default" {
+		t.Fatalf("Shipped(default) = %+v, %v, want the default definition", def, ok)
+	}
+	direct, ok := Shipped("direct-fix")
+	if !ok || direct.Name != "direct-fix" {
+		t.Fatalf("Shipped(direct-fix) = %+v, %v, want the direct-fix definition", direct, ok)
+	}
+	if _, ok := Shipped("bogus"); ok {
+		t.Fatal("Shipped(bogus): want false for an unknown shipped name")
+	}
+}
+
+func TestIsShippedNamesTheShippedWorkflows(t *testing.T) {
+	t.Parallel()
+
+	if !IsShipped(Default()) {
+		t.Error("IsShipped(default): want true")
+	}
+	direct, ok := Shipped("direct-fix")
+	if !ok {
+		t.Fatal("Shipped(direct-fix): want true")
+	}
+	if !IsShipped(direct) {
+		t.Error("IsShipped(direct-fix): want true")
+	}
+	if IsShipped(Definition{Name: "custom"}) {
+		t.Error("IsShipped(custom): want false")
 	}
 }
 
@@ -148,6 +182,51 @@ func TestDefaultCleanupPlacement(t *testing.T) {
 	if problems := Validate(def, shippedEnv()); len(problems) != 0 {
 		t.Errorf("default validates with %v, want clean", problems)
 	}
+}
+
+func TestDirectFixRoutesChangesThroughFixDirect(t *testing.T) {
+	t.Parallel()
+
+	def, ok := Shipped("direct-fix")
+	if !ok {
+		t.Fatal("Shipped(direct-fix): want true")
+	}
+	if got, want := def.Steps["review"].On, map[string]Target{
+		"verdict=pass":    StepTarget("plans"),
+		"verdict=changes": StepTarget("fix-direct"),
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("review on = %+v, want %+v", got, want)
+	}
+	if got, want := def.Steps["fix-direct"].On, map[string]Target{
+		"done": StepTarget("check"),
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("fix-direct on = %+v, want %+v", got, want)
+	}
+	budget := def.Steps["fix-direct"].Budget
+	if budget == nil || budget.Max.Count != 1 || !reflect.DeepEqual(budget.Per.Steps, []string{"plans"}) ||
+		budget.Then != StepTarget("correct") {
+		t.Fatalf("fix-direct budget = %+v, want max 1 per plans then correct", budget)
+	}
+}
+
+func TestDirectFixOverflowsToCorrectAfterOneVisit(t *testing.T) {
+	t.Parallel()
+
+	def, ok := Shipped("direct-fix")
+	if !ok {
+		t.Fatal("Shipped(direct-fix): want true")
+	}
+	def.Params["gate"] = Param{Kind: ParamString, Str: "make check"}
+	s, actions := Start(def, StartInputs{Plans: []string{"plan-1.md"}})
+	if a := only(t, actions); a.Kind != ActionSend || a.Step != "build" {
+		t.Fatalf("start action = %+v, want a send to build", a)
+	}
+	s = advance(t, def, s, Event{Kind: EventStepClosed, Step: "build", Member: "builder", Status: "done"}, ActionRunCheck, "check")
+	s = checkRun(t, def, s, "check", 1, "green", "review")
+	s = stepClose(t, def, s, "review", "reviewer", map[string]string{"verdict": "changes"}, "fix-direct")
+	s = advance(t, def, s, Event{Kind: EventStepClosed, Step: "fix-direct", Member: "builder", Status: "done"}, ActionRunCheck, "check")
+	s = checkRun(t, def, s, "check", 2, "green", "review")
+	stepClose(t, def, s, "review", "reviewer", map[string]string{"verdict": "changes"}, "correct")
 }
 
 func TestDefaultWithNoGateGoesFromBuildToReview(t *testing.T) {

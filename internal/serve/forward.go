@@ -114,7 +114,8 @@ func (s *Server) sendOne(ctx context.Context, cl *client.Client, row burst.NodeR
 			_ = ship.snap.Body.Close()
 		}
 	}()
-	if !s.ensureNodeBinding(ctx, cl, row, w, ship, now) {
+	created, ok := s.ensureNodeBinding(ctx, cl, row, w, ship, now)
+	if !ok {
 		restoreForwardStage(ctx, rt, stage)
 		return false
 	}
@@ -125,7 +126,7 @@ func (s *Server) sendOne(ctx context.Context, cl *client.Client, row burst.NodeR
 	_, serr := cl.StartRound(ctx, row.ID, fwd.NodeBinding, fwd.Round, ship.plan,
 		bundle, ship.tier, w.b.BuilderCandidate, false, ship.tags, false, nil)
 	if serr == nil || burstHTTPStatus(serr, http.StatusConflict) {
-		if s.confirmSend(w, row, ship.outSHA, now) {
+		if s.confirmSend(w, row, ship.outSHA, now, created) {
 			return true
 		}
 		restoreForwardStage(ctx, rt, stage)
@@ -268,20 +269,22 @@ func forwardTags(ctx context.Context, rt relevo.Runtime, bare string) ([]remote.
 }
 
 // ensureNodeBinding creates the round's binding on the node when it is
-// missing. A present binding is left alone: the start below answers an
-// identical retry without sending twice. A refusal returns the round to
-// the local queue, where it can run instead; a transport failure keeps
-// the claim for the next tick.
-func (s *Server) ensureNodeBinding(ctx context.Context, cl *client.Client, row burst.NodeRow, w sendWork, ship *forwardShip, now time.Time) bool {
+// missing, and reports whether this call created it: a start over a binding
+// this send made is a cold forward, whatever the node's binding looks like
+// when the confirm reads it back. A present binding is left alone: the start
+// below answers an identical retry without sending twice. A refusal returns
+// the round to the local queue, where it can run instead; a transport failure
+// keeps the claim for the next tick.
+func (s *Server) ensureNodeBinding(ctx context.Context, cl *client.Client, row burst.NodeRow, w sendWork, ship *forwardShip, now time.Time) (created bool, ok bool) {
 	fwd := *w.b.Burst.Forward
 	_, gerr := cl.GetBinding(ctx, row.ID, fwd.NodeBinding)
 	if gerr == nil {
-		return true
+		return false, true
 	}
 	if !burstHTTPStatus(gerr, http.StatusNotFound) {
 		if burstForwardRefused(gerr) {
 			s.refuseForward(w, fwd, now, "burst: node refused a forward binding, requeued", gerr)
-			return false
+			return false, false
 		}
 		if burstForwardUnreachable(gerr) {
 			s.noteNodeUnreachable(now, row)
@@ -289,19 +292,24 @@ func (s *Server) ensureNodeBinding(ctx context.Context, cl *client.Client, row b
 			slog.Warn("burst: node binding check failed, kept sending", "owner", string(w.id),
 				"binding", w.b.Name, "node", fwd.Node, "err", gerr)
 		}
-		return false
+		return false, false
 	}
 	req := remote.CreateBindingRequest{
 		Name: fwd.NodeBinding, RepoID: ship.repoID, BaseCommit: ship.outSHA,
 		Candidate: w.b.BuilderCandidate, Tier: ship.tier, Role: w.b.Role,
 	}
 	_, cerr := cl.CreateBinding(ctx, row.ID, req)
-	if cerr == nil || burstHTTPStatus(cerr, http.StatusConflict) {
-		return true
+	if cerr == nil {
+		return true, true
+	}
+	if burstHTTPStatus(cerr, http.StatusConflict) {
+		// The binding was not this call's doing: another send, or an older
+		// round the node still knows it by.
+		return false, true
 	}
 	if burstForwardRefused(cerr) {
 		s.refuseForward(w, fwd, now, "burst: node refused a forward binding, requeued", cerr)
-		return false
+		return false, false
 	}
 	if burstForwardUnreachable(cerr) {
 		s.noteNodeUnreachable(now, row)
@@ -309,7 +317,7 @@ func (s *Server) ensureNodeBinding(ctx context.Context, cl *client.Client, row b
 		slog.Warn("burst: forward binding create failed, kept sending", "owner", string(w.id),
 			"binding", w.b.Name, "node", fwd.Node, "err", cerr)
 	}
-	return false
+	return false, false
 }
 
 // confirmSend marks a sent forward running after the node's yes. The
@@ -317,7 +325,12 @@ func (s *Server) ensureNodeBinding(ctx context.Context, cl *client.Client, row b
 // matches, so a result for a superseded claim is dropped. The table learns
 // the send after the binding does, each under its own lock: no lock spans
 // both, so a report merging between them still wins the row guard.
-func (s *Server) confirmSend(w sendWork, row burst.NodeRow, outSHA string, now time.Time) bool {
+//
+// created says whether this send made the node binding. The entry it writes
+// is the round's start evidence, so a retry that found the binding standing
+// after an earlier call created it must not read as warm: the forward that
+// created the binding stays cold until some send to this node was confirmed.
+func (s *Server) confirmSend(w sendWork, row burst.NodeRow, outSHA string, now time.Time, created bool) bool {
 	fwd := *w.b.Burst.Forward
 	st := s.ownerStore(w.ownerPath)
 	b, err := st.Load(w.b.Name)
@@ -329,6 +342,7 @@ func (s *Server) confirmSend(w sendWork, row burst.NodeRow, outSHA string, now t
 	if have == nil || have.Phase != "sending" || have.Node != fwd.Node || b.Round != fwd.Round {
 		return false
 	}
+	cold := created || b.Burst.Shipped[have.Node] == ""
 	have.Phase = "running"
 	have.SentAt = now
 	if b.Burst.Shipped == nil {
@@ -339,6 +353,22 @@ func (s *Server) confirmSend(w sendWork, row burst.NodeRow, outSHA string, now t
 	if err := st.Save(b); err != nil {
 		slog.Warn("burst: confirm forward: save failed", "binding", w.b.Name, "err", err)
 		return false
+	}
+	word := "warm"
+	if cold {
+		word = "cold"
+	}
+	rt := s.runtimeAt(w.ownerPath)
+	if err := rt.Store.AppendLog(w.b.Name, store.LogEntry{
+		TS: now, Round: have.Round, Direction: store.DirToMasterMind,
+		Kind: store.KindQueue, Confirmed: true,
+		Note: store.ForwardedNotePrefix + have.Node + " (" + word + ")",
+	}); err != nil {
+		// A note that will not land never fails the send: the round is on
+		// the node whatever the head log says, and a dropped fact reads as
+		// facts missing, not as a send that did not happen.
+		slog.Warn("burst: confirm forward: send note not appended", "binding", w.b.Name,
+			"round", have.Round, "node", have.Node, "err", err)
 	}
 	s.noteForwardSent(row, now)
 	s.clearNodeProblem(row)

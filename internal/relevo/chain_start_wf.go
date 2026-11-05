@@ -312,7 +312,7 @@ func chainValidateWorkflow(rt Runtime, def workflow.Definition, given workflow.G
 
 // chainWorkflowMembers converts the planned members into the chainMember shape
 // the member builders take. The keeper writer takes the builder part; the
-// shipped default's reviewer, planner and security params name their parts;
+// shipped workflow's reviewer, planner and security params name their parts;
 // every other actor keeps its own name as its part.
 func chainWorkflowMembers(def workflow.Definition, planned []chain.PlannedMember, keeper string) []chainMember {
 	parts := chain.DefaultParts(def)

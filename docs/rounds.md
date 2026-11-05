@@ -205,7 +205,13 @@ relevo chain --name shop --plan plan-a.md --plan plan-b.md --no-feature
 relevo status --chains
 ```
 
-A `--workflow` runs a saved workflow instead of the shipped
+`--workflow direct-fix` runs the shipped alternative: a reviewer's first
+`changes` on a plan goes straight back to the builder with the findings, with no
+planner round, and a second reaches the planner. It works with `--server` too, on
+a server new enough to know it; `--server` takes no other named workflow beyond
+the shipped ones.
+
+A `--workflow` also runs a saved workflow instead of the shipped
 build-review-correct graph; `relevo config workflow` lists, adds and edits the
 saved ones. `relevo help --json chain` lists every flag.
 

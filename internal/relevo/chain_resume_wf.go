@@ -485,12 +485,14 @@ func chainResumeRunAction(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 }
 
 // chainResumeStagedText returns the staged prompt a resume re-sends: the
-// awaited round, when the action re-runs that member's step and the staged
-// file is still there. A replaced check walks back past any repair prompts,
-// whose bytes name the failed check; a walk ending on a non-repair prompt has
-// nothing to re-send.
+// awaited round, when the action re-enters the halted step for the awaited
+// member and the staged file is still there. A --from move to another step
+// renders that step's seed fresh instead, even for the same actor: the staged
+// bytes belong to the halted step. A replaced check walks back past any
+// repair prompts, whose bytes name the failed check; a walk ending on a
+// non-repair prompt has nothing to re-send.
 func chainResumeStagedText(rt Runtime, tx *store.Tx, c db.ChainRow, before workflow.State, act workflow.Action, gateChanged bool) (string, string, bool) {
-	if before.Awaiting.Member == "" || before.Awaiting.Round <= 0 || act.Actor != before.Awaiting.Member {
+	if before.Awaiting.Member == "" || before.Awaiting.Round <= 0 || act.Actor != before.Awaiting.Member || act.Step != before.At {
 		return "", "", false
 	}
 	name, err := chainFlowMemberName(tx, c, act.Actor)

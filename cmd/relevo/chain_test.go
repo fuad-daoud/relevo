@@ -380,6 +380,34 @@ func TestChainFlagSetDefinesGateFlags(t *testing.T) {
 	}
 }
 
+// TestGateHelpNamesTheFallbackOrder pins the gate flags' help on the chain
+// and bind verbs: --gate names the tiers in fallback order -- this flag,
+// then the repository's gate, then the policy default -- and --no-gate names
+// the two tiers it opts out of. The test builds flag sets only, so no
+// harness runs and nothing reaches the network.
+func TestGateHelpNamesTheFallbackOrder(t *testing.T) {
+	chainFS := flag.NewFlagSet("relevo chain", flag.ContinueOnError)
+	chainFlagSet(chainFS)
+	bindFS := flag.NewFlagSet("relevo bind", flag.ContinueOnError)
+	bindFlagSet(bindFS)
+	ordered := func(t *testing.T, usage string, tiers ...string) {
+		t.Helper()
+		at := 0
+		for _, tier := range tiers {
+			i := strings.Index(usage[at:], tier)
+			if i < 0 {
+				t.Errorf("usage = %q, want it to name %q after %q", usage, tier, usage[:at])
+				return
+			}
+			at += i + len(tier)
+		}
+	}
+	for _, fs := range []*flag.FlagSet{chainFS, bindFS} {
+		ordered(t, fs.Lookup("gate").Usage, "this flag", "repo", "policy gate.default")
+		ordered(t, fs.Lookup("no-gate").Usage, "repo", "policy gate.default")
+	}
+}
+
 // TestChainGateFlagsParseIntoOptions pins the start arm's mapping: --gate,
 // --no-gate and --regate land in ChainOptions.
 func TestChainGateFlagsParseIntoOptions(t *testing.T) {
