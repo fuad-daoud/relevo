@@ -204,24 +204,24 @@ func (s *StopTransport) BlobStagingDir() string {
 	return ""
 }
 
-func (s *StopTransport) PutBlob(key, stagingPath string) (int64, bool, error) {
+func (s *StopTransport) PutBlobs(items []synclog.BlobBatchItem) ([]synclog.BlobBatchResult, error) {
 	if s.stopped.Load() {
-		return 0, false, ErrStopped
+		return nil, ErrStopped
 	}
 	m, ok := s.inner.(synclog.BlobMover)
 	if !ok {
-		return 0, false, fmt.Errorf("sync: %w: the client moves no bodies", db.ErrInvalid)
+		return nil, fmt.Errorf("sync: %w: the client moves no bodies", db.ErrInvalid)
 	}
-	return m.PutBlob(key, stagingPath)
+	return m.PutBlobs(items)
 }
 
-func (s *StopTransport) GetBlob(key, stagingPath string, max int64) (int64, error) {
+func (s *StopTransport) GetBlobs(items []synclog.BlobBatchItem) ([]synclog.BlobBatchResult, error) {
 	if s.stopped.Load() {
-		return 0, ErrStopped
+		return nil, ErrStopped
 	}
 	m, ok := s.inner.(synclog.BlobMover)
 	if !ok {
-		return 0, fmt.Errorf("sync: %w: the client moves no bodies", db.ErrInvalid)
+		return nil, fmt.Errorf("sync: %w: the client moves no bodies", db.ErrInvalid)
 	}
-	return m.GetBlob(key, stagingPath, max)
+	return m.GetBlobs(items)
 }

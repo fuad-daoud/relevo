@@ -86,6 +86,63 @@ func TestExportUploadsBeforeAppend(t *testing.T) {
 	}
 }
 
+// One failed key is the batch's failure: a mid-batch refusal appends no row
+// and leaves the outbox whole, so the pass that follows is offered the same
+// batch again -- bodies it did store are skipped on the rerun, and no entry
+// naming a body that never landed reaches the log.
+func TestExportAppendsNothingWhenOneKeyOfABatchFails(t *testing.T) {
+	t.Parallel()
+	d, path := exporterFile(t, "m1")
+	seed(t, path,
+		insertRecord("01A", "m1"),
+		insertSizedRoundFile("01A", "kept", 50<<10),
+		insertSizedRoundFile("01A", "lost", 60<<10),
+	)
+
+	staging := t.TempDir()
+	log, mover := NewBlobTransport("m1", staging)
+	// Both bodies are distinct, so both join one batch; only the second key
+	// fails, which is what a whole-mover refusal cannot show.
+	keptRef := RefFor(bytes.Repeat([]byte{0}, 50<<10), 0)
+	lostRef := RefFor(bytes.Repeat([]byte{0}, 60<<10), 0)
+	mover.PutFail = map[string]error{
+		blobstore.Key("m1", lostRef.SHA256): errors.New("synclog: the bucket refused one key of the batch"),
+	}
+	if _, err := blobExporter(d, log).Export(); err == nil {
+		t.Fatal("Export with a failing batch key returned no error")
+	}
+	if n := len(log.appended()); n != 0 {
+		t.Fatalf("the transport was handed %d entries, want none beside a failed batch", n)
+	}
+	if got, err := log.Stats(); err != nil || got.Entries != 0 {
+		t.Fatalf("the log holds %d entries (err %v), want none", got.Entries, err)
+	}
+	want := `1 binding_record ["01A"] insert|2 round_file ["01A","kept"] insert|3 round_file ["01A","lost"] insert`
+	if out := outboxRows(t, d); out != want {
+		t.Fatalf("outbox after the failed batch = %q, want the whole drain offered again", out)
+	}
+	assertEmptyStaging(t, staging, "after a batch with one failed key")
+
+	// The next pass, with the fault gone, is the rerun: the whole batch is
+	// offered again, both bodies land, and every row appends once.
+	mover.PutFail = nil
+	if _, err := blobExporter(d, log).Export(); err != nil {
+		t.Fatalf("the retry Export: %v", err)
+	}
+	if out := outboxRows(t, d); out != "" {
+		t.Fatalf("outbox after the retry = %q, want it empty", out)
+	}
+	entries := log.appended()
+	if len(entries) != 3 {
+		t.Fatalf("the retry appended %d entries, want the record and both round_files", len(entries))
+	}
+	for _, ref := range []BlobRef{keptRef, lostRef} {
+		if have, err := log.Has(t.Context(), blobstore.Key("m1", ref.SHA256)); err != nil || !have {
+			t.Errorf("the retry left %s out of the store (err %v)", ref.SHA256, err)
+		}
+	}
+}
+
 // A value under the threshold travels inline and a value over it travels as a
 // ref, so the threshold is the only thing separating a small row from a large
 // one and nothing else decides.

@@ -252,33 +252,35 @@ func (s *Supervisor) ClaimIdentity(ctx context.Context, origin, token string, at
 // so writer and worker name it from one place.
 func (s *Supervisor) BlobStagingDir() string { return s.cfg.BlobStaging }
 
-// PutBlob uploads the staged body under key, through the breaker like every call:
-// a worker silent on a put is dead whatever it was doing.
-func (s *Supervisor) PutBlob(key, stagingPath string) (int64, bool, error) {
+// PutBlobs uploads a batch of staged bodies, through the breaker like every
+// call: a worker silent on a put is dead whatever it was doing, and a batch
+// whose pipe call answered but whose reply carries a failed key was refused,
+// so it settles as that refusal -- which is what latches sync on a permanently
+// missing body rather than losing the verdict under a success. A batch with
+// no failed key is the call that succeeds.
+func (s *Supervisor) PutBlobs(items []synclog.BlobBatchItem) ([]synclog.BlobBatchResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var (
-		bytes   int64
-		skipped bool
-	)
-	err := s.drive("put_blob", func(c *Client) error {
+	var results []synclog.BlobBatchResult
+	err := s.drive("put_blobs", func(c *Client) error {
 		var e error
-		bytes, skipped, e = c.PutBlob(key, stagingPath)
+		results, e = c.PutBlobs(items)
 		return e
 	})
-	return bytes, skipped, err
+	return results, err
 }
 
-func (s *Supervisor) GetBlob(key, stagingPath string, max int64) (int64, error) {
+// GetBlobs fetches a batch through the breaker for the reason PutBlobs gives.
+func (s *Supervisor) GetBlobs(items []synclog.BlobBatchItem) ([]synclog.BlobBatchResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var n int64
-	err := s.drive("get_blob", func(c *Client) error {
+	var results []synclog.BlobBatchResult
+	err := s.drive("get_blobs", func(c *Client) error {
 		var e error
-		n, e = c.GetBlob(key, stagingPath, max)
+		results, e = c.GetBlobs(items)
 		return e
 	})
-	return n, err
+	return results, err
 }
 
 // Cancel stops the current worker and keeps nothing to reuse, without the call

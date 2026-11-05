@@ -414,11 +414,16 @@ func (m *memLog) readTraffic() map[string]TrafficRow {
 // it is appended, which only a refusing mover can show.
 type MemBlobMover struct {
 	store *blobstore.MemBlobStore
-	// mu guards the counters: a batch's fetches run side by side.
+	// mu guards the counters: one mover is the bucket the machines of a test
+	// share, and any of them can be moved to at any time.
 	mu sync.Mutex
-	// Err is what PutBlob returns instead of storing. Nil puts.
+	// Err is what PutBlobs answers for every key instead of storing. Nil puts.
 	Err error
-	// GetErr is what GetBlob returns instead of fetching. Nil fetches.
+	// PutFail names keys whose put fails while their batch siblings succeed: a
+	// mid-batch per-key failure a mover alone cannot show.
+	PutFail map[string]error
+	// GetErr is what GetBlobs answers for every key instead of fetching. Nil
+	// fetches.
 	GetErr error
 	// Puts counts stored bodies and Gets fetched ones, so a test can tell an
 	// upload-free batch without reading the store.
@@ -434,46 +439,74 @@ func NewMemBlobMover() *MemBlobMover {
 // Store is the store underneath, for reading what a run left behind.
 func (m *MemBlobMover) Store() *blobstore.MemBlobStore { return m.store }
 
-// PutBlob stores the body staged at stagingPath under key. It works through the
-// staging file like the real mover, so a never-written file surfaces as failure.
-func (m *MemBlobMover) PutBlob(key, stagingPath string) (int64, bool, error) {
-	if m.Err != nil {
-		return 0, false, m.Err
-	}
-	body, err := os.ReadFile(stagingPath)
-	if err != nil {
-		return 0, false, fmt.Errorf("synclog: mem mover read %s: %w", stagingPath, err)
-	}
+// PutBlobs stores each staged body under its key. It works through the staging
+// file like the real mover, so a never-written file surfaces as that key's
+// failure while the rest of its batch stores.
+func (m *MemBlobMover) PutBlobs(items []BlobBatchItem) ([]BlobBatchResult, error) {
+	results := make([]BlobBatchResult, len(items))
 	ctx := context.Background()
-	if err := m.store.Put(ctx, key, bytes.NewReader(body), int64(len(body))); err != nil {
-		return 0, false, err
+	for n, item := range items {
+		results[n].Key = item.Key
+		if m.Err != nil {
+			results[n].Err = m.Err
+			continue
+		}
+		if fail, ok := m.PutFail[item.Key]; ok {
+			results[n].Err = fail
+			continue
+		}
+		body, err := os.ReadFile(item.Staging)
+		if err != nil {
+			results[n].Err = fmt.Errorf("synclog: mem mover read %s: %w", item.Staging, err)
+			continue
+		}
+		if err := m.store.Put(ctx, item.Key, bytes.NewReader(body), int64(len(body))); err != nil {
+			results[n].Err = err
+			continue
+		}
+		m.mu.Lock()
+		m.Puts++
+		m.mu.Unlock()
+		results[n].Bytes = int64(len(body))
 	}
-	m.mu.Lock()
-	m.Puts++
-	m.mu.Unlock()
-	return int64(len(body)), false, nil
+	return results, nil
 }
 
-// GetBlob writes the body under key to stagingPath, or reports the store's
-// ErrNotFound, which the importer latches rather than retries.
-func (m *MemBlobMover) GetBlob(key, stagingPath string, max int64) (int64, error) {
-	m.mu.Lock()
-	m.Gets++
-	m.mu.Unlock()
-	if m.GetErr != nil {
-		return 0, m.GetErr
+// GetBlobs writes each body under the items' keys to the staging files they
+// name, or gives that key the store's ErrNotFound, which the importer latches
+// rather than retries.
+func (m *MemBlobMover) GetBlobs(items []BlobBatchItem) ([]BlobBatchResult, error) {
+	results := make([]BlobBatchResult, len(items))
+	ctx := context.Background()
+	for n, item := range items {
+		results[n].Key = item.Key
+		m.mu.Lock()
+		m.Gets++
+		m.mu.Unlock()
+		if m.GetErr != nil {
+			results[n].Err = m.GetErr
+			continue
+		}
+		results[n].Bytes, results[n].Err = m.fetchOne(item, ctx)
 	}
-	f, err := os.Create(stagingPath)
+	return results, nil
+}
+
+// fetchOne moves one get item through the staging file: created first, like
+// the real mover's write, so a store answer that never carries a body still
+// leaves the file the caller removes.
+func (m *MemBlobMover) fetchOne(item BlobBatchItem, ctx context.Context) (int64, error) {
+	f, err := os.Create(item.Staging)
 	if err != nil {
-		return 0, fmt.Errorf("synclog: mem mover create %s: %w", stagingPath, err)
+		return 0, fmt.Errorf("synclog: mem mover create %s: %w", item.Staging, err)
 	}
 	defer func() { _ = f.Close() }()
 	var body bytes.Buffer
-	if _, err := m.store.Get(context.Background(), key, &body); err != nil {
+	if _, err := m.store.Get(ctx, item.Key, &body); err != nil {
 		return 0, err
 	}
-	if int64(body.Len()) > max {
-		return 0, fmt.Errorf("synclog: mem mover get %s: %d bytes, past %d", key, body.Len(), max)
+	if int64(body.Len()) > item.Max {
+		return 0, fmt.Errorf("synclog: mem mover get %s: %d bytes, past %d", item.Key, body.Len(), item.Max)
 	}
 	n, err := f.Write(body.Bytes())
 	return int64(n), err

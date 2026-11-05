@@ -25,7 +25,11 @@ import (
 //
 // Version 4 carries AfterOrigin and AfterSeq on Entry, ClaimIdentity, and the
 // ctl:takeover entry kind.
-const ProtocolVersion = 4
+//
+// Version 5 carries put_blobs and get_blobs, which move a batch of bodies
+// with one result per key; version 4 has no batch verbs, so a daemon speaking
+// it would read those answers wrongly.
+const ProtocolVersion = 5
 
 // The refusals the worker answers with rather than dying over: a request that
 // breaks one has a well-formed frame, so the reply carries the reason and the
@@ -188,6 +192,10 @@ type Request struct {
 	// Max is the most bytes get_blob may write: the length the ref declares. A
 	// body that runs past it is cut off there rather than downloaded whole.
 	Max int64 `json:"max,omitempty"`
+	// Blobs is the batch put_blobs uploads or get_blobs fetches, one item per
+	// key. The single verbs read Key, Staging and Max instead, so this field
+	// is absent on any other verb.
+	Blobs []BlobItem `json:"blobs,omitempty"`
 	// Entries is the batch an export appends as one write.
 	Entries []Entry `json:"entries,omitempty"`
 	// Marks is each other origin's last applied sequence number, so a pull
@@ -264,6 +272,11 @@ type Response struct {
 	// Skipped says a put_blob found the object already in the store and sent
 	// nothing: the wanted object is there, so the entry may be appended.
 	Skipped bool `json:"skipped,omitempty"`
+	// Results is what put_blobs or get_blobs moved per key, in the order the
+	// request named them. One key's failure rides here rather than refusing
+	// the whole call, so this reply is OK even where some entry carries an
+	// error of its own.
+	Results []BlobResult `json:"results,omitempty"`
 	// Stats is what the log holds, on stats alone.
 	Stats *Stats `json:"stats,omitempty"`
 	// Marks is what a read_marks answered with: one object rather than four

@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -35,6 +36,11 @@ type testBucket struct {
 	bodies  map[string][]byte
 	srv     *httptest.Server
 	Methods []string
+	// FaultGets and FaultPuts name keys the bucket answers with a 500: a fault
+	// the store can read neither as an absent object nor as a marked refusal,
+	// which is how a test reaches a per-key failure a later attempt can get past.
+	FaultGets map[string]bool
+	FaultPuts map[string]bool
 }
 
 // newTestBucket starts a bucket on a local port and stops it with the test.
@@ -66,6 +72,11 @@ func (b *testBucket) handle(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
+		if b.FaultPuts[key] {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`<?xml version="1.0"?><Error><Code>InternalError</Code></Error>`))
+			return
+		}
 		b.bodies[key] = body
 		w.WriteHeader(http.StatusOK)
 	case http.MethodGet:
@@ -74,6 +85,11 @@ func (b *testBucket) handle(w http.ResponseWriter, r *http.Request) {
 			// The shape the store reads a 404 by: an S3 error document.
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`<?xml version="1.0"?><Error><Code>NoSuchKey</Code></Error>`))
+			return
+		}
+		if b.FaultGets[key] {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`<?xml version="1.0"?><Error><Code>InternalError</Code></Error>`))
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -99,6 +115,14 @@ func (b *testBucket) body(key string) ([]byte, bool) {
 	return body, ok
 }
 
+// count is how many bodies the bucket holds: a rerun of an idempotent batch
+// must not leave more behind than the batch first put there.
+func (b *testBucket) count() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.bodies)
+}
+
 // keyFor is the store's key for a body: the digest of what was staged.
 func keyFor(body []byte) string {
 	sum := sha256.Sum256(body)
@@ -114,6 +138,23 @@ func stagedPath(t *testing.T, body []byte) (path, key string) {
 		t.Fatalf("stage: %v", err)
 	}
 	return path, keyFor(body)
+}
+
+// stagedBatch writes each body into dir under its digest and returns the mover
+// items naming them: the shape uploadPending hands the mover, so a client test
+// drives the same request the exporter builds.
+func stagedBatch(t *testing.T, dir string, bodies ...[]byte) []synclog.BlobBatchItem {
+	t.Helper()
+	items := make([]synclog.BlobBatchItem, len(bodies))
+	for n, body := range bodies {
+		digest := digestHex(body)
+		path := filepath.Join(dir, digest)
+		if err := os.WriteFile(path, body, 0o600); err != nil {
+			t.Fatalf("stage: %v", err)
+		}
+		items[n] = synclog.BlobBatchItem{Key: blobstore.Key("origin-a", digest), Staging: path}
+	}
+	return items
 }
 
 // itoa avoids pulling strconv in for one call.
@@ -146,95 +187,183 @@ func blobHandshake(bucket *testBucket) Config {
 }
 
 // TestPipeClientMovesBlobsOverThePipe pins the client's blob calls end to end
-// against a real store: a staged body is stored under its digest, a second put of
-// it is a skip with no bytes, and a fetch writes the whole body back out.
+// against a real store: a staged batch stores every body under its digest, a
+// second put of it answers every key as a skip with no bytes, and a fetched
+// batch writes every whole body back out.
 func TestPipeClientMovesBlobsOverThePipe(t *testing.T) {
 	bucket := newTestBucket(t)
-	body := []byte("a body this machine is about to publish")
-	path, key := stagedPath(t, body)
+	dir := t.TempDir()
+	first := []byte("a body this machine is about to publish")
+	second := []byte("another body riding the same call")
 
 	c, err := startFakeWorker(t, modeBlobs, blobHandshake(bucket))
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	sent, skipped, err := c.PutBlob(key, path)
+	results, err := c.PutBlobs(stagedBatch(t, dir, first, second))
 	if err != nil {
-		t.Fatalf("PutBlob: %v", err)
+		t.Fatalf("PutBlobs: %v", err)
 	}
-	if sent != int64(len(body)) || skipped {
-		t.Errorf("PutBlob = %d/%v, want %d bytes and no skip", sent, skipped, len(body))
+	if len(results) != 2 {
+		t.Fatalf("results = %d, want one verdict per key", len(results))
 	}
-	if stored, ok := bucket.body(key); !ok || string(stored) != string(body) {
-		t.Errorf("the bucket holds %q, want the staged body", stored)
+	for n, body := range [][]byte{first, second} {
+		if results[n].Bytes != int64(len(body)) || results[n].Skipped || results[n].Err != nil {
+			t.Errorf("verdict %d = %+v, want the body's bytes moved with no failure", n, results[n])
+		}
+	}
+	for n, body := range [][]byte{first, second} {
+		if stored, ok := bucket.body(keyFor(body)); !ok || string(stored) != string(body) {
+			t.Errorf("the bucket holds %q at verdict %d's key, want the staged body", stored, n)
+		}
 	}
 
-	// The second put is the case worth pinning: the object is already there, so
-	// it must move no bytes and answer as a skip. A caller that uploaded the same
-	// body twice would otherwise bill the month for the second copy.
-	sent, skipped, err = c.PutBlob(key, path)
+	// The second put is the case worth pinning: the objects are already there,
+	// so it must move no bytes and answer every key as a skip. A caller that
+	// uploaded the same bodies twice would otherwise bill the month for the
+	// second copies.
+	results, err = c.PutBlobs(stagedBatch(t, dir, first, second))
 	if err != nil {
-		t.Fatalf("the second PutBlob: %v", err)
+		t.Fatalf("the second PutBlobs: %v", err)
 	}
-	if !skipped || sent != 0 {
-		t.Errorf("the second PutBlob = %d/%v, want a skip moving nothing", sent, skipped)
+	for n, r := range results {
+		if !r.Skipped || r.Bytes != 0 {
+			t.Errorf("the second verdict %d = %+v, want a skip moving nothing", n, r)
+		}
 	}
 
-	fetched := filepath.Join(filepath.Dir(path), "fetched")
-	got, err := c.GetBlob(key, fetched, 64<<20)
+	items := stagedBatch(t, dir, first, second)
+	fetched := make([]synclog.BlobBatchItem, len(items))
+	for n, item := range items {
+		fetched[n] = synclog.BlobBatchItem{
+			Key:     item.Key,
+			Staging: filepath.Join(dir, "fetched-"+filepath.Base(item.Staging)),
+			Max:     64 << 20,
+		}
+	}
+	results, err = c.GetBlobs(fetched)
 	if err != nil {
-		t.Fatalf("GetBlob: %v", err)
+		t.Fatalf("GetBlobs: %v", err)
 	}
-	if got != int64(len(body)) {
-		t.Errorf("GetBlob = %d, want %d", got, len(body))
-	}
-	reread, err := os.ReadFile(fetched)
-	if err != nil {
-		t.Fatalf("read the fetched body: %v", err)
-	}
-	if string(reread) != string(body) {
-		t.Errorf("the fetched body is %q, want %q", reread, body)
+	for n, body := range [][]byte{first, second} {
+		if results[n].Err != nil || results[n].Bytes != int64(len(body)) {
+			t.Fatalf("fetched verdict %d = %+v, want the body's bytes", n, results[n])
+		}
+		reread, err := os.ReadFile(fetched[n].Staging)
+		if err != nil {
+			t.Fatalf("read the fetched body: %v", err)
+		}
+		if string(reread) != string(body) {
+			t.Errorf("the fetched body is %q, want %q", reread, body)
+		}
 	}
 }
 
-// TestPipeClientMapsAMissingBodyToTheSentinel pins that a 404 arrives as
-// synclog.ErrBlobMissing rather than an ordinary refusal. The importer latches
-// the origin on that sentinel; an unclassified refusal would be retried, and
-// retrying will not put the object there.
+// TestPipeClientMapsAMissingBodyToTheSentinel pins that a batch key whose body
+// the bucket does not hold answers as synclog.ErrBlobMissing under ErrRefused
+// while its sibling keys answer with their bodies: the importer latches the
+// origin on that sentinel, and a missing sibling must not collapse the keys
+// the store did serve.
 func TestPipeClientMapsAMissingBodyToTheSentinel(t *testing.T) {
 	bucket := newTestBucket(t)
+	dir := t.TempDir()
+	present := []byte("a body this machine did upload")
+	c, err := startFakeWorker(t, modeBlobs, blobHandshake(bucket))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, err := c.PutBlobs(stagedBatch(t, dir, present)); err != nil {
+		t.Fatalf("PutBlobs: %v", err)
+	}
+
 	_, absent := stagedPath(t, []byte("a body that was never uploaded"))
+	items := []synclog.BlobBatchItem{
+		{Key: keyFor(present), Staging: filepath.Join(dir, "out-present"), Max: 64 << 20},
+		{Key: absent, Staging: filepath.Join(dir, "out-absent"), Max: 64 << 20},
+	}
+	results, err := c.GetBlobs(items)
+	if err == nil {
+		t.Fatal("GetBlobs with a missing key = nil, want the batch refused")
+	}
+	if !errors.Is(err, synclog.ErrBlobMissing) || !errors.Is(err, ErrRefused) {
+		t.Errorf("GetBlobs = %v, want synclog.ErrBlobMissing under ErrRefused", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("results = %d, want one verdict per key even when a sibling is missing", len(results))
+	}
+	if results[0].Err != nil || results[0].Bytes != int64(len(present)) {
+		t.Errorf("the served sibling = %+v, want its body with no failure", results[0])
+	}
+	if !errors.Is(results[1].Err, synclog.ErrBlobMissing) || !errors.Is(results[1].Err, ErrRefused) {
+		t.Errorf("the missing key's verdict = %v, want the sentinel mapped per key", results[1].Err)
+	}
+}
+
+// TestPipeClientMapsADigestRefusalToItsSentinelPerKey pins that a put whose
+// staged file is not the body its key names is refused under synclog.ErrInvalid
+// as that key's verdict alone: the sibling bodies still publish, and the call
+// stays a refusal rather than a broken pipe, because the worker answered.
+func TestPipeClientMapsADigestRefusalToItsSentinelPerKey(t *testing.T) {
+	bucket := newTestBucket(t)
+	dir := t.TempDir()
+	good := []byte("a body stored under the key naming it")
+	wrong := []byte("a body whose staged file is not its key's digest")
+	mismatchKey := blobstore.Key("origin-a", digestHex([]byte("some other body entirely")))
 
 	c, err := startFakeWorker(t, modeBlobs, blobHandshake(bucket))
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if _, err := c.GetBlob(absent, filepath.Join(t.TempDir(), "out"), 64<<20); !errors.Is(err, synclog.ErrBlobMissing) {
-		t.Errorf("GetBlob = %v, want synclog.ErrBlobMissing", err)
+	items := stagedBatch(t, dir, good, wrong)
+	items[1].Key = mismatchKey
+
+	results, err := c.PutBlobs(items)
+	if err == nil {
+		t.Fatal("PutBlobs with a mismatched key = nil, want the batch refused")
 	}
-	// It stays a refusal as well: a caller that reads only the class still learns
-	// the worker declined rather than that the pipe broke.
-	if _, err := c.GetBlob(absent, filepath.Join(t.TempDir(), "out"), 64<<20); !errors.Is(err, ErrRefused) {
-		t.Error("the mapped error is not a refusal as well")
+	if !errors.Is(err, ErrRefused) || relevosync.IsPermanentRefusal(err) {
+		t.Errorf("PutBlobs = %v, want a refusal a later staging rewrite can clear", err)
+	}
+	if results[0].Err != nil || results[0].Bytes != int64(len(good)) {
+		t.Errorf("the good sibling = %+v, want its body published", results[0])
+	}
+	if !errors.Is(results[1].Err, synclog.ErrInvalid) {
+		t.Errorf("the mismatched key's verdict = %v, want synclog.ErrInvalid mapped per key", results[1].Err)
+	}
+	if _, ok := bucket.body(keyFor(good)); !ok {
+		t.Error("the bucket lost the sibling body a failed key did not poison")
+	}
+	if _, ok := bucket.body(mismatchKey); ok {
+		t.Error("the bucket took the body that disagreed with its key")
 	}
 }
 
 // TestPipeClientCarriesTheByteCounters pins that all four totals reach the
-// daemon. A reply that lost them would leave the month reading as a cost of
-// nothing, which is the failure the counting exists to prevent.
+// daemon through the batch verbs. A reply that lost them would leave the month
+// reading as a cost of nothing, which is the failure the counting exists to
+// prevent.
 func TestPipeClientCarriesTheByteCounters(t *testing.T) {
 	bucket := newTestBucket(t)
+	dir := t.TempDir()
 	c, err := startFakeWorker(t, modeBlobs, blobHandshake(bucket))
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	body := []byte("a body counted on its way out")
-	path, key := stagedPath(t, body)
-	if _, _, err := c.PutBlob(key, path); err != nil {
-		t.Fatalf("PutBlob: %v", err)
+	bodies := [][]byte{
+		[]byte("a body counted on its way out"),
+		[]byte("a second body counted on the same call"),
 	}
-	if _, err := c.GetBlob(key, filepath.Join(filepath.Dir(path), "back"), 64<<20); err != nil {
-		t.Fatalf("GetBlob: %v", err)
+	if _, err := c.PutBlobs(stagedBatch(t, dir, bodies...)); err != nil {
+		t.Fatalf("PutBlobs: %v", err)
+	}
+	items := stagedBatch(t, dir, bodies...)
+	for n := range items {
+		items[n].Staging = filepath.Join(dir, "back-"+filepath.Base(items[n].Staging))
+		items[n].Max = 64 << 20
+	}
+	if _, err := c.GetBlobs(items); err != nil {
+		t.Fatalf("GetBlobs: %v", err)
 	}
 
 	stats, err := c.Stats()
@@ -247,9 +376,51 @@ func TestPipeClientCarriesTheByteCounters(t *testing.T) {
 	if stats.Entries != 11 || stats.Origins != 2 || stats.Seq != 9 {
 		t.Errorf("the log's size is %+v, want the fake worker's", stats)
 	}
-	want := int64(len(body))
+	var want int64
+	for _, body := range bodies {
+		want += int64(len(body))
+	}
 	if stats.R2Put != want || stats.R2Get != want {
 		t.Errorf("the R2 totals are put=%d get=%d, want %d each", stats.R2Put, stats.R2Get, want)
+	}
+}
+
+// TestPipeClientDropsAWorkerThatAnswersABatchShort pins that a batch reply
+// answering some other number of keys than were asked ends the pipe: ids match
+// and the reply decodes, so only the count says the worker lost step, and a
+// verdict the client had to invent would be acted on as the mover's.
+func TestPipeClientDropsAWorkerThatAnswersABatchShort(t *testing.T) {
+	bucket := newTestBucket(t)
+	dir := t.TempDir()
+	missed := 0
+	cfg := blobHandshake(bucket)
+	cfg.OnMiss = func(error) { missed++ }
+	c, err := startFakeWorker(t, modeBatchShort, cfg)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	results, err := c.PutBlobs(stagedBatch(t, dir, []byte("one body"), []byte("a second body")))
+	if err == nil {
+		t.Fatal("PutBlobs over a short batch reply = nil, want the miss")
+	}
+	if errors.Is(err, ErrRefused) {
+		t.Errorf("PutBlobs = %v, want a dead worker, not a refusal", err)
+	}
+	if results != nil {
+		t.Errorf("results = %v, want no verdicts a caller could read", results)
+	}
+	if missed != 1 {
+		t.Errorf("the miss was reported %d times, want once", missed)
+	}
+	// The worker is killed on the miss; wait for the exit so the next call
+	// reliably reads the gone worker rather than racing a pipe write.
+	if !waitForExit(t, c, 5*time.Second) {
+		t.Fatal("the short-answering worker is still running after the miss")
+	}
+	if _, err := c.GetBlobs(stagedBatch(t, dir, []byte("third"))); err == nil ||
+		!strings.Contains(err.Error(), "worker gone") {
+		t.Errorf("a call after the short reply = %v, want the killed worker reported as gone", err)
 	}
 }
 
@@ -352,15 +523,99 @@ func TestOpenSupervisorHandsOverNoCredentialOnTheCommandLine(t *testing.T) {
 }
 
 // TestSupervisorMovesBodiesThroughTheStagingFolder pins the wiring the exporter
-// and reconcile depend on: the supervisor is the mover, and it names the same
-// folder the daemon writes bodies into. The exporter takes its mover from the
-// transport it was handed, so a supervisor that did not carry both would leave
-// every value travelling inline with nothing to say why.
+// and reconcile depend on: the supervisor is the mover, it names the same folder
+// the daemon writes bodies into, and it answers a batch per key -- a sibling of
+// a missing body still returns its verdict while the missing key carries the
+// sentinel. The exporter takes its mover from the transport it was handed, so a
+// supervisor that did not carry both would leave every value travelling inline
+// with nothing to say why.
 func TestSupervisorMovesBodiesThroughTheStagingFolder(t *testing.T) {
 	t.Parallel()
 	bucket := newTestBucket(t)
 	dir := t.TempDir()
-	cfg := fakeWorkerCfg(modeBlobs)
+	sup := newSupervisor(t, blobWorkerCfg(bucket, dir), breakerOver(newMemKV()))
+
+	// The folder the daemon stages into is the one the supervisor names, which is
+	// what lets the exporter write files the worker will be told to read.
+	if sup.BlobStagingDir() != dir {
+		t.Fatalf("BlobStagingDir = %q, want %q", sup.BlobStagingDir(), dir)
+	}
+
+	first := bytes.Repeat([]byte("stored body "), 400)
+	second := bytes.Repeat([]byte("another stored body "), 250)
+	items := stagedBatch(t, dir, first, second)
+
+	results, err := sup.PutBlobs(items)
+	if err != nil {
+		t.Fatalf("PutBlobs: %v", err)
+	}
+	for n, body := range [][]byte{first, second} {
+		if results[n].Skipped || results[n].Bytes != int64(len(body)) || results[n].Err != nil {
+			t.Errorf("verdict %d = %+v, want the body moved with no failure", n, results[n])
+		}
+	}
+	// A second batch of the same digests is the skip, which is what lets two rows
+	// holding one value upload it once.
+	results, err = sup.PutBlobs(items)
+	if err != nil {
+		t.Fatalf("the second PutBlobs: %v", err)
+	}
+	for n, r := range results {
+		if !r.Skipped || r.Bytes != 0 || r.Err != nil {
+			t.Errorf("the second verdict %d = %+v, want a skip moving nothing", n, r)
+		}
+	}
+
+	fetched := []synclog.BlobBatchItem{
+		{Key: items[0].Key, Staging: filepath.Join(dir, "fetched-first"), Max: 64 << 20},
+		{Key: items[1].Key, Staging: filepath.Join(dir, "fetched-second"), Max: 64 << 20},
+	}
+	results, err = sup.GetBlobs(fetched)
+	if err != nil {
+		t.Fatalf("GetBlobs: %v", err)
+	}
+	for n, body := range [][]byte{first, second} {
+		if results[n].Err != nil || results[n].Bytes != int64(len(body)) {
+			t.Fatalf("fetched verdict %d = %+v, want the body's bytes", n, results[n])
+		}
+		got, err := os.ReadFile(fetched[n].Staging)
+		if err != nil {
+			t.Fatalf("read the fetched body: %v", err)
+		}
+		if !bytes.Equal(got, body) {
+			t.Errorf("the fetched body %d is not the one that was stored", n)
+		}
+	}
+
+	// The missing key is one verdict, not the batch's: its sibling still answers
+	// with its body, and only the sentinel under the call's error marks the pair
+	// the bucket lost.
+	_, absent := stagedPath(t, []byte("a body nobody uploaded"))
+	results, err = sup.GetBlobs([]synclog.BlobBatchItem{
+		{Key: items[0].Key, Staging: filepath.Join(dir, "again-first"), Max: 64 << 20},
+		{Key: absent, Staging: filepath.Join(dir, "absent"), Max: 64 << 20},
+	})
+	if !errors.Is(err, synclog.ErrBlobMissing) {
+		t.Fatalf("a batch with a missing key = %v, want the sentinel", err)
+	}
+	if len(results) != 2 || results[0].Err != nil || results[0].Bytes != int64(len(first)) {
+		t.Errorf("the served sibling = %+v, want its verdict beside the failed key", results)
+	}
+	if results[1].Err == nil || !errors.Is(results[1].Err, synclog.ErrBlobMissing) {
+		t.Errorf("the missing key = %v, want its own sentinel verdict", results[1].Err)
+	}
+}
+
+// blobWorkerCfg is the supervisor config a blob test drives: this binary as a
+// blob worker pointed at the test's bucket, staging in dir.
+func blobWorkerCfg(bucket *testBucket, dir string) Config {
+	return blobWorkerCfgMode(modeBlobs, bucket, dir)
+}
+
+// blobWorkerCfgMode is blobWorkerCfg over a named worker mode, so a test of a
+// worker that dies mid-batch drives the same bucket handshake.
+func blobWorkerCfgMode(mode string, bucket *testBucket, dir string) Config {
+	cfg := fakeWorkerCfg(mode)
 	cfg.R2 = &syncworker.R2Config{
 		Endpoint: bucket.srv.URL,
 		Bucket:   "bucket",
@@ -368,51 +623,242 @@ func TestSupervisorMovesBodiesThroughTheStagingFolder(t *testing.T) {
 		Secret:   "secret-1",
 	}
 	cfg.BlobStaging = dir
-	sup := newSupervisor(t, cfg, breakerOver(newMemKV()))
+	return cfg
+}
 
-	// The folder the daemon stages into is the one the supervisor names, which is
-	// what lets the exporter write a file the worker will be told to read.
-	if sup.BlobStagingDir() != dir {
-		t.Fatalf("BlobStagingDir = %q, want %q", sup.BlobStagingDir(), dir)
+// seedBreakerDeaths records a count the settling of a batch can change or leave
+// alone: Success resets Deaths, a refusal leaves it, and a miss counts a death.
+func seedBreakerDeaths(t *testing.T, kv *memKV, st relevosync.BreakerState) {
+	t.Helper()
+	body, err := json.Marshal(st)
+	if err != nil {
+		t.Fatalf("marshal the breaker state: %v", err)
+	}
+	if err := kv.KVPut(relevosync.KeyDeaths, body); err != nil {
+		t.Fatalf("seed the breaker state: %v", err)
+	}
+}
+
+// TestSupervisorLatchesSyncOnABatchWithOneMissingKey pins the rule a batch
+// settles under: the pipe call answered, so nothing about the transport says
+// the machine is broken -- but a reply naming a body the bucket lost refused
+// the call, so the breaker latches on it exactly as it latches on a lone fetch
+// of that key, and the death is not counted as a transport miss.
+func TestSupervisorLatchesSyncOnABatchWithOneMissingKey(t *testing.T) {
+	bucket := newTestBucket(t)
+	dir := t.TempDir()
+	present := []byte("a body the bucket holds")
+	kv := newMemKV()
+	b := breakerOver(kv)
+	sup := newSupervisor(t, blobWorkerCfg(bucket, dir), b)
+
+	if _, err := sup.PutBlobs(stagedBatch(t, dir, present)); err != nil {
+		t.Fatalf("PutBlobs: %v", err)
+	}
+	_, absent := stagedPath(t, []byte("a body nobody uploaded"))
+	_, err := sup.GetBlobs([]synclog.BlobBatchItem{
+		{Key: keyFor(present), Staging: filepath.Join(dir, "out-present"), Max: 64 << 20},
+		{Key: absent, Staging: filepath.Join(dir, "out-absent"), Max: 64 << 20},
+	})
+	if !errors.Is(err, synclog.ErrBlobMissing) {
+		t.Fatalf("GetBlobs = %v, want the missing key's sentinel", err)
+	}
+	if latched, _ := b.Latched(); !latched {
+		t.Fatal("a batch with one missing key did not latch sync, want it settled as a refusal")
+	}
+	if cause, _ := b.LatchCause(); cause != "sync: a body the sync log names is missing from the bucket" {
+		t.Errorf("latch cause = %q, want the missing-body cause", cause)
+	}
+	if got, _ := b.Deaths(); got != 0 {
+		t.Errorf("deaths = %d, want the answered call latched instead of counted", got)
+	}
+}
+
+// TestSupervisorLatchesOnThePermanentKeyOfASettledBatch pins which failure
+// settles the call when several keys fail: the first permanent one, even when a
+// failure a retry could clear stands before it in key order. A batch reported
+// only by its first failed key would let a permanently lost body hide behind a
+// bucket that 500s.
+func TestSupervisorLatchesOnThePermanentKeyOfASettledBatch(t *testing.T) {
+	bucket := newTestBucket(t)
+	dir := t.TempDir()
+	body := []byte("a body the bucket holds but will not serve today")
+	kv := newMemKV()
+	b := breakerOver(kv)
+	sup := newSupervisor(t, blobWorkerCfg(bucket, dir), b)
+
+	if _, err := sup.PutBlobs(stagedBatch(t, dir, body)); err != nil {
+		t.Fatalf("PutBlobs: %v", err)
+	}
+	bucket.mu.Lock()
+	bucket.FaultGets = map[string]bool{keyFor(body): true}
+	bucket.mu.Unlock()
+	_, absent := stagedPath(t, []byte("a body nobody uploaded"))
+
+	results, err := sup.GetBlobs([]synclog.BlobBatchItem{
+		{Key: keyFor(body), Staging: filepath.Join(dir, "faulted"), Max: 64 << 20},
+		{Key: absent, Staging: filepath.Join(dir, "absent"), Max: 64 << 20},
+	})
+	if !errors.Is(err, synclog.ErrBlobMissing) {
+		t.Fatalf("GetBlobs = %v, want the permanent failure of the batch, results %+v", err, results)
+	}
+	if results[0].Err == nil || errors.Is(results[0].Err, synclog.ErrBlobMissing) {
+		t.Errorf("the faulted sibling's own verdict = %v, want its unmarked failure", results[0].Err)
+	}
+	if latched, _ := b.Latched(); !latched {
+		t.Error("a batch whose later key named a permanently missing body did not latch sync")
+	}
+}
+
+// TestSupervisorClasslessBatchFailureNeitherLatchesNorResets pins a batch a
+// retry can still get past: the failure is a refusal, so the worker is kept and
+// the call is not a death, but it is not permanent, so nothing latches -- and
+// because a key did fail, the call does not settle as a success that would
+// start the death count over.
+func TestSupervisorClasslessBatchFailureNeitherLatchesNorResets(t *testing.T) {
+	bucket := newTestBucket(t)
+	dir := t.TempDir()
+	good := []byte("a body that publishes cleanly")
+	faulted := []byte("a body the bucket refuses with a 500")
+	kv := newMemKV()
+	seedBreakerDeaths(t, kv, relevosync.BreakerState{Deaths: 1, Seen: 1})
+	b := breakerOver(kv)
+	sup := newSupervisor(t, blobWorkerCfg(bucket, dir), b)
+	bucket.mu.Lock()
+	bucket.FaultPuts = map[string]bool{keyFor(faulted): true}
+	bucket.mu.Unlock()
+
+	results, err := sup.PutBlobs(stagedBatch(t, dir, good, faulted))
+	if !errors.Is(err, ErrRefused) {
+		t.Fatalf("PutBlobs = %v, want the refused classless key", err)
+	}
+	if relevosync.IsPermanentRefusal(err) {
+		t.Errorf("PutBlobs = %v, want a failure a later attempt can get past", err)
+	}
+	if results[0].Err != nil || results[0].Bytes != int64(len(good)) {
+		t.Errorf("the clean sibling = %+v, want its body published", results[0])
+	}
+	if results[1].Err == nil || relevosync.IsPermanentRefusal(results[1].Err) {
+		t.Errorf("the faulted key = %v, want its own unmarked failure", results[1].Err)
+	}
+	if latched, _ := b.Latched(); latched {
+		t.Error("a failure a retry can clear latched the machine")
+	}
+	if got, _ := b.Deaths(); got != 1 {
+		t.Errorf("deaths = %d, want a failed batch to leave the count alone: it is no success", got)
+	}
+	if s := sup.current(); s == nil {
+		t.Error("the answered worker was dropped for a refusal, want it kept")
+	}
+	if _, ok := bucket.body(keyFor(good)); !ok {
+		t.Error("a batch stopped publishing at its failed key, want the clean sibling stored")
+	}
+}
+
+// TestSupervisorCleanBatchStartsTheDeathCountOver pins the other half of the
+// settle rule: a batch with no failed key is the call that succeeds, and
+// Success is what resets the consecutive deaths the backoff is measured from.
+func TestSupervisorCleanBatchStartsTheDeathCountOver(t *testing.T) {
+	bucket := newTestBucket(t)
+	dir := t.TempDir()
+	kv := newMemKV()
+	seedBreakerDeaths(t, kv, relevosync.BreakerState{Deaths: 1, Seen: 1})
+	b := breakerOver(kv)
+	sup := newSupervisor(t, blobWorkerCfg(bucket, dir), b)
+
+	if _, err := sup.PutBlobs(stagedBatch(t, dir,
+		[]byte("a body that publishes"), []byte("a second body"))); err != nil {
+		t.Fatalf("PutBlobs: %v", err)
+	}
+	if got, _ := b.Deaths(); got != 0 {
+		t.Errorf("deaths = %d after a clean batch, want the count started over", got)
+	}
+}
+
+// TestSupervisorReportsALatchWriteFailureFromABatch pins that a latch the
+// breaker cannot write reaches the caller beside the refusal it was meant to
+// record: the machine must not be told a permanent loss was settled when the
+// record of it failed. The per-key verdicts still ride back with it, because
+// they are what the mover's caller reads.
+func TestSupervisorReportsALatchWriteFailureFromABatch(t *testing.T) {
+	bucket := newTestBucket(t)
+	dir := t.TempDir()
+	present := []byte("a body the bucket holds")
+	kv := &failKV{inner: newMemKV(), failPutKey: relevosync.KeyAttention}
+	sup := newSupervisor(t, blobWorkerCfg(bucket, dir), breakerOver(kv))
+
+	if _, err := sup.PutBlobs(stagedBatch(t, dir, present)); err != nil {
+		t.Fatalf("PutBlobs: %v", err)
+	}
+	_, absent := stagedPath(t, []byte("a body nobody uploaded"))
+	results, err := sup.GetBlobs([]synclog.BlobBatchItem{
+		{Key: keyFor(present), Staging: filepath.Join(dir, "out-present"), Max: 64 << 20},
+		{Key: absent, Staging: filepath.Join(dir, "out-absent"), Max: 64 << 20},
+	})
+	if !errors.Is(err, synclog.ErrBlobMissing) {
+		t.Fatalf("GetBlobs = %v, want the refusal beside the failed latch write", err)
+	}
+	if !errors.Is(err, errKV) {
+		t.Errorf("GetBlobs = %v, want the latch write's own failure to reach the caller", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("results = %d, want the verdicts held out to the caller with the error", len(results))
+	}
+}
+
+// TestSupervisorBatchOnADeadWorkerKeepsNoPartialResults pins the whole-call
+// path of a batch: a worker killed mid-batch is a miss, not a reply, so the
+// caller gets no verdicts to half-act on, and the death is counted. Retrying
+// the same batch through a fresh worker loses and duplicates nothing, because
+// the mover re-sends the whole chunk and puts are idempotent by digest.
+func TestSupervisorBatchOnADeadWorkerKeepsNoPartialResults(t *testing.T) {
+	bucket := newTestBucket(t)
+	dir := t.TempDir()
+	bodies := [][]byte{
+		[]byte("a body the dying worker was asked to publish"),
+		[]byte("a second body on the same call"),
+	}
+	kv := newMemKV()
+	b := breakerOver(kv)
+	cfg := blobWorkerCfgMode(modeDie, bucket, dir)
+	sup := newSupervisor(t, cfg, b)
+
+	results, err := sup.PutBlobs(stagedBatch(t, dir, bodies...))
+	if err == nil {
+		t.Fatal("a batch over a worker that died = nil, want the miss")
+	}
+	if errors.Is(err, ErrRefused) {
+		t.Errorf("the dead worker's call = %v, want a miss rather than a refusal", err)
+	}
+	if results != nil {
+		t.Errorf("results = %+v, want no verdicts from a call that never answered", results)
+	}
+	if got, _ := b.Deaths(); got != 1 {
+		t.Errorf("deaths = %d, want the death counted through Observe", got)
+	}
+	if sup.current() != nil {
+		t.Error("the dead worker was kept for the next call")
 	}
 
-	body := bytes.Repeat([]byte("stored body "), 400)
-	digest := digestHex(body)
-	key := blobstore.Key("m1", digest)
-	staged := filepath.Join(dir, digest)
-	if err := os.WriteFile(staged, body, 0o600); err != nil {
-		t.Fatalf("stage the body: %v", err)
+	// The retry: the same batch through a worker that lives, on the same
+	// bucket. Everything the first call was asked arrives, and none of it
+	// arrives twice -- the second send of the same bodies skips.
+	retry := newSupervisor(t, blobWorkerCfg(bucket, dir), breakerOver(newMemKV()))
+	items := stagedBatch(t, dir, bodies...)
+	if _, err := retry.PutBlobs(items); err != nil {
+		t.Fatalf("the retried batch: %v", err)
 	}
-	sent, skipped, err := sup.PutBlob(key, staged)
+	if n := bucket.count(); n != len(bodies) {
+		t.Errorf("the bucket holds %d bodies after the retry, want the %d the batch named", n, len(bodies))
+	}
+	results, err = retry.PutBlobs(items)
 	if err != nil {
-		t.Fatalf("PutBlob: %v", err)
+		t.Fatalf("the third send of the same bodies: %v", err)
 	}
-	if skipped {
-		t.Error("the first put skipped, want the bucket to have taken the body")
-	}
-	if sent != int64(len(body)) {
-		t.Errorf("PutBlob reported %d bytes, want %d", sent, len(body))
-	}
-	// A second put of the same digest is the skip, which is what lets two rows
-	// holding one value upload it once.
-	if _, skipped, err := sup.PutBlob(key, staged); err != nil || !skipped {
-		t.Errorf("the second put = skipped %v (err %v), want it skipped", skipped, err)
-	}
-
-	fetched := filepath.Join(dir, "fetched")
-	n, err := sup.GetBlob(key, fetched, 64<<20)
-	if err != nil {
-		t.Fatalf("GetBlob: %v", err)
-	}
-	if n != int64(len(body)) {
-		t.Errorf("GetBlob reported %d bytes, want %d", n, len(body))
-	}
-	got, err := os.ReadFile(fetched)
-	if err != nil {
-		t.Fatalf("read the fetched body: %v", err)
-	}
-	if !bytes.Equal(got, body) {
-		t.Error("the fetched body is not the one that was stored")
+	for n, r := range results {
+		if !r.Skipped || r.Bytes != 0 {
+			t.Errorf("verdict %d = %+v, want the retry to duplicate nothing", n, r)
+		}
 	}
 }
 

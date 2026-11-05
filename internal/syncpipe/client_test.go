@@ -62,6 +62,10 @@ const (
 	// leaves the field out, which is what one that skipped the work looks like
 	// from the daemon's side.
 	modeNoKeyAnswer = "no-key-answer"
+	// modeBatchShort answers a blob batch with one verdict fewer than it has
+	// keys, which is a worker that stopped keeping its replies to its requests:
+	// the pipe is in step by id, so only the count says it is not.
+	modeBatchShort = "batch-short"
 )
 
 // TestMain hands this binary over to the fake worker before the suite starts,
@@ -138,6 +142,8 @@ func runFakeWorker(mode string) int {
 		return 0
 	case modeNoKeyAnswer:
 		return serveNoKeyField()
+	case modeBatchShort:
+		return serveBatchShort()
 	default:
 		if err := syncworker.Serve(os.Stdin, os.Stdout, normalBackend{}); err != nil {
 			fmt.Fprintln(os.Stderr, "fake worker:", err)
@@ -191,6 +197,38 @@ func serveStaleID() int {
 		out, err := json.Marshal(syncworker.Response{
 			ID: "1", OK: true, Stats: &syncworker.Stats{},
 		})
+		if err != nil {
+			return 1
+		}
+		if _, err := os.Stdout.Write(append(out, '\n')); err != nil {
+			return 1
+		}
+	}
+}
+
+// serveBatchShort answers the handshake honestly and then answers every blob
+// batch with one verdict fewer than its keys, keeping the ids in step. It is
+// the reply shape a worker that half-lost a batch takes: everything the client
+// can match by id matches, and only the count says the answer is not the one
+// the request earned.
+func serveBatchShort() int {
+	if !answerHandshake(sameID) {
+		return 1
+	}
+	for {
+		line, err := readLine(os.Stdin)
+		if err != nil {
+			return 0
+		}
+		var req syncworker.Request
+		if err := json.Unmarshal(line, &req); err != nil {
+			return 1
+		}
+		var results []syncworker.BlobResult
+		if len(req.Blobs) > 1 {
+			results = make([]syncworker.BlobResult, len(req.Blobs)-1)
+		}
+		out, err := json.Marshal(syncworker.Response{ID: req.ID, OK: true, Results: results})
 		if err != nil {
 			return 1
 		}

@@ -13,14 +13,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
 
 	"github.com/fuad-daoud/relevo/internal/blobstore"
 )
-
-// fetchWorkers bounds the fetches in flight for one batch: four parallelises
-// round trips without a connection per body.
-const fetchWorkers = 4
 
 // ErrBlobMismatch reports a fetched object that is not the one its ref names.
 // It is transient on purpose -- a store that served a truncated or tampered
@@ -186,8 +181,10 @@ func codecOf(f map[string]json.RawMessage, name string) int {
 	return n
 }
 
-// fetchAll fetches each distinct object once, four at a time. Same-object slots
-// share one fetch, or both would stage under one file name at once.
+// fetchAll fetches each distinct object once, in the mover's bounded chunks,
+// one call after another: the pipe carries one request in flight, and the
+// worker bounds the transfers inside a batch. Same-object slots share one
+// fetch, or both would stage under one file name at once.
 func fetchAll(m BlobMover, stagingDir string, batch []Entry, slots []refSlot) ([][]byte, error) {
 	var order []string
 	first := make(map[string]int)
@@ -198,25 +195,18 @@ func fetchAll(m BlobMover, stagingDir string, batch []Entry, slots []refSlot) ([
 			order = append(order, key)
 		}
 	}
-	got := make([][]byte, len(order))
-	errs := make([]error, len(order))
-	sem := make(chan struct{}, fetchWorkers)
-	var wg sync.WaitGroup
+	bodies := make([]batchBody, len(order))
 	for n, key := range order {
-		wg.Add(1)
-		sem <- struct{}{}
-		go func() {
-			defer wg.Done()
-			defer func() { <-sem }()
-			got[n], errs[n] = fetchOne(m, stagingDir, key, slots[first[key]].ref)
-		}()
+		bodies[n] = batchBody{key: key, size: slots[first[key]].ref.Bytes}
 	}
-	wg.Wait()
+	got := make([][]byte, len(order))
+	for _, chunk := range batchChunk(bodies) {
+		if err := fetchChunk(m, stagingDir, batch, slots, first, order, got, chunk); err != nil {
+			return nil, err
+		}
+	}
 	byKey := make(map[string][]byte, len(order))
 	for n, key := range order {
-		if errs[n] != nil {
-			return nil, failedFetch(batch, slots[first[key]], errs[n])
-		}
 		byKey[key] = got[n]
 	}
 	out := make([][]byte, len(slots))
@@ -224,6 +214,74 @@ func fetchAll(m BlobMover, stagingDir string, batch []Entry, slots []refSlot) ([
 		out[n] = byKey[blobstore.Key(batch[s.entry].Origin, s.ref.SHA256)]
 	}
 	return out, nil
+}
+
+// fetchChunk moves one chunk of distinct keys through one batch call and
+// reads the bodies back, gating each on the length and digest its ref declares
+// before it enters the batch. The staged files are removed whether their body
+// passed or not, and decidingFailure picks the key the batch's error names, so a
+// repeated import names the same row. The call's own error rides with it, and
+// fails a chunk whose keys all answered, since it says the breaker lost a write.
+func fetchChunk(m BlobMover, stagingDir string, batch []Entry, slots []refSlot,
+	first map[string]int, order []string, got [][]byte, chunk []int) error {
+	items := make([]BlobBatchItem, len(chunk))
+	for n, i := range chunk {
+		ref := slots[first[order[i]]].ref
+		items[n] = BlobBatchItem{
+			Key:     order[i],
+			Staging: filepath.Join(stagingDir, ref.SHA256),
+			Max:     ref.Bytes,
+		}
+	}
+	results, callErr := m.GetBlobs(items)
+	defer func() {
+		for _, item := range items {
+			_ = os.Remove(item.Staging)
+		}
+	}()
+	if len(results) != len(items) {
+		if callErr == nil {
+			callErr = errNoVerdict
+		}
+		// A whole-call failure answers no key, so it stands against the
+		// first one the chunk asked for.
+		i := chunk[0]
+		return failedFetch(batch, slots[first[order[i]]], fetchWrap(order[i], callErr))
+	}
+	if n := decidingFailure(results); n >= 0 {
+		i := chunk[n]
+		return failedFetch(batch, slots[first[order[i]]], fetchWrap(order[i], errors.Join(callErr, results[n].Err)))
+	}
+	if callErr != nil {
+		return fetchWrap(order[chunk[0]], callErr)
+	}
+	for n, i := range chunk {
+		body, err := readStagedRef(order[i], items[n].Staging, slots[first[order[i]]].ref)
+		if err != nil {
+			return failedFetch(batch, slots[first[order[i]]], err)
+		}
+		got[i] = body
+	}
+	return nil
+}
+
+// decidingFailure picks the result a failed chunk is reported against, or -1
+// when no key failed: the first missing body, since that is the row the importer
+// names and the operator must restore, otherwise the first failed key.
+func decidingFailure(results []BlobBatchResult) int {
+	first := -1
+	for n, r := range results {
+		if r.Err == nil {
+			continue
+		}
+		if errors.Is(r.Err, ErrBlobMissing) || errors.Is(r.Err, blobstore.ErrNotFound) {
+			return n
+		}
+		if first < 0 {
+			first = n
+		}
+	}
+	return first
 }
 
 // failedFetch names the row of a missing object, leaving other failures as is.
@@ -234,17 +292,21 @@ func failedFetch(batch []Entry, s refSlot, err error) error {
 	return err
 }
 
-// fetchOne stages one object, checks length and digest, and returns its bytes,
-// removing the staging file whatever the outcome.
-func fetchOne(m BlobMover, stagingDir, key string, ref BlobRef) ([]byte, error) {
-	path := filepath.Join(stagingDir, ref.SHA256)
-	defer func() { _ = os.Remove(path) }()
-	if _, err := m.GetBlob(key, path, ref.Bytes); err != nil {
-		if errors.Is(err, ErrBlobMissing) || errors.Is(err, blobstore.ErrNotFound) {
-			return nil, fmt.Errorf("synclog: fetch %s: %w", key, ErrBlobMissing)
-		}
-		return nil, fmt.Errorf("synclog: fetch %s: %w", key, err)
+// fetchWrap names the key a fetch was asked under and keeps the deciding
+// sentinel: a body the store does not hold reaches ErrBlobMissing whether the
+// mover mapped its refusal to that sentinel or only said the object was not
+// there, because the importer latches on the sentinel and not the words.
+func fetchWrap(key string, err error) error {
+	if errors.Is(err, ErrBlobMissing) || errors.Is(err, blobstore.ErrNotFound) {
+		return fmt.Errorf("synclog: fetch %s: %w", key, ErrBlobMissing)
 	}
+	return fmt.Errorf("synclog: fetch %s: %w", key, err)
+}
+
+// readStagedRef reads one staged body and gates it against its ref: length
+// against the declared bytes before the read, so an over-long object is not
+// read into memory to be found out, then the digest.
+func readStagedRef(key, path string, ref BlobRef) ([]byte, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, fmt.Errorf("synclog: fetch %s: %w", key, err)

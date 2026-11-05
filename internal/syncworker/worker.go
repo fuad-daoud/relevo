@@ -165,6 +165,8 @@ var verbHandlers = map[Verb]func(*server, Request) Response{
 	VerbHead:           (*server).head,
 	VerbPutBlob:        (*server).putBlobVerb,
 	VerbGetBlob:        (*server).getBlobVerb,
+	VerbPutBlobs:       (*server).putBlobsVerb,
+	VerbGetBlobs:       (*server).getBlobsVerb,
 	VerbStats:          (*server).stats,
 	VerbPublishMarks:   (*server).publishMarks,
 	VerbReadMarks:      (*server).readMarks,

@@ -16,8 +16,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/fuad-daoud/relevo/internal/blobstore"
 )
@@ -40,7 +42,25 @@ var newBlobStore = func(cfg R2Config) blobstore.BlobStore {
 		Bucket:   cfg.Bucket,
 		KeyID:    cfg.KeyID,
 		Secret:   cfg.Secret,
+		Client: &http.Client{
+			Transport: batchTransport(),
+		},
 	})
+}
+
+// blobBatchWorkers bounds the store transfers in flight for one batch call:
+// four parallelises round trips without opening a connection per body.
+const blobBatchWorkers = 4
+
+// batchTransport keeps enough idle connections per host for one batch's
+// transfers in flight. The default transport keeps two, so the third and
+// fourth concurrent transfers would each pay a new handshake per round trip;
+// cloning keeps the default's proxy, timeout and TLS settings rather than
+// restating them.
+func batchTransport() http.RoundTripper {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConnsPerHost = blobBatchWorkers
+	return transport
 }
 
 // partSuffix is the name a fetched body is written under before it is renamed
@@ -196,6 +216,97 @@ func (s *server) getBlobVerb(req Request) Response {
 	}
 	s.r2.R2Get += got
 	return Response{ID: req.ID, OK: true, Bytes: got}
+}
+
+// putBlobsVerb answers put_blobs: every item is uploaded through putBlob,
+// with at most blobBatchWorkers transfers in flight. One key's failure is
+// recorded in its own result rather than stopping the rest, and the moved
+// bytes are tallied once, after every transfer has joined, so the counters
+// read exact totals rather than a sum still being written to.
+func (s *server) putBlobsVerb(req Request) Response {
+	if len(req.Blobs) == 0 {
+		return Response{ID: req.ID, OK: true}
+	}
+	store, err := s.batchStore()
+	if err != nil {
+		return refuse(req, err)
+	}
+	ctx := context.Background()
+	results := make([]BlobResult, len(req.Blobs))
+	fanOut(len(req.Blobs), func(slot int) {
+		item := req.Blobs[slot]
+		sent, skipped, err := putBlob(ctx, store, item.Key, item.Staging)
+		results[slot] = BlobResult{Key: item.Key, Bytes: sent, Skipped: skipped}
+		if err != nil {
+			results[slot].Error = err.Error()
+			results[slot].Code = RefusalCodeOf(err)
+		}
+	})
+	for _, r := range results {
+		s.r2.R2Put += r.Bytes
+	}
+	return Response{ID: req.ID, OK: true, Results: results}
+}
+
+// getBlobsVerb answers get_blobs, writing each body to the staging file its
+// item names. The transfers overlap as the puts do, and one key's failure
+// leaves the other keys' results successful with the same class the single
+// get answers with.
+func (s *server) getBlobsVerb(req Request) Response {
+	if len(req.Blobs) == 0 {
+		return Response{ID: req.ID, OK: true}
+	}
+	store, err := s.batchStore()
+	if err != nil {
+		return refuse(req, err)
+	}
+	ctx := context.Background()
+	results := make([]BlobResult, len(req.Blobs))
+	fanOut(len(req.Blobs), func(slot int) {
+		item := req.Blobs[slot]
+		got, err := getBlob(ctx, store, item.Key, item.Staging, item.Max)
+		results[slot] = BlobResult{Key: item.Key, Bytes: got}
+		if err != nil {
+			results[slot].Error = err.Error()
+			results[slot].Code = RefusalCodeOf(err)
+		}
+	})
+	for _, r := range results {
+		s.r2.R2Get += r.Bytes
+	}
+	return Response{ID: req.ID, OK: true, Results: results}
+}
+
+// fanOut runs work for each of n slots with at most blobBatchWorkers in
+// flight. Each call writes only its own slot, as fetchAll does, so the results
+// stay in request order whatever order the transfers finish in.
+func fanOut(n int, work func(slot int)) {
+	sem := make(chan struct{}, blobBatchWorkers)
+	var wg sync.WaitGroup
+	for slot := 0; slot < n; slot++ {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(slot int) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			work(slot)
+		}(slot)
+	}
+	wg.Wait()
+}
+
+// batchStore returns the store hello configured, building it once and keeping
+// it for the rest of the pipe. A batch carries its keys beside the request
+// rather than on it, so unlike the single verbs it cannot lean on req.Key or
+// req.Staging; a hello that named no bucket stays a whole-call refusal.
+func (s *server) batchStore() (blobstore.BlobStore, error) {
+	if s.blobs == nil {
+		if s.spec == nil || s.spec.R2 == nil {
+			return nil, ErrNoR2
+		}
+		s.blobs = newBlobStore(*s.spec.R2)
+	}
+	return s.blobs, nil
 }
 
 // blobStore returns the store hello configured, or a refusal when there is

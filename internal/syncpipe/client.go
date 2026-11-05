@@ -54,7 +54,8 @@ const (
 func callBound(verb syncworker.Verb) (time.Duration, error) {
 	switch verb {
 	case syncworker.VerbHello, syncworker.VerbExport, syncworker.VerbPull,
-		syncworker.VerbPutBlob, syncworker.VerbGetBlob, syncworker.VerbPublishMarks,
+		syncworker.VerbPutBlob, syncworker.VerbGetBlob, syncworker.VerbPutBlobs,
+		syncworker.VerbGetBlobs, syncworker.VerbPublishMarks,
 		syncworker.VerbPublishTraffic,
 		syncworker.VerbPullRange, syncworker.VerbCompact:
 		return dataCallTimeout, nil
@@ -289,35 +290,73 @@ func (c *Client) Stats() (synclog.Stats, error) {
 	return statsFromWire(*resp.Stats), nil
 }
 
-// PutBlob uploads the staged body under key unless the bucket already holds it.
-// A skip is not a failure: another machine stored the same body, so the referring
-// entry may still append.
-func (c *Client) PutBlob(key, stagingPath string) (int64, bool, error) {
-	resp, err := c.call(syncworker.Request{
-		Verb:    syncworker.VerbPutBlob,
-		Key:     key,
-		Staging: stagingPath,
-	})
+// PutBlobs uploads a batch of staged bodies under their keys. A failed key is
+// a refusal of the call even though the pipe answered, so the breaker's
+// accounting sees it: the batch's own error is its first permanent per-key
+// refusal, otherwise its first failed one.
+func (c *Client) PutBlobs(items []synclog.BlobBatchItem) ([]synclog.BlobBatchResult, error) {
+	resp, err := c.call(batchRequest(syncworker.VerbPutBlobs, items))
 	if err != nil {
-		return 0, false, err
+		return nil, err
 	}
-	return resp.Bytes, resp.Skipped, nil
+	return c.batchVerdicts(syncworker.VerbPutBlobs, resp, items)
 }
 
-// GetBlob fetches the body under key to stagingPath, whole or not at all. A
-// missing body is synclog.ErrBlobMissing: the importer latches the origin on it
-// instead of retrying what asking again will not restore.
-func (c *Client) GetBlob(key, stagingPath string, max int64) (int64, error) {
-	resp, err := c.call(syncworker.Request{
-		Verb:    syncworker.VerbGetBlob,
-		Key:     key,
-		Staging: stagingPath,
-		Max:     max,
-	})
+// GetBlobs fetches a batch of bodies into the staging files their items name,
+// answering per key the way PutBlobs does: a missing body is
+// synclog.ErrBlobMissing under its own verdict, so the importer latches the
+// origin on it instead of retrying what asking again will not restore, while
+// sibling keys still answer with theirs.
+func (c *Client) GetBlobs(items []synclog.BlobBatchItem) ([]synclog.BlobBatchResult, error) {
+	resp, err := c.call(batchRequest(syncworker.VerbGetBlobs, items))
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return resp.Bytes, nil
+	return c.batchVerdicts(syncworker.VerbGetBlobs, resp, items)
+}
+
+// batchRequest names every item's key, staging file and size limit beside one
+// verb, where a single call names them on the request itself.
+func batchRequest(verb syncworker.Verb, items []synclog.BlobBatchItem) syncworker.Request {
+	blobs := make([]syncworker.BlobItem, len(items))
+	for n, item := range items {
+		blobs[n] = syncworker.BlobItem{Key: item.Key, Staging: item.Staging, Max: item.Max}
+	}
+	return syncworker.Request{Verb: verb, Blobs: blobs}
+}
+
+// batchVerdicts reads one batch reply into a verdict per key, mapping each
+// refusal code to its sentinel exactly as a whole-call refusal is mapped, and
+// returns the batch's refusal for the breaker: the first permanent failure in
+// key order, otherwise the first failed key. A reply that answers some other
+// number of keys than were asked is a worker out of step, so it ends the pipe
+// the way a reply with the wrong id does rather than leaving a verdict a
+// caller would have to guess at.
+func (c *Client) batchVerdicts(verb syncworker.Verb, resp syncworker.Response,
+	items []synclog.BlobBatchItem) ([]synclog.BlobBatchResult, error) {
+	if len(resp.Results) != len(items) {
+		return nil, c.miss(fmt.Errorf("%s answered %d results for %d keys",
+			verb, len(resp.Results), len(items)))
+	}
+	out := make([]synclog.BlobBatchResult, len(items))
+	var firstFailed, firstPermanent error
+	for n, r := range resp.Results {
+		verdict := synclog.BlobBatchResult{Key: items[n].Key, Bytes: r.Bytes, Skipped: r.Skipped}
+		if r.Error != "" {
+			verdict.Err = refusalError(syncworker.Response{Error: r.Error, Code: r.Code})
+			if firstFailed == nil {
+				firstFailed = verdict.Err
+			}
+			if firstPermanent == nil && relevosync.IsPermanentRefusal(verdict.Err) {
+				firstPermanent = verdict.Err
+			}
+		}
+		out[n] = verdict
+	}
+	if firstPermanent != nil {
+		return out, firstPermanent
+	}
+	return out, firstFailed
 }
 
 func (c *Client) call(req syncworker.Request) (syncworker.Response, error) {
