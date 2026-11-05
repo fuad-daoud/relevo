@@ -562,6 +562,22 @@ steps:
   fix-rebuild: { run: "{{params.builder}}", seed: "{{fix-correct.plan}}", on: { done: fix-check } }
 `
 
+// A legacy row migrates to a definition an older binary can still parse, since
+// nothing on such a row ever asked for a cleanup.
+func TestLegacyDefinitionCarriesNoCleanup(t *testing.T) {
+	def, err := legacyDefinition(Legacy{})
+	if err != nil {
+		t.Fatalf("legacyDefinition: %v", err)
+	}
+	raw, err := json.Marshal(def)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(raw), "cleanup") {
+		t.Errorf("legacy definition = %s, want no cleanup key", raw)
+	}
+}
+
 // A server that knows direct-fix but not cleanup refuses the cleanup key, so a
 // chain with no cleanup must post direct-fix with none of it.
 func TestPruneEmptyCleanupMatchesTheDirectFixShape(t *testing.T) {

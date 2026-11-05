@@ -633,3 +633,51 @@ steps:
 		t.Fatal("stored def carries no cleanup, want the new server to keep it")
 	}
 }
+
+// TestNoCleanupStoresNoCleanupKey pins every path that persists a definition: a
+// chain with no cleanup stores the shape an older binary can parse, because that
+// binary refuses a cleanup key it does not know.
+func TestNoCleanupStoresNoCleanupKey(t *testing.T) {
+	assertNone := func(t *testing.T, raw []byte) {
+		t.Helper()
+		if len(raw) == 0 {
+			t.Fatal("no definition to inspect")
+		}
+		if strings.Contains(string(raw), "cleanup") {
+			t.Errorf("definition = %s, want no cleanup key", raw)
+		}
+	}
+
+	t.Run("local start", func(t *testing.T) {
+		rt, _ := chainRuntime(t)
+		startedChain(t, rt, ChainOptions{})
+		assertNone(t, flowChainRow(t, rt).WorkflowJSON)
+	})
+
+	t.Run("served settings create", func(t *testing.T) {
+		def, err := servedChainDefinition(servedChainRequest("shop"))
+		if err != nil {
+			t.Fatalf("servedChainDefinition: %v", err)
+		}
+		raw, err := json.Marshal(def)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		assertNone(t, raw)
+	})
+
+	t.Run("served posted definition", func(t *testing.T) {
+		posted, err := json.Marshal(workflow.Default())
+		if err != nil {
+			t.Fatalf("marshal default: %v", err)
+		}
+		if !strings.Contains(string(posted), "cleanup") {
+			t.Fatal("the posted default carries no cleanup steps to prune")
+		}
+		rt, _, _ := servedChainRuntime(t)
+		req := servedChainRequest("shop")
+		req.Workflow = posted
+		req.ClientActorIDs = map[string]string{"builder": "b-link"}
+		assertNone(t, servedChainStart(t, rt, req).Chain.WorkflowJSON)
+	})
+}
