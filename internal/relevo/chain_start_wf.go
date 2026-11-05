@@ -26,7 +26,9 @@ type chainWFStart struct {
 	repoActors map[string]string
 	// gateRes is the gate resolution the settings were built from, so the
 	// start's ChainResult names the tier that supplied the check.
-	gateRes      resolve.GateResolution
+	gateRes resolve.GateResolution
+	// cleanupRes is the cleanup resolution the start line reports.
+	cleanupRes   CleanupResolution
 	repo         string
 	ticket       string
 	bodies       [][]byte
@@ -90,18 +92,20 @@ func chainResolveWorkflowBase(ctx context.Context, rt Runtime, opts ChainOptions
 	if err != nil {
 		return chainWFStart{}, err
 	}
-	values, err := chainParamsFor(def, rt.Policy, opts, repoSet)
+	values, cleanupRes, err := chainParamsFor(def, rt.Policy, opts, repoSet)
 	if err != nil {
 		return chainWFStart{}, err
 	}
 	if def, err = workflow.WithParams(def, values); err != nil {
 		return chainWFStart{}, refusal.New("%v", err)
 	}
+	def = workflow.PruneEmptyCleanup(def)
 	checks := resolve.RoleChecks(rt.RoleRegistry(), "builder")
 	plan := chainWFStart{
-		def:      def,
-		settings: chainSettings(rt.Policy, opts, checks, repoSet),
-		gateRes:  resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, checks, repoSet),
+		def:        def,
+		settings:   chainSettings(rt.Policy, opts, checks, repoSet),
+		gateRes:    resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, checks, repoSet),
+		cleanupRes: cleanupRes,
 	}
 	// An unknown entry actor is refused naming the entry before validation.
 	plan.repoActors, err = chainRepoActorsOrRefuse(rt, def, opts, repoSet)
@@ -525,12 +529,7 @@ func chainPersistAndStartWorkflow(ctx context.Context, rt Runtime, tx *store.Tx,
 			return ChainResult{}, err
 		}
 	}
-	row := prep.row
-	if current, cerr := tx.Chain(prep.opts.Name); cerr == nil {
-		row = current
-	}
-	check, source := chain.CheckReport(prep.plan.def, prep.plan.gateRes, prep.opts.Params)
-	return ChainResult{Chain: row, Members: stored, Plans: len(prep.plan.bodies), Check: check, CheckSource: source}, nil
+	return chainStartResult(tx, prep, prep.row, stored), nil
 }
 
 func chainCreateWorkflow(ctx context.Context, rt Runtime, opts ChainOptions, plan chainWFStart) (ChainResult, error) {

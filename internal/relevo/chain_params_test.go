@@ -34,7 +34,7 @@ func TestChainParamsPrecedence(t *testing.T) {
 	repo := RepoSettings{BuilderActor: "repo-builder", ReviewerActor: "repo-reviewer", PlannerActor: "repo-planner"}
 
 	// Policy fills an unflagged slot the repository leaves alone.
-	got, err := chainParamsFor(def, pol, ChainOptions{}, RepoSettings{})
+	got, _, err := chainParamsFor(def, pol, ChainOptions{}, RepoSettings{})
 	if err != nil {
 		t.Fatalf("chainParamsFor(policy): %v", err)
 	}
@@ -46,7 +46,7 @@ func TestChainParamsPrecedence(t *testing.T) {
 	}
 
 	// The repository beats the policy, and fills the builder slot.
-	got, err = chainParamsFor(def, pol, ChainOptions{}, repo)
+	got, _, err = chainParamsFor(def, pol, ChainOptions{}, repo)
 	if err != nil {
 		t.Fatalf("chainParamsFor(repo): %v", err)
 	}
@@ -59,7 +59,7 @@ func TestChainParamsPrecedence(t *testing.T) {
 	}
 
 	// An old flag beats the repository's own value.
-	got, err = chainParamsFor(def, pol, ChainOptions{ReviewerActor: "flag-reviewer"}, repo)
+	got, _, err = chainParamsFor(def, pol, ChainOptions{ReviewerActor: "flag-reviewer"}, repo)
 	if err != nil {
 		t.Fatalf("chainParamsFor(flag): %v", err)
 	}
@@ -71,7 +71,7 @@ func TestChainParamsPrecedence(t *testing.T) {
 	}
 
 	// An old flag beats the policy's own value.
-	got, err = chainParamsFor(def, pol, ChainOptions{ReviewerActor: "flag-reviewer"}, RepoSettings{})
+	got, _, err = chainParamsFor(def, pol, ChainOptions{ReviewerActor: "flag-reviewer"}, RepoSettings{})
 	if err != nil {
 		t.Fatalf("chainParamsFor(flag): %v", err)
 	}
@@ -80,7 +80,7 @@ func TestChainParamsPrecedence(t *testing.T) {
 	}
 
 	// --param beats the old flag.
-	got, err = chainParamsFor(def, pol, ChainOptions{
+	got, _, err = chainParamsFor(def, pol, ChainOptions{
 		ReviewerActor: "flag-reviewer",
 		Params:        map[string]string{"reviewer": "param-reviewer"},
 	}, repo)
@@ -104,11 +104,11 @@ func TestChainParamsPrecedence(t *testing.T) {
 		{ChainOptions{ReviewerActor: "flag-reviewer", Params: map[string]string{"reviewer": "param-reviewer"}}, repo},
 	}
 	for _, tc := range fundCases {
-		want, err := chainParamsFor(def, pol, tc.opts, tc.repo)
+		want, _, err := chainParamsFor(def, pol, tc.opts, tc.repo)
 		if err != nil {
 			t.Fatalf("chainParamsFor(default %+v): %v", tc.opts, err)
 		}
-		funded, err := chainParamsFor(directFix, pol, tc.opts, tc.repo)
+		funded, _, err := chainParamsFor(directFix, pol, tc.opts, tc.repo)
 		if err != nil {
 			t.Fatalf("chainParamsFor(direct-fix %+v): %v", tc.opts, err)
 		}
@@ -126,7 +126,7 @@ func TestChainParamsFlagWithoutSlotListsParams(t *testing.T) {
 		Name:   "triage",
 		Params: map[string]workflow.Param{"answer": {Kind: workflow.ParamBool, Bool: true}},
 	}
-	_, err := chainParamsFor(def, policy.Policy{}, ChainOptions{ReviewerActor: "assistant"}, RepoSettings{})
+	_, _, err := chainParamsFor(def, policy.Policy{}, ChainOptions{ReviewerActor: "assistant"}, RepoSettings{})
 	if err == nil {
 		t.Fatal("chainParamsFor(no slot) = nil error, want a refusal")
 	}
@@ -142,7 +142,7 @@ func TestChainParamsFlagWithoutSlotListsParams(t *testing.T) {
 // on direct-fix alike.
 func TestChainParamsNoGateRendersEmpty(t *testing.T) {
 	for _, def := range []workflow.Definition{workflow.Default(), directFixDef(t)} {
-		got, err := chainParamsFor(def, policy.Policy{}, ChainOptions{NoGate: true}, RepoSettings{})
+		got, _, err := chainParamsFor(def, policy.Policy{}, ChainOptions{NoGate: true}, RepoSettings{})
 		if err != nil {
 			t.Fatalf("chainParamsFor(%s --no-gate): %v", def.Name, err)
 		}
@@ -188,7 +188,7 @@ func TestChainParamsMatchChainSettings(t *testing.T) {
 	for _, def := range defs {
 		for _, tc := range cases {
 			opts, repo := tc.opts, tc.repo
-			values, err := chainParamsFor(def, rt.Policy, opts, repo)
+			values, _, err := chainParamsFor(def, rt.Policy, opts, repo)
 			if err != nil {
 				t.Fatalf("%s chainParamsFor(%+v): %v", def.Name, opts, err)
 			}
@@ -235,7 +235,7 @@ func TestCustomWorkflowParamDefaultsBeatPolicy(t *testing.T) {
 	}
 	pol := policy.Policy{Chain: &policy.ChainPolicy{ReviewerActor: "policy-reviewer"}}
 
-	got, err := chainParamsFor(def, pol, ChainOptions{}, RepoSettings{})
+	got, _, err := chainParamsFor(def, pol, ChainOptions{}, RepoSettings{})
 	if err != nil {
 		t.Fatalf("chainParamsFor(custom): %v", err)
 	}
@@ -244,7 +244,7 @@ func TestCustomWorkflowParamDefaultsBeatPolicy(t *testing.T) {
 	}
 
 	// The repository entry fills nothing outside the shipped default either.
-	got, err = chainParamsFor(def, pol, ChainOptions{}, RepoSettings{BuilderActor: "repo-builder", ReviewerActor: "repo-reviewer"})
+	got, _, err = chainParamsFor(def, pol, ChainOptions{}, RepoSettings{BuilderActor: "repo-builder", ReviewerActor: "repo-reviewer"})
 	if err != nil {
 		t.Fatalf("chainParamsFor(custom repo): %v", err)
 	}
@@ -270,7 +270,7 @@ func TestChainRepoSuppliedActors(t *testing.T) {
 	repo := RepoSettings{BuilderActor: "repo-builder", ReviewerActor: "repo-reviewer", PlannerActor: "repo-planner"}
 	apply := func(def workflow.Definition, opts ChainOptions) workflow.Definition {
 		t.Helper()
-		values, err := chainParamsFor(def, policy.Policy{}, opts, repo)
+		values, _, err := chainParamsFor(def, policy.Policy{}, opts, repo)
 		if err != nil {
 			t.Fatalf("chainParamsFor: %v", err)
 		}
@@ -318,11 +318,138 @@ func TestChainRepoSuppliedActors(t *testing.T) {
 func TestDefaultWorkflowParamsComeFromPolicy(t *testing.T) {
 	pol := policy.Policy{Chain: &policy.ChainPolicy{ReviewerActor: "policy-reviewer"}}
 
-	got, err := chainParamsFor(workflow.Default(), pol, ChainOptions{}, RepoSettings{})
+	got, _, err := chainParamsFor(workflow.Default(), pol, ChainOptions{}, RepoSettings{})
 	if err != nil {
 		t.Fatalf("chainParamsFor(default): %v", err)
 	}
 	if got["reviewer"] != "policy-reviewer" {
 		t.Errorf("reviewer = %q, want policy's policy-reviewer for the shipped default", got["reviewer"])
+	}
+}
+
+// TestChainCleanupFillsRoundChainOrBoth pins the cleanup mapping: the flag
+// beats the repository entry, an empty resolution fills neither slot, and the
+// after word picks the round slot, the chain slot, or both. Filling only the
+// round slot for both is the mutation this test catches.
+func TestChainCleanupFillsRoundChainOrBoth(t *testing.T) {
+	def := workflow.Default()
+	cases := []struct {
+		name             string
+		opts             ChainOptions
+		repo             RepoSettings
+		round, chainSlot string
+	}{
+		{"the flag beats the repo",
+			ChainOptions{Cleanup: "flag-clean", CleanupAfter: "round"},
+			RepoSettings{Cleanup: "repo-clean", CleanupAfter: "chain"},
+			"flag-clean", ""},
+		{"the repo fills the chain slot",
+			ChainOptions{},
+			RepoSettings{Cleanup: "repo-clean", CleanupAfter: "chain"},
+			"", "repo-clean"},
+		{"round fills only the round slot",
+			ChainOptions{Cleanup: "flag-clean", CleanupAfter: "round"},
+			RepoSettings{},
+			"flag-clean", ""},
+		{"both fills both slots",
+			ChainOptions{Cleanup: "flag-clean", CleanupAfter: "both"},
+			RepoSettings{},
+			"flag-clean", "flag-clean"},
+		{"the repo after both fills both slots",
+			ChainOptions{},
+			RepoSettings{Cleanup: "repo-clean", CleanupAfter: "both"},
+			"repo-clean", "repo-clean"},
+		{"empty fills neither",
+			ChainOptions{},
+			RepoSettings{},
+			"", ""},
+	}
+	for _, tc := range cases {
+		got, _, err := chainParamsFor(def, policy.Policy{}, tc.opts, tc.repo)
+		if err != nil {
+			t.Fatalf("%s: chainParamsFor: %v", tc.name, err)
+		}
+		if got["cleanup_round"] != tc.round || got["cleanup_chain"] != tc.chainSlot {
+			t.Errorf("%s: round, chain = %q, %q, want %q, %q",
+				tc.name, got["cleanup_round"], got["cleanup_chain"], tc.round, tc.chainSlot)
+		}
+	}
+}
+
+// TestChainCleanupNoCleanupClears pins --no-cleanup: a repository entry's
+// cleanup is cleared, so neither slot is filled. Keeping the entry's command
+// is the mutation this test catches.
+func TestChainCleanupNoCleanupClears(t *testing.T) {
+	got, _, err := chainParamsFor(workflow.Default(), policy.Policy{},
+		ChainOptions{NoCleanup: true}, RepoSettings{Cleanup: "repo-clean", CleanupAfter: "both"})
+	if err != nil {
+		t.Fatalf("chainParamsFor(--no-cleanup): %v", err)
+	}
+	if got["cleanup_round"] != "" || got["cleanup_chain"] != "" {
+		t.Errorf("round, chain = %q, %q, want neither filled",
+			got["cleanup_round"], got["cleanup_chain"])
+	}
+}
+
+// TestChainCleanupParamBeatsTheFlag pins that --param still wins per-param: a
+// cleanup_round override replaces the flag's command in that slot while the
+// other slot keeps it. Letting the flag win is the mutation this test
+// catches.
+func TestChainCleanupParamBeatsTheFlag(t *testing.T) {
+	got, _, err := chainParamsFor(workflow.Default(), policy.Policy{},
+		ChainOptions{Cleanup: "flag-clean", CleanupAfter: "both",
+			Params: map[string]string{"cleanup_round": "param-clean"}},
+		RepoSettings{})
+	if err != nil {
+		t.Fatalf("chainParamsFor(--param): %v", err)
+	}
+	if got["cleanup_round"] != "param-clean" {
+		t.Errorf("cleanup_round = %q, want param-clean (--param must beat the flag)", got["cleanup_round"])
+	}
+	if got["cleanup_chain"] != "flag-clean" {
+		t.Errorf("cleanup_chain = %q, want flag-clean (an unoverridden slot keeps the flag)", got["cleanup_chain"])
+	}
+}
+
+// TestChainCleanupBadAfterRefuses pins the refusal a bad after word earns,
+// whether it came from the flag or the repository entry.
+func TestChainCleanupBadAfterRefuses(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts ChainOptions
+		repo RepoSettings
+	}{
+		{"a bad flag after", ChainOptions{Cleanup: "make clean", CleanupAfter: "weekly"}, RepoSettings{}},
+		{"a bad repo after", ChainOptions{}, RepoSettings{Cleanup: "make clean", CleanupAfter: "weekly"}},
+	} {
+		_, _, err := chainParamsFor(workflow.Default(), policy.Policy{}, tc.opts, tc.repo)
+		if err == nil {
+			t.Errorf("%s: chainParamsFor = nil error, want a refusal", tc.name)
+			continue
+		}
+		for _, want := range []string{`cleanup_after is "weekly"`, "round, chain or both"} {
+			if got := err.Error(); !strings.Contains(got, want) {
+				t.Errorf("%s: error = %q, want it to name %q", tc.name, got, want)
+			}
+		}
+	}
+}
+
+// TestChainCleanupFlagWithoutSlotRefuses pins the refusal a --cleanup earns
+// when the chosen workflow has no slot for it: the error names the flag, the
+// missing param and every param the workflow does take.
+func TestChainCleanupFlagWithoutSlotRefuses(t *testing.T) {
+	def := workflow.Definition{
+		Name:   "triage",
+		Params: map[string]workflow.Param{"answer": {Kind: workflow.ParamBool, Bool: true}},
+	}
+	_, _, err := chainParamsFor(def, policy.Policy{}, ChainOptions{Cleanup: "make clean"}, RepoSettings{})
+	if err == nil {
+		t.Fatal("chainParamsFor(no slot) = nil error, want a refusal")
+	}
+	for _, want := range []string{"--cleanup", "cleanup_chain", "answer"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to name %q", err, want)
+		}
 	}
 }

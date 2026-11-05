@@ -284,7 +284,7 @@ func boundedCycles(def Definition) []cycle {
 	bounded := make(map[string]bool)
 	for id, step := range def.Steps {
 		switch kindOf(step) {
-		case "run", "check":
+		case "run", "check", "cleanup":
 		case "for-each":
 			control[id] = true
 			bounded[id] = true

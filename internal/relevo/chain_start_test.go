@@ -753,6 +753,21 @@ func TestChainCheckReportNamesTheCheckStepsCommand(t *testing.T) {
 	}
 }
 
+// TestChainStartReportsCleanup pins the start line's cleanup wiring end to
+// end: a flagged cleanup fills both slots, and the result names the command,
+// its source and its when word.
+func TestChainStartReportsCleanup(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	res := startedChain(t, rt, ChainOptions{Cleanup: "make clean", CleanupAfter: "both"})
+
+	if res.Cleanup != "make clean" || res.CleanupSource != "--cleanup" || res.CleanupAfter != "both" {
+		t.Errorf("result cleanup = %q (%q) [%q], want make clean (--cleanup) [both]",
+			res.Cleanup, res.CleanupSource, res.CleanupAfter)
+	}
+}
+
 // TestChainStartRefusesUnknownRepoActors pins the start refusal for a
 // repository entry naming an actor no role defines, one case per actor slot.
 // Dropping the repo tier would run the generic actor instead of refusing, and

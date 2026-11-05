@@ -19,6 +19,8 @@ func (v *validator) checkMatches() {
 			v.checkRunMatches(id, step)
 		case "check":
 			v.checkEnumMatches(id, step, "result", "green", "red")
+		case "cleanup":
+			v.checkCleanupMatches(id, step)
 		case "for-each":
 			v.checkEnumMatches(id, step, "", "next", "empty")
 		case "when":
@@ -168,6 +170,23 @@ func (v *validator) checkEnumMatches(id string, step Step, resultKind, a, b stri
 	}
 	if !hasMatch(on, resultKind, b) {
 		v.add(id, RuleMatch, "uncovered: %s", b)
+	}
+}
+
+// checkCleanupMatches is rule 3 for a cleanup: done is the only outcome, and
+// it or an else covers the step.
+func (v *validator) checkCleanupMatches(id string, step Step) {
+	on := step.On
+	for _, key := range slices.Sorted(maps.Keys(on)) {
+		if key != "done" && key != "else" {
+			v.add(id, RuleMatch, "match %q is not valid for this step", key)
+		}
+	}
+	if _, ok := on["else"]; ok {
+		return
+	}
+	if _, ok := on["done"]; !ok {
+		v.add(id, RuleMatch, "uncovered: done")
 	}
 }
 

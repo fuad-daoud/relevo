@@ -24,6 +24,7 @@ func (v *validator) templates(id string) []stepTemplate {
 	}
 	add("run", step.Run)
 	add("check", step.Check)
+	add("cleanup", step.Cleanup)
 	add("for-each", step.ForEach)
 	add("when", step.When)
 	add("seed", step.Seed)
@@ -128,6 +129,8 @@ func (v *validator) attrFits(id, attr string) bool {
 			return attr == "output"
 		}
 	case "check":
+		return attr == "log"
+	case "cleanup":
 		return attr == "log"
 	case "fork":
 		return attr == "conflict"

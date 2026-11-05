@@ -16,7 +16,7 @@ func shippedEnv() Env {
 			"planner":      {Shape: ShapeReader, Outputs: Outputs{"plan": {Kind: OutputArtifact}}},
 			"security":     {Shape: ShapeReader, Outputs: Outputs{"findings": {Kind: OutputCount}, "report": {Kind: OutputArtifact}}},
 		},
-		Seeds: []string{"repair", "review", "correct", "scan", "fix"},
+		Seeds: []string{"repair", "review", "correct", "scan", "fix", "fix-direct"},
 	}
 }
 

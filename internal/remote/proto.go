@@ -484,6 +484,12 @@ const FeatureIsolation = "isolation"
 // and gate updates on served bindings advertises.
 const FeatureCheck = "check"
 
+// FeatureCleanup is the WhoAmI.Features token a server that runs cleanup
+// steps on a served chain advertises. A client with a cleanup refuses a
+// server without it by pruning the cleanup and warning, never by failing
+// the chain.
+const FeatureCleanup = "cleanup"
+
 // CodeCheckRunning is a 409: the binding is already running a check, so
 // another check cannot start until it finishes.
 const CodeCheckRunning Code = "check_running"

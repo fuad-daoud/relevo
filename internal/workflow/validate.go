@@ -300,8 +300,8 @@ func (v *validator) checkForEachSource(id, source string) {
 	}
 }
 
-// checkParamsOnly is rule 2's params clause for a step's run, check, when and
-// budget.max fields.
+// checkParamsOnly is rule 2's params clause for a step's run, check, cleanup,
+// when and budget.max fields.
 func (v *validator) checkParamsOnly(id string, step Step) {
 	fields := make([]stepTemplate, 0, 4)
 	add := func(name, text string) {
@@ -311,6 +311,7 @@ func (v *validator) checkParamsOnly(id string, step Step) {
 	}
 	add("run", step.Run)
 	add("check", step.Check)
+	add("cleanup", step.Cleanup)
 	add("when", step.When)
 	if step.Budget != nil {
 		add("budget.max", step.Budget.Max.Ref)

@@ -69,6 +69,7 @@ type Definition struct {
 type Step struct {
 	Run     string
 	Check   string
+	Cleanup string
 	ForEach string
 	When    string
 	Fork    *Fork
@@ -79,12 +80,15 @@ type Step struct {
 
 // Kinds lists the kind keys this step carries, in a fixed order.
 func (s Step) Kinds() []string {
-	kinds := make([]string, 0, 5)
+	kinds := make([]string, 0, 6)
 	if s.Run != "" {
 		kinds = append(kinds, "run")
 	}
 	if s.Check != "" {
 		kinds = append(kinds, "check")
+	}
+	if s.Cleanup != "" {
+		kinds = append(kinds, "cleanup")
 	}
 	if s.ForEach != "" {
 		kinds = append(kinds, "for-each")
@@ -107,6 +111,9 @@ func (s Step) MarshalJSON() ([]byte, error) {
 	}
 	if s.Check != "" {
 		obj["check"] = s.Check
+	}
+	if s.Cleanup != "" {
+		obj["cleanup"] = s.Cleanup
 	}
 	if s.ForEach != "" {
 		obj["for-each"] = s.ForEach

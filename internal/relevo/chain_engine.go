@@ -236,11 +236,19 @@ func chainCheckID(run int) string {
 
 // chainFlowCheck starts one check run for a check step: via the check route
 // on a server with check support, from the writer's newest closed round's
-// gate record without it, and through the gate runner locally.
+// gate record without it, and through the gate runner locally. A cleanup
+// step runs through the same runner locally, but a placed writer's cleanup
+// is skipped with a trace warning instead of a check route call: only the
+// chain owner can run a cleanup in its worktree, and a missing runner
+// warns, never halts. A cleanup the owner cannot start closes as done
+// naming that start failure.
 func chainFlowCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before workflow.State, next *workflow.State, ev workflow.Event, act workflow.Action) error {
 	member, err := chainFlowWriterMember(tx, c)
 	if err == nil {
 		if b, lerr := tx.Load(member); lerr == nil && b.Builder.Remote() {
+			if isCleanupStep(def, act.Step) {
+				return chainSkipCleanup(ctx, rt, tx, c, def, before, next, ev, act, member, chainCleanupSkippedWarning(b.Builder.Server))
+			}
 			if rt.Remote != nil {
 				who, werr := rt.Remote.WhoAmI(ctx, b.Builder.Server)
 				if werr == nil && remote.HasFeature(who, remote.FeatureCheck) {
@@ -261,6 +269,14 @@ func chainFlowCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow
 			}
 			return chainFlowPullCheck(ctx, rt, tx, c, def, before, next, ev, act, member)
 		}
+	}
+	if isCleanupStep(def, act.Step) {
+		run, rerr := chainStartOrAdoptCleanup(ctx, rt, tx, c, act.Step, act.Command)
+		if rerr != nil {
+			return chainSkipCleanup(ctx, rt, tx, c, def, before, next, ev, act, member, chainCleanupStartFailWarning(rerr))
+		}
+		next.Awaiting.Run = run
+		return chainSaveFlow(rt, tx, c, def, before, *next, ev, act, member)
 	}
 	run, err := chainStartOrAdoptCheck(ctx, rt, tx, c, act.Step, act.Command)
 	if err != nil {
@@ -317,8 +333,17 @@ func chainRepeatSameItem(rt Runtime, c db.ChainRow, before workflow.State, step 
 // chainFlowPullCheck answers a placed writer's check from its newest closed
 // round's gate record. No record yet leaves the chain awaiting, for a later
 // tick. It records no run id: the next check step would inherit it and ask
-// the server for a run that was never created.
+// the server for a run that was never created. A cleanup never answers from
+// a gate record: the record is the check the round ran, not the cleanup.
 func chainFlowPullCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before workflow.State, next *workflow.State, ev workflow.Event, act workflow.Action, member string) error {
+	if isCleanupStep(def, act.Step) {
+		b, lerr := tx.Load(member)
+		server := ""
+		if lerr == nil {
+			server = b.Builder.Server
+		}
+		return chainSkipCleanup(ctx, rt, tx, c, def, before, next, ev, act, member, chainCleanupSkippedWarning(server))
+	}
 	round := chain.NewestClosedRound(tx, member)
 	rec, err := chain.RoundGate(tx, member, round)
 	if err != nil {
@@ -343,6 +368,40 @@ func chainFlowPullCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chai
 		Kind: workflow.EventCheckClosed, Step: act.Step, Run: 0,
 		Result: chain.GateResult(rec), Log: rec.LogPath,
 		RepeatRed: chainRepeatRedCheck(rt, c, *next, act.Step, rec.LogPath),
+	})
+}
+
+// chainSettlePlacedCheck closes a placed writer's check from its answered
+// remote run: the served tail is sealed under the round's log and the close
+// feeds the engine, so a repeat red still refuses another repair for the
+// same output.
+func chainSettlePlacedCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, st workflow.State, b store.Binding, view remote.CheckView) error {
+	if view.Result == "" {
+		return nil
+	}
+	logTarget, round, err := chainCheckLogTarget(tx, c)
+	if err != nil {
+		return err
+	}
+	logKey := rt.Store.CheckLogPath(logTarget, round, st.Awaiting.Run)
+	if err := tx.PutRoundFile(logTarget, round, logKey, []byte(partialCheckNote(view, b.Builder.Server)+view.LogTail)); err != nil {
+		return err
+	}
+	saved, err := tx.Chain(c.Name)
+	if err != nil {
+		return err
+	}
+	before, err := chain.WorkflowState(saved)
+	if err != nil {
+		return err
+	}
+	return chainAdvance(ctx, rt, tx, saved, workflow.Event{
+		Kind:      workflow.EventCheckClosed,
+		Step:      st.Awaiting.Step,
+		Run:       st.Awaiting.Run,
+		Result:    chainCheckResult(view.Result),
+		Log:       logKey,
+		RepeatRed: chainRepeatRedCheck(rt, saved, before, st.Awaiting.Step, logKey),
 	})
 }
 

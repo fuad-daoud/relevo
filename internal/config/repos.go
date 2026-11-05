@@ -18,10 +18,11 @@ import (
 // nothing. Name is a display label only; gate is the acceptance command the
 // repository's bindings take with no --gate; board_theme is an opaque string
 // the board round owns; trimpath is on or off, unset meaning on; the actor
-// fields name the chain members' actors, unset meaning the policy default.
-// The unset default never stores as itself -- an entry holding only it would
-// drop as empty -- so an entry wanting on beside nothing else stores `on`
-// explicitly.
+// fields name the chain members' actors, unset meaning the policy default;
+// cleanup is the chain's cleanup command, unset meaning none, and
+// cleanup_after is when it runs, unset meaning chain. The unset default never
+// stores as itself -- an entry holding only it would drop as empty -- so an
+// entry wanting on beside nothing else stores `on` explicitly.
 type RepoEntry struct {
 	Name          string `json:"name,omitempty"`
 	Gate          string `json:"gate,omitempty"`
@@ -30,19 +31,22 @@ type RepoEntry struct {
 	BuilderActor  string `json:"builder_actor,omitempty"`
 	ReviewerActor string `json:"reviewer_actor,omitempty"`
 	PlannerActor  string `json:"planner_actor,omitempty"`
+	Cleanup       string `json:"cleanup,omitempty"`
+	CleanupAfter  string `json:"cleanup_after,omitempty"`
 }
 
 // repoEntryFields is the field vocabulary one entry carries. A field beyond
-// these seven is refused by name rather than ignored, so a typo'd key never
+// these nine is refused by name rather than ignored, so a typo'd key never
 // silently stores nothing.
-var repoEntryFields = []string{"name", "gate", "board_theme", "trimpath", "builder_actor", "reviewer_actor", "planner_actor"}
+var repoEntryFields = []string{"name", "gate", "board_theme", "trimpath", "builder_actor", "reviewer_actor", "planner_actor", "cleanup", "cleanup_after"}
 
 // ParseRepos reads and checks the repos body: an object keyed by repository
-// identity, each value an object carrying at most the seven known string
-// fields, trimpath restricted to on and off. A non-object body, a non-object
-// entry (null included), an unknown field and a non-string value are each
-// refused, naming section and entry. Empty fields drop, and an entry left
-// with none drops, so an accepted body encodes back to itself.
+// identity, each value an object carrying at most the nine known string
+// fields, trimpath restricted to on and off and cleanup_after to round, chain
+// or both. A non-object body, a non-object entry (null included), an unknown
+// field and a non-string value are each refused, naming section and entry.
+// Empty fields drop, and an entry left with none drops, so an accepted body
+// encodes back to itself.
 func ParseRepos(body []byte) (map[string]RepoEntry, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil {
@@ -91,7 +95,7 @@ func parseRepoEntry(key string, fields map[string]json.RawMessage) (RepoEntry, e
 	var out RepoEntry
 	for _, name := range names {
 		if !slices.Contains(repoEntryFields, name) {
-			return RepoEntry{}, fmt.Errorf("%s: %s: unknown field %q; a repos entry takes name, gate, board_theme, trimpath, builder_actor, reviewer_actor and planner_actor", Repos, key, name)
+			return RepoEntry{}, fmt.Errorf("%s: %s: unknown field %q; a repos entry takes name, gate, board_theme, trimpath, builder_actor, reviewer_actor, planner_actor, cleanup and cleanup_after", Repos, key, name)
 		}
 		value := fields[name]
 		if len(value) == 0 || string(value) == "null" {
@@ -119,6 +123,13 @@ func parseRepoEntry(key string, fields map[string]json.RawMessage) (RepoEntry, e
 			out.ReviewerActor = s
 		case "planner_actor":
 			out.PlannerActor = s
+		case "cleanup":
+			out.Cleanup = s
+		case "cleanup_after":
+			if s != "round" && s != "chain" && s != "both" {
+				return RepoEntry{}, fmt.Errorf("%s: %s: cleanup_after is %q, want round, chain or both", Repos, key, s)
+			}
+			out.CleanupAfter = s
 		}
 	}
 	return out, nil

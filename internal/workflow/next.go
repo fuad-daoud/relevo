@@ -280,12 +280,30 @@ func cutEq(key string) (string, string, bool) {
 }
 
 func (s State) checkClosed(def Definition, e Event) (State, []Action) {
+	if kindOf(def.Steps[e.Step]) == "cleanup" {
+		return s.cleanupClosed(def, e)
+	}
 	s.recordCheck(e)
 	t, ok := matchFork(def.Steps[e.Step].On, e.Result)
 	if !ok {
 		return halt(s, e.Step, e.Step+" "+e.Result+": no edge matches")
 	}
 	return route(def, s, e.Step, t, 0)
+}
+
+// cleanupClosed records a cleanup close as done and routes its done edge on
+// any exit code: one outcome, done, never green or red. The done status keeps
+// the check readers from seeing a cleanup as a gate.
+func (s State) cleanupClosed(def Definition, e Event) (State, []Action) {
+	s.recordCleanup(e)
+	on := def.Steps[e.Step].On
+	if t, ok := on["done"]; ok {
+		return route(def, s, e.Step, t, 0)
+	}
+	if t, ok := on["else"]; ok {
+		return route(def, s, e.Step, t, 0)
+	}
+	return halt(s, e.Step, e.Step+" done: no edge matches")
 }
 
 // recordStep stores a run step's latest close with its override, so the override
@@ -305,6 +323,19 @@ func (s State) recordCheck(e Event) State {
 		Round:     e.Run,
 		Status:    e.Result,
 		Outcomes:  map[string]string{"result": e.Result},
+		Artifacts: map[string][]string{"log": {e.Log}},
+	}
+	return s
+}
+
+// recordCleanup stores a cleanup close like a check close but with a done
+// status, so the check readers that key on green or red skip it.
+func (s State) recordCleanup(e Event) State {
+	s.Results = ensureResults(s.Results)
+	s.Results[e.Step] = Result{
+		Round:     e.Run,
+		Status:    "done",
+		Outcomes:  map[string]string{"result": "done"},
 		Artifacts: map[string][]string{"log": {e.Log}},
 	}
 	return s

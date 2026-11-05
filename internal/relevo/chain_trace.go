@@ -155,14 +155,33 @@ func RenderTrace(doc ChainTraceDoc) string {
 }
 
 // flowTraceLine renders one workflow trace row: the step it was on, the round
-// or check run, the outcomes it carried and the target it chose.
+// or check run, the outcomes it carried and the target it chose. A cleanup
+// close renders its exit and duration, with a warning marker on a nonzero
+// exit; a skipped placed cleanup renders the skip and its warning.
 func flowTraceLine(e ChainTraceEvent) string {
 	var b strings.Builder
 	switch e.Flow.Kind {
 	case workflow.EventCheckClosed:
-		fmt.Fprintf(&b, "%s run %d", e.Step, e.Flow.Run)
-		if e.Flow.Result != "" {
-			b.WriteString("  result=" + e.Flow.Result)
+		if e.Flow.Result == "done" {
+			if e.Flow.Run == 0 && e.Flow.Log == "" {
+				b.WriteString(e.Step + " skipped")
+				if e.Flow.Reason != "" {
+					b.WriteString(" (" + e.Flow.Reason + ")")
+				}
+			} else {
+				duration := (time.Duration(e.Flow.DurationMS) * time.Millisecond).String()
+				fmt.Fprintf(&b, "%s run %d exit=%d %s", e.Step, e.Flow.Run, e.Flow.ExitCode, duration)
+				if e.Flow.ExitCode != 0 {
+					b.WriteString(" warning: cleanup failed")
+				} else if e.Flow.Reason != "" {
+					b.WriteString(" (" + e.Flow.Reason + ")")
+				}
+			}
+		} else {
+			fmt.Fprintf(&b, "%s run %d", e.Step, e.Flow.Run)
+			if e.Flow.Result != "" {
+				b.WriteString("  result=" + e.Flow.Result)
+			}
 		}
 	case workflow.EventStepClosed:
 		fmt.Fprintf(&b, "%s r%d", e.Step, e.Round)

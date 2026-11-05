@@ -318,7 +318,7 @@ func allReposKeys(t *testing.T, m map[string]config.RepoEntry) string {
 }
 
 // TestConfigRepoRefusesAnUnknownKey pins the key vocabulary: a key outside
-// the seven an entry takes is a usage refusal that names all seven.
+// the nine an entry takes is a usage refusal that names all nine.
 // Accepting any key is the mutation this test catches.
 func TestConfigRepoRefusesAnUnknownKey(t *testing.T) {
 	initRoot(t)
@@ -331,7 +331,7 @@ func TestConfigRepoRefusesAnUnknownKey(t *testing.T) {
 	} {
 		err := run(s)
 		ce := requireCLIError(t, err, codeUsage, "")
-		for _, want := range []string{"name", "gate", "board_theme", "trimpath", "builder_actor", "reviewer_actor", "planner_actor"} {
+		for _, want := range []string{"name", "gate", "board_theme", "trimpath", "builder_actor", "reviewer_actor", "planner_actor", "cleanup", "cleanup_after"} {
 			if !strings.Contains(ce.message, want) {
 				t.Errorf("%v: message = %q, want it to name %q", s, ce.message, want)
 			}
@@ -375,6 +375,103 @@ func TestConfigRepoActorFieldsSetShowUnsetRoundTrip(t *testing.T) {
 		{"builder_actor", "relevo-builder", func(e config.RepoEntry) string { return e.BuilderActor }},
 		{"reviewer_actor", "relevo-reviewer", func(e config.RepoEntry) string { return e.ReviewerActor }},
 		{"planner_actor", "relevo-lite-planner", func(e config.RepoEntry) string { return e.PlannerActor }},
+	}
+	for _, f := range fields {
+		t.Run(f.key, func(t *testing.T) {
+			initRoot(t)
+			repo := gitRepoWithACommit(t)
+			chdirRepo(t, repo)
+
+			if _, stderr, err := captureOutput(t, func() error {
+				return run([]string{"config", "repo", "set", f.key, f.value})
+			}); err != nil {
+				t.Fatalf("config repo set %s: %v (stderr: %s)", f.key, err, stderr)
+			}
+			stored := storedConfig(t)
+			if len(stored.Repos) != 1 {
+				t.Fatalf("stored entries = %+v, want exactly one", stored.Repos)
+			}
+			for _, entry := range stored.Repos {
+				if got := f.read(entry); got != f.value {
+					t.Errorf("stored %s = %q, want %q", f.key, got, f.value)
+				}
+			}
+
+			stdout, _, err := captureOutput(t, func() error {
+				return run([]string{"config", "repo"})
+			})
+			if err != nil {
+				t.Fatalf("config repo: %v", err)
+			}
+			if !strings.Contains(string(stdout), f.key+" "+f.value) {
+				t.Errorf("config repo output = %q, want it to read the stored %s back", stdout, f.key)
+			}
+
+			stdout, _, err = captureOutput(t, func() error {
+				return run([]string{"config", "repo", "--json"})
+			})
+			if err != nil {
+				t.Fatalf("show --json: %v", err)
+			}
+			var doc map[string]string
+			if err := json.Unmarshal(stdout, &doc); err != nil {
+				t.Fatalf("show --json output %s: %v", stdout, err)
+			}
+			if doc[f.key] != f.value {
+				t.Errorf("show --json %s = %q, want %q", f.key, doc[f.key], f.value)
+			}
+
+			stdout, _, err = captureOutput(t, func() error {
+				return run([]string{"config", "repo", "list", "--json"})
+			})
+			if err != nil {
+				t.Fatalf("list --json: %v", err)
+			}
+			var list struct {
+				Repos []map[string]string `json:"repos"`
+			}
+			if err := json.Unmarshal(stdout, &list); err != nil {
+				t.Fatalf("list --json output %s: %v", stdout, err)
+			}
+			if len(list.Repos) != 1 || list.Repos[0][f.key] != f.value {
+				t.Errorf("list --json = %+v, want one row reading the %s back", list.Repos, f.key)
+			}
+
+			stdout, _, err = captureOutput(t, func() error {
+				return run([]string{"config", "repo", "list"})
+			})
+			if err != nil {
+				t.Fatalf("list: %v", err)
+			}
+			if !strings.Contains(string(stdout), f.key+" "+f.value) {
+				t.Errorf("list output = %q, want it to read the stored %s back", stdout, f.key)
+			}
+
+			if _, stderr, err := captureOutput(t, func() error {
+				return run([]string{"config", "repo", "unset", f.key})
+			}); err != nil {
+				t.Fatalf("config repo unset %s: %v (stderr: %s)", f.key, err, stderr)
+			}
+			if entries := storedConfig(t).Repos; len(entries) != 0 {
+				t.Errorf("stored entries after unset = %+v, want none: the entry emptied is dropped", entries)
+			}
+		})
+	}
+}
+
+// TestConfigRepoCleanupFieldsSetShowUnsetRoundTrip pins the two cleanup keys
+// through the verbs: a set stores the field the section validation carries,
+// show and list read it back in human and --json form, and an unset of the
+// only field drops the entry again. A wrong field mapping is the mutation
+// this test catches.
+func TestConfigRepoCleanupFieldsSetShowUnsetRoundTrip(t *testing.T) {
+	fields := []struct {
+		key   string
+		value string
+		read  func(config.RepoEntry) string
+	}{
+		{"cleanup", "make clean", func(e config.RepoEntry) string { return e.Cleanup }},
+		{"cleanup_after", "both", func(e config.RepoEntry) string { return e.CleanupAfter }},
 	}
 	for _, f := range fields {
 		t.Run(f.key, func(t *testing.T) {

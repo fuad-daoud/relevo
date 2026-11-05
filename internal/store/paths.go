@@ -255,6 +255,14 @@ func (s *Store) ServedCheckLogPath(name string, round int) string {
 	return s.roundFile(name, round, "served-check", ".log")
 }
 
+// CleanupLogPath is a round_file key for one chain cleanup run's log, sealed
+// at the cleanup's end. It never shares a name with CheckLogPath: a round
+// that runs both a check and a cleanup holds two files, so the gate section
+// that lists the round's check logs can never read a cleanup log as the gate.
+func (s *Store) CleanupLogPath(name string, round, run int) string {
+	return s.roundFile(name, round, fmt.Sprintf("cleanup-%03d", run), ".log")
+}
+
 // CheckLogTarget resolves a check log path built by CheckLogPath back to the
 // member and round it was keyed with, through RoundFileTarget; ok is false for
 // a path outside the state root or a name that carries no round.
