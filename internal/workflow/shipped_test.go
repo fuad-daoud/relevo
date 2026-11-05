@@ -128,13 +128,28 @@ func TestDefaultCheckRoutesGreenToReviewAndRedToRepair(t *testing.T) {
 // flows through the chain cleanup first. Pointing build's done edge straight
 // at check is the mutation this test catches.
 func TestDefaultCleanupPlacement(t *testing.T) {
+	assertCleanupPlacement(t, Default(), "build", "repair", "build-fix")
+}
+
+// TestDirectFixCleanupPlacement holds the direct-fix workflow to the default's
+// placement, with its one extra writer step, so a cleanup configured for a repo
+// runs whichever shipped workflow the chain picks.
+func TestDirectFixCleanupPlacement(t *testing.T) {
+	def, ok := Shipped("direct-fix")
+	if !ok {
+		t.Fatal("Shipped(direct-fix): want true")
+	}
+	assertCleanupPlacement(t, def, "build", "repair", "build-fix", "fix-direct")
+}
+
+func assertCleanupPlacement(t *testing.T, def Definition, writers ...string) {
+	t.Helper()
 	for _, param := range []string{"cleanup_round", "cleanup_chain"} {
-		p, ok := Default().Params[param]
+		p, ok := def.Params[param]
 		if !ok || p != (Param{Kind: ParamString}) {
 			t.Errorf("param %s = %+v, want an empty string param", param, p)
 		}
 	}
-	def := Default()
 	edge := func(step, match string) Target {
 		t.Helper()
 		on, ok := def.Steps[step].On[match]
@@ -143,7 +158,7 @@ func TestDefaultCleanupPlacement(t *testing.T) {
 		}
 		return on
 	}
-	for _, step := range []string{"build", "repair", "build-fix"} {
+	for _, step := range writers {
 		if got := edge(step, "done"); got != StepTarget("cleanup-round") {
 			t.Errorf("%s done = %+v, want the round cleanup", step, got)
 		}
@@ -180,7 +195,7 @@ func TestDefaultCleanupPlacement(t *testing.T) {
 		}
 	}
 	if problems := Validate(def, shippedEnv()); len(problems) != 0 {
-		t.Errorf("default validates with %v, want clean", problems)
+		t.Errorf("%s validates with %v, want clean", def.Name, problems)
 	}
 }
 
@@ -198,7 +213,7 @@ func TestDirectFixRoutesChangesThroughFixDirect(t *testing.T) {
 		t.Fatalf("review on = %+v, want %+v", got, want)
 	}
 	if got, want := def.Steps["fix-direct"].On, map[string]Target{
-		"done": StepTarget("check"),
+		"done": StepTarget("cleanup-round"),
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("fix-direct on = %+v, want %+v", got, want)
 	}

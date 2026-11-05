@@ -265,7 +265,7 @@ of them the chain runs no cleanup. `--param cleanup_round=<cmd>` and
 `--param cleanup_chain=<cmd>` fill a slot past the resolution, and a cleanup
 whose workflow has no matching slot is refused, naming the params it takes.
 
-In the shipped default workflow a round cleanup runs after every builder
+In the shipped workflows a round cleanup runs after every builder
 round -- build, repair and correction rounds alike -- **before that round's
 gate check**, so it must not delete anything the check needs; the chain
 cleanup runs once, as the chain's last work before done. `both` does each.

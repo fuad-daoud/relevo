@@ -10,39 +10,44 @@ params:                    # the only values a CLI flag changes
   security: security
   scan: true
   gate: ""                 # no check; a repo without one still runs
+  cleanup_round: ""      # round cleanup; empty runs no cleanup
+  cleanup_chain: ""      # chain-end cleanup; empty runs no cleanup
   regate: 1
   max_corrections: 3
 start: plans
 steps:
   plans:      { for-each: plans, on: { next: build, empty: scan-gate } }
-  build:      { run: "{{params.builder}}", seed: "{{plans.current}}", on: { done: check } }
+  build:      { run: "{{params.builder}}", seed: "{{plans.current}}", on: { done: cleanup-round } }
   check:      { check: "{{params.gate}}", on: { green: review, red: repair } }
   repair:     { run: "{{params.builder}}", seed: shipped:repair,
                 budget: { max: "{{params.regate}}", per: [build, build-fix, fix-direct], then: review },
-                on: { done: check } }
+                on: { done: cleanup-round } }
   review:     { run: "{{params.reviewer}}", seed: shipped:review,
                 on: { verdict=pass: plans, verdict=changes: fix-direct } }
   fix-direct: { run: "{{params.builder}}", seed: shipped:fix-direct,
                 budget: { max: 1, per: plans, then: correct },
-                on: { done: check } }
+                on: { done: cleanup-round } }
   correct:    { run: "{{params.planner}}", seed: shipped:correct,
                 budget: { max: "{{params.max_corrections}}", per: plans,
                           then: { halt: "reviewer still wants changes after {{params.max_corrections}} corrections" } },
                 on: { done: build-fix } }
-  build-fix:  { run: "{{params.builder}}", seed: "{{correct.plan}}", on: { done: check } }
-  scan-gate:  { when: "{{params.scan}}", on: { true: scan, false: done } }
+  build-fix:  { run: "{{params.builder}}", seed: "{{correct.plan}}", on: { done: cleanup-round } }
+  cleanup-round: { cleanup: "{{params.cleanup_round}}", on: { done: check } }
+  scan-gate:  { when: "{{params.scan}}", on: { true: scan, false: cleanup-chain } }
   scan:       { run: "{{params.security}}", seed: shipped:scan,
-                on: { findings=0: done, findings>0: fix-plan } }
+                on: { findings=0: cleanup-chain, findings>0: fix-plan } }
   fix-plan:   { run: "{{params.planner}}", seed: shipped:fix, on: { done: fix-build } }
-  fix-build:  { run: "{{params.builder}}", seed: "{{fix-plan.plan}}", on: { done: fix-check } }
+  fix-build:  { run: "{{params.builder}}", seed: "{{fix-plan.plan}}", on: { done: fix-cleanup-round } }
   fix-check:  { check: "{{params.gate}}", on: { green: fix-review, red: fix-repair } }
   fix-repair: { run: "{{params.builder}}", seed: shipped:repair,
                 budget: { max: "{{params.regate}}", per: [fix-build, fix-rebuild], then: fix-review },
-                on: { done: fix-check } }
+                on: { done: fix-cleanup-round } }
   fix-review: { run: "{{params.reviewer}}", seed: shipped:review,
-                on: { verdict=pass: done, verdict=changes: fix-correct } }
+                on: { verdict=pass: cleanup-chain, verdict=changes: fix-correct } }
   fix-correct: { run: "{{params.planner}}", seed: shipped:correct,
                  budget: { max: "{{params.max_corrections}}", per: fix-plan,
                            then: { halt: "reviewer still wants changes after {{params.max_corrections}} corrections" } },
                  on: { done: fix-rebuild } }
-  fix-rebuild: { run: "{{params.builder}}", seed: "{{fix-correct.plan}}", on: { done: fix-check } }
+  fix-rebuild: { run: "{{params.builder}}", seed: "{{fix-correct.plan}}", on: { done: fix-cleanup-round } }
+  fix-cleanup-round: { cleanup: "{{params.cleanup_round}}", on: { done: fix-check } }
+  cleanup-chain: { cleanup: "{{params.cleanup_chain}}", on: { done: done } }
