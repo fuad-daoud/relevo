@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +26,12 @@ func remoteCode(err error, status int, code remote.Code) bool {
 		return false
 	}
 	return httpErr.Status == status && httpErr.Body.Code == code
+}
+
+// remoteNotFound reports whether a server answered 404.
+func remoteNotFound(err error) bool {
+	var httpErr *client.HTTPError
+	return errors.As(err, &httpErr) && httpErr.Status == http.StatusNotFound
 }
 
 // chainServerStatus is `relevo status <chain>` for a chain that runs on a

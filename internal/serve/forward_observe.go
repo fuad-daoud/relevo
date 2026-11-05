@@ -74,6 +74,7 @@ func (s *Server) observeForwards(ctx context.Context) int {
 		}
 	}
 	s.burstHealth.forgetAckEpisodes(holdingClosed)
+	s.burstHealth.forgetStopMarks(stoppingForwards(work))
 	if len(work) == 0 {
 		return 0
 	}
@@ -116,6 +117,9 @@ func (s *Server) observeForwards(ctx context.Context) int {
 func (s *Server) observeOne(ctx context.Context, cl *client.Client, row burst.NodeRow, w observeWork, now time.Time) bool {
 	view, err := cl.GetBinding(ctx, w.fwd.Node, w.fwd.NodeBinding)
 	if err != nil {
+		if isObserveNotFound(err) {
+			return s.observeBindingGone(ctx, cl, w, now)
+		}
 		if burstForwardUnreachable(err) {
 			s.noteNodeUnreachable(now, row)
 		} else {
@@ -134,12 +138,15 @@ func (s *Server) observeOne(ctx context.Context, cl *client.Client, row burst.No
 	}
 	switch view.RoundState {
 	case remote.RoundQueued, remote.RoundRunning:
+		s.retryForwardStop(ctx, cl, row, w, now)
 		return s.observeLive(view, w)
 	case remote.RoundClosed:
 		return s.observeClosed(ctx, cl, row, w, view, now)
 	case remote.RoundNeedsYou, remote.RoundBroken:
 		s.observeNeedsYou(ctx, cl, row, w, view, now)
 		return false
+	case remote.RoundIdle:
+		return s.observeBindingGone(ctx, cl, w, now)
 	default:
 		slog.Warn("burst: observe answered an unexpected state", "binding", w.name, "node", w.fwd.Node, "state", view.RoundState)
 		return false
@@ -511,86 +518,4 @@ func writeObserveFiles(rt relevo.Runtime, name string, round int, fetch *observe
 		}
 	}
 	return true
-}
-
-// ackObserveClosed acks the closed round without the lock. An ack failure
-// keeps Phase closed so the next cycle retries and the node keeps counting
-// unacked; it is also the node's ack episode, counted and flagged once when
-// a reachable node refuses three in a row. A failure never marks the node
-// unreachable and never requeues: the round is home, only its receipt is
-// missing. True means the ack landed and the forward cleared.
-func (s *Server) ackObserveClosed(ctx context.Context, cl *client.Client, w observeWork) bool {
-	if _, err := cl.Ack(ctx, w.fwd.Node, w.fwd.NodeBinding, w.fwd.Round); err != nil {
-		slog.Warn("burst: observe ack failed, keeping closed", "binding", w.name, "node", w.fwd.Node, "err", err)
-		s.noteAckStuck(ctx, w)
-		return false
-	}
-	s.burstHealth.clearAckFails(w.fwd.Node)
-	st := s.ownerStore(w.ownerPath)
-	cur, err := st.Load(w.name)
-	if err != nil {
-		return false
-	}
-	if !observeClosedAckMatches(cur, w.fwd) {
-		return true
-	}
-	cur.Burst.Forward = nil
-	if len(cur.Burst.Shipped) == 0 && len(cur.Burst.NodeBindings) == 0 {
-		cur.Burst = nil
-	}
-	if err := st.Save(cur); err != nil {
-		slog.Warn("burst: observe ack clear failed", "binding", w.name, "err", err)
-		return false
-	}
-	return true
-}
-
-// observeNeedsYou parks a head binding the node waits on a human for. The
-// head takes the node's halt reason and report, clears the forward, and
-// leaves the round open: the local tick owns what happens next.
-func (s *Server) observeNeedsYou(ctx context.Context, cl *client.Client, row burst.NodeRow, w observeWork, view remote.BindingView, now time.Time) {
-	if view.Round != w.fwd.Round {
-		slog.Warn("burst: observe answered another waiting round", "binding", w.name, "node", w.fwd.Node, "want", w.fwd.Round, "got", view.Round)
-		return
-	}
-	var report []byte
-	if rc, err := cl.RoundFile(ctx, w.fwd.Node, w.fwd.NodeBinding, view.Round, "report"); err == nil {
-		body, rerr := io.ReadAll(rc)
-		_ = rc.Close()
-		if rerr == nil {
-			report = body
-		}
-	} else if !isObserveNotFound(err) {
-		if burstForwardUnreachable(err) {
-			s.noteNodeUnreachable(now, row)
-		}
-		return
-	}
-	st := s.ownerStore(w.ownerPath)
-	cur, err := st.Load(w.name)
-	if err != nil {
-		return
-	}
-	if !observeMatches(cur, w.fwd) {
-		return
-	}
-	rt := s.runtimeAt(w.ownerPath)
-	if report != nil {
-		path := rt.Store.ReportPath(cur.Name, w.fwd.Round)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err == nil {
-			_ = os.WriteFile(path, report, 0o644)
-		}
-	}
-	cur.State = store.StateNeedsYou
-	cur.Halt = view.Halt
-	if cur.Halt == "" {
-		cur.Halt = "the node waits on its human"
-	}
-	cur.Burst.Forward = nil
-	if len(cur.Burst.Shipped) == 0 && len(cur.Burst.NodeBindings) == 0 {
-		cur.Burst = nil
-	}
-	if err := st.Save(cur); err != nil {
-		slog.Warn("burst: observe needs_you save failed", "binding", w.name, "err", err)
-	}
 }

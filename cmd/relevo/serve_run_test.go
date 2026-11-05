@@ -36,6 +36,24 @@ func TestServeStatusConfigCarriesBurst(t *testing.T) {
 	}
 }
 
+// TestServeGateConfigCarriesBurst pins what a gate needs to reach the nodes:
+// without the burst block and the client key New loads no node table, and the
+// fan-out has nobody to dial. Pure struct assembly.
+func TestServeGateConfigCarriesBurst(t *testing.T) {
+	key := []byte("pem-encoded-client-key")
+	burstBlock := &policy.BurstPolicy{Command: []string{"burst", "report"}}
+	cfg := serveGateConfigFrom(t.TempDir(), nil, config.Loaded{
+		ClientKey: key,
+		Policy:    policy.Policy{Serve: &policy.ServePolicy{Burst: burstBlock}},
+	})
+	if !reflect.DeepEqual(cfg.Burst, burstBlock) {
+		t.Errorf("cfg.Burst = %+v, want the serve.burst block", cfg.Burst)
+	}
+	if !bytes.Equal(cfg.ClientKey, key) {
+		t.Errorf("cfg.ClientKey = %q, want the loaded client key", cfg.ClientKey)
+	}
+}
+
 // TestBuildServeConfigWiresBurst pins the burst section of the server config:
 // the policy block passes through, the client key reaches the server so the
 // startup gate can read it, and a command builds the provider while no

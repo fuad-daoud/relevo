@@ -112,11 +112,12 @@ check-test:
 # e2e runs relevo's headless end-to-end scenarios (internal/e2e): one round on
 # its own, a chain of two plans with the security phase, a chain whose builder
 # runs on a served member, a chain the server drives end to end with a
-# correction, and a fork chain whose two children are merged back into their
-# parent. CI runs it; it needs no session manager on PATH and is not part
+# correction, a fork chain whose two children are merged back into their
+# parent, and a round the head forwards to a burst node and collects home.
+# CI runs it; it needs no session manager on PATH and is not part
 # of check.
 e2e:
-	go test ./internal/e2e/ -run 'TestHeadlessE2E|TestChainE2E|TestChainTriageE2E|TestChainForkE2E|TestChainRemoteBuilderE2E|TestChainServerE2E' -count=1
+	go test ./internal/e2e/ -run 'TestHeadlessE2E|TestChainE2E|TestChainTriageE2E|TestChainForkE2E|TestChainRemoteBuilderE2E|TestChainServerE2E|TestForwardedRoundE2E' -count=1
 
 build: check
 	go build -ldflags "$(LDFLAGS)" -o relevo ./cmd/relevo

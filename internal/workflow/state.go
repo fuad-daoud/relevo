@@ -119,6 +119,11 @@ type Event struct {
 	Log       string
 	Child     string
 	Reason    string
+	// ExitCode and DurationMS are a cleanup close's own outcome: the
+	// command's exit and how long it ran. A check close leaves both zero,
+	// so a cleanup trace row can name them without changing a check row.
+	ExitCode   int   `json:"exit_code,omitempty"`
+	DurationMS int64 `json:"duration_ms,omitempty"`
 	// RepeatRed says a red check's output repeats the previous red's, so a
 	// budgeted repair is not bought twice for the same failure.
 	RepeatRed bool

@@ -58,6 +58,10 @@ func (s *Server) sendForwards(ctx context.Context, now time.Time) int {
 			if f == nil || f.Phase != "sending" {
 				continue
 			}
+			if f.StopRequested {
+				s.closeStopRequestedSend(ctx, ownerPath, b.Name, *f)
+				continue
+			}
 			row, ok := rows[f.Node]
 			if !ok || !row.Verified || row.State != "ready" {
 				continue
@@ -95,10 +99,18 @@ func (s *Server) sendForwards(ctx context.Context, now time.Time) int {
 	return confirmed
 }
 
+// forwardShipPatience bounds a claim the head cannot ship. Most causes clear by
+// the next tick, but one that does not would hold the node's seat for as long
+// as the head runs.
+const forwardShipPatience = 5 * time.Minute
+
+var errForwardNotShipped = errors.New("nothing to ship")
+
 // sendOne ships one sending forward: the node binding is created when
-// missing and the round starts with the head's own plan, candidate, tier
-// and tags. A started round and an already-started answer both confirm;
-// a refusal requeues, and anything else keeps the claim for the next tick.
+// missing, its round count moved up to the head's, and the round starts with
+// the head's own plan, candidate, tier and tags. A started round confirms, and
+// so does a conflict when the node holds this very round. A refusal requeues,
+// and anything else keeps the claim for the next tick.
 // A send that never confirms restores the staged forward ref, so the next
 // send stages fresh instead of wedging on this attempt's leftover.
 func (s *Server) sendOne(ctx context.Context, cl *client.Client, row burst.NodeRow, w sendWork, now time.Time) bool {
@@ -107,6 +119,9 @@ func (s *Server) sendOne(ctx context.Context, cl *client.Client, row burst.NodeR
 	ship, stage, ok := s.shipForward(ctx, rt, w.b, fwd, w.since)
 	if !ok {
 		restoreForwardStage(ctx, rt, stage)
+		if now.Sub(fwd.ClaimedAt) > forwardShipPatience {
+			s.refuseForward(ctx, w, fwd, now, "burst: forward could not ship, requeued", errForwardNotShipped)
+		}
 		return false
 	}
 	defer func() {
@@ -123,28 +138,78 @@ func (s *Server) sendOne(ctx context.Context, cl *client.Client, row burst.NodeR
 	if !ship.snap.Empty && ship.snap.Body != nil {
 		bundle = ship.snap.Body
 	}
+	if _, aerr := cl.AlignRound(ctx, row.ID, fwd.NodeBinding, fwd.Round); aerr != nil {
+		s.noteSendFailure(ctx, row, w, fwd, now, aerr)
+		restoreForwardStage(ctx, rt, stage)
+		return false
+	}
 	_, serr := cl.StartRound(ctx, row.ID, fwd.NodeBinding, fwd.Round, ship.plan,
 		bundle, ship.tier, w.b.BuilderCandidate, false, ship.tags, false, nil)
-	if serr == nil || burstHTTPStatus(serr, http.StatusConflict) {
+	if burstHTTPStatus(serr, http.StatusConflict) {
+		serr = conflictUnlessHeld(ctx, cl, row, fwd, serr)
+	}
+	if serr == nil {
 		if s.confirmSend(w, row, ship.outSHA, now, created) {
 			return true
 		}
 		restoreForwardStage(ctx, rt, stage)
 		return false
 	}
-	if burstForwardRefused(serr) {
-		s.refuseForward(w, fwd, now, "burst: node refused a forward, requeued", serr)
-		restoreForwardStage(ctx, rt, stage)
-		return false
-	}
-	if burstForwardUnreachable(serr) {
-		s.noteNodeUnreachable(now, row)
-	} else {
-		slog.Warn("burst: send forward failed, kept sending", "owner", string(w.id),
-			"binding", w.b.Name, "node", fwd.Node, "err", serr)
-	}
+	s.noteSendFailure(ctx, row, w, fwd, now, serr)
 	restoreForwardStage(ctx, rt, stage)
 	return false
+}
+
+// conflictUnlessHeld reads what a conflict on a start means. Only a node running
+// this very round may confirm it. A forward believed running on a node that has
+// no such round waits forever and holds the node open, and a round the node
+// closed under this number ran some other plan, since an identical resend of it
+// is answered as a success.
+func conflictUnlessHeld(ctx context.Context, cl *client.Client, row burst.NodeRow, fwd store.Forward, conflict error) error {
+	view, err := cl.GetBinding(ctx, row.ID, fwd.NodeBinding)
+	if err != nil {
+		return err
+	}
+	if (view.RoundState == remote.RoundQueued || view.RoundState == remote.RoundRunning) && view.Round == fwd.Round {
+		return nil
+	}
+	return conflict
+}
+
+// noteSendFailure sorts a send the node did not take: a refusal or a conflict
+// requeues, and anything else keeps the claim for the next tick.
+func (s *Server) noteSendFailure(ctx context.Context, row burst.NodeRow, w sendWork, fwd store.Forward, now time.Time, err error) {
+	if burstForwardRefused(err) || burstHTTPStatus(err, http.StatusConflict) {
+		s.refuseForward(ctx, w, fwd, now, "burst: node refused a forward, requeued", err)
+		return
+	}
+	if burstForwardUnreachable(err) {
+		s.noteNodeUnreachable(now, row)
+		return
+	}
+	slog.Warn("burst: send forward failed, kept sending", "owner", string(w.id),
+		"binding", w.b.Name, "node", fwd.Node, "err", err)
+}
+
+// closeStopRequestedSend closes a sending forward the stop reached before
+// the send: the head never contacts the node and the round closes the way
+// stopping a queued local round closes it. The match is re-checked under the
+// store lock, so a result that landed in between wins instead.
+func (s *Server) closeStopRequestedSend(ctx context.Context, ownerPath, name string, fwd store.Forward) {
+	st := s.ownerStore(ownerPath)
+	rt := s.runtimeAt(ownerPath)
+	if err := st.WithLock(func(tx *store.Tx) error {
+		closed, err := relevo.CloseStopRequestedForward(ctx, rt, tx, name, fwd, "dequeued")
+		if err != nil {
+			return err
+		}
+		if !closed {
+			slog.Info("burst: stop-requested send already moved", "binding", name, "node", fwd.Node)
+		}
+		return nil
+	}); err != nil {
+		slog.Warn("burst: stop-requested send not closed", "binding", name, "node", fwd.Node, "err", err)
+	}
 }
 
 // forwardShip is everything one send ships: the round's staged plan, the
@@ -230,7 +295,7 @@ func (s *Server) shipForward(ctx context.Context, rt relevo.Runtime, b store.Bin
 	// losing its ref.
 	fwdRef := "refs/relevo/" + fwd.NodeBinding + "/out"
 	cur, ok, err := rt.Git.RefSHA(ctx, bare, fwdRef)
-	if err != nil || (ok && cur != since && cur != outSHA) {
+	if err != nil || (ok && cur != since && cur != outSHA && cur != b.Burst.Staged) {
 		slog.Warn("burst: send forward: forward ref not available", "binding", b.Name, "ref", fwdRef, "err", err)
 		return nil, nil, false
 	}
@@ -283,7 +348,7 @@ func (s *Server) ensureNodeBinding(ctx context.Context, cl *client.Client, row b
 	}
 	if !burstHTTPStatus(gerr, http.StatusNotFound) {
 		if burstForwardRefused(gerr) {
-			s.refuseForward(w, fwd, now, "burst: node refused a forward binding, requeued", gerr)
+			s.refuseForward(ctx, w, fwd, now, "burst: node refused a forward binding, requeued", gerr)
 			return false, false
 		}
 		if burstForwardUnreachable(gerr) {
@@ -308,7 +373,7 @@ func (s *Server) ensureNodeBinding(ctx context.Context, cl *client.Client, row b
 		return false, true
 	}
 	if burstForwardRefused(cerr) {
-		s.refuseForward(w, fwd, now, "burst: node refused a forward binding, requeued", cerr)
+		s.refuseForward(ctx, w, fwd, now, "burst: node refused a forward binding, requeued", cerr)
 		return false, false
 	}
 	if burstForwardUnreachable(cerr) {
@@ -349,6 +414,7 @@ func (s *Server) confirmSend(w sendWork, row burst.NodeRow, outSHA string, now t
 		b.Burst.Shipped = map[string]string{}
 	}
 	b.Burst.Shipped[have.Node] = outSHA
+	b.Burst.Staged = outSHA
 	b.Burst.NodeBindings = append(b.Burst.NodeBindings, have.NodeBinding)
 	if err := st.Save(b); err != nil {
 		slog.Warn("burst: confirm forward: save failed", "binding", w.b.Name, "err", err)
@@ -461,14 +527,14 @@ func (s *Server) noteForwardSent(row burst.NodeRow, now time.Time) {
 // refuseForward returns a round a node refused to the queue and holds it out
 // of placement for a while, so the next tick does not claim it for the same
 // refusal again.
-func (s *Server) refuseForward(w sendWork, fwd store.Forward, now time.Time, msg string, err error) {
+func (s *Server) refuseForward(ctx context.Context, w sendWork, fwd store.Forward, now time.Time, msg string, err error) {
 	slog.Warn(msg, "owner", string(w.id), "binding", w.b.Name, "node", fwd.Node, "err", err)
 	since := fwd.QueuedSince
 	if since.IsZero() {
 		since = now
 	}
 	s.burstHealth.noteRefused(burstRefusalKey(string(w.id)+"/"+w.b.Name, since), now)
-	s.requeueOne(w.id, w.ownerPath, w.b.Name, fwd, now)
+	s.requeueOne(ctx, w.id, w.ownerPath, w.b.Name, fwd, now)
 }
 
 // withoutHeldRefusals drops from placement every waiting round a node

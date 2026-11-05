@@ -1,9 +1,12 @@
 package serve
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -11,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -171,7 +175,90 @@ type nodeScript struct {
 	startView    remote.BindingView
 	startCode    remote.Code
 	startMsg     string
-	redirect     string
+	stopStatus   int
+	stopView     remote.BindingView
+	stopCode     remote.Code
+	stopMsg      string
+	// stopWait, when non-nil, holds the stop answer until the test closes
+	// it, so the head's return can be observed before the node answers.
+	stopWait chan struct{}
+	// stopHits counts the stop answers, apart from every other hit, so a
+	// test can say exactly how many stops the node saw.
+	stopHits atomic.Int64
+	// unbindForced says whether the last unbind asked for force.
+	unbindForced atomic.Bool
+	// alignStatus answers the round alignment; zero answers 200.
+	alignStatus int
+	alignCode   remote.Code
+	alignHits   atomic.Int64
+	startHits   atomic.Int64
+	// unavailableStatus answers the node-side unavailable; zero answers 200.
+	// unavailableWait, when non-nil, holds the answer until the test closes
+	// it, so a gate's return can be observed before the node answers. The
+	// hold also ends when the request's context does, so a test that fails
+	// before releasing never wedges the stub's close in cleanup.
+	unavailableStatus int
+	unavailableMsg    string
+	unavailableWait   chan struct{}
+	// unavailableHits counts the unavailable answers, apart from every
+	// other hit, so a test can say exactly how many gates the node saw.
+	unavailableHits atomic.Int64
+	// availableStatus answers the node-side available; zero answers 200.
+	// availableWait ends with the request's context too, for the same
+	// cleanup reason as unavailableWait.
+	availableStatus int
+	availableMsg    string
+	availableWait   chan struct{}
+	// availableHits counts the available answers, apart from every other
+	// hit.
+	availableHits atomic.Int64
+	// gateMu guards gates, the gates a scripted node received in arrival
+	// order, so a test can say the head forwarded the gate it recorded.
+	gateMu sync.Mutex
+	gates  []gateSeen
+	// unbindStatus answers the node-side unbind; zero answers 200.
+	unbindStatus int
+	unbindCode   remote.Code
+	unbindMsg    string
+	// unbindWait, when non-nil, holds the unbind answer until the test
+	// closes it, so a release's non-blocking can be observed.
+	unbindWait chan struct{}
+	// unbindHits counts the unbind answers, apart from every other hit.
+	unbindHits atomic.Int64
+	// startBodies records the bytes each round start carried, so a test can
+	// tell a full bundle from an incremental or empty one.
+	startMu     sync.Mutex
+	startBodies [][]byte
+	redirect    string
+}
+
+// recordStart keeps one start request's body for bundle assertions.
+func (s *nodeScript) recordStart(body []byte) {
+	s.startMu.Lock()
+	defer s.startMu.Unlock()
+	s.startBodies = append(s.startBodies, body)
+}
+
+// gateSeen is one gate a scripted node received: the token the unavailable
+// carried, or the subject the available carried with an empty reason.
+type gateSeen struct {
+	token  string
+	reason string
+}
+
+// recordGate keeps one received gate for value assertions: the head
+// forwards the gate it recorded, not just a knock on the node's door.
+func (s *nodeScript) recordGate(seen gateSeen) {
+	s.gateMu.Lock()
+	defer s.gateMu.Unlock()
+	s.gates = append(s.gates, seen)
+}
+
+// gateTokens reports every gate the node received, in arrival order.
+func (s *nodeScript) gateTokens() []gateSeen {
+	s.gateMu.Lock()
+	defer s.gateMu.Unlock()
+	return append([]gateSeen(nil), s.gates...)
 }
 
 func (s *nodeScript) serve() http.Handler {
@@ -194,16 +281,111 @@ func (s *nodeScript) serve() http.Handler {
 			} else {
 				writeJSON(w, s.createStatus, s.getView)
 			}
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/unbind"):
+			s.unbindForced.Store(r.URL.Query().Get("force") != "")
+			s.unbindHits.Add(1)
+			if s.unbindWait != nil {
+				<-s.unbindWait
+			}
+			status := s.unbindStatus
+			if status == 0 {
+				status = http.StatusOK
+			}
+			if status >= 400 {
+				writeJSON(w, status, remote.ErrorBody{Code: s.unbindCode, Message: s.unbindMsg})
+			} else {
+				writeJSON(w, status, map[string]any{})
+			}
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/align"):
+			s.alignHits.Add(1)
+			status := s.alignStatus
+			if status == 0 {
+				status = http.StatusOK
+			}
+			if status >= 400 {
+				writeJSON(w, status, remote.ErrorBody{Code: s.alignCode, Message: "align refused"})
+			} else {
+				writeJSON(w, status, s.getView)
+			}
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/rounds"):
+			s.startHits.Add(1)
+			body, _ := io.ReadAll(r.Body)
+			s.recordStart(body)
 			if s.startStatus >= 400 {
 				writeJSON(w, s.startStatus, remote.ErrorBody{Code: s.startCode, Message: s.startMsg})
 			} else {
 				writeJSON(w, s.startStatus, s.startView)
 			}
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/stop"):
+			s.stopHits.Add(1)
+			if s.stopWait != nil {
+				<-s.stopWait
+			}
+			if s.stopStatus >= 400 {
+				writeJSON(w, s.stopStatus, remote.ErrorBody{Code: s.stopCode, Message: s.stopMsg})
+			} else {
+				writeJSON(w, s.stopStatus, s.stopView)
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/unavailable":
+			var req remote.UnavailableRequest
+			if body, err := io.ReadAll(r.Body); err == nil {
+				_ = json.Unmarshal(body, &req)
+			}
+			s.recordGate(gateSeen{token: req.Token, reason: req.Reason})
+			s.unavailableHits.Add(1)
+			if s.unavailableWait != nil {
+				select {
+				case <-s.unavailableWait:
+				case <-r.Context().Done():
+				}
+			}
+			status := s.unavailableStatus
+			if status == 0 {
+				status = http.StatusOK
+			}
+			if status >= 400 {
+				writeJSON(w, status, remote.ErrorBody{Message: s.unavailableMsg})
+			} else {
+				writeJSON(w, status, map[string]any{})
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/available":
+			var req remote.AvailableRequest
+			if body, err := io.ReadAll(r.Body); err == nil {
+				_ = json.Unmarshal(body, &req)
+			}
+			s.recordGate(gateSeen{token: req.Subject})
+			s.availableHits.Add(1)
+			if s.availableWait != nil {
+				select {
+				case <-s.availableWait:
+				case <-r.Context().Done():
+				}
+			}
+			status := s.availableStatus
+			if status == 0 {
+				status = http.StatusOK
+			}
+			if status >= 400 {
+				writeJSON(w, status, remote.ErrorBody{Message: s.availableMsg})
+			} else {
+				writeJSON(w, status, remote.AvailableResponse{})
+			}
 		default:
 			http.NotFound(w, r)
 		}
 	})
+}
+
+// lastStartHasBundle reports whether the newest recorded start carried a
+// bundle part: the ship's full cut rides the form, an empty incremental one
+// does not.
+func (s *nodeScript) lastStartHasBundle() bool {
+	s.startMu.Lock()
+	defer s.startMu.Unlock()
+	if len(s.startBodies) == 0 {
+		return false
+	}
+	return bytes.Contains(s.startBodies[len(s.startBodies)-1], []byte("bundle.bundle"))
 }
 
 // stubRoundView is the minimal view a scripted node answers.
@@ -319,18 +501,35 @@ func requireStillSending(t *testing.T, env *testEnv, name string) {
 }
 
 // TestBurstSendAnswers pins every StartRound and create answer: a started
-// round and an already-started answer both confirm, a definite refusal
+// round confirms, so does a conflict over a round the node holds, a definite
+// refusal or a conflict over anything else
 // requeues to the FIFO place with the node's message logged, and a failure
 // or a redirect keeps the claim for the next tick.
 func TestBurstSendAnswers(t *testing.T) {
 	clock := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
 	running := stubRoundView("nb-api", 1, remote.RoundRunning)
 
-	t.Run("409 started confirms", func(t *testing.T) {
+	t.Run("a claim that cannot ship gives up its seat", func(t *testing.T) {
+		script := &nodeScript{getStatus: http.StatusOK, getView: running, startStatus: http.StatusCreated, startView: running}
+		env, _, fwd := answerSetup(t, script, clock)
+		rt := env.runtime(t)
+		if err := os.Remove(rt.Store.PromptPath("api", fwd.Round)); err != nil {
+			t.Fatal(err)
+		}
+		if got := env.srv.sendForwards(context.Background(), fwd.ClaimedAt.Add(forwardShipPatience)); got != 0 {
+			t.Fatalf("confirmed = %d, want 0", got)
+		}
+		requireStillSending(t, env, "api")
+		if got := env.srv.sendForwards(context.Background(), fwd.ClaimedAt.Add(forwardShipPatience+time.Second)); got != 0 {
+			t.Fatalf("confirmed = %d, want 0", got)
+		}
+		requireRequeued(t, env, fwd)
+	})
+
+	t.Run("409 on a round the node holds requeues nothing", func(t *testing.T) {
 		script := &nodeScript{
-			getStatus: http.StatusNotFound, getCode: remote.CodeNotFound, getMsg: "not found",
-			createStatus: http.StatusCreated,
-			startStatus:  http.StatusConflict, startCode: remote.CodeRoundStarted, startMsg: "round 1 already started",
+			getStatus: http.StatusOK, getView: running,
+			startStatus: http.StatusConflict, startCode: remote.CodeRoundStarted, startMsg: "round 1 already started",
 		}
 		env, _, fwd := answerSetup(t, script, clock)
 		if got := env.srv.sendForwards(context.Background(), clock); got != 1 {
@@ -343,6 +542,62 @@ func TestBurstSendAnswers(t *testing.T) {
 		}
 		if back.Burst == nil || back.Burst.Shipped["b1"] == "" || len(back.Burst.NodeBindings) != 1 || back.Burst.NodeBindings[0] != fwd.NodeBinding {
 			t.Errorf("Burst = %+v, want the ship base and node binding recorded", back.Burst)
+		}
+	})
+
+	t.Run("409 on a round the node does not hold requeues", func(t *testing.T) {
+		script := &nodeScript{
+			getStatus: http.StatusOK, getView: stubRoundView("nb-api", 1, remote.RoundIdle),
+			startStatus: http.StatusConflict, startCode: remote.CodeRoundStarted, startMsg: "round 1 already started",
+		}
+		env, _, fwd := answerSetup(t, script, clock)
+		if got := env.srv.sendForwards(context.Background(), clock); got != 0 {
+			t.Fatalf("confirmed = %d, want 0: the node has no such round", got)
+		}
+		requireRequeued(t, env, fwd)
+	})
+
+	t.Run("409 on a round the node closed requeues", func(t *testing.T) {
+		closed := stubRoundView("nb-api", 2, remote.RoundClosed)
+		closed.ClosedRound = 1
+		script := &nodeScript{
+			getStatus: http.StatusOK, getView: closed,
+			startStatus: http.StatusConflict, startCode: remote.CodeRoundStarted, startMsg: "round 1 already started",
+		}
+		env, _, fwd := answerSetup(t, script, clock)
+		if got := env.srv.sendForwards(context.Background(), clock); got != 0 {
+			t.Fatalf("confirmed = %d, want 0: that close ran another plan", got)
+		}
+		requireRequeued(t, env, fwd)
+	})
+
+	t.Run("the count moves up before the start", func(t *testing.T) {
+		script := &nodeScript{
+			getStatus: http.StatusOK, getView: stubRoundView("nb-api", 1, remote.RoundIdle),
+			startStatus: http.StatusCreated, startView: running,
+		}
+		env, _, _ := answerSetup(t, script, clock)
+		if got := env.srv.sendForwards(context.Background(), clock); got != 1 {
+			t.Fatalf("confirmed = %d, want 1", got)
+		}
+		if got := script.alignHits.Load(); got != 1 {
+			t.Errorf("align hits = %d, want 1", got)
+		}
+	})
+
+	t.Run("a refused count requeues without a start", func(t *testing.T) {
+		script := &nodeScript{
+			getStatus: http.StatusOK, getView: stubRoundView("nb-api", 1, remote.RoundRunning),
+			alignStatus: http.StatusConflict, alignCode: remote.CodeRoundOpen,
+			startStatus: http.StatusCreated, startView: running,
+		}
+		env, _, fwd := answerSetup(t, script, clock)
+		if got := env.srv.sendForwards(context.Background(), clock); got != 0 {
+			t.Fatalf("confirmed = %d, want 0", got)
+		}
+		requireRequeued(t, env, fwd)
+		if got := script.startHits.Load(); got != 0 {
+			t.Errorf("start hits = %d, want 0", got)
 		}
 	})
 
@@ -1248,5 +1503,52 @@ func TestBurstRefusalHoldKeys(t *testing.T) {
 	nilHealth.noteRefused(k, at)
 	if nilHealth.refusalHeld(k, at) {
 		t.Error("nil health holds a round")
+	}
+}
+
+// A round moving to a node it never shipped to has no ship base there, and the
+// forward ref still holds what the last node took. That ref is this binding's
+// own, and the send must take it over once the out ref has moved on.
+func TestBurstSendToANewNodeKnowsItsStagedRef(t *testing.T) {
+	clock := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+	script := &nodeScript{
+		getStatus: http.StatusOK, getView: stubRoundView("nb-api", 1, remote.RoundRunning),
+		startStatus: http.StatusCreated, startView: stubRoundView("nb-api", 1, remote.RoundRunning),
+	}
+	env, _, _ := answerSetup(t, script, clock)
+	rt := env.runtime(t)
+	if got := env.srv.sendForwards(ctx, clock); got != 1 {
+		t.Fatalf("confirmed = %d, want 1", got)
+	}
+	b := loadBurstBinding(t, rt, "api")
+	outSHA, ok, err := env.srv.cfg.Git.RefSHA(ctx, b.Serve.BareRepo, "refs/relevo/api/out")
+	if err != nil || !ok {
+		t.Fatalf("out ref: %v, ok=%v", err, ok)
+	}
+	tree := strings.TrimSpace(runGit(t, b.Serve.BareRepo, "rev-parse", outSHA+"^{tree}"))
+	next, err := rt.Git.CommitTree(ctx, b.Serve.BareRepo, tree, outSHA, "round 2 work")
+	if err != nil {
+		t.Fatalf("CommitTree: %v", err)
+	}
+	if err := rt.Git.UpdateRef(ctx, b.Serve.BareRepo, "refs/relevo/api/out", next, outSHA); err != nil {
+		t.Fatalf("advance out ref: %v", err)
+	}
+	b.Round = 2
+	b.Burst.Shipped = nil
+	b.Burst.Forward.Round = 2
+	b.Burst.Forward.Phase = "sending"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	writeHeadPlan(t, env, "api", 2)
+	script.getView = stubRoundView("nb-api", 2, remote.RoundRunning)
+	script.startView = stubRoundView("nb-api", 2, remote.RoundRunning)
+	if got := env.srv.sendForwards(ctx, clock.Add(time.Minute)); got != 1 {
+		t.Fatalf("confirmed = %d, want 1: the forward ref is this binding's own", got)
+	}
+	cur, ok, err := env.srv.cfg.Git.RefSHA(ctx, b.Serve.BareRepo, "refs/relevo/nb-api/out")
+	if err != nil || !ok || cur != next {
+		t.Errorf("forward ref = %q ok=%v err=%v, want the new out commit %s", cur, ok, err, next)
 	}
 }

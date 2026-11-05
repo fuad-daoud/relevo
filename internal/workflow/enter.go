@@ -60,6 +60,8 @@ func enter(def Definition, s State, id string, walked int) (State, []Action) {
 		return sendRun(def, s, id, step)
 	case "check":
 		return runCheck(def, s, id, step, walked)
+	case "cleanup":
+		return runCleanup(def, s, id, step, walked)
 	case "for-each":
 		return walkForEach(def, s, id, step, walked+1)
 	case "when":
@@ -169,6 +171,23 @@ func runCheck(def Definition, s State, id string, step Step, walked int) (State,
 		return halt(s, id, capReason(def, id))
 	}
 	return controlRoute(def, s, id, step.On, "green", walked)
+}
+
+// runCleanup renders the cleanup's command. An empty command is skipped with
+// no action and no log; like a control step it consumes one unit of the walk,
+// so an empty edge that loops back cannot recurse past the cap. A non-empty
+// command runs as a check with no new action kind, so stored events stay
+// decodable.
+func runCleanup(def Definition, s State, id string, step Step, walked int) (State, []Action) {
+	if command := RenderParams(def, step.Cleanup); command != "" {
+		s.Awaiting = Awaiting{Step: id}
+		return s, []Action{{Kind: ActionRunCheck, Step: id, Command: command}}
+	}
+	walked++
+	if walked > len(def.Steps)+1 {
+		return halt(s, id, capReason(def, id))
+	}
+	return controlRoute(def, s, id, step.On, "done", walked)
 }
 
 // walkForEach advances a for-each and routes next or empty. Past the end the

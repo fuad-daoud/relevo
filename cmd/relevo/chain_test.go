@@ -528,6 +528,29 @@ func TestChainStartedTextPrintsTheCheck(t *testing.T) {
 	}
 }
 
+// TestChainStartedTextPrintsTheCleanup pins the human line: the resolved
+// cleanup with its when word, or "none".
+func TestChainStartedTextPrintsTheCleanup(t *testing.T) {
+	for _, tc := range []struct {
+		cleanup, source, after, want string
+	}{
+		{"make clean", "--cleanup", "both", "  cleanup: make clean (--cleanup) [both]\n"},
+		{"", "", "", "  cleanup: none\n"},
+	} {
+		stdout, _, err := captureOutput(t, func() error {
+			chainStartedText(relevo.Runtime{}, relevo.ChainResult{
+				Cleanup: tc.cleanup, CleanupSource: tc.source, CleanupAfter: tc.after})
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("chainStartedText: %v", err)
+		}
+		if !strings.Contains(string(stdout), tc.want) {
+			t.Errorf("stdout = %q, want it to contain %q", stdout, tc.want)
+		}
+	}
+}
+
 // TestChainDocCarriesPlacement pins the document's placement field: a remote
 // member names its server, every other member runs here.
 func TestChainDocCarriesPlacement(t *testing.T) {

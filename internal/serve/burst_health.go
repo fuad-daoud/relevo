@@ -2,10 +2,12 @@ package serve
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/hooks"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // burstHealth is the server's memory-only picture of node health: when the
@@ -18,6 +20,8 @@ type burstHealth struct {
 	lastCheck map[string]time.Time
 	ackFails  map[string]int
 	refused   map[string]time.Time
+	stopLast  map[string]time.Time
+	stopDone  map[string]bool
 }
 
 func newBurstHealth() *burstHealth {
@@ -25,6 +29,8 @@ func newBurstHealth() *burstHealth {
 		lastCheck: map[string]time.Time{},
 		ackFails:  map[string]int{},
 		refused:   map[string]time.Time{},
+		stopLast:  map[string]time.Time{},
+		stopDone:  map[string]bool{},
 	}
 }
 
@@ -152,4 +158,75 @@ func (h *burstHealth) refusalHeld(key string, now time.Time) bool {
 	defer h.mu.Unlock()
 	at, ok := h.refused[key]
 	return ok && now.Sub(at) < burstRefusalHold
+}
+
+// stopRetryEvery bounds the node-stop retry: a stop the node never answered
+// waits this long before the next attempt, so a down node is not dialled on
+// every tick while its round stays open.
+const stopRetryEvery = 30 * time.Second
+
+// stopMarkKey names one stop episode: the node, node binding and round the
+// stop was sent for, so a later round's stop is a new episode.
+func stopMarkKey(fwd store.Forward) string {
+	return fmt.Sprintf("%s\x00%s\x00%d", fwd.Node, fwd.NodeBinding, fwd.Round)
+}
+
+// stopDue says whether another Stop may go out for key at now: never after
+// one landed (an answer, or the node's nothing-to-stop), and at most one
+// attempt per stopRetryEvery otherwise. A nil health dials every pass, the
+// way recheckDue does.
+func (h *burstHealth) stopDue(key string, now time.Time) bool {
+	if h == nil {
+		return true
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.stopDone[key] {
+		return false
+	}
+	last, ok := h.stopLast[key]
+	return !ok || !now.Before(last.Add(stopRetryEvery))
+}
+
+// noteStopSent stamps an attempt that left without an answer, so the next
+// one waits out stopRetryEvery.
+func (h *burstHealth) noteStopSent(key string, now time.Time) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.stopLast[key] = now
+}
+
+// noteStopDone ends the episode: the stop landed, so no retry goes out.
+func (h *burstHealth) noteStopDone(key string) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.stopDone[key] = true
+}
+
+// forgetStopMarks drops every stop mark outside open, so a server that lives
+// for months does not keep one per round ever stopped. A round's forward
+// never comes back once its stop closed it, so a dropped mark is never asked
+// for again.
+func (h *burstHealth) forgetStopMarks(open map[string]bool) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for key := range h.stopLast {
+		if !open[key] {
+			delete(h.stopLast, key)
+		}
+	}
+	for key := range h.stopDone {
+		if !open[key] {
+			delete(h.stopDone, key)
+		}
+	}
 }

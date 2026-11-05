@@ -95,6 +95,9 @@ This is an ops step, not code.
 - contabo: download the tag's linux archive from the GitHub release, verify it
   against `checksums.txt`, and deploy that binary with
   `~/projects/servers/contabo/srv.fish deploy relevo-serve <binary>`.
+- Every relevo upgrade on contabo drains the pool: the provider compares the
+  seeded binary's sha, so a new binary reads as new nodes and the old node
+  rows drain. Expected after every upgrade, not a fault.
 - Deploy only when no chain round runs on that server.
 - Ownership rollout: every machine runs this build before anyone hands a
   binding over. `relevo handover` refuses a target whose newest log entry was

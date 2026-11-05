@@ -36,7 +36,7 @@ type StopOptions struct{}
 // StopResult is what Stop did.
 type StopResult struct {
 	Round  int
-	Action string        // "killed" | "reaped" | "gone" | "dequeued" | "nothing"
+	Action string        // "killed" | "reaped" | "gone" | "dequeued" | "stopping" | "nothing"
 	Grace  time.Duration // always zero; there is no wrap-up to wait out
 	// Shape is the stopped binding's shape, so StopText can word the close
 	// without a second store read.
@@ -91,6 +91,15 @@ func Stop(ctx context.Context, rt Runtime, name string, opts StopOptions) (StopR
 			return stopRemote(ctx, rt, tx, b, name, &out)
 		}
 
+		// A round the head forwarded to a burst node stops there, not here:
+		// the request is recorded under the lock and fanned out after it, so
+		// a local kill can never end a round the node owns. ChainStop reaches
+		// this same branch through Stop, so a forwarded member stops the same
+		// way whatever verb asked.
+		if stamped, err := stampForwardStop(tx, b, &out); stamped || err != nil {
+			return err
+		}
+
 		out.Round = b.Round
 		out.Shape = b.Shape
 
@@ -142,12 +151,106 @@ func Stop(ctx context.Context, rt Runtime, name string, opts StopOptions) (StopR
 		out.Action = how
 		return tx.Save(b)
 	})
-	if err == nil && out.Action == "killed" {
-		// The delete runs outside the lock, and its failure only logs: it
-		// never changes what Stop did.
+	afterStop(ctx, rt, name, out, err)
+	return out, err
+}
+
+// afterStop runs Stop's post-lock side effects: the abandoned-scope delete
+// after a kill, and the node fan-out after a recorded forward stop. Both run
+// outside the lock, and neither changes what Stop did.
+func afterStop(ctx context.Context, rt Runtime, name string, out StopResult, err error) {
+	if err != nil {
+		return
+	}
+	if out.Action == "killed" {
+		// The delete's failure only logs: it never changes what Stop did.
 		reapAbandoned(ctx, rt, name)
 	}
-	return out, err
+	if out.Action == "stopping" && rt.StopForward != nil {
+		fanoutForwardStop(rt, name)
+	}
+}
+
+// stampForwardStop records a stop on a round the head forwarded to a burst
+// node: the flag the tick and the fan-out read. True means the binding holds
+// such a forward and the local stop is skipped, since killing the head's
+// process would end a round the node owns. A sending forward stamps the same
+// way: the tick closes it without ever dialling the node.
+func stampForwardStop(tx *store.Tx, b store.Binding, out *StopResult) (bool, error) {
+	fwd := burstForwardOf(b)
+	if fwd == nil || (fwd.Phase != "sending" && fwd.Phase != "running") {
+		return false, nil
+	}
+	fwd.StopRequested = true
+	out.Round = b.Round
+	out.Shape = b.Shape
+	out.Action = "stopping"
+	return true, tx.Save(b)
+}
+
+// fanoutForwardStop starts the best-effort node stop for a recorded forward
+// stop. A sending forward never reached a node, so only a running one dials;
+// anything the tick already closed or moved is left to the tick.
+func fanoutForwardStop(rt Runtime, name string) {
+	b, err := rt.Store.Load(name)
+	if err != nil {
+		slog.Warn("forward stop recorded but the binding would not reload", "binding", name, "err", err)
+		return
+	}
+	fwd := burstForwardOf(b)
+	if fwd == nil || fwd.Phase != "running" {
+		return
+	}
+	rt.StopForward(b)
+}
+
+// burstForwardOf reads the binding's burst forward, if any.
+func burstForwardOf(b store.Binding) *store.Forward {
+	if b.Burst == nil {
+		return nil
+	}
+	return b.Burst.Forward
+}
+
+// CloseStopRequestedForward closes a stop-requested forward's head round
+// instead of running it again. The stored forward must still match the one
+// the caller read -- same node, node binding and round, still stop-requested
+// -- or nothing changed and the round is left for whoever moved it: the
+// check and the close hold the store lock together, so admit cannot start
+// the round in between. how is dequeued when the forward never started (a
+// sending claim closes with the same entry and note as a queued local stop)
+// and gone when its node is lost (its process is gone with it). False means
+// the forward moved and nothing was closed.
+func CloseStopRequestedForward(ctx context.Context, rt Runtime, tx *store.Tx, name string, fwd store.Forward, how string) (bool, error) {
+	b, err := tx.Load(name)
+	if err != nil {
+		return false, err
+	}
+	have := burstForwardOf(b)
+	if have == nil || !have.StopRequested ||
+		have.Node != fwd.Node || have.NodeBinding != fwd.NodeBinding ||
+		have.Round != fwd.Round || b.Round != fwd.Round ||
+		(have.Phase != "sending" && have.Phase != "running") {
+		return false, nil
+	}
+	b.Burst.Forward = nil
+	if len(b.Burst.Shipped) == 0 && len(b.Burst.NodeBindings) == 0 {
+		b.Burst = nil
+	}
+	next, err := closeStopped(ctx, rt, tx, b, how)
+	if err != nil {
+		return false, err
+	}
+	if next.Owner != "" && rt.CloseServedRound != nil {
+		// Same order as markerClose: queueReport first, then the served
+		// close, so the closed round's facts are recorded.
+		next = rt.CloseServedRound(ctx, rt, next)
+	}
+	next.StalledSince = time.Time{}
+	if err := tx.Save(next); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // stopRemote stops a remote round on its server: refusals first, then the
@@ -190,9 +293,16 @@ func stopRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 
 	out.Round = b.Round
 	out.Shape = b.Shape
-	out.Action = view.Stopped
-	if out.Action == "" {
-		out.Action = "killed"
+	if view.RoundState == remote.RoundQueued || view.RoundState == remote.RoundRunning {
+		// The server took the stop but the round is still open: a head that
+		// fans the stop out to a burst node answers this way and closes on
+		// a later tick. Report the request, not a close.
+		out.Action = "stopping"
+	} else {
+		out.Action = view.Stopped
+		if out.Action == "" {
+			out.Action = "killed"
+		}
 	}
 
 	if chain.ServerMember(tx, b.Name) {

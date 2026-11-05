@@ -17,6 +17,7 @@ GET /v1/bindings/test-binding/rounds/1/artifacts 401 not_enrolled
 GET /v1/bindings/test-binding/rounds/1/artifacts/findings.md 401 not_enrolled
 GET /v1/bindings/test-binding/rounds/1/bundle 401 not_enrolled
 POST /v1/bindings/test-binding/rounds/1/ack 401 not_enrolled
+POST /v1/bindings/test-binding/rounds/1/align 401 not_enrolled
 POST /v1/bindings/test-binding/unavailable 401 not_enrolled
 POST /v1/chains 401 not_enrolled
 GET /v1/chains/test-chain 401 not_enrolled

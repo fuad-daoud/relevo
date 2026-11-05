@@ -151,7 +151,7 @@
   configuration document section by section.
 - `relevo config repo [--repo <path>]` — read this repository's own settings
   (the `repos` config section, keyed by the repository's identity);
-  `config repo set <name|gate|board_theme|trimpath|builder_actor|reviewer_actor|planner_actor> <value>` stores one field,
+  `config repo set <name|gate|board_theme|trimpath|builder_actor|reviewer_actor|planner_actor|cleanup|cleanup_after> <value>` stores one field,
   `config repo unset <key>` clears it, and `config repo list` prints one row
   per repository that has settings.
 - `relevo config secret set|rm|list` — store, forget or list the `client.key`
@@ -227,6 +227,7 @@
 - `relevo gate --serve [--state DIR]` — list the gates on the server's own ledger.
 - `relevo gate --serve --clear <provider|token> [--state DIR]` — clear a recorded rate limit on the server's ledger.
 - `relevo gate --serve <token> [--for D] [--reason S] [--state DIR]` — record a provider rate limit on the server's ledger.
+  On a burst head, recording or clearing a gate also tells every live node; the command waits for those sends, at most 30 s per node. A node's gate carries no `--for`: it ends at a reset the reason names, or when cleared.
 - `relevo config server key [--enroll-line]` — generate this machine's remote-builder identity (an
   ed25519 keypair); prints the enrollment line a server admin runs
   `relevo serve enroll --key "<line>"` with. With `--enroll-line`, it prints

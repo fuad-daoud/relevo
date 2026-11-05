@@ -241,6 +241,52 @@ The JSON document (`--json`) carries the candidate each member runs as
 `candidate`: its pin, or the policy pick when it has none. The start and
 resume text prints it as `actor (candidate)` on the member's row.
 
+### Cleanup
+
+A chain can run a **cleanup command** in its own worktree after builder
+rounds and at chain end. It is configured like the [gate](#gate), minus the
+policy tier, and it never fails the chain: the step closes `done` whatever
+the command exits with, a cleanup is never red and counts toward no repair
+budget, and a non-zero exit only warns -- in `relevo status --chains` and in
+the chain's trace (`relevo show <chain> --trace`), beside the step that
+failed.
+
+| Setting | Holds | Default |
+| --- | --- | --- |
+| `--cleanup <cmd>` | the chain's cleanup command | the repository's `cleanup` |
+| `--no-cleanup` | run no cleanup even where the repository sets one | off |
+| `--cleanup-after <when>` | when the cleanup runs: `round`, `chain` or `both` | the repository's `cleanup_after`, else `chain` |
+| `relevo config repo set cleanup <cmd>` | the repository's cleanup command | unset: none |
+| `relevo config repo set cleanup_after <when>` | the repository's when word | unset: `chain` |
+
+The flags resolve in this order: `--no-cleanup` wins over everything, then
+`--cleanup` and `--cleanup-after`, then the repository's own keys; with none
+of them the chain runs no cleanup. `--param cleanup_round=<cmd>` and
+`--param cleanup_chain=<cmd>` fill a slot past the resolution, and a cleanup
+whose workflow has no matching slot is refused, naming the params it takes.
+
+In the shipped workflows a round cleanup runs after every builder
+round -- build, repair and correction rounds alike -- **before that round's
+gate check**, so it must not delete anything the check needs; the chain
+cleanup runs once, as the chain's last work before done. `both` does each.
+The start line names the command with its tier and when word -- `cleanup:
+make tidy (repo setting) [both]` -- and `relevo chain --dry-run` lists each
+cleanup step with its command, source and the step it precedes. A resume
+keeps what the chain stored: it refuses `--cleanup`, `--no-cleanup` and
+`--cleanup-after`.
+
+On a served chain the client resolves the command and the server runs it in
+the chain's worktree; a cleanup that would land on a writer placed on
+another machine is skipped with a trace warning, since only the chain owner
+has that tree to clean. Upgrade every machine sharing the repository's
+config before anyone sets a cleanup key: an older binary refuses the unknown
+`cleanup` and `cleanup_after` keys and refuses a workflow holding a cleanup
+step. The exception is the server that predates the feature: the client
+drops every cleanup step before posting, the start line warns
+`server zen cannot run cleanup; running without it`, and the chain runs
+without cleanup. A chain with no cleanup stores the shape an older binary
+reads.
+
 ## Stopping a round
 
 `relevo stop` ends an open round on purpose. The builder runs with no stdin, so

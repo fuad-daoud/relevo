@@ -212,6 +212,24 @@ type Runtime struct {
 	// ServedLive reads the binding's own row.
 	NodeLive func(b store.Binding) *remote.LiveView
 
+	// StopForward fans a stop out to the burst node running b's round. Stop
+	// calls it after the stop is recorded, never under the store lock, and
+	// only for a running forward: a sending one never reached a node, so the
+	// tick closes it without a dial. The hook starts a best-effort send at
+	// most -- failures only log, and the observe retry carries on. Nil means
+	// no node fan-out is wired, so the stamp stands without a send.
+	StopForward func(b store.Binding)
+
+	// UnbindNodes fans an unbind out to every burst node the record's ship
+	// facts name, so a released binding leaves no node binding running a
+	// round nobody can read back. Done and UnbindWith call it with the
+	// record as it stood before the settle -- the ship entries and the live
+	// forward are gone from the store by then -- only after the local step
+	// landed, and never under the store lock. A refused release calls it
+	// nothing. Like StopForward the hook starts best-effort sends at most;
+	// nil means no node fan-out is wired, so a release dials no node.
+	UnbindNodes func(b store.Binding)
+
 	// InFlight counts the live rounds per candidate token across every binding
 	// the resolver knows, leaving out the binding named by its argument. Nil
 	// means a walk over Store.

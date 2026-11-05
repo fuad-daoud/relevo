@@ -6588,3 +6588,33 @@ func TestObserveRemoteSkipsSwitchWhenCandidateAlreadyRecorded(t *testing.T) {
 		}
 	}
 }
+
+// A round out on a burst node has no log on its head, and that answer comes on
+// every sync, so it must not reach the log.
+func TestMirrorLogMissingOnTheServerIsQuiet(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	var logged bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+	defer slog.SetDefault(previous)
+
+	rt := Runtime{Store: st, Now: func() time.Time { return baseTime }, Remote: &fakeRemote{
+		roundFileFromErr: &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: remote.CodeNotFound, Message: "file not found"}},
+	}}
+	if m := fetchLogMirror(context.Background(), rt, "zen", "api", 1); m != nil {
+		t.Errorf("mirror = %+v, want none", m)
+	}
+	if strings.Contains(logged.String(), "mirror builder log failed") {
+		t.Errorf("logged %q, want nothing for a log the server does not have yet", logged.String())
+	}
+
+	rt.Remote = &fakeRemote{roundFileFromErr: &client.HTTPError{Status: 500, Body: remote.ErrorBody{Message: "boom"}}}
+	_ = fetchLogMirror(context.Background(), rt, "zen", "api", 1)
+	if !strings.Contains(logged.String(), "mirror builder log failed") {
+		t.Errorf("logged %q, want a real failure to warn", logged.String())
+	}
+}

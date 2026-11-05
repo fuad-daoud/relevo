@@ -236,7 +236,7 @@ func decodeStep(v any, path string) (Step, error) {
 	if err != nil {
 		return Step{}, err
 	}
-	if err := onlyKeys(obj, path, "run", "check", "for-each", "when", "fork", "seed", "budget", "on"); err != nil {
+	if err := onlyKeys(obj, path, "run", "check", "cleanup", "for-each", "when", "fork", "seed", "budget", "on"); err != nil {
 		return Step{}, err
 	}
 	var s Step
@@ -246,6 +246,7 @@ func decodeStep(v any, path string) (Step, error) {
 	}{
 		{"run", &s.Run},
 		{"check", &s.Check},
+		{"cleanup", &s.Cleanup},
 		{"for-each", &s.ForEach},
 		{"when", &s.When},
 		{"seed", &s.Seed},

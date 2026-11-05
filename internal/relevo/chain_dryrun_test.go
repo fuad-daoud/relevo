@@ -54,6 +54,103 @@ func TestDryRunPrintsGraphActorsPlacementRefs(t *testing.T) {
 	}
 }
 
+// TestDryRunShowsRepoCleanupWithSourceAndPhase pins the dry run's cleanup
+// section: a repository cleanup appears with its source and when word, on the
+// step it precedes. Reporting the flag source for a repo command is the
+// mutation this test catches.
+func TestDryRunShowsRepoCleanupWithSourceAndPhase(t *testing.T) {
+	rt, fg := chainRuntime(t)
+	fg.rootCommitSHA = reposRootCommit
+	st := auditStore(t)
+	seedOneRepos(t, st, fmt.Sprintf(`{%q:{"name":"shop","cleanup":"make clean","cleanup_after":"both"}}`, reposKeyOf(t)))
+	rt.Config = st
+
+	doc, err := ChainDryRun(context.Background(), rt, ChainOptions{
+		Name:  "shop",
+		Plans: []string{filepath.Join(t.TempDir(), "plan-1.md")},
+	})
+	if err != nil {
+		t.Fatalf("ChainDryRun: %v", err)
+	}
+	if len(doc.Problems) != 0 {
+		t.Fatalf("problems = %v, want none", doc.Problems)
+	}
+	got := RenderChainDryRun(doc)
+	for _, want := range []string{
+		"cleanup-round: make clean (repo setting) [round, before check]",
+		"fix-cleanup-round: make clean (repo setting) [round, before fix-check]",
+		"cleanup-chain: make clean (repo setting) [chain, before done]",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("dry run output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestDryRunOmitsCleanupSectionWithoutCleanup pins the amendment: a chain
+// with no cleanup prints no cleanup lines, so the existing graph output stays
+// as it is.
+func TestDryRunOmitsCleanupSectionWithoutCleanup(t *testing.T) {
+	rt, _ := chainRuntime(t)
+
+	doc, err := ChainDryRun(context.Background(), rt, ChainOptions{
+		Name:     "shop",
+		Plans:    []string{filepath.Join(t.TempDir(), "plan-1.md")},
+		Workflow: "default",
+	})
+	if err != nil {
+		t.Fatalf("ChainDryRun: %v", err)
+	}
+	if len(doc.Cleanup) != 0 {
+		t.Errorf("cleanup = %+v, want none", doc.Cleanup)
+	}
+	if got := RenderChainDryRun(doc); strings.Contains(got, "cleanup") {
+		t.Errorf("dry run output names cleanup without one:\n%s", got)
+	}
+}
+
+// TestDryRunCleanupSourceAndWhen pins the per-step helpers: a --param
+// override wins the source, a step naming both cleanup params runs in both
+// phases, a literal step keeps the workflow source with the after word, and
+// the before step reads the done edge, then the else.
+func TestDryRunCleanupSourceAndWhen(t *testing.T) {
+	t.Parallel()
+
+	res := CleanupResolution{Command: "make clean", Source: "--cleanup", After: "both"}
+	roundStep := workflow.Step{Cleanup: "{{params.cleanup_round}}", On: map[string]workflow.Target{"done": workflow.StepTarget("check")}}
+	if got := dryRunCleanupSource(roundStep, "param-clean", res, map[string]string{"cleanup_round": "param-clean"}); got != "--param cleanup_round" {
+		t.Errorf("source with a --param override = %q, want --param cleanup_round", got)
+	}
+	if got := dryRunCleanupSource(roundStep, "make clean", res, nil); got != "--cleanup" {
+		t.Errorf("source with the resolved command = %q, want --cleanup", got)
+	}
+	if got := dryRunCleanupSource(roundStep, "other", res, nil); got != "workflow" {
+		t.Errorf("source with an unmatched command = %q, want workflow", got)
+	}
+	literal := workflow.Step{Cleanup: "make clean", On: map[string]workflow.Target{"done": workflow.StepTarget("check")}}
+	if got := dryRunCleanupSource(literal, "make clean", res, nil); got != "workflow" {
+		t.Errorf("source of a literal step = %q, want workflow, never the resolution", got)
+	}
+	if got := dryRunCleanupWhen(literal, "chain"); got != "chain" {
+		t.Errorf("when of a literal step = %q, want the after word", got)
+	}
+	bothStep := workflow.Step{Cleanup: "{{params.cleanup_round}}{{params.cleanup_chain}}"}
+	if got := dryRunCleanupWhen(bothStep, "chain"); got != "both" {
+		t.Errorf("when naming both params = %q, want both", got)
+	}
+	if got := dryRunCleanupBefore(roundStep); got != "check" {
+		t.Errorf("before = %q, want the done edge's check", got)
+	}
+	elseStep := workflow.Step{Cleanup: "make clean", On: map[string]workflow.Target{"else": workflow.StepTarget("g")}}
+	if got := dryRunCleanupBefore(elseStep); got != "g" {
+		t.Errorf("before without done = %q, want the else edge's g", got)
+	}
+	bare := workflow.Step{Cleanup: "make clean"}
+	if got := dryRunCleanupBefore(bare); got != "" {
+		t.Errorf("before without edges = %q, want empty", got)
+	}
+}
+
 // TestDryRunDirectFixResolvesShipped pins the direct-fix dry run: the shipped
 // name resolves with origin shipped, the graph carries a fix-direct step, and
 // the shipped seeds validate with no problems.

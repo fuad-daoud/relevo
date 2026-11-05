@@ -55,7 +55,10 @@ type Endpoint struct {
 	// session.
 	StreamSessionID string `json:"stream_session_id,omitempty"`
 
-	Server       string `json:"server,omitempty"`
+	Server string `json:"server,omitempty"`
+	// RemoteNode is the burst node carrying the round; "" when the round
+	// runs here, or from a record written before forwarding existed.
+	RemoteNode   string `json:"remote_node,omitempty"`
 	LastShipped  string `json:"last_shipped,omitempty"`
 	LastKnown    string `json:"last_known,omitempty"`
 	RemoteStatus string `json:"remote_status,omitempty"`
