@@ -108,7 +108,7 @@ func TestChainParamsPrecedence(t *testing.T) {
 		if err != nil {
 			t.Fatalf("chainParamsFor(default %+v): %v", tc.opts, err)
 		}
-		funded, err := chainParamsFor(directFix, pol, tc.opts, tc.repo)
+		funded, _, err := chainParamsFor(directFix, pol, tc.opts, tc.repo)
 		if err != nil {
 			t.Fatalf("chainParamsFor(direct-fix %+v): %v", tc.opts, err)
 		}
