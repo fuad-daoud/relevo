@@ -409,6 +409,50 @@ func TestFetchResolvesAWholeBatchInChunks(t *testing.T) {
 	assertEmptyStaging(t, dir, "after a clean fetch")
 }
 
+// Rows sharing a body are common in a real log, so slots outnumber the distinct
+// keys a fetch sends. Every row still gets its own ref's bytes, wherever in the
+// batch the repeat falls, and each distinct body is fetched once.
+func TestFetchGivesEveryRowItsBodyWhenRowsShareOne(t *testing.T) {
+	t.Parallel()
+	bodies := map[string][]byte{
+		"a": incompressible(BlobRefThreshold + 1),
+		"b": incompressible(BlobRefThreshold + 2),
+		"c": incompressible(BlobRefThreshold + 3),
+	}
+	for _, tc := range []struct {
+		name     string
+		rows     []string
+		distinct int
+	}{
+		{"repeat first", []string{"a", "a", "b"}, 2},
+		{"repeat between", []string{"a", "b", "a", "c"}, 3},
+		{"repeat last", []string{"a", "b", "a"}, 2},
+		{"every row the same", []string{"a", "a", "a"}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			mover := newScriptedMover()
+			batch := make([]Entry, len(tc.rows))
+			for n, row := range tc.rows {
+				batch[n] = storedBody(t, mover, fmt.Sprintf("f%d", n), bodies[row])
+			}
+			if err := resolveRefs(mover, dir, batch); err != nil {
+				t.Fatalf("resolveRefs: %v", err)
+			}
+			if got := callsOf(mover.getCalls); !equalInts(got, []int{tc.distinct}) {
+				t.Errorf("calls = %v keys, want one call of %d", got, tc.distinct)
+			}
+			for n, row := range tc.rows {
+				if !bytes.Equal(resolvedBody(t, batch[n]), bodies[row]) {
+					t.Errorf("row %d did not get body %q", n, row)
+				}
+			}
+			assertEmptyStaging(t, dir, "after a fetch with a shared body")
+		})
+	}
+}
+
 // One missing key among siblings is that row's own verdict: the batch names
 // the row the store lost, while the keys the store held still answered with
 // their bodies and no staging file was left behind.

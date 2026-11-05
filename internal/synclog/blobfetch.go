@@ -205,9 +205,13 @@ func fetchAll(m BlobMover, stagingDir string, batch []Entry, slots []refSlot) ([
 			return nil, err
 		}
 	}
+	byKey := make(map[string][]byte, len(order))
+	for n, key := range order {
+		byKey[key] = got[n]
+	}
 	out := make([][]byte, len(slots))
 	for n, s := range slots {
-		out[n] = got[first[blobstore.Key(batch[s.entry].Origin, s.ref.SHA256)]]
+		out[n] = byKey[blobstore.Key(batch[s.entry].Origin, s.ref.SHA256)]
 	}
 	return out, nil
 }
