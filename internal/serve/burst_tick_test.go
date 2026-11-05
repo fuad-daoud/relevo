@@ -82,6 +82,9 @@ func traceNode(tr *tickTrace) http.Handler {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/bindings":
 			tr.add("binding-create")
 			writeJSON(w, http.StatusCreated, stubRoundView("nb", 1, remote.RoundRunning))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/align"):
+			tr.add("round-align")
+			writeJSON(w, http.StatusOK, stubRoundView("nb", 1, remote.RoundIdle))
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/rounds"):
 			tr.add("round-start")
 			writeJSON(w, http.StatusCreated, stubRoundView("nb", 1, remote.RoundRunning))
@@ -144,7 +147,7 @@ func TestBurstTickRunsThePipelineInDesignOrder(t *testing.T) {
 
 	want := []string{
 		"hook:burst_node_lost",
-		"binding-get", "binding-create", "round-start",
+		"binding-get", "binding-create", "round-align", "round-start",
 		"binding-get",
 		"whoami",
 		"report",

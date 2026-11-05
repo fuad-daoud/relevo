@@ -146,7 +146,9 @@ func fetchLogMirror(ctx context.Context, rt Runtime, server, name string, round 
 
 	rc, fr, err := rt.Remote.RoundFileFrom(ctx, server, name, round, "log", local)
 	if err != nil || rc == nil {
-		if err != nil {
+		// A round out on a burst node has no log on its head until it comes
+		// home, so missing is the normal answer on every sync of that round.
+		if err != nil && !remoteNotFound(err) {
 			slog.Warn("mirror builder log failed", "server", server, "name", name, "round", round, "err", err)
 		}
 		return nil

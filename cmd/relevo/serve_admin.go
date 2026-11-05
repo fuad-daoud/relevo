@@ -214,7 +214,8 @@ func serveGateList(fs *flag.FlagSet, asJSON bool) error {
 }
 
 // serveGateClear lifts the server-side gate on a provider, in place, with
-// no forwarding: the verb for the box that runs the daemon.
+// no forwarding to another server: the verb for the box that runs the daemon.
+// A head's nodes hear it.
 func serveGateClear(fs *flag.FlagSet, subject string, asJSON bool) error {
 	root, d, err := adminRoot(fs)
 	if err != nil {
@@ -235,6 +236,7 @@ func serveGateClear(fs *flag.FlagSet, subject string, asJSON bool) error {
 	if err != nil {
 		return err
 	}
+	serve.AdminWaitFanout(srv)
 
 	// The document is the same GateDoc the client ledger prints; the counting
 	// rule is the one the server's own gating line uses.
@@ -252,7 +254,8 @@ func serveGateClear(fs *flag.FlagSet, subject string, asJSON bool) error {
 
 // serveGateUnavailable records a server-side gate: the server ledger's
 // counterpart to gateUnavailable, with no daemon-switch line and no
-// forwarding (the gate is already on the ledger the daemon reads).
+// forwarding to another server (the gate is already on the ledger the daemon
+// reads). A head's nodes hear it.
 func serveGateUnavailable(fs *flag.FlagSet, token, forFlag, reason string, asJSON bool) error {
 	root, d, err := adminRoot(fs)
 	if err != nil {
@@ -278,6 +281,7 @@ func serveGateUnavailable(fs *flag.FlagSet, token, forFlag, reason string, asJSO
 	if err != nil {
 		return err
 	}
+	serve.AdminWaitFanout(srv)
 
 	if asJSON {
 		return printDoc(gateSetDocOf(provider, until, serveCandidateCount(cfg, provider)))

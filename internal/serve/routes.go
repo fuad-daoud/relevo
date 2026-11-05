@@ -65,6 +65,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/bindings/{name}/rounds/{n}/artifacts/{rel...}", s.handleRoundArtifact)
 	mux.HandleFunc("GET /v1/bindings/{name}/rounds/{n}/bundle", s.handleRoundBundle)
 	mux.HandleFunc("POST /v1/bindings/{name}/rounds/{n}/ack", s.handleAckRound)
+	mux.HandleFunc("POST /v1/bindings/{name}/rounds/{n}/align", s.handleAlignRound)
 	mux.HandleFunc("POST /v1/bindings/{name}/unavailable", s.handleUnavailable)
 	mux.HandleFunc("POST /v1/chains", s.handleCreateChain)
 	mux.HandleFunc("GET /v1/chains/{name}", s.handleGetChain)

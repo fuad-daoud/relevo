@@ -459,6 +459,13 @@ func (s *Server) handleUnbind(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, remote.CodeWorktreeKept, err.Error())
 		return
 	}
+	// A live forward reads as an open round here too: the forward owns it,
+	// so the unbind answers with the same refusal a local open round gets
+	// and fans out nothing. Force releases it and fans the unbind out.
+	if errors.Is(err, relevo.ErrForwardRunning) {
+		writeErr(w, http.StatusConflict, remote.CodeRoundOpen, err.Error())
+		return
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "", err.Error())
 		return
@@ -541,6 +548,11 @@ func (s *Server) handleAvailable(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnprocessableEntity, remote.CodeInvalid, err.Error())
 		return
 	}
+
+	// The ledger is server-wide, so the lifted gate reaches every verified
+	// live node too. Detached like the unavailable fan-out: the answer
+	// never waits for a node and a node failure only logs.
+	s.fanoutGateAvailableAsync(req.Subject)
 
 	writeJSON(w, http.StatusOK, remote.AvailableResponse{Provider: provider, Removed: removed})
 }

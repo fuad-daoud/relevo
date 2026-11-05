@@ -522,11 +522,32 @@ func AdminGates(s *Server) []availability.Gate {
 }
 
 func AdminAvailable(s *Server, subject string) (provider string, removed int, err error) {
-	return availability.Available(relevo.AvailabilityDeps(ledgerRuntime(s)), subject, availability.ClearedByServer)
+	provider, removed, err = availability.Available(relevo.AvailabilityDeps(ledgerRuntime(s)), subject, availability.ClearedByServer)
+	if err != nil {
+		return "", 0, err
+	}
+	// A server-side clear enters through here as well as through the
+	// handler, so it fans out the same way: detached, failures only logged.
+	s.fanoutGateAvailableAsync(subject)
+	return provider, removed, nil
 }
 
 func AdminUnavailable(s *Server, token string, until time.Time, reason string) (provider string, err error) {
-	return availability.Unavailable(relevo.AvailabilityDeps(ledgerRuntime(s)), token, until, reason)
+	provider, err = availability.Unavailable(relevo.AvailabilityDeps(ledgerRuntime(s)), token, until, reason)
+	if err != nil {
+		return "", err
+	}
+	// A server-side gate enters through here as well as through the
+	// handler, so it fans out the same way: detached, failures only logged.
+	s.fanoutGateUnavailableAsync(token, reason)
+	return provider, nil
+}
+
+// AdminWaitFanout holds an admin verb until the node sends it started have
+// landed: its process exits right after, which would end them. Every attempt
+// carries its own timeout, so a dead node bounds this at fanoutTimeout.
+func AdminWaitFanout(s *Server) {
+	s.fanout.Wait()
 }
 
 // RenderGates formats `relevo serve gates`.

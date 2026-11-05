@@ -976,6 +976,69 @@ func TestServeStatusJSONKeysBurstReads(t *testing.T) {
 	if b0["round"] != float64(2) {
 		t.Errorf("bindings[0] round = %v, want 2 (float64 after Unmarshal)", b0["round"])
 	}
+
+	// The burst block below is the additive half the keys above do not
+	// read: the block is byte-identical, present only when bursting was
+	// configured, and nodes never null, so the idle-node reader the
+	// comment above names keeps parsing. A rename or a dropped key fails
+	// the byte compare; emitting the block while off, or a null nodes,
+	// fails the additive checks.
+	if _, ok := m["burst"]; ok {
+		t.Error("burst key present with bursting off, want it absent: the block is additive")
+	}
+	if got := s.BurstStatus(); got != nil {
+		t.Errorf("BurstStatus with bursting off = %+v, want nil so the key drops", got)
+	}
+	empty := newAdminServer(t, now)
+	empty.burstTable = &burst.NodeTable{}
+	if got := empty.BurstStatus(); got == nil {
+		t.Error("BurstStatus with an empty table = nil, want the block with an empty nodes list")
+	} else if raw, err := json.Marshal(got); err != nil {
+		t.Fatalf("Marshal empty burst: %v", err)
+	} else if !strings.Contains(string(raw), `"nodes":[]`) {
+		t.Errorf("empty burst block = %s, want nodes to read as a list, never null", raw)
+	}
+
+	reported := time.Date(2026, 9, 21, 12, 30, 0, 0, time.UTC)
+	doc.Burst = &BurstStatus{
+		LastReportAt: &reported,
+		LastErr:      "report failed: refused",
+		Preparing:    &burst.Preparing{Slots: 2, Since: reported},
+		Denied:       &burst.Denied{Reason: "no_capacity", RetryAfter: "30s"},
+		Nodes: []BurstNodeStatus{{
+			ID: "b1", Name: "b1 cx43@hel1", State: "ready",
+			Verified: true, Running: 1, Cap: 2,
+		}},
+	}
+	blob, err = json.Marshal(doc.Burst)
+	if err != nil {
+		t.Fatalf("Marshal burst: %v", err)
+	}
+	const wantBurst = `{"last_report_at":"2026-09-21T12:30:00Z","last_err":"report failed: refused",` +
+		`"preparing":{"slots":2,"since":"2026-09-21T12:30:00Z"},` +
+		`"denied":{"reason":"no_capacity","retry_after":"30s"},` +
+		`"nodes":[{"id":"b1","name":"b1 cx43@hel1","state":"ready","verified":true,` +
+		`"problem":"","running":1,"cap":2}]}`
+	if string(blob) != wantBurst {
+		t.Errorf("burst block = %s, want exactly:\n%s", blob, wantBurst)
+	}
+
+	blob, err = json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("Marshal with burst: %v", err)
+	}
+	var with map[string]any
+	if err := json.Unmarshal(blob, &with); err != nil {
+		t.Fatalf("Unmarshal with burst: %v", err)
+	}
+	burstBlock, ok := with["burst"].(map[string]any)
+	if !ok {
+		t.Fatalf("burst is %T, want the block present once configured: %s", with["burst"], blob)
+	}
+	nodes, ok := burstBlock["nodes"].([]any)
+	if !ok || len(nodes) != 1 {
+		t.Errorf("burst nodes = %v, want the one configured node, never null", burstBlock["nodes"])
+	}
 }
 
 // TestStatusDocumentCarriesIsolation pins slice A's status fact: the builder
