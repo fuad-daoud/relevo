@@ -160,6 +160,22 @@ func Unbind(ctx context.Context, rt Runtime, name string, archive bool) (UnbindR
 	return UnbindWith(ctx, rt, name, archive, false)
 }
 
+// adoptServerOutcome carries a remote binding's answer into the result. A
+// remote binding's worktree lives on its server alone, so a fully empty
+// local outcome adopts the server's answer, kept tree included.
+func adoptServerOutcome(res *UnbindResult, outcome worktreeOutcome, serverResp remote.UnbindResponse, server string) {
+	if outcome != (worktreeOutcome{}) {
+		return
+	}
+	res.WorktreeRemoved = serverResp.WorktreeRemoved
+	res.WorktreeKept = serverResp.WorktreeKept
+	res.KeptReason = serverResp.KeptReason
+	res.WorktreeGone = serverResp.WorktreeGone
+	if res.WorktreeKept != "" {
+		res.KeptOn = server
+	}
+}
+
 // UnbindWith clears away one binding's state. When archive is set the record
 // is archived rather than deleted, freeing the name while its log and round
 // files survive. A relevo-created worktree is removed when clean, never the
@@ -213,17 +229,7 @@ func UnbindWith(ctx context.Context, rt Runtime, name string, archive, force boo
 	res.WorktreeKept = outcome.Kept
 	res.KeptReason = outcome.Reason
 	res.WorktreeGone = outcome.Gone
-	// A remote binding's worktree lives on its server alone, so a fully
-	// empty local outcome adopts the server's answer, kept tree included.
-	if outcome == (worktreeOutcome{}) {
-		res.WorktreeRemoved = serverResp.WorktreeRemoved
-		res.WorktreeKept = serverResp.WorktreeKept
-		res.KeptReason = serverResp.KeptReason
-		res.WorktreeGone = serverResp.WorktreeGone
-		if res.WorktreeKept != "" {
-			res.KeptOn = b.Builder.Server
-		}
-	}
+	adoptServerOutcome(&res, outcome, serverResp, b.Builder.Server)
 
 	// The guard sits before the session reaping so a kept binding stays
 	// resumable with its sessions intact.
