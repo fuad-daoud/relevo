@@ -368,16 +368,7 @@ func chainAdvanceOneCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 		}
 		result, logKey, err := chainAdvanceCheck(ctx, rt, tx, c, run)
 		if err != nil {
-			// An advance reporting the check could not start halts the chain
-			// the way an unstartable check does; any other advance failure
-			// keeps the tick's warning.
-			if halted, herr := chainHaltOnCouldNotStart(ctx, rt, tx, c, run, err); halted || herr != nil {
-				return herr
-			}
-			if halted, herr := chainHaltOnTimeout(ctx, rt, tx, c, run, err); halted || herr != nil {
-				return herr
-			}
-			return err
+			return chainTickAdvanceFailure(ctx, rt, tx, c, run, err)
 		}
 		if result == "" {
 			return nil
@@ -396,6 +387,21 @@ func chainAdvanceOneCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 		}
 		return chainAdvance(ctx, rt, tx, c, ev)
 	}
+}
+
+// chainTickAdvanceFailure turns a check advance's failure into what the tick
+// should do: an advance reporting the check could not start halts the chain
+// the way an unstartable check does, one reporting a second consecutive
+// timeout halts the chain instead of buying a repair, and any other advance
+// failure is returned for the tick's warning.
+func chainTickAdvanceFailure(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, run int, err error) error {
+	if halted, herr := chainHaltOnCouldNotStart(ctx, rt, tx, c, run, err); halted || herr != nil {
+		return herr
+	}
+	if halted, herr := chainHaltOnTimeout(ctx, rt, tx, c, run, err); halted || herr != nil {
+		return herr
+	}
+	return err
 }
 
 // chainTickPlacedCheck advances a placed writer's check run: with a run id
