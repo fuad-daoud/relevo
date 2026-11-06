@@ -168,7 +168,8 @@ func cmdServe(args []string) error {
        relevo gate --serve [--state <dir>]        (gates, available and unavailable moved to relevo gate)
        relevo serve ui [--state <dir>] [--interval 2s]
        relevo serve gc --abandoned <duration> [--dry-run] [--state <dir>]
-       relevo serve unbind --owner <label|id> <name> [--state <dir>] [--force]`
+       relevo serve unbind --owner <label|id> <name> [--state <dir>] [--force]
+       relevo serve remove-stray --owner <label|id> <name> [--state <dir>] [--json]`
 
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, usage)
@@ -202,6 +203,8 @@ func cmdServe(args []string) error {
 		return cmdServeGC(args[1:])
 	case "unbind":
 		return cmdServeUnbind(args[1:])
+	case "remove-stray":
+		return cmdServeRemoveStray(args[1:])
 	case "help", "-h", "--help":
 		fmt.Println(usage)
 		return nil

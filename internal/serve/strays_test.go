@@ -7,10 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -338,6 +340,257 @@ func TestStatusDocumentCarriesStrays(t *testing.T) {
 	}
 	if _, ok := bareDoc["owners"].([]any)[0].(map[string]any)["strays"]; ok {
 		t.Error("strays key present with no strays, want it dropped")
+	}
+}
+
+// removeStrayFixture builds one owner's worktree directory with an entry per
+// removal case: clean and dirty worktrees, a directory git does not
+// recognise, a worktree whose binding is archived, a live-owned worktree, a
+// worktree a renamed binding owns by path alone, a symlink, a regular file,
+// and a fresh directory. Every entry but the fresh one is aged past the
+// guard; the symlink keeps its fresh age because only a link's own age is
+// readable and the shape check refuses it first anyway.
+func removeStrayFixture(t *testing.T, now time.Time) (*Server, relevo.Runtime, string) {
+	t.Helper()
+	gitClient := git.NewClient("git", 0, 0)
+	s := newAdminServer(t, now, func(c *Config) { c.Git = gitClient })
+	id := enrol(t, s, "alice")
+	rt := ownerRuntime(t, s, id)
+
+	bare := strayFixtureRepo(t, gitClient,
+		"relevo/live", "relevo/gone", "relevo/clean", "relevo/dirty", "relevo/oldname")
+	wtDir := rt.Store.WorktreeDir()
+	if err := os.MkdirAll(wtDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	checkout := func(name, branch string) string {
+		t.Helper()
+		path := filepath.Join(wtDir, name)
+		checkoutStray(t, gitClient, bare, path, branch)
+		return path
+	}
+	checkout("live", "relevo/live")
+	checkout("gone", "relevo/gone")
+	dirtyWT := checkout("dirty", "relevo/dirty")
+	oldnameWT := checkout("oldname", "relevo/oldname")
+	checkout("clean", "relevo/clean")
+
+	save := func(name, wt string) {
+		t.Helper()
+		b := store.Binding{
+			Name: name, Owner: string(id), CWD: wt, Worktree: wt,
+			State: store.StateActive, Round: 1, Builder: store.Endpoint{Kind: "claude"},
+		}
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatalf("Save %s: %v", name, err)
+		}
+	}
+	save("live", filepath.Join(wtDir, "live"))
+	save("gone", filepath.Join(wtDir, "gone"))
+	if _, err := rt.Store.Archive("gone"); err != nil {
+		t.Fatalf("Archive gone: %v", err)
+	}
+	// The row owns oldname by worktree path alone: the names differ.
+	save("renamed", oldnameWT)
+	// The row owns alias by name alone: its tree lives outside this owner's
+	// worktree directory, so only the name check can refuse wtDir/alias.
+	elsewhere := filepath.Join(t.TempDir(), "elsewhere")
+	if err := os.MkdirAll(elsewhere, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	save("alias", elsewhere)
+	aliasWT := filepath.Join(wtDir, "alias")
+	if err := os.MkdirAll(aliasWT, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(aliasWT, "data.bin"), []byte("0123456789"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dirtyWT, "dirty.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nogit := filepath.Join(wtDir, "nogit")
+	if err := os.MkdirAll(nogit, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nogit, "data.bin"), []byte("0123456789"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The link points at a directory so a Stat-instead-of-Lstat mutant reads
+	// it as one; the target stays empty so even the mutant deletes nothing of
+	// value before the test goes red on the wrong outcome.
+	target := filepath.Join(t.TempDir(), "target")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(wtDir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	plain := filepath.Join(wtDir, "file")
+	if err := os.WriteFile(plain, []byte("plain\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fresh := filepath.Join(wtDir, "fresh")
+	if err := os.MkdirAll(fresh, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fresh, "fresh.txt"), []byte("new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	old := now.Add(-time.Hour)
+	for _, dir := range []string{
+		filepath.Join(wtDir, "live"), filepath.Join(wtDir, "gone"),
+		filepath.Join(wtDir, "clean"), dirtyWT, oldnameWT, nogit, plain, aliasWT, fresh,
+	} {
+		if err := os.Chtimes(dir, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chtimes(fresh, now, now); err != nil {
+		t.Fatal(err)
+	}
+	return s, rt, bare
+}
+
+// TestRemoveStrayTable pins the engine rule: clean, dirty and unrecognised
+// strays remove with the listing's facts, and so does a tree whose binding is
+// archived, because an archived record owns nothing. Live-owned names and
+// paths, invalid names, symlinks, regular files, fresh entries and missing
+// entries are refused with their sentinel.
+func TestRemoveStrayTable(t *testing.T) {
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+	s, rt, _ := removeStrayFixture(t, now)
+	wtDir := rt.Store.WorktreeDir()
+
+	t.Run("removes", func(t *testing.T) {
+		for _, c := range []struct{ name, reason string }{
+			{"clean", strayClean},
+			{"dirty", strayDirty},
+			{"nogit", strayUnrecognised},
+			{"gone", strayClean},
+		} {
+			got, err := RemoveStray(ctx, s, "alice", c.name)
+			if err != nil {
+				t.Fatalf("RemoveStray(%s): %v", c.name, err)
+			}
+			if got.Name != c.name || got.Path != filepath.Join(wtDir, c.name) || got.Reason != c.reason {
+				t.Errorf("removed = %+v, want name %s reason %s", got, c.name, c.reason)
+			}
+			if got.Size <= 0 {
+				t.Errorf("removed %s size = %d, want positive", c.name, got.Size)
+			}
+			if _, err := os.Lstat(filepath.Join(wtDir, c.name)); !os.IsNotExist(err) {
+				t.Errorf("entry %s still exists after removal: %v", c.name, err)
+			}
+		}
+	})
+
+	t.Run("refuses", func(t *testing.T) {
+		for _, c := range []struct {
+			name string
+			want error
+		}{
+			{"live", ErrStrayOwned},
+			{"oldname", ErrStrayOwned},
+			{"alias", ErrStrayOwned},
+			{"", store.ErrInvalidName},
+			{".scratch", store.ErrInvalidName},
+			{"a/b", store.ErrInvalidName},
+			{"..", store.ErrInvalidName},
+			{"link", ErrStrayNotDir},
+			{"file", ErrStrayNotDir},
+			{"fresh", ErrStrayFresh},
+			{"missing", store.ErrNotFound},
+		} {
+			if _, err := RemoveStray(ctx, s, "alice", c.name); !errors.Is(err, c.want) {
+				t.Errorf("RemoveStray(%q) = %v, want %v", c.name, err, c.want)
+			}
+		}
+	})
+
+	// clean is already gone above, so its absence cannot mask the order: the
+	// owner resolves before any entry is read.
+	t.Run("unknown owner", func(t *testing.T) {
+		if _, err := RemoveStray(ctx, s, "nosuch", "clean"); !errors.Is(err, ErrNoSuchClient) {
+			t.Errorf("RemoveStray unknown owner = %v, want %v", err, ErrNoSuchClient)
+		}
+	})
+}
+
+// TestRemoveStrayClearsGitRegistration pins the removal half the listing never
+// sees: a recognised tree goes through git from inside the tree, so the bare
+// repository no longer lists it and its branch deletes.
+func TestRemoveStrayClearsGitRegistration(t *testing.T) {
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+	s, rt, bare := removeStrayFixture(t, now)
+	cleanWT := filepath.Join(rt.Store.WorktreeDir(), "clean")
+
+	if _, err := RemoveStray(ctx, s, "alice", "clean"); err != nil {
+		t.Fatalf("RemoveStray(clean): %v", err)
+	}
+	if out := runGit(t, bare, "worktree", "list"); strings.Contains(out, cleanWT) {
+		t.Errorf("worktree list still names %s after removal:\n%s", cleanWT, out)
+	}
+	runGit(t, bare, "branch", "-D", "relevo/clean")
+}
+
+// TestRemoveStrayLockedTreeReportsWithoutDeleting pins the failure half: when
+// git's removal fails, the error surfaces and the entry is left alone, never
+// retried as a plain removal.
+func TestRemoveStrayLockedTreeReportsWithoutDeleting(t *testing.T) {
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+	s, rt, bare := removeStrayFixture(t, now)
+	cleanWT := filepath.Join(rt.Store.WorktreeDir(), "clean")
+
+	runGit(t, bare, "worktree", "lock", cleanWT)
+	if _, err := RemoveStray(ctx, s, "alice", "clean"); err == nil {
+		t.Fatal("RemoveStray locked clean: got nil, want the git failure")
+	}
+	if _, err := os.Stat(cleanWT); err != nil {
+		t.Errorf("locked entry gone after the failed removal: %v", err)
+	}
+	if out := runGit(t, bare, "worktree", "list"); !strings.Contains(out, cleanWT) {
+		t.Errorf("worktree list no longer names %s, want the failed removal to leave the registration:\n%s", cleanWT, out)
+	}
+}
+
+// TestStrayRemoveCommandParsesAsRemoveStrayArgv pins the listing's removal
+// command against the verb's argv: every Remove the walk emits splits into
+// the exact argv the verb parses, so the two cannot drift.
+func TestStrayRemoveCommandParsesAsRemoveStrayArgv(t *testing.T) {
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+	s := newAdminServer(t, now)
+	id := enrol(t, s, "alice")
+	rt := ownerRuntime(t, s, id)
+
+	stray := filepath.Join(rt.Store.WorktreeDir(), "leftover")
+	if err := os.MkdirAll(stray, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stray, "work.txt"), []byte("kept\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(stray, now.Add(-time.Hour), now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := listOwnerStrays(ctx, rt, "alice", now)
+	if err != nil {
+		t.Fatalf("listOwnerStrays: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("strays = %+v, want the one leftover tree", got)
+	}
+	fields := strings.Fields(strings.TrimPrefix(got[0].Remove, "relevo "))
+	want := []string{"serve", "remove-stray", "--owner", "alice", "leftover"}
+	if !slices.Equal(fields, want) {
+		t.Errorf("remove argv = %q, want %q", fields, want)
 	}
 }
 

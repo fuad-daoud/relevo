@@ -2,6 +2,7 @@ package serve
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // strayFreshGuard is how long a worktree outlives its missing record. A bind
@@ -130,6 +132,118 @@ func straySize(root string) int64 {
 		return nil
 	})
 	return size
+}
+
+// The removal refusals: a live binding still owns the entry, the entry is too
+// young to tell apart from a bind in progress, or the entry is not a
+// directory at all. Each is a distinct sentinel so the verb can report every
+// refusal without inventing a code.
+var (
+	ErrStrayOwned  = errors.New("stray is owned by a live binding")
+	ErrStrayFresh  = errors.New("stray is too fresh to remove")
+	ErrStrayNotDir = errors.New("stray is not a directory")
+)
+
+// RemovedStray is the entry RemoveStray cleared: the reason and size the
+// listing reported, measured before the removal, so the verb prints the same
+// facts the listing showed.
+type RemovedStray struct {
+	Name   string `json:"name"`
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
+	Size   int64  `json:"size"`
+}
+
+// RemoveStray clears one stray worktree on the owner's explicit command. The
+// refusals rerun every skip the listing applied, in listing order, so a
+// binding created after the listing still owns its tree: unknown owner, an
+// invalid name, a live-owned name or worktree path, a missing entry, an entry
+// that is not a directory, and an entry too young to tell apart from a bind
+// still cutting its tree. A tree git recognises goes through git's own
+// removal from inside the tree, which also clears git's registration; a tree
+// git does not recognise has no registration left and goes through the
+// .worktrees root, which refuses a symlink planted out of it. A git failure
+// is reported as is, never retried as a plain removal.
+func RemoveStray(ctx context.Context, s *Server, owner, name string) (RemovedStray, error) {
+	id, err := s.resolveOwner(owner)
+	if err != nil {
+		return RemovedStray{}, err
+	}
+	if err := store.ValidName(name); err != nil {
+		return RemovedStray{}, err
+	}
+	rt, err := s.runtime(id)
+	if err != nil {
+		return RemovedStray{}, err
+	}
+	path, err := strayRemovalEntry(rt, name, s.cfg.Now())
+	if err != nil {
+		return RemovedStray{}, err
+	}
+	removed := RemovedStray{
+		Name:   name,
+		Path:   path,
+		Reason: classifyStray(ctx, rt.Git, path),
+		Size:   straySize(path),
+	}
+	if removed.Reason == strayClean || removed.Reason == strayDirty {
+		if err := rt.Git.RemoveWorktree(ctx, path, path, true); err != nil {
+			return RemovedStray{}, err
+		}
+	} else if err := removeUnrecognisedStray(rt.Store, name); err != nil {
+		return RemovedStray{}, err
+	}
+	rt.Store.PruneWorktreeDirs()
+	return removed, nil
+}
+
+// strayRemovalEntry rechecks the listing's skips against the live store: a
+// name or worktree path a live row owns is refused, an archived record owning
+// nothing. The shape check runs before the youth check so a planted entry is
+// refused for what it is whatever its age: a fresh symlink is still a
+// symlink, and only a link's own age (never its target's) is readable.
+func strayRemovalEntry(rt relevo.Runtime, name string, now time.Time) (string, error) {
+	if _, err := rt.Store.Load(name); err == nil {
+		return "", fmt.Errorf("remove %s: %w", name, ErrStrayOwned)
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return "", err
+	}
+	path := filepath.Join(rt.Store.WorktreeDir(), name)
+	live, err := rt.Store.List()
+	if err != nil {
+		return "", err
+	}
+	for _, b := range live {
+		if b.Worktree == path {
+			return "", fmt.Errorf("remove %s: %w", name, ErrStrayOwned)
+		}
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("remove %s: %w", name, store.ErrNotFound)
+		}
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("remove %s: %w", name, ErrStrayNotDir)
+	}
+	if now.Sub(info.ModTime()) < strayFreshGuard {
+		return "", fmt.Errorf("remove %s: %w", name, ErrStrayFresh)
+	}
+	return path, nil
+}
+
+// removeUnrecognisedStray deletes an entry git does not recognise through the
+// .worktrees root, so a directory swapped for a symlink out of .worktrees
+// leads nowhere: the removal refuses rather than deleting the target.
+func removeUnrecognisedStray(st *store.Store, name string) error {
+	root, err := st.WorktreeRoot()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	return root.RemoveAll(name)
 }
 
 // strayOwnerRef is the --owner value the removal takes: the label when the

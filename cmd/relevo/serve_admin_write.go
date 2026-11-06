@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/serve"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // serveInitFlagValues holds the pointers `serve init` parses into. state is
@@ -280,6 +281,70 @@ func cmdServeUnbindRun(args []string) error {
 	if txt := relevo.UnbindText(name, res); txt != "" {
 		fmt.Println(txt)
 	}
+	return nil
+}
+
+// serveRemoveStrayFlagValues holds the pointers `serve remove-stray` parses
+// into. state is read back off the FlagSet, so it has no pointer of its own.
+type serveRemoveStrayFlagValues struct {
+	owner  *string
+	asJSON *bool
+}
+
+func serveRemoveStrayFlagSet(fs *flag.FlagSet) *serveRemoveStrayFlagValues {
+	v := &serveRemoveStrayFlagValues{}
+	v.owner = fs.String("owner", "", "client label or id")
+	_ = fs.String("state", "", "state directory")
+	v.asJSON = fs.Bool("json", false, "print the document the removal produced")
+	return v
+}
+
+func cmdServeRemoveStray(args []string) error {
+	return outcomeError(cmdServeRemoveStrayRun(args))
+}
+
+func cmdServeRemoveStrayRun(args []string) error {
+	fs := flag.NewFlagSet("relevo serve remove-stray", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	v := serveRemoveStrayFlagSet(fs)
+	owner, asJSON := v.owner, v.asJSON
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+
+	if *owner == "" || fs.NArg() < 1 {
+		return fail(codeUsage, "serve remove-stray wants --owner <label|id> <name> [--state <dir>]")
+	}
+
+	name := fs.Arg(0)
+	root, d, err := adminRoot(fs)
+	if err != nil {
+		return failNext(codeNotAvailable, "relevo serve init", "%v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	srv, err := serve.New(serveAdminConfig(root, d))
+	if err != nil {
+		return err
+	}
+
+	res, err := serve.RemoveStray(context.Background(), srv, *owner, name)
+	if err != nil {
+		// An invalid name is the caller's own input; each refusal below is
+		// the entry failing the removal-time recheck a listing had passed.
+		if errors.Is(err, store.ErrInvalidName) {
+			return fail(codeUsage, "%v", err)
+		}
+		if errors.Is(err, serve.ErrStrayOwned) || errors.Is(err, serve.ErrStrayFresh) || errors.Is(err, serve.ErrStrayNotDir) {
+			return fail(codeRefused, "%v", err)
+		}
+		return err
+	}
+
+	if *asJSON {
+		return printDoc(serveRemoveStrayDocOf(*owner, res))
+	}
+	fmt.Printf("removed %s/%s (%s, %d bytes)\n", *owner, res.Name, res.Reason, res.Size)
 	return nil
 }
 

@@ -104,6 +104,7 @@ var verbFlagSets = map[string]func(*flag.FlagSet){
 	"serve fingerprint":    installer(serveFingerprintFlagSet),
 	"serve gc":             installer(serveGCFlagSet),
 	"serve init":           installer(serveInitFlagSet),
+	"serve remove-stray":   installer(serveRemoveStrayFlagSet),
 	"serve revoke":         installer(serveRevokeFlagSet),
 	"serve status":         serveStatusFlagSet,
 	"serve ui":             installer(serveUIFlagSet),
