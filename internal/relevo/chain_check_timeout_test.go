@@ -143,6 +143,47 @@ func TestChainCheckGreenAfterTimeoutRoutesGreen(t *testing.T) {
 	}
 }
 
+// TestChainCheckGreenRetryFinishesTheChainViaTick pins the tick continuation:
+// a timeout's retry run advanced through the tick finishes the chain when it
+// goes green, so the hold does not wedge the chain with all rows settled.
+func TestChainCheckGreenRetryFinishesTheChainViaTick(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startFlowChain(t, rt, flowCheckWorkflow)
+	flowAdvance(t, rt, workflow.Event{Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: "done"})
+	run, row := flowCheckRun(t, rt, "shop")
+	clock := &fakeClock{now: time.Unix(row.StartedAt, 0)}
+	rt = withClock(rt, clock)
+	clock.Advance(2 * rt.Policy.GateTimeout())
+
+	tickChainChecks(context.Background(), rt)
+	next, nrow := flowCheckRun(t, rt, "shop")
+	if next != run+1 {
+		t.Fatalf("run = %d, want %d: the first timeout retries fresh", next, run+1)
+	}
+
+	fr := rt.Runner.(*fakeRunner)
+	fr.script(nrow.PID, false)
+	fr.exit(nrow.PID, 0)
+	tickChainChecks(context.Background(), rt)
+
+	c := flowChainRow(t, rt)
+	if c.Status != string(workflow.StatusDone) {
+		t.Fatalf("status = %s (%q), want done after the retry goes green", c.Status, c.Reason)
+	}
+	st, serr := chain.WorkflowState(c)
+	if serr != nil {
+		t.Fatalf("WorkflowState: %v", serr)
+	}
+	if got := st.Results["check"].Status; got != chainCheckGreen {
+		t.Errorf("check result = %q, want green from the retry", got)
+	}
+	if chainRepeatRedCheck(rt, c, st, "check", nrow.Log) {
+		t.Errorf("a timeout counts as a previous red")
+	}
+}
+
 // seedTimeoutCheckHolds records settled timeout rows for the step, the shape
 // a step timed out that many times already has.
 func seedTimeoutCheckHolds(t *testing.T, rt Runtime, name string, runs ...db.ChainCheckRow) {
@@ -233,6 +274,11 @@ func TestChainCheckSecondTimeoutHaltsTheChain(t *testing.T) {
 	if nrow.Step != "check" {
 		t.Errorf("step = %q, want the same check step", nrow.Step)
 	}
+	if st, serr := chain.WorkflowState(flowChainRow(t, rt)); serr != nil {
+		t.Fatalf("WorkflowState: %v", serr)
+	} else if st.Awaiting.Run != next {
+		t.Errorf("Awaiting.Run = %d, want the retry run %d", st.Awaiting.Run, next)
+	}
 
 	tickChainChecks(context.Background(), rt)
 
@@ -240,7 +286,7 @@ func TestChainCheckSecondTimeoutHaltsTheChain(t *testing.T) {
 	if c.Status != string(workflow.StatusHalted) {
 		t.Fatalf("status = %s (%q), want the timeout halt", c.Status, c.Reason)
 	}
-	for _, want := range []string{"timed out after", "policy.gate.timeout_ms"} {
+	for _, want := range []string{"timed out after", "policy.gate.timeout_ms", "2 times in a row"} {
 		if !strings.Contains(c.Reason, want) {
 			t.Errorf("halt reason %q does not carry %q", c.Reason, want)
 		}
@@ -293,7 +339,7 @@ func TestChainCheckTimeoutHaltResumesWithoutExtraRetry(t *testing.T) {
 	if got := flowChainRow(t, rt); got.Status != string(workflow.StatusHalted) {
 		t.Fatalf("status = %s (%q), want the timeout halt with no extra retry", got.Status, got.Reason)
 	}
-	for _, want := range []string{"timed out after", "policy.gate.timeout_ms"} {
+	for _, want := range []string{"timed out after", "policy.gate.timeout_ms", "3 times in a row"} {
 		if got := flowChainRow(t, rt); !strings.Contains(got.Reason, want) {
 			t.Errorf("halt reason %q does not carry %q", got.Reason, want)
 		}

@@ -184,7 +184,7 @@ func TestChainCheckRedOnFail(t *testing.T) {
 	}
 }
 
-func TestChainCheckTimeoutIsRed(t *testing.T) {
+func TestChainCheckTimeoutHoldsWithoutRed(t *testing.T) {
 	t.Parallel()
 
 	rt, fr, c := chainCheckFixture(t)

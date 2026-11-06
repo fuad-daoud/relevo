@@ -450,6 +450,48 @@ func TestChainCheckFrozenLogRetriesTheCheckFresh(t *testing.T) {
 	}
 }
 
+// TestChainCheckFrozenRetryFinishesTheChainViaTick pins the tick continuation:
+// a frozen hold's retry run advanced through the tick finishes the chain when
+// it goes green, so the hold does not wedge the chain with all rows settled.
+func TestChainCheckFrozenRetryFinishesTheChainViaTick(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startFlowChain(t, rt, flowCheckWorkflow)
+	flowAdvance(t, rt, workflow.Event{Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: "done"})
+	run, row := flowCheckRun(t, rt, "shop")
+	if err := os.WriteFile(row.Log, []byte(freezeFixtureLine+"\n"), 0o644); err != nil {
+		t.Fatalf("write check log: %v", err)
+	}
+	fr := rt.Runner.(*fakeRunner)
+	fr.script(row.PID, false)
+
+	tickChainChecks(context.Background(), rt)
+	next, nrow := flowCheckRun(t, rt, "shop")
+	if next != run+1 {
+		t.Fatalf("run = %d, want %d: the frozen hold retries fresh", next, run+1)
+	}
+
+	fr.script(nrow.PID, false)
+	fr.exit(nrow.PID, 0)
+	tickChainChecks(context.Background(), rt)
+
+	c := flowChainRow(t, rt)
+	if c.Status != string(workflow.StatusDone) {
+		t.Fatalf("status = %s (%q), want done after the retry goes green", c.Status, c.Reason)
+	}
+	st, serr := chain.WorkflowState(c)
+	if serr != nil {
+		t.Fatalf("WorkflowState: %v", serr)
+	}
+	if got := st.Results["check"].Status; got != chainCheckGreen {
+		t.Errorf("check result = %q, want green from the retry", got)
+	}
+	if chainRepeatRedCheck(rt, c, st, "check", nrow.Log) {
+		t.Errorf("a could-not-start counts as a previous red")
+	}
+}
+
 // seedFrozenCheckHolds records bound could-not-start runs for the step, the
 // shape a step frozen that many times already has.
 func seedFrozenCheckHolds(t *testing.T, rt Runtime, name string) {

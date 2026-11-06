@@ -65,6 +65,27 @@ func timeoutCheckHolds(tx *store.Tx, name, step string) (int, error) {
 	return holds, nil
 }
 
+// advanceHoldAwaitingRun points the workflow's awaited check at the hold's
+// retry run, so the retry's green close matches and the chain continues. A
+// hold is not an engine transition, so the write carries no event and records
+// no trace row. A stateless chain carries no workflow to advance.
+func advanceHoldAwaitingRun(rt Runtime, tx *store.Tx, c db.ChainRow, run int) error {
+	if len(c.WorkflowJSON) == 0 {
+		return nil
+	}
+	def, err := chain.WorkflowDef(c)
+	if err != nil {
+		return err
+	}
+	before, err := chain.WorkflowState(c)
+	if err != nil {
+		return err
+	}
+	next := cloneFlowState(before)
+	next.Awaiting.Run = run
+	return chainSaveFlow(rt, tx, c, def, before, next, workflow.Event{}, workflow.Action{}, "")
+}
+
 // advanceTimeoutCheck settles a timed-out run with its runner result and,
 // under the bound, starts the check fresh on a new run: the hold retries the
 // step rather than reddening it. Past the bound it reports the typed error
@@ -96,6 +117,9 @@ func advanceTimeoutCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Cha
 	if rerr != nil {
 		return "", row.Log, rerr
 	}
+	if err := advanceHoldAwaitingRun(rt, tx, c, next); err != nil {
+		return "", row.Log, err
+	}
 	return "", retry.Log, nil
 }
 
@@ -122,6 +146,6 @@ func chainHaltOnTimeout(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chai
 	}
 	next := cloneFlowState(before)
 	next.Status = workflow.StatusHalted
-	next.Reason = fmt.Sprintf("check %s timed out twice in a row", row.Step)
+	next.Reason = fmt.Sprintf("check %s timed out %d times in a row", row.Step, timeoutErr.Holds)
 	return true, chainTerminalWF(ctx, rt, tx, c, def, before, next, workflow.Event{}, workflow.Action{Kind: workflow.ActionHalt, Reason: next.Reason})
 }
