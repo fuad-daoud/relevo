@@ -199,6 +199,25 @@ func (d *DB) RecordListForMasterMind(owner, mastermindID string) ([]Record, erro
 	return out, nil
 }
 
+// RecordListWithCheckRun is RecordList narrowed, in the query, to the records
+// whose binding carries a check run, so a sweep that advances checks reads no
+// other binding. '$.check_run' is the JSON key store.Binding writes CheckRun
+// under.
+func (d *DB) RecordListWithCheckRun(owner string) ([]Record, error) {
+	rows, err := d.sqlDB.QueryContext(context.Background(),
+		`SELECT `+recordCols+` FROM binding_record WHERE `+writerScope+` AND owner = ? AND archived_at IS NULL
+			AND json_extract(record_json, '$.check_run') IS NOT NULL ORDER BY name ASC`,
+		d.origin, owner)
+	if err != nil {
+		return nil, fmt.Errorf("db: record list with check run: %w", mapBusy(err))
+	}
+	out, err := collectRows(rows, scanRecord)
+	if err != nil {
+		return nil, fmt.Errorf("db: record list with check run: %w", mapBusy(err))
+	}
+	return out, nil
+}
+
 // RecordListArchived returns every archived row, oldest archived_at first and by
 // name within one stamp, so archive readers see what RecordGet and RecordList
 // hide.

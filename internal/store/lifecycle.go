@@ -400,6 +400,9 @@ func isWriter(b Binding) bool {
 }
 
 func (s *Store) load(name string) (Binding, error) {
+	if s.onLoad != nil {
+		s.onLoad(name)
+	}
 	d, err := s.dbForRead()
 	if err != nil {
 		return Binding{}, err
@@ -481,6 +484,27 @@ func (s *Store) ListForMasterMind(mastermindID string) ([]Binding, error) {
 		return nil, nil
 	}
 	recs, err := d.RecordListForMasterMind(s.owner, mastermindID)
+	if err != nil {
+		return nil, fmt.Errorf("read state root: %w", err)
+	}
+	bindings, err := decodeRecords(recs)
+	if err != nil {
+		return nil, err
+	}
+	return s.mergeLiveList(bindings, recs)
+}
+
+// ListWithCheckRun is List narrowed to the bindings carrying a check run,
+// read with the filter in the query rather than by listing everything.
+func (s *Store) ListWithCheckRun() ([]Binding, error) {
+	d, err := s.dbForRead()
+	if err != nil {
+		return nil, err
+	}
+	if d == nil {
+		return nil, nil
+	}
+	recs, err := d.RecordListWithCheckRun(s.owner)
 	if err != nil {
 		return nil, fmt.Errorf("read state root: %w", err)
 	}

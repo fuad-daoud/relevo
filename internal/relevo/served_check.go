@@ -345,11 +345,12 @@ func servedCheckLogTail(read func(string) ([]byte, error), path string) (string,
 
 // tickServedChecks advances every served binding's check run once per tick, one
 // check per binding: a check is a single process against one tree, so a binding
-// never has two to advance. It rides the daemon tick, the one that advances a
-// round's gate, so a check keeps moving across the ticks between a round's
-// marker and the next round.
+// never has two to advance. The candidates are read narrowed, in the query, to
+// the bindings carrying a check run, so an idle tick loads no other binding.
+// It rides the daemon tick, the one that advances a round's gate, so a check
+// keeps moving across the ticks between a round's marker and the next round.
 func tickServedChecks(ctx context.Context, rt Runtime) {
-	bindings, err := rt.Store.List()
+	bindings, err := rt.Store.ListWithCheckRun()
 	if err != nil {
 		slog.Warn("served check tick: list bindings", "err", err)
 		return

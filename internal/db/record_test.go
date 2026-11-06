@@ -137,6 +137,44 @@ func TestRecordPutScopesByOwner(t *testing.T) {
 	}
 }
 
+// TestRecordListWithCheckRunListsOnlyCheckCarriers pins the served-check
+// sweep's candidate query against the JSON it filters on: only live rows whose
+// document carries a check run come back, name-ordered, settled or not. Drop
+// the extract predicate and the plain rows return too.
+func TestRecordListWithCheckRunListsOnlyCheckCarriers(t *testing.T) {
+	d := openTestDB(t)
+
+	if _, err := d.RecordPut(testRecord("plain")); err != nil {
+		t.Fatalf("RecordPut(plain): %v", err)
+	}
+	running := testRecord("running")
+	running.JSON = `{"name":"running","check_run":{"id":"c1","command":"make check"}}`
+	if _, err := d.RecordPut(running); err != nil {
+		t.Fatalf("RecordPut(running): %v", err)
+	}
+	settled := testRecord("settled")
+	settled.JSON = `{"name":"settled","check_run":{"id":"c0","command":"make check","result":"pass"}}`
+	if _, err := d.RecordPut(settled); err != nil {
+		t.Fatalf("RecordPut(settled): %v", err)
+	}
+	archived := testRecord("archived")
+	archived.JSON = `{"name":"archived","check_run":{"id":"c9","command":"make check"}}`
+	if _, err := d.RecordPut(archived); err != nil {
+		t.Fatalf("RecordPut(archived): %v", err)
+	}
+	if err := d.RecordArchive("", "archived", time.Now().UTC()); err != nil {
+		t.Fatalf("RecordArchive: %v", err)
+	}
+
+	got, err := d.RecordListWithCheckRun("")
+	if err != nil {
+		t.Fatalf("RecordListWithCheckRun: %v", err)
+	}
+	if len(got) != 2 || got[0].Name != "running" || got[1].Name != "settled" {
+		t.Fatalf("RecordListWithCheckRun = %v, want [running settled]", recordNames(got))
+	}
+}
+
 func TestRecordArchiveFreesName(t *testing.T) {
 	d := openTestDB(t)
 
