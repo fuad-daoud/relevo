@@ -92,6 +92,41 @@ func TestRoundGateReadsTheRoundsReportGate(t *testing.T) {
 	})
 }
 
+// TestNewestReportAtIsTheLatestReportTime pins that only a report's time counts,
+// and that the latest one wins wherever it sits in the log.
+func TestNewestReportAtIsTheLatestReportTime(t *testing.T) {
+	t.Parallel()
+
+	s := store.New(t.TempDir())
+	if err := s.WithLock(func(tx *store.Tx) error {
+		return tx.Save(store.Binding{Name: "c", CWD: s.Dir("c")})
+	}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	base := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	for _, e := range []store.LogEntry{
+		{Direction: store.DirToMasterMind, Kind: store.KindReport, Round: 1, TS: base.Add(time.Minute)},
+		{Direction: store.DirToMasterMind, Kind: store.KindReport, Round: 2, TS: base.Add(3 * time.Minute)},
+		{Direction: store.DirToMasterMind, Kind: store.KindReport, Round: 3, TS: base.Add(2 * time.Minute)},
+		{Direction: store.DirToMasterMind, Kind: store.KindDiff, Round: 4, TS: base.Add(9 * time.Minute)},
+		{Direction: store.DirToBuilder, Kind: store.KindPrompt, Round: 5, TS: base.Add(9 * time.Minute)},
+	} {
+		if err := s.AppendLog("c", e); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+	inTx(t, s, func(tx *store.Tx) {
+		if got, want := NewestReportAt(tx, "c"), base.Add(3*time.Minute); !got.Equal(want) {
+			t.Errorf("NewestReportAt(c) = %v, want %v", got, want)
+		}
+		for _, name := range []string{"", "gone"} {
+			if got := NewestReportAt(tx, name); !got.IsZero() {
+				t.Errorf("NewestReportAt(%q) = %v, want zero", name, got)
+			}
+		}
+	})
+}
+
 // TestNewestClosedRoundIsTheHighestReportedRound pins that only report
 // entries count, that the highest round wins regardless of order, and that
 // an empty name or a member with no log reads as round 0.

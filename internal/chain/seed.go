@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"strings"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
@@ -119,6 +120,26 @@ func GateResult(gate *store.GateRecord) string {
 		return GateGreen
 	}
 	return GateRed
+}
+
+// NewestReportAt is when a member's newest report landed, zero when the record
+// is gone or no round has closed. Each member counts its own rounds, so only
+// this time orders the reports of different members.
+func NewestReportAt(tx *store.Tx, name string) time.Time {
+	var newest time.Time
+	if name == "" {
+		return newest
+	}
+	entries, err := tx.ReadLog(name)
+	if err != nil {
+		return newest
+	}
+	for _, e := range entries {
+		if e.Direction == store.DirToMasterMind && e.Kind == store.KindReport && e.TS.After(newest) {
+			newest = e.TS
+		}
+	}
+	return newest
 }
 
 // NewestClosedRound is a member's newest closed round: the highest round

@@ -86,7 +86,7 @@ func chainApply(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 // seeds name a reader's own output file rather than the flat NNN-report.md no
 // reader writes. The security and fixes seeds name the whole branch diff and
 // render no gate.
-func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act chain.Action, closedRound int) (workflow.SeedView, error) {
+func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, s chain.State, act chain.Action, closedRound int) (workflow.SeedView, error) {
 	v := workflow.SeedView{
 		Plan: s.Plan, Plans: s.Plans, Corrections: s.Corrections,
 		Branch: c.Branch, Base: c.Base,
@@ -99,13 +99,15 @@ func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act c
 	reviewerOutput, securityOutput := "", ""
 	switch act.Seed {
 	case chain.SeedCorrection, chain.SeedDirectFix:
-		if p, err := chain.MemberReportPath(tx, c.Reviewer, closedRound); err != nil {
+		reviewer := chainSeedStepBinding(tx, c, def, c.Reviewer, "shipped:review")
+		if p, err := chain.MemberReportPath(tx, reviewer, closedRound); err != nil {
 			reviewerOutput = chain.SeedMissing(err)
 		} else {
 			reviewerOutput = chainSeedInput(rt, c, p)
 		}
 	case chain.SeedFixes:
-		if p, err := chain.MemberReportPath(tx, c.Security, closedRound); err != nil {
+		security := chainSeedStepBinding(tx, c, def, c.Security, "shipped:scan")
+		if p, err := chain.MemberReportPath(tx, security, closedRound); err != nil {
 			securityOutput = chain.SeedMissing(err)
 		} else {
 			securityOutput = chainSeedInput(rt, c, p)
@@ -136,7 +138,7 @@ func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act c
 		v.PlanDiffPath = chainSeedInput(rt, c, chainPlanDiff(rt, tx, c, c.Builder, builderRound))
 		v.RoundPromptPath = chainSeedInput(rt, c, chainRoundPromptPath(rt, v.PlanPath, c.Builder, builderRound))
 		v.BuilderRoundKind, v.BuilderRoundOn, v.BuilderRounds, v.DiffFrom =
-			chainBuilderPlanView(rt, tx, c, s, act, c.Builder, builderRound)
+			chainBuilderPlanView(rt, tx, c, def, s, act, c.Builder, builderRound)
 		if act.Seed == chain.SeedCorrection || act.Seed == chain.SeedDirectFix {
 			v.OutputPath = reviewerOutput
 		}
