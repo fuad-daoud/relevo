@@ -8,6 +8,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
@@ -58,6 +59,45 @@ func TestIdleRemoteBindingsQueueNoSyncedWritePerTick(t *testing.T) {
 		if rows := idleOutboxRows(t, w.raw); len(rows) != 0 {
 			t.Errorf("20 idle ticks against moving clocks queued %d outbox rows, want 0: %v",
 				len(rows), rows)
+		}
+	})
+
+	// One blip on the link flips every served binding at once, so the outage has
+	// to reach this machine's status and nothing else.
+	t.Run("flaky link", func(t *testing.T) {
+		w := newIdleWorld(t)
+		w.d.backoff.now = func() time.Time { return w.now }
+		w.tick(t)
+		w.tick(t)
+		if err := w.mdb.TruncateOutbox(); err != nil {
+			t.Fatalf("truncate outbox: %v", err)
+		}
+		for i := 0; i < 5; i++ {
+			w.fr.getBindingErr = client.ErrUnreachable
+			w.tick(t)
+			w.now = w.now.Add(2 * serverBackoff)
+			got, err := w.d.rt.Store.Load("api")
+			if err != nil {
+				t.Fatalf("load during the outage: %v", err)
+			}
+			if got.Builder.RemoteStatus != "unreachable" || got.RemoteUnreachableSince.IsZero() {
+				t.Fatalf("status %q since %v during the outage, want it read back here",
+					got.Builder.RemoteStatus, got.RemoteUnreachableSince)
+			}
+
+			w.fr.getBindingErr = nil
+			w.tick(t)
+			got, err = w.d.rt.Store.Load("api")
+			if err != nil {
+				t.Fatalf("load after the outage: %v", err)
+			}
+			if got.Builder.RemoteStatus != string(remote.RoundIdle) || !got.RemoteUnreachableSince.IsZero() {
+				t.Fatalf("status %q since %v after the outage, want idle and no outage",
+					got.Builder.RemoteStatus, got.RemoteUnreachableSince)
+			}
+		}
+		if rows := idleOutboxRows(t, w.raw); len(rows) != 0 {
+			t.Errorf("5 outages queued %d outbox rows, want 0: %v", len(rows), rows)
 		}
 	})
 }
