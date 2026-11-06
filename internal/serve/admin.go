@@ -97,58 +97,12 @@ func AdminStatus(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([
 		if !entry.IsDir() || !ok {
 			continue
 		}
-		ownerPath := filepath.Join(bindingsDir, entry.Name())
-		rt := s.runtimeAt(ownerPath)
 		label := s.clients.LabelOf(id)
-		rep, err := relevo.Status(ctx, rt, opts...)
+		o, err := adminOwnerStatus(ctx, s, filepath.Join(bindingsDir, entry.Name()), id, label, position, c, builders.Cap, now, opts...)
 		if err != nil {
 			return nil, remote.BuildersView{}, err
 		}
-		var lastSeen time.Time
-		for ri := range rep.Bindings {
-			row := &rep.Bindings[ri]
-			// Only a client request counts as contact: no RoundStartedAt fallback.
-			b, err := rt.Store.Load(row.Name)
-			if err != nil {
-				// A row whose binding is gone is a stale reference, not a
-				// failure of the read: the row was built from the List
-				// snapshot, and what it named has since been deleted or is a
-				// chain whose members are all gone. Keep the row, mark it, and
-				// carry on -- one stale reference must not fail the census for
-				// every other owner. Every other error still returns as before.
-				if !errors.Is(err, store.ErrNotFound) {
-					return nil, remote.BuildersView{}, err
-				}
-				row.Gone = true
-				row.GoneStep = goneStep(row, label)
-				// A gone row has no Serve facts and is not queued work, so it
-				// contributes to neither LastSeen nor the queue.
-				continue
-			}
-			if b.Serve != nil && b.Serve.LastSeen.After(lastSeen) {
-				lastSeen = b.Serve.LastSeen
-			}
-			i, ok := position[string(id)+"/"+row.Name]
-			if !ok {
-				continue
-			}
-			q := c.Queued[i]
-			row.Queued = &remote.QueueView{Position: i + 1, Ahead: i, Running: c.Running, Cap: builders.Cap, Since: q.QueuedAt}
-			row.BuilderStatus = fmt.Sprintf("queued %s (%d ahead)", view.AgeText(now.Sub(q.QueuedAt)), i)
-		}
-		// Strays are server-local facts read beside the rows, never on a tick:
-		// the walk shells to git per tree, too costly for every reconcile.
-		strays, err := listOwnerStrays(ctx, rt, strayOwnerRef(s, id), now)
-		if err != nil {
-			return nil, remote.BuildersView{}, err
-		}
-		owners = append(owners, OwnerStatus{
-			Owner:    id,
-			Label:    label,
-			LastSeen: lastSeen,
-			Report:   rep,
-			Strays:   strays,
-		})
+		owners = append(owners, o)
 	}
 
 	sort.Slice(owners, func(i, j int) bool {
@@ -156,6 +110,60 @@ func AdminStatus(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([
 	})
 
 	return owners, builders, nil
+}
+
+// adminOwnerStatus reads one owner's rows and strays. Strays are server-local
+// facts read beside the rows, never on a tick: the walk shells to git per
+// tree, too costly for every reconcile.
+func adminOwnerStatus(ctx context.Context, s *Server, ownerPath string, id remote.ClientID, label string, position map[string]int, c census, buildersCap int, now time.Time, opts ...relevo.StatusOption) (OwnerStatus, error) {
+	rt := s.runtimeAt(ownerPath)
+	rep, err := relevo.Status(ctx, rt, opts...)
+	if err != nil {
+		return OwnerStatus{}, err
+	}
+	var lastSeen time.Time
+	for ri := range rep.Bindings {
+		row := &rep.Bindings[ri]
+		// Only a client request counts as contact: no RoundStartedAt fallback.
+		b, err := rt.Store.Load(row.Name)
+		if err != nil {
+			// A row whose binding is gone is a stale reference, not a
+			// failure of the read: the row was built from the List
+			// snapshot, and what it named has since been deleted or is a
+			// chain whose members are all gone. Keep the row, mark it, and
+			// carry on -- one stale reference must not fail the census for
+			// every other owner. Every other error still returns as before.
+			if !errors.Is(err, store.ErrNotFound) {
+				return OwnerStatus{}, err
+			}
+			row.Gone = true
+			row.GoneStep = goneStep(row, label)
+			// A gone row has no Serve facts and is not queued work, so it
+			// contributes to neither LastSeen nor the queue.
+			continue
+		}
+		if b.Serve != nil && b.Serve.LastSeen.After(lastSeen) {
+			lastSeen = b.Serve.LastSeen
+		}
+		i, ok := position[string(id)+"/"+row.Name]
+		if !ok {
+			continue
+		}
+		q := c.Queued[i]
+		row.Queued = &remote.QueueView{Position: i + 1, Ahead: i, Running: c.Running, Cap: buildersCap, Since: q.QueuedAt}
+		row.BuilderStatus = fmt.Sprintf("queued %s (%d ahead)", view.AgeText(now.Sub(q.QueuedAt)), i)
+	}
+	strays, err := listOwnerStrays(ctx, rt, strayOwnerRef(s, id), now)
+	if err != nil {
+		return OwnerStatus{}, err
+	}
+	return OwnerStatus{
+		Owner:    id,
+		Label:    label,
+		LastSeen: lastSeen,
+		Report:   rep,
+		Strays:   strays,
+	}, nil
 }
 
 // FlatStatus is the whole fleet as one report, Owner/OwnerLabel stamped on each
