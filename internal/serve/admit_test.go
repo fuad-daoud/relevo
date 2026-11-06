@@ -1073,6 +1073,78 @@ func TestAdmitPlannerCapQueuesTheSecondPlanner(t *testing.T) {
 	}
 }
 
+// TestAdmitPlannerCapHoldsInOnePass: two planners queued together under
+// serve.max_planners 1 start one at a time. The census counts only what was
+// running when the pass began, so the pass must count what it admits itself.
+func TestAdmitPlannerCapHoldsInOnePass(t *testing.T) {
+	one := 1
+	set, err := builderCandidateSet(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := setupTestEnv(t, func(cfg *Config) {
+		cfg.MaxBuilders = 1
+		cfg.Candidates = set
+		cfg.Registry = plannerAdmitRegistry(t, set)
+		cfg.Policy = policy.Policy{Serve: &policy.ServePolicy{MaxPlanners: &one}}
+	})
+	ownerB := addOwner(t, env, "bob")
+	ownerC := addOwner(t, env, "carol")
+
+	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, respA, bodyA, "A")
+	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
+	requireCreated(t, respB, bodyB, "B")
+	respC, bodyC := sendRound(t, env, ownerC.kp, ownerC.clientDir, ownerC.repoID, ownerC.headSHA, "api", "# Plan C")
+	requireCreated(t, respC, bodyC, "C")
+	stampRole(t, testRuntime(t, env.srv, ownerB.id), "api", "lite-planner")
+	stampRole(t, testRuntime(t, env.srv, ownerC.id), "api", "lite-planner")
+
+	if err := env.srv.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	requireRoundState(t, testRuntime(t, env.srv, ownerB.id), "api", remote.RoundRunning)
+	requireRoundState(t, testRuntime(t, env.srv, ownerC.id), "api", remote.RoundQueued)
+}
+
+// TestAdmitPlannerLeavesTheBuilderSeatInOnePass: a planner admitted first does
+// not use up the seat a queued builder behind it needs, or the builder would
+// wait a tick with a seat free.
+func TestAdmitPlannerLeavesTheBuilderSeatInOnePass(t *testing.T) {
+	set, err := builderCandidateSet(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := setupTestEnv(t, func(cfg *Config) {
+		cfg.MaxBuilders = 1
+		cfg.Candidates = set
+		cfg.Registry = plannerAdmitRegistry(t, set)
+	})
+	ownerB := addOwner(t, env, "bob")
+	ownerC := addOwner(t, env, "carol")
+
+	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, respA, bodyA, "A")
+	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
+	requireCreated(t, respB, bodyB, "B")
+	respC, bodyC := sendRound(t, env, ownerC.kp, ownerC.clientDir, ownerC.repoID, ownerC.headSHA, "api", "# Plan C")
+	requireCreated(t, respC, bodyC, "C")
+	stampRole(t, testRuntime(t, env.srv, ownerB.id), "api", "lite-planner")
+
+	rtA := testRuntime(t, env.srv, env.id)
+	bA, err := rtA.Store.Load("api")
+	if err != nil {
+		t.Fatalf("load A: %v", err)
+	}
+	closeRound(t, rtA, "api", bA.Builder.PID, env.runner)
+
+	if err := env.srv.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	requireRoundState(t, testRuntime(t, env.srv, ownerB.id), "api", remote.RoundRunning)
+	requireRoundState(t, testRuntime(t, env.srv, ownerC.id), "api", remote.RoundRunning)
+}
+
 // TestAdmitPlannerQueueViewReadsPlannerClass: with serve.max_planners 1 and
 // two builder seats, one builder and one planner running and a second planner
 // queued, the queued planner's row reads the planner class on both surfaces
