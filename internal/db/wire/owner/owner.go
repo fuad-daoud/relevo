@@ -67,6 +67,12 @@ type Server struct {
 	// An idle connection never holds a slot, handshaken or between statements.
 	sem chan struct{}
 
+	// statsMu guards the served-statement window counters. It sits apart from
+	// mu because every statement dispatched takes it, while mu serialises the
+	// accept bookkeeping a drain and the idle watcher read.
+	statsMu sync.Mutex
+	stats   map[shapeKey]int64
+
 	// OnAbandoned, when set, runs once when an abandoned statement has not
 	// finished within reapGrace. The daemon uses it to ask for a re-exec, the
 	// only way to end a statement the engine cannot interrupt.
@@ -117,6 +123,7 @@ func New(dbh *sql.DB, have, know int, origin string, codeOf func(error) (int, in
 		conns:   make(map[*conn]struct{}),
 		maxLive: maxLiveConns,
 		sem:     make(chan struct{}, maxConns),
+		stats:   make(map[shapeKey]int64),
 	}
 }
 
@@ -163,6 +170,12 @@ func (s *Server) Serve(l net.Listener) error {
 	s.mu.Lock()
 	s.ln = l
 	s.mu.Unlock()
+
+	// The window reporter lives exactly as long as the accept loop: a server
+	// that is not serving has no statements to report.
+	stop := make(chan struct{})
+	defer close(stop)
+	go s.watchQueryStats(stop)
 
 	for {
 		nc, err := l.Accept()
