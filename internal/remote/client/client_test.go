@@ -430,10 +430,10 @@ func TestUnbindRequestsForceOnlyWhenAsked(t *testing.T) {
 		time.Now,
 	)
 	ctx := context.Background()
-	if err := cl.Unbind(ctx, "zen", "api", true); err != nil {
+	if _, err := cl.Unbind(ctx, "zen", "api", true); err != nil {
 		t.Fatalf("Unbind force: %v", err)
 	}
-	if err := cl.Unbind(ctx, "zen", "api", false); err != nil {
+	if _, err := cl.Unbind(ctx, "zen", "api", false); err != nil {
 		t.Fatalf("Unbind: %v", err)
 	}
 	mu.Lock()
@@ -441,5 +441,40 @@ func TestUnbindRequestsForceOnlyWhenAsked(t *testing.T) {
 	want := []string{"/v1/bindings/api/unbind?force=1", "/v1/bindings/api/unbind"}
 	if !slices.Equal(uris, want) {
 		t.Errorf("requests = %v, want %v", uris, want)
+	}
+}
+
+func TestUnbindDecodesKeptWorktree(t *testing.T) {
+	t.Parallel()
+
+	newClient := func(body string) *client.Client {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(body))
+		}))
+		t.Cleanup(ts.Close)
+		return client.New(
+			remote.Servers{"zen": remote.ServerEntry{URL: ts.URL, Insecure: true}},
+			generateKey(t),
+			time.Now,
+		)
+	}
+
+	cl := newClient(`{"worktree_kept":"/w/api","kept_reason":"uncommitted changes"}`)
+	got, err := cl.Unbind(context.Background(), "zen", "api", true)
+	if err != nil {
+		t.Fatalf("Unbind kept: %v", err)
+	}
+	if got.WorktreeKept != "/w/api" || got.KeptReason != "uncommitted changes" {
+		t.Errorf("Unbind kept = %+v, want the kept fields", got)
+	}
+
+	old := newClient(`{}`)
+	zero, err := old.Unbind(context.Background(), "zen", "api", true)
+	if err != nil {
+		t.Fatalf("Unbind empty: %v", err)
+	}
+	if zero != (remote.UnbindResponse{}) {
+		t.Errorf("Unbind empty = %+v, want zero", zero)
 	}
 }

@@ -493,6 +493,7 @@ func TestContractWriteAdminForcedFailures(t *testing.T) {
 		{"serve revoke bad args", []string{"serve", "revoke"}, codeUsage, "relevo help"},
 		{"serve gc bad args", []string{"serve", "gc"}, codeUsage, "relevo help"},
 		{"serve unbind bad args", []string{"serve", "unbind", "some-binding"}, codeUsage, "relevo help"},
+		{"serve remove-stray bad args", []string{"serve", "remove-stray"}, codeUsage, "relevo help"},
 		{"update bad to", []string{"update", "--to", "bogus"}, codeUsage, "relevo help"},
 		{"update local build", []string{"update", "--to", "v9.9.9"}, codeRefused, ""},
 	}
@@ -598,6 +599,7 @@ func TestContractWriteAdminStateFailures(t *testing.T) {
 		{"serve revoke uninitialised", []string{"serve", "revoke", "SHA256:x"}},
 		{"serve gc uninitialised", []string{"serve", "gc", "--abandoned", "1h"}},
 		{"serve unbind uninitialised", []string{"serve", "unbind", "--owner", "nosuch", "webshelf"}},
+		{"serve remove-stray uninitialised", []string{"serve", "remove-stray", "--owner", "nosuch", "leftover"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			args := append(append([]string{}, c.args...), "--state", t.TempDir())

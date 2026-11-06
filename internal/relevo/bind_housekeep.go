@@ -23,7 +23,8 @@ func housekeepTeardown(rt Runtime) func(context.Context, store.Binding, bool) ho
 
 func housekeepAskUnbind(rt Runtime) func(context.Context, store.Binding, bool) error {
 	return func(ctx context.Context, b store.Binding, force bool) error {
-		return askServerUnbind(ctx, rt, b, force)
+		_, err := askServerUnbind(ctx, rt, b, force)
+		return err
 	}
 }
 

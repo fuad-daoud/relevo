@@ -293,7 +293,7 @@ func chainRemoteUnwindGuard(ctx context.Context, rt Runtime, server, name, branc
 			return
 		}
 		armed = false
-		if uerr := rt.Remote.Unbind(ctx, server, name, true); uerr != nil {
+		if _, uerr := rt.Remote.Unbind(ctx, server, name, true); uerr != nil {
 			*err = fmt.Errorf("%w; server binding %s on %s could not be removed: %w", *err, name, server, uerr)
 		}
 		if created {

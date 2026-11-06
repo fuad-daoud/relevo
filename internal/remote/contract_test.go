@@ -488,6 +488,15 @@ func filledSetGateRequest() SetGateRequest {
 	}
 }
 
+func filledUnbindResponse() UnbindResponse {
+	return UnbindResponse{
+		WorktreeRemoved: "/w/removed",
+		WorktreeKept:    "/w/kept",
+		KeptReason:      "uncommitted changes",
+		WorktreeGone:    "/w/gone",
+	}
+}
+
 type protoTypeCase struct {
 	name string
 	val  any
@@ -525,6 +534,7 @@ var protoCases = []protoTypeCase{
 	{"CheckView", filledCheckView(), func() any { return new(CheckView) }},
 	{"SetGateRequest", filledSetGateRequest(), func() any { return new(SetGateRequest) }},
 	{"ErrorBody", filledErrorBody(), func() any { return new(ErrorBody) }},
+	{"UnbindResponse", filledUnbindResponse(), func() any { return new(UnbindResponse) }},
 }
 
 func TestContractProtoShapes(t *testing.T) {
@@ -550,6 +560,13 @@ func TestContractProtoShapes(t *testing.T) {
 				t.Fatalf("%s round-trip mismatch:\n--- orig ---\n%s\n--- back ---\n%s", tc.name, string(b), string(b2))
 			}
 		})
+	}
+	zero, err := json.Marshal(UnbindResponse{})
+	if err != nil {
+		t.Fatalf("marshal zero UnbindResponse: %v", err)
+	}
+	if string(zero) != "{}" {
+		t.Fatalf("zero UnbindResponse = %s, want {}", zero)
 	}
 }
 

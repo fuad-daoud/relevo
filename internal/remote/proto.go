@@ -395,6 +395,17 @@ const (
 	CodeWorktreeKept Code = "worktree_kept"
 )
 
+// UnbindResponse is the 200 body of POST /v1/bindings/{name}/unbind: what the
+// unbind did to the server's worktree. Every field is additive, so a zero
+// value marshals to {}: a new client reading an old server sees no worktree
+// change, and an old client ignoring the body is unaffected.
+type UnbindResponse struct {
+	WorktreeRemoved string `json:"worktree_removed,omitempty"`
+	WorktreeKept    string `json:"worktree_kept,omitempty"`
+	KeptReason      string `json:"kept_reason,omitempty"`
+	WorktreeGone    string `json:"worktree_gone,omitempty"`
+}
+
 // FeatureTier is the WhoAmI.Features token a server with the permission-tier
 // wire fields advertises.
 const FeatureTier = "tier"

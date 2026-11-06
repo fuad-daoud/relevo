@@ -26,6 +26,7 @@ type OwnerStatus struct {
 	Label    string      // Clients.LabelOf
 	LastSeen time.Time   // max over the owner's bindings of Serve.LastSeen; zero when none
 	Report   view.Report // relevo.Status over that owner's runtime
+	Strays   []StrayWorktree
 }
 
 // isolationView stamps the server's isolation facts onto v: the mode always,
@@ -61,14 +62,28 @@ func goneStep(row *view.BindingStatus, label string) string {
 	return row.Name + " is gone from the store; nothing to clear"
 }
 
-// AdminStatus returns every owner who has a bindings directory, sorted by
+// AdminStatus is the one-shot read behind `relevo serve status`: adminOwners
+// plus each owner's strays. FlatStatus stays on adminOwners because the walk
+// runs git and sums sizes per tree, which a polling fleet view cannot afford.
+func AdminStatus(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([]OwnerStatus, remote.BuildersView, error) {
+	owners, builders, err := adminOwners(ctx, s, opts...)
+	if err != nil {
+		return nil, remote.BuildersView{}, err
+	}
+	if err := fillOwnerStrays(ctx, s, owners); err != nil {
+		return nil, remote.BuildersView{}, err
+	}
+	return owners, builders, nil
+}
+
+// adminOwners returns every owner who has a bindings directory, sorted by
 // Label, plus the builder census. Every queued row gains its Queued position
 // and a "queued <age> (<ahead> ahead)" BuilderStatus.
 //
 // opts reach the per-owner Status, so a caller that paints no detail figure
 // (the ui's fleet source) pays for none of them. They default to on, which
 // keeps `relevo serve admin` and every other caller on today's rows.
-func AdminStatus(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([]OwnerStatus, remote.BuildersView, error) {
+func adminOwners(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([]OwnerStatus, remote.BuildersView, error) {
 	c, _ := s.census()
 	builders := s.buildersViewFor(c)
 
@@ -93,51 +108,12 @@ func AdminStatus(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([
 		if !entry.IsDir() || !ok {
 			continue
 		}
-		ownerPath := filepath.Join(bindingsDir, entry.Name())
-		rt := s.runtimeAt(ownerPath)
 		label := s.clients.LabelOf(id)
-		rep, err := relevo.Status(ctx, rt, opts...)
+		o, err := adminOwnerStatus(ctx, s, filepath.Join(bindingsDir, entry.Name()), id, label, position, c, builders, now, opts...)
 		if err != nil {
 			return nil, remote.BuildersView{}, err
 		}
-		var lastSeen time.Time
-		for ri := range rep.Bindings {
-			row := &rep.Bindings[ri]
-			// Only a client request counts as contact: no RoundStartedAt fallback.
-			b, err := rt.Store.Load(row.Name)
-			if err != nil {
-				// A row whose binding is gone is a stale reference, not a
-				// failure of the read: the row was built from the List
-				// snapshot, and what it named has since been deleted or is a
-				// chain whose members are all gone. Keep the row, mark it, and
-				// carry on -- one stale reference must not fail the census for
-				// every other owner. Every other error still returns as before.
-				if !errors.Is(err, store.ErrNotFound) {
-					return nil, remote.BuildersView{}, err
-				}
-				row.Gone = true
-				row.GoneStep = goneStep(row, label)
-				// A gone row has no Serve facts and is not queued work, so it
-				// contributes to neither LastSeen nor the queue.
-				continue
-			}
-			if b.Serve != nil && b.Serve.LastSeen.After(lastSeen) {
-				lastSeen = b.Serve.LastSeen
-			}
-			i, ok := position[string(id)+"/"+row.Name]
-			if !ok {
-				continue
-			}
-			q := c.Queued[i]
-			row.Queued = queueViewFor(q, i, c, builders)
-			row.BuilderStatus = fmt.Sprintf("queued %s (%d ahead)", view.AgeText(now.Sub(q.QueuedAt)), i)
-		}
-		owners = append(owners, OwnerStatus{
-			Owner:    id,
-			Label:    label,
-			LastSeen: lastSeen,
-			Report:   rep,
-		})
+		owners = append(owners, o)
 	}
 
 	sort.Slice(owners, func(i, j int) bool {
@@ -147,14 +123,61 @@ func AdminStatus(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([
 	return owners, builders, nil
 }
 
+// adminOwnerStatus reads one owner's rows.
+func adminOwnerStatus(ctx context.Context, s *Server, ownerPath string, id remote.ClientID, label string, position map[string]int, c census, builders remote.BuildersView, now time.Time, opts ...relevo.StatusOption) (OwnerStatus, error) {
+	rt := s.runtimeAt(ownerPath)
+	rep, err := relevo.Status(ctx, rt, opts...)
+	if err != nil {
+		return OwnerStatus{}, err
+	}
+	var lastSeen time.Time
+	for ri := range rep.Bindings {
+		row := &rep.Bindings[ri]
+		// Only a client request counts as contact: no RoundStartedAt fallback.
+		b, err := rt.Store.Load(row.Name)
+		if err != nil {
+			// A row whose binding is gone is a stale reference, not a
+			// failure of the read: the row was built from the List
+			// snapshot, and what it named has since been deleted or is a
+			// chain whose members are all gone. Keep the row, mark it, and
+			// carry on -- one stale reference must not fail the census for
+			// every other owner. Every other error still returns as before.
+			if !errors.Is(err, store.ErrNotFound) {
+				return OwnerStatus{}, err
+			}
+			row.Gone = true
+			row.GoneStep = goneStep(row, label)
+			// A gone row has no Serve facts and is not queued work, so it
+			// contributes to neither LastSeen nor the queue.
+			continue
+		}
+		if b.Serve != nil && b.Serve.LastSeen.After(lastSeen) {
+			lastSeen = b.Serve.LastSeen
+		}
+		i, ok := position[string(id)+"/"+row.Name]
+		if !ok {
+			continue
+		}
+		q := c.Queued[i]
+		row.Queued = queueViewFor(q, i, c, builders)
+		row.BuilderStatus = fmt.Sprintf("queued %s (%d ahead)", view.AgeText(now.Sub(q.QueuedAt)), i)
+	}
+	return OwnerStatus{
+		Owner:    id,
+		Label:    label,
+		LastSeen: lastSeen,
+		Report:   rep,
+	}, nil
+}
+
 // FlatStatus is the whole fleet as one report, Owner/OwnerLabel stamped on each
 // row. Gated is the first owner's slice: the ledger is server-wide.
 //
-// opts reach AdminStatus's per-owner Status, so the ui's fleet source can turn
+// opts reach adminOwners's per-owner Status, so the ui's fleet source can turn
 // the detail figures off; they default to on, which keeps every other caller on
 // today's identical rows.
 func FlatStatus(ctx context.Context, s *Server, opts ...relevo.StatusOption) (view.Report, error) {
-	owners, _, err := AdminStatus(ctx, s, opts...)
+	owners, _, err := adminOwners(ctx, s, opts...)
 	if err != nil {
 		return view.Report{}, err
 	}
@@ -254,10 +277,11 @@ func (s *Server) BurstStatus() *BurstStatus {
 }
 
 type OwnerJSON struct {
-	Owner    string      `json:"owner"`
-	Label    string      `json:"label"`
-	LastSeen *time.Time  `json:"last_seen"`
-	Report   view.Report `json:"report"`
+	Owner    string          `json:"owner"`
+	Label    string          `json:"label"`
+	LastSeen *time.Time      `json:"last_seen"`
+	Report   view.Report     `json:"report"`
+	Strays   []StrayWorktree `json:"strays,omitempty"`
 }
 
 func StatusDocument(owners []OwnerStatus, builders remote.BuildersView) StatusJSON {
@@ -272,6 +296,7 @@ func StatusDocument(owners []OwnerStatus, builders remote.BuildersView) StatusJS
 			Owner:  string(o.Owner),
 			Label:  o.Label,
 			Report: o.Report,
+			Strays: o.Strays,
 		}
 		if !o.LastSeen.IsZero() {
 			seen := o.LastSeen.UTC()
