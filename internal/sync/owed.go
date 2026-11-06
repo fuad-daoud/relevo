@@ -10,9 +10,10 @@ import (
 )
 
 // DefaultOwedSlice is how long one attempt sends a locked join's owed history
-// before it gives the sync slot back, so a verb waiting on the slot gets in between
-// slices however long the whole send takes.
-const DefaultOwedSlice = 30 * time.Second
+// before it gives the sync slot back. A verb queues for the slot under its client's
+// bound, DefaultTimeout, so a slice has to end well inside that bound or every verb
+// run during a long send would time out.
+const DefaultOwedSlice = DefaultTimeout - 5*time.Second
 
 // owedWalk is one run over this machine's file, with the transport it was started
 // on. A walk never outlives that transport's client: a re-enable may have pointed
