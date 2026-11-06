@@ -32,11 +32,17 @@ func SyncNow(ctx context.Context, eng Engine) {
 
 // CountOpenRounds counts bindings holding an open round: a prompt out with no
 // report back. A remote binding counts too, since its prompt and report sit in
-// the local log. Each binding costs one log read; the tick's reconcile hands
-// nothing back, so there is no entry list to reuse.
+// the local log. Each binding read costs one log read; the tick's reconcile
+// hands nothing back, so there is no entry list to reuse. A done binding is
+// never read: the mastermind declared its work verified, so no new prompt
+// goes out for it and its round stays as its close left it. A paused binding
+// keeps its round, so it reads like any live one.
 func CountOpenRounds(st *store.Store, bindings []store.Binding) int {
 	open := 0
 	for _, b := range bindings {
+		if b.State == store.StateDone {
+			continue
+		}
 		entries, err := st.ReadLog(b.Name)
 		if err != nil {
 			slog.Warn("rounds: read the log for the idle count", "binding", b.Name, "err", err)
