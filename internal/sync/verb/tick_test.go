@@ -53,6 +53,7 @@ func TestNoteRoundsOpenSkipsDoneBindingsAndKeepsPaused(t *testing.T) {
 
 	st := store.New(t.TempDir())
 	seedTickBinding(t, st, t.TempDir(), "done-closed", 1, store.StateDone, true)
+	seedTickBinding(t, st, t.TempDir(), "done-open", 1, store.StateDone, false)
 	seedTickBinding(t, st, t.TempDir(), "paused-open", 1, store.StatePaused, false)
 	seedTickBinding(t, st, t.TempDir(), "active-open", 2, store.StateActive, false)
 	seedTickBinding(t, st, t.TempDir(), "active-closed", 1, store.StateActive, true)
@@ -73,7 +74,7 @@ func TestNoteRoundsOpenSkipsDoneBindingsAndKeepsPaused(t *testing.T) {
 		t.Errorf("open rounds = %d, known = %v, want 2, true", got, known)
 	}
 	for name, want := range map[string]int{
-		"done-closed": 0, "paused-open": 1, "active-open": 1, "active-closed": 1,
+		"done-closed": 0, "done-open": 0, "paused-open": 1, "active-open": 1, "active-closed": 1,
 	} {
 		if reads[name] != want {
 			t.Errorf("log reads for %s = %d, want %d", name, reads[name], want)
