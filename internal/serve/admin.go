@@ -70,16 +70,8 @@ func AdminStatus(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([
 	if err != nil {
 		return nil, remote.BuildersView{}, err
 	}
-	now := s.cfg.Now()
-	for i := range owners {
-		rt, err := s.runtime(owners[i].Owner)
-		if err != nil {
-			return nil, remote.BuildersView{}, err
-		}
-		owners[i].Strays, err = listOwnerStrays(ctx, rt, strayOwnerRef(s, owners[i].Owner), now)
-		if err != nil {
-			return nil, remote.BuildersView{}, err
-		}
+	if err := fillOwnerStrays(ctx, s, owners); err != nil {
+		return nil, remote.BuildersView{}, err
 	}
 	return owners, builders, nil
 }

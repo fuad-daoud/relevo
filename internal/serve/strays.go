@@ -41,6 +41,22 @@ type StrayWorktree struct {
 	Remove string `json:"remove"`
 }
 
+// fillOwnerStrays sets each owner's strays.
+func fillOwnerStrays(ctx context.Context, s *Server, owners []OwnerStatus) error {
+	now := s.cfg.Now()
+	for i := range owners {
+		rt, err := s.runtime(owners[i].Owner)
+		if err != nil {
+			return err
+		}
+		owners[i].Strays, err = listOwnerStrays(ctx, rt, strayOwnerRef(s, owners[i].Owner), now)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // listOwnerStrays reports every entry directly under the owner's worktree
 // directory that no live binding owns. Ownership is the live rows alone, by
 // binding name and by recorded worktree path: an archived record never comes
