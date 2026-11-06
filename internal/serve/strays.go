@@ -83,6 +83,11 @@ func listOwnerStrays(ctx context.Context, rt relevo.Runtime, ownerRef string, no
 		if err != nil {
 			return nil, err
 		}
+		// A file or symlink is no worktree, and RemoveStray refuses it, so
+		// listing one would print a command that can never work.
+		if !info.IsDir() {
+			continue
+		}
 		if now.Sub(info.ModTime()) < strayFreshGuard {
 			continue
 		}

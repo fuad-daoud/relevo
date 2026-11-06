@@ -288,6 +288,46 @@ func TestAdminStatusFillsStraysPerOwner(t *testing.T) {
 	}
 }
 
+// TestListOwnerStraysSkipsWhatRemovalRefuses pins the listing to the removal: a
+// file and a symlink never list, since their command could only be refused, and
+// RemoveStray still refuses each by name.
+func TestListOwnerStraysSkipsWhatRemovalRefuses(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	s := newAdminServer(t, now)
+	id := enrol(t, s, "alice")
+	rt := ownerRuntime(t, s, id)
+	wtDir := rt.Store.WorktreeDir()
+	if err := os.MkdirAll(wtDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(wtDir, "afile")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(wtDir, "alink")
+	if err := os.Symlink(t.TempDir(), link); err != nil {
+		t.Fatal(err)
+	}
+	old := now.Add(-time.Hour)
+	if err := os.Chtimes(file, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := listOwnerStrays(ctx, rt, "alice", now)
+	if err != nil {
+		t.Fatalf("listOwnerStrays: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("strays = %+v, want none", got)
+	}
+	for _, name := range []string{"afile", "alink"} {
+		if _, err := RemoveStray(ctx, s, "alice", name); !errors.Is(err, ErrStrayNotDir) {
+			t.Errorf("RemoveStray(%s) = %v, want ErrStrayNotDir", name, err)
+		}
+	}
+}
+
 // TestFlatStatusLeavesStraysUnwalked pins the cost rule: the polling fleet read
 // runs no git against a stray tree, while the one-shot status read does. The
 // wrapper logs every git call, so the second half proves the log can see one.
