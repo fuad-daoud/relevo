@@ -61,6 +61,9 @@ type dbSyncStatusDoc struct {
 	// finishes the join whether the enable waited or not.
 	Joining   bool   `json:"joining,omitempty"`
 	JoinSince string `json:"join_since,omitempty"`
+	// JoinSent is how many of this machine's entries a locked join has sent since
+	// its unlock.
+	JoinSent int `json:"join_sent,omitempty"`
 	// LastAttempt is the daemon's last steady attempt, absent until it has run
 	// one.
 	LastAttempt *dbSyncAttemptDoc `json:"last_attempt,omitempty"`
@@ -173,6 +176,9 @@ func dbSyncStatusDetails(doc dbSyncStatusDoc) string {
 	var b strings.Builder
 	if doc.Joining {
 		fmt.Fprintf(&b, " · joining since %s", doc.JoinSince)
+		if doc.JoinSent > 0 {
+			fmt.Fprintf(&b, ", %d of this machine's entries sent", doc.JoinSent)
+		}
 	}
 	if doc.Latched {
 		fmt.Fprintf(&b, " · latched: %s", doc.LatchCause)

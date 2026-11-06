@@ -271,6 +271,36 @@ func TestConfigEditMarksTheOutboxPending(t *testing.T) {
 	}
 }
 
+// An idle machine's outbox can be empty while its history is owed, and the attempts
+// are what send it; a locked machine has nothing it could send, so it asks for none.
+func TestOwedHistoryCountsAsPendingOnlyWithAKey(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		key  []byte
+		want bool
+	}{
+		{"unlocked", cfgSyncKey, true},
+		{"locked", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			m := newCfgMachine(t, synclog.NewMemTransport("x"), tc.key, true)
+			d := NewDaemon(Runtime{Store: m.st, Sync: m.runner}, time.Second)
+			m.attempt(t)
+			if d.outboxPending() {
+				t.Fatal("pending before any history is owed")
+			}
+			if err := relevosync.WriteJoin(m.local, time.Unix(0, 0).UTC()); err != nil {
+				t.Fatalf("WriteJoin: %v", err)
+			}
+			if got := d.outboxPending(); got != tc.want {
+				t.Errorf("outboxPending = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestLockedMachineDoesNotCountConfigSignalsAsPending(t *testing.T) {
 	t.Parallel()
 	log := synclog.NewMemTransport("x")

@@ -126,11 +126,21 @@ func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) 
 		out.Trouble.Held = append(out.Trouble.Held, err.Error())
 		return out
 	}
-	exported, locked, err := r.exportStep(ctx, shared, t)
+	// The outbox waits for the owed history: a row it names may reference a parent
+	// the walk has not sent yet, and an importer applies with foreign keys on.
+	owing, err := r.sendOwed(ctx, shared, t)
 	if err != nil {
 		return r.failed(out, err)
 	}
-	out.Exported = exported
+	var locked bool
+	if !owing {
+		var exported int
+		exported, locked, err = r.exportStep(ctx, shared, t)
+		if err != nil {
+			return r.failed(out, err)
+		}
+		out.Exported = exported
+	}
 	// The extension vouching for this origin's confirmed tail goes out before the
 	// import reads the cuts, so this attempt's own reads see the fence believed in.
 	PublishOwnCut(ctx, shared, r.Local, t)

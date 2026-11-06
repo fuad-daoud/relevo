@@ -33,11 +33,12 @@ func (v *Runner) unlock(ctx context.Context, verb *wire.SyncVerb, passphrase []b
 	if err := v.Local.SignalDoc(relevosync.SecretsDocName); err != nil {
 		return Refusal(Classify(err), err)
 	}
-	// A join run while locked still owes its own history, sendable only with the
-	// now-held key.
-	owed := &relevosync.Enabler{Request: relevosync.EnableRequest{Local: v.Local, Shared: v.Shared}}
-	if _, err := owed.FinishJoin(transport); err != nil {
+	// A join run while locked still owes its own history, which can take far longer
+	// than a caller waits. The steady attempts send it now that there is a key, so
+	// the answer only says that it is still going.
+	_, owing, err := relevosync.ReadJoin(v.Local)
+	if err != nil {
 		return Refusal(Classify(err), err)
 	}
-	return &wire.SyncResult{OK: true, Created: created}
+	return &wire.SyncResult{OK: true, Created: created, Sending: owing}
 }
