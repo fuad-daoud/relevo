@@ -288,6 +288,59 @@ func TestAdminStatusFillsStraysPerOwner(t *testing.T) {
 	}
 }
 
+// TestFlatStatusLeavesStraysUnwalked pins the cost rule: the polling fleet read
+// runs no git against a stray tree, while the one-shot status read does. The
+// wrapper logs every git call, so the second half proves the log can see one.
+func TestFlatStatusLeavesStraysUnwalked(t *testing.T) {
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "git.log")
+	wrapper := filepath.Join(dir, "git-wrapper")
+	script := "#!/bin/sh\necho \"$PWD $*\" >> '" + logPath + "'\nexec git \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s := newAdminServer(t, now, func(c *Config) { c.Git = git.NewClient(wrapper, 0, 0) })
+	id := enrol(t, s, "alice")
+	rt := ownerRuntime(t, s, id)
+	stray := filepath.Join(rt.Store.WorktreeDir(), "leftover")
+	if err := os.MkdirAll(stray, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stray, ".git"), []byte("gitdir: /nowhere\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := now.Add(-time.Hour)
+	if err := os.Chtimes(stray, old, old); err != nil {
+		t.Fatal(err)
+	}
+	gitTouchedStray := func() bool {
+		blob, err := os.ReadFile(logPath)
+		if err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		return strings.Contains(string(blob), "leftover")
+	}
+
+	if _, err := FlatStatus(context.Background(), s); err != nil {
+		t.Fatalf("FlatStatus: %v", err)
+	}
+	if gitTouchedStray() {
+		t.Errorf("FlatStatus ran git against the stray tree")
+	}
+
+	owners, _, err := AdminStatus(context.Background(), s)
+	if err != nil {
+		t.Fatalf("AdminStatus: %v", err)
+	}
+	if len(owners) != 1 || len(owners[0].Strays) != 1 {
+		t.Fatalf("owners = %+v, want one owner with the one stray", owners)
+	}
+	if !gitTouchedStray() {
+		t.Errorf("AdminStatus ran no git against the stray tree, so the log proves nothing")
+	}
+}
+
 // TestStatusDocumentCarriesStrays pins the document half: an owner with
 // strays carries them, and an owner without keeps the key dropped so the
 // strays-less document stays byte-identical.

@@ -62,14 +62,36 @@ func goneStep(row *view.BindingStatus, label string) string {
 	return row.Name + " is gone from the store; nothing to clear"
 }
 
-// AdminStatus returns every owner who has a bindings directory, sorted by
+// AdminStatus is the one-shot read behind `relevo serve status`: adminOwners
+// plus each owner's strays. FlatStatus stays on adminOwners because the walk
+// runs git and sums sizes per tree, which a polling fleet view cannot afford.
+func AdminStatus(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([]OwnerStatus, remote.BuildersView, error) {
+	owners, builders, err := adminOwners(ctx, s, opts...)
+	if err != nil {
+		return nil, remote.BuildersView{}, err
+	}
+	now := s.cfg.Now()
+	for i := range owners {
+		rt, err := s.runtime(owners[i].Owner)
+		if err != nil {
+			return nil, remote.BuildersView{}, err
+		}
+		owners[i].Strays, err = listOwnerStrays(ctx, rt, strayOwnerRef(s, owners[i].Owner), now)
+		if err != nil {
+			return nil, remote.BuildersView{}, err
+		}
+	}
+	return owners, builders, nil
+}
+
+// adminOwners returns every owner who has a bindings directory, sorted by
 // Label, plus the builder census. Every queued row gains its Queued position
 // and a "queued <age> (<ahead> ahead)" BuilderStatus.
 //
 // opts reach the per-owner Status, so a caller that paints no detail figure
 // (the ui's fleet source) pays for none of them. They default to on, which
 // keeps `relevo serve admin` and every other caller on today's rows.
-func AdminStatus(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([]OwnerStatus, remote.BuildersView, error) {
+func adminOwners(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([]OwnerStatus, remote.BuildersView, error) {
 	builders := s.isolationView(remote.BuildersView{Cap: s.cap()})
 
 	bindingsDir := filepath.Join(s.cfg.Root, "bindings")
@@ -112,9 +134,7 @@ func AdminStatus(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([
 	return owners, builders, nil
 }
 
-// adminOwnerStatus reads one owner's rows and strays. Strays are server-local
-// facts read beside the rows, never on a tick: the walk shells to git per
-// tree, too costly for every reconcile.
+// adminOwnerStatus reads one owner's rows.
 func adminOwnerStatus(ctx context.Context, s *Server, ownerPath string, id remote.ClientID, label string, position map[string]int, c census, buildersCap int, now time.Time, opts ...relevo.StatusOption) (OwnerStatus, error) {
 	rt := s.runtimeAt(ownerPath)
 	rep, err := relevo.Status(ctx, rt, opts...)
@@ -153,27 +173,22 @@ func adminOwnerStatus(ctx context.Context, s *Server, ownerPath string, id remot
 		row.Queued = &remote.QueueView{Position: i + 1, Ahead: i, Running: c.Running, Cap: buildersCap, Since: q.QueuedAt}
 		row.BuilderStatus = fmt.Sprintf("queued %s (%d ahead)", view.AgeText(now.Sub(q.QueuedAt)), i)
 	}
-	strays, err := listOwnerStrays(ctx, rt, strayOwnerRef(s, id), now)
-	if err != nil {
-		return OwnerStatus{}, err
-	}
 	return OwnerStatus{
 		Owner:    id,
 		Label:    label,
 		LastSeen: lastSeen,
 		Report:   rep,
-		Strays:   strays,
 	}, nil
 }
 
 // FlatStatus is the whole fleet as one report, Owner/OwnerLabel stamped on each
 // row. Gated is the first owner's slice: the ledger is server-wide.
 //
-// opts reach AdminStatus's per-owner Status, so the ui's fleet source can turn
+// opts reach adminOwners's per-owner Status, so the ui's fleet source can turn
 // the detail figures off; they default to on, which keeps every other caller on
 // today's identical rows.
 func FlatStatus(ctx context.Context, s *Server, opts ...relevo.StatusOption) (view.Report, error) {
-	owners, _, err := AdminStatus(ctx, s, opts...)
+	owners, _, err := adminOwners(ctx, s, opts...)
 	if err != nil {
 		return view.Report{}, err
 	}
