@@ -22,6 +22,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // requireRoundState fails unless name's stored round state is want.
@@ -971,6 +972,45 @@ func TestAdmitPlannerPassesQueuedBuilders(t *testing.T) {
 	}
 }
 
+// TestAdmitPlannerPassesQueuedBuilderFirst: the builder queues ahead of the
+// planner behind a running builder; the tick starts the planner and leaves
+// the earlier builder queued with no process, so a capped class only skips
+// its own rounds instead of stopping the pass.
+func TestAdmitPlannerPassesQueuedBuilderFirst(t *testing.T) {
+	set, err := builderCandidateSet(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := setupTestEnv(t, func(cfg *Config) {
+		cfg.MaxBuilders = 1
+		cfg.Candidates = set
+		cfg.Registry = plannerAdmitRegistry(t, set)
+	})
+	ownerB := addOwner(t, env, "bob")
+	ownerC := addOwner(t, env, "carol")
+
+	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, respA, bodyA, "A")
+	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
+	requireCreated(t, respB, bodyB, "B")
+	respC, bodyC := sendRound(t, env, ownerC.kp, ownerC.clientDir, ownerC.repoID, ownerC.headSHA, "api", "# Plan C")
+	requireCreated(t, respC, bodyC, "C")
+
+	stampRole(t, testRuntime(t, env.srv, ownerC.id), "api", "lite-planner")
+
+	if err := env.srv.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	requireRoundState(t, testRuntime(t, env.srv, ownerC.id), "api", remote.RoundRunning)
+	rtB := testRuntime(t, env.srv, ownerB.id)
+	requireRoundState(t, rtB, "api", remote.RoundQueued)
+	if b, err := rtB.Store.Load("api"); err != nil {
+		t.Fatal(err)
+	} else if b.Builder.PID != 0 {
+		t.Errorf("B PID = %d, want 0: the builder stays queued while its cap is full", b.Builder.PID)
+	}
+}
+
 // TestAdmitPlannerCapQueuesTheSecondPlanner: with serve.max_planners 1, the
 // first planner runs while the second queues, and whoami shows both classes:
 // builders 1/1 with nothing queued, planners 1/1 with one queued.
@@ -1030,6 +1070,103 @@ func TestAdmitPlannerCapQueuesTheSecondPlanner(t *testing.T) {
 	}
 	if got.PlannersRunning != 1 || got.PlannersQueued != 1 || got.PlannersCap != 1 {
 		t.Errorf("whoami planners = %+v, want {PlannersRunning:1 PlannersQueued:1 PlannersCap:1}", got)
+	}
+}
+
+// TestAdmitPlannerQueueViewReadsPlannerClass: with serve.max_planners 1 and
+// two builder seats, one builder and one planner running and a second planner
+// queued, the queued planner's row reads the planner class on both surfaces
+// that paint a queue position: the AdminStatus row and the caller's own
+// binding view. The caps differ on purpose (builders 2, planners 1), so a
+// row falling back to the builder class reads Cap 2 instead of 1.
+func TestAdmitPlannerQueueViewReadsPlannerClass(t *testing.T) {
+	one := 1
+	set, err := builderCandidateSet(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := setupTestEnv(t, func(cfg *Config) {
+		cfg.MaxBuilders = 2
+		cfg.Candidates = set
+		cfg.Registry = plannerAdmitRegistry(t, set)
+		cfg.Policy = policy.Policy{Serve: &policy.ServePolicy{MaxPlanners: &one}}
+	})
+	ownerB := addOwner(t, env, "bob")
+	ownerC := addOwner(t, env, "carol")
+	ownerD := addOwner(t, env, "dave")
+
+	// Both builder seats fill at send time, so C queues behind them and the
+	// tick admits it against the planner cap.
+	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, respA, bodyA, "A")
+	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
+	requireCreated(t, respB, bodyB, "B")
+	respC, bodyC := sendRound(t, env, ownerC.kp, ownerC.clientDir, ownerC.repoID, ownerC.headSHA, "api", "# Plan C")
+	requireCreated(t, respC, bodyC, "C")
+	stampRole(t, testRuntime(t, env.srv, ownerC.id), "api", "lite-planner")
+	if err := env.srv.Tick(context.Background()); err != nil {
+		t.Fatalf("tick 1: %v", err)
+	}
+	requireRoundState(t, testRuntime(t, env.srv, ownerC.id), "api", remote.RoundRunning)
+
+	// Builders and planners are both full now, so D queues and stays queued
+	// on the next tick.
+	respD, bodyD := sendRound(t, env, ownerD.kp, ownerD.clientDir, ownerD.repoID, ownerD.headSHA, "api", "# Plan D")
+	requireCreated(t, respD, bodyD, "D")
+	stampRole(t, testRuntime(t, env.srv, ownerD.id), "api", "lite-planner")
+	if err := env.srv.Tick(context.Background()); err != nil {
+		t.Fatalf("tick 2: %v", err)
+	}
+	rtD := testRuntime(t, env.srv, ownerD.id)
+	requireRoundState(t, rtD, "api", remote.RoundQueued)
+
+	owners, builders, err := AdminStatus(context.Background(), env.srv)
+	if err != nil {
+		t.Fatalf("AdminStatus: %v", err)
+	}
+	if builders.Running != 2 || builders.Queued != 0 || builders.Cap != 2 {
+		t.Fatalf("builders = %+v, want {Running:2 Queued:0 Cap:2}", builders)
+	}
+	if builders.PlannersRunning != 1 || builders.PlannersQueued != 1 || builders.PlannersCap != 1 {
+		t.Fatalf("builders planners = %+v, want {PlannersRunning:1 PlannersQueued:1 PlannersCap:1}", builders)
+	}
+	var queued *view.BindingStatus
+	for i := range owners {
+		if owners[i].Label != "dave" {
+			continue
+		}
+		for j := range owners[i].Report.Bindings {
+			if owners[i].Report.Bindings[j].Name == "api" {
+				queued = &owners[i].Report.Bindings[j]
+			}
+		}
+	}
+	if queued == nil {
+		t.Fatal("dave's api row missing from AdminStatus")
+	}
+	if queued.Queued == nil {
+		t.Fatal("dave's queued planner row has no QueueView, want the planner class")
+	}
+	if queued.Queued.Running != 1 || queued.Queued.Cap != 1 {
+		t.Errorf("admin row QueueView = %+v, want {Running:1 Cap:1} from the planner class", queued.Queued)
+	}
+	if queued.Queued.Position != 1 || queued.Queued.Ahead != 0 {
+		t.Errorf("admin row QueueView = %+v, want {Position:1 Ahead:0} keeping the FIFO meaning", queued.Queued)
+	}
+
+	resp, body := doSigned(t, env.ts, ownerD.kp, "GET", "/v1/bindings/api", nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get binding status = %d, want 200; body: %s", resp.StatusCode, string(body))
+	}
+	got := decodeView(t, body)
+	if got.Queue == nil {
+		t.Fatal("caller's queue view is nil, want the planner class")
+	}
+	if got.Queue.Running != 1 || got.Queue.Cap != 1 {
+		t.Errorf("caller's QueueView = %+v, want {Running:1 Cap:1} from the planner class", got.Queue)
+	}
+	if got.Queue.Position != 1 || got.Queue.Ahead != 0 {
+		t.Errorf("caller's QueueView = %+v, want {Position:1 Ahead:0} keeping the FIFO meaning", got.Queue)
 	}
 }
 

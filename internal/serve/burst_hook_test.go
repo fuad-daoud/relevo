@@ -140,6 +140,76 @@ func TestBurstPlaceFillsLocalFirst(t *testing.T) {
 	}
 }
 
+// TestBurstWaitingSkipsQueuedPlanner pins that a queued planner never reaches
+// the provider: burstWaiting leaves it out of the waiting list and the
+// placement index, placeForwards claims only the queued builder's seat, and
+// the head's reported queued load counts builder seats only.
+func TestBurstWaitingSkipsQueuedPlanner(t *testing.T) {
+	clock := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	fake := &recordingBurstProvider{resp: burstSuccessResponse()}
+	set, err := builderCandidateSet(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := setupTestEnv(t, func(cfg *Config) {
+		cfg.Burst = burstTestPolicy()
+		cfg.ClientKey = []byte("pem-client-key")
+		cfg.Provider = fake
+		cfg.MaxBuilders = 2
+		cfg.Candidates = set
+		cfg.Registry = plannerAdmitRegistry(t, set)
+		cfg.Now = func() time.Time { return clock }
+	})
+	env.srv.burstTable = &burst.NodeTable{Nodes: []burst.NodeRow{burstEligibleRow("b1", 2)}}
+	rt := env.runtime(t)
+	first := clock.Add(-time.Minute)
+	saveBurstBinding(t, rt, "a", time.Time{}, 4242)
+	saveBurstBinding(t, rt, "b", first, 0)
+	saveBurstBinding(t, rt, "c", first.Add(2*time.Second), 0)
+	stampRole(t, rt, "c", "lite-planner")
+
+	c, _ := env.srv.census()
+	if got := c.plannersQueued(); got != 1 {
+		t.Fatalf("planners queued = %d, want 1 (the c binding)", got)
+	}
+	waiting, index := env.srv.burstWaiting(c)
+	if len(waiting) != 1 {
+		t.Fatalf("waiting = %+v, want only the queued builder", waiting)
+	}
+	if want := string(env.id) + "/b"; waiting[0].ID != want {
+		t.Errorf("waiting[0].ID = %q, want %q", waiting[0].ID, want)
+	}
+	if _, ok := index[string(env.id)+"/c"]; ok {
+		t.Error("the queued planner has a placement index entry, want none")
+	}
+
+	if got := env.srv.placeForwards(clock); got != 0 {
+		t.Fatalf("placed = %d, want 0: the queued builder is the head's own seat", got)
+	}
+	for _, name := range []string{"b", "c"} {
+		if kept := loadBurstBinding(t, rt, name); burstStoredForward(kept) != nil {
+			t.Errorf("%s forward = %+v, want nothing placed", name, kept.Burst.Forward)
+		} else if kept.QueuedAt.IsZero() {
+			t.Errorf("%s lost its queue time, want it kept", name)
+		}
+	}
+
+	env.srv.burstTick(context.Background())
+	if got := fake.calls(); got != 1 {
+		t.Fatalf("provider calls = %d, want 1", got)
+	}
+	req := fake.last()
+	checkBurstRequest(t, req, 1, 1)
+	if req.Local != (burst.ReportLocal{Running: 1, Queued: 1, Cap: 2}) {
+		t.Errorf("local = %+v, want running 1 queued 1 cap 2 with the planner left out", req.Local)
+	}
+	for _, w := range req.Waiting {
+		if strings.HasSuffix(w.ID, "/c") {
+			t.Errorf("waiting carries the queued planner: %+v", req.Waiting)
+		}
+	}
+}
+
 // burstSuccessResponse keeps the one test node live at the reported cadence.
 func burstSuccessResponse() burst.ReportResponse {
 	return burst.ReportResponse{

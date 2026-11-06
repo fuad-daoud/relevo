@@ -401,6 +401,30 @@ func TestSettingsResetRefusalIsPlainWords(t *testing.T) {
 	}
 }
 
+// h. The max_builders form opened from the serve.max_planners row focuses the
+// second field, so typing edits max_planners, not max_builders.
+func TestSettingsMaxBuildersFormFocusesPlannersField(t *testing.T) {
+	fa := &fakeActions{doc: settingsFixtureDoc(t)}
+	env := candActionEnv(fa, view.Report{})
+	v := settingsFixtureView(t, fa)
+	v.cur = 16 // serve.max_planners
+
+	if settings := relevo.Settings(v.doc, numCPU()); settings[v.cur].Key != "serve.max_planners" {
+		t.Fatalf("cursor key = %q, want serve.max_planners", settings[v.cur].Key)
+	}
+
+	f := settingsFormFrom(t, v, env)
+	if f.title != "serve.max_builders" {
+		t.Fatalf("title = %q, want serve.max_builders", f.title)
+	}
+	if f.focus != 1 {
+		t.Fatalf("focus = %d, want 1 (max_planners)", f.focus)
+	}
+	if f.fields[1].label != "max_planners" {
+		t.Fatalf("field 1 = %+v, want max_planners", f.fields[1])
+	}
+}
+
 // f. down from the last rounds row lands on gate.default, never on a rule line.
 func TestSettingsDownSkipsRule(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
