@@ -132,6 +132,9 @@ func advanceFrozenCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chai
 	if rerr != nil {
 		return "", row.Log, rerr
 	}
+	if err := advanceHoldAwaitingRun(rt, tx, c, next); err != nil {
+		return "", row.Log, err
+	}
 	return "", retry.Log, nil
 }
 

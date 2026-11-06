@@ -355,6 +355,16 @@ func chainFlowPullCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chai
 	if rec == nil {
 		return chainSaveFlow(rt, tx, c, def, before, *next, ev, act, member)
 	}
+	// A timed-out gate record is history and no check process stands behind
+	// it to restart: the chain halts with the timeout sentence naming the
+	// gate limit, with no red close, no repair round and no retry.
+	if rec.Result == "timeout" {
+		next.Status = workflow.StatusHalted
+		next.Reason = timeoutOutcome(rt, rec.DurationMS)
+		return chainTerminalWF(ctx, rt, tx, c, def, before, *next, workflow.Event{
+			Kind: workflow.EventCheckClosed, Step: act.Step, Result: "timeout", Log: rec.LogPath,
+		}, workflow.Action{Kind: workflow.ActionHalt, Reason: next.Reason})
+	}
 	if err := chainSaveFlow(rt, tx, c, def, before, *next, ev, act, member); err != nil {
 		return err
 	}
@@ -387,6 +397,12 @@ func chainSettlePlacedCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.
 	if err := tx.PutRoundFile(logTarget, round, logKey, []byte(partialCheckNote(view, b.Builder.Server)+view.LogTail)); err != nil {
 		return err
 	}
+	// A timeout holds the check rather than closing it: no red reaches the
+	// engine, so no repair round and no budget spend follows it. Every other
+	// settled result still maps through chainCheckResult.
+	if view.Result == "timeout" {
+		return chainHoldPlacedCheckTimeout(ctx, rt, tx, c, st, b, view, logKey)
+	}
 	saved, err := tx.Chain(c.Name)
 	if err != nil {
 		return err
@@ -403,6 +419,79 @@ func chainSettlePlacedCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.
 		Log:       logKey,
 		RepeatRed: chainRepeatRedCheck(rt, saved, before, st.Awaiting.Step, logKey),
 	})
+}
+
+// chainHoldPlacedCheckTimeout settles a placed writer's timed-out check the
+// way a freeze hold settles one: the close is recorded on the trace with the
+// runner's own word and never fed to the engine, and the step starts once
+// more on a fresh run. A second consecutive timeout on the step halts the
+// chain with the timeout sentence naming the gate limit, through the same
+// terminal writer a proven lost run uses: the placed chain holds no local
+// check row for the halt reason to quote. The walk runs once here, per
+// settled timeout, never on an ordinary tick.
+func chainHoldPlacedCheckTimeout(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, st workflow.State, b store.Binding, view remote.CheckView, logKey string) error {
+	def, err := chain.WorkflowDef(c)
+	if err != nil {
+		return err
+	}
+	before := st
+	ev := workflow.Event{Kind: workflow.EventCheckClosed, Step: st.Awaiting.Step, Run: st.Awaiting.Run, Result: "timeout", Log: logKey}
+	holds, err := placedTimeoutHolds(rt, c.Name, st.Awaiting.Step)
+	if err != nil {
+		return err
+	}
+	holds++
+	next := cloneFlowState(before)
+	if holds >= timeoutCheckHoldMax {
+		next.Status = workflow.StatusHalted
+		next.Reason = timeoutOutcome(rt, view.DurationMS)
+		return chainTerminalWF(ctx, rt, tx, c, def, before, next, ev, workflow.Action{Kind: workflow.ActionHalt, Reason: next.Reason})
+	}
+	// The trace holds no close for the settling run yet, so the fresh run
+	// continues from the awaited id; the timeout row written below keeps
+	// every later mint past it.
+	run := st.Awaiting.Run + 1
+	req := remote.CreateCheckRequest{ID: chainCheckID(run), Command: def.Steps[st.Awaiting.Step].Check, Step: st.Awaiting.Step}
+	if _, cerr := rt.Remote.CreateCheck(ctx, b.Builder.Server, b.Name, req); cerr != nil {
+		next.Status = workflow.StatusHalted
+		next.Reason = chainCheckStartReason(st.Awaiting.Step, cerr)
+		return chainTerminalWF(ctx, rt, tx, c, def, before, next, ev, workflow.Action{Kind: workflow.ActionHalt, Reason: next.Reason})
+	}
+	next.Awaiting.Run = run
+	act := workflow.Action{Kind: workflow.ActionRunCheck, Step: st.Awaiting.Step, Command: req.Command}
+	return chainSaveFlow(rt, tx, c, def, before, next, ev, act, b.Name)
+}
+
+// placedTimeoutHolds counts a step's consecutive timeout closes on the trace,
+// newest to oldest: a could-not-start close neither counts nor ends the
+// walk, because a freeze between two timeouts changes nothing about them,
+// while any other settled close ends it. Rows of other steps and rows that
+// are not check closes are passed over. The settling close is not yet
+// recorded when this runs, so its caller counts it itself.
+func placedTimeoutHolds(rt Runtime, name, step string) (int, error) {
+	rows, err := rt.Store.ChainEvents(name)
+	if err != nil {
+		return 0, err
+	}
+	var holds int
+	for i := len(rows) - 1; i >= 0; i-- {
+		if rows[i].Step != step {
+			continue
+		}
+		ev, derr := workflow.DecodeEvent(rows[i].Event)
+		if derr != nil || ev.Kind != workflow.EventCheckClosed {
+			continue
+		}
+		if ev.Result == "timeout" {
+			holds++
+			continue
+		}
+		if ev.Result == chainCheckCouldNotStart {
+			continue
+		}
+		break
+	}
+	return holds, nil
 }
 
 // chainFlowWriterMember names the member whose tree a check runs on: the

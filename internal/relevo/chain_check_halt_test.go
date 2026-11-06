@@ -144,6 +144,7 @@ func TestHaltAfterATimedOutCheckSaysItTimedOutAndNamesTheSetting(t *testing.T) {
 	rt = withClock(rt, clock)
 	clock.Advance(2 * rt.Policy.GateTimeout())
 	tickChainChecks(context.Background(), rt)
+	tickChainChecks(context.Background(), rt)
 
 	c := flowChainRow(t, rt)
 	if c.Status != string(workflow.StatusHalted) {

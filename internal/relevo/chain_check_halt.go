@@ -69,8 +69,7 @@ func chainNewestCheck(tx *store.Tx, name string) (db.ChainCheckRow, bool) {
 func checkOutcome(rt Runtime, row db.ChainCheckRow) string {
 	switch row.Result {
 	case "timeout":
-		return fmt.Sprintf("The last check timed out after %s; raise the limit with `relevo config set policy.gate.timeout_ms <ms>` (now %d ms).",
-			(time.Duration(row.DurationMS) * time.Millisecond).Round(time.Millisecond), rt.Policy.GateTimeout().Milliseconds())
+		return timeoutOutcome(rt, row.DurationMS)
 	case "error":
 		return fmt.Sprintf("The last check could not run: %s.", row.Note)
 	case "fail":
@@ -78,4 +77,13 @@ func checkOutcome(rt Runtime, row db.ChainCheckRow) string {
 	default:
 		return fmt.Sprintf("The last check ended %s (exit code %d);", row.Result, row.ExitCode)
 	}
+}
+
+// timeoutOutcome is the sentence a timed-out check leaves behind, shared by
+// checkOutcome's tail quote and a placed chain's own halt reason: a placed
+// chain holds no local check row for chainHaltReason to quote, so its reason
+// must carry the timeout itself, naming the policy key that raises the limit.
+func timeoutOutcome(rt Runtime, durationMS int64) string {
+	return fmt.Sprintf("The last check timed out after %s; raise the limit with `relevo config set policy.gate.timeout_ms <ms>` (now %d ms).",
+		(time.Duration(durationMS) * time.Millisecond).Round(time.Millisecond), rt.Policy.GateTimeout().Milliseconds())
 }
