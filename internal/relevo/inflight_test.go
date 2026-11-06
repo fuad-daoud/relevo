@@ -4,7 +4,11 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 func inflightBinding(name, tok string, mut func(*store.Binding)) store.Binding {
@@ -95,6 +99,100 @@ func TestInFlightCapsACandidateWhoseModelNamesAnEffort(t *testing.T) {
 	gates := availability.Gates(AvailabilityDeps(Runtime{Store: st, Candidates: set}))
 	if len(gates) != 1 || gates[0].Kind != availability.ConcurrencyLimit || gates[0].Note != "1/1" {
 		t.Fatalf("gates = %+v, want the effort-named candidate at its cap 1/1", gates)
+	}
+}
+
+// plannerTestRegistry builds the registry the planner table reads: the
+// shipped lite-planner and planner actors over the architect agent with no
+// declared outputs, the two relevo planner actors with declared plan and
+// design artifacts, the two morphic planner natives the same way, and every
+// non-planner the table pins beside them.
+func plannerTestRegistry(t *testing.T) *roles.Registry {
+	t.Helper()
+	native := func(name, shape string) roles.AgentEntry {
+		return roles.AgentEntry{Shape: shape, Native: map[string]roles.DefRow{"claude": {Agent: name}}}
+	}
+	agents := map[string]roles.AgentEntry{
+		"relevo-lite-planner":     native("relevo-lite-planner", "reader"),
+		"relevo-planner":          native("relevo-planner", "reader"),
+		"morphic-lite-planner":    native("morphic-lite-planner", "reader"),
+		"morphic-planner":         native("morphic-planner", "reader"),
+		"morphic-reviewer":        native("morphic-reviewer", "reader"),
+		"morphic-reviewer-skills": native("morphic-reviewer-skills", "reader"),
+		"relevo-builder":          native("relevo-builder", "writer"),
+		"relevo-reviewer":         native("relevo-reviewer", "reader"),
+	}
+	verdict := workflow.Outputs{
+		"verdict":  {Kind: workflow.OutputOneOf, Values: []string{"pass", "changes"}},
+		"findings": {Kind: workflow.OutputArtifact},
+	}
+	actors := map[string]roles.Actor{
+		"lite-planner":            {Agent: "architect"},
+		"planner":                 {Agent: "architect"},
+		"relevo-lite-planner":     {Agent: "relevo-lite-planner", Outputs: workflow.Outputs{"plan": {Kind: workflow.OutputArtifact}}},
+		"relevo-planner":          {Agent: "relevo-planner", Outputs: workflow.Outputs{"design": {Kind: workflow.OutputArtifact}}},
+		"morphic-lite-planner":    {Agent: "morphic-lite-planner", Outputs: workflow.Outputs{"plan": {Kind: workflow.OutputArtifact}}},
+		"morphic-planner":         {Agent: "morphic-planner", Outputs: workflow.Outputs{"design": {Kind: workflow.OutputArtifact}}},
+		"reviewer":                {Agent: "reviewer"},
+		"relevo-reviewer":         {Agent: "relevo-reviewer", Outputs: verdict},
+		"morphic-reviewer":        {Agent: "morphic-reviewer", Outputs: verdict},
+		"morphic-reviewer-skills": {Agent: "morphic-reviewer-skills", Outputs: verdict, Skills: []string{"design-runbooks"}},
+		"security":                {Agent: "security-reviewer"},
+		"researcher":              {Agent: "researcher"},
+		"builder":                 {Agent: "plan-executor"},
+		"relevo-builder":          {Agent: "relevo-builder"},
+	}
+	f, _, err := roles.FromActors(agents, actors)
+	if err != nil {
+		t.Fatalf("FromActors: %v", err)
+	}
+	reg, err := roles.Build(f, &candidate.Set{}, policy.Policy{})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	return reg
+}
+
+// TestIsPlannerRoundAdmitsOnlyPlanAndDesignReaders pins the planner
+// definition: the six planner actors read true -- the shipped pair through
+// the architect agent's plan default, the rest through declared plan or
+// design artifacts -- while reviewers, security, researcher and builders
+// read false, as does an unknown role unless its name ends in "planner".
+func TestIsPlannerRoundAdmitsOnlyPlanAndDesignReaders(t *testing.T) {
+	t.Parallel()
+	reg := plannerTestRegistry(t)
+	tests := []struct {
+		role string
+		want bool
+	}{
+		{role: "lite-planner", want: true},
+		{role: "planner", want: true},
+		{role: "relevo-lite-planner", want: true},
+		{role: "relevo-planner", want: true},
+		{role: "morphic-lite-planner", want: true},
+		{role: "morphic-planner", want: true},
+		{role: "reviewer", want: false},
+		{role: "relevo-reviewer", want: false},
+		{role: "morphic-reviewer", want: false},
+		{role: "morphic-reviewer-skills", want: false},
+		{role: "security", want: false},
+		{role: "researcher", want: false},
+		{role: "builder", want: false},
+		{role: "relevo-builder", want: false},
+		{role: "custom-planner", want: true},
+		{role: "custom-reviewer", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.role, func(t *testing.T) {
+			t.Parallel()
+			b := store.Binding{Role: tt.role}
+			if got := IsPlannerRound(reg, b); got != tt.want {
+				t.Errorf("IsPlannerRound(%q) = %v, want %v", tt.role, got, tt.want)
+			}
+		})
+	}
+	if got := IsPlannerRound(nil, store.Binding{Role: "custom-planner"}); !got {
+		t.Errorf("IsPlannerRound(nil registry, custom-planner) = false, want true")
 	}
 }
 

@@ -278,7 +278,7 @@ func TestSettingsServeScopeFormSetsCPUQuota(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 16 // serve.scope
+	v.cur = 17 // serve.scope
 
 	f := settingsFormFrom(t, v, env)
 	if f.title != "serve.scope" {
@@ -315,7 +315,7 @@ func TestSettingsServeScopeFormClearingSliceRemovesServe(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 16 // serve.scope
+	v.cur = 17 // serve.scope
 
 	f := settingsFormFrom(t, v, env)
 	f = f.setFocus(1) // slice
@@ -426,7 +426,7 @@ func TestSettingsChainFormTurnsSecurityOn(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 23 // chain.security
+	v.cur = 24 // chain.security
 
 	f := settingsFormFrom(t, v, env)
 	if f.title != "chain" {
@@ -467,7 +467,7 @@ func TestSettingsChainFormSetsMaxCorrections(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 19 // chain.max_corrections
+	v.cur = 20 // chain.max_corrections
 
 	f := settingsFormFrom(t, v, env)
 	if f.title != "chain" {
@@ -500,7 +500,7 @@ func TestSettingsChainFormRejectsANegativeCount(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 19 // chain.max_corrections
+	v.cur = 20 // chain.max_corrections
 
 	f := settingsFormFrom(t, v, env)
 	f = f.setFocus(1) // max_corrections
@@ -529,7 +529,7 @@ func TestSettingsChainFormBadActorText(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 20 // chain.reviewer_actor
+	v.cur = 21 // chain.reviewer_actor
 
 	f := settingsFormFrom(t, v, env)
 	f = f.setFocus(2) // reviewer_actor

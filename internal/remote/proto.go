@@ -296,12 +296,18 @@ type LiveView struct {
 }
 
 type BuildersView struct {
-	Running int    `json:"running"`
-	Queued  int    `json:"queued"`
-	Cap     int    `json:"cap"`
-	Scopes  bool   `json:"scopes"`          // the server sets it; false here
-	Slice   string `json:"slice,omitempty"` // the server sets it; "" here
-	Quota   string `json:"quota,omitempty"` // "" = no CPU quota; else e.g. "200%"
+	Running int `json:"running"`
+	Queued  int `json:"queued"`
+	Cap     int `json:"cap"`
+	// PlannersRunning, PlannersQueued and PlannersCap are the planner
+	// rounds' own counts under serve.max_planners: planners never hold a
+	// builder seat, so the builder counts above exclude them.
+	PlannersRunning int    `json:"planners_running"`
+	PlannersQueued  int    `json:"planners_queued"`
+	PlannersCap     int    `json:"planners_cap"`
+	Scopes          bool   `json:"scopes"`          // the server sets it; false here
+	Slice           string `json:"slice,omitempty"` // the server sets it; "" here
+	Quota           string `json:"quota,omitempty"` // "" = no CPU quota; else e.g. "200%"
 	// Isolation is the tenant-isolation mode in force: "none", "user" or
 	// "container". "" from a server that predates isolation.
 	Isolation string `json:"isolation,omitempty"`

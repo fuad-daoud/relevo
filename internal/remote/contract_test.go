@@ -205,14 +205,17 @@ func filledLiveView() LiveView {
 
 func filledBuildersView() BuildersView {
 	return BuildersView{
-		Running:   2,
-		Queued:    1,
-		Cap:       4,
-		Scopes:    true,
-		Slice:     "relevo.slice",
-		Quota:     "200%",
-		Isolation: "container",
-		Image:     "registry.example/relevo-builder:latest",
+		Running:         2,
+		Queued:          1,
+		Cap:             4,
+		PlannersRunning: 1,
+		PlannersQueued:  1,
+		PlannersCap:     4,
+		Scopes:          true,
+		Slice:           "relevo.slice",
+		Quota:           "200%",
+		Isolation:       "container",
+		Image:           "registry.example/relevo-builder:latest",
 	}
 }
 

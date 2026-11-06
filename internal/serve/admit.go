@@ -21,11 +21,28 @@ type queuedRound struct {
 	OwnerRoot string // the owner's store root, what runtimeAt takes
 	Name      string
 	QueuedAt  time.Time
+	Planner   bool // the binding is a planner round, admitted against its own cap
 }
 
 type census struct {
-	Running int
-	Queued  []queuedRound // sorted by QueuedAt, then Owner, then Name
+	// Running counts running builder rounds; planners run under their own
+	// cap and are counted in PlannersRunning, so a builder seat never
+	// holds a planner round.
+	Running         int
+	PlannersRunning int
+	Queued          []queuedRound // sorted by QueuedAt, then Owner, then Name
+}
+
+// plannersQueued counts the census's queued planner rounds; the rest of
+// Queued are builders.
+func (c census) plannersQueued() int {
+	n := 0
+	for _, q := range c.Queued {
+		if q.Planner {
+			n++
+		}
+	}
+	return n
 }
 
 // cap is the builder cap in effect: cfg.MaxBuilders if set, else the default.
@@ -37,6 +54,13 @@ func (s *Server) cap() int {
 		return s.cfg.MaxBuilders
 	}
 	return s.live().Policy.MaxBuildersOrDefault()
+}
+
+// plannerCap is the planner cap in effect: the reloadable serve.max_planners,
+// so a policy edit changes the cap on the next tick or admission. Planners
+// never take the --max-builders flag: that flag caps builder seats only.
+func (s *Server) plannerCap() int {
+	return s.live().Policy.MaxPlannersOrDefault()
 }
 
 // walkOwners lists every owner's bindings and hands them to visit. A per-owner
@@ -95,17 +119,24 @@ func (s *Server) inFlightFor(root string) func(string) map[string]int {
 
 // census counts running headless builders and queued rounds across all owners.
 // A per-owner List error is logged and skipped; the first is returned after the
-// walk, and the census is still usable.
+// walk, and the census is still usable. The registry is the live snapshot's,
+// resolved once, so every binding in the walk classifies against one registry.
 func (s *Server) census() (census, error) {
 	var c census
+	reg := s.live().Registry
 	firstErr := s.walkOwners(func(id remote.ClientID, ownerPath string, bindings []store.Binding) {
 		for _, b := range bindings {
 			switch {
 			case relevo.LiveBuilder(b):
-				c.Running++
+				if relevo.IsPlannerRound(reg, b) {
+					c.PlannersRunning++
+				} else {
+					c.Running++
+				}
 			case !b.QueuedAt.IsZero() && b.State == store.StateActive:
 				c.Queued = append(c.Queued, queuedRound{
 					Owner: id, OwnerRoot: ownerPath, Name: b.Name, QueuedAt: b.QueuedAt,
+					Planner: relevo.IsPlannerRound(reg, b),
 				})
 			}
 		}
@@ -143,11 +174,20 @@ func (s *Server) admit(ctx context.Context) error {
 func (s *Server) admitLocked(ctx context.Context) error {
 	c, cerr := s.census()
 	running := c.Running
+	planners := c.PlannersRunning
 	limit := s.cap()
+	plannerLimit := s.plannerCap()
 
 	for _, q := range c.Queued {
-		if running >= limit {
-			break
+		// Each class holds its own cap, and a capped class only skips its
+		// own rounds: the queue stays one FIFO, so a planner behind queued
+		// builders still starts while builders wait on their cap.
+		if q.Planner {
+			if planners >= plannerLimit {
+				continue
+			}
+		} else if running >= limit {
+			continue
 		}
 		err := relevo.Admit(ctx, s.runtimeAt(q.OwnerRoot), q.Name)
 		switch {
@@ -168,8 +208,12 @@ func (s *Server) admitLocked(ctx context.Context) error {
 				slog.Warn(fmt.Sprintf("admit owner=%s binding=%s: no process started; the slot stays free", q.Owner, q.Name))
 				continue
 			}
-			running++
-			slog.Info(fmt.Sprintf("admitted owner=%s binding=%s running=%d/%d", q.Owner, q.Name, running, limit))
+			if q.Planner {
+				planners++
+			} else {
+				running++
+			}
+			slog.Info(fmt.Sprintf("admitted owner=%s binding=%s running=%d/%d planners=%d/%d", q.Owner, q.Name, running, limit, planners, plannerLimit))
 		case errors.Is(err, relevo.ErrNotQueued):
 			continue
 		default:
@@ -191,6 +235,12 @@ func (s *Server) queuePositionView(b store.Binding, view remote.BindingView, cal
 	c, _ := s.census()
 	for i, q := range c.Queued {
 		if q.Owner == caller && q.Name == b.Name {
+			// The viewed round reads its own class's count and cap; Position
+			// and Ahead keep their global FIFO meaning, which the single
+			// pass over the shared queue preserves.
+			if q.Planner {
+				return &remote.QueueView{Position: i + 1, Ahead: i, Running: c.PlannersRunning, Cap: s.plannerCap(), Since: b.QueuedAt}
+			}
 			return &remote.QueueView{Position: i + 1, Ahead: i, Running: c.Running, Cap: s.cap(), Since: b.QueuedAt}
 		}
 	}

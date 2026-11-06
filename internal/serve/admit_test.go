@@ -19,6 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -855,4 +856,228 @@ func TestServerCountsInFlightAcrossOwners(t *testing.T) {
 	if got := total(env.srv.inFlightFor(rootB)("api")); got != 1 {
 		t.Errorf("in flight excluding bob's api = %d, want 1", got)
 	}
+}
+
+// plannerAdmitRegistry builds the file-mode registry the planner admit tests
+// read: builder and a findings-only reviewer beside lite-planner over the
+// architect agent, whose plan output the shipped default supplies, so the
+// registry classifies it as a planner with no declared outputs.
+func plannerAdmitRegistry(t *testing.T, set *candidate.Set) *roles.Registry {
+	t.Helper()
+	entry := []roles.Entry{{Candidate: testBuilderToken}}
+	actors := map[string]roles.Actor{
+		"builder":      {Agent: "plan-executor", Candidates: entry},
+		"lite-planner": {Agent: "architect", Candidates: entry},
+		"reviewer":     {Agent: "reviewer", Candidates: entry},
+	}
+	f, _, err := roles.FromActors(nil, actors)
+	if err != nil {
+		t.Fatalf("FromActors: %v", err)
+	}
+	reg, err := roles.Build(f, set, policy.Policy{})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	return reg
+}
+
+// stampRole restamps name's stored Role, so a round sendRound created as a
+// builder is admitted as the named actor.
+func stampRole(t *testing.T, rt relevo.Runtime, name, role string) {
+	t.Helper()
+	b, err := rt.Store.Load(name)
+	if err != nil {
+		t.Fatalf("load %s: %v", name, err)
+	}
+	b.Role = role
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("save %s: %v", name, err)
+	}
+}
+
+// TestAdmitPlannerRunsWhileBuildersAreFull: with MaxBuilders 1 and a builder
+// holding the only seat, a queued round restamped as a planner is running
+// after the tick: planners admit against their own cap, not the builders'.
+func TestAdmitPlannerRunsWhileBuildersAreFull(t *testing.T) {
+	set, err := builderCandidateSet(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := setupTestEnv(t, func(cfg *Config) {
+		cfg.MaxBuilders = 1
+		cfg.Candidates = set
+		cfg.Registry = plannerAdmitRegistry(t, set)
+	})
+	ownerB := addOwner(t, env, "bob")
+
+	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, respA, bodyA, "A")
+	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
+	requireCreated(t, respB, bodyB, "B")
+	if viewB := decodeView(t, bodyB); viewB.RoundState != remote.RoundQueued {
+		t.Fatalf("B round_state = %q, want queued", viewB.RoundState)
+	}
+
+	stampRole(t, testRuntime(t, env.srv, ownerB.id), "api", "lite-planner")
+
+	if err := env.srv.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	rtB := testRuntime(t, env.srv, ownerB.id)
+	requireRoundState(t, rtB, "api", remote.RoundRunning)
+	if b, err := rtB.Store.Load("api"); err != nil {
+		t.Fatal(err)
+	} else if b.Builder.PID == 0 {
+		t.Error("B PID = 0, want a started planner round")
+	}
+}
+
+// TestAdmitPlannerPassesQueuedBuilders: the planner and a builder queue
+// behind a running builder; the tick starts the planner and leaves the
+// builder queued with no process, so a planner behind queued builders is
+// still admitted while builders wait on their cap.
+func TestAdmitPlannerPassesQueuedBuilders(t *testing.T) {
+	set, err := builderCandidateSet(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := setupTestEnv(t, func(cfg *Config) {
+		cfg.MaxBuilders = 1
+		cfg.Candidates = set
+		cfg.Registry = plannerAdmitRegistry(t, set)
+	})
+	ownerB := addOwner(t, env, "bob")
+	ownerC := addOwner(t, env, "carol")
+
+	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, respA, bodyA, "A")
+	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
+	requireCreated(t, respB, bodyB, "B")
+	respC, bodyC := sendRound(t, env, ownerC.kp, ownerC.clientDir, ownerC.repoID, ownerC.headSHA, "api", "# Plan C")
+	requireCreated(t, respC, bodyC, "C")
+
+	stampRole(t, testRuntime(t, env.srv, ownerB.id), "api", "lite-planner")
+
+	if err := env.srv.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	requireRoundState(t, testRuntime(t, env.srv, ownerB.id), "api", remote.RoundRunning)
+	rtC := testRuntime(t, env.srv, ownerC.id)
+	requireRoundState(t, rtC, "api", remote.RoundQueued)
+	if b, err := rtC.Store.Load("api"); err != nil {
+		t.Fatal(err)
+	} else if b.Builder.PID != 0 {
+		t.Errorf("C PID = %d, want 0: the builder stays queued while planners run", b.Builder.PID)
+	}
+}
+
+// TestAdmitPlannerCapQueuesTheSecondPlanner: with serve.max_planners 1, the
+// first planner runs while the second queues, and whoami shows both classes:
+// builders 1/1 with nothing queued, planners 1/1 with one queued.
+func TestAdmitPlannerCapQueuesTheSecondPlanner(t *testing.T) {
+	one := 1
+	set, err := builderCandidateSet(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := setupTestEnv(t, func(cfg *Config) {
+		cfg.MaxBuilders = 1
+		cfg.Candidates = set
+		cfg.Registry = plannerAdmitRegistry(t, set)
+		cfg.Policy = policy.Policy{Serve: &policy.ServePolicy{MaxPlanners: &one}}
+	})
+	ownerB := addOwner(t, env, "bob")
+	ownerC := addOwner(t, env, "carol")
+
+	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, respA, bodyA, "A")
+	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
+	requireCreated(t, respB, bodyB, "B")
+	stampRole(t, testRuntime(t, env.srv, ownerB.id), "api", "lite-planner")
+	if err := env.srv.Tick(context.Background()); err != nil {
+		t.Fatalf("tick 1: %v", err)
+	}
+	requireRoundState(t, testRuntime(t, env.srv, ownerB.id), "api", remote.RoundRunning)
+
+	respC, bodyC := sendRound(t, env, ownerC.kp, ownerC.clientDir, ownerC.repoID, ownerC.headSHA, "api", "# Plan C")
+	requireCreated(t, respC, bodyC, "C")
+	stampRole(t, testRuntime(t, env.srv, ownerC.id), "api", "lite-planner")
+	if err := env.srv.Tick(context.Background()); err != nil {
+		t.Fatalf("tick 2: %v", err)
+	}
+	rtC := testRuntime(t, env.srv, ownerC.id)
+	requireRoundState(t, rtC, "api", remote.RoundQueued)
+	if b, err := rtC.Store.Load("api"); err != nil {
+		t.Fatal(err)
+	} else if b.Builder.PID != 0 {
+		t.Errorf("C PID = %d, want 0: the planner cap holds at one", b.Builder.PID)
+	}
+
+	resp, body := doSigned(t, env.ts, env.kp, "GET", "/v1/whoami", nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("whoami status = %d, want 200; body: %s", resp.StatusCode, string(body))
+	}
+	var who remote.WhoAmI
+	if err := json.Unmarshal(body, &who); err != nil {
+		t.Fatalf("unmarshal whoami: %v", err)
+	}
+	if who.Builders == nil {
+		t.Fatal("whoami.Builders = nil, want both classes")
+	}
+	got := *who.Builders
+	if got.Running != 1 || got.Queued != 0 || got.Cap != 1 {
+		t.Errorf("whoami builders = %+v, want {Running:1 Queued:0 Cap:1 ...}", got)
+	}
+	if got.PlannersRunning != 1 || got.PlannersQueued != 1 || got.PlannersCap != 1 {
+		t.Errorf("whoami planners = %+v, want {PlannersRunning:1 PlannersQueued:1 PlannersCap:1}", got)
+	}
+}
+
+// TestAdmitReviewerStillCountsAsBuilder: a queued round restamped as reviewer
+// stays queued while builders are full -- reviewers hold builder seats -- and
+// runs only once a freed builder slot admits it.
+func TestAdmitReviewerStillCountsAsBuilder(t *testing.T) {
+	set, err := builderCandidateSet(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := setupTestEnv(t, func(cfg *Config) {
+		cfg.MaxBuilders = 1
+		cfg.Candidates = set
+		cfg.Registry = plannerAdmitRegistry(t, set)
+	})
+	ownerB := addOwner(t, env, "bob")
+
+	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, respA, bodyA, "A")
+	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
+	requireCreated(t, respB, bodyB, "B")
+	if viewB := decodeView(t, bodyB); viewB.RoundState != remote.RoundQueued {
+		t.Fatalf("B round_state = %q, want queued", viewB.RoundState)
+	}
+
+	stampRole(t, testRuntime(t, env.srv, ownerB.id), "api", "reviewer")
+
+	if err := env.srv.Tick(context.Background()); err != nil {
+		t.Fatalf("tick 1: %v", err)
+	}
+	rtB := testRuntime(t, env.srv, ownerB.id)
+	requireRoundState(t, rtB, "api", remote.RoundQueued)
+	if b, err := rtB.Store.Load("api"); err != nil {
+		t.Fatal(err)
+	} else if b.Builder.PID != 0 {
+		t.Errorf("B PID = %d, want 0: the reviewer holds no planner seat", b.Builder.PID)
+	}
+
+	rtA := testRuntime(t, env.srv, env.id)
+	bA, err := rtA.Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeRound(t, rtA, "api", bA.Builder.PID, env.runner)
+
+	if err := env.srv.Tick(context.Background()); err != nil {
+		t.Fatalf("tick 2: %v", err)
+	}
+	requireRoundState(t, rtB, "api", remote.RoundRunning)
 }

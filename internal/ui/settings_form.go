@@ -164,8 +164,7 @@ func newSettingsForm(env widget.Env, doc relevo.ConfigDoc, form, focusKey string
 
 	case "max_builders":
 		title = "serve.max_builders"
-		fields = []settingField{settingsMaxBuildersField(byKey)}
-		focus = 0
+		fields, focus = settingsMaxBuildersFields(byKey, focusKey)
 
 	case "scope", "serve.scope":
 		fields, note, title = newScopeFields(doc, form)
@@ -275,9 +274,23 @@ func settingsTimingFields(byKey func(string) relevo.Setting, focusKey string) ([
 	return fields, focus
 }
 
+func settingsMaxBuildersFields(byKey func(string) relevo.Setting, focusKey string) ([]settingField, int) {
+	focus := 0
+	if focusKey == "serve.max_planners" {
+		focus = 1
+	}
+	return []settingField{settingsMaxBuildersField(byKey), settingsMaxPlannersField(byKey)}, focus
+}
+
 func settingsMaxBuildersField(byKey func(string) relevo.Setting) settingField {
 	f := textSettingField("max_builders", byKey("serve.max_builders"), parseIntMin(1, "a whole number, 1 or more"))
 	f.path = "serve.max_builders"
+	return f
+}
+
+func settingsMaxPlannersField(byKey func(string) relevo.Setting) settingField {
+	f := textSettingField("max_planners", byKey("serve.max_planners"), parseIntMin(1, "a whole number, 1 or more"))
+	f.path = "serve.max_planners"
 	return f
 }
 

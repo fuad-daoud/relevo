@@ -77,12 +77,12 @@ func formatScope(sc *policy.ScopePolicy, defaultText string) string {
 	return strings.Join(parts, " · ")
 }
 
-// Settings returns the 24 policy rows in display order, filled from d.Policy.
+// Settings returns the 25 policy rows in display order, filled from d.Policy.
 func Settings(d ConfigDoc, cpus int) []Setting {
 	p := d.Policy
 	defMaxBuilders := max(1, cpus-1)
 
-	var rows [24]Setting
+	var rows [25]Setting
 
 	roundsSettingsRows(p, rows[:])
 	// 9-14: timing rows
@@ -139,17 +139,24 @@ func processesSettingsRows(p policy.Policy, rows []Setting, defMaxBuilders int) 
 	}
 	rows[15] = Setting{Group: "processes", Key: "serve.max_builders", Value: strconv.Itoa(smbVal),
 		Default: strconv.Itoa(defMaxBuilders), Set: p.Serve != nil && p.Serve.MaxBuilders != nil, Form: "max_builders"}
-	// 17: processes / serve.scope
+	// 17: processes / serve.max_planners
+	smpVal := policy.DefaultMaxPlanners
+	if p.Serve != nil && p.Serve.MaxPlanners != nil {
+		smpVal = *p.Serve.MaxPlanners
+	}
+	rows[16] = Setting{Group: "processes", Key: "serve.max_planners", Value: strconv.Itoa(smpVal),
+		Default: strconv.Itoa(policy.DefaultMaxPlanners), Set: p.Serve != nil && p.Serve.MaxPlanners != nil, Form: "max_builders"}
+	// 18: processes / serve.scope
 	ssVal := "as scope"
 	if p.Serve != nil && p.Serve.Scope != nil {
 		ssVal = formatScope(p.Serve.Scope, "as scope")
 	}
-	rows[16] = Setting{Group: "processes", Key: "serve.scope", Value: ssVal,
+	rows[17] = Setting{Group: "processes", Key: "serve.scope", Value: ssVal,
 		Default: "as scope", Set: p.Serve != nil && p.Serve.Scope != nil, Form: "serve.scope"}
 }
 
 func scanNotifyChainSettingsRows(p policy.Policy, rows []Setting) {
-	// 18: scan / scan_patterns
+	// 19: scan / scan_patterns
 	var spVal string
 	switch len(p.ScanPatterns) {
 	case 0:
@@ -159,9 +166,9 @@ func scanNotifyChainSettingsRows(p policy.Policy, rows []Setting) {
 	default:
 		spVal = fmt.Sprintf("%d patterns", len(p.ScanPatterns))
 	}
-	rows[17] = Setting{Group: "scan", Key: "scan_patterns", Value: spVal,
+	rows[18] = Setting{Group: "scan", Key: "scan_patterns", Value: spVal,
 		Default: "none", Set: len(p.ScanPatterns) > 0, Form: "scan_patterns"}
-	// 19: notify / notify.webhooks
+	// 20: notify / notify.webhooks
 	var nwVal string
 	var nwCount int
 	if p.Notify != nil {
@@ -175,26 +182,26 @@ func scanNotifyChainSettingsRows(p policy.Policy, rows []Setting) {
 	default:
 		nwVal = fmt.Sprintf("%d webhooks", nwCount)
 	}
-	rows[18] = Setting{Group: "notify", Key: "notify.webhooks", Value: nwVal,
+	rows[19] = Setting{Group: "notify", Key: "notify.webhooks", Value: nwVal,
 		Default: "none", Set: p.Notify != nil && len(p.Notify.Webhooks) > 0, Form: "webhooks"}
-	// 20: chain / chain.max_corrections
-	rows[19] = Setting{Group: "chain", Key: "chain.max_corrections", Value: strconv.Itoa(p.ChainMaxCorrections()),
+	// 21: chain / chain.max_corrections
+	rows[20] = Setting{Group: "chain", Key: "chain.max_corrections", Value: strconv.Itoa(p.ChainMaxCorrections()),
 		Default: strconv.Itoa(policy.DefaultChainMaxCorrections), Set: p.Chain != nil && p.Chain.MaxCorrections != nil, Form: "chain"}
-	// 21: chain / chain.reviewer_actor
-	rows[20] = Setting{Group: "chain", Key: "chain.reviewer_actor", Value: p.ChainReviewerActor(),
+	// 22: chain / chain.reviewer_actor
+	rows[21] = Setting{Group: "chain", Key: "chain.reviewer_actor", Value: p.ChainReviewerActor(),
 		Default: policy.DefaultChainReviewerActor, Set: p.Chain != nil && p.Chain.ReviewerActor != "", Form: "chain"}
-	// 22: chain / chain.planner_actor
-	rows[21] = Setting{Group: "chain", Key: "chain.planner_actor", Value: p.ChainPlannerActor(),
+	// 23: chain / chain.planner_actor
+	rows[22] = Setting{Group: "chain", Key: "chain.planner_actor", Value: p.ChainPlannerActor(),
 		Default: policy.DefaultChainPlannerActor, Set: p.Chain != nil && p.Chain.PlannerActor != "", Form: "chain"}
-	// 23: chain / chain.security_actor
-	rows[22] = Setting{Group: "chain", Key: "chain.security_actor", Value: p.ChainSecurityActor(),
+	// 24: chain / chain.security_actor
+	rows[23] = Setting{Group: "chain", Key: "chain.security_actor", Value: p.ChainSecurityActor(),
 		Default: policy.DefaultChainSecurityActor, Set: p.Chain != nil && p.Chain.SecurityActor != "", Form: "chain"}
-	// 24: chain / chain.security
+	// 25: chain / chain.security
 	csVal := "off"
 	if p.ChainSecurityOn() {
 		csVal = "on"
 	}
-	rows[23] = Setting{Group: "chain", Key: "chain.security", Value: csVal,
+	rows[24] = Setting{Group: "chain", Key: "chain.security", Value: csVal,
 		Default: "off", Set: p.Chain != nil && p.Chain.Security != nil, Form: "chain"}
 }
 
@@ -221,6 +228,8 @@ func SettingPaths(key string) []string {
 		return []string{"scope"}
 	case "serve.max_builders":
 		return []string{"serve.max_builders"}
+	case "serve.max_planners":
+		return []string{"serve.max_planners"}
 	case "serve.scope":
 		return []string{"serve.scope"}
 	case "scan_patterns":

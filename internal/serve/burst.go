@@ -150,8 +150,10 @@ func (s *Server) reportCycle(now time.Time, forwarded, closed int) {
 	if !t.Due(now, len(waiting) > 0, reason) {
 		return
 	}
+	// Local and waiting come from the same planner-free set: census.Running
+	// counts builder seats only, and burstWaiting leaves planners out.
 	req, notes, err := burst.BuildReport(burst.Census{
-		Head: s.burstHead(), Local: burst.ReportLocal{Running: c.Running, Queued: len(c.Queued), Cap: s.cap()},
+		Head: s.burstHead(), Local: burst.ReportLocal{Running: c.Running, Queued: len(waiting), Cap: s.cap()},
 		Waiting: waiting,
 	}, *t, now, reason, forwards)
 	if err != nil {
@@ -215,11 +217,17 @@ func (s *Server) burstHead() burst.ReportHead {
 
 // burstWaiting lists the queued FIFO the way the provider counts it. A round
 // whose binding vanished since the census still waits as far as the head
-// knows; it carries no candidate rather than dropping the load.
+// knows; it carries no candidate rather than dropping the load. Planner
+// rounds are left out: they run on the head under their own cap and are
+// never claimed for a node, so the provider is never asked for capacity
+// for rounds that need none.
 func (s *Server) burstWaiting(c census) ([]burst.ReportWaiting, map[string]queuedRound) {
 	waiting := make([]burst.ReportWaiting, 0, len(c.Queued))
 	index := make(map[string]queuedRound, len(c.Queued))
 	for _, q := range c.Queued {
+		if q.Planner {
+			continue
+		}
 		id := string(q.Owner) + "/" + q.Name
 		entry := burst.ReportWaiting{ID: id, Since: q.QueuedAt.UTC()}
 		if b, err := s.ownerStore(q.OwnerRoot).Load(q.Name); err == nil && b.BuilderCandidate != "" {

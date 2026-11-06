@@ -279,6 +279,9 @@ func validateThresholds(path string, p Policy) error {
 	if p.Serve != nil && p.Serve.MaxBuilders != nil && *p.Serve.MaxBuilders < 1 {
 		return fmt.Errorf("%s: serve.max_builders: must be at least 1, got %d: %w", path, *p.Serve.MaxBuilders, ErrBadPolicy)
 	}
+	if p.Serve != nil && p.Serve.MaxPlanners != nil && *p.Serve.MaxPlanners < 1 {
+		return fmt.Errorf("%s: serve.max_planners: must be at least 1, got %d: %w", path, *p.Serve.MaxPlanners, ErrBadPolicy)
+	}
 	if p.Serve != nil {
 		switch p.Serve.Isolation {
 		case "", "none", "user", "container":

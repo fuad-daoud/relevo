@@ -82,7 +82,11 @@ func AdminStatus(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([
 
 	c, _ := s.census()
 	builders.Running = c.Running
-	builders.Queued = len(c.Queued)
+	pq := c.plannersQueued()
+	builders.Queued = len(c.Queued) - pq
+	builders.PlannersRunning = c.PlannersRunning
+	builders.PlannersQueued = pq
+	builders.PlannersCap = s.plannerCap()
 
 	now := s.cfg.Now()
 	position := make(map[string]int, len(c.Queued))
@@ -132,7 +136,11 @@ func AdminStatus(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([
 				continue
 			}
 			q := c.Queued[i]
-			row.Queued = &remote.QueueView{Position: i + 1, Ahead: i, Running: c.Running, Cap: builders.Cap, Since: q.QueuedAt}
+			if q.Planner {
+				row.Queued = &remote.QueueView{Position: i + 1, Ahead: i, Running: c.PlannersRunning, Cap: builders.PlannersCap, Since: q.QueuedAt}
+			} else {
+				row.Queued = &remote.QueueView{Position: i + 1, Ahead: i, Running: c.Running, Cap: builders.Cap, Since: q.QueuedAt}
+			}
 			row.BuilderStatus = fmt.Sprintf("queued %s (%d ahead)", view.AgeText(now.Sub(q.QueuedAt)), i)
 		}
 		owners = append(owners, OwnerStatus{
