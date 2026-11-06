@@ -45,6 +45,30 @@ func (c census) plannersQueued() int {
 	return n
 }
 
+// buildersViewFor stamps the census counts onto a fresh builders view: the
+// builder queue is the FIFO length minus queued planners, and planners read
+// their own class counts, so each surface reports its own cap.
+func (s *Server) buildersViewFor(c census) remote.BuildersView {
+	v := s.isolationView(remote.BuildersView{Cap: s.cap()})
+	pq := c.plannersQueued()
+	v.Running = c.Running
+	v.Queued = len(c.Queued) - pq
+	v.PlannersRunning = c.PlannersRunning
+	v.PlannersQueued = pq
+	v.PlannersCap = s.plannerCap()
+	return v
+}
+
+// queueViewFor is the queued position row for one census entry: a planner
+// reads its own class count and cap while Position and Ahead keep their
+// global FIFO meaning.
+func queueViewFor(q queuedRound, i int, c census, v remote.BuildersView) *remote.QueueView {
+	if q.Planner {
+		return &remote.QueueView{Position: i + 1, Ahead: i, Running: c.PlannersRunning, Cap: v.PlannersCap, Since: q.QueuedAt}
+	}
+	return &remote.QueueView{Position: i + 1, Ahead: i, Running: c.Running, Cap: v.Cap, Since: q.QueuedAt}
+}
+
 // cap is the builder cap in effect: cfg.MaxBuilders if set, else the default.
 // The flag wins over the policy because it was given on this process's command
 // line; the policy half is the reloadable serve.max_builders, so a policy edit

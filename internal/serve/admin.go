@@ -69,7 +69,8 @@ func goneStep(row *view.BindingStatus, label string) string {
 // (the ui's fleet source) pays for none of them. They default to on, which
 // keeps `relevo serve admin` and every other caller on today's rows.
 func AdminStatus(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([]OwnerStatus, remote.BuildersView, error) {
-	builders := s.isolationView(remote.BuildersView{Cap: s.cap()})
+	c, _ := s.census()
+	builders := s.buildersViewFor(c)
 
 	bindingsDir := filepath.Join(s.cfg.Root, "bindings")
 	entries, err := os.ReadDir(bindingsDir)
@@ -79,14 +80,6 @@ func AdminStatus(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([
 		}
 		return nil, remote.BuildersView{}, err
 	}
-
-	c, _ := s.census()
-	builders.Running = c.Running
-	pq := c.plannersQueued()
-	builders.Queued = len(c.Queued) - pq
-	builders.PlannersRunning = c.PlannersRunning
-	builders.PlannersQueued = pq
-	builders.PlannersCap = s.plannerCap()
 
 	now := s.cfg.Now()
 	position := make(map[string]int, len(c.Queued))
@@ -136,11 +129,7 @@ func AdminStatus(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([
 				continue
 			}
 			q := c.Queued[i]
-			if q.Planner {
-				row.Queued = &remote.QueueView{Position: i + 1, Ahead: i, Running: c.PlannersRunning, Cap: builders.PlannersCap, Since: q.QueuedAt}
-			} else {
-				row.Queued = &remote.QueueView{Position: i + 1, Ahead: i, Running: c.Running, Cap: builders.Cap, Since: q.QueuedAt}
-			}
+			row.Queued = queueViewFor(q, i, c, builders)
 			row.BuilderStatus = fmt.Sprintf("queued %s (%d ahead)", view.AgeText(now.Sub(q.QueuedAt)), i)
 		}
 		owners = append(owners, OwnerStatus{
