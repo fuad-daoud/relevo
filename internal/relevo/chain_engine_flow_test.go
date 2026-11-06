@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/roles"
@@ -719,6 +720,8 @@ func TestSavedWorkflowCorrectionAnswersTheReviewThatAskedForIt(t *testing.T) {
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainReaderClose(t, rt, "shop-team-reviewer", chainVerdictBody("pass"))
+	later := rt.Now().Add(time.Minute)
+	rt.Now = func() time.Time { return later }
 	chainReaderClose(t, rt, "shop-other-reviewer", chainVerdictBody("changes"))
 
 	planner := chainBinding(t, rt, "shop-team-planner")
