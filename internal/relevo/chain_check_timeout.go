@@ -24,7 +24,7 @@ type chainTimeoutError struct {
 }
 
 func (e *chainTimeoutError) Error() string {
-	return fmt.Sprintf("check %s timed out %d times in a row", e.Step, e.Holds)
+	return fmt.Sprintf("%s timed out %d times in a row", e.Step, e.Holds)
 }
 
 // timeoutCheckHolds counts the step's consecutive settled timeouts, walking
@@ -146,6 +146,6 @@ func chainHaltOnTimeout(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chai
 	}
 	next := cloneFlowState(before)
 	next.Status = workflow.StatusHalted
-	next.Reason = fmt.Sprintf("check %s timed out %d times in a row", row.Step, timeoutErr.Holds)
+	next.Reason = fmt.Sprintf("%s timed out %d times in a row", row.Step, timeoutErr.Holds)
 	return true, chainTerminalWF(ctx, rt, tx, c, def, before, next, workflow.Event{}, workflow.Action{Kind: workflow.ActionHalt, Reason: next.Reason})
 }
