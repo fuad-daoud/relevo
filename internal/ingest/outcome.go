@@ -165,7 +165,11 @@ func lastBuilderToken(events []store.LogEntry, actor string, inRound func(int) b
 		if e.Kind == store.KindPick && isOtherActorPick(e.Note, actor) {
 			continue
 		}
-		tok = parseBuilderNote(e.Kind, e.Note)
+		// The switch kind also carries nudges and failed switches, which name no
+		// one and must not erase the builder an earlier entry named.
+		if named := parseBuilderNote(e.Kind, e.Note); named != "" {
+			tok = named
+		}
 	}
 	return tok
 }

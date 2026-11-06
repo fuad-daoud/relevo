@@ -346,6 +346,17 @@ func TestCandidateForRoundBeforeTheFirstSwitch(t *testing.T) {
 			want:    map[int]string{1: muse},
 		},
 		{
+			name: "a note naming no one does not erase the round's switch",
+			events: []store.LogEntry{
+				{Round: 1, Kind: store.KindPick, Note: "picked " + muse + " for builder: order #1"},
+				poll(2, muse, qwen),
+				{Round: 2, Kind: store.KindSwitch, Note: "nudged builder"},
+				{Round: 2, Kind: store.KindSwitch, Note: "switched builder (reason): cannot switch"},
+			},
+			current: "c/d/e",
+			want:    map[int]string{1: muse, 2: qwen, 3: qwen},
+		},
+		{
 			name:    "no switch keeps the binding's candidate",
 			events:  nil,
 			current: qwen,
