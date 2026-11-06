@@ -402,3 +402,24 @@ func TestTickPassedPrunesWithTheBindingList(t *testing.T) {
 		t.Error("a listed binding lost its recorded revision")
 	}
 }
+
+// TestTickPrunesARecordItsListNoLongerHolds pins that the tick itself prunes,
+// so an unbound name's revision does not outlive it in a long-running daemon.
+func TestTickPrunesARecordItsListNoLongerHolds(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	quietDone(t, rt, "kept")
+	d := NewDaemon(rt, time.Hour)
+	d.tickPassed["gone"] = "rev-gone"
+
+	if err := d.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if _, ok := d.tickPassed["gone"]; ok {
+		t.Error("a binding the tick's list no longer holds kept its recorded revision")
+	}
+	if d.tickPassed["kept"] == "" {
+		t.Error("a listed done binding lost its recorded revision")
+	}
+}
