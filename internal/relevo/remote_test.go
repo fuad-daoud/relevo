@@ -105,6 +105,7 @@ type fakeRemote struct {
 	availableErrFor   func(server, subject string) error
 	doneResp          remote.BindingView
 	doneErr           error
+	unbindResp        remote.UnbindResponse
 	unbindErr         error
 	unbindForce       []bool
 	resumeResp        remote.BindingView
@@ -294,13 +295,13 @@ func (f *fakeRemote) Done(ctx context.Context, server, name string) (remote.Bind
 	return f.doneResp, f.doneErr
 }
 
-func (f *fakeRemote) Unbind(ctx context.Context, server, name string, force bool) error {
+func (f *fakeRemote) Unbind(ctx context.Context, server, name string, force bool) (remote.UnbindResponse, error) {
 	f.calls = append(f.calls, fmt.Sprintf("Unbind:%s:%s", server, name))
 	f.unbindForce = append(f.unbindForce, force)
 	if f.onUnbind != nil {
 		f.onUnbind()
 	}
-	return f.unbindErr
+	return f.unbindResp, f.unbindErr
 }
 
 func (f *fakeRemote) Resume(ctx context.Context, server, name string) (remote.BindingView, error) {

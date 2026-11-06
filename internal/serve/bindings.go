@@ -476,7 +476,12 @@ func (s *Server) handleUnbind(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{})
+	writeJSON(w, http.StatusOK, remote.UnbindResponse{
+		WorktreeRemoved: res.WorktreeRemoved,
+		WorktreeKept:    res.WorktreeKept,
+		KeptReason:      res.KeptReason,
+		WorktreeGone:    res.WorktreeGone,
+	})
 }
 
 // handleStop ends the binding's open round, leaving the binding in place.

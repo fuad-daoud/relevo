@@ -1,0 +1,7 @@
+{
+  "owner": "alice",
+  "name": "leftover",
+  "path": "/srv/.worktrees/leftover",
+  "reason": "git does not recognise it",
+  "size": 5
+}
