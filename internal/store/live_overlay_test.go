@@ -20,6 +20,8 @@ func liveBinding() Binding {
 	b.Builder.StreamStart = 800
 	b.Builder.StreamSegments = []StreamSegment{{Start: 800, Kind: "opencode"}}
 	b.Builder.RemoteLive = &LiveFacts{At: now, PID: 4711, Tail: []string{"one", "two"}}
+	b.Builder.RemoteStatus = "unreachable"
+	b.RemoteUnreachableSince = now.Add(-time.Hour)
 	b.Progress = &Progress{
 		SampledAt:  now,
 		Tree:       "treefp",
@@ -33,7 +35,7 @@ func liveBinding() Binding {
 }
 
 // strippedKeys are the record_json paths that must never survive a save.
-var strippedKeys = []string{"stream_offset", "remote_live", "sampled_at", "output_at", "cpu_ticks", "cpu_ticks_at"}
+var strippedKeys = []string{"stream_offset", "remote_live", "remote_status", "remote_unreachable_since", "sampled_at", "output_at", "cpu_ticks", "cpu_ticks_at"}
 
 func assertNoStrippedKeys(t *testing.T, raw []byte, where string) {
 	t.Helper()
@@ -228,6 +230,133 @@ func TestOverlayTickQueuesNoOutboxRows(t *testing.T) {
 	}
 	if got.Builder.StreamOffset != 5000 {
 		t.Errorf("overlay after transition: got %d want 5000", got.Builder.StreamOffset)
+	}
+}
+
+// TestConnectionFlipsQueueNoOutboxRows pins the cost of a flaky link: one blip
+// flips every served binding at once, so a flip must stay on this machine while
+// the machine itself still reads the flip back.
+func TestConnectionFlipsQueueNoOutboxRows(t *testing.T) {
+	s := New(t.TempDir())
+	if err := s.Save(newBinding("api", "/repo/a")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	d, err := s.DB()
+	if err != nil {
+		t.Fatalf("DB: %v", err)
+	}
+	if err := d.TruncateOutbox(); err != nil {
+		t.Fatalf("TruncateOutbox: %v", err)
+	}
+	since := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+
+	for _, step := range []struct {
+		status string
+		since  time.Time
+	}{
+		{"unreachable", since},
+		{"idle", time.Time{}},
+		{"running", time.Time{}},
+		{"unreachable", since.Add(time.Minute)},
+		{"", time.Time{}},
+	} {
+		b, err := s.Load("api")
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		b.Builder.RemoteStatus = step.status
+		b.RemoteUnreachableSince = step.since
+		if err := s.Save(b); err != nil {
+			t.Fatalf("Save %q: %v", step.status, err)
+		}
+		if rows := outboxRecordRows(t, d); len(rows) != 0 {
+			t.Fatalf("flip to %q queued %d binding_record rows", step.status, len(rows))
+		}
+		got, err := s.Load("api")
+		if err != nil {
+			t.Fatalf("Load after %q: %v", step.status, err)
+		}
+		if got.Builder.RemoteStatus != step.status || !got.RemoteUnreachableSince.Equal(step.since) {
+			t.Errorf("read back status %q since %v, want %q %v",
+				got.Builder.RemoteStatus, got.RemoteUnreachableSince, step.status, step.since)
+		}
+		assertNoStrippedKeys(t, bindingRecordJSON(t, s, "api"), "record_json after a flip")
+	}
+}
+
+// TestSameBindingSyncedIgnoresConnectionFields is what stops a reconcile
+// announcing a flip the shared row never saw.
+func TestSameBindingSyncedIgnoresConnectionFields(t *testing.T) {
+	a := newBinding("api", "/repo/a")
+	flipped := a
+	flipped.Builder.RemoteStatus = "unreachable"
+	if !SameBindingSynced(a, flipped) {
+		t.Error("a status flip reads as a synced change")
+	}
+	flipped = a
+	flipped.RemoteUnreachableSince = time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+	if !SameBindingSynced(a, flipped) {
+		t.Error("an outage stamp reads as a synced change")
+	}
+	moved := a
+	moved.Round = a.Round + 1
+	if SameBindingSynced(a, moved) {
+		t.Error("a round change reads as no synced change")
+	}
+}
+
+// TestOverlayIsZeroSeesEveryField keeps a binding holding only one live field
+// from having its overlay deleted as empty.
+func TestOverlayIsZeroSeesEveryField(t *testing.T) {
+	now := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+	for name, ov := range map[string]liveOverlay{
+		"stream offset": {StreamOffset: 1},
+		"remote live":   {RemoteLive: &LiveFacts{}},
+		"clocks":        {Clocks: &overlayClocks{}},
+		"remote status": {RemoteStatus: "idle"},
+		"unreachable":   {RemoteUnreachableSince: now},
+	} {
+		if ov.isZero() {
+			t.Errorf("an overlay holding only its %s reads as zero", name)
+		}
+	}
+	if !(liveOverlay{}).isZero() {
+		t.Error("an empty overlay does not read as zero")
+	}
+}
+
+// TestOverlayWithoutConnectionFieldsKeepsTheSyncedOnes covers a row and overlay
+// both written before these fields moved: the overlay exists but is silent about
+// them, so the row's values stand until its next save moves them across.
+func TestOverlayWithoutConnectionFieldsKeepsTheSyncedOnes(t *testing.T) {
+	s := New(t.TempDir())
+	b := liveBinding()
+	if err := s.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	rec := seedPreOverlayRow(t, s, b)
+	d, err := s.DB()
+	if err != nil {
+		t.Fatalf("DB: %v", err)
+	}
+	older, err := json.Marshal(liveOverlay{StreamOffset: 7})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := d.LocalOrSelf().KVPut(liveKey(rec.ID), older); err != nil {
+		t.Fatalf("KVPut: %v", err)
+	}
+
+	got, err := s.Load("api")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.Builder.StreamOffset != 7 {
+		t.Errorf("stream offset = %d, want the overlay's 7", got.Builder.StreamOffset)
+	}
+	if got.Builder.RemoteStatus != "unreachable" || !got.RemoteUnreachableSince.Equal(b.RemoteUnreachableSince) {
+		t.Errorf("status %q since %v: an overlay silent about them blanked the row's values",
+			got.Builder.RemoteStatus, got.RemoteUnreachableSince)
 	}
 }
 
