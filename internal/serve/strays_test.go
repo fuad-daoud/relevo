@@ -328,6 +328,40 @@ func TestListOwnerStraysSkipsWhatRemovalRefuses(t *testing.T) {
 	}
 }
 
+// TestListOwnerStraysDropsANameALiveBindingHolds pins ownership by name alone: a
+// live binding that records no worktree path still owns the directory of its
+// name, the case a path comparison cannot see.
+func TestListOwnerStraysDropsANameALiveBindingHolds(t *testing.T) {
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	s := newAdminServer(t, now)
+	id := enrol(t, s, "alice")
+	saveOwnerBinding(t, s, id, "app-a")
+	rt := ownerRuntime(t, s, id)
+	b, err := rt.Store.Load("app-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Worktree != "" {
+		t.Fatalf("fixture records worktree %q, want none", b.Worktree)
+	}
+	dir := filepath.Join(rt.Store.WorktreeDir(), "app-a")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := now.Add(-time.Hour)
+	if err := os.Chtimes(dir, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := listOwnerStrays(context.Background(), rt, "alice", now)
+	if err != nil {
+		t.Fatalf("listOwnerStrays: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("strays = %+v, want none", got)
+	}
+}
+
 // TestFlatStatusLeavesStraysUnwalked pins the cost rule: the polling fleet read
 // runs no git against a stray tree, while the one-shot status read does. The
 // wrapper logs every git call, so the second half proves the log can see one.
