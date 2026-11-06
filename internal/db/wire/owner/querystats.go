@@ -12,10 +12,15 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 )
 
-// statsWindow is how long one served-statement report covers. It is a package
-// var for the same reason maxConns is: a test can shrink it before Serve and
-// watch a window close.
-var statsWindow = 60 * time.Second
+// statsWindow is how long one served-statement report covers. A window writes
+// up to maxShapesLogged lines to the journal, on every machine and for as long
+// as the daemon runs, so it is long. It is a package var for the same reason
+// maxConns is: a test can shrink it before Serve and watch a window close.
+var statsWindow = 10 * time.Minute
+
+// maxShapesLogged caps the shape lines one window writes: the bulk callers are
+// what a report is read for, and the summary line still counts every shape.
+const maxShapesLogged = 20
 
 // shapeMaxLen caps one recorded shape: an ad-hoc connection carries whole
 // statements, so one long query must not own the counters, or the log line a
@@ -87,7 +92,7 @@ func (s *Server) reportQueryStats(window time.Duration) {
 		}
 		return keys[i].local && !keys[j].local
 	})
-	for _, k := range keys {
+	for _, k := range keys[:min(len(keys), maxShapesLogged)] {
 		slog.Info("owner: served statement shape",
 			"window", window,
 			"kind", kindText(k.kind),

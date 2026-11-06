@@ -4,6 +4,7 @@ package owner
 
 import (
 	"bytes"
+	"fmt"
 	"log/slog"
 	"maps"
 	"net"
@@ -271,6 +272,34 @@ func TestQueryStatsWindowReportedPerShape(t *testing.T) {
 	}
 	if strings.Contains(quiet, "owner: served statement shape") {
 		t.Errorf("a quiet window emitted shape lines:\n%s", quiet)
+	}
+}
+
+// TestQueryStatsWindowCapsTheShapeLines pins the journal's cost: a window with
+// more shapes than the cap writes only the largest, and its summary still
+// counts them all.
+func TestQueryStatsWindowCapsTheShapeLines(t *testing.T) {
+	srv := New(nil, 0, 0, "01ORIGIN", nil)
+	extra := 5
+	for i := range maxShapesLogged + extra {
+		srv.noteQuery(wire.KindQuery, false, false, "SELECT x FROM t_"+strings.Repeat("a", i+1))
+	}
+	bulk := "SELECT y FROM bulk"
+	srv.noteQuery(wire.KindQuery, false, false, bulk)
+	srv.noteQuery(wire.KindQuery, false, false, bulk)
+
+	logged := captureStatsLog(t)
+	srv.reportQueryStats(time.Minute)
+
+	out := logged.snapshot()
+	if n := strings.Count(out, "owner: served statement shape"); n != maxShapesLogged {
+		t.Errorf("shape lines = %d, want the cap %d:\n%s", n, maxShapesLogged, out)
+	}
+	if !strings.Contains(out, bulk) {
+		t.Errorf("the largest shape %q was cut:\n%s", bulk, out)
+	}
+	if want := fmt.Sprintf("shapes=%d", maxShapesLogged+extra+1); !strings.Contains(out, want) {
+		t.Errorf("summary lacks %q:\n%s", want, out)
 	}
 }
 
