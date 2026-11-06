@@ -683,3 +683,127 @@ func TestSavedWorkflowCustomPlannerRoundIsNotHumanSent(t *testing.T) {
 		t.Errorf("fix-review prompt calls the planner's round human-sent:\n%s", prompt)
 	}
 }
+
+// twoReviewerWorkflow reviews with two differently named actors in turn, and
+// the sorted step ids put the reviewer that passes first.
+const twoReviewerWorkflow = `name: two-review
+inputs: { plans: required }
+start: plans
+steps:
+  plans: { for-each: plans, on: { next: build, empty: done } }
+  build: { run: builder, seed: "{{plans.current}}", on: { done: review-a } }
+  review-a: { run: team-reviewer, seed: shipped:review, on: { verdict=pass: review-b, verdict=changes: correct } }
+  review-b: { run: other-reviewer, seed: shipped:review, on: { verdict=pass: plans, verdict=changes: correct } }
+  correct: { run: team-planner, seed: shipped:correct, on: { done: rebuild } }
+  rebuild: { run: builder, seed: "{{correct.plan}}", on: { done: review-a } }
+`
+
+// TestSavedWorkflowCorrectionAnswersTheReviewThatAskedForIt pins the choice
+// among reviewers: both are on their first round when the second asks for
+// changes, so round numbers tie and only the time of each report finds it.
+func TestSavedWorkflowCorrectionAnswersTheReviewThatAskedForIt(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	rows := chainRows()
+	reader := roles.Row{
+		Shape:       ptr("reader"),
+		Candidates:  []string{testClaudeRef},
+		Definitions: map[string]roles.DefRow{"claude": {Agent: "reviewer"}},
+	}
+	rows["team-reviewer"] = reader
+	rows["other-reviewer"] = reader
+	rows["team-planner"] = rows["lite-planner"]
+	rt.Registry = rolesFileRegistry(t, rt.Candidates, rt.Policy, rows)
+	startFlowChain(t, rt, twoReviewerWorkflow)
+
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	chainReaderClose(t, rt, "shop-team-reviewer", chainVerdictBody("pass"))
+	chainReaderClose(t, rt, "shop-other-reviewer", chainVerdictBody("changes"))
+
+	planner := chainBinding(t, rt, "shop-team-planner")
+	if planner.Round != 1 {
+		t.Fatalf("planner round = %d, want the correct round 1", planner.Round)
+	}
+	prompt, err := rt.Store.ReadFile(rt.Store.PromptPath("shop-team-planner", planner.Round))
+	if err != nil {
+		t.Fatalf("read the correct prompt: %v", err)
+	}
+	other := chainBinding(t, rt, "shop-other-reviewer")
+	output := seedCopy(t, rt, rt.Store.OutputPath("shop-other-reviewer", 1, other.WriterRole(), readerOutputLabel(rt, other)))
+	if !strings.Contains(string(prompt), "Reviewer's output: "+output+".") {
+		t.Errorf("correct prompt does not name the reviewer that asked for changes, %s:\n%s", output, prompt)
+	}
+}
+
+// TestSavedWorkflowCustomPlannerCorrectionIsNotHumanSent pins the planner check
+// on the correct step, as TestSavedWorkflowCustomPlannerRoundIsNotHumanSent does
+// on the fix step: the builder round that ran the plan is named a correction.
+func TestSavedWorkflowCustomPlannerCorrectionIsNotHumanSent(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	rows := chainRows()
+	rows["team-reviewer"] = roles.Row{
+		Shape:       ptr("reader"),
+		Candidates:  []string{testClaudeRef},
+		Definitions: map[string]roles.DefRow{"claude": {Agent: "reviewer"}},
+	}
+	rows["other-reviewer"] = rows["team-reviewer"]
+	rows["team-planner"] = rows["lite-planner"]
+	rt.Registry = rolesFileRegistry(t, rt.Candidates, rt.Policy, rows)
+	startFlowChain(t, rt, twoReviewerWorkflow)
+
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	chainReaderClose(t, rt, "shop-team-reviewer", chainVerdictBody("changes"))
+	chainReaderClose(t, rt, "shop-team-planner", "# Correction\n\n1. Repair the finding.\n")
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+	rev := chainBinding(t, rt, "shop-team-reviewer")
+	if rev.Round != 2 {
+		t.Fatalf("reviewer round = %d, want the re-review round 2", rev.Round)
+	}
+	prompt, err := rt.Store.ReadFile(rt.Store.PromptPath("shop-team-reviewer", rev.Round))
+	if err != nil {
+		t.Fatalf("read the re-review prompt: %v", err)
+	}
+	if want := "This closing round is " + workflow.BuilderRoundCorrection + ", on top of round 1."; !strings.Contains(string(prompt), want) {
+		t.Errorf("re-review prompt does not name %q:\n%s", want, prompt)
+	}
+}
+
+// TestChainSeedStepBindingPrefersASetColumn pins the two ends of the lookup: a
+// set legacy column names the member without consulting the steps, and no
+// matching step names none, which a seed words as a missing input.
+func TestChainSeedStepBindingPrefersASetColumn(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	rows := chainRows()
+	rows["team-reviewer"] = roles.Row{
+		Shape:       ptr("reader"),
+		Candidates:  []string{testClaudeRef},
+		Definitions: map[string]roles.DefRow{"claude": {Agent: "reviewer"}},
+	}
+	rows["other-reviewer"] = rows["team-reviewer"]
+	rows["team-planner"] = rows["lite-planner"]
+	rt.Registry = rolesFileRegistry(t, rt.Candidates, rt.Policy, rows)
+	startFlowChain(t, rt, twoReviewerWorkflow)
+	row := flowChainRow(t, rt)
+	def, err := chain.WorkflowDef(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = rt.Store.WithLock(func(tx *store.Tx) error {
+		if got := chainSeedStepBinding(tx, row, def, "legacy-member", "shipped:review"); got != "legacy-member" {
+			t.Errorf("with a set column = %q, want legacy-member", got)
+		}
+		if got := chainSeedStepBinding(tx, row, def, "", "shipped:scan"); got != "" {
+			t.Errorf("with no such step = %q, want none", got)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

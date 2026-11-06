@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/chain"
@@ -285,15 +286,16 @@ func chainSeedInput(rt Runtime, c db.ChainRow, path string) string {
 
 // chainSeedStepBinding names the member whose output a seed reads: the member
 // behind the step whose seed is one of wants. A set legacy column wins, so a
-// shipped chain keeps its columns. Step ids sort because the definition keeps
-// steps in a map, and the newest closed report wins among several actors, so a
-// correction answers the latest review. No such step reads "", which the
-// caller words as a missing input.
+// shipped chain keeps its columns. Among several actors the newest report wins,
+// by when it landed rather than by round number, since a second reviewer on its
+// first round must beat a first reviewer on its third: a correction answers the
+// review that asked for it. Step ids sort because the definition keeps steps in
+// a map. No such step reads "", which the caller words as a missing input.
 func chainSeedStepBinding(tx *store.Tx, c db.ChainRow, def workflow.Definition, fallback string, wants ...string) string {
 	if fallback != "" {
 		return fallback
 	}
-	best, bestRound := "", -1
+	best, bestAt := "", time.Time{}
 	for _, id := range slices.Sorted(maps.Keys(def.Steps)) {
 		step := def.Steps[id]
 		if !slices.Contains(wants, step.Seed) {
@@ -303,8 +305,8 @@ func chainSeedStepBinding(tx *store.Tx, c db.ChainRow, def workflow.Definition, 
 		if err != nil {
 			continue
 		}
-		if round := chain.NewestClosedRound(tx, member); round > bestRound {
-			best, bestRound = member, round
+		if at := chain.NewestReportAt(tx, member); best == "" || at.After(bestAt) {
+			best, bestAt = member, at
 		}
 	}
 	return best
