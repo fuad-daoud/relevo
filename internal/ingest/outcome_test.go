@@ -267,6 +267,104 @@ func TestCandidateForRoundCarriesTheEarlierRoundsBuilder(t *testing.T) {
 	}
 }
 
+// TestCandidateForRoundBeforeTheFirstSwitch pins a served binding whose log holds
+// no pick, only what a poll saw: each round names the candidate that ran it, not
+// the binding's newest one.
+func TestCandidateForRoundBeforeTheFirstSwitch(t *testing.T) {
+	const (
+		muse = "muse/meta/muse-spark-1.3:xhigh"
+		qwen = "opencode/alibaba-tp/qwen3.8-flash#xhigh"
+	)
+	poll := func(round int, from, to string) store.LogEntry {
+		return store.LogEntry{Round: round, Kind: store.KindSwitch, Note: store.PollSwitchNotePrefix + "zen: " + from + " -> " + to}
+	}
+	tests := []struct {
+		name    string
+		events  []store.LogEntry
+		current string
+		want    map[int]string
+	}{
+		{
+			name:    "one switch late",
+			events:  []store.LogEntry{poll(9, muse, qwen)},
+			current: qwen,
+			want:    map[int]string{1: muse, 8: muse, 9: qwen, 10: qwen},
+		},
+		{
+			name:    "one switch early",
+			events:  []store.LogEntry{poll(2, qwen, muse)},
+			current: muse,
+			want:    map[int]string{1: qwen, 2: muse, 3: muse},
+		},
+		{
+			name:    "switched and back",
+			events:  []store.LogEntry{poll(4, muse, qwen), poll(6, qwen, muse)},
+			current: muse,
+			want:    map[int]string{1: muse, 3: muse, 4: qwen, 5: qwen, 6: muse, 7: muse},
+		},
+		{
+			name: "the first of two later switches names it, whatever the log order",
+			events: []store.LogEntry{
+				poll(6, qwen, "c/d/e"), poll(4, muse, qwen),
+			},
+			current: "c/d/e",
+			want:    map[int]string{1: muse},
+		},
+		{
+			name: "a shipped note ahead of the poll's does not hide the old candidate",
+			events: []store.LogEntry{
+				{Round: 3, Kind: store.KindSwitch, Note: "switched builder (rate-limited): picked " + qwen + " for builder: order #2"},
+				poll(3, muse, qwen),
+			},
+			current: qwen,
+			want:    map[int]string{1: muse, 3: qwen},
+		},
+		{
+			name: "only a shipped note names no old candidate",
+			events: []store.LogEntry{
+				{Round: 3, Kind: store.KindSwitch, Note: "switched builder (a -> b): picked " + qwen + " for builder: order #2"},
+			},
+			current: qwen,
+			want:    map[int]string{1: qwen},
+		},
+		{
+			name:    "a poll with no old candidate names none",
+			events:  []store.LogEntry{poll(3, "", qwen)},
+			current: qwen,
+			want:    map[int]string{1: qwen},
+		},
+		{
+			name: "entries that are not a switch are not the next switch",
+			events: []store.LogEntry{
+				{Round: 2, Kind: store.KindSwitch, Note: "nudged builder -> again"},
+				{Round: 2, Kind: store.KindSwitch, Note: "switched builder (reason): cannot switch"},
+				{Round: 3, Kind: store.KindSwitch, Note: "resumed session s1 builder (lost to a daemon restart at t): picked " + muse + " for builder: same candidate, not counted"},
+				{Round: 3, Kind: store.KindExit, Note: "switched x -> y"},
+				poll(4, muse, qwen),
+			},
+			current: qwen,
+			want:    map[int]string{1: muse},
+		},
+		{
+			name:    "no switch keeps the binding's candidate",
+			events:  nil,
+			current: qwen,
+			want:    map[int]string{1: qwen},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := store.Binding{BuilderCandidate: tt.current}
+			for n, want := range tt.want {
+				tok, _, ok := candidateForRound(tt.events, n, b)
+				if !ok || tok != want {
+					t.Errorf("candidateForRound(round %d) = %q, %v, want %q", n, tok, ok, want)
+				}
+			}
+		})
+	}
+}
+
 // TestSwitchesIgnorePollEntriesWhenTheServerShippedTheHistory pins that the
 // entry a poll writes for a switch it happened to observe does not count beside
 // the server's own record of the same switch.
