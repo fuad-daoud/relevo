@@ -140,7 +140,8 @@ func statusLineRowText(row StatusLineRow, nameW, statusW, clockW, columns int, d
 	if statusColour != "" {
 		status = statusColour + status + ansiReset
 	}
-	return dot + " " + pad(row.Name, nameW) + "  " + pad(truncate(mid, midW), midW) + " " + status + "  " + padLeft(row.Clock, clockW) + "\n"
+	mid = truncate(dropServerToFit(mid, row.On, midW), midW)
+	return dot + " " + pad(row.Name, nameW) + "  " + pad(mid, midW) + " " + status + "  " + padLeft(row.Clock, clockW) + "\n"
 }
 
 // renderedStatusLineRow lays out one StatusLineRow with its SGR codes. The
