@@ -50,6 +50,12 @@ type Daemon struct {
 	// change the daemon never saw cannot hide behind a revision it wrote.
 	ingestSeen map[string]string
 
+	// tickPassed is the revision each done binding's last full pass ran at, so
+	// a done binding that moved nothing and owes nothing costs one read on
+	// later ticks. It is process state on the same terms as ingestSeen: the
+	// first tick after a start reconciles every binding in full.
+	tickPassed map[string]string
+
 	// backoff remembers servers whose prefetch failed, so a dead server costs
 	// one bounded dial per backoff window instead of one per binding per tick.
 	backoff remoteBackoff
@@ -148,8 +154,9 @@ func NewDaemon(rt Runtime, interval time.Duration) *Daemon {
 		interval = minInterval
 	}
 	d := &Daemon{
-		rt:       rt,
-		interval: interval,
+		rt:         rt,
+		interval:   interval,
+		tickPassed: make(map[string]string),
 	}
 	d.syncIdle = sync.NewCond(&d.syncMu)
 	return d
@@ -326,6 +333,7 @@ func (d *Daemon) Tick(ctx context.Context) error {
 			slog.Error("reconcile failed", "binding", b.Name, "err", err)
 		}
 	}
+	d.pruneTickPassed(bindings)
 
 	// The count lands after the loop, so an attempt idleSync queued earlier
 	// this tick still classifies against the previous tick's count: one tick
@@ -395,6 +403,15 @@ func (d *Daemon) tickOne(ctx context.Context, b store.Binding) (err error) {
 	pre := d.prefetchRemote(ctx, b)
 	defer pre.release()
 
+	// A done binding whose digest has not moved since the pass that last
+	// reconciled it, and that owes the full path nothing, costs this tick one
+	// read: see doneTickSkip. prefetchRemote already refused a done binding,
+	// so no remote fetch is pending to settle at this point.
+	rev, skip := d.doneTickSkip(b)
+	if skip {
+		return nil
+	}
+
 	// sealed is how many files this tick's seal pass moved into the database.
 	// It is read after the lock is released, which is the only place a sync
 	// may be started from.
@@ -459,6 +476,7 @@ func (d *Daemon) tickOne(ctx context.Context, b store.Binding) (err error) {
 	if err != nil {
 		return err
 	}
+	d.noteTickPassed(b.Name, rev)
 	// A seal that moved bytes is the moment worth syncing on: the bulk of what
 	// a machine has to hand another machine is a round's files. The sync starts
 	// here rather than inside the seal or the lock, and is not waited on,

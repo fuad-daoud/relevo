@@ -154,3 +154,90 @@ func TestRevisionMissingBinding(t *testing.T) {
 		t.Errorf("Revision(nobody) err = %v, want ErrNotFound", err)
 	}
 }
+
+// TestTickStateCarriesTheDigestAndTheInPlaceStates pins the one read the
+// daemon's done-skip guards on: Rev is Revision's own digest, and the two
+// states that settle by patching an entry in place move AdmitsOpen while the
+// digest stands still -- the same blindness the mirror's own doc names, which
+// the daemon must not inherit.
+func TestTickStateCarriesTheDigestAndTheInPlaceStates(t *testing.T) {
+	root := t.TempDir()
+	s := New(root)
+	if err := s.Save(Binding{Name: "webshop", CWD: "/repo", State: StateDone, Round: 1}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	read := func() TickState {
+		t.Helper()
+		st, err := s.TickState("webshop")
+		if err != nil {
+			t.Fatalf("TickState: %v", err)
+		}
+		rev, err := s.Revision("webshop")
+		if err != nil {
+			t.Fatalf("Revision: %v", err)
+		}
+		if st.Rev != rev {
+			t.Fatalf("TickState.Rev = %q, Revision = %q, want one digest", st.Rev, rev)
+		}
+		return st
+	}
+
+	if st := read(); st.AdmitsOpen != 0 || st.RoundsOnDisk != 0 {
+		t.Fatalf("quiet store TickState = %+v, want no open admit and no round on disk", st)
+	}
+
+	if err := s.AppendLog("webshop", LogEntry{Round: 1, Direction: DirToMasterMind, Kind: KindReport, Payload: "the report"}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+	pending := read()
+	if pending.AdmitsOpen != 0 {
+		t.Errorf("a pending unadmitted entry reads AdmitsOpen %d, want 0: another route can still take it", pending.AdmitsOpen)
+	}
+
+	if err := s.AdmitIndex("webshop", 0); err != nil {
+		t.Fatalf("AdmitIndex: %v", err)
+	}
+	admitted := read()
+	if admitted.AdmitsOpen != 1 {
+		t.Errorf("AdmitsOpen = %d, want the open admit counted: no other route can take it", admitted.AdmitsOpen)
+	}
+	if admitted.Rev != pending.Rev {
+		t.Error("the in-place admit moved the digest")
+	}
+
+	if err := s.ConfirmIndex("webshop", 0, "wait"); err != nil {
+		t.Fatalf("ConfirmIndex: %v", err)
+	}
+	if st := read(); st.AdmitsOpen != 0 {
+		t.Errorf("AdmitsOpen = %d after the confirm, want 0: the admit no longer needs a tick", st.AdmitsOpen)
+	}
+
+	// A stamp on a builder-bound entry is not the mastermind's queue.
+	if err := s.AppendLog("webshop", LogEntry{Round: 1, Direction: DirToBuilder, Kind: KindPrompt}); err != nil {
+		t.Fatalf("AppendLog prompt: %v", err)
+	}
+	if err := s.AdmitIndex("webshop", 1); err != nil {
+		t.Fatalf("AdmitIndex prompt: %v", err)
+	}
+	if st := read(); st.AdmitsOpen != 0 {
+		t.Errorf("AdmitsOpen = %d with a builder-bound admit, want 0: the count is mastermind-bound entries", st.AdmitsOpen)
+	}
+
+	// A round whose files still wait on disk is the seal's worklist.
+	if err := os.WriteFile(filepath.Join(s.Dir("webshop"), "001-report.md"), []byte("r"), 0o644); err != nil {
+		t.Fatalf("write round file: %v", err)
+	}
+	if st := read(); st.RoundsOnDisk != 1 {
+		t.Errorf("RoundsOnDisk = %d, want the round whose file still waits to seal", st.RoundsOnDisk)
+	}
+}
+
+// TestTickStateMissingBinding pins the same nothing-to-guard answer Revision
+// gives: no record is not a failure to report.
+func TestTickStateMissingBinding(t *testing.T) {
+	s := New(t.TempDir())
+	if _, err := s.TickState("nobody"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("TickState(nobody) err = %v, want ErrNotFound", err)
+	}
+}

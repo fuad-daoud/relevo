@@ -120,19 +120,29 @@ func getRecord(ctx context.Context, q queryer, origin, owner, name string) (Reco
 
 // RecordRevision is what a mirror reads from a record besides its bytes: the
 // record's own JSON and the extents of its log and sealed round files, cheap
-// enough to read every tick.
+// enough to read every tick, plus the admitted-unconfirmed entry count, which
+// no extent moves.
 type RecordRevision struct {
 	JSON        string
 	EventCount  int
 	EventMaxSeq int
 	FileCount   int
 	FileMaxName string
+	// AdmitsOpen is how many mastermind-bound entries a push route admitted
+	// and has not confirmed. Admit and confirm patch the entry JSON in place,
+	// so the extents miss them, and a caller that decides whether an admitted
+	// payload still needs its settle needs the count beside them.
+	// 'to_planner' is store.DirToMasterMind's persisted value and admitted_at
+	// is the key store's admit writes into the entry JSON: both copies must
+	// agree, and the count lives only in the JSON, as the admit does.
+	AdmitsOpen int
 }
 
-// RecordRevision reads owner's live row for name and the extents of its events
-// and sealed round files in one query. ok false when no such record exists.
-// The extents are counts, not content: a growing log and a sealing round both
-// move them, and nothing else does.
+// RecordRevision reads owner's live row for name, the extents of its events
+// and sealed round files, and its admitted-unconfirmed entry count, in one
+// query. ok false when no such record exists. The extents are counts, not
+// content: a growing log and a sealing round both move them, and nothing else
+// does.
 func (d *DB) RecordRevision(owner, name string) (RecordRevision, bool, error) {
 	var r RecordRevision
 	err := d.sqlDB.QueryRowContext(context.Background(),
@@ -140,9 +150,12 @@ func (d *DB) RecordRevision(owner, name string) (RecordRevision, bool, error) {
 			(SELECT COUNT(*) FROM binding_event e WHERE e.record_id = r.id),
 			(SELECT COALESCE(MAX(e.seq), 0) FROM binding_event e WHERE e.record_id = r.id),
 			(SELECT COUNT(*) FROM round_file f WHERE f.record_id = r.id),
-			(SELECT COALESCE(MAX(f.name), '') FROM round_file f WHERE f.record_id = r.id)
+			(SELECT COALESCE(MAX(f.name), '') FROM round_file f WHERE f.record_id = r.id),
+			(SELECT COUNT(*) FROM binding_event e WHERE e.record_id = r.id
+				AND e.direction = 'to_planner' AND e.confirmed = 0
+				AND json_extract(e.entry_json, '$.admitted_at') IS NOT NULL)
 		 FROM binding_record r WHERE `+writerScope+` AND r.owner = ? AND r.name = ? AND r.archived_at IS NULL`,
-		d.origin, owner, name).Scan(&r.JSON, &r.EventCount, &r.EventMaxSeq, &r.FileCount, &r.FileMaxName)
+		d.origin, owner, name).Scan(&r.JSON, &r.EventCount, &r.EventMaxSeq, &r.FileCount, &r.FileMaxName, &r.AdmitsOpen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RecordRevision{}, false, nil
 	}

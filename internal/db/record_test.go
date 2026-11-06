@@ -1,6 +1,7 @@
 package db
 
 import (
+	"strconv"
 	"testing"
 	"time"
 )
@@ -305,5 +306,43 @@ func TestEventConfirmPatchesJSON(t *testing.T) {
 	}
 	if all[0].Route != "" {
 		t.Errorf("route = %q, want empty", all[0].Route)
+	}
+}
+
+// TestRecordRevisionCountsOpenAdmits pins the admitted-unconfirmed extent: the
+// admit lives only in the entry JSON, the confirm sets a column, and only a
+// mastermind-bound entry's open admit counts.
+func TestRecordRevisionCountsOpenAdmits(t *testing.T) {
+	d := openTestDB(t)
+
+	id, err := d.RecordPut(testRecord("alpha"))
+	if err != nil {
+		t.Fatalf("RecordPut: %v", err)
+	}
+	add := func(seq int, direction string, confirmed, admitted bool) {
+		ev := testEvent(seq)
+		ev.Direction = direction
+		ev.Confirmed = confirmed
+		if admitted {
+			ev.JSON = `{"seq":` + strconv.Itoa(seq) + `,"admitted_at":"2026-09-10T10:00:00Z"}`
+		}
+		if err := d.EventAppend(id, ev); err != nil {
+			t.Fatalf("EventAppend(%d): %v", seq, err)
+		}
+	}
+	add(1, "to_planner", false, true)  // the open admit: the one count
+	add(2, "to_planner", false, false) // pending but never pushed: no admit
+	add(3, "to_planner", true, true)   // admitted and confirmed: settled
+	add(4, "to_runner", false, true)   // the stamp on a builder-bound entry is not the mastermind's queue
+
+	rev, ok, err := d.RecordRevision("", "alpha")
+	if err != nil || !ok {
+		t.Fatalf("RecordRevision = (ok %v, err %v), want the row", ok, err)
+	}
+	if rev.AdmitsOpen != 1 {
+		t.Errorf("AdmitsOpen = %d, want 1: the count is direction, confirm flag and JSON stamp together", rev.AdmitsOpen)
+	}
+	if rev.EventCount != 4 || rev.EventMaxSeq != 4 {
+		t.Errorf("extents = %d/%d, want the log extents the admits ride in", rev.EventCount, rev.EventMaxSeq)
 	}
 }
