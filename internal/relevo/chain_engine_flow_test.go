@@ -580,3 +580,106 @@ func TestSavedWorkflowCustomReviewerReachesItsSeeds(t *testing.T) {
 		t.Errorf("correct prompt does not name the reviewer's output %s:\n%s", output2, correctPrompt)
 	}
 }
+
+// customSecurityWorkflow is a file workflow whose actors are not named after
+// their parts: a team-security reader scans, a team-planner fixes the
+// findings, and a team-reviewer judges the fix round, all through the shipped
+// seeds. Its step ids keep the shipped fix phase's names.
+const customSecurityWorkflow = `name: custom-scan
+inputs: { plans: required }
+start: plans
+steps:
+  plans: { for-each: plans, on: { next: build, empty: done } }
+  build: { run: builder, seed: "{{plans.current}}", on: { done: scan } }
+  scan: { run: team-security, seed: shipped:scan, on: { findings=0: done, findings>0: fix } }
+  fix: { run: team-planner, seed: shipped:fix, on: { done: fix-build } }
+  fix-build: { run: builder, seed: "{{fix.plan}}", on: { done: fix-review } }
+  fix-review: { run: team-reviewer, seed: shipped:review, on: { verdict=pass: done, verdict=changes: { halt: "changes" } } }
+`
+
+// customSecurityRows is the roles file behind customSecurityWorkflow: the
+// custom actors stand in for the shipped security, planner and reviewer.
+func customSecurityRows(t *testing.T, rt Runtime) *roles.Registry {
+	t.Helper()
+	rows := chainRows()
+	rows["team-security"] = rows["security"]
+	rows["team-planner"] = rows["lite-planner"]
+	rows["team-reviewer"] = roles.Row{
+		Shape:       ptr("reader"),
+		Candidates:  []string{testClaudeRef},
+		Definitions: map[string]roles.DefRow{"claude": {Agent: "reviewer"}},
+	}
+	return rolesFileRegistry(t, rt.Candidates, rt.Policy, rows)
+}
+
+// TestSavedWorkflowCustomSecurityReachesTheFixSeed pins the saved-workflow
+// security lookup: with no legacy columns, the fix seed still names the
+// scanner's own output, resolved through the workflow's scan step and the
+// chain's member rows.
+func TestSavedWorkflowCustomSecurityReachesTheFixSeed(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	rt.Registry = customSecurityRows(t, rt)
+	startFlowChain(t, rt, customSecurityWorkflow)
+
+	row := flowChainRow(t, rt)
+	if row.Security != "" || row.Planner != "" {
+		t.Fatalf("chain columns security=%q planner=%q, want both empty on a saved workflow", row.Security, row.Planner)
+	}
+
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	chainReaderClose(t, rt, "shop-team-security", chainFindingsBody(2))
+
+	planner := chainBinding(t, rt, "shop-team-planner")
+	if planner.Round != 1 {
+		t.Fatalf("planner round = %d, want the fix round 1", planner.Round)
+	}
+	prompt, err := rt.Store.ReadFile(rt.Store.PromptPath("shop-team-planner", planner.Round))
+	if err != nil {
+		t.Fatalf("read the fix prompt: %v", err)
+	}
+	sec := chainBinding(t, rt, "shop-team-security")
+	output := seedCopy(t, rt, rt.Store.OutputPath("shop-team-security", 1, sec.WriterRole(), readerOutputLabel(rt, sec)))
+	if !strings.Contains(string(prompt), "Security output: "+output+".") {
+		t.Errorf("fix prompt does not name the security output %s:\n%s", output, prompt)
+	}
+}
+
+// TestSavedWorkflowCustomPlannerRoundIsNotHumanSent pins the planner check on
+// the saved workflow's fix step: the builder round that ran the custom
+// planner's plan is named a fix-plan round, not a round a human sent, because
+// the check reads the planner through the workflow and member rows instead of
+// the empty legacy column.
+func TestSavedWorkflowCustomPlannerRoundIsNotHumanSent(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	rt.Registry = customSecurityRows(t, rt)
+	startFlowChain(t, rt, customSecurityWorkflow)
+
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	chainReaderClose(t, rt, "shop-team-security", chainFindingsBody(2))
+	chainReaderClose(t, rt, "shop-team-planner", "# Fix plan\n\n1. Repair the finding.\n")
+
+	builder := chainBinding(t, rt, "shop")
+	if builder.Round != 2 {
+		t.Fatalf("builder round = %d, want the fix-build round 2", builder.Round)
+	}
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+	rev := chainBinding(t, rt, "shop-team-reviewer")
+	if rev.Round != 1 {
+		t.Fatalf("reviewer round = %d, want the fix-review round 1", rev.Round)
+	}
+	prompt, err := rt.Store.ReadFile(rt.Store.PromptPath("shop-team-reviewer", rev.Round))
+	if err != nil {
+		t.Fatalf("read the fix-review prompt: %v", err)
+	}
+	if want := "This closing round is " + workflow.BuilderRoundFix + ", on top of round 1."; !strings.Contains(string(prompt), want) {
+		t.Errorf("fix-review prompt does not name %q:\n%s", want, prompt)
+	}
+	if strings.Contains(string(prompt), workflow.BuilderRoundHuman) {
+		t.Errorf("fix-review prompt calls the planner's round human-sent:\n%s", prompt)
+	}
+}

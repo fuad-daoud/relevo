@@ -106,7 +106,8 @@ func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definit
 			reviewerOutput = chainSeedInput(rt, c, p)
 		}
 	case chain.SeedFixes:
-		if p, err := chain.MemberReportPath(tx, c.Security, closedRound); err != nil {
+		security := chainSeedStepBinding(tx, c, def, c.Security, "shipped:scan")
+		if p, err := chain.MemberReportPath(tx, security, closedRound); err != nil {
 			securityOutput = chain.SeedMissing(err)
 		} else {
 			securityOutput = chainSeedInput(rt, c, p)
@@ -137,7 +138,7 @@ func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definit
 		v.PlanDiffPath = chainSeedInput(rt, c, chainPlanDiff(rt, tx, c, c.Builder, builderRound))
 		v.RoundPromptPath = chainSeedInput(rt, c, chainRoundPromptPath(rt, v.PlanPath, c.Builder, builderRound))
 		v.BuilderRoundKind, v.BuilderRoundOn, v.BuilderRounds, v.DiffFrom =
-			chainBuilderPlanView(rt, tx, c, s, act, c.Builder, builderRound)
+			chainBuilderPlanView(rt, tx, c, def, s, act, c.Builder, builderRound)
 		if act.Seed == chain.SeedCorrection || act.Seed == chain.SeedDirectFix {
 			v.OutputPath = reviewerOutput
 		}
