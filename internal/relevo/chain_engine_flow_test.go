@@ -694,7 +694,7 @@ steps:
   build: { run: builder, seed: "{{plans.current}}", on: { done: review-a } }
   review-a: { run: team-reviewer, seed: shipped:review, on: { verdict=pass: review-b, verdict=changes: correct } }
   review-b: { run: other-reviewer, seed: shipped:review, on: { verdict=pass: plans, verdict=changes: correct } }
-  correct: { run: team-planner, seed: shipped:correct, on: { done: rebuild } }
+  correct: { run: team-planner, seed: shipped:correct, budget: { max: 2, per: plans, then: { halt: "reviewers still want changes" } }, on: { done: rebuild } }
   rebuild: { run: builder, seed: "{{correct.plan}}", on: { done: review-a } }
 `
 
