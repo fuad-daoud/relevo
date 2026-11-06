@@ -328,6 +328,22 @@ func serveUnbindDocOf(owner, name string, res relevo.UnbindResult) ServeUnbindDo
 	return ServeUnbindDoc{Owner: owner, UnbindDoc: unbindDocOf(name, res)}
 }
 
+// ServeRemoveStrayDoc is `serve remove-stray --json`: the owner and the facts
+// of the entry the verb cleared.
+type ServeRemoveStrayDoc struct {
+	Owner  string `json:"owner"`
+	Name   string `json:"name"`
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
+	Size   int64  `json:"size"`
+}
+
+// serveRemoveStrayDocOf is the remove-stray document: the same facts the human
+// line prints.
+func serveRemoveStrayDocOf(owner string, res serve.RemovedStray) ServeRemoveStrayDoc {
+	return ServeRemoveStrayDoc{Owner: owner, Name: res.Name, Path: res.Path, Reason: res.Reason, Size: res.Size}
+}
+
 // updateDoc is `update`/`update --check --json`: the running version, the
 // executable the run resolved, the action word, the target (omitted when the
 // decision names none), whether the binary was actually replaced, and the
@@ -420,6 +436,10 @@ func outcomeDocFixtures() []struct {
 			Archived:        true,
 			WorktreeRemoved: "/s/work/webshop",
 			ProcessStopped:  4242,
+		})},
+		{"serve-remove-stray-json", serveRemoveStrayDocOf("alice", serve.RemovedStray{
+			Name: "leftover", Path: "/srv/.worktrees/leftover",
+			Reason: "git does not recognise it", Size: 5,
 		})},
 		{"service-install-json", serviceDocOf("install", "/home/u/.config/systemd/user/relevo.service", "wrote")},
 		{"service-uninstall-json", serviceDocOf("uninstall", "/home/u/.config/systemd/user/relevo.service", "removed")},

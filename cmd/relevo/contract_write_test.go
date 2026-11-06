@@ -374,7 +374,7 @@ func TestContractWriteRegistryExits(t *testing.T) {
 		"config secret set", "config server add", "config server rm", "config set",
 		"config unset", "mastermind disable", "mastermind enable", "mastermind forget",
 		"mastermind init", "mastermind rename", "mastermind reset",
-		"serve enroll", "serve gc", "serve init", "serve revoke", "serve unbind",
+		"serve enroll", "serve gc", "serve init", "serve remove-stray", "serve revoke", "serve unbind",
 		"update",
 	} {
 		e, ok := registryEntry(name)

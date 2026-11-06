@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/chain"
@@ -114,7 +117,7 @@ func chainParseOutcomes(rt Runtime, b store.Binding, round int, body []byte, out
 // plan copy: a start/advance send hands that copy, while a correction, repair,
 // or human round carries other bytes. A first-round close, or an unreadable
 // copy, gets no kind and no list.
-func chainBuilderPlanView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act chain.Action, builder string, builderRound int) (kind string, on int, rounds []workflow.SeedRound, diffFrom string) {
+func chainBuilderPlanView(rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, s chain.State, act chain.Action, builder string, builderRound int) (kind string, on int, rounds []workflow.SeedRound, diffFrom string) {
 	diffFrom = chain.PlanDiffFrom(c, s)
 	paths, err := chainPlanPaths(c)
 	if err != nil || s.Plan < 1 || s.Plan > len(paths) {
@@ -138,7 +141,7 @@ func chainBuilderPlanView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State
 	if first == 0 || first == builderRound {
 		return "", 0, nil, diffFrom
 	}
-	kind = chainBuilderRoundKind(rt, tx, c, s, builder, builderRound)
+	kind = chainBuilderRoundKind(rt, tx, c, def, s, builder, builderRound)
 	on = builderRound - 1
 	for r := first; r <= builderRound; r++ {
 		rounds = append(rounds, workflow.SeedRound{
@@ -154,14 +157,14 @@ func chainBuilderPlanView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State
 // prompt entry says so, else direct-fix when it ran the fix-direct seed, else
 // correction or fix-plan when it ran the planner's newest plan, else
 // human-sent.
-func chainBuilderRoundKind(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, builder string, builderRound int) string {
+func chainBuilderRoundKind(rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, s chain.State, builder string, builderRound int) string {
 	if chainBuilderRoundIsRepair(rt, tx, builder, builderRound) {
 		return workflow.BuilderRoundRepair
 	}
 	if chainBuilderRoundIsFixDirect(rt, builder, builderRound) {
 		return workflow.BuilderRoundDirectFix
 	}
-	if chainBuilderRanThePlannerPlan(rt, tx, c, builder, builderRound) {
+	if chainBuilderRanThePlannerPlan(rt, tx, c, def, builder, builderRound) {
 		if s.Phase == chain.PhaseSecurity {
 			return workflow.BuilderRoundFix
 		}
@@ -210,13 +213,16 @@ func chainBuilderRoundIsRepair(rt Runtime, tx *store.Tx, builder string, round i
 
 // chainBuilderRanThePlannerPlan reports whether the builder's staged prompt
 // is the planner's newest closed plan: a correction or fix-plan send hands
-// over the planner's own text, so the bytes match.
-func chainBuilderRanThePlannerPlan(rt Runtime, tx *store.Tx, c db.ChainRow, builder string, builderRound int) bool {
-	planRound := chain.NewestClosedRound(tx, c.Planner)
+// over the planner's own text, so the bytes match. The planner is the member
+// behind the workflow's correct or fix step, since the legacy column names
+// none on a saved chain.
+func chainBuilderRanThePlannerPlan(rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, builder string, builderRound int) bool {
+	planner := chainSeedStepBinding(tx, c, def, c.Planner, "shipped:correct", "shipped:fix")
+	planRound := chain.NewestClosedRound(tx, planner)
 	if planRound == 0 {
 		return false
 	}
-	path, err := chain.MemberReportPath(tx, c.Planner, planRound)
+	path, err := chain.MemberReportPath(tx, planner, planRound)
 	if err != nil {
 		return false
 	}
@@ -276,4 +282,32 @@ func chainSeedInput(rt Runtime, c db.ChainRow, path string) string {
 		return chain.SeedMissing(err)
 	}
 	return dest
+}
+
+// chainSeedStepBinding names the member whose output a seed reads: the member
+// behind the step whose seed is one of wants. A set legacy column wins, so a
+// shipped chain keeps its columns. Among several actors the newest report wins,
+// by when it landed rather than by round number, since a second reviewer on its
+// first round must beat a first reviewer on its third: a correction answers the
+// review that asked for it. Step ids sort because the definition keeps steps in
+// a map. No such step reads "", which the caller words as a missing input.
+func chainSeedStepBinding(tx *store.Tx, c db.ChainRow, def workflow.Definition, fallback string, wants ...string) string {
+	if fallback != "" {
+		return fallback
+	}
+	best, bestAt := "", time.Time{}
+	for _, id := range slices.Sorted(maps.Keys(def.Steps)) {
+		step := def.Steps[id]
+		if !slices.Contains(wants, step.Seed) {
+			continue
+		}
+		member, err := chainFlowMemberName(tx, c, workflow.RenderParams(def, step.Run))
+		if err != nil {
+			continue
+		}
+		if at := chain.NewestReportAt(tx, member); best == "" || at.After(bestAt) {
+			best, bestAt = member, at
+		}
+	}
+	return best
 }

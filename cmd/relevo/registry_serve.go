@@ -58,6 +58,15 @@ var registryServeVerbs = []verbEntry{
 		Errors:  []string{"internal", "usage"},
 	},
 	{
+		Name:    "serve remove-stray",
+		Summary: "remove one stray worktree no binding owns on the server host",
+		Args:    "--owner <label|id> <name> [--state <dir>] [--json]",
+		Flags:   []string{"--json", "--owner", "--state"},
+		Output:  "json:ServeRemoveStrayDoc",
+		Exit:    []int{0, 1, 2},
+		Errors:  []string{"binding_not_found", "client_not_found", "internal", "not_available", "refused", "usage"},
+	},
+	{
 		Name:    "serve revoke",
 		Summary: "revoke an enrolled client",
 		Args:    "<id> [--state <dir>] [--json]",

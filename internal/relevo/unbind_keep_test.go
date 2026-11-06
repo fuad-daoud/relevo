@@ -156,6 +156,32 @@ func TestUnbindRemoteForcePassesForce(t *testing.T) {
 
 const oldServerKeptBody = "binding api kept: worktree /p/api kept (uncommitted changes); commit or discard the work, then unbind again, or `relevo unbind api --force` archives it anyway; on the server: relevo serve unbind --owner SHA256:abc api --force"
 
+func TestUnbindAdoptsServerKeptWorktree(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	if err := st.Save(remoteBinding("zen")); err != nil {
+		t.Fatal(err)
+	}
+	fr := &fakeRemote{unbindResp: remote.UnbindResponse{WorktreeKept: "/srv/w/api", KeptReason: "uncommitted changes"}}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	res, err := UnbindWith(context.Background(), rt, "api", false, true)
+	if err != nil {
+		t.Fatalf("UnbindWith: %v", err)
+	}
+	if res.WorktreeKept != "/srv/w/api" || res.KeptReason != "uncommitted changes" || res.KeptOn != "zen" {
+		t.Fatalf("result = %+v, want the server kept fields plus KeptOn zen", res)
+	}
+	got := UnbindText("api", res)
+	if !strings.Contains(got, "kept worktree /srv/w/api (uncommitted changes) on zen") {
+		t.Errorf("text %q lacks the server kept line", got)
+	}
+	if strings.Contains(got, "git -C") {
+		t.Errorf("text %q must not carry a git -C line for a tree on another host", got)
+	}
+}
+
 func TestUnbindOfAServedBindingNamesTheServerAndTheReason(t *testing.T) {
 	t.Parallel()
 
