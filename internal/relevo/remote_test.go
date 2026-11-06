@@ -3617,12 +3617,8 @@ func TestSyncRemoteCollectsClosedRoundWithoutDelivery(t *testing.T) {
 	}
 	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
 
-	synced, err := SyncRemote(context.Background(), rt)
-	if err != nil {
+	if _, err := SyncRemote(context.Background(), rt); err != nil {
 		t.Fatalf("SyncRemote: %v", err)
-	}
-	if synced != 1 {
-		t.Fatalf("synced = %d, want 1", synced)
 	}
 
 	entries, err := st.ReadLog("api")

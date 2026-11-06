@@ -227,8 +227,8 @@ func (s *Store) prepareSave(b Binding, siblings []string) (Binding, db.Record, e
 		return b, db.Record{}, fmt.Errorf("create binding dir: %w", err)
 	}
 
-	// The live fields -- the stream cursor, the progress sampling clocks and
-	// the served round's remote_live -- leave the synced row for the
+	// The live fields -- the stream cursor, the progress sampling clocks, the
+	// served round's remote_live and the poll's status -- leave the synced row for the
 	// machine-local overlay: the record carries neither a live value nor a
 	// zero stand-in, and an absent key decodes to the zero, so no format bump
 	// is needed. mergeLiveInto puts the values back on read.

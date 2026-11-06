@@ -224,6 +224,38 @@ func TestChainPullSaveIfChangedDropsNothingButTheStamp(t *testing.T) {
 	if count() != before {
 		t.Errorf("binding_record outbox entries = %d, want %d: a settled null cache saves nothing", count(), before)
 	}
+
+	// A pass that moves only machine-local fields is what every running member
+	// sees: the local copy changes, the shared row and its stamp do not.
+	b3 := chainBinding(t, rt, "webshop")
+	b3.Builder.RemoteLive = &store.LiveFacts{PID: 4711}
+	if err := rt.Store.Save(b3); err != nil {
+		t.Fatalf("seed a live view: %v", err)
+	}
+	stamp := chainBinding(t, rt, "webshop").UpdatedAt
+	before = count()
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		cur, err := tx.Load("webshop")
+		if err != nil {
+			return err
+		}
+		snap := cur
+		cur.Builder.RemoteLive = nil
+		cur.Builder.RemoteStatus = "running"
+		return chainPullSaveIfChanged(tx, snap, cur)
+	}); err != nil {
+		t.Fatalf("pass a live-only move: %v", err)
+	}
+	if count() != before {
+		t.Errorf("binding_record outbox entries = %d, want %d: a live-only pass rewrote the shared row", count(), before)
+	}
+	got := chainBinding(t, rt, "webshop")
+	if !got.UpdatedAt.Equal(stamp) {
+		t.Errorf("updated_at = %v, want %v: a live-only pass moved the stamp", got.UpdatedAt, stamp)
+	}
+	if got.Builder.RemoteLive != nil || got.Builder.RemoteStatus != "running" {
+		t.Errorf("live %v status %q: a live-only pass must still land locally", got.Builder.RemoteLive, got.Builder.RemoteStatus)
+	}
 }
 
 // TestChainPullHaltedStaysRunningBehindMembers pins the kept guard: a halted

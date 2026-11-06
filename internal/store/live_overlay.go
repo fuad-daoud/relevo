@@ -11,8 +11,9 @@ import (
 )
 
 // liveOverlay holds the binding fields that move every tick while a round
-// runs: the stream cursor, the progress sampling clocks, and the client's
-// copy of a served round's live view. They live in a machine-local kv blob
+// runs: the stream cursor, the progress sampling clocks, the client's copy of
+// a served round's live view, and this machine's last word on reaching the
+// server. They live in a machine-local kv blob
 // keyed by binding_record id instead of the synced record_json, because every
 // rewrite of the synced row is an outbox entry every machine pulls, and a
 // tick that moves only these fields changes no synced fact. On save they are
@@ -31,6 +32,11 @@ type liveOverlay struct {
 	// RemoteLive is the whole server-view copy of a running served round,
 	// rewritten on every poll with the server's current numbers.
 	RemoteLive *LiveFacts `json:"remote_live,omitempty"`
+	// RemoteStatus and RemoteUnreachableSince say how this machine's last poll
+	// went. One blip on the link flips every served binding at once, and a peer
+	// reaches the server itself when it takes a binding over.
+	RemoteStatus           string    `json:"remote_status,omitempty"`
+	RemoteUnreachableSince time.Time `json:"remote_unreachable_since,omitzero"`
 	// Clocks are the per-sample progress clocks; nil when the binding has
 	// no Progress object at all.
 	Clocks *overlayClocks `json:"clocks,omitempty"`
@@ -47,7 +53,8 @@ type overlayClocks struct {
 }
 
 func (ov liveOverlay) isZero() bool {
-	return ov.StreamOffset == 0 && ov.RemoteLive == nil && ov.Clocks == nil
+	return ov.StreamOffset == 0 && ov.RemoteLive == nil && ov.Clocks == nil &&
+		ov.RemoteStatus == "" && ov.RemoteUnreachableSince.IsZero()
 }
 
 // liveKey is the machine-local kv key of one binding's overlay. The key is
@@ -63,6 +70,9 @@ func stripLive(b Binding) (Binding, liveOverlay) {
 	ov := liveOverlay{
 		StreamOffset: b.Builder.StreamOffset,
 		RemoteLive:   b.Builder.RemoteLive,
+
+		RemoteStatus:           b.Builder.RemoteStatus,
+		RemoteUnreachableSince: b.RemoteUnreachableSince,
 	}
 	if p := b.Progress; p != nil {
 		ov.Clocks = &overlayClocks{
@@ -77,6 +87,8 @@ func stripLive(b Binding) (Binding, liveOverlay) {
 	}
 	b.Builder.StreamOffset = 0
 	b.Builder.RemoteLive = nil
+	b.Builder.RemoteStatus = ""
+	b.RemoteUnreachableSince = time.Time{}
 	return b, ov
 }
 
@@ -87,6 +99,14 @@ func mergeLive(b Binding, ov liveOverlay) Binding {
 	b.Builder.StreamOffset = ov.StreamOffset
 	if ov.RemoteLive != nil {
 		b.Builder.RemoteLive = ov.RemoteLive
+	}
+	// An overlay written before these fields moved is silent about them while its
+	// row still holds them, and a row that has moved them holds nothing to protect.
+	if ov.RemoteStatus != "" {
+		b.Builder.RemoteStatus = ov.RemoteStatus
+	}
+	if !ov.RemoteUnreachableSince.IsZero() {
+		b.RemoteUnreachableSince = ov.RemoteUnreachableSince
 	}
 	if c := ov.Clocks; c != nil {
 		if b.Progress == nil {
@@ -140,7 +160,8 @@ func strippedJSON(b Binding) ([]byte, error) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return nil, err
 	}
-	dropFrom(doc, "runner", "stream_offset", "remote_live")
+	dropFrom(doc, "runner", "stream_offset", "remote_live", "remote_status")
+	delete(doc, "remote_unreachable_since")
 	dropFrom(doc, "progress", "sampled_at", "output_at", "cpu_ticks", "cpu_ticks_at")
 	out, err := json.Marshal(doc)
 	if err != nil {

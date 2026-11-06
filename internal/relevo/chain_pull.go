@@ -488,11 +488,14 @@ func chainAllCaughtUp(tx *store.Tx, view remote.ChainView) bool {
 // an unchanged record is dropped rather than rewritten with a new stamp, so a
 // repeated pass over an unchanged view writes nothing. The snapshot and the
 // mutable copy are compared with the UpdatedAt stamp Save writes dropped on
-// both sides, so any moved field still saves.
+// both sides, so any moved field still saves. Save is handed the stamp the record
+// holds: its own check compares the whole row, so a blank stamp reads as a change
+// and rewrites a row in which only machine-local fields moved.
 func chainPullSaveIfChanged(tx *store.Tx, snap, cur store.Binding) error {
+	compared := cur
 	snap.UpdatedAt = time.Time{}
-	cur.UpdatedAt = time.Time{}
-	if reflect.DeepEqual(snap, cur) {
+	compared.UpdatedAt = time.Time{}
+	if reflect.DeepEqual(snap, compared) {
 		return nil
 	}
 	return tx.Save(cur)
