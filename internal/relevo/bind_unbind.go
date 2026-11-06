@@ -78,6 +78,9 @@ type UnbindResult struct {
 	WorktreeKept    string // worktree relevo refused to remove, or ""
 	KeptReason      string // why it was kept; "" when nothing was kept
 	WorktreeGone    string // recorded worktree whose directory no longer exists, or ""
+	// KeptOn is the server holding the kept worktree, or "" when the kept
+	// tree is local. A remote binding's worktree lives on its server alone.
+	KeptOn string
 	// ProcessStopped is the headless builder process relevo stopped, or 0.
 	// ProcessErr is why a stop failed; "" when it did not. Both
 	// zero for a pane binding and for a headless one between rounds.
@@ -106,32 +109,32 @@ func keptRefusal(name string, res UnbindResult) error {
 // askServerUnbind tells a remote binding's server to release it before
 // anything local changes. A 404 is not a refusal: the server already
 // considers it gone.
-func askServerUnbind(ctx context.Context, rt Runtime, b store.Binding, force bool) error {
+func askServerUnbind(ctx context.Context, rt Runtime, b store.Binding, force bool) (remote.UnbindResponse, error) {
 	if rt.Remote == nil {
-		return ErrRemoteUnavailable
+		return remote.UnbindResponse{}, ErrRemoteUnavailable
 	}
-	uerr := rt.Remote.Unbind(ctx, b.Builder.Server, b.Name, force)
+	resp, uerr := rt.Remote.Unbind(ctx, b.Builder.Server, b.Name, force)
 	if uerr == nil {
-		return nil
+		return resp, nil
 	}
 	var httpErr *client.HTTPError
 	if errors.As(uerr, &httpErr) {
 		switch {
 		case httpErr.Status == 404:
-			return nil
+			return remote.UnbindResponse{}, nil
 		case httpErr.Status == 409 && httpErr.Body.Code == remote.CodeWorktreeKept:
 			reason := KeptReason(httpErr.Body.Message)
 
-			return newWorktreeKeptWithReason("worktree on "+b.Builder.Server+" kept: "+reason, reason)
+			return remote.UnbindResponse{}, newWorktreeKeptWithReason("worktree on "+b.Builder.Server+" kept: "+reason, reason)
 		case httpErr.Status == 409 && httpErr.Body.Code == remote.CodeRoundOpen:
 			message := strings.TrimSuffix(httpErr.Body.Message, ": "+ErrForwardRunning.Error())
-			return fmt.Errorf("%s: %s: %w", b.Builder.Server, message, ErrForwardRunning)
+			return remote.UnbindResponse{}, fmt.Errorf("%s: %s: %w", b.Builder.Server, message, ErrForwardRunning)
 		}
 	}
 	if errors.Is(uerr, client.ErrUnreachable) {
-		return fmt.Errorf("%s unreachable: %w", b.Builder.Server, uerr)
+		return remote.UnbindResponse{}, fmt.Errorf("%s unreachable: %w", b.Builder.Server, uerr)
 	}
-	return fmt.Errorf("%s: %w", b.Builder.Server, uerr)
+	return remote.UnbindResponse{}, fmt.Errorf("%s: %w", b.Builder.Server, uerr)
 }
 
 // reapSessions deletes the builder's session and everything already
@@ -186,8 +189,11 @@ func UnbindWith(ctx context.Context, rt Runtime, name string, archive, force boo
 		}
 	}
 
+	var serverResp remote.UnbindResponse
 	if b.Builder.Remote() {
-		if err := askServerUnbind(ctx, rt, b, force); err != nil {
+		var err error
+		serverResp, err = askServerUnbind(ctx, rt, b, force)
+		if err != nil {
 			return UnbindResult{}, err
 		}
 	}
@@ -207,6 +213,17 @@ func UnbindWith(ctx context.Context, rt Runtime, name string, archive, force boo
 	res.WorktreeKept = outcome.Kept
 	res.KeptReason = outcome.Reason
 	res.WorktreeGone = outcome.Gone
+	// A remote binding's worktree lives on its server alone, so a fully
+	// empty local outcome adopts the server's answer, kept tree included.
+	if outcome == (worktreeOutcome{}) {
+		res.WorktreeRemoved = serverResp.WorktreeRemoved
+		res.WorktreeKept = serverResp.WorktreeKept
+		res.KeptReason = serverResp.KeptReason
+		res.WorktreeGone = serverResp.WorktreeGone
+		if res.WorktreeKept != "" {
+			res.KeptOn = b.Builder.Server
+		}
+	}
 
 	// The guard sits before the session reaping so a kept binding stays
 	// resumable with its sessions intact.

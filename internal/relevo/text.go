@@ -129,6 +129,9 @@ func UnbindText(name string, res UnbindResult) string {
 	switch {
 	case res.WorktreeRemoved != "":
 		lines = append(lines, fmt.Sprintf("removed worktree %s", res.WorktreeRemoved))
+	case res.WorktreeKept != "" && res.KeptOn != "":
+		lines = append(lines, fmt.Sprintf("kept worktree %s (%s) on %s",
+			res.WorktreeKept, res.KeptReason, res.KeptOn))
 	case res.WorktreeKept != "":
 		lines = append(lines, fmt.Sprintf("kept worktree %s (%s)\n  remove by hand: git -C %s worktree remove %s",
 			res.WorktreeKept, res.KeptReason, res.WorktreeKept, res.WorktreeKept))

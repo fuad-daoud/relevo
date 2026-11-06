@@ -87,3 +87,28 @@ func TestUnbindForceArchivesDirtyWorktree(t *testing.T) {
 		t.Errorf("dirty worktree must survive the forced unbind: %v", err)
 	}
 }
+
+func TestUnbindForceAnswerCarriesKeptWorktree(t *testing.T) {
+	env := setupTestEnv(t)
+	rt := env.runtime(t)
+
+	_, wt := seedActiveWithNoRound(t, env, rt, "dirty")
+	if err := os.WriteFile(filepath.Join(wt, "dirty.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/dirty/unbind?force=1", nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("forced unbind status = %d, want 200; body: %s", resp.StatusCode, body)
+	}
+	var got remote.UnbindResponse
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("unmarshal unbind response: %v", err)
+	}
+	if got.WorktreeKept != wt {
+		t.Errorf("WorktreeKept = %q, want %q", got.WorktreeKept, wt)
+	}
+	if got.KeptReason != "uncommitted changes" {
+		t.Errorf("KeptReason = %q, want %q", got.KeptReason, "uncommitted changes")
+	}
+}
