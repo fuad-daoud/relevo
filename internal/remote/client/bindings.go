@@ -137,24 +137,18 @@ func (c *Client) Done(ctx context.Context, server, name string) (remote.BindingV
 	return decodeJSON[remote.BindingView](resp, "decode binding view")
 }
 
-func (c *Client) Unbind(ctx context.Context, server, name string, force bool) error {
+func (c *Client) Unbind(ctx context.Context, server, name string, force bool) (remote.UnbindResponse, error) {
 	path := fmt.Sprintf("/v1/bindings/%s/unbind", url.PathEscape(name))
 	if force {
 		path += "?force=1"
 	}
-	return postOnce(ctx, c, server, path)
-}
-
-// postOnce does not retry: the caller's action is not safe to repeat blindly.
-func postOnce(ctx context.Context, c *Client, server, path string) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	resp, err := c.do(ctx, server, "POST", path, nil, nil, "")
 	if err != nil {
-		return err
+		return remote.UnbindResponse{}, err
 	}
-	_ = resp.Body.Close()
-	return nil
+	return decodeJSON[remote.UnbindResponse](resp, "decode unbind response")
 }
 
 func (c *Client) Resume(ctx context.Context, server, name string) (remote.BindingView, error) {

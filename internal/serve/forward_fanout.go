@@ -217,7 +217,7 @@ func (s *Server) unbindNode(headName, nodeBinding, nodeID string) error {
 	}
 	callCtx, cancel := context.WithTimeout(context.Background(), fanoutTimeout)
 	defer cancel()
-	uerr := cl.Unbind(callCtx, row.ID, nodeBinding, true)
+	_, uerr := cl.Unbind(callCtx, row.ID, nodeBinding, true)
 	if uerr == nil || isUnbindGone(uerr) {
 		return nil
 	}

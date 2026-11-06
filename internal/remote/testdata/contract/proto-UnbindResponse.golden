@@ -1,0 +1,6 @@
+{
+  "worktree_removed": "/w/removed",
+  "worktree_kept": "/w/kept",
+  "kept_reason": "uncommitted changes",
+  "worktree_gone": "/w/gone"
+}

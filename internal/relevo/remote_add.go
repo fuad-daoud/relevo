@@ -84,7 +84,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		if err == nil {
 			return
 		}
-		if unbindErr := rt.Remote.Unbind(ctx, opts.Server, opts.Name, true); unbindErr != nil {
+		if _, unbindErr := rt.Remote.Unbind(ctx, opts.Server, opts.Name, true); unbindErr != nil {
 			slog.Warn("unbind after failed add", "server", opts.Server, "name", opts.Name, "err", unbindErr)
 			err = fmt.Errorf("%w; server binding %s on %s could not be removed: %w", err, opts.Name, opts.Server, unbindErr)
 		}
