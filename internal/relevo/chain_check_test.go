@@ -196,8 +196,8 @@ func TestChainCheckTimeoutIsRed(t *testing.T) {
 	clock.Advance(2 * rt.Policy.GateTimeout())
 
 	result, _ := chainAdvanceCheckForTest(t, rt, c, run)
-	if result != chainCheckRed {
-		t.Errorf("result = %q, want red", result)
+	if result != "" {
+		t.Errorf("result = %q, want empty while the fresh run is in flight", result)
 	}
 	if len(fr.kills) != 1 || fr.kills[0].PID != row.PID {
 		t.Errorf("kills = %+v, want the timed-out run killed", fr.kills)

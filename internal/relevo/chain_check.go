@@ -244,6 +244,11 @@ func chainAdvanceCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 		}
 		return chainCheckRed, row.Log, nil
 	}
+	// A settled timeout never feeds the engine: the tick skips settled rows,
+	// so a repeated advance stays quiet rather than reddening.
+	if row.Result == "timeout" {
+		return "", row.Log, nil
+	}
 	if row.Result != "" {
 		return chainCheckResult(row.Result), row.Log, nil
 	}
@@ -276,6 +281,9 @@ func chainAdvanceCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 		// signature: the slice refused the spawn, so the run holds as
 		// could-not-start instead of reddening.
 		return advanceFrozenCheck(ctx, rt, tx, c, row)
+	}
+	if rec.Result == "timeout" {
+		return advanceTimeoutCheck(ctx, rt, tx, c, row, rec)
 	}
 
 	row.Result = rec.Result
@@ -364,6 +372,9 @@ func chainAdvanceOneCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 			// the way an unstartable check does; any other advance failure
 			// keeps the tick's warning.
 			if halted, herr := chainHaltOnCouldNotStart(ctx, rt, tx, c, run, err); halted || herr != nil {
+				return herr
+			}
+			if halted, herr := chainHaltOnTimeout(ctx, rt, tx, c, run, err); halted || herr != nil {
 				return herr
 			}
 			return err
