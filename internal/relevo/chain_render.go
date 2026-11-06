@@ -158,14 +158,12 @@ func chainRenderShippedSeed(rt Runtime, tx *store.Tx, c db.ChainRow, def workflo
 	switch kind {
 	case chain.SeedReviewer:
 		closedRound = chain.NewestClosedRound(tx, c.Builder)
-	case chain.SeedCorrection:
-		closedRound = chain.NewestClosedRound(tx, c.Reviewer)
-	case chain.SeedDirectFix:
-		closedRound = chain.NewestClosedRound(tx, c.Reviewer)
+	case chain.SeedCorrection, chain.SeedDirectFix:
+		closedRound = chain.NewestClosedRound(tx, chainSeedStepBinding(tx, c, def, c.Reviewer, "shipped:review"))
 	case chain.SeedFixes:
 		closedRound = chain.NewestClosedRound(tx, c.Security)
 	}
-	v, err := chainSeedView(rt, tx, c, s, chain.Action{Seed: kind}, closedRound)
+	v, err := chainSeedView(rt, tx, c, def, s, chain.Action{Seed: kind}, closedRound)
 	if err != nil {
 		return "", err
 	}

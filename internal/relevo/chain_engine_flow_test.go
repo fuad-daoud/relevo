@@ -500,3 +500,83 @@ func TestWorkflowDirectFixCustomActorsReachTheirSeeds(t *testing.T) {
 		t.Errorf("fix-direct prompt does not name the reviewer's output %s:\n%s", output, prompt)
 	}
 }
+
+// customReviewerWorkflow is a file workflow whose actors are not named after
+// their parts: a team-reviewer reader reviews, the builder fixes directly,
+// and a team-planner corrects, all through the shipped seeds.
+const customReviewerWorkflow = `name: custom-review
+inputs: { plans: required }
+start: plans
+steps:
+  plans: { for-each: plans, on: { next: build, empty: done } }
+  build: { run: builder, seed: "{{plans.current}}", on: { done: review } }
+  review: { run: team-reviewer, seed: shipped:review, on: { verdict=pass: plans, verdict=changes: fix-direct } }
+  fix-direct: { run: builder, seed: shipped:fix-direct, budget: { max: 1, per: plans, then: correct }, on: { done: review } }
+  correct: { run: team-planner, seed: shipped:correct, on: { done: rebuild } }
+  rebuild: { run: builder, seed: "{{correct.plan}}", on: { done: review } }
+`
+
+// TestSavedWorkflowCustomReviewerReachesItsSeeds pins the saved-workflow
+// reviewer lookup: with no legacy columns, the fix-direct and correct seeds
+// still name the reviewer's output, resolved through the workflow's review
+// step and the chain's member rows.
+func TestSavedWorkflowCustomReviewerReachesItsSeeds(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	rows := chainRows()
+	rows["team-reviewer"] = roles.Row{
+		Shape:       ptr("reader"),
+		Candidates:  []string{testClaudeRef},
+		Definitions: map[string]roles.DefRow{"claude": {Agent: "reviewer"}},
+	}
+	rows["team-planner"] = rows["lite-planner"]
+	rt.Registry = rolesFileRegistry(t, rt.Candidates, rt.Policy, rows)
+	startFlowChain(t, rt, customReviewerWorkflow)
+
+	row := flowChainRow(t, rt)
+	if row.Reviewer != "" || row.Planner != "" {
+		t.Fatalf("chain columns reviewer=%q planner=%q, want both empty on a saved workflow", row.Reviewer, row.Planner)
+	}
+
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	chainReaderClose(t, rt, "shop-team-reviewer", chainVerdictBody("changes"))
+
+	builder := chainBinding(t, rt, "shop")
+	if builder.Round != 2 {
+		t.Fatalf("builder round = %d, want the fix-direct round 2", builder.Round)
+	}
+	prompt, err := rt.Store.ReadFile(rt.Store.PromptPath("shop", builder.Round))
+	if err != nil {
+		t.Fatalf("read the fix-direct prompt: %v", err)
+	}
+	rev := chainBinding(t, rt, "shop-team-reviewer")
+	output := seedCopy(t, rt, rt.Store.OutputPath("shop-team-reviewer", 1, rev.WriterRole(), readerOutputLabel(rt, rev)))
+	if !strings.Contains(string(prompt), "Reviewer's output: "+output+".") {
+		t.Errorf("fix-direct prompt does not name the reviewer's output %s:\n%s", output, prompt)
+	}
+
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	chainReaderClose(t, rt, "shop-team-reviewer", chainVerdictBody("changes"))
+
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
+	if err != nil {
+		t.Fatalf("chain.WorkflowState: %v", err)
+	}
+	if st.Awaiting.Step != "correct" {
+		t.Fatalf("awaiting = %+v, want the correct step after two changes on one plan", st.Awaiting)
+	}
+	planner := chainBinding(t, rt, "shop-team-planner")
+	if planner.Round != 1 {
+		t.Fatalf("planner round = %d, want the correct round 1", planner.Round)
+	}
+	correctPrompt, err := rt.Store.ReadFile(rt.Store.PromptPath("shop-team-planner", planner.Round))
+	if err != nil {
+		t.Fatalf("read the correct prompt: %v", err)
+	}
+	rev2 := chainBinding(t, rt, "shop-team-reviewer")
+	output2 := seedCopy(t, rt, rt.Store.OutputPath("shop-team-reviewer", 2, rev2.WriterRole(), readerOutputLabel(rt, rev2)))
+	if !strings.Contains(string(correctPrompt), "Reviewer's output: "+output2+".") {
+		t.Errorf("correct prompt does not name the reviewer's output %s:\n%s", output2, correctPrompt)
+	}
+}

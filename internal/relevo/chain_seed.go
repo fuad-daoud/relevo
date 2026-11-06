@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/capture"
@@ -276,4 +278,31 @@ func chainSeedInput(rt Runtime, c db.ChainRow, path string) string {
 		return chain.SeedMissing(err)
 	}
 	return dest
+}
+
+// chainSeedStepBinding names the member whose output a seed reads: the member
+// behind the step whose seed is want. A set legacy column wins, so a shipped
+// chain keeps its columns. Step ids sort because the definition keeps steps in
+// a map, and the newest closed report wins among several actors, so a
+// correction answers the latest review. No such step reads "", which the
+// caller words as a missing input.
+func chainSeedStepBinding(tx *store.Tx, c db.ChainRow, def workflow.Definition, fallback, want string) string {
+	if fallback != "" {
+		return fallback
+	}
+	best, bestRound := "", -1
+	for _, id := range slices.Sorted(maps.Keys(def.Steps)) {
+		step := def.Steps[id]
+		if step.Seed != want {
+			continue
+		}
+		member, err := chainFlowMemberName(tx, c, workflow.RenderParams(def, step.Run))
+		if err != nil {
+			continue
+		}
+		if round := chain.NewestClosedRound(tx, member); round > bestRound {
+			best, bestRound = member, round
+		}
+	}
+	return best
 }
