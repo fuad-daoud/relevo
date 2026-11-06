@@ -31,10 +31,17 @@ const KeyJoin = "sync.join"
 // tells a long join from a stalled one without asking the remote.
 type JoinProgress struct {
 	At time.Time `json:"at"`
+	// Sent is how many entries of a locked join's owed history have gone out, so
+	// a reader sees that a long send is moving.
+	Sent int `json:"sent,omitempty"`
 }
 
 func WriteJoin(local Local, at time.Time) error {
-	body, err := json.Marshal(JoinProgress{At: at.UTC()})
+	return writeJoin(local, JoinProgress{At: at.UTC()})
+}
+
+func writeJoin(local db.KV, progress JoinProgress) error {
+	body, err := json.Marshal(progress)
 	if err != nil {
 		return fmt.Errorf("sync: join marker: %w", err)
 	}
@@ -46,7 +53,7 @@ func WriteJoin(local Local, at time.Time) error {
 
 // ReadJoin returns the join marker; one that will not parse is a failure rather
 // than absent, so a join in progress never reads as a machine at rest.
-func ReadJoin(local Local) (JoinProgress, bool, error) {
+func ReadJoin(local db.KV) (JoinProgress, bool, error) {
 	body, ok, err := local.KVGet(KeyJoin)
 	if err != nil {
 		return JoinProgress{}, false, fmt.Errorf("sync: join marker: %w", err)
@@ -61,7 +68,7 @@ func ReadJoin(local Local) (JoinProgress, bool, error) {
 	return progress, true, nil
 }
 
-func ClearJoin(local Local) error {
+func ClearJoin(local db.KV) error {
 	if err := local.KVDelete(KeyJoin); err != nil {
 		return fmt.Errorf("sync: join marker: %w", err)
 	}
@@ -396,8 +403,8 @@ func (e *Enabler) join(transport synclog.LogTransport, now time.Time) (res Enabl
 		return res, err
 	}
 	// A locked machine still turns on, or unlock -- which needs sync on -- could
-	// never run. The marker stays while this origin's history is owed; FinishJoin
-	// sends it once there is a key.
+	// never run. The marker stays while this origin's history is owed; the steady
+	// attempts send it once there is a key.
 	if res.Locked {
 		return res, nil
 	}
@@ -405,22 +412,6 @@ func (e *Enabler) join(transport synclog.LogTransport, now time.Time) (res Enabl
 		return res, err
 	}
 	return res, nil
-}
-
-// FinishJoin sends what a locked join left owed, signed now that there is a key.
-// A machine with no join marker has nothing owed.
-func (e *Enabler) FinishJoin(transport synclog.LogTransport) (int, error) {
-	if _, joining, err := ReadJoin(e.Request.Local); err != nil || !joining {
-		return 0, err
-	}
-	appended, _, err := e.reconcile(transport)
-	if err != nil {
-		return appended, err
-	}
-	if err := e.publishMarks(transport); err != nil {
-		return appended, err
-	}
-	return appended, ClearJoin(e.Request.Local)
 }
 
 // JoinImportDeadline bounds the join's import loop, which runs long by design

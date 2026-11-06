@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db/wire"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
@@ -96,5 +97,49 @@ func TestStatusSaysLockedWhenTheRemoteHasAKeyAndThisMachineDoesNot(t *testing.T)
 	}
 	if doc, _ = dbSyncStatusRead(local, shared.Origin()); doc.Key != "unlocked" {
 		t.Errorf("key = %q, want unlocked", doc.Key)
+	}
+}
+
+func TestUnlockedLineSaysWhenHistoryIsStillGoing(t *testing.T) {
+	t.Parallel()
+	if got := unlockedLine(&wire.SyncResult{OK: true}); got != "unlocked" {
+		t.Errorf("nothing owed prints %q, want just unlocked", got)
+	}
+	got := unlockedLine(&wire.SyncResult{OK: true, Sending: true})
+	for _, want := range []string{"unlocked", "still being sent", "relevo db sync status"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("owing history prints %q, which does not name %q", got, want)
+		}
+	}
+	for _, want := range []string{"still running in the daemon", "relevo db sync status"} {
+		if !strings.Contains(unlockContinuesLine, want) {
+			t.Errorf("the continue line %q does not name %q", unlockContinuesLine, want)
+		}
+	}
+}
+
+func TestStatusCountsTheOwedHistorySent(t *testing.T) {
+	t.Parallel()
+	shared, err := db.OpenSplit(t.TempDir()+"/relevo.db", db.Options{})
+	if err != nil {
+		t.Fatalf("OpenSplit: %v", err)
+	}
+	t.Cleanup(func() { _ = shared.Close() })
+	local, err := relevosync.LocalHandle(shared)
+	if err != nil {
+		t.Fatalf("LocalHandle: %v", err)
+	}
+	if err := local.KVPut(relevosync.KeyJoin, []byte(`{"at":"2026-01-02T03:04:05Z","sent":512}`)); err != nil {
+		t.Fatalf("KVPut: %v", err)
+	}
+	doc, err := dbSyncStatusRead(local, shared.Origin())
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if doc.JoinSent != 512 {
+		t.Errorf("JoinSent = %d, want 512", doc.JoinSent)
+	}
+	if line := dbSyncStatusLine(doc); !strings.Contains(line, "512 of this machine's entries sent") {
+		t.Errorf("status line = %q, want the count", line)
 	}
 }

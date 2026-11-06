@@ -221,7 +221,7 @@ func dbSyncStatusRead(local relevosync.Local, origin string) (dbSyncStatusDoc, e
 		return dbSyncStatusDoc{}, dbSyncClassify(err)
 	}
 	if joining {
-		doc.Joining, doc.JoinSince = true, statusStamp(progress.At)
+		doc.Joining, doc.JoinSince, doc.JoinSent = true, statusStamp(progress.At), progress.Sent
 	}
 	if pending := relevosync.AdoptPending(local); pending != "" {
 		doc.AdoptPending = pending

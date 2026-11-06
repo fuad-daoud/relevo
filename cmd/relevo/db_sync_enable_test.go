@@ -35,8 +35,8 @@ func TestEnableContinuesInDaemonIsTheClientBound(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := enableContinuesInDaemon(tc.err); got != tc.want {
-				t.Errorf("enableContinuesInDaemon(%v) = %v, want %v", tc.err, got, tc.want)
+			if got := verbContinuesInDaemon(tc.err); got != tc.want {
+				t.Errorf("verbContinuesInDaemon(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
 	}

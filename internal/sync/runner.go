@@ -41,6 +41,12 @@ type Runner struct {
 	// which is the bound production runs under; a test shortens it so a step
 	// that overruns is reached without waiting the real bound out.
 	Timeout time.Duration
+	// OwedSlice is how long one attempt sends a locked join's owed history. Zero
+	// means DefaultOwedSlice; a test shortens it to reach a send that spans attempts.
+	OwedSlice time.Duration
+	// owed is the walk of that history, kept between attempts so each row is read
+	// once. Only the attempt holding the sync slot touches it.
+	owed *owedWalk
 	// Blobs returns the in-process bucket store, or nil when the machine has no
 	// bucket. It is a func so the credentials are read when needed.
 	Blobs func() blobstore.BlobStore

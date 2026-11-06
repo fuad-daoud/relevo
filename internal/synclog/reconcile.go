@@ -157,6 +157,13 @@ func (r *Reconciler) reset() {
 	r.pending = nil
 }
 
+// Rebind points a run in progress at the transport of a later attempt, keeping its
+// place in the walk and the head it read.
+func (r *Reconciler) Rebind(t LogTransport) {
+	r.transport = t
+	r.mover, r.staging = blobWiring(t)
+}
+
 // RepairBodies makes the run upload every body of this origin's rows that the
 // bucket does not hold, present being the keys it does hold.
 func (r *Reconciler) RepairBodies(present map[string]bool) {

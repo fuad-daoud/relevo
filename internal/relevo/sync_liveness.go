@@ -121,6 +121,11 @@ func (d *Daemon) outboxPending() bool {
 	if !d.holdsSigningKey() {
 		return false
 	}
+	// A locked join's owed history goes out one attempt at a time, and an idle
+	// machine's outbox may be empty while it does.
+	if _, owed, err := relevosync.ReadJoin(d.syncRunner().Local); err == nil && owed {
+		return true
+	}
 	signals, err := mdb.DocSignals()
 	if err != nil {
 		slog.Debug("sync: probe the doc signals", "err", err)

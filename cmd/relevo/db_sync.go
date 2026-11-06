@@ -43,7 +43,9 @@ const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [-
 	"deletes included: the repair for a log that missed this machine's writes.\n" +
 	"--dry-run lists the same rows and appends nothing. unlock stores\n" +
 	"the sync key derived from the passphrase; --new creates it on a remote that\n" +
-	"holds none. The passphrase comes from --passphrase-stdin, else " + dbSyncPassphraseEnv + ",\n" +
+	"holds none, and any history a locked join still owes goes out afterwards in\n" +
+	"the daemon, which status shows. The passphrase comes from --passphrase-stdin,\n" +
+	"else " + dbSyncPassphraseEnv + ",\n" +
 	"else a prompt. rekey rotates the log's key to a new epoch: the machine must\n" +
 	"be unlocked, the current passphrase is checked against the remote before\n" +
 	"anything is written, and the new one comes from " + dbSyncNewPassphraseEnv + "\n" +
@@ -310,7 +312,7 @@ func cmdDBSyncEnable(args []string) error {
 	}
 	res, err := sendSyncVerbToken(ctx, shared, wire.SyncVerbEnable, tail, opts)
 	if err != nil {
-		if !enableContinuesInDaemon(err) {
+		if !verbContinuesInDaemon(err) {
 			return err
 		}
 		if *v.asJSON {
@@ -342,12 +344,11 @@ func cmdDBSyncEnable(args []string) error {
 // where to watch it and how to resume it.
 const enableContinuesLine = "sync enable: the join is still running in the daemon; `relevo db sync status` shows it"
 
-// enableContinuesInDaemon reports whether a failed enable call is the client's
-// own bound ending a reply wait after the frame reached the daemon. Only then is
-// a join in progress, which re-running enable resumes; a deadline from the dial,
-// the handshake or a partly written frame started no join, so there is nothing
-// still running to report.
-func enableContinuesInDaemon(err error) bool {
+// verbContinuesInDaemon reports whether a failed call is the client's own bound
+// ending a reply wait after the frame reached the daemon. Only then is the verb
+// still running; a deadline from the dial, the handshake or a partly written frame
+// started nothing, so there is nothing still running to report.
+func verbContinuesInDaemon(err error) bool {
 	return errors.Is(err, client.ErrAwaitingReply) && errors.Is(err, context.DeadlineExceeded)
 }
 

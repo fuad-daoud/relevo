@@ -218,3 +218,47 @@ func TestReconcileCutsBetweenUpsertsAndDeletes(t *testing.T) {
 		t.Fatalf("reconcile once every batch is through: %v", err)
 	}
 }
+
+// countingAppends counts the appends that come through this handle of the log.
+type countingAppends struct {
+	*MemTransport
+	appends int
+}
+
+func (c *countingAppends) Append(entries []Entry) ([]Entry, error) {
+	c.appends++
+	return c.MemTransport.Append(entries)
+}
+
+// A rebound run keeps its place and sends the rest through the new transport.
+func TestRebindCarriesAWalkOverToAnotherTransport(t *testing.T) {
+	t.Parallel()
+	d, path := exporterFile(t, "m1")
+	for i := range 300 {
+		seed(t, path, insertBinding(fmt.Sprintf("%04d", i), "m1"))
+	}
+	log := NewMemTransport("m1")
+	first := &countingAppends{MemTransport: log}
+	second := &countingAppends{MemTransport: log}
+	r := reconciler(d, first)
+	if _, err := r.ReconcileBatch(); err != nil {
+		t.Fatalf("first batch: %v", err)
+	}
+
+	r.Rebind(second)
+	for {
+		one, err := r.ReconcileBatch()
+		if err != nil {
+			t.Fatalf("batch: %v", err)
+		}
+		if !one.More() {
+			break
+		}
+	}
+	if first.appends != 1 || second.appends == 0 {
+		t.Errorf("appends = %d then %d, want one through the first and the rest through the second", first.appends, second.appends)
+	}
+	if head, err := log.Head("m1"); err != nil || len(head) != 300 {
+		t.Errorf("head holds %d rows (%v), want every row once", len(head), err)
+	}
+}

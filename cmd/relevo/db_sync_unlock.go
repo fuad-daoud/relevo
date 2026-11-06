@@ -58,6 +58,22 @@ func dbSyncUnlockFlagSet(fs *flag.FlagSet) *dbSyncUnlockFlagValues {
 type dbSyncUnlockDoc struct {
 	Unlocked bool `json:"unlocked"`
 	Created  bool `json:"created"`
+	// Sending says this machine's history is still going out, in the daemon.
+	Sending bool `json:"sending,omitempty"`
+	// Pending says the client stopped waiting before the daemon answered.
+	Pending bool `json:"pending,omitempty"`
+}
+
+// unlockContinuesLine is what an unlock prints when the client's own wait runs out
+// first: the daemon still has the passphrase, so a second unlock would only queue.
+const unlockContinuesLine = "sync unlock: still running in the daemon; `relevo db sync status` shows the key once it is done"
+
+// unlockedLine is what a finished unlock prints.
+func unlockedLine(res *wire.SyncResult) string {
+	if res.Sending {
+		return "unlocked; this machine's history is still being sent, `relevo db sync status` shows it"
+	}
+	return "unlocked"
 }
 
 // dbSyncPassphrase resolves the passphrase: standard input, else the environment,
@@ -136,12 +152,19 @@ func cmdDBSyncUnlock(args []string) error {
 	res, err := sendSyncVerbToken(ctx, shared, wire.SyncVerbUnlock, pass,
 		dbSyncVerbOptions{Timeout: dbSyncDefaultTimeout, New: *v.isNew})
 	if err != nil {
-		return err
+		if !verbContinuesInDaemon(err) {
+			return err
+		}
+		if *v.asJSON {
+			return printDoc(dbSyncUnlockDoc{Pending: true})
+		}
+		fmt.Println(unlockContinuesLine)
+		return nil
 	}
 	if *v.asJSON {
-		return printDoc(dbSyncUnlockDoc{Unlocked: true, Created: res.Created})
+		return printDoc(dbSyncUnlockDoc{Unlocked: true, Created: res.Created, Sending: res.Sending})
 	}
-	fmt.Println("unlocked")
+	fmt.Println(unlockedLine(res))
 	return nil
 }
 

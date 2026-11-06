@@ -19,7 +19,7 @@ import (
 
 // unlockVerb unlocks the machine through the verb a person runs, which is
 // where the steps that follow the key's storing live.
-func (m *cfgMachine) unlockVerb(t *testing.T, isNew bool) {
+func (m *cfgMachine) unlockVerb(t *testing.T, isNew bool) *wire.SyncResult {
 	t.Helper()
 	runner := &syncverb.Runner{
 		Shared: m.mdb,
@@ -29,8 +29,35 @@ func (m *cfgMachine) unlockVerb(t *testing.T, isNew bool) {
 		Open:   func(context.Context) (synclog.LogTransport, error) { return m.transport(), nil },
 	}
 	verb := &wire.SyncVerb{Verb: wire.SyncVerbUnlock, New: isNew}
-	if res := runner.Run(context.Background(), verb, fleetPass); !res.OK {
+	res := runner.Run(context.Background(), verb, fleetPass)
+	if !res.OK {
 		t.Fatalf("unlock refused: %s (%s)", res.Message, res.Code)
+	}
+	return res
+}
+
+// An unlock answers once the key is stored: the history a locked join owes can take
+// far longer than a caller waits, so the answer says it is owed and leaves it to the
+// steady attempts.
+func TestUnlockLeavesTheOwedHistoryToTheAttempts(t *testing.T) {
+	t.Parallel()
+	log := synclog.NewMemTransport("x")
+	m := newCfgMachine(t, log, nil, true)
+	if res := m.unlockVerb(t, true); res.Sending {
+		t.Error("an unlock with nothing owed says history is being sent")
+	}
+
+	if err := relevosync.DeleteKey(m.local); err != nil {
+		t.Fatalf("DeleteKey: %v", err)
+	}
+	if err := relevosync.WriteJoin(m.local, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("WriteJoin: %v", err)
+	}
+	if res := m.unlockVerb(t, false); !res.Sending {
+		t.Error("an unlock owing history does not say so")
+	}
+	if _, joining, err := relevosync.ReadJoin(m.local); err != nil || !joining {
+		t.Errorf("the marker reads (%v, %v) after the unlock, want it left for the attempts", joining, err)
 	}
 }
 
