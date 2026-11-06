@@ -82,13 +82,17 @@ func switchesForRound(events []store.LogEntry, n int) int {
 
 // candidateForRound resolves round n's candidate from the round's own last pick
 // or switch entry's note, else the builder earlier rounds left running, else
-// b.BuilderCandidate when no round records one. A pick naming another actor is a
-// consult's and is skipped. candidateTok is verbatim; ref sheds a trailing
-// "#...", since a ":effort" suffix belongs to the model.
+// what the next switch replaced, else b.BuilderCandidate when no round records
+// one. A pick naming another actor is a consult's and is skipped. candidateTok
+// is verbatim; ref sheds a trailing "#...", since a ":effort" suffix belongs to
+// the model.
 func candidateForRound(events []store.LogEntry, n int, b store.Binding) (candidateTok string, ref candidate.Ref, ok bool) {
 	tok := lastBuilderToken(events, b.WriterRole(), func(round int) bool { return round == n })
 	if tok == "" {
 		tok = lastBuilderToken(events, b.WriterRole(), func(round int) bool { return round > 0 && round < n })
+	}
+	if tok == "" {
+		tok = candidateBeforeNextSwitch(events, n)
 	}
 	if tok == "" {
 		tok = b.BuilderCandidate
@@ -103,6 +107,53 @@ func candidateForRound(events []store.LogEntry, n int, b store.Binding) (candida
 	return tok, ref, true
 }
 
+// candidateBeforeNextSwitch is the candidate the first switch after round n
+// replaced, which is what round n ran on when no earlier entry names it: a
+// served binding's log can hold no pick at all, and the binding's own candidate
+// is by then the newest one. "" when no later round switched, or when its notes
+// name only the new candidate.
+func candidateBeforeNextSwitch(events []store.LogEntry, n int) string {
+	next := 0
+	for _, e := range events {
+		if e.Round > n && isBuilderSwitch(e) && (next == 0 || e.Round < next) {
+			next = e.Round
+		}
+	}
+	if next == 0 {
+		return ""
+	}
+	for _, e := range events {
+		if e.Round != next || !isBuilderSwitch(e) {
+			continue
+		}
+		if tok := switchedFrom(e.Note); tok != "" {
+			return tok
+		}
+	}
+	return ""
+}
+
+// isBuilderSwitch reports whether e records the builder changing. The switch
+// kind also carries nudges, stalls, relaunches and a switch that found no one.
+func isBuilderSwitch(e store.LogEntry) bool {
+	return e.Kind == store.KindSwitch && strings.HasPrefix(e.Note, "switched ") && parseSwitchNote(e.Note) != ""
+}
+
+// switchedFrom parses the token before "->" in a "switched [on server:] a -> b"
+// note. A pick clause's note may carry an arrow inside its reason and names no
+// old candidate, so it yields "", as does an arrow with nothing named before it.
+func switchedFrom(note string) string {
+	i := strings.LastIndex(note, "->")
+	if i < 0 || strings.Contains(note, "picked ") {
+		return ""
+	}
+	fields := strings.Fields(note[:i])
+	if len(fields) < 2 || strings.HasSuffix(fields[len(fields)-1], ":") {
+		return ""
+	}
+	return fields[len(fields)-1]
+}
+
 // lastBuilderToken is the token of the last pick or switch entry in rounds
 // inRound accepts that names the builder actor plays.
 func lastBuilderToken(events []store.LogEntry, actor string, inRound func(int) bool) string {
@@ -114,7 +165,11 @@ func lastBuilderToken(events []store.LogEntry, actor string, inRound func(int) b
 		if e.Kind == store.KindPick && isOtherActorPick(e.Note, actor) {
 			continue
 		}
-		tok = parseBuilderNote(e.Kind, e.Note)
+		// The switch kind also carries nudges and failed switches, which name no
+		// one and must not erase the builder an earlier entry named.
+		if named := parseBuilderNote(e.Kind, e.Note); named != "" {
+			tok = named
+		}
 	}
 	return tok
 }
