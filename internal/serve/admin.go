@@ -26,6 +26,7 @@ type OwnerStatus struct {
 	Label    string      // Clients.LabelOf
 	LastSeen time.Time   // max over the owner's bindings of Serve.LastSeen; zero when none
 	Report   view.Report // relevo.Status over that owner's runtime
+	Strays   []StrayWorktree
 }
 
 // isolationView stamps the server's isolation facts onto v: the mode always,
@@ -135,11 +136,18 @@ func AdminStatus(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([
 			row.Queued = &remote.QueueView{Position: i + 1, Ahead: i, Running: c.Running, Cap: builders.Cap, Since: q.QueuedAt}
 			row.BuilderStatus = fmt.Sprintf("queued %s (%d ahead)", view.AgeText(now.Sub(q.QueuedAt)), i)
 		}
+		// Strays are server-local facts read beside the rows, never on a tick:
+		// the walk shells to git per tree, too costly for every reconcile.
+		strays, err := listOwnerStrays(ctx, rt, strayOwnerRef(s, id), now)
+		if err != nil {
+			return nil, remote.BuildersView{}, err
+		}
 		owners = append(owners, OwnerStatus{
 			Owner:    id,
 			Label:    label,
 			LastSeen: lastSeen,
 			Report:   rep,
+			Strays:   strays,
 		})
 	}
 
@@ -257,10 +265,11 @@ func (s *Server) BurstStatus() *BurstStatus {
 }
 
 type OwnerJSON struct {
-	Owner    string      `json:"owner"`
-	Label    string      `json:"label"`
-	LastSeen *time.Time  `json:"last_seen"`
-	Report   view.Report `json:"report"`
+	Owner    string          `json:"owner"`
+	Label    string          `json:"label"`
+	LastSeen *time.Time      `json:"last_seen"`
+	Report   view.Report     `json:"report"`
+	Strays   []StrayWorktree `json:"strays,omitempty"`
 }
 
 func StatusDocument(owners []OwnerStatus, builders remote.BuildersView) StatusJSON {
@@ -275,6 +284,7 @@ func StatusDocument(owners []OwnerStatus, builders remote.BuildersView) StatusJS
 			Owner:  string(o.Owner),
 			Label:  o.Label,
 			Report: o.Report,
+			Strays: o.Strays,
 		}
 		if !o.LastSeen.IsZero() {
 			seen := o.LastSeen.UTC()
