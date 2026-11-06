@@ -9,11 +9,16 @@ import (
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
-// DefaultOwedSlice is how long one attempt sends a locked join's owed history
-// before it gives the sync slot back. A verb queues for the slot under its client's
-// bound, DefaultTimeout, so a slice has to end well inside that bound or every verb
-// run during a long send would time out.
-const DefaultOwedSlice = DefaultTimeout - 5*time.Second
+// A verb queues for the sync slot under its client's bound, DefaultTimeout, so what
+// one attempt spends on a locked join's owed history has to end well inside that or
+// every verb run during a long send would time out. A slice cannot interrupt a batch,
+// and a batch of bodies takes far longer than one of rows, so both are bounded.
+const (
+	// DefaultOwedSlice is how long one attempt sends before it gives the slot back.
+	DefaultOwedSlice = DefaultTimeout / 2
+	// owedChunk is how many rows one batch carries.
+	owedChunk = 64
+)
 
 // owedWalk is one run over this machine's file, with the transport it was started
 // on. A walk never outlives that transport's client: a re-enable may have pointed
@@ -76,6 +81,7 @@ func (r *Runner) owedWalkOn(shared *db.DB, t *StopTransport, key []byte) *owedWa
 		return r.owed
 	}
 	reconciler := synclog.NewReconciler(shared, t)
+	reconciler.SetChunk(owedChunk)
 	reconciler.SetKey(key)
 	BindDocs(reconciler, shared)
 	r.owed = &owedWalk{reconciler: reconciler, client: r.Client}

@@ -157,6 +157,12 @@ func (r *Reconciler) reset() {
 	r.pending = nil
 }
 
+// SetChunk sets how many rows one batch carries, for a caller that has to get back
+// to something else sooner than a full chunk of bodies would let it.
+func (r *Reconciler) SetChunk(rows int) {
+	r.chunk = rows
+}
+
 // Rebind points a run in progress at the transport of a later attempt, keeping its
 // place in the walk and the head it read.
 func (r *Reconciler) Rebind(t LogTransport) {

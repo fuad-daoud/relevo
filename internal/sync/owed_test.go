@@ -171,8 +171,8 @@ func TestTheOwedHistorySpansAttemptsAndHoldsTheOutboxBack(t *testing.T) {
 	if err != nil || !joining {
 		t.Fatalf("after one slice the marker reads (%v, %v), want it still set", joining, err)
 	}
-	if progress.Sent == 0 {
-		t.Error("the marker counts nothing sent after one slice")
+	if progress.Sent == 0 || progress.Sent > owedChunk {
+		t.Errorf("one batch sent %d entries, want between 1 and %d", progress.Sent, owedChunk)
 	}
 	if progress.At.IsZero() {
 		t.Error("recording progress lost when the join began")
