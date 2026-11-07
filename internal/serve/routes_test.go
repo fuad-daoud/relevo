@@ -50,6 +50,7 @@ func enrolledServer(t *testing.T) (*Server, remote.Keypair) {
 	if _, err := srv.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), "", time.Now()); err != nil {
 		t.Fatalf("clients.Add: %v", err)
 	}
+	trackOwnerTmp(t, srv, remote.IDOf(kp.Public))
 	return srv, kp
 }
 

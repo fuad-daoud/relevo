@@ -15,6 +15,7 @@ func TestRuntimeAtWiresRemoteSend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	trackTmpRoot(t, s, filepath.Join(root, "bindings", "aaa"))
 	rt := s.runtimeAt(filepath.Join(root, "bindings", "aaa"))
 	if rt.RemoteSend.Send == nil || rt.RemoteSend.Ship == nil || rt.RemoteSend.Record == nil {
 		t.Fatal("runtimeAt left the RemoteSend hook empty")

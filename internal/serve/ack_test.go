@@ -134,6 +134,43 @@ func TestAckRoundSettlesPending(t *testing.T) {
 	}
 }
 
+// TestServedRoundStartsWhileTmpReadsFull pins the link's reason to exist: a
+// served round starts while /tmp itself reads under the 5 GB minimum, because
+// the disk preflight measures through the link onto the serve filesystem. The
+// resolving DiskFree stub reports plenty under the serve root and 1 GiB
+// everywhere else, so only a measurement through the link can admit the round.
+func TestServedRoundStartsWhileTmpReadsFull(t *testing.T) {
+	var serveRoot string
+	env := setupTestEnv(t, func(c *Config) {
+		c.DiskFree = func(p string) (uint64, error) {
+			real := p
+			if resolved, err := filepath.EvalSymlinks(p); err == nil {
+				real = resolved
+			}
+			if serveRoot != "" && insideRoot(serveRoot, real) {
+				return 100 << 30, nil
+			}
+			return 1 << 30, nil
+		}
+	})
+	// Resolved like the measured paths: on macOS the temp dir sits behind
+	// /var -> /private/var.
+	resolvedRoot, err := filepath.EvalSymlinks(env.srv.cfg.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serveRoot = resolvedRoot
+
+	resp, body := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan 1")
+	requireCreated(t, resp, body, "api")
+	if view := decodeView(t, body); view.RoundState != remote.RoundRunning {
+		t.Fatalf("round_state = %q, want running while /tmp reads full", view.RoundState)
+	}
+	if len(startedSpecs(env)) == 0 {
+		t.Fatal("no builder spec started, want the round running")
+	}
+}
+
 // TestDoneSettlesClosedRounds: done must settle up to the closed round for a
 // DONE binding whose last acked round trails it, so nothing is left pending.
 func TestDoneSettlesClosedRounds(t *testing.T) {
@@ -208,6 +245,7 @@ func TestSettleAllServedBackfills(t *testing.T) {
 			t.Fatal("client id has no owner dir")
 		}
 		ownerRoot := filepath.Join(srv.cfg.Root, "bindings", dir)
+		trackTmpRoot(t, srv, ownerRoot)
 		rt := srv.runtimeAt(ownerRoot)
 
 		b := store.Binding{

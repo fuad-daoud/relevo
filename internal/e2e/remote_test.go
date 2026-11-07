@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -154,10 +155,18 @@ func newServerWithContext(t *testing.T, ctx context.Context, cancel context.Canc
 		t.Fatal("timed out waiting for server address")
 	}
 
-	t.Cleanup(func() {
-		cancel()
-		<-errCh
-	})
+	// shutdown stops the tick loop exactly once: the link tracker below
+	// shuts the server down before removing its link, so a background tick
+	// cannot recreate the link after the removal, and this cleanup then
+	// finds nothing left to stop.
+	var shutdownOnce sync.Once
+	shutdown := func() {
+		shutdownOnce.Do(func() {
+			cancel()
+			<-errCh
+		})
+	}
+	t.Cleanup(shutdown)
 
 	url := "https://" + addr.String()
 	srvStore := func(owner remote.ClientID) *store.Store {
@@ -165,7 +174,24 @@ func newServerWithContext(t *testing.T, ctx context.Context, cancel context.Canc
 		return store.NewShared(filepath.Join(root, "bindings", dir), string(owner), machineDB)
 	}
 
-	return srv, url, fp, enroll, srvStore, runner
+	// The enrolled owner's rounds resolve its runtime, which plants its served
+	// tmp link under /tmp; resolving here learns the same path so each test
+	// removes its own link. The server goes down first: its tick loop would
+	// otherwise recreate the link after the removal.
+	tracked := func(pub string) remote.ClientID {
+		id := enroll(pub)
+		rt, err := srv.OwnerRuntime(id)
+		if err != nil {
+			t.Fatalf("owner runtime: %v", err)
+		}
+		t.Cleanup(func() {
+			shutdown()
+			_ = os.RemoveAll(rt.TmpRoot)
+		})
+		return id
+	}
+
+	return srv, url, fp, tracked, srvStore, runner
 }
 
 func newClient(t *testing.T, url, fingerprint string) (relevo.Runtime, remote.Keypair) {

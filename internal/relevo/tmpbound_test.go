@@ -14,11 +14,11 @@ import (
 // TestTmpDirLengthBound pins the budget end to end: the longest TMPDIR
 // relevo hands a served or local round or check, plus the socket suffix,
 // stays under the sun_path limit. The served root below has ownerTmpDir's
-// shape (tmp/t/<8>); the local root is tmpdir.TempDir's (<state>/tmp).
+// shape (/tmp/rv-<8>); the local root is tmpdir.TempDir's (<state>/tmp).
 func TestTmpDirLengthBound(t *testing.T) {
 	t.Parallel()
 
-	servedRoot := filepath.Join("/home", "u", ".local", "state", "relevo-serve", "tmp", "t", strings.Repeat("a", 8))
+	servedRoot := filepath.Join("/tmp", "rv-"+strings.Repeat("a", 8))
 	localRoot := filepath.Join("/home", "u", ".local", "state", "relevo", "tmp")
 	longestName := strings.Repeat("n", store.MaxAgentNameLen)
 	zeroID := remote.ClientID("SHA256:" + base64.RawStdEncoding.EncodeToString(make([]byte, 32)))

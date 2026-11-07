@@ -134,6 +134,7 @@ func TestListenWhoAmI(t *testing.T) {
 			if _, err := srv.clients.Add(tc.label, remote.MarshalPublic(kp.Public, tc.label), "", now); err != nil {
 				t.Fatal(err)
 			}
+			trackOwnerTmp(t, srv, remote.IDOf(kp.Public))
 
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()

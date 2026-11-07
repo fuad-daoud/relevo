@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -71,6 +72,8 @@ func TestServerSourceRuntimeSplitsKey(t *testing.T) {
 	if !ok {
 		t.Fatal("Runtime(<id>/persist) = !ok, want ok")
 	}
+	// Resolving the runtime plants the owner's served tmp link under /tmp.
+	t.Cleanup(func() { _ = os.RemoveAll(rt.TmpRoot) })
 	if name != "persist" {
 		t.Errorf("name = %q, want persist", name)
 	}

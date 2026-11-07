@@ -1,6 +1,7 @@
 package housekeep
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -98,5 +99,35 @@ func TestTmpOverBudgetRule(t *testing.T) {
 	}
 	if maxTmpDirLen+TmpSocketSuffixLen >= 108 {
 		t.Errorf("bound %d + suffix %d must stay under 108", maxTmpDirLen, TmpSocketSuffixLen)
+	}
+}
+
+// TestTmpSocketSuffixCoversChromium pins the socket budget against its
+// longest known consumer: a Chromium singleton lock, a temp profile dir
+// org.chromium.Chromium.XXXXXX under TMPDIR plus /SingletonSocket. A
+// /tmp/rv-<8> served check dir stays quiet while a 64-byte one under a
+// state root warns.
+func TestTmpSocketSuffixCoversChromium(t *testing.T) {
+	t.Parallel()
+
+	const chromiumSuffix = "/org.chromium.Chromium.XXXXXX/SingletonSocket"
+	if len(chromiumSuffix) != 45 {
+		t.Fatalf("chromium suffix fixture is %d bytes, want 45", len(chromiumSuffix))
+	}
+	if TmpSocketSuffixLen < len(chromiumSuffix) {
+		t.Errorf("TmpSocketSuffixLen = %d, want at least %d to cover the Chromium socket", TmpSocketSuffixLen, len(chromiumSuffix))
+	}
+
+	unit := "relevo-gate-abcdef12-shop-check-3"
+	short := filepath.Join("/tmp", "rv-"+strings.Repeat("a", 8), SubChecks, ShortCheckID(unit))
+	if TmpOverBudget(short) {
+		t.Errorf("short served check dir %q (%d bytes) must stay under budget", short, len(short))
+	}
+	long := filepath.Join("/home", "u", ".local", "state", "relevo-serve", "tmp", "t", strings.Repeat("a", 8), SubChecks, ShortCheckID(unit))
+	if len(long) != 64 {
+		t.Fatalf("long-dir fixture is %d bytes, want 64", len(long))
+	}
+	if !TmpOverBudget(long) {
+		t.Errorf("64-byte dir %q under a state root must warn", long)
 	}
 }

@@ -1276,6 +1276,7 @@ func TestWhoAmIAdvertisesChain(t *testing.T) {
 	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	trackOwnerTmp(t, s, remote.IDOf(kp.Public))
 
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, signedRequest(t, kp, "GET", "/v1/whoami", nil))
@@ -1554,6 +1555,7 @@ func TestWhoAmIAdvertisesWorkflow(t *testing.T) {
 	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	trackOwnerTmp(t, s, remote.IDOf(kp.Public))
 
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, signedRequest(t, kp, "GET", "/v1/whoami", nil))

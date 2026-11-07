@@ -41,7 +41,8 @@ func (s *Server) Tick(ctx context.Context) error {
 	// Reconcile each owner on its own, with no server-wide lock held, so one
 	// owner's slow builder cannot hold up another's.
 	for _, owner := range owners {
-		d := relevo.NewDaemon(s.runtimeAt(owner.root), s.cfg.Interval)
+		rt := s.runtimeAt(owner.root)
+		d := relevo.NewDaemon(rt, s.cfg.Interval)
 		if at, ok := s.tmpSweptAt.Load(owner.root); ok {
 			d.SetTmpSweptAt(at.(time.Time))
 		}

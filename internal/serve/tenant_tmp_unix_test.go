@@ -5,10 +5,14 @@ package serve
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/isolate"
 	"github.com/fuad-daoud/relevo/internal/proc"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 )
@@ -123,6 +127,58 @@ func TestTmpDirRunnerKeepsTheInheritedTmpDir(t *testing.T) {
 	}
 	if v := os.Getenv("TMPDIR"); v != user {
 		t.Fatalf("TMPDIR = %q, want the user's %q", v, user)
+	}
+}
+
+// TestEnsureTmpLinkRefusesForeignOwnedLink pins the link's ownership check
+// through a direct call: a link another uid owns is refused untouched, even
+// when it already points at the target. The fake euid stands in for a tenant
+// the link does not belong to, so the test needs no root.
+func TestEnsureTmpLinkRefusesForeignOwnedLink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	const foreign = 4294967294
+	if err := ensureTmpLink(link, target, foreign); err == nil {
+		t.Fatal("ensureTmpLink accepted a foreign-owned link")
+	} else if !strings.Contains(err.Error(), link) {
+		t.Errorf("refusal = %q, want it to name the planted link", err)
+	}
+	if got, err := os.Readlink(link); err != nil || got != target {
+		t.Errorf("the refused link now points at %q (%v), want it left alone", got, err)
+	}
+}
+
+// TestUserModeTmpLinkBelongsToServe pins whose link it is in user mode: serve
+// makes it, so it belongs to serve's euid, never the tenant's. The tenant here
+// has a uid nothing on disk owns, so a check against the tenant would refuse
+// the link serve itself made on the first resolution.
+func TestUserModeTmpLinkBelongsToServe(t *testing.T) {
+	env := newUserTestEnv(t, "alice")
+	ownerRoot := ownerRootOf(t, env)
+	link := env.srv.ownerTmpDir(ownerRoot)
+	t.Cleanup(func() { _ = os.RemoveAll(link) })
+	tenant := isolate.Tenant{User: "alice", UID: 4294967294, GID: uint32(os.Getgid()), Home: "/home/alice"}
+	for i := range 2 {
+		if err := env.srv.ensureTenantRoots(env.id, tenant); err != nil {
+			t.Fatalf("resolution %d: %v", i+1, err)
+		}
+	}
+	fi, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ouid, _, ok := db.StatOwner(fi); ok && ouid != uint32(os.Geteuid()) {
+		t.Errorf("link owner = %d, want serve's euid %d", ouid, os.Geteuid())
+	}
+	if got, err := os.Readlink(link); err != nil || got != env.srv.ownerTmpTarget(ownerRoot) {
+		t.Errorf("link = %q, %v; want it pointing at the target", got, err)
 	}
 }
 

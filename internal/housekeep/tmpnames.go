@@ -18,8 +18,11 @@ const (
 
 // TmpSocketSuffixLen is the longest socket file name held under a handed-out
 // temp directory: every TMPDIR relevo hands out must leave room for it under
-// Linux's 108-byte sun_path limit.
-const TmpSocketSuffixLen = 40
+// Linux's 108-byte sun_path limit. The longest known consumer is a Chromium
+// singleton lock: a temp profile directory org.chromium.Chromium.XXXXXX under
+// TMPDIR plus /SingletonSocket, 1 + 22 + 6 + 1 + 15 = 45 bytes including the
+// leading slash.
+const TmpSocketSuffixLen = 45
 
 // maxTmpDirLen is the longest temp directory relevo hands out: sun_path
 // holds 108 bytes NUL included, so 107 usable bytes must fit the directory
@@ -92,6 +95,6 @@ func WarnTmpOverBudget(dir string) {
 		return
 	}
 	tmpBudgetWarned.Do(func() {
-		slog.Warn("tmp dir leaves under 40 bytes for a socket path; tests that bind a socket under TMPDIR may fail", "dir", dir, "len", len(dir))
+		slog.Warn("tmp dir leaves under 45 bytes for a socket path; tests that bind a socket under TMPDIR may fail", "dir", dir, "len", len(dir))
 	})
 }

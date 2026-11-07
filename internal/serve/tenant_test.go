@@ -71,6 +71,7 @@ func newUserTestEnv(t *testing.T, unixUser string, cfgOpts ...func(*Config)) *te
 	if _, err := srv.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), unixUser, time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	trackOwnerTmp(t, srv, id)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 
