@@ -314,7 +314,7 @@ func chainRemoteLocalBinding(ctx context.Context, rt Runtime, opts ChainOptions,
 	server := rp.server
 	if err := rt.Git.CreateBranch(ctx, plan.repo, branch, base); err != nil {
 		if errors.Is(err, git.ErrBranchExists) {
-			return store.Binding{}, fmt.Errorf("branch relevo/%s exists; delete it or pick another name", name)
+			return store.Binding{}, localBranchTaken(branch)
 		}
 		return store.Binding{}, err
 	}
