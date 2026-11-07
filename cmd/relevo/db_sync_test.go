@@ -371,6 +371,31 @@ func TestDBSyncRemoteRefusalIsRefusedNotInternal(t *testing.T) {
 	}
 }
 
+// A bucket turning the R2 key down is the key's problem: a retry can clear it,
+// and a bug report can't.
+func TestDBSyncBucketRefusalNamesTheKeyAndARetry(t *testing.T) {
+	t.Parallel()
+
+	classified := dbSyncVerbRefusal(wire.SyncVerbEnable, &client.VerbRefusal{
+		Code:    wire.SyncCodeBucketRefused,
+		Message: "sync: enable: estimate the join: sync: list the bucket: blobstore: s3: 401 Unauthorized: Unauthorized",
+	})
+
+	var got *cliError
+	if !errors.As(classified, &got) {
+		t.Fatalf("classified = %v, want a cliError", classified)
+	}
+	if got.code != codeRemoteAuth {
+		t.Errorf("code = %q, want %q", got.code, codeRemoteAuth)
+	}
+	if got.next != "relevo db sync enable" {
+		t.Errorf("next = %q, want the verb again", got.next)
+	}
+	if !strings.Contains(got.Error(), "check the R2 key") {
+		t.Errorf("message %q doesn't name the key", got.Error())
+	}
+}
+
 // TestDBSyncBackoffIsRefusedWithRetry pins the refusal a verb gets while the
 // breaker waits out a stopped worker: nothing was written, the delay ends on
 // its own, and the way out is the retry verb. Classifying it internal would

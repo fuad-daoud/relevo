@@ -215,20 +215,23 @@ type hookEnvelope struct {
 	} `json:"hookSpecificOutput"`
 }
 
-// generousNoticeTimeout runs a healthy-path notice test under a budget no
-// healthy hook can miss, so the test pins what the hook says rather than how
-// fast it says it. The lock test keeps the production budget.
-func generousNoticeTimeout(t *testing.T) {
+// generousHookTimeouts runs a healthy-path hook test under budgets no healthy
+// hook can miss, so the test pins what the hook says rather than how fast it
+// says it. An init hook past its budget answers empty and writes no baseline,
+// which a loaded machine would otherwise report as a wrong answer. The lock
+// test keeps the production budget.
+func generousHookTimeouts(t *testing.T) {
 	t.Helper()
-	orig := mastermindNoticeTimeout
-	mastermindNoticeTimeout = time.Minute
-	t.Cleanup(func() { mastermindNoticeTimeout = orig })
+	origNotice, origInit := mastermindNoticeTimeout, mastermindInitTimeout
+	mastermindNoticeTimeout, mastermindInitTimeout = time.Minute, time.Minute
+	t.Cleanup(func() { mastermindNoticeTimeout, mastermindInitTimeout = origNotice, origInit })
 }
 
 // TestMasterMindInitHookAlwaysExitsZero is the hook's contract: a
 // hook failure must never block a Claude Code session, so malformed or
 // incomplete stdin still exits 0 and answers on stdout with the note envelope.
 func TestMasterMindInitHookAlwaysExitsZero(t *testing.T) {
+	generousHookTimeouts(t)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	// Never write to whatever the developer's own CLAUDE_ENV_FILE names.
 	t.Setenv("CLAUDE_ENV_FILE", "")
@@ -263,6 +266,7 @@ func TestMasterMindInitHookAlwaysExitsZero(t *testing.T) {
 // registers a mastermind, appends the export line to $CLAUDE_ENV_FILE, and tells
 // the model which mastermind it is.
 func TestMasterMindInitHookWritesEnvFile(t *testing.T) {
+	generousHookTimeouts(t)
 	state := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", state)
 	envFile := filepath.Join(t.TempDir(), "claude-env")
@@ -320,6 +324,7 @@ func TestMasterMindInitHookWritesEnvFile(t *testing.T) {
 // additionalContext says RELEVO_MASTERMIND could not be exported and that relevo
 // resolves the session through its host process instead.
 func TestMasterMindInitHookWithoutEnvFileSaysSo(t *testing.T) {
+	generousHookTimeouts(t)
 	state := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", state)
 	t.Setenv("CLAUDE_ENV_FILE", "")
@@ -358,6 +363,7 @@ func TestMasterMindInitHookWithoutEnvFileSaysSo(t *testing.T) {
 // registers nothing and injects the ask-note, so the model puts the question
 // to the human.
 func TestMasterMindInitHookAsksWhenRepoUnanswered(t *testing.T) {
+	generousHookTimeouts(t)
 	state := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", state)
 	t.Setenv("CLAUDE_ENV_FILE", "")
@@ -384,6 +390,7 @@ func TestMasterMindInitHookAsksWhenRepoUnanswered(t *testing.T) {
 // TestMasterMindInitHookStaysSilentWhenRepoSaysNo pins the no answer: no
 // context and no record.
 func TestMasterMindInitHookStaysSilentWhenRepoSaysNo(t *testing.T) {
+	generousHookTimeouts(t)
 	state := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", state)
 	t.Setenv("CLAUDE_ENV_FILE", "")
@@ -405,6 +412,7 @@ func TestMasterMindInitHookStaysSilentWhenRepoSaysNo(t *testing.T) {
 // TestMasterMindInitHookIgnoresANonRepo pins the no-repository rule: there is
 // nothing to remember, so the session is left entirely alone.
 func TestMasterMindInitHookIgnoresANonRepo(t *testing.T) {
+	generousHookTimeouts(t)
 	state := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", state)
 	t.Setenv("CLAUDE_ENV_FILE", "")
@@ -426,6 +434,7 @@ func TestMasterMindInitHookIgnoresANonRepo(t *testing.T) {
 // session that answered no stays silent even when the repository answered yes,
 // and registers nothing.
 func TestMasterMindInitHookSessionNoHidesAYesRepo(t *testing.T) {
+	generousHookTimeouts(t)
 	state := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", state)
 	t.Setenv("CLAUDE_ENV_FILE", "")
@@ -452,6 +461,7 @@ func TestMasterMindInitHookSessionNoHidesAYesRepo(t *testing.T) {
 // session precedence: a session that answered yes registers even when the
 // repository has not answered.
 func TestMasterMindInitHookSessionYesRegistersInAnUnsetRepo(t *testing.T) {
+	generousHookTimeouts(t)
 	state := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", state)
 	envFile := filepath.Join(t.TempDir(), "claude-env")
@@ -481,6 +491,7 @@ func TestMasterMindInitHookSessionYesRegistersInAnUnsetRepo(t *testing.T) {
 // TestMasterMindInitHookWritesToldBaseline pins that the hook records what it
 // just told the session, so the next prompt's notice has something to compare.
 func TestMasterMindInitHookWritesToldBaseline(t *testing.T) {
+	generousHookTimeouts(t)
 	state := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", state)
 	t.Setenv("CLAUDE_ENV_FILE", "")
@@ -589,6 +600,7 @@ func TestMasterMindInitHookLockedDatabaseStillAnswersEmptyFast(t *testing.T) {
 // error branch: a database that cannot be opened fails the run, and the hook
 // still exits 0 with the failure note on stdout and the error on stderr.
 func TestMasterMindInitHookBrokenDatabaseAnswersTheFailureNote(t *testing.T) {
+	generousHookTimeouts(t)
 	state := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", state)
 	t.Setenv("CLAUDE_ENV_FILE", "")
@@ -1165,6 +1177,7 @@ func TestMasterMindGuideStaysSilentForARunner(t *testing.T) {
 // note. A runner gets the empty object for any payload -- malformed included
 // -- and writes no record, no told baseline and nothing to $CLAUDE_ENV_FILE.
 func TestMasterMindInitHookStaysSilentForARunner(t *testing.T) {
+	generousHookTimeouts(t)
 	t.Setenv("RELEVO_RUNNER", "api")
 
 	cases := []struct {
@@ -1258,7 +1271,7 @@ func TestMasterMindNoticeHook(t *testing.T) {
 	}
 
 	t.Run("no change is the empty object", func(t *testing.T) {
-		generousNoticeTimeout(t)
+		generousHookTimeouts(t)
 		state := t.TempDir()
 		t.Setenv("XDG_STATE_HOME", state)
 		t.Setenv("CLAUDE_ENV_FILE", "")
@@ -1278,7 +1291,7 @@ func TestMasterMindNoticeHook(t *testing.T) {
 	})
 
 	t.Run("an enable from elsewhere carries the notice", func(t *testing.T) {
-		generousNoticeTimeout(t)
+		generousHookTimeouts(t)
 		state := t.TempDir()
 		t.Setenv("XDG_STATE_HOME", state)
 		t.Setenv("CLAUDE_ENV_FILE", "")
@@ -1311,7 +1324,7 @@ func TestMasterMindNoticeHook(t *testing.T) {
 	})
 
 	t.Run("a rename is the rename line", func(t *testing.T) {
-		generousNoticeTimeout(t)
+		generousHookTimeouts(t)
 		state := t.TempDir()
 		t.Setenv("XDG_STATE_HOME", state)
 		t.Setenv("CLAUDE_ENV_FILE", "")
@@ -1341,7 +1354,7 @@ func TestMasterMindNoticeHook(t *testing.T) {
 	})
 
 	t.Run("a NULL baseline is written and stays silent", func(t *testing.T) {
-		generousNoticeTimeout(t)
+		generousHookTimeouts(t)
 		state := t.TempDir()
 		t.Setenv("XDG_STATE_HOME", state)
 		t.Setenv("CLAUDE_ENV_FILE", "")
@@ -1363,7 +1376,7 @@ func TestMasterMindNoticeHook(t *testing.T) {
 	})
 
 	t.Run("a broken payload exits 0 with the empty object", func(t *testing.T) {
-		generousNoticeTimeout(t)
+		generousHookTimeouts(t)
 		state := t.TempDir()
 		t.Setenv("XDG_STATE_HOME", state)
 		for _, payload := range []string{"not json at all", `{"session_id":"s"}`, `{"hook_event_name":"UserPromptSubmit","cwd":"/tmp"}`} {
@@ -1381,7 +1394,7 @@ func TestMasterMindNoticeHook(t *testing.T) {
 	})
 
 	t.Run("nothing outside a repo without a session answer", func(t *testing.T) {
-		generousNoticeTimeout(t)
+		generousHookTimeouts(t)
 		state := t.TempDir()
 		t.Setenv("XDG_STATE_HOME", state)
 		t.Setenv("CLAUDE_ENV_FILE", "")
@@ -1464,7 +1477,7 @@ func TestMasterMindNoticeHook(t *testing.T) {
 	})
 
 	t.Run("a broken database still exits 0 with the empty object", func(t *testing.T) {
-		generousNoticeTimeout(t)
+		generousHookTimeouts(t)
 		state := t.TempDir()
 		t.Setenv("XDG_STATE_HOME", state)
 		t.Setenv("CLAUDE_ENV_FILE", "")

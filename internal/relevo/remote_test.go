@@ -1572,8 +1572,8 @@ func TestAddRemoteBranchExistsUnbindsServer(t *testing.T) {
 	}
 
 	_, err := Add(ctx, rt, opts)
-	if err == nil || !strings.Contains(err.Error(), "branch relevo/api exists; delete it or pick another name") {
-		t.Fatalf("got err %v, want 'branch relevo/api exists...'", err)
+	if !errors.Is(err, git.ErrBranchExists) || !strings.Contains(err.Error(), "branch relevo/api exists in this repository on this machine") {
+		t.Fatalf("got err %v, want the branch conflict naming this machine's copy", err)
 	}
 
 	// Verify unbind was called on server
@@ -1586,6 +1586,57 @@ func TestAddRemoteBranchExistsUnbindsServer(t *testing.T) {
 	}
 	if !foundUnbind {
 		t.Fatalf("Unbind was not called on server, calls = %v", fr.calls)
+	}
+}
+
+// A branch the client already holds is refused before the server hears of the
+// name, so the clash costs no server row.
+func TestAddRemoteTakenBranchNeverReachesTheServer(t *testing.T) {
+	fg := &fakeGit{
+		headCommitID:  "1111111111111111111111111111111111111111",
+		rootCommitSHA: "2222222222222222222222222222222222222222",
+		branchExists:  true,
+	}
+	fr := &fakeRemote{createBindingResp: remote.BindingView{Name: "api"}}
+	rt := Runtime{
+		Store:       store.New(t.TempDir()),
+		MasterMinds: addRemoteMasterMind(t),
+		Git:         fg,
+		Remote:      fr,
+		Now:         time.Now,
+	}
+
+	_, err := Add(context.Background(), rt, AddOptions{Name: "api", Server: "zen", Repo: "/fake/repo"})
+	if !errors.Is(err, git.ErrBranchExists) {
+		t.Fatalf("err = %v, want the branch conflict", err)
+	}
+	if slices.Contains(fr.calls, "CreateBinding:zen:api") {
+		t.Errorf("calls = %v, want no CreateBinding for a taken branch", fr.calls)
+	}
+}
+
+// A name this machine already binds is the caller's input, refused with the ways
+// out before the server hears of it.
+func TestAddRemoteRefusesANameBoundHere(t *testing.T) {
+	st := store.New(t.TempDir())
+	if err := st.Save(store.Binding{Name: "api", CWD: t.TempDir(), State: store.StateActive}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	fr := &fakeRemote{createBindingResp: remote.BindingView{Name: "api"}}
+	rt := Runtime{
+		Store:       st,
+		MasterMinds: addRemoteMasterMind(t),
+		Git:         &fakeGit{headCommitID: "1111111111111111111111111111111111111111", rootCommitSHA: "2222222222222222222222222222222222222222"},
+		Remote:      fr,
+		Now:         time.Now,
+	}
+
+	_, err := Add(context.Background(), rt, AddOptions{Name: "api", Server: "zen", Repo: "/fake/repo"})
+	if !errors.Is(err, refusal.ErrBadInput) || !strings.Contains(err.Error(), "relevo bind --resume --name api") {
+		t.Fatalf("err = %v, want a bad-input refusal naming the ways out", err)
+	}
+	if slices.Contains(fr.calls, "CreateBinding:zen:api") {
+		t.Errorf("calls = %v, want no CreateBinding", fr.calls)
 	}
 }
 

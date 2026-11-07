@@ -147,7 +147,9 @@ scans the builder's last output for the harness's
 rate-limit text and records a `rate_limited` gate (`source relevo`, the
 matched line) on a match, parsing the line's own reset time when it names
 one (`Resets in 2h48m52s`, `resets 7pm`) or using `limit_gate_default_ms`
-otherwise, then switches uncounted toward `max_switches`. `relevo
+otherwise, then switches uncounted toward `max_switches`. A reset that has
+already passed gates nothing, so that switch does count: a provider that keeps
+refusing ends in `NEEDS YOU` rather than a loop on the same candidate. `relevo
 gate` still overrides; `relevo gate --clear` undoes a false positive.
 
 ## Round budget
