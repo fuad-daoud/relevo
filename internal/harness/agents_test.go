@@ -70,6 +70,33 @@ func TestPlanExecutorGateRunsInForegroundOnEveryKind(t *testing.T) {
 	}
 }
 
+func TestPlanExecutorHoldsScopeTestsAndClaimsOnEveryKind(t *testing.T) {
+	fragments := []string{
+		"The plan is not exempt from them.",
+		"never in the repository, even if you would delete them before the commit",
+		`Before you write "Deviations: none", compare ` + "`git diff --stat`" + ` against the plan.`,
+		"A step you cannot finish halts the round.",
+		"is reached by a test that fails without it",
+		"A test runs the path the real command takes.",
+		"Never bend a test to fit.",
+		"Break it yourself:",
+		"names the command or file it came from, and you saw that output in this round",
+		"Check that the source can see what you claim.",
+		"- Mutations: each condition you broke",
+	}
+	for _, kind := range []string{"claude", "opencode", "agy", "codex", "muse"} {
+		doc, err := AgentDoc("plan-executor", kind)
+		if err != nil {
+			t.Fatalf("AgentDoc(plan-executor, %s): %v", kind, err)
+		}
+		for _, want := range fragments {
+			if !strings.Contains(string(doc), want) {
+				t.Errorf("plan-executor.%s must contain %q", kind, want)
+			}
+		}
+	}
+}
+
 func TestPlanExecutorVerifiesAHalfDoneTree(t *testing.T) {
 	const fragment = "do not redo the step: verify what is there against the step's text"
 	for _, kind := range []string{"claude", "opencode", "agy", "codex"} {
