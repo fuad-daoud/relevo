@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -37,7 +38,10 @@ func TestDroppedActorCandidatesNamesNewlyDropped(t *testing.T) {
 		Actors:     `{"builder":{"agent":"w","candidates":["m","agy/q/n"]}}`,
 	})
 
-	drops := DroppedActorCandidates(old, new)
+	drops, err := DroppedActorCandidates(old, new)
+	if err != nil {
+		t.Fatalf("DroppedActorCandidates: %v", err)
+	}
 	want := []string{"actor builder names candidate m"}
 	if len(drops) != len(want) || drops[0] != want[0] {
 		t.Fatalf("drops = %q, want %q", drops, want)
@@ -56,7 +60,10 @@ func TestDroppedActorCandidatesCountsOffEntries(t *testing.T) {
 		Actors:     `{"builder":{"agent":"w","candidates":[{"candidate":"m","off":true}]}}`,
 	})
 
-	drops := DroppedActorCandidates(old, new)
+	drops, err := DroppedActorCandidates(old, new)
+	if err != nil {
+		t.Fatalf("DroppedActorCandidates: %v", err)
+	}
 	if len(drops) != 1 || !strings.Contains(drops[0], "builder") || !strings.Contains(drops[0], "m") {
 		t.Errorf("drops = %q, want the off entry's drop named", drops)
 	}
@@ -77,7 +84,11 @@ func TestDroppedActorCandidatesIgnoresAlreadyDanglingRefs(t *testing.T) {
 		Actors:     `{"builder":{"agent":"w","candidates":["gone"]}}`,
 	})
 
-	if drops := DroppedActorCandidates(old, new); len(drops) != 0 {
+	drops, err := DroppedActorCandidates(old, new)
+	if err != nil {
+		t.Fatalf("DroppedActorCandidates: %v", err)
+	}
+	if len(drops) != 0 {
 		t.Errorf("drops = %q, want none for a reference that never resolved", drops)
 	}
 }
@@ -95,7 +106,11 @@ func TestDroppedActorCandidatesAllowsAddingCandidatesBack(t *testing.T) {
 		Actors:     `{"builder":{"agent":"w","candidates":["m"]}}`,
 	})
 
-	if drops := DroppedActorCandidates(old, new); len(drops) != 0 {
+	drops, err := DroppedActorCandidates(old, new)
+	if err != nil {
+		t.Fatalf("DroppedActorCandidates: %v", err)
+	}
+	if len(drops) != 0 {
 		t.Errorf("drops = %q, want none when the write adds candidates back", drops)
 	}
 }
@@ -106,7 +121,11 @@ func TestDroppedActorCandidatesWithoutActorsIsNil(t *testing.T) {
 	old := docOf(map[Section]string{Candidates: guardCandidates})
 	new := docOf(map[Section]string{Candidates: `[]`})
 
-	if drops := DroppedActorCandidates(old, new); len(drops) != 0 {
+	drops, err := DroppedActorCandidates(old, new)
+	if err != nil {
+		t.Fatalf("DroppedActorCandidates: %v", err)
+	}
+	if len(drops) != 0 {
 		t.Errorf("drops = %q, want nil when no actor names anything", drops)
 	}
 }
@@ -122,7 +141,10 @@ func TestDroppedActorCandidatesFallsBackToOldActors(t *testing.T) {
 	})
 	new := docOf(map[Section]string{Candidates: `[{"harness":"agy","provider":"q","model":"n"}]`})
 
-	drops := DroppedActorCandidates(old, new)
+	drops, err := DroppedActorCandidates(old, new)
+	if err != nil {
+		t.Fatalf("DroppedActorCandidates: %v", err)
+	}
 	if len(drops) != 1 || !strings.Contains(drops[0], "builder") {
 		t.Errorf("drops = %q, want the stored actor's drop", drops)
 	}
@@ -137,11 +159,65 @@ func TestDroppedActorCandidatesOrdersByActorName(t *testing.T) {
 	})
 	new := docOf(map[Section]string{Candidates: `[]`})
 
-	drops := DroppedActorCandidates(old, new)
+	drops, err := DroppedActorCandidates(old, new)
+	if err != nil {
+		t.Fatalf("DroppedActorCandidates: %v", err)
+	}
 	if len(drops) != 2 {
 		t.Fatalf("drops = %q, want two", drops)
 	}
 	if !strings.HasPrefix(drops[0], "actor alpha ") || !strings.HasPrefix(drops[1], "actor zulu ") {
 		t.Errorf("drops = %q, want them in sorted actor order", drops)
+	}
+}
+
+func TestDroppedActorCandidatesRefusesAnUnparseableNewListNamingTheCandidate(t *testing.T) {
+	t.Parallel()
+
+	old := docOf(map[Section]string{
+		Candidates: guardCandidates,
+		Actors:     `{"builder":{"agent":"w","candidates":["m","agy/q/n"]}}`,
+	})
+	new := docOf(map[Section]string{
+		Candidates: `[{"harness":"claude","provider":"p","model":"m"},{"harness":"agy","provider":"q","model":"n"},{"name":"inkling-2-small-free-high","harness":"opencode","provider":"opencode","model":"inkling-2-small-free#high"}]`,
+		Actors:     `{"builder":{"agent":"w","candidates":["m","agy/q/n"]}}`,
+	})
+
+	drops, err := DroppedActorCandidates(old, new)
+	if err == nil {
+		t.Fatalf("err = nil, want the new list's parse error naming the candidate (drops = %q)", drops)
+	}
+	if !errors.Is(err, ErrInvalidValue) {
+		t.Errorf("err = %v, want it to carry ErrInvalidValue", err)
+	}
+	if !strings.Contains(err.Error(), "inkling-2-small-free-high") {
+		t.Errorf("err = %q, want it to name the candidate", err)
+	}
+	if len(drops) != 0 {
+		t.Errorf("drops = %q, want none: an unparseable new list is never read as dropped", drops)
+	}
+}
+
+func TestDroppedActorCandidatesAllowsRepairWhenOldListIsUnparseable(t *testing.T) {
+	t.Parallel()
+
+	// A stored list that does not parse reads as the empty set, so every
+	// actor reference counts as already broken and the repair write is
+	// allowed through to the store's own check.
+	old := docOf(map[Section]string{
+		Candidates: `[{"name":"inkling-2-small-free-high","harness":"opencode","provider":"opencode","model":"x"}]`,
+		Actors:     `{"builder":{"agent":"w","candidates":["m"]}}`,
+	})
+	new := docOf(map[Section]string{
+		Candidates: guardCandidates,
+		Actors:     `{"builder":{"agent":"w","candidates":["m"]}}`,
+	})
+
+	drops, err := DroppedActorCandidates(old, new)
+	if err != nil {
+		t.Fatalf("DroppedActorCandidates: %v", err)
+	}
+	if len(drops) != 0 {
+		t.Errorf("drops = %q, want none when the old list never resolved", drops)
 	}
 }
