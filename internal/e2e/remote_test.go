@@ -165,7 +165,20 @@ func newServerWithContext(t *testing.T, ctx context.Context, cancel context.Canc
 		return store.NewShared(filepath.Join(root, "bindings", dir), string(owner), machineDB)
 	}
 
-	return srv, url, fp, enroll, srvStore, runner
+	// The enrolled owner's rounds resolve its runtime, which plants its served
+	// tmp root under /tmp; resolving here learns the same path so each test
+	// removes its own directory.
+	tracked := func(pub string) remote.ClientID {
+		id := enroll(pub)
+		rt, err := srv.OwnerRuntime(id)
+		if err != nil {
+			t.Fatalf("owner runtime: %v", err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(rt.TmpRoot) })
+		return id
+	}
+
+	return srv, url, fp, tracked, srvStore, runner
 }
 
 func newClient(t *testing.T, url, fingerprint string) (relevo.Runtime, remote.Keypair) {

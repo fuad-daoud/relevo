@@ -46,6 +46,7 @@ func reloadingServer(t *testing.T) (*Server, string) {
 // snapshot for its whole life.
 func TestTickReloadsConfigWithoutRestart(t *testing.T) {
 	s, root := reloadingServer(t)
+	trackTmpRoot(t, s, filepath.Join(root, "bindings", "owner"))
 
 	if got := s.cap(); got == 7 {
 		t.Fatalf("cap before any config = %d; the test cannot distinguish a reload", got)
@@ -445,6 +446,7 @@ func TestReloadIsWireAdditive(t *testing.T) {
 // which is what an admin verb and an embedded server do.
 func TestNilReloaderKeepsStartupConfig(t *testing.T) {
 	s, root := newTestServer(t, 0)
+	trackTmpRoot(t, s, filepath.Join(root, "bindings", "owner"))
 	putConfig(t, s, config.Candidates, reloadCandidateJSON)
 
 	if err := s.Tick(context.Background()); err != nil {

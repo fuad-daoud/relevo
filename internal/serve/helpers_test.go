@@ -455,6 +455,7 @@ func setupTestEnv(t *testing.T, cfgOpts ...func(*Config)) *testEnv {
 	if _, err := srv.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	trackOwnerTmp(t, srv, id)
 
 	transport := remote.NewBundleTransport(gitClient, t.TempDir())
 
@@ -498,11 +499,34 @@ func (env *testEnv) runtime(t *testing.T) relevo.Runtime {
 
 func testRuntime(t *testing.T, s *Server, id remote.ClientID) relevo.Runtime {
 	t.Helper()
+	trackOwnerTmp(t, s, id)
 	rt, err := s.runtime(id)
 	if err != nil {
 		t.Fatalf("runtime(%s): %v", id, err)
 	}
 	return rt
+}
+
+// trackOwnerTmp removes one owner's served tmp root when the test ends: every
+// mode that runs builders on this host plants /tmp/rv-<8> on the first runtime
+// resolution, so a test that resolves a runtime or ticks with the owner
+// enrolled would otherwise litter the shared /tmp. The path is a digest of
+// this server's root and the owner, so only this test's directory goes, never
+// another serve's or production's.
+func trackOwnerTmp(t *testing.T, s *Server, id remote.ClientID) {
+	t.Helper()
+	root, err := s.ownerRoot(id)
+	if err != nil {
+		t.Fatalf("ownerRoot: %v", err)
+	}
+	trackTmpRoot(t, s, root)
+}
+
+// trackTmpRoot removes one owner-rooted served tmp root when the test ends,
+// for tests whose owner root is not an enrolled client id.
+func trackTmpRoot(t *testing.T, s *Server, ownerRoot string) {
+	t.Helper()
+	t.Cleanup(func() { _ = os.RemoveAll(s.ownerTmpDir(ownerRoot)) })
 }
 
 func newTestServer(t *testing.T, maxBundleBytes int64) (*Server, string) {
@@ -544,6 +568,7 @@ func addOwner(t *testing.T, env *testEnv, label string) ownerEnv {
 	if _, err := env.srv.clients.Add(label, remote.MarshalPublic(kp.Public, label), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	trackOwnerTmp(t, env.srv, id)
 
 	return ownerEnv{kp: kp, id: id, clientDir: clientDir, headSHA: headSHA, repoID: repoID}
 }

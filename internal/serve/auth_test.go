@@ -155,6 +155,7 @@ func TestReplayAcrossServersIsRefused(t *testing.T) {
 		if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), "", time.Now()); err != nil {
 			t.Fatalf("clients.Add: %v", err)
 		}
+		trackOwnerTmp(t, s, remote.IDOf(kp.Public))
 		return s
 	}
 	serverA := newServer([]string{fpA})

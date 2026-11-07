@@ -299,6 +299,7 @@ func TestRuntimeAtWiresCloseServedRound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	trackTmpRoot(t, s, filepath.Join(root, "bindings", "aaa"))
 	rt := s.runtimeAt(filepath.Join(root, "bindings", "aaa"))
 	if rt.CloseServedRound == nil {
 		t.Fatal("CloseServedRound is nil: owner runtimes must serve the close")

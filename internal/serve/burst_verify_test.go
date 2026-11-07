@@ -74,6 +74,7 @@ func startBurstNode(t *testing.T, enroll *remote.Keypair) (nodeSrv *Server, ts *
 		if _, err := nodeSrv.clients.Add("head", remote.MarshalPublic(enroll.Public, "head"), "", time.Now()); err != nil {
 			t.Fatalf("enroll head on node: %v", err)
 		}
+		trackOwnerTmp(t, nodeSrv, remote.IDOf(enroll.Public))
 	}
 	ts = httptest.NewUnstartedServer(nodeSrv.Handler())
 	ts.TLS = &tls.Config{Certificates: []tls.Certificate{cert}}

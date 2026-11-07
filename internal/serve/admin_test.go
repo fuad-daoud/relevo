@@ -62,6 +62,7 @@ func enrol(t *testing.T, s *Server, label string) remote.ClientID {
 	if _, err := s.clients.Add(label, remote.MarshalPublic(kp.Public, label), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	trackOwnerTmp(t, s, id)
 	return id
 }
 
@@ -84,6 +85,7 @@ func saveOwnerBinding(t *testing.T, s *Server, id remote.ClientID, name string, 
 
 func ownerRuntime(t *testing.T, s *Server, id remote.ClientID) relevo.Runtime {
 	t.Helper()
+	trackOwnerTmp(t, s, id)
 	rt, err := s.runtime(id)
 	if err != nil {
 		t.Fatalf("runtime(%s): %v", id, err)

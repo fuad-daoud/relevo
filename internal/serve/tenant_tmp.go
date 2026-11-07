@@ -18,7 +18,9 @@ import (
 
 // ownerTmpDir is the temp directory one owner writes through: /tmp/rv-<8>,
 // a digest of the serve root and the owner id, so two serves on one host
-// never share a directory and a restart finds the same one. The literal /tmp
+// never share a directory and a restart finds the same one. Eight hex is a
+// 32-bit truncation of a uniform digest, safe among the handful of owners on
+// one host. The literal /tmp
 // keeps the root plus a rounds/ or checks/ leaf short enough to leave room
 // for a socket name under the sun_path limit. /tmp is hostile -- aged and
 // writable by every tenant -- so every resolution verifies the root with

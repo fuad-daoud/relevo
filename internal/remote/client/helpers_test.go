@@ -131,6 +131,13 @@ func startTestServer(t *testing.T) (*client.Client, *testServerFixture) {
 	kp := generateKey(t)
 	enrollTestClient(t, machineDB, serverRoot, kp)
 	srv := newTestServer(t, serverRoot, machineDB, cSet, runner, gitClient, []string{fingerprint})
+	// Learning the owner's tmp root resolves its runtime, which plants the
+	// same directory the test's rounds would; the cleanup removes it.
+	rt, err := srv.OwnerRuntime(remote.IDOf(kp.Public))
+	if err != nil {
+		t.Fatalf("owner runtime: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(rt.TmpRoot) })
 	ts := newTestTLSServer(t, srv, cert)
 
 	cl := client.New(pinnedServers(ts.URL, fingerprint), kp, time.Now)

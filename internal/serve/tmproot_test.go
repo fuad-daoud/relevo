@@ -23,6 +23,8 @@ func TestRuntimeAtTmpRootPerOwner(t *testing.T) {
 	}
 	dirA := filepath.Join(root, "bindings", "aaa")
 	dirB := filepath.Join(root, "bindings", "bbb")
+	trackTmpRoot(t, s, dirA)
+	trackTmpRoot(t, s, dirB)
 	rtA := s.runtimeAt(dirA)
 	rtB := s.runtimeAt(dirB)
 
@@ -134,6 +136,7 @@ func TestTickPacesTmpSweepAcrossTicks(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	owner := filepath.Join(root, "bindings", strings.Repeat("a", 64))
+	trackTmpRoot(t, s, owner)
 	if err := os.MkdirAll(owner, 0o700); err != nil {
 		t.Fatal(err)
 	}

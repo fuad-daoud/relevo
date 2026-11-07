@@ -335,6 +335,7 @@ func TestWhoAmI(t *testing.T) {
 	if _, err := s.clients.Add("alice", pubLine, "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	trackOwnerTmp(t, s, id)
 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, signedRequest(t, kp, "GET", "/v1/whoami", nil))
@@ -508,6 +509,7 @@ func TestWhoAmIAdvertisesCandidateAndActors(t *testing.T) {
 	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	trackOwnerTmp(t, s, remote.IDOf(kp.Public))
 
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, signedRequest(t, kp, "GET", "/v1/whoami", nil))
@@ -543,6 +545,7 @@ func TestWhoAmIAdvertisesChainMember(t *testing.T) {
 	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	trackOwnerTmp(t, s, remote.IDOf(kp.Public))
 
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, signedRequest(t, kp, "GET", "/v1/whoami", nil))
@@ -576,6 +579,7 @@ func TestWhoAmIScope(t *testing.T) {
 	if _, err := scoped.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	trackOwnerTmp(t, scoped, remote.IDOf(kp.Public))
 
 	rec := httptest.NewRecorder()
 	scoped.Handler().ServeHTTP(rec, signedRequest(t, kp, "GET", "/v1/whoami", nil))
@@ -787,6 +791,7 @@ func TestOwnerDirIsFlatHex(t *testing.T) {
 	if _, err := s.clients.Add("creator", remote.MarshalPublic(kp.Public, "creator"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	trackOwnerTmp(t, s, id)
 
 	createBody, _ := json.Marshal(remote.CreateBindingRequest{
 		Name:       "api",
@@ -852,6 +857,7 @@ func newTierTestServer(t *testing.T, pol policy.Policy) (*Server, remote.Keypair
 	if _, err := srv.clients.Add("creator", remote.MarshalPublic(kp.Public, "creator"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	trackOwnerTmp(t, srv, remote.IDOf(kp.Public))
 	return srv, kp
 }
 
@@ -906,6 +912,7 @@ func newRoleTestServer(t *testing.T, pol policy.Policy, reg *roles.Registry) (*S
 	if _, err := srv.clients.Add("creator", remote.MarshalPublic(kp.Public, "creator"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	trackOwnerTmp(t, srv, remote.IDOf(kp.Public))
 	return srv, kp
 }
 
@@ -1166,6 +1173,7 @@ func roleRefusalServer(t *testing.T, checker harness.RoleChecker) (*Server, remo
 	if _, err := srv.clients.Add("creator", remote.MarshalPublic(kp.Public, "creator"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	trackOwnerTmp(t, srv, remote.IDOf(kp.Public))
 	return srv, kp
 }
 
@@ -1323,6 +1331,7 @@ func TestCreateDuplicate(t *testing.T) {
 	if _, err := s.clients.Add("user", remote.MarshalPublic(kp.Public, "user"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	trackOwnerTmp(t, s, remote.IDOf(kp.Public))
 
 	body, _ := json.Marshal(remote.CreateBindingRequest{
 		Name:       "api",
@@ -1353,6 +1362,7 @@ func TestListIsOwnerScoped(t *testing.T) {
 	if _, err := s.clients.Add("alice", remote.MarshalPublic(kpA.Public, "alice"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	trackOwnerTmp(t, s, remote.IDOf(kpA.Public))
 	kpB, err := remote.Generate()
 	if err != nil {
 		t.Fatal(err)
@@ -1360,6 +1370,7 @@ func TestListIsOwnerScoped(t *testing.T) {
 	if _, err := s.clients.Add("bob", remote.MarshalPublic(kpB.Public, "bob"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	trackOwnerTmp(t, s, remote.IDOf(kpB.Public))
 
 	bodyA, _ := json.Marshal(remote.CreateBindingRequest{
 		Name:       "api",
@@ -1572,6 +1583,7 @@ func TestUnavailableGatesServerWide(t *testing.T) {
 	if _, err := s.clients.Add("alice", remote.MarshalPublic(kpA.Public, "alice"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	trackOwnerTmp(t, s, idA)
 
 	unavailBody, _ := json.Marshal(remote.UnavailableRequest{
 		Token:  "claude/anthropic/haiku",
@@ -1661,6 +1673,7 @@ func TestUnavailableAcceptsBareProvider(t *testing.T) {
 	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	trackOwnerTmp(t, s, remote.IDOf(kp.Public))
 
 	post := func(token string) *httptest.ResponseRecorder {
 		body, _ := json.Marshal(remote.UnavailableRequest{Token: token, Reason: "rate limited test"})
@@ -1701,6 +1714,7 @@ func newAvailableServer(t *testing.T) (*Server, remote.Keypair) {
 	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	trackOwnerTmp(t, s, remote.IDOf(kp.Public))
 	return s, kp
 }
 
@@ -1761,6 +1775,7 @@ func TestServerRuntimeCarriesAccounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	trackTmpRoot(t, s, filepath.Join(s.cfg.Root, "bindings", "x"))
 	rt := s.runtimeAt(filepath.Join(s.cfg.Root, "bindings", "x"))
 	if len(rt.Accounts) != 1 || rt.Accounts[0].Name != "work" {
 		t.Fatalf("runtime accounts = %+v, want the server's own pool", rt.Accounts)
@@ -3091,6 +3106,7 @@ func candidatesViewServer(t *testing.T) (*Server, remote.Keypair) {
 	if _, err := srv.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), "", now); err != nil {
 		t.Fatal(err)
 	}
+	trackOwnerTmp(t, srv, remote.IDOf(kp.Public))
 	return srv, kp
 }
 
@@ -3827,6 +3843,7 @@ func TestUnavailableRejectsAnOverlongReason(t *testing.T) {
 	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	trackOwnerTmp(t, s, remote.IDOf(kp.Public))
 
 	body, err := json.Marshal(remote.UnavailableRequest{
 		Token:  "claude/anthropic/haiku",

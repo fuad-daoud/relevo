@@ -324,6 +324,7 @@ func TestTickPrunesAnUnusedRepo(t *testing.T) {
 	// decoded): on List error pruneUnusedRepos must skip the owner and
 	// preserve its repo.
 	failOwnerHex := strings.Repeat("b", 64)
+	trackTmpRoot(t, env.srv, filepath.Join(env.srv.cfg.Root, "bindings", failOwnerHex))
 	failBareRepo := filepath.Join(env.srv.cfg.Root, "repos", failOwnerHex, "unpruned.git")
 	if err := env.gitClient.InitBare(ctx, failBareRepo); err != nil {
 		t.Fatalf("init bare failOwner: %v", err)

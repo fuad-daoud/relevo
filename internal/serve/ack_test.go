@@ -208,6 +208,7 @@ func TestSettleAllServedBackfills(t *testing.T) {
 			t.Fatal("client id has no owner dir")
 		}
 		ownerRoot := filepath.Join(srv.cfg.Root, "bindings", dir)
+		trackTmpRoot(t, srv, ownerRoot)
 		rt := srv.runtimeAt(ownerRoot)
 
 		b := store.Binding{
