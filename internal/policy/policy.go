@@ -80,6 +80,9 @@ type ServePolicy struct {
 	// MaxBuilders caps headless builders running at once; nil is
 	// max(1, runtime.NumCPU()-1).
 	MaxBuilders *int `json:"max_builders,omitempty"`
+	// MaxPlanners caps planner rounds running at once; nil is
+	// DefaultMaxPlanners.
+	MaxPlanners *int `json:"max_planners,omitempty"`
 	// Scope is the per-round systemd scope; nil is defaults.
 	Scope *ScopePolicy `json:"scope,omitempty"`
 	// Isolation is the tenant-isolation mode: "none" (the default), "user"
@@ -220,6 +223,9 @@ const DefaultExploreAfter = 20 * time.Minute
 const DefaultStaleAfter = 4 * time.Hour
 
 const DefaultGateTimeout = 10 * time.Minute
+
+// DefaultMaxPlanners is the planner cap when serve.max_planners is unset.
+const DefaultMaxPlanners = 4
 
 // DefaultBurstNodeLostAfter bounds how long a forwarded round waits for a
 // burst node that stopped answering before the head re-queues it: nil
@@ -448,6 +454,13 @@ func (p Policy) MaxBuildersOrDefault() int {
 		return 1
 	}
 	return *p.Serve.MaxBuilders
+}
+
+func (p Policy) MaxPlannersOrDefault() int {
+	if p.Serve == nil || p.Serve.MaxPlanners == nil {
+		return DefaultMaxPlanners
+	}
+	return *p.Serve.MaxPlanners
 }
 
 // BurstNodeLostAfter returns the configured serve.burst.node_lost_after_ms,

@@ -717,6 +717,48 @@ func TestMaxBuildersOrDefault(t *testing.T) {
 	}
 }
 
+func TestMaxPlannersOrDefault(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		want    int
+		wantErr bool
+	}{
+		{name: "absent defaults to 4", body: `{}`, want: 4},
+		{name: "one is ok", body: `{"serve":{"max_planners":1}}`, want: 1},
+		{name: "zero is an error", body: `{"serve":{"max_planners":0}}`, wantErr: true},
+		{name: "negative is an error", body: `{"serve":{"max_planners":-1}}`, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := load(t, tt.body)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("Load: got nil error, want one wrapping ErrBadPolicy")
+				}
+				if !errors.Is(err, ErrBadPolicy) {
+					t.Fatalf("Load error %v does not wrap ErrBadPolicy", err)
+				}
+				if !strings.Contains(err.Error(), "serve.max_planners") {
+					t.Fatalf("Load error %q does not mention serve.max_planners", err.Error())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if got := p.MaxPlannersOrDefault(); got != tt.want {
+				t.Fatalf("MaxPlannersOrDefault() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+
+	if got := (Policy{}).MaxPlannersOrDefault(); got != 4 {
+		t.Fatalf("Policy{}.MaxPlannersOrDefault() = %d, want 4", got)
+	}
+}
+
 // TestBurstPolicyDefaultsAndOverrides pins the serve.burst block: the node
 // lost wait defaults to 10 m, converts from milliseconds, and refuses 0 or
 // negative naming the key; the command reads back as configured, nil without

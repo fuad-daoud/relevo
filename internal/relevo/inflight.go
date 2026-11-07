@@ -1,8 +1,12 @@
 package relevo
 
 import (
+	"strings"
+
 	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/resolve"
+	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -11,6 +15,29 @@ import (
 // round holds no slot yet, and a halted round has no process.
 func LiveBuilder(b store.Binding) bool {
 	return b.Builder.Headless() && b.Builder.PID != 0 && b.State != store.StateDone && b.State != store.StatePaused
+}
+
+// IsPlannerRound reports whether b's binding is a planner round: the registry
+// knows its writer role as a reader whose declared outputs carry a plan or
+// design artifact. A role the registry does not know counts as a planner only
+// by its name ending in "planner"; every other unknown role counts as a
+// builder, so a reviewer or researcher never escapes the builder cap.
+func IsPlannerRound(reg *roles.Registry, b store.Binding) bool {
+	role := b.WriterRole()
+	if reg != nil {
+		if r, ok := reg.Role(role); ok {
+			if r.Shape != harness.ShapeConsult {
+				return false
+			}
+			for _, name := range r.Outputs.Artifacts() {
+				if name == "plan" || name == "design" {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	return strings.HasSuffix(resolve.NormRole(role), "planner")
 }
 
 // openRoundsByCandidate counts the live builders per candidate token, the

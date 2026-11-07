@@ -69,6 +69,7 @@ var settingHelp = map[string]string{
 	"stale_after":        "A binding left in needs-you or held this long is shown as stale.",
 	"scope":              "The systemd scope relevo starts each round's builder in on this machine: CPU, memory and task limits.",
 	"serve.max_builders": "How many builders relevo serve runs at once; more rounds wait in its queue.",
+	"serve.max_planners": "How many planner rounds relevo serve runs at once; planners never take a builder seat.",
 	"serve.scope":        "The scope for rounds relevo serve runs; when set it replaces scope for them.",
 	"scan_patterns":      "Extra patterns that mark a builder's line as instruction-shaped, beside the built-in list.",
 	"notify.webhooks":    "Where relevo posts round and binding events over HTTP.",

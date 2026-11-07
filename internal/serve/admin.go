@@ -84,7 +84,8 @@ func AdminStatus(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([
 // (the ui's fleet source) pays for none of them. They default to on, which
 // keeps `relevo serve admin` and every other caller on today's rows.
 func adminOwners(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([]OwnerStatus, remote.BuildersView, error) {
-	builders := s.isolationView(remote.BuildersView{Cap: s.cap()})
+	c, _ := s.census()
+	builders := s.buildersViewFor(c)
 
 	bindingsDir := filepath.Join(s.cfg.Root, "bindings")
 	entries, err := os.ReadDir(bindingsDir)
@@ -94,10 +95,6 @@ func adminOwners(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([
 		}
 		return nil, remote.BuildersView{}, err
 	}
-
-	c, _ := s.census()
-	builders.Running = c.Running
-	builders.Queued = len(c.Queued)
 
 	now := s.cfg.Now()
 	position := make(map[string]int, len(c.Queued))
@@ -112,7 +109,7 @@ func adminOwners(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([
 			continue
 		}
 		label := s.clients.LabelOf(id)
-		o, err := adminOwnerStatus(ctx, s, filepath.Join(bindingsDir, entry.Name()), id, label, position, c, builders.Cap, now, opts...)
+		o, err := adminOwnerStatus(ctx, s, filepath.Join(bindingsDir, entry.Name()), id, label, position, c, builders, now, opts...)
 		if err != nil {
 			return nil, remote.BuildersView{}, err
 		}
@@ -127,7 +124,7 @@ func adminOwners(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([
 }
 
 // adminOwnerStatus reads one owner's rows.
-func adminOwnerStatus(ctx context.Context, s *Server, ownerPath string, id remote.ClientID, label string, position map[string]int, c census, buildersCap int, now time.Time, opts ...relevo.StatusOption) (OwnerStatus, error) {
+func adminOwnerStatus(ctx context.Context, s *Server, ownerPath string, id remote.ClientID, label string, position map[string]int, c census, builders remote.BuildersView, now time.Time, opts ...relevo.StatusOption) (OwnerStatus, error) {
 	rt := s.runtimeAt(ownerPath)
 	rep, err := relevo.Status(ctx, rt, opts...)
 	if err != nil {
@@ -162,7 +159,7 @@ func adminOwnerStatus(ctx context.Context, s *Server, ownerPath string, id remot
 			continue
 		}
 		q := c.Queued[i]
-		row.Queued = &remote.QueueView{Position: i + 1, Ahead: i, Running: c.Running, Cap: buildersCap, Since: q.QueuedAt}
+		row.Queued = queueViewFor(q, i, c, builders)
 		row.BuilderStatus = fmt.Sprintf("queued %s (%d ahead)", view.AgeText(now.Sub(q.QueuedAt)), i)
 	}
 	return OwnerStatus{

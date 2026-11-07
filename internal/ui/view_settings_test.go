@@ -278,7 +278,7 @@ func TestSettingsServeScopeFormSetsCPUQuota(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 16 // serve.scope
+	v.cur = 17 // serve.scope
 
 	f := settingsFormFrom(t, v, env)
 	if f.title != "serve.scope" {
@@ -315,7 +315,7 @@ func TestSettingsServeScopeFormClearingSliceRemovesServe(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 16 // serve.scope
+	v.cur = 17 // serve.scope
 
 	f := settingsFormFrom(t, v, env)
 	f = f.setFocus(1) // slice
@@ -401,6 +401,30 @@ func TestSettingsResetRefusalIsPlainWords(t *testing.T) {
 	}
 }
 
+// h. The max_builders form opened from the serve.max_planners row focuses the
+// second field, so typing edits max_planners, not max_builders.
+func TestSettingsMaxBuildersFormFocusesPlannersField(t *testing.T) {
+	fa := &fakeActions{doc: settingsFixtureDoc(t)}
+	env := candActionEnv(fa, view.Report{})
+	v := settingsFixtureView(t, fa)
+	v.cur = 16 // serve.max_planners
+
+	if settings := relevo.Settings(v.doc, numCPU()); settings[v.cur].Key != "serve.max_planners" {
+		t.Fatalf("cursor key = %q, want serve.max_planners", settings[v.cur].Key)
+	}
+
+	f := settingsFormFrom(t, v, env)
+	if f.title != "serve.max_builders" {
+		t.Fatalf("title = %q, want serve.max_builders", f.title)
+	}
+	if f.focus != 1 {
+		t.Fatalf("focus = %d, want 1 (max_planners)", f.focus)
+	}
+	if f.fields[1].label != "max_planners" {
+		t.Fatalf("field 1 = %+v, want max_planners", f.fields[1])
+	}
+}
+
 // f. down from the last rounds row lands on gate.default, never on a rule line.
 func TestSettingsDownSkipsRule(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
@@ -426,7 +450,7 @@ func TestSettingsChainFormTurnsSecurityOn(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 23 // chain.security
+	v.cur = 24 // chain.security
 
 	f := settingsFormFrom(t, v, env)
 	if f.title != "chain" {
@@ -467,7 +491,7 @@ func TestSettingsChainFormSetsMaxCorrections(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 19 // chain.max_corrections
+	v.cur = 20 // chain.max_corrections
 
 	f := settingsFormFrom(t, v, env)
 	if f.title != "chain" {
@@ -500,7 +524,7 @@ func TestSettingsChainFormRejectsANegativeCount(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 19 // chain.max_corrections
+	v.cur = 20 // chain.max_corrections
 
 	f := settingsFormFrom(t, v, env)
 	f = f.setFocus(1) // max_corrections
@@ -529,7 +553,7 @@ func TestSettingsChainFormBadActorText(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 20 // chain.reviewer_actor
+	v.cur = 21 // chain.reviewer_actor
 
 	f := settingsFormFrom(t, v, env)
 	f = f.setFocus(2) // reviewer_actor

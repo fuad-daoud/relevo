@@ -3,6 +3,9 @@
     "running": 0,
     "queued": 0,
     "cap": 7,
+    "planners_running": 0,
+    "planners_queued": 0,
+    "planners_cap": 4,
     "scopes": false,
     "isolation": "none"
   },
