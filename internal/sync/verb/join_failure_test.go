@@ -138,6 +138,16 @@ func TestBeginJoinWithNoLocalFileIsANoOp(t *testing.T) {
 	(&Runner{Local: nil}).beginJoin()
 }
 
+// Recording a join failure with no local file is a no-op rather than a panic:
+// there is no marker to read and no record to write, so both a nil runner and
+// a runner holding no file return quietly.
+func TestRecordJoinFailureWithNoLocalFileIsANoOp(t *testing.T) {
+	t.Parallel()
+
+	(&Runner{Local: nil}).recordJoinFailure(errors.New("test: a failure with nowhere to go"))
+	(*Runner)(nil).recordJoinFailure(errors.New("test: a failure with nowhere to go"))
+}
+
 // panicStats is a log that panics where the join's import reads, carrying a
 // token-shaped value so the test can tell whether the value leaked.
 type panicStats struct {
@@ -188,5 +198,80 @@ func TestAJoinPanicRecordsAFixedFailureAndRepanics(t *testing.T) {
 	}
 	if strings.Contains(failure.Message, "test-panic-token-shaped-value") {
 		t.Error("the panic value reached the failure record")
+	}
+}
+
+// A panic with no marker records nothing: no join wrote its mark, so a record
+// would blame a join that never started, and the log stays quiet for the same
+// reason the record does.
+func TestAJoinPanicWithNoMarkerRecordsNothing(t *testing.T) {
+	runner, local, log := joinMachine(t, joinPassphrase)
+	if err := relevosync.SetR2(local, verbFixtureR2, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("SetR2: %v", err)
+	}
+	runner.Open = func(context.Context) (synclog.LogTransport, error) {
+		return &panicStats{MemTransport: log}, nil
+	}
+	buf, restore := captureSyncLogs(t)
+	defer restore()
+
+	var recovered any
+	func() {
+		defer func() { recovered = recover() }()
+		runner.Run(context.Background(), joinVerb(t, joinPassphrase), []byte(joinToken+joinPassphrase))
+	}()
+	if recovered != "test-panic-token-shaped-value" {
+		t.Fatalf("recovered = %v, want the panic to reach the caller", recovered)
+	}
+	if _, ok, err := relevosync.ReadJoinFailure(local); err != nil || ok {
+		t.Errorf("ReadJoinFailure = (ok %v, err %v), want no record without a marker", ok, err)
+	}
+	if logged := buf.String(); strings.Contains(logged, "the join panicked") {
+		t.Errorf("the log carries a panic line with no marker:\n%s", logged)
+	}
+	if logged := buf.String(); strings.Contains(logged, "test-panic-token-shaped-value") {
+		t.Errorf("the panic value reached the log:\n%s", logged)
+	}
+}
+
+// A plain enable refused at verify with a marker set records the failure too:
+// the marker says a join is in progress, and the planted record names an older
+// run, so without this status would blame the wrong failure.
+func TestAPlainEnableRefusedAtVerifyStillRecordsItsFailure(t *testing.T) {
+	t.Parallel()
+
+	runner, local, _ := joinMachine(t, joinPassphrase)
+	if err := relevosync.SetR2(local, verbFixtureR2, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("SetR2: %v", err)
+	}
+	if err := relevosync.WriteJoin(local, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("WriteJoin: %v", err)
+	}
+	if err := relevosync.WriteJoinFailure(local, time.Unix(0, 0).UTC(), "sync: enable: import: an old failure"); err != nil {
+		t.Fatalf("WriteJoinFailure: %v", err)
+	}
+	wrong := "not the passphrase"
+	verb := &wire.SyncVerb{
+		Verb:          wire.SyncVerbEnable,
+		RemoteURL:     joinRemote,
+		PassphraseLen: len(wrong),
+		R2Endpoint:    verbFixtureR2.Endpoint,
+		R2Bucket:      verbFixtureR2.Bucket,
+		R2KeyID:       verbFixtureR2.KeyID,
+		R2SecretLen:   len(verbFixtureR2.Secret),
+	}
+	res := runner.Run(context.Background(), verb, []byte(joinToken+wrong+verbFixtureR2.Secret))
+	if res.OK {
+		t.Fatal("a plain enable with the wrong passphrase was accepted")
+	}
+	if _, marked, err := relevosync.ReadJoin(local); err != nil || !marked {
+		t.Fatalf("the join marker = (marked %v, err %v), want it still set", marked, err)
+	}
+	failure, ok, err := relevosync.ReadJoinFailure(local)
+	if err != nil || !ok {
+		t.Fatalf("ReadJoinFailure = (%+v, %v, %v), want the refused run's failure", failure, ok, err)
+	}
+	if failure.Message != res.Message {
+		t.Errorf("failure message = %q, want the refusal's %q", failure.Message, res.Message)
 	}
 }
