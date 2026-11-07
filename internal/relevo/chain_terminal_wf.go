@@ -94,7 +94,9 @@ func chainTerminalCarrier(tx *store.Tx, c db.ChainRow) (store.Binding, bool, err
 // chainTerminalWFPayload is what the mastermind reads when a workflow chain
 // ends: how it ended, where it got to, and the command that resumes it (on a
 // halt) or shows its trace. A halt names both ways out, since a reader who
-// has abandoned the work needs the half that is not a resume at all.
+// has abandoned the work needs the half that is not a resume at all. A halt on
+// a repair arm with one feeding check names both resumes: --from the check
+// re-runs it, and --from the arm sends the repair round again.
 func chainTerminalWFPayload(c db.ChainRow, s workflow.State) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "chain %s %s: status %s, at %s, plans %d/%d, findings %d.",
@@ -103,10 +105,27 @@ func chainTerminalWFPayload(c db.ChainRow, s workflow.State) string {
 		fmt.Fprintf(&b, " Reason: %s", reasonSentence(s.Reason))
 	}
 	if s.Status == workflow.StatusHalted {
-		fmt.Fprintf(&b, " relevo chain --resume --name %s resumes it once the cause is fixed; `relevo done %s` closes it instead.", c.Name, c.Name)
+		if check, arm := terminalRepairFrom(c, s); check != "" {
+			fmt.Fprintf(&b, " relevo chain --resume --name %s --from %s re-runs the check, or --from %s sends the repair round again; `relevo done %s` closes it instead.", c.Name, check, arm, c.Name)
+		} else {
+			fmt.Fprintf(&b, " relevo chain --resume --name %s resumes it once the cause is fixed; `relevo done %s` closes it instead.", c.Name, c.Name)
+		}
 	}
 	fmt.Fprintf(&b, " Branch %s. relevo show %s --trace", c.Branch, c.Name)
 	return b.String()
+}
+
+// terminalRepairFrom names the --from pair a halted repair arm offers: the
+// single feeding check and the arm itself. Any other halt keeps today's text.
+func terminalRepairFrom(c db.ChainRow, s workflow.State) (string, string) {
+	def, err := chain.WorkflowDef(c)
+	if err != nil {
+		return "", ""
+	}
+	if checks := workflow.RedArmChecks(def, s.At); len(checks) == 1 {
+		return checks[0], s.At
+	}
+	return "", ""
 }
 
 // flowTerminalStep is the step a terminal state names: the step it halted
