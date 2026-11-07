@@ -289,6 +289,56 @@ func TestCandidateForRoundCarriesTheEarlierRoundsBuilder(t *testing.T) {
 // TestCandidateForRoundBeforeTheFirstSwitch pins a served binding whose log holds
 // no pick, only what a poll saw: each round names the candidate that ran it, not
 // the binding's newest one.
+// TestAccountForRound pins that a round's account comes from the same pick or
+// switch entry its candidate comes from: the round's own last entry naming
+// the builder, else the builder earlier rounds left running. A consult pick
+// is skipped, and an entry naming no account leaves the account unknown,
+// never guessed from the binding, even when the binding names a login.
+func TestAccountForRound(t *testing.T) {
+	pick := func(round int, note string) store.LogEntry {
+		return store.LogEntry{Round: round, Kind: store.KindPick, Note: note}
+	}
+	sw := func(round int, note string) store.LogEntry {
+		return store.LogEntry{Round: round, Kind: store.KindSwitch, Note: note}
+	}
+	const (
+		ownPick    = "picked a/b/c for builder: order #1; account cp1"
+		switchB    = "switched builder (rate-limited): picked d/e/f for builder: order #2; account cp2"
+		pollToB    = store.PollSwitchNotePrefix + "zen: a/b/c -> d/e/f"
+		remotePick = "picked d/e/f on zen: server's pick"
+		failedSw   = "switched builder (reason): cannot switch"
+	)
+	cases := []struct {
+		name   string
+		events []store.LogEntry
+		n      int
+		want   string
+		wantOK bool
+	}{
+		{"own pick names an account", []store.LogEntry{pick(1, ownPick)}, 1, "cp1", true},
+		{"earlier round's pick carries forward", []store.LogEntry{pick(1, ownPick)}, 2, "cp1", true},
+		{"a switch entry's account replaces it for its round on", []store.LogEntry{pick(1, ownPick), sw(2, switchB)}, 2, "cp2", true},
+		{"an earlier round keeps its own account past a later switch", []store.LogEntry{pick(1, ownPick), sw(2, switchB)}, 1, "cp1", true},
+		{"the account ends at the next clause", []store.LogEntry{pick(1, ownPick+"; placement zen (actor)")}, 1, "cp1", true},
+		{"a consult pick is skipped", []store.LogEntry{pick(1, ownPick), pick(1, "picked q/w/e for reviewer: order #1; account cp9")}, 1, "cp1", true},
+		{"an only consult pick names no account", []store.LogEntry{pick(1, "picked q/w/e for reviewer: order #1; account cp9")}, 1, "", false},
+		{"a poll note names no account", []store.LogEntry{sw(2, pollToB)}, 2, "", false},
+		{"a server pick note names no account", []store.LogEntry{pick(1, remotePick)}, 1, "", false},
+		{"a note naming no one after the pick does not erase it", []store.LogEntry{pick(1, ownPick), sw(1, failedSw)}, 1, "cp1", true},
+		{"a pick naming no account names none", []store.LogEntry{pick(1, "picked a/b/c for builder: order #1")}, 1, "", false},
+		{"no entry names none", nil, 1, "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			b := store.Binding{BuilderAccount: "cpX"}
+			got, ok := accountForRound(c.events, c.n, b)
+			if ok != c.wantOK || got != c.want {
+				t.Errorf("accountForRound(round %d) = %q, %v, want %q, %v", c.n, got, ok, c.want, c.wantOK)
+			}
+		})
+	}
+}
+
 func TestCandidateForRoundBeforeTheFirstSwitch(t *testing.T) {
 	const (
 		muse = "muse/meta/muse-spark-1.3:xhigh"

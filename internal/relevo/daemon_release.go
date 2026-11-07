@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -206,9 +207,18 @@ func (b *liveArchiveBackend) listSince(since time.Time) ([]store.ArchivedRef, er
 	return b.st.ListArchivedSince(since)
 }
 
+// archiveMarkVersion is the value an ingested archived record's mark holds,
+// stored as a JSON string. Only the current value counts as ingested: a
+// record marked anything else still owes one ingest, so its rows are
+// re-derived from the stored log.
+const archiveMarkVersion = "v2"
+
 func (b *liveArchiveBackend) marked(recordID string) (bool, error) {
-	_, ok, err := b.marks.KVGet("ingested.archive." + recordID)
-	return ok, err
+	v, ok, err := b.marks.KVGet("ingested.archive." + recordID)
+	if err != nil || !ok {
+		return ok, err
+	}
+	return string(v) == strconv.Quote(archiveMarkVersion), nil
 }
 
 func (b *liveArchiveBackend) ingest(ctx context.Context, recordID, _ string) (ingest.Stats, error) {
@@ -216,7 +226,7 @@ func (b *liveArchiveBackend) ingest(ctx context.Context, recordID, _ string) (in
 }
 
 func (b *liveArchiveBackend) confirm(recordID string) error {
-	return b.marks.KVPut("ingested.archive."+recordID, []byte("true"))
+	return b.marks.KVPut("ingested.archive."+recordID, []byte(strconv.Quote(archiveMarkVersion)))
 }
 
 // mirror runs one pass: a full pass the first time, then only the records
