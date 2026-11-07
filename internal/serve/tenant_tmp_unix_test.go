@@ -136,7 +136,7 @@ func TestTmpDirRunnerKeepsTheInheritedTmpDir(t *testing.T) {
 // start without chmod'ing or chown'ing the directory.
 func TestUserModeOwnerTmpDirWrongUidRefused(t *testing.T) {
 	requireTenantBoundary(t)
-	var uid uint32 = uint32(os.Getuid())
+	uid := uint32(os.Getuid())
 	env := newUserTestEnv(t, "alice", func(c *Config) {
 		outer := c.LookupUser
 		c.LookupUser = func(name string) (isolate.Tenant, error) {
