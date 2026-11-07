@@ -33,6 +33,9 @@ type ReplicaDriver interface {
 	// Open bootstraps the replica from the remote and returns the pool every
 	// statement runs through. It runs once, from hello.
 	Open(ctx context.Context, spec Spec) (*sql.DB, error)
+	// Bootstrapped is the bytes the last Open downloaded to create the replica,
+	// zero when the replica already existed.
+	Bootstrapped() int64
 	// Push sends the replica's local changes to the remote.
 	Push(ctx context.Context) error
 	// Pull applies the remote's changes to the replica.
@@ -103,6 +106,7 @@ func (b *TursoBackend) Open(spec Spec) error {
 	}
 	b.spec = spec
 	b.db = db
+	b.bytes.TursoReceived += b.driver.Bootstrapped()
 	if err := b.ensureLog(ctx, spec.URL); err != nil {
 		_ = b.Close()
 		return err

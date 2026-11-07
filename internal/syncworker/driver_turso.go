@@ -3,7 +3,9 @@ package syncworker
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"os"
 
 	turso "turso.tech/database/tursogo"
 )
@@ -41,6 +43,8 @@ var newSyncDb = func(ctx context.Context, cfg turso.TursoSyncDbConfig) (syncDb, 
 type tursoDriver struct {
 	path string
 	sdb  syncDb
+	// bootstrapped is what the last Open downloaded to create the replica.
+	bootstrapped int64
 }
 
 // newTursoDriver returns the driver for one replica path, held here and nowhere
@@ -56,6 +60,9 @@ func (d *tursoDriver) Open(ctx context.Context, spec Spec) (*sql.DB, error) {
 	if d.sdb != nil {
 		return nil, fmt.Errorf("syncworker: replica %s is already open", d.path)
 	}
+	d.bootstrapped = 0
+	_, statErr := os.Stat(d.path)
+	fresh := errors.Is(statErr, os.ErrNotExist)
 	bootstrap := true
 	sdb, err := newSyncDb(ctx, turso.TursoSyncDbConfig{
 		Path:                    d.path,
@@ -74,7 +81,32 @@ func (d *tursoDriver) Open(ctx context.Context, spec Spec) (*sql.DB, error) {
 		d.sdb = nil
 		return nil, fmt.Errorf("syncworker: connect to %s: %w", d.path, err)
 	}
+	if fresh {
+		d.bootstrapped = replicaBytes(d.path)
+	}
 	return db, nil
+}
+
+// Bootstrapped is what the last Open downloaded to create the replica, read from
+// the files it left, because the byte totals only start at the first transfer
+// after the open. A real bootstrap's files came within 1% of what the remote
+// billed. A replica that already existed reads zero, so a bootstrap an interrupted
+// join resumed goes uncounted.
+func (d *tursoDriver) Bootstrapped() int64 {
+	return d.bootstrapped
+}
+
+// replicaBytes is the size of the replica's database and WAL files. A file that
+// can't be read counts as empty: the meter is an estimate, and it never fails an
+// open.
+func replicaBytes(path string) int64 {
+	var total int64
+	for _, name := range []string{path, path + "-wal"} {
+		if info, err := os.Stat(name); err == nil {
+			total += info.Size()
+		}
+	}
+	return total
 }
 
 // Push sends the replica's local changes to the remote.
