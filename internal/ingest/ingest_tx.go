@@ -255,14 +255,16 @@ func (r *ingestRun) upsertRounds(tx *db.Tx, bindingID string, all []store.LogEnt
 		return nil, fmt.Errorf("existing rounds: %w", err)
 	}
 	hadRound := make(map[int]bool, len(existing))
+	storedAccount := make(map[int]*string, len(existing))
 	for _, rd := range existing {
 		hadRound[rd.Number] = true
+		storedAccount[rd.Number] = rd.Account
 	}
 
 	now := r.deps.Now()
 	roundIDs := make(map[int]string, len(rounds))
 	for _, n := range rounds {
-		roundID, err := r.upsertRound(tx, bindingID, n, all, now, hadRound)
+		roundID, err := r.upsertRound(tx, bindingID, n, all, now, hadRound, storedAccount)
 		if err != nil {
 			return nil, err
 		}
@@ -271,7 +273,7 @@ func (r *ingestRun) upsertRounds(tx *db.Tx, bindingID string, all []store.LogEnt
 	return roundIDs, nil
 }
 
-func (r *ingestRun) upsertRound(tx *db.Tx, bindingID string, n int, all []store.LogEntry, now time.Time, hadRound map[int]bool) (string, error) {
+func (r *ingestRun) upsertRound(tx *db.Tx, bindingID string, n int, all []store.LogEntry, now time.Time, hadRound map[int]bool, storedAccount map[int]*string) (string, error) {
 	rd := roundFacts(all, n, r.b.Builder.Mode == store.ModeRemote)
 	rd.BindingID = bindingID
 	rd.Number = n
@@ -279,7 +281,14 @@ func (r *ingestRun) upsertRound(tx *db.Tx, bindingID string, n int, all []store.
 	rd.Switches = switchesForRound(all, n)
 
 	rd.Actor = r.b.WriterRole()
-	rd.Account = nonEmptyPtr(r.b.BuilderAccount)
+	// The round's account comes from its own pick or switch entry. A stored
+	// row whose log names none keeps its account, and a new round with no
+	// evidence claims none rather than the binding's current login.
+	if acct, ok := accountForRound(all, n, r.b); ok {
+		rd.Account = nonEmptyPtr(acct)
+	} else if hadRound[n] {
+		rd.Account = storedAccount[n]
+	}
 	if cand, ref, ok := candidateForRound(all, n, r.b); ok {
 		candTok := cand
 		rd.Candidate = &candTok

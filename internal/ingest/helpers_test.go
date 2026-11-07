@@ -238,6 +238,53 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
+// writeLogFixture writes a minimal live binding directory: bind.json for b
+// and a log.jsonl with one line per entry, so a test can stage a pick and
+// the switch that followed it.
+func writeLogFixture(t *testing.T, b store.Binding, entries []store.LogEntry) string {
+	t.Helper()
+	dir := t.TempDir()
+	rewriteBindJSON(t, dir, b)
+	appendLogEntries(t, dir, entries)
+	return dir
+}
+
+// rewriteBindJSON replaces dir's bind.json with b, so a re-ingest sees the
+// binding as the switch left it.
+func rewriteBindJSON(t *testing.T, dir string, b store.Binding) {
+	t.Helper()
+	bind, err := json.Marshal(b)
+	if err != nil {
+		t.Fatalf("marshal bind.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "bind.json"), bind, 0o644); err != nil {
+		t.Fatalf("write bind.json: %v", err)
+	}
+}
+
+// appendLogEntries appends entries to dir's log.jsonl, so a re-ingest reads
+// the rounds the binding ran since.
+func appendLogEntries(t *testing.T, dir string, entries []store.LogEntry) {
+	t.Helper()
+	var sb strings.Builder
+	for _, e := range entries {
+		line, err := json.Marshal(e)
+		if err != nil {
+			t.Fatalf("marshal log entry: %v", err)
+		}
+		sb.Write(line)
+		sb.WriteByte('\n')
+	}
+	f, err := os.OpenFile(filepath.Join(dir, "log.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("open log.jsonl: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+	if _, err := f.WriteString(sb.String()); err != nil {
+		t.Fatalf("append log.jsonl: %v", err)
+	}
+}
+
 // mapGitFacts answers RepoFacts per directory, erroring for any dir it was not
 // told about -- standing in for a gc'd worktree.
 type mapGitFacts map[string]struct{ originURL, commonDir string }
