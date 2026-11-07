@@ -139,10 +139,15 @@ func isBuilderSwitch(e store.LogEntry) bool {
 	return e.Kind == store.KindSwitch && strings.HasPrefix(e.Note, "switched ") && parseSwitchNote(e.Note) != ""
 }
 
-// switchedFrom parses the token before "->" in a "switched [on server:] a -> b"
-// note. A pick clause's note may carry an arrow inside its reason and names no
-// old candidate, so it yields "", as does an arrow with nothing named before it.
+// switchedFrom is the candidate a switch note says it replaced: its replaced
+// clause, or the token before "->" in a "switched [on server:] a -> b" note. A
+// pick clause's note with no replaced clause may carry an arrow inside its reason
+// and names no old candidate, so it yields "", as does an arrow with nothing
+// named before it.
 func switchedFrom(note string) string {
+	if at := strings.LastIndex(note, store.SwitchReplacedClause); at >= 0 {
+		return strings.TrimSpace(note[at+len(store.SwitchReplacedClause):])
+	}
 	i := strings.LastIndex(note, "->")
 	if i < 0 || strings.Contains(note, "picked ") {
 		return ""
