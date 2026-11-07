@@ -116,7 +116,10 @@ func (v *Runner) Run(ctx context.Context, verb *wire.SyncVerb, token []byte) *wi
 	case wire.SyncVerbAttempt:
 		// An attempt is queued, not waited for: the daemon's slot decides when
 		// it runs, which is what lets the one-shot that asked return at once.
-		return v.runGuarded(v.attempt)
+		// It never takes the guard itself, because the guard drops a trigger
+		// that lands while a verb holds the slot, and the trigger is all this
+		// verb does.
+		return v.attempt()
 	case wire.SyncVerbDisable:
 		// A disable must not queue behind a call that can run for the whole
 		// data-call bound: a joined machine reads off for the whole join, and a

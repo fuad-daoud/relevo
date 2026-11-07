@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db/wire"
 	"github.com/fuad-daoud/relevo/internal/store"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 	"github.com/fuad-daoud/relevo/internal/sync/verb"
@@ -208,8 +209,11 @@ func TestSyncExportDebounce(t *testing.T) {
 		t.Errorf("attempts at the debounce boundary = %d, want %d", got, opened+1)
 	}
 
-	f.setNow(baseTime.Add(3 * verb.ExportDebounce))
-	f.d.idleSync(ctx)
+	// The export trigger alone: an idle tick this late would also open the cold
+	// pull window, which is no smaller than the export gap.
+	at := baseTime.Add(3 * verb.ExportDebounce)
+	f.setNow(at)
+	f.d.exportIfPending(ctx, at)
 	waitSyncIdle(t, f.d)
 	if got := f.attempts(); got != opened+1 {
 		t.Errorf("an empty outbox started an attempt (%d -> %d)", opened+1, got)
@@ -386,6 +390,83 @@ func TestSyncAppliedRowsTurnTheWindowHot(t *testing.T) {
 	}
 }
 
+// lastSyncStart is when the fixture daemon's last attempt began. An owed attempt
+// fails before its pull against the fake log, which cannot take a signed send, so
+// the start is what shows the gap let an attempt through.
+func (f *liveFixture) lastSyncStart() time.Time {
+	f.d.syncMu.Lock()
+	defer f.d.syncMu.Unlock()
+	return f.d.live.StartedAt
+}
+
+// clearDocSignals strikes the fixture database's pending doc signals, which a
+// machine holding the key would otherwise count as something to send.
+func clearDocSignals(t *testing.T, mdb *db.DB) {
+	t.Helper()
+	signals, err := mdb.DocSignals()
+	if err != nil {
+		t.Fatalf("DocSignals: %v", err)
+	}
+	for _, sig := range signals {
+		if err := mdb.LocalOrSelf().Tx(func(tx *db.Tx) error { return tx.ClearDocSignals(sig.Doc) }); err != nil {
+			t.Fatalf("ClearDocSignals %s: %v", sig.Doc, err)
+		}
+	}
+	if left, err := mdb.DocSignals(); err != nil || len(left) > 0 {
+		t.Fatalf("doc signals left after clearing: %d, %v", len(left), err)
+	}
+}
+
+// TestSyncOwedHistoryKeepsTheShortGap pins that a join's owed history is not held
+// to the long export gap: each attempt sends one slice, so the long gap would
+// stretch the send twentyfold. The outbox is empty, so the owed history alone has
+// to count as something to send.
+func TestSyncOwedHistoryKeepsTheShortGap(t *testing.T) {
+	t.Parallel()
+	f := newLiveFixture(t)
+	f.baseline(t)
+	f.tick(baseTime)
+	opened := f.lastSyncStart()
+	clearDocSignals(t, f.mdb)
+
+	if err := relevosync.SetKey(f.local, make([]byte, 32), baseTime); err != nil {
+		t.Fatalf("SetKey: %v", err)
+	}
+	if err := relevosync.WriteJoin(f.local, baseTime); err != nil {
+		t.Fatalf("WriteJoin: %v", err)
+	}
+	f.tick(baseTime.Add(verb.OwedDebounce - time.Second))
+	if got := f.lastSyncStart(); !got.Equal(opened) {
+		t.Fatalf("owed history started an attempt at %v inside the short gap", got)
+	}
+
+	at := baseTime.Add(verb.OwedDebounce)
+	f.tick(at)
+	if got := f.lastSyncStart(); !got.Equal(at) {
+		t.Errorf("last attempt began %v, want an attempt with owed history at the short gap %v", got, at)
+	}
+}
+
+// TestSyncLockedJoinKeepsTheExportGap pins that a locked machine's join marker
+// does not shorten the gap: it cannot sign its owed history, so an attempt every
+// short gap would only pull.
+func TestSyncLockedJoinKeepsTheExportGap(t *testing.T) {
+	t.Parallel()
+	f := newLiveFixture(t)
+	f.baseline(t)
+	f.tick(baseTime)
+	opened := f.lastSyncStart()
+
+	seedOutboxWrite(t, f.mdb, "locked")
+	if err := relevosync.WriteJoin(f.local, baseTime); err != nil {
+		t.Fatalf("WriteJoin: %v", err)
+	}
+	f.tick(baseTime.Add(verb.OwedDebounce))
+	if got := f.lastSyncStart(); !got.Equal(opened) {
+		t.Errorf("a locked join's outbox write started an attempt at %v inside the export gap", got)
+	}
+}
+
 func TestSyncFreshenThrottle(t *testing.T) {
 	t.Parallel()
 	f := newLiveFixture(t)
@@ -453,6 +534,30 @@ func TestSyncTriggerDuringAJoinWaitsForNothingAndDoesNotInterleave(t *testing.T)
 	waitSyncIdle(t, f.d)
 	if got := f.attempts(); got != base {
 		t.Errorf("a trigger dropped by a join ran after it (%d -> %d)", base, got)
+	}
+}
+
+// TestSyncAttemptVerbStartsAnAttempt pins that the attempt verb a gate or a
+// takeover sends hurries an attempt through the daemon's own wiring: the verb
+// runs under the slot guard, which drops a trigger landing while it holds the
+// slot, so an attempt verb run inside that guard would never start anything.
+func TestSyncAttemptVerbStartsAnAttempt(t *testing.T) {
+	t.Parallel()
+	f := newLiveFixture(t)
+	f.baseline(t)
+	ctx := context.Background()
+	f.tick(baseTime)
+
+	at := baseTime.Add(time.Minute)
+	f.setNow(at)
+	runner := &verb.Runner{Local: f.local, Runner: f.d.rt.Sync, Serialize: f.d.WaitSyncSlot}
+	runner.Trigger = func() { f.d.SyncNow(ctx) }
+	if res := runner.Run(ctx, &wire.SyncVerb{Verb: wire.SyncVerbAttempt}, nil); !res.OK {
+		t.Fatalf("attempt verb answered %+v", res)
+	}
+	waitSyncIdle(t, f.d)
+	if got := f.lastSyncStart(); !got.Equal(at) {
+		t.Errorf("last attempt began %v, want the attempt verb's %v inside the export gap", got, at)
 	}
 }
 
