@@ -36,30 +36,50 @@ func museSessionGate(rt relevo.Runtime, in *MasterMindCheckInput, resolver chatl
 }
 
 // museMasterMindFacts fills the session-row fields for a muse session as
-// mastermindCheckInput's claude branch fills them.
+// mastermindCheckInput's claude branch fills them. The record resolves
+// first: a doctor under `sh -c` must check the resolved host's children,
+// not the short-lived shell's.
 func museMasterMindFacts(rt relevo.Runtime, in *MasterMindCheckInput, resolver chatlabel.Resolver) {
-	in.MCPChild = HasMCPChild(hostChildProcesses(os.Getppid()))
-	if rt.MasterMinds == nil {
-		return
+	ppid := os.Getppid()
+	var museHost int
+	var museOK bool
+	if rt.MuseHost != nil {
+		museHost, museOK = rt.MuseHost(ppid)
 	}
-	rec, _, err := mastermind.Resolve(rt.MasterMinds, mastermind.ResolveInput{
-		Env:       os.Getenv,
-		PPID:      os.Getppid(),
-		ProcStart: rt.ProcStart,
-		Now:       rt.Now(),
-	})
-	if err != nil {
-		return
-	}
-	in.Resolved = &rec
-	if lbl := resolver.Resolve(context.Background(), rec.HarnessKind, rec.SessionID); lbl != (chatlabel.Label{}) {
-		in.Chat = lbl.String()
-	}
-	if rt.Channels != nil {
-		if c, cerr := rt.Channels.Live(rec.ID, rt.Now()); cerr == nil && c != nil {
-			in.ClaimLive = true
+	if rt.MasterMinds != nil {
+		rec, _, err := mastermind.Resolve(rt.MasterMinds, mastermind.ResolveInput{
+			Env:       os.Getenv,
+			PPID:      ppid,
+			ProcStart: rt.ProcStart,
+			MuseHost:  rt.MuseHost,
+			Now:       rt.Now(),
+		})
+		if err == nil {
+			in.Resolved = &rec
+			if lbl := resolver.Resolve(context.Background(), rec.HarnessKind, rec.SessionID); lbl != (chatlabel.Label{}) {
+				in.Chat = lbl.String()
+			}
+			if rt.Channels != nil {
+				if c, cerr := rt.Channels.Live(rec.ID, rt.Now()); cerr == nil && c != nil {
+					in.ClaimLive = true
+				}
+			}
 		}
 	}
+	in.MCPChild = HasMCPChild(hostChildProcesses(museMCPHostPID(in.Resolved, museHost, museOK, ppid)))
+}
+
+// museMCPHostPID picks whose children prove the session's tools are up: the
+// resolved record's host, else the verified muse ancestor, else the direct
+// parent. Pure, so the shell-sibling order is testable without /proc.
+func museMCPHostPID(resolved *mastermind.Record, museHost int, ok bool, ppid int) int {
+	if resolved != nil && resolved.HostPID > 0 {
+		return resolved.HostPID
+	}
+	if ok && museHost > 0 {
+		return museHost
+	}
+	return ppid
 }
 
 // museBinaryPresent is the direct exec.LookPath this package already makes;

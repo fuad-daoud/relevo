@@ -4,7 +4,7 @@ description: Drive a relevo round end to end -- send a plan, wait for the runner
 allowed-tools: Bash(relevo:*)
 ---
 
-If the relevo MCP tools are not available in this session, tell the user that relevo runs only in Claude Code with the relevo binary installed, then stop.
+If the relevo MCP tools are not available in this session, tell the user that relevo works only in Claude Code or muse with the relevo binary installed, then stop.
 
 # The planner loop
 

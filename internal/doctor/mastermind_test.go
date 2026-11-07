@@ -683,6 +683,48 @@ func TestDoctorMuseSessionRowPinsEnvGate(t *testing.T) {
 	}
 }
 
+// TestDoctorMuseSessionShellSiblingMCPChild pins the shell-sibling order: a
+// doctor under `sh -c` checks the resolved host's children for `relevo mcp`,
+// not the shell's, so the MasterMind row stays off FAIL.
+func TestDoctorMuseSessionShellSiblingMCPChild(t *testing.T) {
+	const shell = 100
+	const host = 80
+	byPID := map[int][]ChildProcess{
+		shell: {{PID: 101, Args: []string{"sh", "-c", "relevo doctor"}}},
+		host:  {{PID: 81, Args: []string{"relevo", "mcp"}}},
+	}
+	resolved := &mastermind.Record{ID: "pl_aaaaaaaabbbb", Name: "muse-1", HarnessKind: "muse", SessionID: "sess", HostPID: host}
+
+	cases := []struct {
+		name     string
+		rec      *mastermind.Record
+		museHost int
+		ok       bool
+		wantPID  int
+	}{
+		{"resolved host wins over the shell", resolved, host, true, host},
+		{"verified walk wins when unresolved", nil, host, true, host},
+		{"unverified walk falls back to the parent", nil, 0, false, shell},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := museMCPHostPID(tc.rec, tc.museHost, tc.ok, shell); got != tc.wantPID {
+				t.Errorf("museMCPHostPID = %d, want %d", got, tc.wantPID)
+			}
+		})
+	}
+
+	pid := museMCPHostPID(resolved, host, true, shell)
+	in := MasterMindCheckInput{MuseSession: true, Resolved: resolved, MCPChild: HasMCPChild(byPID[pid])}
+	if !in.MCPChild {
+		t.Fatalf("MCPChild = false, want true: the resolved host's children hold relevo mcp")
+	}
+	c := findCheck(Report{Checks: MasterMindChecks(in)}, "", "MasterMind")
+	if c == nil || c.Severity == SevFail {
+		t.Fatalf("mastermind row = %+v, want not FAIL for a resolved host serving tools", c)
+	}
+}
+
 // TestMuseInspectReaderGetsExactCommand pins the probe command: `muse
 // plugins inspect relevo --json`, through the injected reader only.
 func TestMuseInspectReaderGetsExactCommand(t *testing.T) {
