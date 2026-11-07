@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
@@ -130,10 +131,35 @@ func TestTmpDirRunnerKeepsTheInheritedTmpDir(t *testing.T) {
 	}
 }
 
-// TestUserModeOwnerTmpDirWrongUidRefused pins that a directory another uid
-// owns is refused untouched: the tenant's uid switches to one nothing on
-// disk owns after the layout is created, and the next resolve refuses the
-// start without chmod'ing or chown'ing the directory.
+// TestEnsureTmpLinkRefusesForeignOwnedLink pins the link's ownership check
+// through a direct call: a link another uid owns is refused untouched, even
+// when it already points at the target. The fake euid stands in for a tenant
+// the link does not belong to, so the test needs no root.
+func TestEnsureTmpLinkRefusesForeignOwnedLink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	const foreign = 4294967294
+	if err := ensureTmpLink(link, target, foreign); err == nil {
+		t.Fatal("ensureTmpLink accepted a foreign-owned link")
+	} else if !strings.Contains(err.Error(), link) {
+		t.Errorf("refusal = %q, want it to name the planted link", err)
+	}
+	if got, err := os.Readlink(link); err != nil || got != target {
+		t.Errorf("the refused link now points at %q (%v), want it left alone", got, err)
+	}
+}
+
+// TestUserModeOwnerTmpDirWrongUidRefused pins that a link another uid owns is
+// refused untouched: the tenant's uid switches to one nothing on disk owns
+// after the layout is created, and the next resolve refuses the start without
+// removing or repointing the link.
 func TestUserModeOwnerTmpDirWrongUidRefused(t *testing.T) {
 	requireTenantBoundary(t)
 	uid := uint32(os.Getuid())
@@ -170,10 +196,13 @@ func TestUserModeOwnerTmpDirWrongUidRefused(t *testing.T) {
 		t.Fatalf("resolve removed %s: %v", tmpRoot, err)
 	}
 	if after.Mode().Perm() != before.Mode().Perm() {
-		t.Errorf("resolve changed %s mode to %04o, want another's directory left untouched", tmpRoot, after.Mode().Perm())
+		t.Errorf("resolve changed %s mode to %04o, want another's link left untouched", tmpRoot, after.Mode().Perm())
 	}
 	if ouid, _, ok := db.StatOwner(after); !ok || ouid != uint32(os.Getuid()) {
 		t.Errorf("resolve changed %s owner to %d, want it left untouched", tmpRoot, ouid)
+	}
+	if got, rerr := os.Readlink(tmpRoot); rerr != nil || got != env.srv.ownerTmpTarget(ownerRoot) {
+		t.Errorf("resolve repointed the refused link at %q (%v), want it untouched", got, rerr)
 	}
 }
 

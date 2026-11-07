@@ -16,25 +16,36 @@ import (
 	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
-// ownerTmpDir is the temp directory one owner writes through: /tmp/rv-<8>,
-// a digest of the serve root and the owner id, so two serves on one host
-// never share a directory and a restart finds the same one. Eight hex is a
-// 32-bit truncation of a uniform digest, safe among the handful of owners on
-// one host. The literal /tmp
-// keeps the root plus a rounds/ or checks/ leaf short enough to leave room
-// for a socket name under the sun_path limit. /tmp is hostile -- aged and
-// writable by every tenant -- so every resolution verifies the root with
-// ensureTmpRoot before a round or check start can reach it, in both modes.
-// The bundle transport keeps its own <root>/tmp/<hex>; this root is only what
-// round and check processes see as TMPDIR.
+// ownerTmpDir is the link one owner writes through: /tmp/rv-<8>, a digest
+// of the serve root and the owner id, so two serves on one host never share
+// a link and a restart finds the same one. Eight hex is a 32-bit truncation
+// of a uniform digest, safe among the handful of owners on one host. The
+// literal /tmp keeps the link plus a rounds/ or checks/ leaf short enough to
+// leave room for a socket name under the sun_path limit. /tmp is hostile --
+// aged and writable by every tenant -- so every resolution verifies the link
+// with ensureTmpLink before a round or check start can reach it, in both
+// modes. The bytes live in the on-disk target the link points at; the link is
+// only what round and check processes see as TMPDIR. The bundle transport
+// keeps its own <root>/tmp/<hex>.
 func (s *Server) ownerTmpDir(root string) string {
 	sum := sha256.Sum256([]byte(s.cfg.Root + "\x00" + filepath.Base(root)))
 	return filepath.Join("/tmp", "rv-"+hex.EncodeToString(sum[:])[:8])
 }
 
-// shortOwnerDir is one owner's path component under the old serve tmp root:
-// the first 8 characters of its 64-hex directory name. Only the Tick drain
-// still derives it, to find and empty the old tree.
+// ownerTmpTarget is where one owner's tmp bytes live:
+// <serve root>/tmp/t/<short>, under the serve root so the disk preflight
+// measures the serve filesystem, not /tmp's. The ownerTmpDir link points
+// here, so a served round starts while /tmp itself reads full.
+func (s *Server) ownerTmpTarget(ownerRoot string) string {
+	return filepath.Join(s.cfg.Root, "tmp", "t", shortOwnerDir(filepath.Base(ownerRoot)))
+}
+
+// shortOwnerDir is one owner's path component under the serve tmp target:
+// the first 8 characters of its 64-hex directory name. The digest is already
+// uniform, so truncation stays deterministic in the full owner id; shorter
+// test ids pass through untouched. Two owners sharing a prefix would share
+// a target, which takes a 32-bit collision among the handful of enrolled
+// owners.
 func shortOwnerDir(hex string) string {
 	if len(hex) > 8 {
 		return hex[:8]
@@ -42,45 +53,50 @@ func shortOwnerDir(hex string) string {
 	return hex
 }
 
-// ensureTmpRoot creates or verifies one served tmp root under the hostile
-// /tmp. The directory must already belong to the expected owner, or be made
-// for it now: a symlink, a non-directory, or a directory another uid owns is
-// refused untouched, never followed, chmod'ed or chown'ed, so a planted path
-// fails the owner's round start instead of diverting it. A missing root is
-// made with one Mkdir, never MkdirAll through the hostile parent, then set
-// to 0700 past the umask; an existing directory the expected uid owns with
-// lax mode is chmod'ed back to 0700. Every refusal names the path and the
-// fix.
-func ensureTmpRoot(path string, uid, gid uint32) error {
-	fi, err := os.Lstat(path)
+// ensureTmpLink creates or verifies the /tmp link pointing at one owner's
+// on-disk tmp target. /tmp is hostile -- aged and writable by every tenant --
+// so the link is resolved on every call, never cached: a missing link is
+// made, an EEXIST falls back to one stat of the race winner's link, and a
+// link the caller owns that points elsewhere is removed and remade, since
+// only our own link is ours to replace. A non-link, or a link another uid
+// owns, is refused untouched and never followed, so a planted path fails the
+// owner's round start instead of diverting it. Ownership comes from Lstat,
+// which reports the link itself. Every refusal names the path and the fix.
+func ensureTmpLink(link, target string, euid uint32) error {
+	fi, err := os.Lstat(link)
 	if errors.Is(err, fs.ErrNotExist) {
-		if merr := os.Mkdir(path, tenantDirMode); merr != nil {
-			return fmt.Errorf("tmp root %s: create it with mode 0700: %w", path, merr)
+		if serr := os.Symlink(target, link); serr != nil {
+			if !errors.Is(serr, fs.ErrExist) {
+				return fmt.Errorf("tmp link %s: point it at %s: %w", link, target, serr)
+			}
+			fi, err = os.Lstat(link)
+			if err != nil {
+				return err
+			}
+		} else {
+			return nil
 		}
-		if err := os.Chmod(path, tenantDirMode); err != nil {
-			return fmt.Errorf("tmp root %s: chmod 0700: %w", path, err)
-		}
-		// A root-made directory is handed to the expected owner. A non-root
-		// daemon (a test) cannot chown, so its EPERM is tolerated and the
-		// ownership check below reads whatever owner the directory has.
-		if err := os.Lchown(path, int(uid), int(gid)); err != nil && os.Geteuid() == 0 {
-			return fmt.Errorf("tmp root %s: chown %d:%d: %w", path, uid, gid, err)
-		}
-		fi, err = os.Lstat(path)
-	}
-	if err != nil {
+	} else if err != nil {
 		return err
 	}
-	if fi.Mode()&os.ModeSymlink != 0 || !fi.IsDir() {
-		return fmt.Errorf("tmp root %s is not a directory: remove it so serve can recreate it with mode 0700", path)
+	if fi.Mode()&os.ModeSymlink == 0 {
+		return fmt.Errorf("tmp link %s is not a symlink: remove it so serve can recreate it pointing at %s", link, target)
 	}
-	if ouid, _, ok := db.StatOwner(fi); ok && ouid != uid {
-		return fmt.Errorf("tmp root %s is owned by uid %d, want %d: remove it or hand it to %d so serve can use it", path, ouid, uid, uid)
+	if ouid, _, ok := db.StatOwner(fi); ok && ouid != euid {
+		return fmt.Errorf("tmp link %s is owned by uid %d, want %d: remove it or hand it to %d so serve can use it", link, ouid, euid, euid)
 	}
-	if fi.Mode().Perm() != tenantDirMode {
-		if err := os.Chmod(path, tenantDirMode); err != nil {
-			return fmt.Errorf("tmp root %s: chmod 0700: %w", path, err)
-		}
+	got, err := os.Readlink(link)
+	if err != nil {
+		return fmt.Errorf("tmp link %s: read it to check it points at %s: %w", link, target, err)
+	}
+	if got == target {
+		return nil
+	}
+	if err := os.Remove(link); err != nil {
+		return fmt.Errorf("tmp link %s: remove it so serve can recreate it pointing at %s: %w", link, target, err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		return fmt.Errorf("tmp link %s: point it at %s: %w", link, target, err)
 	}
 	return nil
 }

@@ -64,14 +64,17 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 	}
 	if cfg.Isolation == isolate.ModeNone {
 		// The hostile check runs on every resolution, never once: /tmp is
-		// aged and writable by every tenant, so a root that was fine can
+		// aged and writable by every tenant, so a link that was fine can
 		// turn planted while serve keeps running. User mode does no
-		// pre-create here -- a serve-owned directory would fail the
+		// pre-create here -- a serve-owned target would fail the
 		// tenant's own check -- its creation lives in ensureTenantRoots.
 		// A refusal wraps the runner so the round start halts NEEDS YOU;
-		// TmpRoot stays set, since an empty root would read as container
-		// "no tmp" and silently inherit TMPDIR.
-		if err := ensureTmpRoot(rt.TmpRoot, uint32(os.Getuid()), uint32(os.Getgid())); err != nil {
+		// TmpRoot stays set at the link path, since an empty root would
+		// read as container "no tmp" and silently inherit TMPDIR.
+		target := s.ownerTmpTarget(root)
+		if err := os.MkdirAll(target, tenantDirMode); err != nil {
+			rt.Runner = isolate.Refuse(rt.Runner, fmt.Errorf("tmp target %s: create it with mode 0700: %w", target, err))
+		} else if err := ensureTmpLink(rt.TmpRoot, target, uint32(os.Geteuid())); err != nil {
 			rt.Runner = isolate.Refuse(rt.Runner, err)
 		}
 	}

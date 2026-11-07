@@ -105,7 +105,30 @@ func seedServeOwnerState(t *testing.T, label string) (*store.Store, string) {
 
 	owner := store.NewShared(filepath.Join(serveRoot, "bindings", dir), string(cl.ID), d)
 	seedOwnerStore(t, owner, string(cl.ID))
+	trackOwnerTmpLink(t, label)
 	return owner, root
+}
+
+// trackOwnerTmpLink removes the served tmp link an owner verb resolves, so
+// seeded-owner tests never litter the shared /tmp. It re-resolves the owner's
+// runtime the way the verbs do and removes exactly the TmpRoot it reports, so
+// only this test's link goes, never another serve's or production's.
+func trackOwnerTmpLink(t *testing.T, label string) {
+	t.Helper()
+	t.Cleanup(func() {
+		root, d, err := adminRootFor("")
+		if err != nil {
+			return
+		}
+		defer func() { _ = d.Close() }()
+		srv, err := serve.New(serveAdminConfig(root, d))
+		if err != nil {
+			return
+		}
+		if rt, _, err := serve.AdminOwnerRuntime(srv, label); err == nil {
+			_ = os.RemoveAll(rt.TmpRoot)
+		}
+	})
 }
 
 // TestShowOwnerIsTheOldServeShow pins `show <name> --owner <label>`: it

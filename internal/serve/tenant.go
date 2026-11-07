@@ -79,17 +79,18 @@ func (s *Server) ownerTransport(root string, t isolate.Tenant, gc *git.Client) r
 
 // ensureTenantRoots creates or verifies the split layout for one owner:
 //
-//	<root>, bindings/, repos/, tmp/           root 0711
+//	<root>, bindings/, repos/, tmp/, tmp/t    root 0711
 //	bindings/<hex>                            root:<gid> 0710
 //	bindings/<hex>/.worktrees, .../.scratch  tenant 0700
-//	repos/<hex>, tmp/<hex>                    tenant 0700
+//	repos/<hex>, tmp/<hex>, tmp/t/<short>     tenant 0700
 //
-// The served tmp root lives outside the serve root, directly under /tmp, so
-// a round's TMPDIR stays short enough for a socket name under the sun_path
-// limit; the long tmp/<hex> stays the bundle transport's home. Every
-// component is Lstat'ed first, so a symlink or a regular file where a
-// directory belongs is refused, never followed. It runs on every resolution
-// because the daemon's prunes remove the empty tenant directories.
+// The short tmp target is what the /tmp link points at; the long tmp/<hex>
+// stays the bundle transport's home. A round's TMPDIR is the link, so it
+// stays short enough for a socket name under the sun_path limit while the
+// bytes live under the serve root. Every component is Lstat'ed first, so a
+// symlink or a regular file where a directory belongs is refused, never
+// followed. It runs on every resolution because the daemon's prunes remove
+// the empty tenant directories.
 func (s *Server) ensureTenantRoots(owner remote.ClientID, t isolate.Tenant) error {
 	hex, ok := owner.Dir()
 	if !ok {
@@ -101,6 +102,7 @@ func (s *Server) ensureTenantRoots(owner remote.ClientID, t isolate.Tenant) erro
 		filepath.Join(root, "bindings"),
 		filepath.Join(root, "repos"),
 		filepath.Join(root, "tmp"),
+		filepath.Join(root, "tmp", "t"),
 	} {
 		if err := ensureRootDir(d, serveRootMode); err != nil {
 			return err
@@ -115,15 +117,16 @@ func (s *Server) ensureTenantRoots(owner remote.ClientID, t isolate.Tenant) erro
 		filepath.Join(ownerRoot, ".worktrees", ".scratch"),
 		filepath.Join(root, "repos", hex),
 		filepath.Join(root, "tmp", hex),
+		s.ownerTmpTarget(ownerRoot),
 	} {
 		if err := ensureTenantDir(d, t); err != nil {
 			return err
 		}
 	}
-	// The served tmp root is verified after the serve-root layout: it lives
-	// under the hostile /tmp, so a planted path refuses the owner's round
-	// start through the tenant boundary instead of diverting it.
-	if err := ensureTmpRoot(s.ownerTmpDir(ownerRoot), t.UID, t.GID); err != nil {
+	// The link is resolved after the serve-root layout: it lives under the
+	// hostile /tmp, so a planted path refuses the owner's round start through
+	// the tenant boundary instead of diverting it.
+	if err := ensureTmpLink(s.ownerTmpDir(ownerRoot), s.ownerTmpTarget(ownerRoot), t.UID); err != nil {
 		return err
 	}
 	return nil

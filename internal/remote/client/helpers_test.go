@@ -132,7 +132,7 @@ func startTestServer(t *testing.T) (*client.Client, *testServerFixture) {
 	enrollTestClient(t, machineDB, serverRoot, kp)
 	srv := newTestServer(t, serverRoot, machineDB, cSet, runner, gitClient, []string{fingerprint})
 	// Learning the owner's tmp root resolves its runtime, which plants the
-	// same directory the test's rounds would; the cleanup removes it.
+	// same tmp link the test's rounds would; the cleanup removes it.
 	rt, err := srv.OwnerRuntime(remote.IDOf(kp.Public))
 	if err != nil {
 		t.Fatalf("owner runtime: %v", err)

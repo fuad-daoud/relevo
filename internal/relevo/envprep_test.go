@@ -66,6 +66,77 @@ func TestPrepareProcRefusesLowDisk(t *testing.T) {
 	}
 }
 
+// resolvingDisk is a DiskFree stub that measures through symlinks: plenty
+// under plentyRoot, 1 GiB everywhere else. A TmpRoot link into the test root
+// reads plenty while a real directory outside it reads low, which is how the
+// tests pin the preflight following the link onto the serve filesystem.
+func resolvingDisk(plentyRoot string) func(string) (uint64, error) {
+	return func(p string) (uint64, error) {
+		real := p
+		if resolved, err := filepath.EvalSymlinks(p); err == nil {
+			real = resolved
+		}
+		if rel, err := filepath.Rel(plentyRoot, real); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+			return 100 << 30, nil
+		}
+		return 1 << 30, nil
+	}
+}
+
+// TestPrepareProcStartsThroughTmpLink pins that a round starts when TmpRoot
+// is a link into the test root while a literal read of the link's own
+// directory would refuse: the preflight resolves the link and measures the
+// target's filesystem.
+func TestPrepareProcStartsThroughTmpLink(t *testing.T) {
+	serveRoot := t.TempDir()
+	target := filepath.Join(serveRoot, "tmp", "t", "01234567")
+	if err := os.MkdirAll(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "rv-12345678")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	rt := newRuntime(t)
+	rt.TmpRoot = link
+	rt.DiskFree = resolvingDisk(serveRoot)
+	b := store.Binding{Name: "webshop", Round: 1}
+	req := roundReq(&b)
+	req.tree = serveRoot
+
+	dir, _, _, err := prepareProc(context.Background(), rt, req)
+	if err != nil {
+		t.Fatalf("prepareProc through the link: %v", err)
+	}
+	if got, err := filepath.EvalSymlinks(dir); err != nil || !strings.HasPrefix(got, serveRoot) {
+		t.Errorf("tmpDir = %q resolves to %q (%v), want it under the serve root", dir, got, err)
+	}
+}
+
+// TestPrepareProcRefusesRealTmpDirOutsideServeRoot pins the other half: the
+// same resolving stub refuses when TmpRoot is a real directory outside the
+// serve root, the old shape the link replaced.
+func TestPrepareProcRefusesRealTmpDirOutsideServeRoot(t *testing.T) {
+	serveRoot := t.TempDir()
+	real, err := os.MkdirTemp("", "rv-refuse-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(real) })
+	rt := newRuntime(t)
+	rt.TmpRoot = real
+	rt.DiskFree = resolvingDisk(serveRoot)
+	b := store.Binding{Name: "webshop", Round: 1}
+	req := roundReq(&b)
+	req.tree = serveRoot
+
+	if _, _, _, err := prepareProc(context.Background(), rt, req); err == nil {
+		t.Fatal("prepareProc with a real tmp root outside the serve root succeeded under a full disk")
+	} else if !strings.Contains(err.Error(), real) {
+		t.Errorf("err = %q, want it to name the full path", err)
+	}
+}
+
 func TestPrepareProcChecksWorktreeAndTmpRoot(t *testing.T) {
 	t.Parallel()
 

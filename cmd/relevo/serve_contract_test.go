@@ -76,6 +76,7 @@ func seedSecondOwner(t *testing.T, root, label string) (*store.Store, remote.Cli
 
 	owner := store.NewShared(filepath.Join(serveRoot, "bindings", dir), string(cl.ID), d)
 	seedOwnerStore(t, owner, string(cl.ID))
+	trackOwnerTmpLink(t, label)
 	return owner, cl.ID
 }
 

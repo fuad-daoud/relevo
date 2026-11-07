@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 )
@@ -51,7 +50,6 @@ func (s *Server) Tick(ctx context.Context) error {
 			slog.Error("tick owner failed", "owner", owner.id, "err", err)
 		}
 		s.tmpSweptAt.Store(owner.root, d.TmpSweptAt())
-		s.drainOldTmpRoot(ctx, owner, rt)
 	}
 
 	// Every owner is reconciled, so admit can start queued rounds into the slots
@@ -77,45 +75,6 @@ func (s *Server) Tick(ctx context.Context) error {
 type ownerRoot struct {
 	id   remote.ClientID
 	root string
-}
-
-// drainOldTmpRoot empties one owner's leftover of the old serve tmp root,
-// <root>/tmp/t/<short>. The same paced sweep that guards the new root runs
-// retargeted at the old one, over that owner's own store list; then the
-// per-owner directory and its tmp/t parent go when they are empty. Only
-// empty directories go, so a live tree the sweep keeps is left alone, and a
-// removal that fails -- still in use, raced by a start -- is left for the
-// next tick. Once gone the Lstat miss ends the drain, and the bundle homes
-// under <root>/tmp/<hex> are never touched.
-func (s *Server) drainOldTmpRoot(ctx context.Context, owner ownerRoot, rt relevo.Runtime) {
-	hex, ok := owner.id.Dir()
-	if !ok {
-		return
-	}
-	old := filepath.Join(s.cfg.Root, "tmp", "t", shortOwnerDir(hex))
-	fi, err := os.Lstat(old)
-	if err != nil {
-		return
-	}
-	if fi.Mode()&os.ModeSymlink == 0 && fi.IsDir() {
-		deps := relevo.HousekeepDeps(rt)
-		deps.TmpRoot = old
-		var last time.Time
-		if at, ok := s.oldTmpSweptAt.Load(owner.root); ok {
-			last = at.(time.Time)
-		}
-		if bindings, lerr := s.ownerStore(owner.root).List(); lerr == nil {
-			housekeep.SweepTick(ctx, deps, bindings, &last, s.cfg.Now())
-			s.oldTmpSweptAt.Store(owner.root, last)
-		}
-		// The sweep takes entries, not the shells that held them: the leaf
-		// subdirectories go too, so the per-owner directory can follow.
-		// Every removal is best-effort; a failure is retried next tick.
-		_ = os.Remove(filepath.Join(old, housekeep.SubRounds))
-		_ = os.Remove(filepath.Join(old, housekeep.SubChecks))
-	}
-	_ = os.Remove(old)
-	_ = os.Remove(filepath.Join(s.cfg.Root, "tmp", "t"))
 }
 
 // ownerRoots lists the owner roots under the bindings directory. A missing

@@ -92,6 +92,23 @@ func TestOwnerTmpDirSeparatesRootsAndOwners(t *testing.T) {
 	}
 }
 
+// TestOwnerTmpTargetOnDiskShape pins the link's target: <root>/tmp/t/<8>,
+// the on-disk root the bytes live in, so the disk preflight measures the
+// serve filesystem while the handed-out link stays short.
+func TestOwnerTmpTargetOnDiskShape(t *testing.T) {
+	root := t.TempDir()
+	s, err := New(Config{DB: testServeDB(t), Root: root, Now: time.Now})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ownerHex := strings.Repeat("a", 64)
+	ownerRoot := filepath.Join(root, "bindings", ownerHex)
+	got := s.ownerTmpTarget(ownerRoot)
+	if want := filepath.Join(root, "tmp", "t", ownerHex[:8]); got != want {
+		t.Errorf("ownerTmpTarget = %q, want %q", got, want)
+	}
+}
+
 // TestOwnerTmpDirLengthBound pins the move's goal: the new root plus a
 // checks/<8> leaf plus Chromium's 45-byte socket suffix stays under 108
 // bytes, even under a long serve root that dwarfs the digest itself.
@@ -174,11 +191,11 @@ func TestTickPacesTmpSweepAcrossTicks(t *testing.T) {
 	}
 }
 
-// TestRuntimeAtRefusesPlantedSymlink pins that mode none re-checks the tmp
-// root on every resolution: a root that resolved fine, then is replaced by a
-// symlink, refuses the next start with spawn.ErrBoundarySetup naming the
-// path. TmpRoot stays set, so the failure cannot read as container "no tmp".
-func TestRuntimeAtRefusesPlantedSymlink(t *testing.T) {
+// TestRuntimeAtReplacesOwnedSymlink pins that mode none re-checks the tmp
+// link on every resolution: a link the serve uid owns that points elsewhere
+// is removed and remade pointing at the target, and the next start works.
+// TmpRoot stays set at the link path.
+func TestRuntimeAtReplacesOwnedSymlink(t *testing.T) {
 	root := t.TempDir()
 	s, err := New(Config{DB: testServeDB(t), Root: root, Runner: newScriptRunner(), Now: time.Now})
 	if err != nil {
@@ -186,11 +203,12 @@ func TestRuntimeAtRefusesPlantedSymlink(t *testing.T) {
 	}
 	ownerRoot := filepath.Join(root, "bindings", strings.Repeat("a", 64))
 	tmpRoot := s.ownerTmpDir(ownerRoot)
+	target := s.ownerTmpTarget(ownerRoot)
 	t.Cleanup(func() { _ = os.RemoveAll(tmpRoot) })
 	if rt := s.runtimeAt(ownerRoot); rt.TmpRoot != tmpRoot {
 		t.Fatalf("first resolve TmpRoot = %q, want %q", rt.TmpRoot, tmpRoot)
 	}
-	if err := os.RemoveAll(tmpRoot); err != nil {
+	if err := os.Remove(tmpRoot); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(t.TempDir(), tmpRoot); err != nil {
@@ -198,14 +216,13 @@ func TestRuntimeAtRefusesPlantedSymlink(t *testing.T) {
 	}
 	rt := s.runtimeAt(ownerRoot)
 	if rt.TmpRoot != tmpRoot {
-		t.Errorf("refused TmpRoot = %q, want it kept at %q", rt.TmpRoot, tmpRoot)
+		t.Errorf("replaced TmpRoot = %q, want it kept at %q", rt.TmpRoot, tmpRoot)
 	}
-	_, err = rt.Runner.Start(context.Background(), spawn.ProcSpec{Dir: ownerRoot, Argv: []string{"true"}})
-	if !errors.Is(err, spawn.ErrBoundarySetup) {
-		t.Fatalf("Start = %v, want an error wrapping spawn.ErrBoundarySetup", err)
+	if got, err := os.Readlink(tmpRoot); err != nil || got != target {
+		t.Fatalf("link = %q, %v; want it remade pointing at %s", got, err, target)
 	}
-	if !strings.Contains(err.Error(), tmpRoot) {
-		t.Errorf("halt error = %q, want it to name the planted path", err)
+	if _, err := rt.Runner.Start(context.Background(), spawn.ProcSpec{Dir: ownerRoot, Argv: []string{"true"}}); err != nil {
+		t.Fatalf("Start after replace: %v", err)
 	}
 }
 
@@ -240,8 +257,9 @@ func TestRuntimeAtRefusesPlantedFile(t *testing.T) {
 	}
 }
 
-// TestRuntimeAtRecreatesMissingTmpRoot pins that a root /tmp aged away comes
-// back on the next resolution at 0700, with starts working again.
+// TestRuntimeAtRecreatesMissingTmpRoot pins that a link /tmp aged away comes
+// back on the next resolution pointing at the surviving target, with starts
+// working again. TmpRoot stays set at the link path.
 func TestRuntimeAtRecreatesMissingTmpRoot(t *testing.T) {
 	root := t.TempDir()
 	s, err := New(Config{DB: testServeDB(t), Root: root, Runner: newScriptRunner(), Now: time.Now})
@@ -250,63 +268,73 @@ func TestRuntimeAtRecreatesMissingTmpRoot(t *testing.T) {
 	}
 	ownerRoot := filepath.Join(root, "bindings", strings.Repeat("c", 64))
 	tmpRoot := s.ownerTmpDir(ownerRoot)
+	target := s.ownerTmpTarget(ownerRoot)
 	t.Cleanup(func() { _ = os.RemoveAll(tmpRoot) })
 	_ = s.runtimeAt(ownerRoot)
-	if err := os.RemoveAll(tmpRoot); err != nil {
+	if err := os.Remove(tmpRoot); err != nil {
 		t.Fatal(err)
 	}
-	rt := s.runtimeAt(ownerRoot)
-	fi, err := os.Lstat(tmpRoot)
-	if err != nil {
-		t.Fatalf("resolve did not recreate %s: %v", tmpRoot, err)
+	if _, err := os.Lstat(target); err != nil {
+		t.Fatalf("removing the link took the target %s: %v", target, err)
 	}
-	if !fi.IsDir() || fi.Mode().Perm() != 0o700 {
-		t.Errorf("recreated %s mode = %04o, want a 0700 directory", tmpRoot, fi.Mode().Perm())
+	rt := s.runtimeAt(ownerRoot)
+	if rt.TmpRoot != tmpRoot {
+		t.Errorf("recreated TmpRoot = %q, want it kept at %q", rt.TmpRoot, tmpRoot)
+	}
+	if got, err := os.Readlink(tmpRoot); err != nil || got != target {
+		t.Fatalf("link = %q, %v; want it recreated pointing at %s", got, err, target)
 	}
 	if _, err := rt.Runner.Start(context.Background(), spawn.ProcSpec{Dir: ownerRoot, Argv: []string{"true"}}); err != nil {
 		t.Fatalf("Start after recreate: %v", err)
 	}
 }
 
-// TestRuntimeAtRepairsLaxTmpMode pins the own-dir fixup: a 0755 directory the
-// serve uid owns is chmod'ed back to 0700 instead of refused.
-func TestRuntimeAtRepairsLaxTmpMode(t *testing.T) {
-	root := t.TempDir()
-	s, err := New(Config{DB: testServeDB(t), Root: root, Runner: newScriptRunner(), Now: time.Now})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	ownerRoot := filepath.Join(root, "bindings", strings.Repeat("d", 64))
-	tmpRoot := s.ownerTmpDir(ownerRoot)
-	t.Cleanup(func() { _ = os.RemoveAll(tmpRoot) })
-	_ = s.runtimeAt(ownerRoot)
-	if err := os.Chmod(tmpRoot, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	rt := s.runtimeAt(ownerRoot)
-	if fi, err := os.Lstat(tmpRoot); err != nil || fi.Mode().Perm() != 0o700 {
-		t.Fatalf("%s mode = %v, %v; want the resolve to fix it to 0700", tmpRoot, fi.Mode(), err)
-	}
-	if _, err := rt.Runner.Start(context.Background(), spawn.ProcSpec{Dir: ownerRoot, Argv: []string{"true"}}); err != nil {
-		t.Fatalf("Start after fixup: %v", err)
-	}
-}
-
-// TestEnsureTenantRootsRefusesPlantedSymlink pins the user-mode half of the
-// per-resolution check: a planted symlink at the new root refuses the next
-// start through the tenant boundary.
-func TestEnsureTenantRootsRefusesPlantedSymlink(t *testing.T) {
+// TestEnsureTenantRootsReplacesOwnedSymlink pins the user-mode half of the
+// per-resolution link check: a link the tenant owns that points elsewhere is
+// removed and remade pointing at the target, and the next start works.
+func TestEnsureTenantRootsReplacesOwnedSymlink(t *testing.T) {
 	env := newUserTestEnv(t, "alice")
 	ownerRoot := ownerRootOf(t, env)
 	tmpRoot := env.srv.ownerTmpDir(ownerRoot)
+	target := env.srv.ownerTmpTarget(ownerRoot)
 	t.Cleanup(func() { _ = os.RemoveAll(tmpRoot) })
 	_ = env.srv.runtimeAt(ownerRoot)
-	if err := os.RemoveAll(tmpRoot); err != nil {
+	if err := os.Remove(tmpRoot); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(t.TempDir(), tmpRoot); err != nil {
 		t.Fatal(err)
 	}
+	rt := env.srv.runtimeAt(ownerRoot)
+	if rt.TmpRoot != tmpRoot {
+		t.Errorf("replaced TmpRoot = %q, want it kept at %q", rt.TmpRoot, tmpRoot)
+	}
+	if got, err := os.Readlink(tmpRoot); err != nil || got != target {
+		t.Fatalf("link = %q, %v; want it remade pointing at %s", got, err, target)
+	}
+	if _, err := rt.Runner.Start(context.Background(), spawn.ProcSpec{Dir: ownerRoot, Argv: []string{"true"}}); err != nil {
+		t.Fatalf("Start after replace: %v", err)
+	}
+}
+
+// TestEnsureTenantRootsRefusesPlantedTargetFile pins that a regular file where
+// the owner's on-disk tmp target belongs is refused and left alone: the
+// target is Lstat'ed and never followed, so the plant cannot divert the link
+// onto it.
+func TestEnsureTenantRootsRefusesPlantedTargetFile(t *testing.T) {
+	env := newUserTestEnv(t, "alice")
+	ownerRoot := ownerRootOf(t, env)
+	tmpRoot := env.srv.ownerTmpDir(ownerRoot)
+	target := env.srv.ownerTmpTarget(ownerRoot)
+	t.Cleanup(func() { _ = os.RemoveAll(tmpRoot) })
+	_ = env.srv.runtimeAt(ownerRoot)
+	if err := os.RemoveAll(target); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("planted"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(target) })
 	rt := env.srv.runtimeAt(ownerRoot)
 	if rt.TmpRoot != tmpRoot {
 		t.Errorf("refused TmpRoot = %q, want it kept at %q", rt.TmpRoot, tmpRoot)
@@ -315,81 +343,38 @@ func TestEnsureTenantRootsRefusesPlantedSymlink(t *testing.T) {
 	if !errors.Is(err, spawn.ErrBoundarySetup) {
 		t.Fatalf("Start = %v, want an error wrapping spawn.ErrBoundarySetup", err)
 	}
-	if !strings.Contains(err.Error(), tmpRoot) {
-		t.Errorf("halt error = %q, want it to name the planted path", err)
+	if !strings.Contains(err.Error(), target) {
+		t.Errorf("halt error = %q, want it to name the planted target", err)
+	}
+	if fi, serr := os.Lstat(target); serr != nil || !fi.Mode().IsRegular() {
+		t.Errorf("resolve took the planted target file: %v, %v", fi, serr)
 	}
 }
 
 // TestEnsureTenantRootsRecreatesMissingTmpRoot pins the user-mode half of
-// the re-create rule: an aged-away root comes back tenant-owned at 0700.
+// the re-create rule: an aged-away link comes back pointing at the surviving
+// target, and the next start works.
 func TestEnsureTenantRootsRecreatesMissingTmpRoot(t *testing.T) {
 	env := newUserTestEnv(t, "alice")
 	ownerRoot := ownerRootOf(t, env)
 	tmpRoot := env.srv.ownerTmpDir(ownerRoot)
+	target := env.srv.ownerTmpTarget(ownerRoot)
 	t.Cleanup(func() { _ = os.RemoveAll(tmpRoot) })
 	_ = env.srv.runtimeAt(ownerRoot)
-	if err := os.RemoveAll(tmpRoot); err != nil {
+	if err := os.Remove(tmpRoot); err != nil {
 		t.Fatal(err)
 	}
-	rt := env.srv.runtimeAt(ownerRoot)
-	fi, err := os.Lstat(tmpRoot)
-	if err != nil {
-		t.Fatalf("resolve did not recreate %s: %v", tmpRoot, err)
+	if _, err := os.Lstat(target); err != nil {
+		t.Fatalf("removing the link took the target %s: %v", target, err)
 	}
-	if !fi.IsDir() || fi.Mode().Perm() != 0o700 {
-		t.Errorf("recreated %s mode = %04o, want a 0700 directory", tmpRoot, fi.Mode().Perm())
+	rt := env.srv.runtimeAt(ownerRoot)
+	if rt.TmpRoot != tmpRoot {
+		t.Errorf("recreated TmpRoot = %q, want it kept at %q", rt.TmpRoot, tmpRoot)
+	}
+	if got, err := os.Readlink(tmpRoot); err != nil || got != target {
+		t.Fatalf("link = %q, %v; want it recreated pointing at %s", got, err, target)
 	}
 	if _, err := rt.Runner.Start(context.Background(), spawn.ProcSpec{Dir: ownerRoot, Argv: []string{"true"}}); err != nil {
 		t.Fatalf("Start after recreate: %v", err)
-	}
-}
-
-// TestTickDrainsOldTmpTree pins the upgrade drain: a leftover of the old
-// <root>/tmp/t/<short> tree holding a stale round leaf is swept by the same
-// paced sweep, then the per-owner directory and its tmp/t parent are
-// removed, while the new root still sweeps and bundle homes are kept.
-func TestTickDrainsOldTmpTree(t *testing.T) {
-	root := t.TempDir()
-	now := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
-	s, err := New(Config{DB: testServeDB(t), Root: root, Now: func() time.Time { return now }})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	ownerHex := strings.Repeat("a", 64)
-	ownerRoot := filepath.Join(root, "bindings", ownerHex)
-	if err := os.MkdirAll(ownerRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	oldRoot := filepath.Join(root, "tmp", "t", shortOwnerDir(ownerHex))
-	oldLeaf := filepath.Join(oldRoot, "rounds", "01234567")
-	if err := os.MkdirAll(oldLeaf, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	bundleHome := filepath.Join(root, "tmp", ownerHex)
-	if err := os.MkdirAll(bundleHome, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	newLeaf := filepath.Join(s.ownerTmpDir(ownerRoot), "rounds", "01234567")
-	t.Cleanup(func() { _ = os.RemoveAll(s.ownerTmpDir(ownerRoot)) })
-	if err := os.MkdirAll(newLeaf, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Tick(context.Background()); err != nil {
-		t.Fatalf("Tick: %v", err)
-	}
-	if _, err := os.Stat(oldLeaf); !os.IsNotExist(err) {
-		t.Errorf("tick left old leaf %s (err %v), want it swept", oldLeaf, err)
-	}
-	if _, err := os.Lstat(oldRoot); !os.IsNotExist(err) {
-		t.Errorf("tick left old per-owner dir %s (err %v), want it removed", oldRoot, err)
-	}
-	if _, err := os.Lstat(filepath.Join(root, "tmp", "t")); !os.IsNotExist(err) {
-		t.Errorf("tick left the old tmp/t parent, want it removed once empty")
-	}
-	if _, err := os.Stat(newLeaf); !os.IsNotExist(err) {
-		t.Errorf("tick left new-root leaf %s (err %v), want the new root still swept", newLeaf, err)
-	}
-	if _, err := os.Stat(bundleHome); err != nil {
-		t.Errorf("tick removed bundle home %s: %v", bundleHome, err)
 	}
 }
