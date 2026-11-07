@@ -107,6 +107,13 @@ type remoteAddInput struct {
 	existingBranch bool
 }
 
+// localBranchTaken refuses a name whose branch this repository already holds. It
+// says which copy blocks, because a served binding's branch also lives in the
+// server's repository and the client's copy survives an unbind.
+func localBranchTaken(branch string) error {
+	return refusal.Classed(git.ErrBranchExists, fmt.Sprintf("branch %s exists in this repository on this machine; delete it or pick another name", branch))
+}
+
 // remoteAddBase is the base identity a remote add was resolved to: the repo,
 // the author the remote builder commits as, and the candidate token.
 type remoteAddBase struct {
@@ -193,6 +200,15 @@ func validateRemoteAddInput(ctx context.Context, rt Runtime, opts *AddOptions, r
 		input.existingBranch = true
 		input.base = tip
 	} else {
+		// Checked before the server hears of it, so a clash leaves no archived
+		// row there. CreateBranch still refuses a branch cut in between.
+		taken, err := rt.Git.BranchExists(ctx, opts.Repo, input.branch)
+		if err != nil {
+			return remoteAddInput{}, fmt.Errorf("branch %s: %w", input.branch, err)
+		}
+		if taken {
+			return remoteAddInput{}, localBranchTaken(input.branch)
+		}
 		if input.base == "" {
 			var err error
 			input.base, err = rt.Git.HeadCommit(ctx, opts.Repo)
@@ -364,7 +380,7 @@ func createAndMirrorBinding(ctx context.Context, rt Runtime, opts AddOptions, in
 	if !input.existingBranch {
 		if err := rt.Git.CreateBranch(ctx, opts.Repo, input.branch, input.base); err != nil {
 			if errors.Is(err, git.ErrBranchExists) {
-				return AddResult{}, fmt.Errorf("branch relevo/%s exists; delete it or pick another name", opts.Name)
+				return AddResult{}, localBranchTaken(input.branch)
 			}
 			return AddResult{}, err
 		}
