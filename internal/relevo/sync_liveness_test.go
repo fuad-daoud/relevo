@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db/wire"
 	"github.com/fuad-daoud/relevo/internal/store"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 	"github.com/fuad-daoud/relevo/internal/sync/verb"
@@ -533,6 +534,30 @@ func TestSyncTriggerDuringAJoinWaitsForNothingAndDoesNotInterleave(t *testing.T)
 	waitSyncIdle(t, f.d)
 	if got := f.attempts(); got != base {
 		t.Errorf("a trigger dropped by a join ran after it (%d -> %d)", base, got)
+	}
+}
+
+// TestSyncAttemptVerbStartsAnAttempt pins that the attempt verb a gate or a
+// takeover sends hurries an attempt through the daemon's own wiring: the verb
+// runs under the slot guard, which drops a trigger landing while it holds the
+// slot, so an attempt verb run inside that guard would never start anything.
+func TestSyncAttemptVerbStartsAnAttempt(t *testing.T) {
+	t.Parallel()
+	f := newLiveFixture(t)
+	f.baseline(t)
+	ctx := context.Background()
+	f.tick(baseTime)
+
+	at := baseTime.Add(time.Minute)
+	f.setNow(at)
+	runner := &verb.Runner{Local: f.local, Runner: f.d.rt.Sync, Serialize: f.d.WaitSyncSlot}
+	runner.Trigger = func() { f.d.SyncNow(ctx) }
+	if res := runner.Run(ctx, &wire.SyncVerb{Verb: wire.SyncVerbAttempt}, nil); !res.OK {
+		t.Fatalf("attempt verb answered %+v", res)
+	}
+	waitSyncIdle(t, f.d)
+	if got := f.lastSyncStart(); !got.Equal(at) {
+		t.Errorf("last attempt began %v, want the attempt verb's %v inside the export gap", got, at)
 	}
 }
 
