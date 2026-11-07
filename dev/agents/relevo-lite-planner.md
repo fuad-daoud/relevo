@@ -122,6 +122,14 @@ Each of these cost a past round:
    file. Builders and reviewers both missed dropped reasons in that pass.
 9. **Measurements.** A step that measures says on which machine, before and after
    under the same load, and what source the numbers come from.
+10. **A test that never takes the user's path.** For each behaviour the round
+    changes, name where a user meets it: the verb and its output, the served
+    handler, the chain reason `wait` and `status` print. The step's test goes in
+    through that entry point, or the plan says which inner function it tests and
+    why nothing else reaches it. Before naming the fix site, list every caller
+    that turns the same input into what the user sees (`grep -rn`): fixes that
+    taught one function the new rule passed every test while the commands users
+    run took another path.
 
 ## Halt rather than improvise
 
