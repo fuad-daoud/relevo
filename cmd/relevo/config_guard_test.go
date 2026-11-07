@@ -171,6 +171,82 @@ func TestConfigUnsetCandidatesDroppingAnActorCandidateRefuses(t *testing.T) {
 	}
 }
 
+// invalidCandidatesWithOverlongName is the seeded two candidates plus one
+// entry whose 25-character name breaks the 24-character limit, so the write
+// carries an unparseable list that still names everything the actor holds.
+const invalidCandidatesWithOverlongName = `[{"harness":"claude","provider":"p","model":"m"},{"harness":"agy","provider":"q","model":"n"},{"name":"inkling-2-small-free-high","harness":"opencode","provider":"opencode","model":"inkling-2-small-free#high"}]`
+
+func TestConfigSetCandidatesWithAnUnparseableNameRefusesAsInvalid(t *testing.T) {
+	initRoot(t)
+	seedActorOverTwoCandidates(t)
+	beforeVersion, beforeRevs := configWriteCounts(t)
+
+	_, _, err := captureOutput(t, func() error {
+		return run([]string{"config", "set", "candidates", invalidCandidatesWithOverlongName})
+	})
+	ce := requireCLIError(t, err, codeConfigInvalid, "")
+	if !strings.Contains(ce.message, "inkling-2-small-free-high") {
+		t.Errorf("message = %q, want it to name the candidate", ce.message)
+	}
+	if strings.Contains(ce.message, "pass --force to drop it") {
+		t.Errorf("message = %q, want no drop wording for an unparseable list", ce.message)
+	}
+
+	afterVersion, afterRevs := configWriteCounts(t)
+	if afterVersion != beforeVersion || afterRevs != beforeRevs {
+		t.Errorf("counts = (v%d, %d revisions), want (v%d, %d): the refused write stored something",
+			afterVersion, afterRevs, beforeVersion, beforeRevs)
+	}
+}
+
+func TestConfigSetCandidatesWithAnUnparseableNameForceStillRefusesAsInvalid(t *testing.T) {
+	initRoot(t)
+	seedActorOverTwoCandidates(t)
+	beforeVersion, beforeRevs := configWriteCounts(t)
+
+	_, _, err := captureOutput(t, func() error {
+		return run([]string{"config", "set", "candidates", invalidCandidatesWithOverlongName, "--force"})
+	})
+	ce := requireCLIError(t, err, codeConfigInvalid, "")
+	if !strings.Contains(ce.message, "inkling-2-small-free-high") {
+		t.Errorf("message = %q, want it to name the candidate", ce.message)
+	}
+
+	afterVersion, afterRevs := configWriteCounts(t)
+	if afterVersion != beforeVersion || afterRevs != beforeRevs {
+		t.Errorf("counts = (v%d, %d revisions), want (v%d, %d): the refused write stored something",
+			afterVersion, afterRevs, beforeVersion, beforeRevs)
+	}
+}
+
+func TestConfigImportWithAnUnparseableNameRefusesAsInvalid(t *testing.T) {
+	initRoot(t)
+	seedActorOverTwoCandidates(t)
+	beforeVersion, beforeRevs := configWriteCounts(t)
+
+	doc := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(doc, []byte(`{"candidates":`+invalidCandidatesWithOverlongName+`}`), 0o600); err != nil {
+		t.Fatalf("write document: %v", err)
+	}
+
+	_, _, err := captureOutput(t, func() error {
+		return run([]string{"config", "import", doc})
+	})
+	ce := requireCLIError(t, err, codeConfigInvalid, "")
+	if !strings.Contains(ce.message, "inkling-2-small-free-high") {
+		t.Errorf("message = %q, want it to name the candidate", ce.message)
+	}
+	if strings.Contains(ce.message, "pass --force to drop it") {
+		t.Errorf("message = %q, want no drop wording for an unparseable list", ce.message)
+	}
+
+	afterVersion, afterRevs := configWriteCounts(t)
+	if afterVersion != beforeVersion || afterRevs != beforeRevs {
+		t.Errorf("counts = (v%d, %d revisions), want (v%d, %d): the refused import stored something",
+			afterVersion, afterRevs, beforeVersion, beforeRevs)
+	}
+}
+
 // TestConfigSetActorsNamingAnUnknownCandidateIsAllowed pins that provisioning
 // order is legitimate: an actor may be written before its candidate exists, so
 // the reverse direction is never guarded.

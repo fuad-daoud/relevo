@@ -143,7 +143,10 @@ func guardImportCandidatesDrop(rt relevo.Runtime, candidates json.RawMessage, fo
 		newDoc[name] = stored
 	}
 	newDoc[config.Candidates] = candidates
-	drops := config.DroppedActorCandidates(oldDoc, newDoc)
+	drops, err := config.DroppedActorCandidates(oldDoc, newDoc)
+	if err != nil {
+		return failWrap(codeConfigInvalid, err, "%v", err)
+	}
 	if len(drops) == 0 {
 		return nil
 	}

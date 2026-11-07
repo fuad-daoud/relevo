@@ -25,23 +25,33 @@ import (
 // to repair itself. Adding an actor naming a candidate nobody defines yet is
 // allowed for the same reason: an actor may precede its candidate.
 //
-// A parse error returns nil: callers validate before guarding, and Put
-// re-validates inside the transaction, so an unreadable body is already
-// refused upstream and a drop from it would only add noise.
-func DroppedActorCandidates(oldDoc, newDoc Doc) []string {
-	oldSet := candidateSet(oldDoc)
-	newSet := candidateSet(newDoc)
+// A new list that does not parse is refused with its parse error before any
+// drop is computed, so a bad write is never read as dropping what actors
+// name. An old list that does not parse instead reads as the empty set, so
+// every actor reference counts as already broken and a repair write stays
+// allowed through to the store's own refusal.
+func DroppedActorCandidates(oldDoc, newDoc Doc) ([]string, error) {
+	oldSet, err := candidateSet(oldDoc)
+	if err != nil {
+		// An empty array is the section's missing-file form and cannot fail
+		// to parse, so the fallback is the empty set.
+		oldSet, _, _ = candidate.Parse(FileName(Candidates), []byte("[]"))
+	}
+	newSet, err := candidateSet(newDoc)
+	if err != nil {
+		return nil, err
+	}
 
 	body, ok := newDoc[Actors]
 	if !ok {
 		body, ok = oldDoc[Actors]
 	}
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	actors, _, err := roles.ParseActors(body)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 
 	names := make([]string, 0, len(actors))
@@ -63,22 +73,20 @@ func DroppedActorCandidates(oldDoc, newDoc Doc) []string {
 			drops = append(drops, fmt.Sprintf("actor %s names candidate %s", name, e.Candidate))
 		}
 	}
-	return drops
+	return drops, nil
 }
 
 // candidateSet parses doc's candidates section, an absent section being the
-// empty set. A parse error yields the empty set too: the caller already
-// validated, and an unreadable body is refused there, not here.
-func candidateSet(doc Doc) *candidate.Set {
+// empty set. A present section that does not parse returns its error
+// unchanged, so the refusal names the candidate it derives from.
+func candidateSet(doc Doc) (*candidate.Set, error) {
 	body, ok := doc[Candidates]
 	if !ok {
 		body = []byte("[]")
 	}
-	if set, _, err := candidate.Parse(FileName(Candidates), body); err == nil {
-		return set
+	set, _, err := candidate.Parse(FileName(Candidates), body)
+	if err != nil {
+		return nil, invalidValueOf(err)
 	}
-	// An empty array is the section's missing-file form and cannot fail to
-	// parse, so the fallback is the empty set.
-	set, _, _ := candidate.Parse(FileName(Candidates), []byte("[]"))
-	return set
+	return set, nil
 }

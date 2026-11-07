@@ -472,7 +472,10 @@ func guardCandidatesDrop(rt relevo.Runtime, sec config.Section, body []byte, for
 	} else {
 		newDoc[config.Candidates] = body
 	}
-	drops := config.DroppedActorCandidates(oldDoc, newDoc)
+	drops, err := config.DroppedActorCandidates(oldDoc, newDoc)
+	if err != nil {
+		return failWrap(codeConfigInvalid, err, "%v", err)
+	}
 	if len(drops) == 0 {
 		return nil
 	}
