@@ -406,6 +406,15 @@ func (c *Client) callLocked(req syncworker.Request) (syncworker.Response, error)
 func refusalError(resp syncworker.Response) error {
 	refused := fmt.Errorf("%w: %s", ErrRefused, resp.Error)
 	switch resp.Code {
+	case syncworker.CodeTransport:
+		// The connection dropped, so the remote refused nothing: the error must
+		// read as a lost connection and carry no refusal sentence. A replica
+		// that is also unreadable outranks the dropped connection, because only
+		// a refusal reaches the rebuild that recovers it.
+		if relevosync.IsReplicaCorrupt(refused) {
+			return refused
+		}
+		return fmt.Errorf("%w: %s", relevosync.ErrConnectionLost, resp.Error)
 	case syncworker.CodeSchema:
 		return fmt.Errorf("%w: %w", refused, relevosync.ErrRemoteSchema)
 	case syncworker.CodeRemote:

@@ -303,6 +303,29 @@ func TestSupervisorRefusalIsNotADeath(t *testing.T) {
 	}
 }
 
+// TestSupervisorTransportSettlesAsRefusal pins that a dropped connection is
+// accounted as a worker that answered: the worker is kept, no death is counted
+// and nothing latches, though the error reads as a lost connection and not as a
+// refusal.
+func TestSupervisorTransportSettlesAsRefusal(t *testing.T) {
+	b := breakerOver(newMemKV())
+	s := newSupervisor(t, fakeWorkerCfg(modeRefuseTransport), b)
+
+	_, err := s.Stats()
+	if !errors.Is(err, relevosync.ErrConnectionLost) {
+		t.Fatalf("Stats over a dropped connection = %v, want the lost-connection error", err)
+	}
+	if errors.Is(err, ErrRefused) {
+		t.Errorf("err = %v, want it not to read as a refusal", err)
+	}
+	if got, _ := b.Deaths(); got != 0 {
+		t.Errorf("deaths = %d, want a dropped connection left uncounted", got)
+	}
+	if latched, _ := b.Latched(); latched {
+		t.Error("a dropped connection latched the machine")
+	}
+}
+
 // TestSupervisorLatchesOnAPermanentRefusal pins the pipe's permanent-refusal
 // path end to end: the worker's marked class reaches the breaker as the
 // sentinel it names, which latches with the fixed cause and the sync:err token
