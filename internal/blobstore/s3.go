@@ -243,9 +243,15 @@ func (e *s3Error) Error() string {
 }
 
 // Is reports a 404 as ErrNotFound, the one condition the caller latches rather
-// than retries.
+// than retries, and a 401 or 403 as ErrCredentialsRefused.
 func (e *s3Error) Is(target error) bool {
-	return target == ErrNotFound && e.Status == http.StatusNotFound
+	switch target {
+	case ErrNotFound:
+		return e.Status == http.StatusNotFound
+	case ErrCredentialsRefused:
+		return e.Status == http.StatusUnauthorized || e.Status == http.StatusForbidden
+	}
+	return false
 }
 
 // isNotFound reports whether err is the missing-object refusal, from an

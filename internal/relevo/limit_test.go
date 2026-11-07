@@ -279,6 +279,9 @@ func TestGateOnLimit(t *testing.T) {
 		}
 
 		sw := switches(t, rt)
+		if len(sw) == 1 && !strings.Contains(sw[0].Note, store.SwitchReplacedClause) {
+			t.Errorf("switch note %q doesn't name what it replaced", sw[0].Note)
+		}
 		if len(sw) != 1 || !strings.HasPrefix(sw[0].Note, "switched builder (rate-limited: Individual quota reached") {
 			t.Errorf("switch entries = %+v", sw)
 		}

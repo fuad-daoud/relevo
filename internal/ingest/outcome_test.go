@@ -250,6 +250,25 @@ func TestSwitchesSkipRelaunch(t *testing.T) {
 // TestCandidateForRoundCarriesTheEarlierRoundsBuilder pins that a round with no
 // pick or switch of its own takes the builder the earlier rounds left running,
 // not the binding's live candidate, which a later round may have changed.
+// A server's copy of a binding can hold no pick, so a round before the first
+// switch learns its candidate from what that switch replaced, not from the
+// binding's newest one.
+func TestCandidateForRoundReadsWhatAServerSwitchReplaced(t *testing.T) {
+	events := []store.LogEntry{
+		{Round: 2, Kind: store.KindSwitch, Note: "switched builder (gated while queued): picked claude/anthropic/b for builder: order #2; replaced opencode/zen/a"},
+	}
+	b := store.Binding{Round: 2, BuilderCandidate: "claude/anthropic/b"}
+
+	tok, _, ok := candidateForRound(events, 1, b)
+	if !ok || tok != "opencode/zen/a" {
+		t.Errorf("candidateForRound(round 1) = %q, %v, want what the switch replaced", tok, ok)
+	}
+	tok, _, ok = candidateForRound(events, 2, b)
+	if !ok || tok != "claude/anthropic/b" {
+		t.Errorf("candidateForRound(round 2) = %q, %v, want the switch's pick", tok, ok)
+	}
+}
+
 func TestCandidateForRoundCarriesTheEarlierRoundsBuilder(t *testing.T) {
 	events := []store.LogEntry{
 		{Round: 1, Kind: store.KindPick, Note: "picked opencode/zen/space-bunny-free for builder: order #1"},
