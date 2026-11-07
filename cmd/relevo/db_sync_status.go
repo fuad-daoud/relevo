@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/sanitize"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
@@ -57,13 +58,20 @@ type dbSyncStatusDoc struct {
 	// AdoptPending is the installation id whose adoption is unfinished.
 	AdoptPending    string `json:"adopt_pending,omitempty"`
 	AdoptionPending string `json:"adoption_pending,omitempty"`
-	// Joining says a join is in progress and JoinSince is when it began. The daemon
-	// finishes the join whether the enable waited or not.
+	// Joining says a join is in progress and JoinSince is when it began. The
+	// daemon owns the join past the enable that started it, so status reads
+	// the marker rather than asking the enable: the daemon finishes the join,
+	// or records the failure beside the marker.
 	Joining   bool   `json:"joining,omitempty"`
 	JoinSince string `json:"join_since,omitempty"`
 	// JoinSent is how many of this machine's entries a locked join has sent since
 	// its unlock.
 	JoinSent int `json:"join_sent,omitempty"`
+	// JoinFailedAt and JoinFailure are the failure a dead join recorded beside
+	// its marker, and when. Status shows them instead of the marker's start,
+	// so a join nothing runs reads as failed rather than running.
+	JoinFailedAt string `json:"join_failed_at,omitempty"`
+	JoinFailure  string `json:"join_failure,omitempty"`
 	// LastAttempt is the daemon's last steady attempt, absent until it has run
 	// one.
 	LastAttempt *dbSyncAttemptDoc `json:"last_attempt,omitempty"`
@@ -165,7 +173,14 @@ func dbSyncStatusLine(doc dbSyncStatusDoc) string {
 	if r2 := dbSyncR2Line(doc); r2 != "" {
 		line += ", r2: " + r2
 	}
-	line += dbSyncKeyClause(doc.Key)
+	// A locked join that is off names the lock without the instruction, which
+	// would send the reader to an unlock that needs sync on. The wording is
+	// the locked half of dbSyncKeyClause, kept beside it so the two agree.
+	if relevo.SuppressUnlockHint(doc.Key, doc.Enabled, doc.Joining, doc.JoinFailedAt != "") {
+		line += ", key: locked"
+	} else {
+		line += dbSyncKeyClause(doc.Key)
+	}
 	return line + dbSyncStatusDetails(doc) + "\n"
 }
 
@@ -174,7 +189,10 @@ func dbSyncStatusLine(doc dbSyncStatusDoc) string {
 // is the one state that stops the machine until a human acts.
 func dbSyncStatusDetails(doc dbSyncStatusDoc) string {
 	var b strings.Builder
-	if doc.Joining {
+	if doc.JoinFailedAt != "" {
+		fmt.Fprintf(&b, " · join failed at %s: %s; re-run `relevo db sync enable` to resume",
+			doc.JoinFailedAt, sanitize.Text(doc.JoinFailure))
+	} else if doc.Joining {
 		fmt.Fprintf(&b, " · joining since %s", doc.JoinSince)
 		if doc.JoinSent > 0 {
 			fmt.Fprintf(&b, ", %d of this machine's entries sent", doc.JoinSent)
