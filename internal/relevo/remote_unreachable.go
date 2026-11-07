@@ -18,19 +18,32 @@ import (
 // view. store.Binding.RemoteHaltKind names the episode instead; the text is
 // built from the marker and nothing reads it back.
 
-// applyRemoteUnreachable is the unreachable arm of a failed fetch: stamp when the
-// outage began, report it as the status, and halt once an open round has been
-// unreachable for longer than its budget plus the grace.
+// applyRemoteUnreachable is the unreachable arm of a failed fetch: a failure
+// the tick's prefetch counted as the first in a row leaves the binding
+// unchanged, and a confirming or skipped failure stamps the episode start the
+// fetch carries -- the first failure's time -- and reports it as the status.
+// An inline fetch carries no episode start and stamps the time it read. The
+// arm halts once an open round has been unreachable for longer than its budget
+// plus the grace.
 //
 // The halt fires only on an open round: a round the server already closed has
 // nothing left running over there, and its answer arrives as a view rather than
 // as silence.
-func applyRemoteUnreachable(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, now time.Time) (store.Binding, error) {
+func applyRemoteUnreachable(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, f *remoteFetch, now time.Time) (store.Binding, error) {
+	if f.Unconfirmed {
+		// One failed read is the noise of a redeploy or a tunnel flap: the
+		// tick's next read either confirms the outage or clears the suspicion.
+		return b, nil
+	}
 	server := b.Builder.Server
 	name := b.Name
+	start := now
+	if !f.EpisodeStart.IsZero() {
+		start = f.EpisodeStart.UTC()
+	}
 	if b.RemoteUnreachableSince.IsZero() {
-		b.RemoteUnreachableSince = now
-		slog.Warn(fmt.Sprintf("%s unreachable", server), "server", server, "binding", name)
+		b.RemoteUnreachableSince = start
+		slog.Debug(fmt.Sprintf("%s unreachable", server), "server", server, "binding", name)
 	}
 	b.Builder.RemoteStatus = "unreachable"
 

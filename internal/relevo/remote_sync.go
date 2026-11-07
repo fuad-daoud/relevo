@@ -121,7 +121,7 @@ func applyRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	}
 	now := rt.Now().UTC()
 	if f.Err != nil {
-		return applyRemoteErr(ctx, rt, tx, b, f.Err, now)
+		return applyRemoteErr(ctx, rt, tx, b, f, now)
 	}
 	return applyRemoteView(ctx, rt, tx, b, f, now)
 }
@@ -131,7 +131,8 @@ func applyRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 // budget halts, a server this machine's config does not name only updates
 // the reported status -- the round may be running fine there -- and
 // anything else just warns.
-func applyRemoteErr(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, err error, now time.Time) (store.Binding, bool, error) {
+func applyRemoteErr(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, f *remoteFetch, now time.Time) (store.Binding, bool, error) {
+	err := f.Err
 	server := b.Builder.Server
 	name := b.Name
 	var httpErr *client.HTTPError
@@ -164,7 +165,7 @@ func applyRemoteErr(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 		}
 	}
 	if errors.Is(err, client.ErrUnreachable) {
-		b, err := applyRemoteUnreachable(ctx, rt, tx, b, now)
+		b, err := applyRemoteUnreachable(ctx, rt, tx, b, f, now)
 		return b, false, err
 	}
 	if errors.Is(err, client.ErrCertChanged) {

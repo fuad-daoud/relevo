@@ -428,6 +428,30 @@ func TestDisableDeletesTheStagingFolder(t *testing.T) {
 	}
 }
 
+// TestDisableClearsTheJoinFailureWithTheMarker pins that a turn-off takes the
+// failure record with the marker: off is neither joining nor failed.
+func TestDisableClearsTheJoinFailureWithTheMarker(t *testing.T) {
+	t.Parallel()
+
+	fake := &exportFake{}
+	disabler, local := disableFixture(t, fake.Export)
+	if err := WriteJoin(local, tokenNow); err != nil {
+		t.Fatalf("WriteJoin: %v", err)
+	}
+	if err := WriteJoinFailure(local, tokenNow, "sync: enable: import: an old failure"); err != nil {
+		t.Fatalf("WriteJoinFailure: %v", err)
+	}
+	if _, err := disabler.Disable(context.Background()); err != nil {
+		t.Fatalf("Disable: %v", err)
+	}
+	if _, ok, err := ReadJoin(local); err != nil || ok {
+		t.Errorf("the turn-off left the join marker behind: (ok %v, err %v)", ok, err)
+	}
+	if _, ok, err := ReadJoinFailure(local); err != nil || ok {
+		t.Errorf("the turn-off left the join failure behind: (ok %v, err %v)", ok, err)
+	}
+}
+
 func TestDisableDeletesTheSyncKey(t *testing.T) {
 	t.Parallel()
 

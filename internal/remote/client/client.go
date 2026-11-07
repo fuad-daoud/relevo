@@ -230,6 +230,34 @@ func (c *Client) newRequest(ctx context.Context, entry remote.ServerEntry, metho
 	return req, nil
 }
 
+// GatewayError is a gateway status from the server: a redeploy or a tunnel
+// flap, not an answer. It wraps ErrUnreachable so the retry still repeats the
+// read, and it carries the status so callers can tell an answered failure
+// from a dial that never arrived without matching the message text.
+type GatewayError struct {
+	Status int
+	// Text is the status's standard text, or "gateway error" when the status
+	// has none.
+	Text string
+}
+
+func (e *GatewayError) Error() string {
+	return fmt.Sprintf("server returned %d %s", e.Status, e.Text)
+}
+
+// GotResponse reports whether a failed read reached the server far enough to
+// get an HTTP response: true for an HTTPError of any status and for a gateway
+// carrier, false for a transport error, a deadline, a certificate refusal and
+// an unknown server.
+func GotResponse(err error) bool {
+	var httpErr *HTTPError
+	if errors.As(err, &httpErr) {
+		return true
+	}
+	var gatewayErr *GatewayError
+	return errors.As(err, &gatewayErr)
+}
+
 // A gateway status is a redeploy, not an answer, so its CDN HTML body is dropped.
 func responseError(resp *http.Response) error {
 	if resp.StatusCode == http.StatusUpgradeRequired {
@@ -242,7 +270,7 @@ func responseError(resp *http.Response) error {
 		if text == "" {
 			text = "gateway error"
 		}
-		return fmt.Errorf("%w: server returned %d %s", ErrUnreachable, resp.StatusCode, text)
+		return fmt.Errorf("%w: %w", ErrUnreachable, &GatewayError{Status: resp.StatusCode, Text: text})
 	}
 	if resp.StatusCode < 300 || resp.StatusCode == http.StatusNoContent {
 		return nil

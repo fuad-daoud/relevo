@@ -14,6 +14,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/relevo"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
@@ -216,11 +217,18 @@ func dbSyncStatusRead(local relevosync.Local, origin string) (dbSyncStatusDoc, e
 	if err := dbSyncStatusMeter(local, origin, &doc); err != nil {
 		return dbSyncStatusDoc{}, err
 	}
-	progress, joining, err := relevosync.ReadJoin(local)
+	progress, hasMarker, err := relevosync.ReadJoin(local)
 	if err != nil {
 		return dbSyncStatusDoc{}, dbSyncClassify(err)
 	}
-	if joining {
+	failure, hasFailure, err := relevosync.ReadJoinFailure(local)
+	if err != nil {
+		return dbSyncStatusDoc{}, dbSyncClassify(err)
+	}
+	switch relevo.JoinState(hasMarker, hasFailure) {
+	case relevo.JoinFailed:
+		doc.JoinFailedAt, doc.JoinFailure = statusStamp(failure.At), failure.Message
+	case relevo.JoinJoining:
 		doc.Joining, doc.JoinSince, doc.JoinSent = true, statusStamp(progress.At), progress.Sent
 	}
 	if pending := relevosync.AdoptPending(local); pending != "" {

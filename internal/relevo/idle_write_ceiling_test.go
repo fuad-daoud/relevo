@@ -3,6 +3,7 @@ package relevo
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,8 +63,10 @@ func TestIdleRemoteBindingsQueueNoSyncedWritePerTick(t *testing.T) {
 		}
 	})
 
-	// One blip on the link flips every served binding at once, so the outage has
-	// to reach this machine's status and nothing else.
+	// A lone blip on the link is noise, not an outage: the binding keeps its
+	// status and queues nothing. Consecutive failures confirm the outage and
+	// flip every served binding at once, and the flip is what reaches the
+	// outbox rather than the noise around it.
 	t.Run("flaky link", func(t *testing.T) {
 		w := newIdleWorld(t)
 		w.d.backoff.now = func() time.Time { return w.now }
@@ -72,32 +75,67 @@ func TestIdleRemoteBindingsQueueNoSyncedWritePerTick(t *testing.T) {
 		if err := w.mdb.TruncateOutbox(); err != nil {
 			t.Fatalf("truncate outbox: %v", err)
 		}
-		for i := 0; i < 5; i++ {
-			w.fr.getBindingErr = client.ErrUnreachable
-			w.tick(t)
-			w.now = w.now.Add(2 * serverBackoff)
-			got, err := w.d.rt.Store.Load("api")
-			if err != nil {
-				t.Fatalf("load during the outage: %v", err)
-			}
-			if got.Builder.RemoteStatus != "unreachable" || got.RemoteUnreachableSince.IsZero() {
-				t.Fatalf("status %q since %v during the outage, want it read back here",
-					got.Builder.RemoteStatus, got.RemoteUnreachableSince)
-			}
-
-			w.fr.getBindingErr = nil
-			w.tick(t)
-			got, err = w.d.rt.Store.Load("api")
-			if err != nil {
-				t.Fatalf("load after the outage: %v", err)
-			}
-			if got.Builder.RemoteStatus != string(remote.RoundIdle) || !got.RemoteUnreachableSince.IsZero() {
-				t.Fatalf("status %q since %v after the outage, want idle and no outage",
-					got.Builder.RemoteStatus, got.RemoteUnreachableSince)
+		// One failed read, then the server answers again: still idle,
+		// unstamped, nothing queued.
+		blips := 0
+		w.fr.beforeCall = func(call string) {
+			if blips > 0 && strings.HasPrefix(call, "GetBinding:") {
+				blips--
+				w.fr.getBindingErr = client.ErrUnreachable
+			} else {
+				w.fr.getBindingErr = nil
 			}
 		}
+		blips = 1
+		w.tick(t)
+		got, err := w.d.rt.Store.Load("api")
+		if err != nil {
+			t.Fatalf("load after one blip: %v", err)
+		}
+		if got.Builder.RemoteStatus != string(remote.RoundIdle) || !got.RemoteUnreachableSince.IsZero() {
+			t.Fatalf("status %q since %v after one blip, want idle and no outage",
+				got.Builder.RemoteStatus, got.RemoteUnreachableSince)
+		}
 		if rows := idleOutboxRows(t, w.raw); len(rows) != 0 {
-			t.Errorf("5 outages queued %d outbox rows, want 0: %v", len(rows), rows)
+			t.Errorf("one blip queued %d outbox rows, want 0: %v", len(rows), rows)
+		}
+
+		// Consecutive failures confirm the outage: the binding flips and
+		// stamps the episode start.
+		w.fr.beforeCall = nil
+		w.fr.getBindingErr = client.ErrUnreachable
+		w.tick(t)
+		w.tick(t)
+		got, err = w.d.rt.Store.Load("api")
+		if err != nil {
+			t.Fatalf("load during the outage: %v", err)
+		}
+		if got.Builder.RemoteStatus != "unreachable" || got.RemoteUnreachableSince.IsZero() {
+			t.Fatalf("status %q since %v during the outage, want it read back here",
+				got.Builder.RemoteStatus, got.RemoteUnreachableSince)
+		}
+
+		// The server answers again: idle, no stamp, and the idle ticks after
+		// that queue nothing more.
+		w.fr.getBindingErr = nil
+		w.now = w.now.Add(2 * serverBackoff)
+		w.tick(t)
+		got, err = w.d.rt.Store.Load("api")
+		if err != nil {
+			t.Fatalf("load after the outage: %v", err)
+		}
+		if got.Builder.RemoteStatus != string(remote.RoundIdle) || !got.RemoteUnreachableSince.IsZero() {
+			t.Fatalf("status %q since %v after the outage, want idle and no outage",
+				got.Builder.RemoteStatus, got.RemoteUnreachableSince)
+		}
+		if err := w.mdb.TruncateOutbox(); err != nil {
+			t.Fatalf("truncate outbox: %v", err)
+		}
+		for i := 0; i < 5; i++ {
+			w.tick(t)
+		}
+		if rows := idleOutboxRows(t, w.raw); len(rows) != 0 {
+			t.Errorf("5 idle ticks queued %d outbox rows, want 0: %v", len(rows), rows)
 		}
 	})
 }

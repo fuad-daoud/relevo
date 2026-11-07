@@ -106,6 +106,11 @@ func (d *Disabler) Disable(ctx context.Context) (DisableResult, error) {
 	if err := ClearJoin(d.Local); err != nil {
 		return out, fmt.Errorf("sync: disable: clear the join marker: %w", err)
 	}
+	// The failure goes with the marker, for the same reason: off is neither
+	// joining nor failed.
+	if err := ClearJoinFailure(d.Local); err != nil {
+		return out, fmt.Errorf("sync: disable: clear the join failure: %w", err)
+	}
 
 	out.Steps = append(out.Steps, stepDeleteToke)
 	if err := DeleteToken(d.Local); err != nil {

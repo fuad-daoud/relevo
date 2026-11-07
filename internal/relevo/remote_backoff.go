@@ -28,8 +28,46 @@ type remoteBackoff struct {
 	mu sync.Mutex
 	// now is the clock the backoff reads. Nil means time.Now.
 	now func() time.Time
-	// until is when a server that failed may be tried again.
-	until map[string]time.Time
+	// outages is the consecutive-failure memory per server: a suspicion after
+	// the first failure, an armed episode after the second.
+	outages map[string]serverOutage
+}
+
+// serverOutage is one server's consecutive-failure memory: the first failure
+// starts a suspicion without backing off, and the second starts the episode
+// the tick's skips then enforce.
+type serverOutage struct {
+	// first is the first consecutive failure: the episode's start when a
+	// second failure confirms it, and the stamp the bindings carry.
+	first time.Time
+	// last is the most recent consecutive failure: a quiet longer than twice
+	// the backoff restarts at suspicion rather than confirming.
+	last time.Time
+	// opening is the first failure: the episode's account.
+	opening error
+	// until is the armed episode's end; zero while merely suspected.
+	until time.Time
+}
+
+// backoffReport is what one record call decided: a failure either starts an
+// episode, continues one, or starts a suspicion, and a success either ends an
+// episode or clears a suspicion quietly.
+type backoffReport struct {
+	// confirmed is set when this failure is the second in a row: an episode
+	// starts now, at start, and the caller logs it once per server.
+	confirmed bool
+	// inEpisode is set when this failure lands on an armed episode with recent
+	// evidence: the backoff re-arms silently and the caller logs at debug.
+	inEpisode bool
+	// ended is set when this success closed an armed episode; start, opening
+	// and end describe the episode that ended.
+	ended bool
+	// start is the episode's start: the first failure's time.
+	start time.Time
+	// opening is the episode's first failure.
+	opening error
+	// end is when the success cleared the episode, on the backoff's clock.
+	end time.Time
 }
 
 func (r *remoteBackoff) clock() time.Time {
@@ -43,20 +81,75 @@ func (r *remoteBackoff) clock() time.Time {
 func (r *remoteBackoff) skip(server string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.clock().Before(r.until[server])
+	return r.clock().Before(r.outages[server].until)
 }
 
-func (r *remoteBackoff) record(server string, failed bool) {
+// episodeStart reports the armed episode's start for the skipped fetch to
+// stamp. A skip means an armed episode, so the start is always set here.
+func (r *remoteBackoff) episodeStart(server string) time.Time {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !failed {
-		delete(r.until, server)
-		return
+	return r.outages[server].first
+}
+
+func (r *remoteBackoff) setOutage(server string, st serverOutage) {
+	if r.outages == nil {
+		r.outages = map[string]serverOutage{}
 	}
-	if r.until == nil {
-		r.until = map[string]time.Time{}
+	r.outages[server] = st
+}
+
+// recordFailure counts one failed server read. The first in a row starts a
+// suspicion without backing off, the second starts the episode, and a failure
+// on an armed episode with recent evidence re-arms it silently.
+//
+// One failed read is the noise of a redeploy or a tunnel flap, so every
+// ErrUnreachable -- a refused dial, a deadline, a gateway status -- needs the
+// same second consecutive failure; the confirmation costs one tick. The tick
+// reads its bindings one after another, so the second read follows the
+// first's failure rather than racing it, which is what makes counting
+// consecutive failures across bindings sound.
+func (r *remoteBackoff) recordFailure(server string, err error) backoffReport {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := r.clock()
+	st, ok := r.outages[server]
+	if ok && now.Sub(st.last) > 2*serverBackoff {
+		// The daemon probes every backoff window while bindings live, so a
+		// longer quiet means nothing was dialling: the old memory is stale,
+		// not evidence, and this failure starts a fresh suspicion.
+		ok = false
 	}
-	r.until[server] = r.clock().Add(serverBackoff)
+	if !ok {
+		r.setOutage(server, serverOutage{first: now, last: now, opening: err})
+		return backoffReport{}
+	}
+	st.last = now
+	if st.until.IsZero() {
+		st.until = now.Add(serverBackoff)
+		r.setOutage(server, st)
+		return backoffReport{confirmed: true, start: st.first, opening: st.opening}
+	}
+	st.until = now.Add(serverBackoff)
+	r.setOutage(server, st)
+	return backoffReport{inEpisode: true, start: st.first, opening: st.opening}
+}
+
+// recordSuccess clears one server's consecutive-failure memory. A lone
+// suspicion clears quietly; only an armed episode reports its end.
+func (r *remoteBackoff) recordSuccess(server string) backoffReport {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := r.clock()
+	st, ok := r.outages[server]
+	if !ok {
+		return backoffReport{}
+	}
+	delete(r.outages, server)
+	if st.until.IsZero() {
+		return backoffReport{}
+	}
+	return backoffReport{ended: true, start: st.first, opening: st.opening, end: now}
 }
 
 // serverUnreachable reports whether a failed read says the server itself did
