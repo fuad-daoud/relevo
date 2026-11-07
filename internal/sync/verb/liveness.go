@@ -8,12 +8,20 @@ import (
 )
 
 // ExportDebounce is the shortest gap between the starts of two attempts that
-// an outbox entry or a freshen hint may cause. Ingest writes the shared file
-// on nearly every two-second tick while a round runs, so a trigger per write
-// would be an attempt per tick; fifteen seconds keeps a write's wait to a
-// quarter minute at the cost of at most four attempts a minute, and a burst
-// of writes inside the gap costs one.
-const ExportDebounce = 15 * time.Second
+// an outbox entry or a freshen hint may cause. Every machine pulls an attempt's
+// changes as whole pages, and a page that changed in several attempts between
+// two pulls travels once, so fewer, larger batches cost far less per entry.
+// Five minutes trades how soon a peer sees a routine write for that saving; a
+// write that cannot wait -- a gate, a handover, a takeover -- goes through
+// SyncNow, which skips this gap. A freshen shares it
+// because a peer exports no faster than this, so pulling sooner finds little.
+const ExportDebounce = 5 * time.Minute
+
+// OwedDebounce is the gap while a locked join's owed history is still going
+// out. Each attempt sends one slice of it and gives the slot back, so the long
+// export gap would stretch a join's send twentyfold; a join is one-off, and
+// its batches are full ones.
+const OwedDebounce = 15 * time.Second
 
 // HotWindow is the idle pull window while another machine is writing. One
 // attempt is a handful of calls to the remote, so 30 s is 2,880 attempts a day

@@ -83,19 +83,31 @@ func (d *Daemon) noteApplied(applied int) {
 }
 
 // exportIfPending queues an attempt when the outbox has entries and the last
-// attempt began at least exportDebounce ago. The cheap age check runs first, so
-// a tick inside the gap reads nothing.
+// attempt began at least ExportDebounce ago, or OwedDebounce ago while a join's
+// history is owed. The cheap age check runs first, so a tick inside the short
+// gap reads nothing.
 func (d *Daemon) exportIfPending(ctx context.Context, now time.Time) {
 	d.syncMu.Lock()
 	started := d.live.StartedAt
 	d.syncMu.Unlock()
-	if !started.IsZero() && now.Sub(started) < verb.ExportDebounce {
+	age := now.Sub(started)
+	if !started.IsZero() && age < verb.OwedDebounce {
+		return
+	}
+	if !started.IsZero() && age < verb.ExportDebounce && !(d.holdsSigningKey() && d.joinOwed()) {
 		return
 	}
 	if !d.outboxPending() {
 		return
 	}
 	d.queueSync(ctx)
+}
+
+// joinOwed reports whether the join marker is still set, which on a machine
+// holding the signing key means owed history is still to go out.
+func (d *Daemon) joinOwed() bool {
+	_, owed, err := relevosync.ReadJoin(d.syncRunner().Local)
+	return err == nil && owed
 }
 
 // outboxPending reports whether the machine has writes waiting to be exported:
@@ -123,7 +135,7 @@ func (d *Daemon) outboxPending() bool {
 	}
 	// A locked join's owed history goes out one attempt at a time, and an idle
 	// machine's outbox may be empty while it does.
-	if _, owed, err := relevosync.ReadJoin(d.syncRunner().Local); err == nil && owed {
+	if d.joinOwed() {
 		return true
 	}
 	signals, err := mdb.DocSignals()
