@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sort"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/ingest"
 	"github.com/fuad-daoud/relevo/internal/release"
+	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -104,11 +106,45 @@ func (d *Daemon) prefetchRemote(ctx context.Context, b store.Binding) *remoteFet
 	if !store.KnownState(b.State) || b.Format > store.BindingFormat {
 		return nil
 	}
-	if d.backoff.skip(b.Builder.Server) {
-		return skippedFetch(b)
+	server := b.Builder.Server
+	if d.backoff.skip(server) {
+		f := skippedFetch(b)
+		// A skip means an armed episode, so the backoff holds the start the
+		// apply half stamps.
+		f.EpisodeStart = d.backoff.episodeStart(server)
+		return f
 	}
+	started := time.Now()
 	f := fetchRemoteWithin(ctx, d.rt, b, prefetchDeadline)
-	d.backoff.record(b.Builder.Server, f.Err != nil && serverUnreachable(f.Err))
+	elapsed := time.Since(started)
+	if f.Err == nil || !serverUnreachable(f.Err) {
+		// A live answer -- a view or a per-binding refusal -- proves the
+		// server is up, so it clears the consecutive-failure memory.
+		if rep := d.backoff.recordSuccess(server); rep.ended {
+			slog.Info(fmt.Sprintf("%s reachable", server), "server", server,
+				"duration", rep.end.Sub(rep.start).Truncate(time.Second), "err", rep.opening)
+		}
+		return &f
+	}
+	rep := d.backoff.recordFailure(server, f.Err)
+	switch {
+	case rep.confirmed:
+		// The second consecutive failure starts the episode: one WARN per
+		// server, while every binding's own line drops to the apply half's
+		// DEBUG.
+		f.EpisodeStart = rep.start
+		slog.Warn(fmt.Sprintf("%s unreachable", server), "server", server, "err", rep.opening)
+	case rep.inEpisode:
+		// A probe that finds the episode still armed rejoins it: the binding
+		// keeps the episode's start, so the halt still fires for the prober.
+		f.EpisodeStart = rep.start
+		slog.Debug(fmt.Sprintf("%s unreachable", server),
+			"server", server, "binding", b.Name, "duration", elapsed, "err", f.Err)
+	default:
+		f.Unconfirmed = true
+		slog.Info("remote prefetch failed", "server", server, "binding", b.Name,
+			"duration", elapsed, "http_response", client.GotResponse(f.Err), "err", f.Err)
+	}
 	return &f
 }
 
