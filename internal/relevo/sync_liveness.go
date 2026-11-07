@@ -94,13 +94,19 @@ func (d *Daemon) exportIfPending(ctx context.Context, now time.Time) {
 	if !started.IsZero() && age < verb.OwedDebounce {
 		return
 	}
-	if !started.IsZero() && age < verb.ExportDebounce && !(d.holdsSigningKey() && d.joinOwed()) {
+	if !started.IsZero() && age < verb.ExportDebounce && !d.sendingOwed() {
 		return
 	}
 	if !d.outboxPending() {
 		return
 	}
 	d.queueSync(ctx)
+}
+
+// sendingOwed reports whether owed history is still to go out and this machine
+// can sign it, which is what the short gap is for.
+func (d *Daemon) sendingOwed() bool {
+	return d.holdsSigningKey() && d.joinOwed()
 }
 
 // joinOwed reports whether the join marker is still set, which on a machine
