@@ -103,11 +103,17 @@ func haltNext(name string, round int, w *Waiting, detail string) *Next {
 // chainHaltNext is a halted chain's next move: the halt's own detail, then both
 // ways out of it. A binding's halt has one resolving move; a chain's has two --
 // resume it once the cause is fixed, or close it -- and a row that named only
-// the first left a reader who has given up with no command to run.
-func chainHaltNext(name, detail string) *Next {
+// the first left a reader who has given up with no command to run. A halt on a
+// repair arm with one feeding check names that check's --from, which re-runs
+// it; the repair round itself is only in the end delivery.
+func chainHaltNext(name, detail, resumeCheck string) *Next {
 	text := "Resolve " + name
 	if detail != "" {
 		text += ": " + detail
+	}
+	if resumeCheck != "" {
+		text += fmt.Sprintf(" -- `relevo chain --resume --name %s --from %s` once the cause is fixed, or `relevo done %s` closes it", name, resumeCheck, name)
+		return &Next{Label: "resolve the halt", Text: text}
 	}
 	text += fmt.Sprintf(" -- `relevo chain --resume --name %s` once the cause is fixed, or `relevo done %s` closes it", name, name)
 	return &Next{Label: "resolve the halt", Text: text}

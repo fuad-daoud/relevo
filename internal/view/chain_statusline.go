@@ -49,7 +49,7 @@ func statusLineRowOfChain(b BindingStatus) StatusLineRow {
 		ChainProgress: chainProgressOf(*b.Chain),
 	}
 	if tone == "needs" {
-		row.Next = chainHaltNext(b.Name, b.Detail)
+		row.Next = chainHaltNext(b.Name, b.Detail, b.Chain.ResumeCheck)
 	}
 	return row
 }

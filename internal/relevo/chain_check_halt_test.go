@@ -52,7 +52,8 @@ func TestTerminalPayloadClosesTheReasonOnce(t *testing.T) {
 		"the check failed; `relevo show shop --gate` reads its log.": " Reason: the check failed; `relevo show shop --gate` reads its log. relevo chain",
 		"changes": " Reason: changes. relevo chain",
 	} {
-		got := chainTerminalWFPayload(c, workflow.State{Status: workflow.StatusHalted, Reason: reason})
+		st := workflow.State{Status: workflow.StatusHalted, Reason: reason}
+		got := chainTerminalWFPayload(c, st, repairCheckOfRow(c, st))
 		if !strings.Contains(got, want) {
 			t.Errorf("payload = %q, want it to contain %q", got, want)
 		}

@@ -119,16 +119,20 @@ func chainResumePreflight(ctx context.Context, rt Runtime, c db.ChainRow, opts R
 		return fail(err)
 	}
 	// A resume replacing the check on a zero-budget repair-arm halt goes back
-	// to that arm's check, so the check runs again under the new command. The
+	// to that arm's check, so the check runs again under the new command. A
+	// plain resume on an arm with no commit since the check goes back too,
+	// keeping the arm's spent visits so the re-run cannot buy new rounds. The
 	// refusal lands here, before the delivery below is superseded and before
 	// the lock writes anything.
-	from, err := chainResumeReroute(def, before, opts)
+	from, noCommit, err := chainResumeReroute(ctx, rt, c, def, before, opts)
 	if err != nil {
 		return fail(err)
 	}
 	// A human has looked at the plan: every budget starts fresh, as a resume
-	// resets the correction count on the fixed state machine.
-	before.Visits = map[string]int{}
+	// resets the correction count on the fixed state machine. A no-commit
+	// reroute keeps the arm's count, so a repeat red re-halts on the same
+	// budget instead of opening a repair round.
+	before.Visits = chainResumeVisits(before, noCommit)
 	return def, before, from, set, merged, repins, nil
 }
 

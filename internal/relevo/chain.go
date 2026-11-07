@@ -174,7 +174,8 @@ func chainDeliveryMember(tx *store.Tx, c db.ChainRow) (name string, b store.Bind
 // chainTerminalPayload is what the mastermind reads when a chain ends: how
 // it ended, where it got to, and the resume command on a halt. The phase, plan
 // and correction counts are the row's projected legacy columns, kept in step
-// with the state.
+// with the state. A halt on a repair arm one check feeds names both resumes
+// with their --from steps; any other halt keeps the plain resume.
 func chainTerminalPayload(c db.ChainRow, findings int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "chain %s %s: status %s, phase %s, plan %d/%d, corrections %d, findings %d.",
@@ -183,10 +184,33 @@ func chainTerminalPayload(c db.ChainRow, findings int) string {
 		fmt.Fprintf(&b, " Reason: %s", reasonSentence(c.Reason))
 	}
 	if c.Status == string(chain.StatusHalted) {
-		fmt.Fprintf(&b, " relevo chain --resume --name %s resumes it once the cause is fixed; `relevo done %s` closes it instead.", c.Name, c.Name)
+		if check, arm := legacyRepairFrom(c); check != "" {
+			fmt.Fprintf(&b, " relevo chain --resume --name %s --from %s re-runs the check, or --from %s sends the repair round again; `relevo done %s` closes it instead.", c.Name, check, arm, c.Name)
+		} else {
+			fmt.Fprintf(&b, " relevo chain --resume --name %s resumes it once the cause is fixed; `relevo done %s` closes it instead.", c.Name, c.Name)
+		}
 	}
 	fmt.Fprintf(&b, " Branch %s. relevo show %s --trace", c.Branch, c.Name)
 	return b.String()
+}
+
+// legacyRepairFrom names the --from pair a halted legacy row offers: the
+// single feeding check of its stored engine state's standing, and the arm
+// itself. A row without a stored workflow, and a standing no single check
+// feeds, keep today's text.
+func legacyRepairFrom(c db.ChainRow) (string, string) {
+	def, err := chain.WorkflowDef(c)
+	if err != nil {
+		return "", ""
+	}
+	st, err := chain.WorkflowState(c)
+	if err != nil {
+		return "", ""
+	}
+	if check := terminalRepairCheck(def, st.At); check != "" {
+		return check, st.At
+	}
+	return "", ""
 }
 
 func chainTerminalVerb(s chain.Status) string {

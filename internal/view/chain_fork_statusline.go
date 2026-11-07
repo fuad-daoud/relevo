@@ -35,7 +35,7 @@ func ChainChildRow(b BindingStatus) (StatusLineRow, bool) {
 		display = "NEEDS YOU"
 	}
 	return StatusLineRow{
-		Next:     chainHaltNext(b.Name, b.Detail),
+		Next:     chainHaltNext(b.Name, b.Detail, b.Chain.ResumeCheck),
 		Name:     b.Name,
 		Chain:    "child " + b.Name + " · " + ChainSegment(*b.Chain),
 		Display:  display,

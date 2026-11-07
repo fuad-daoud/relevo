@@ -31,6 +31,10 @@ type ChainFacts struct {
 	PlanPos   int    `json:"plan_pos,omitempty"`
 	PlanTotal int    `json:"plan_total,omitempty"`
 	Check     bool   `json:"check,omitempty"`
+	// ResumeCheck names the single feeding check when a halted workflow chain
+	// stands on a repair arm, so the next move names the --from that re-runs
+	// it. Empty otherwise.
+	ResumeCheck string `json:"resume_check,omitempty"`
 	// PendingMembers names, in member order, the members holding a payload the
 	// MasterMind has not collected. Empty when every member's payloads are
 	// collected.

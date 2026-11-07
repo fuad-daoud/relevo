@@ -228,6 +228,27 @@ func chainFlowFacts(f *ChainFacts, c db.ChainRow) {
 		f.Round = st.Awaiting.Run
 	}
 	f.PlanPos, f.PlanTotal = FlowPlanPos(st)
+	f.ResumeCheck = flowResumeCheck(c, st)
+}
+
+// flowResumeCheck names the single feeding check when a halted workflow chain
+// stands on a repair arm, so the next move names the --from that re-runs it.
+func flowResumeCheck(c db.ChainRow, st workflow.State) string {
+	if c.Status != string(chain.StatusHalted) {
+		return ""
+	}
+	def, err := chain.WorkflowDef(c)
+	if err != nil {
+		return ""
+	}
+	at := st.At
+	if at == "" {
+		at = st.Awaiting.Step
+	}
+	if checks := workflow.RedArmChecks(def, at); len(checks) == 1 {
+		return checks[0]
+	}
+	return ""
 }
 
 // FlowPlanPos is a plans walk's position for a status surface: the

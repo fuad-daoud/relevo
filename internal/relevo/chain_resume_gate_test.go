@@ -254,12 +254,14 @@ func TestResumeGateChangeOffARedArmDoesNotReroute(t *testing.T) {
 // resume that changes nothing: the chain stays halted, the reason still travels
 // with the message, and the error is a refusal -- never a plain error, which
 // the CLI would code internal and send a reader to file a bug on a row they can
-// simply fix.
+// simply fix. A repair arm with no commit reroutes to its check, so the
+// stays-halted case carries a commit since the check.
 func TestResumeWithoutAGateChangeStaysHaltedAndRefused(t *testing.T) {
 	t.Parallel()
 
-	rt, _ := chainRuntime(t)
+	rt, fg := chainRuntime(t)
 	haltAtZeroBudgetRepair(t, rt)
+	fg.headCommitID = "commit-after-the-work"
 	reason := flowChainRow(t, rt).Reason
 
 	_, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"})
