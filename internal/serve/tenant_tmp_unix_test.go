@@ -4,11 +4,15 @@ package serve
 
 import (
 	"context"
+	"errors"
 	"os"
 	"slices"
+	"strings"
 	"syscall"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/isolate"
 	"github.com/fuad-daoud/relevo/internal/proc"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 )
@@ -123,6 +127,53 @@ func TestTmpDirRunnerKeepsTheInheritedTmpDir(t *testing.T) {
 	}
 	if v := os.Getenv("TMPDIR"); v != user {
 		t.Fatalf("TMPDIR = %q, want the user's %q", v, user)
+	}
+}
+
+// TestUserModeOwnerTmpDirWrongUidRefused pins that a directory another uid
+// owns is refused untouched: the tenant's uid switches to one nothing on
+// disk owns after the layout is created, and the next resolve refuses the
+// start without chmod'ing or chown'ing the directory.
+func TestUserModeOwnerTmpDirWrongUidRefused(t *testing.T) {
+	requireTenantBoundary(t)
+	var uid uint32 = uint32(os.Getuid())
+	env := newUserTestEnv(t, "alice", func(c *Config) {
+		outer := c.LookupUser
+		c.LookupUser = func(name string) (isolate.Tenant, error) {
+			tnt, err := outer(name)
+			if err != nil {
+				return tnt, err
+			}
+			tnt.UID = uid
+			return tnt, nil
+		}
+	})
+	ownerRoot := ownerRootOf(t, env)
+	_ = env.srv.runtimeAt(ownerRoot)
+	tmpRoot := env.srv.ownerTmpDir(ownerRoot)
+	t.Cleanup(func() { _ = os.RemoveAll(tmpRoot) })
+	before, err := os.Lstat(tmpRoot)
+	if err != nil {
+		t.Fatalf("Lstat %s: %v", tmpRoot, err)
+	}
+	uid = 4294967294 // no account owns this uid
+	rt := env.srv.runtimeAt(ownerRoot)
+	_, err = rt.Runner.Start(context.Background(), spawn.ProcSpec{Dir: ownerRoot, Argv: []string{"true"}})
+	if !errors.Is(err, spawn.ErrBoundarySetup) {
+		t.Fatalf("Start = %v, want an error wrapping spawn.ErrBoundarySetup", err)
+	}
+	if !strings.Contains(err.Error(), tmpRoot) {
+		t.Errorf("halt error = %q, want it to name the foreign-owned path", err)
+	}
+	after, err := os.Lstat(tmpRoot)
+	if err != nil {
+		t.Fatalf("resolve removed %s: %v", tmpRoot, err)
+	}
+	if after.Mode().Perm() != before.Mode().Perm() {
+		t.Errorf("resolve changed %s mode to %04o, want another's directory left untouched", tmpRoot, after.Mode().Perm())
+	}
+	if ouid, _, ok := db.StatOwner(after); !ok || ouid != uint32(os.Getuid()) {
+		t.Errorf("resolve changed %s owner to %d, want it left untouched", tmpRoot, ouid)
 	}
 }
 

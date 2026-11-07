@@ -156,7 +156,11 @@ type Server struct {
 	// tmpSweptAt maps an owner root to its last tmp sweep. The Daemon that
 	// sweeps lives for one tick, so the pace has to outlive it here.
 	tmpSweptAt sync.Map
-	liveCache  *liveCache
+	// oldTmpSweptAt paces the old-root drain the way tmpSweptAt paces the
+	// new-root sweep: one timestamp per owner root, outliving the Daemon
+	// that sweeps for one tick.
+	oldTmpSweptAt sync.Map
+	liveCache     *liveCache
 	// nodeLive is the cached node live view observe fills for ServedLive.
 	nodeLive *liveCache
 	// burstProvider is the head's resolved report provider: nil when

@@ -2,7 +2,6 @@ package serve
 
 import (
 	"fmt"
-	"log/slog"
 	"os"
 
 	"github.com/fuad-daoud/relevo/internal/isolate"
@@ -62,11 +61,18 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 	// own /tmp, and a host path means nothing inside it.
 	if cfg.Isolation != isolate.ModeContainer {
 		rt.TmpRoot = s.ownerTmpDir(root)
-		// A named root must exist before a round's start prepares its directory:
-		// mode-none serve has no ensureTenantRoots step to make it. Made at
-		// 0700, the mode ensureTenantDir creates it with.
-		if err := os.MkdirAll(rt.TmpRoot, tenantDirMode); err != nil {
-			slog.Warn("owner tmp root not created", "root", rt.TmpRoot, "err", err)
+	}
+	if cfg.Isolation == isolate.ModeNone {
+		// The hostile check runs on every resolution, never once: /tmp is
+		// aged and writable by every tenant, so a root that was fine can
+		// turn planted while serve keeps running. User mode does no
+		// pre-create here -- a serve-owned directory would fail the
+		// tenant's own check -- its creation lives in ensureTenantRoots.
+		// A refusal wraps the runner so the round start halts NEEDS YOU;
+		// TmpRoot stays set, since an empty root would read as container
+		// "no tmp" and silently inherit TMPDIR.
+		if err := ensureTmpRoot(rt.TmpRoot, uint32(os.Getuid()), uint32(os.Getgid())); err != nil {
+			rt.Runner = isolate.Refuse(rt.Runner, err)
 		}
 	}
 	switch cfg.Isolation {
