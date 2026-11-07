@@ -39,7 +39,7 @@ func applyRemoteUnreachable(ctx context.Context, rt Runtime, tx *store.Tx, b sto
 	name := b.Name
 	start := now
 	if !f.EpisodeStart.IsZero() {
-		start = f.EpisodeStart
+		start = f.EpisodeStart.UTC()
 	}
 	if b.RemoteUnreachableSince.IsZero() {
 		b.RemoteUnreachableSince = start
