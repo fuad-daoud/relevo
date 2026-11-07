@@ -1257,7 +1257,7 @@ func TestWriteChainResumeErrorMapsTheChainDone(t *testing.T) {
 // CLI printing internal.
 func TestWriteChainResumeErrorMapsTheStillHaltedRefusal(t *testing.T) {
 	rec := httptest.NewRecorder()
-	writeChainResumeError(rec, fmt.Errorf("chain %s is still halted: %s: %w", "shop", "repair has no budget left", relevo.ErrChainStillHalted))
+	writeChainResumeError(rec, refusal.Classed(relevo.ErrChainStillHalted, "chain shop is still halted: repair has no budget left"))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusConflict)
 	}
@@ -1268,8 +1268,8 @@ func TestWriteChainResumeErrorMapsTheStillHaltedRefusal(t *testing.T) {
 	if body.Code != remote.CodeChainStillHalted {
 		t.Errorf("code = %q, want %q", body.Code, remote.CodeChainStillHalted)
 	}
-	if !strings.Contains(body.Message, "repair has no budget left") {
-		t.Errorf("message = %q, want it to carry the halt reason", body.Message)
+	if body.Message != "chain shop is still halted: repair has no budget left" {
+		t.Errorf("message = %q, want the halt's own wording", body.Message)
 	}
 }
 
@@ -1278,7 +1278,7 @@ func TestWriteChainResumeErrorMapsTheStillHaltedRefusal(t *testing.T) {
 // halts reach a served client through the same arm, not the default 500.
 func TestWriteChainResumeErrorMapsTheDirtyStillHaltedRefusal(t *testing.T) {
 	rec := httptest.NewRecorder()
-	writeChainResumeError(rec, fmt.Errorf("chain %s is still halted over uncommitted work: %s: %w", "shop", "commit or stash first", relevo.ErrChainStillHalted))
+	writeChainResumeError(rec, refusal.Classed(relevo.ErrChainStillHalted, "chain shop is still halted over uncommitted work: commit or stash first"))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusConflict)
 	}
@@ -1288,6 +1288,9 @@ func TestWriteChainResumeErrorMapsTheDirtyStillHaltedRefusal(t *testing.T) {
 	}
 	if body.Code != remote.CodeChainStillHalted {
 		t.Errorf("code = %q, want %q", body.Code, remote.CodeChainStillHalted)
+	}
+	if body.Message != "chain shop is still halted over uncommitted work: commit or stash first" {
+		t.Errorf("message = %q, want the halt's own wording", body.Message)
 	}
 }
 

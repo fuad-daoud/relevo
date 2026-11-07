@@ -165,7 +165,7 @@ func chainResumePostGate(ctx context.Context, rt Runtime, out ChainResult, opts 
 	// as exit 2 with the reason to act on, and an internal as "send this to
 	// bugreport" on a human-readable row.
 	if out.Chain.Status == string(workflow.StatusHalted) {
-		return out, fmt.Errorf("chain %s is still halted: %s: %w", out.Chain.Name, out.Chain.Reason, ErrChainStillHalted)
+		return out, stillHaltedf("chain %s is still halted: %s", out.Chain.Name, out.Chain.Reason)
 	}
 	// The resume committed and nothing refused it, so the gate change a placed
 	// writer's server is owed can go out now. No later abort of this resume

@@ -2,7 +2,6 @@ package relevo
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/refusal"
@@ -43,17 +42,17 @@ func chainResumeDirtyRecovery(ctx context.Context, rt Runtime, tx *store.Tx, c d
 		return nil, refusal.New("chain %s is halted over uncommitted work and its tree could not be read (%v): %s", c.Name, err, reason)
 	}
 	if dirty {
-		return nil, fmt.Errorf("chain %s is still halted over uncommitted work: %s: %w", c.Name, reason, ErrChainStillHalted)
+		return nil, stillHaltedf("chain %s is still halted over uncommitted work: %s", c.Name, reason)
 	}
 	head, err := rt.Git.HeadCommit(ctx, b.CWD)
 	if err != nil {
 		return nil, refusal.New("chain %s is halted over uncommitted work and HEAD could not be read (%v): %s", c.Name, err, reason)
 	}
 	if b.RoundClosedBaselineHead == "" {
-		return nil, fmt.Errorf("chain %s is still halted over uncommitted work, and the round's starting commit is unknown: %s: %w", c.Name, reason, ErrChainStillHalted)
+		return nil, stillHaltedf("chain %s is still halted over uncommitted work, and the round's starting commit is unknown: %s", c.Name, reason)
 	}
 	if head == "" || head == b.RoundClosedBaselineHead {
-		return nil, fmt.Errorf("chain %s is still halted over uncommitted work, and nothing has been committed since the round began: %s: %w", c.Name, reason, ErrChainStillHalted)
+		return nil, stillHaltedf("chain %s is still halted over uncommitted work, and nothing has been committed since the round began: %s", c.Name, reason)
 	}
 	return chainResumeRoundClose(ctx, rt, tx, c, member, st.Awaiting.Round)
 }
