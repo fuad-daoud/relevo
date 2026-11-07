@@ -136,3 +136,28 @@ func TestSettingsRefuseTheRemovedTuningFields(t *testing.T) {
 		}
 	}
 }
+
+// movedLog is a log whose worker reports a fixed total, as a join's first
+// worker does after its bootstrap.
+type movedLog struct {
+	*synclog.MemTransport
+	moved synclog.Stats
+}
+
+func (m *movedLog) Stats() (synclog.Stats, error) { return m.moved, nil }
+
+// A worker released before any count read it is counted whole, once.
+func TestCountReleasedFoldsAWorkersWholeTotal(t *testing.T) {
+	local := r2Pair(t)
+	log := &movedLog{MemTransport: synclog.NewMemTransport("m1"), moved: synclog.Stats{TursoReceived: 65709, TursoSent: 17}}
+
+	CountReleased(local, log)
+
+	got, err := ReadBytes(local, time.Now())
+	if err != nil {
+		t.Fatalf("ReadBytes: %v", err)
+	}
+	if got.TursoPull != 65709 || got.TursoPush != 17 {
+		t.Errorf("month = %+v, want the worker's 65709 pulled and 17 pushed", got)
+	}
+}

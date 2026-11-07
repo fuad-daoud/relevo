@@ -132,6 +132,19 @@ func (r *Runner) CountMoved(ctx context.Context, t *StopTransport) {
 	r.countBytes(ctx, t)
 }
 
+// CountReleased folds everything a worker moved into this month's row, for one
+// released before any count read it. A join's first worker bootstraps the
+// replica and is then replaced, so its download is counted here or never. A
+// reading that cannot be taken is skipped.
+func CountReleased(kv db.KV, t synclog.LogTransport) {
+	cur, err := t.Stats()
+	if err != nil {
+		return
+	}
+	var zero synclog.Stats
+	recordStats(kv, &zero, cur)
+}
+
 // SeedStats sets the reading the next count is measured against, for a worker a
 // join already counted up to cur.
 func (r *Runner) SeedStats(cur synclog.Stats) {

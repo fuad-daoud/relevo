@@ -37,6 +37,9 @@ type localDriver struct {
 	// difference between the readings either side.
 	engineBytes turso.TursoSyncDbStats
 
+	// bootstrapped is what Open reports it downloaded.
+	bootstrapped int64
+
 	openErr  error
 	pushErr  error
 	pullErr  error
@@ -45,6 +48,8 @@ type localDriver struct {
 	// between a publish's push and the read that follows it.
 	afterPush func(*sql.DB)
 }
+
+func (d *localDriver) Bootstrapped() int64 { return d.bootstrapped }
 
 func (d *localDriver) Open(context.Context, Spec) (*sql.DB, error) {
 	d.opens++
@@ -913,8 +918,10 @@ func TestTursoDriverOpensThroughTheSyncConstructor(t *testing.T) {
 	if err := d.Pull(context.Background()); err != nil || fake.pulls != 1 {
 		t.Errorf("Pull err=%v calls=%d, want one call", err, fake.pulls)
 	}
-	if _, err := d.Stats(context.Background()); err != nil || fake.stats != 1 {
-		t.Errorf("Stats err=%v calls=%d, want one call", err, fake.stats)
+	// A fresh replica's open reads the engine's counters once for the
+	// bootstrap, so the driver's own Stats is the second call.
+	if _, err := d.Stats(context.Background()); err != nil || fake.stats != 2 {
+		t.Errorf("Stats err=%v calls=%d, want the open's reading and this one", err, fake.stats)
 	}
 	if _, err := d.Open(context.Background(), Spec{}); err == nil {
 		t.Error("a second open replaced the replica instead of refusing")
@@ -949,6 +956,57 @@ func TestTursoDriverPropagatesConstructorFailures(t *testing.T) {
 	}
 	if _, err := d.Open(context.Background(), Spec{URL: "u", Token: "t"}); err != nil {
 		t.Errorf("a failed connect left the driver holding a replica: %v", err)
+	}
+}
+
+// A replica Open had to create counts what the engine says it downloaded, and
+// one that already existed counts nothing, so a restarted worker doesn't bill it
+// twice.
+func TestDriverCountsOnlyABootstrapItDownloaded(t *testing.T) {
+	restore := newSyncDb
+	t.Cleanup(func() { newSyncDb = restore })
+	newSyncDb = func(_ context.Context, cfg turso.TursoSyncDbConfig) (syncDb, error) {
+		if err := os.WriteFile(cfg.Path, make([]byte, 10), 0o600); err != nil {
+			return nil, err
+		}
+		fake := &fakeSyncDb{db: openAt(t, tempReplica(t))}
+		fake.reading.NetworkReceivedBytes = 65709
+		return fake, nil
+	}
+
+	path := tempReplica(t)
+	fresh := newTursoDriver(path)
+	if _, err := fresh.Open(context.Background(), Spec{URL: "u", Token: "t"}); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if got := fresh.Bootstrapped(); got != 65709 {
+		t.Errorf("fresh replica's Bootstrapped = %d, want the engine's 65709", got)
+	}
+
+	again := newTursoDriver(path)
+	if _, err := again.Open(context.Background(), Spec{URL: "u", Token: "t"}); err != nil {
+		t.Fatalf("second open: %v", err)
+	}
+	if got := again.Bootstrapped(); got != 0 {
+		t.Errorf("existing replica's Bootstrapped = %d, want 0", got)
+	}
+}
+
+// The first download reaches the traffic totals with the first stats reading.
+func TestBackendCountsTheBootstrapAsReceived(t *testing.T) {
+	driver := &localDriver{path: tempReplica(t), bootstrapped: 248}
+	b := NewTursoBackend(driver)
+	if err := b.Open(Spec{URL: "u", Token: "t", Origin: "origin-a"}); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+
+	stats, err := b.Stats()
+	if err != nil {
+		t.Fatalf("stats: %v", err)
+	}
+	if stats.TursoReceived != 248 {
+		t.Errorf("TursoReceived = %d, want the 248 bytes the bootstrap downloaded", stats.TursoReceived)
 	}
 }
 

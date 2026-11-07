@@ -409,6 +409,11 @@ func (v *Runner) settleImportBucket(r2 relevosync.R2Intake, staged *verified) er
 }
 
 func releaseStagedWorker(v *Runner, staged *verified) {
+	// A worker this enable opened is counted before it goes: it may have run
+	// the bootstrap, and no later reading sees what it moved.
+	if staged.opened && staged.transport != nil && v.Local != nil {
+		relevosync.CountReleased(v.Local, staged.transport)
+	}
 	v.clearJoin(staged.transport)
 	closeTransport(staged.transport)
 	staged.transport = nil

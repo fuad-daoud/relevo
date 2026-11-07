@@ -259,6 +259,8 @@ type sharedRemoteDriver struct {
 	skipNextPull bool
 }
 
+func (d *sharedRemoteDriver) Bootstrapped() int64 { return 0 }
+
 func (d *sharedRemoteDriver) Open(_ context.Context, _ Spec) (*sql.DB, error) {
 	db, err := sql.Open("sqlite", d.path)
 	if err != nil {
