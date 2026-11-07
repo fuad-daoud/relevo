@@ -164,12 +164,16 @@ func switchLines(entries []store.LogEntry, round int, serverSwitch bool) []strin
 // turn and a duplicate payload beside the report. Its trace to the mastermind
 // is the switch line in the closing round's report: no new stored fact is added
 // for it, since the note written here is what that line renders.
-func switchEntry(now time.Time, round int, reason string, res resolve.Resolution, u *usage.Usage) store.LogEntry {
+func switchEntry(now time.Time, round int, reason, replaced string, res resolve.Resolution, u *usage.Usage) store.LogEntry {
+	note := "switched builder (" + reason + "): " + resolve.ExplainResolution("builder", res)
+	if replaced != "" {
+		note += store.SwitchReplacedClause + replaced
+	}
 	return store.LogEntry{
 		TS: now.UTC(), Round: round, Direction: store.DirToMasterMind,
 		Kind: store.KindSwitch, Confirmed: true,
 		Usage: u,
-		Note:  "switched builder (" + reason + "): " + resolve.ExplainResolution("builder", res),
+		Note:  note,
 	}
 }
 
@@ -397,7 +401,7 @@ func installSwitchReplacement(ctx context.Context, rt Runtime, tx *store.Tx, b s
 	// the way out: this halt really is the round's current reason.
 	b = ClearHaltFields(b)
 
-	if err := tx.AppendLog(b.Name, switchEntry(now, b.Round, reason, res, prior)); err != nil {
+	if err := tx.AppendLog(b.Name, switchEntry(now, b.Round, reason, old, res, prior)); err != nil {
 		return b, "", time.Time{}, true, err
 	}
 
