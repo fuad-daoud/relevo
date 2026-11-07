@@ -9,7 +9,9 @@ import (
 func TestRecordPutGetList(t *testing.T) {
 	d := openTestDB(t)
 
+	viewed := time.Now().UTC().Truncate(time.Millisecond)
 	beta := testRecord("beta")
+	beta.ViewedAt = &viewed
 	betaID, err := d.RecordPut(beta)
 	if err != nil {
 		t.Fatalf("RecordPut(beta): %v", err)
@@ -41,11 +43,6 @@ func TestRecordPutGetList(t *testing.T) {
 		t.Fatalf("RecordList names = %v, want [alpha beta]", recordNames(list))
 	}
 
-	viewed := time.Now().UTC().Truncate(time.Millisecond)
-	if err := d.RecordSetViewed("", "beta", viewed); err != nil {
-		t.Fatalf("RecordSetViewed: %v", err)
-	}
-
 	// A second put upserts: same id, created_at and viewed_at kept.
 	next := testRecord("beta")
 	next.State = "needs_you"
@@ -71,11 +68,6 @@ func TestRecordPutGetList(t *testing.T) {
 	}
 	if got.ViewedAt == nil || !got.ViewedAt.Equal(viewed) {
 		t.Errorf("viewed_at = %v, want %v (a put keeps it)", got.ViewedAt, viewed)
-	}
-
-	// SetViewed on a name with no row is a no-op, not an error.
-	if err := d.RecordSetViewed("", "missing", viewed); err != nil {
-		t.Errorf("RecordSetViewed(missing) = %v, want nil", err)
 	}
 }
 

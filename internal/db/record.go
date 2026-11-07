@@ -296,16 +296,6 @@ func (t *Tx) RecordDelete(owner, name string) error {
 	return nil
 }
 
-// RecordSetViewed stamps viewed_at on owner's live row for name. No row is a
-// no-op: a read verb must not fail over an unwritable stamp.
-func (t *Tx) RecordSetViewed(owner, name string, at time.Time) error {
-	if _, err := t.exec(`UPDATE binding_record SET viewed_at = ? WHERE `+writerScope+` AND owner = ? AND name = ? AND archived_at IS NULL`,
-		formatTime(at), t.origin, owner, name); err != nil {
-		return fmt.Errorf("db: record set viewed %s/%q: %w", owner, name, mapBusy(err))
-	}
-	return nil
-}
-
 // EventsOf returns recordID's events whose Seq is greater than afterSeq,
 // ascending; afterSeq 0 reads the whole log.
 func (d *DB) EventsOf(recordID string, afterSeq int) ([]RecordEvent, error) {
@@ -454,10 +444,6 @@ func (d *DB) RecordArchive(owner, name string, at time.Time) error {
 
 func (d *DB) RecordDelete(owner, name string) error {
 	return d.Tx(func(t *Tx) error { return t.RecordDelete(owner, name) })
-}
-
-func (d *DB) RecordSetViewed(owner, name string, at time.Time) error {
-	return d.Tx(func(t *Tx) error { return t.RecordSetViewed(owner, name, at) })
 }
 
 func (d *DB) EventAppend(recordID string, e RecordEvent) error {

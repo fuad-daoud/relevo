@@ -332,14 +332,14 @@ func (s *Store) MarkViewed(name string, at time.Time) error {
 	if err != nil {
 		return err
 	}
-	_, ok, err := d.RecordGet(s.owner, name)
+	rec, ok, err := d.RecordGet(s.owner, name)
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return nil
 	}
-	return d.RecordSetViewed(s.owner, name, at)
+	return s.writeViewedOverlay(rec.ID, at)
 }
 
 func (s *Store) ViewedAt(name string) (time.Time, bool) {
@@ -348,7 +348,15 @@ func (s *Store) ViewedAt(name string) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	rec, ok, err := d.RecordGet(s.owner, name)
-	if err != nil || !ok || rec.ViewedAt == nil {
+	if err != nil || !ok {
+		return time.Time{}, false
+	}
+	if ov, ok, err := s.readLiveOverlay(rec.ID); err != nil {
+		return time.Time{}, false
+	} else if ok && !ov.ViewedAt.IsZero() {
+		return ov.ViewedAt, true
+	}
+	if rec.ViewedAt == nil {
 		return time.Time{}, false
 	}
 	return *rec.ViewedAt, true
