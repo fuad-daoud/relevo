@@ -38,6 +38,12 @@ var ErrChainRunning = errors.New("the chain is still running")
 // running sibling has.
 var ErrChainDone = errors.New("the chain is done")
 
+// ErrChainStillHalted marks a resume the halt kept: the post-gate halt and the
+// uncommitted-work halts. As a refusal.Sentinel it unwraps to
+// refusal.ErrRefused, so the CLI answers refused, and the served resume maps
+// it by errors.Is rather than message text.
+var ErrChainStillHalted = refusal.Sentinel("chain is still halted")
+
 // ChainStop ends a running chain: `relevo stop <n>` where <n> names a chain.
 // The member the chain is waiting on is stopped exactly as `relevo stop` stops
 // any binding, and that member's stopped close raises the chain's `stopped`

@@ -1251,6 +1251,46 @@ func TestWriteChainResumeErrorMapsTheChainDone(t *testing.T) {
 	}
 }
 
+// TestWriteChainResumeErrorMapsTheStillHaltedRefusal pins the still-halted
+// refusal's wire shape: a resume the halt kept is 409 chain_still_halted
+// carrying the halt's reason, so the client rebuilds a refusal instead of the
+// CLI printing internal.
+func TestWriteChainResumeErrorMapsTheStillHaltedRefusal(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeChainResumeError(rec, fmt.Errorf("chain %s is still halted: %s: %w", "shop", "repair has no budget left", relevo.ErrChainStillHalted))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusConflict)
+	}
+	var body remote.ErrorBody
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Code != remote.CodeChainStillHalted {
+		t.Errorf("code = %q, want %q", body.Code, remote.CodeChainStillHalted)
+	}
+	if !strings.Contains(body.Message, "repair has no budget left") {
+		t.Errorf("message = %q, want it to carry the halt reason", body.Message)
+	}
+}
+
+// TestWriteChainResumeErrorMapsTheDirtyStillHaltedRefusal pins that a resume
+// refused over uncommitted work answers the same 409: the dirty-recovery
+// halts reach a served client through the same arm, not the default 500.
+func TestWriteChainResumeErrorMapsTheDirtyStillHaltedRefusal(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeChainResumeError(rec, fmt.Errorf("chain %s is still halted over uncommitted work: %s: %w", "shop", "commit or stash first", relevo.ErrChainStillHalted))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusConflict)
+	}
+	var body remote.ErrorBody
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Code != remote.CodeChainStillHalted {
+		t.Errorf("code = %q, want %q", body.Code, remote.CodeChainStillHalted)
+	}
+}
+
 func TestWriteChainResumeErrorMapsAnUnknownActor(t *testing.T) {
 	rec := httptest.NewRecorder()
 	err := fmt.Errorf("step build: rule 2: run names unknown actor %q: %w", "builder-qwen", resolve.ErrUnknownRole)

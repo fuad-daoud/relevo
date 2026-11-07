@@ -13,6 +13,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
@@ -477,6 +478,32 @@ func TestChainServerResumeRetypesAChainDone(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "chain shop is done") {
 		t.Errorf("err = %q, want it to name the chain's state", err)
+	}
+}
+
+// TestChainServerResumeRetypesAStillHalted pins the client half of the
+// still-halted mapping: the server's 409 chain_still_halted becomes a refusal
+// carrying the halt's reason, so the CLI answers refused instead of internal.
+func TestChainServerResumeRetypesAStillHalted(t *testing.T) {
+	t.Parallel()
+
+	fr := chainPullFake(chainPullView("shop", string(chain.StatusHalted), 1, 0, 0))
+	fr.chainResumeErr = &client.HTTPError{
+		Status: http.StatusConflict,
+		Body:   remote.ErrorBody{Code: remote.CodeChainStillHalted, Message: "chain shop is still halted: repair has no budget left"},
+	}
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "shop")
+
+	_, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"})
+	if err == nil {
+		t.Fatal("ChainResume = nil, want the still-halted refusal")
+	}
+	if !errors.Is(err, refusal.ErrRefused) {
+		t.Errorf("err = %v, want errors.Is(err, refusal.ErrRefused)", err)
+	}
+	if !strings.Contains(err.Error(), "repair has no budget left") {
+		t.Errorf("err = %q, want it to carry the halt reason", err)
 	}
 }
 
