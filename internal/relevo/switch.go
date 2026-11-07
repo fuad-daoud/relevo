@@ -192,9 +192,11 @@ func switchEntry(now time.Time, round int, reason string, res resolve.Resolution
 // switch -- from a pattern match or a human's `relevo gate <token>` -- passes
 // false: max_switches counts builders that fail, not providers that close, and
 // counting one trigger but not the other would make the halt depend on who
-// noticed the gate first. The `>= limit` check above is unaffected either way:
-// `0` still disables switching, and a binding already at the limit still halts
-// instead of switching again.
+// noticed the gate first. The exception is a limit whose reset has already
+// passed: its gate closes nothing, so the pick can land on the same candidate
+// and only this budget ends the loop. The `>= limit` check above is unaffected
+// either way: `0` still disables switching, and a binding already at the limit
+// still halts instead of switching again.
 func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, reason string, closeOld, counted bool) (store.Binding, error) {
 	limit := rt.Policy.SwitchLimit()
 	if b.RoundSwitches >= limit {
@@ -469,7 +471,7 @@ func limitText(ctx context.Context, rt Runtime, b store.Binding) string {
 // a headless builder's log, then checks whether this round already has a report
 // on disk: if so the gate is recorded but the round is left for the caller to
 // close as it would have (handled=false, m.Line set); otherwise it switches the
-// builder uncounted (handled=true).
+// builder (handled=true), uncounted unless the reset has already passed.
 func gateOnLimit(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, text string, resetMS int64, closeOld bool) (next store.Binding, m availability.LimitMatch, handled bool, err error) {
 	switchable := b.BuilderCandidate != "" && !b.RoundStartedAt.IsZero()
 	if !switchable {
@@ -528,7 +530,8 @@ func gateOnLimit(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		return b, m, false, nil
 	}
 
-	next, err = switchBuilder(ctx, rt, tx, b, reason, closeOld, false)
+	counted := !credit && !m.Until.After(now)
+	next, err = switchBuilder(ctx, rt, tx, b, reason, closeOld, counted)
 	return next, m, true, err
 }
 
