@@ -288,7 +288,7 @@ func resolveRemoteBaseIdentity(ctx context.Context, rt Runtime, opts AddOptions)
 					available[i] = fmt.Sprintf("%s (%s)", c.Name, c.Token)
 				}
 			}
-			return remoteAddBase{}, fmt.Errorf("candidate %q not available on %s (available: %s)", opts.Candidate, opts.Server, strings.Join(available, ", "))
+			return remoteAddBase{}, refusal.New("candidate %q not available on %s (available: %s); a served bind takes only a candidate configured on that server and listed for the actor", opts.Candidate, opts.Server, strings.Join(available, ", "))
 		}
 	}
 	return base, nil

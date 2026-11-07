@@ -1055,6 +1055,15 @@ func TestCreateBindingRole(t *testing.T) {
 				t.Fatalf("status = %d, want %d; body: %s", rec.Code, tc.wantStatus, rec.Body.String())
 			}
 			if tc.wantStatus != http.StatusCreated {
+				if tc.name == "unknown role" {
+					var errBody remote.ErrorBody
+					if err := json.Unmarshal(rec.Body.Bytes(), &errBody); err != nil {
+						t.Fatalf("decode error body: %v", err)
+					}
+					if errBody.Code != remote.CodeUnknownActor {
+						t.Errorf("code = %q, want %q", errBody.Code, remote.CodeUnknownActor)
+					}
+				}
 				requireCreateRefused(t, srv, kp, rec, tc.wantMsg, tc.wantNoRepo)
 				return
 			}

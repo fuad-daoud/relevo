@@ -433,6 +433,86 @@ func TestResumeNoCommitRehaltOpensNoNewRound(t *testing.T) {
 	}
 }
 
+// TestResumeReviewPassedWhileCheckRedGoesBackToCheck pins the gating reroute:
+// a halt at review while check is still red resumes plain back to the check,
+// sending no new reviewer or builder round. A repeat red then re-halts at
+// review with the same gating reason and no new repair round, which is what
+// the kept arm budget buys.
+func TestResumeReviewPassedWhileCheckRedGoesBackToCheck(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startRegateFlowChain(t, rt)
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	chainRedCheck(t, rt, "shop", "FAIL second\n")
+	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("pass"))
+	c := flowChainRow(t, rt)
+	if c.Status != string(workflow.StatusHalted) {
+		t.Fatalf("setup: status = %s (%q), want halted at review", c.Status, c.Reason)
+	}
+	st, err := chain.WorkflowState(c)
+	if err != nil {
+		t.Fatalf("chain.WorkflowState: %v", err)
+	}
+	if st.At != "review" {
+		t.Fatalf("setup: engine at %q, want review", st.At)
+	}
+	if !strings.Contains(c.Reason, "passed while check") {
+		t.Fatalf("setup: reason %q, want the red-gate halt", c.Reason)
+	}
+	haltReason := c.Reason
+	beforeBuilder := chainBinding(t, rt, "shop").Round
+	beforeReviewer := chainBinding(t, rt, "shop-rev").Round
+
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+	row := flowChainRow(t, rt)
+	if row.Status != string(workflow.StatusRunning) {
+		t.Fatalf("status = %s (%q), want running: the check must rerun, not re-halt", row.Status, row.Reason)
+	}
+	rst, err := chain.WorkflowState(row)
+	if err != nil {
+		t.Fatalf("chain.WorkflowState: %v", err)
+	}
+	if rst.Awaiting.Step != "check" {
+		t.Fatalf("engine awaiting %+v, want the check step", rst.Awaiting)
+	}
+	if got := chainBinding(t, rt, "shop").Round; got != beforeBuilder {
+		t.Errorf("builder round = %d, want %d: no builder round may be sent", got, beforeBuilder)
+	}
+	if got := chainBinding(t, rt, "shop-rev").Round; got != beforeReviewer {
+		t.Errorf("reviewer round = %d, want %d: no reviewer round may be sent", got, beforeReviewer)
+	}
+
+	chainRedCheck(t, rt, "shop", "FAIL third\n")
+	after := flowChainRow(t, rt)
+	ast, err := chain.WorkflowState(after)
+	if err != nil {
+		t.Fatalf("chain.WorkflowState: %v", err)
+	}
+	if ast.Awaiting.Step == "review" {
+		chainReaderClose(t, rt, "shop-rev", chainVerdictBody("pass"))
+		after = flowChainRow(t, rt)
+		ast, err = chain.WorkflowState(after)
+		if err != nil {
+			t.Fatalf("chain.WorkflowState: %v", err)
+		}
+	}
+	if after.Status != string(workflow.StatusHalted) {
+		t.Fatalf("status = %s (%q), want the repeat red to re-halt", after.Status, after.Reason)
+	}
+	if ast.At != "review" {
+		t.Errorf("engine at %q, want review again", ast.At)
+	}
+	if !strings.Contains(after.Reason, "passed while check") {
+		t.Errorf("reason %q, want the same red-gate halt as %q", after.Reason, haltReason)
+	}
+	if got := chainBinding(t, rt, "shop").Round; got != beforeBuilder {
+		t.Errorf("builder round = %d, want %d: no new repair round", got, beforeBuilder)
+	}
+}
+
 // TestResumeRegateRaisedBuysRepairRound pins the raised-budget path: with a
 // commit present the resume re-enters the arm with a fresh budget, so the
 // raised max buys a repair round.
@@ -810,14 +890,15 @@ steps:
 func TestResumeVisitsHelperPinsFreshAndKept(t *testing.T) {
 	t.Parallel()
 
+	def := workflow.Default()
 	before := workflow.State{At: "repair", Visits: map[string]int{"repair": 1, "check": 3}}
-	if got := chainResumeVisits(before, true); got["repair"] != 1 || len(got) != 1 {
+	if got := chainResumeVisits(def, before, "check", true); got["repair"] != 1 || len(got) != 1 {
 		t.Errorf("kept visits = %+v, want only repair=1", got)
 	}
-	if got := chainResumeVisits(before, false); len(got) != 0 {
+	if got := chainResumeVisits(def, before, "check", false); len(got) != 0 {
 		t.Errorf("fresh visits = %+v, want empty", got)
 	}
-	if got := chainResumeVisits(workflow.State{At: "repair"}, true); len(got) != 0 {
+	if got := chainResumeVisits(def, workflow.State{At: "repair"}, "check", true); len(got) != 0 {
 		t.Errorf("kept visits with no map = %+v, want empty", got)
 	}
 }

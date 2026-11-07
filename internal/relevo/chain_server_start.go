@@ -266,6 +266,8 @@ func chainServerCreateError(err error) error {
 			return refusal.Classed(ErrChainCreateTimeout, msg)
 		case httpErr.Status == http.StatusConflict && strings.Contains(httpErr.Body.Message, "already exists"):
 			return refusal.Classed(git.ErrBranchExists, httpErr.Body.Message)
+		case httpErr.Status == http.StatusBadRequest && httpErr.Body.Code == remote.CodeInvalid && strings.Contains(httpErr.Body.Message, "archived"):
+			return refusal.New("%s", httpErr.Body.Message)
 		case httpErr.Status == http.StatusBadRequest && httpErr.Body.Code == remote.CodeInvalid:
 			return refusal.New("the server refused this chain: %s; a server older than this client may not know its workflow, so upgrade the server if it is older", httpErr.Body.Message)
 		}

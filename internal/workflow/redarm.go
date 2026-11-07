@@ -36,6 +36,14 @@ func redEdgeNames(step Step, id string) bool {
 	return false
 }
 
+// GatingRedCheck names the check whose red still gates a pass at the halted
+// state's step, or false when no red stands in its way. It is the halt's own
+// rule, so a resume re-entering the gate asks the same question the halt did
+// without copying it.
+func GatingRedCheck(def Definition, s State) (string, bool) {
+	return gatingRedCheck(def, s, s.At)
+}
+
 // IsZeroBudgetArm reports whether id is the zero-max repair arm applyBudget
 // halts on rather than routing past.
 func IsZeroBudgetArm(def Definition, id string) bool {

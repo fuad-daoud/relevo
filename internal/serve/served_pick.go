@@ -62,7 +62,11 @@ func (s *Server) servedShape(w http.ResponseWriter, rt relevo.Runtime, reqRole, 
 	if role != "" {
 		s, err := resolve.ActorShape(rt.RoleRegistry(), role)
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
+			if errors.Is(err, resolve.ErrUnknownRole) {
+				writeErr(w, http.StatusBadRequest, remote.CodeUnknownActor, err.Error())
+			} else {
+				writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
+			}
 			return "", false
 		}
 		shape = s

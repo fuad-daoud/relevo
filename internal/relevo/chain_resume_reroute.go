@@ -20,7 +20,9 @@ import (
 // check ran goes back to that check too, without granting a fresh repair
 // budget: the check re-runs on the true tree, and a repeat red re-halts
 // without opening a repair round. A stopped resume keeps the arm so it
-// re-sends the stopped round's own staged prompt.
+// re-sends the stopped round's own staged prompt. A halted pass while its
+// check is still red goes back to that gating check the same way, without the
+// tree guards: the tree did not change under a review.
 //
 // Every other resume re-enters what it asked for. An explicit --from wins; a
 // chain no red edge reaches resumes as before; and several feeding checks keep
@@ -36,22 +38,32 @@ func chainResumeReroute(ctx context.Context, rt Runtime, c db.ChainRow, def work
 	checks := workflow.RedArmChecks(def, st.At)
 	switch len(checks) {
 	case 0:
-		return opts.From, false, nil
+		// No arm; the gating-check branch below decides.
 	case 1:
+		if chainResumeChangesGate(opts) {
+			return checks[0], false, nil
+		}
+		if st.Status == workflow.StatusHalted {
+			if next, ok := chainResumeNoCommitCheck(ctx, rt, c, def, st, checks[0]); ok {
+				return next, true, nil
+			}
+		}
+		return "", false, nil
 	default:
 		return "", false, refusal.New(
 			"chain %s at %s, and %d checks reach it (%s); resume with --from <step> to name the one to rerun",
 			st.Status, st.At, len(checks), strings.Join(checks, ", "))
 	}
-	if chainResumeChangesGate(opts) {
-		return checks[0], false, nil
+	if st.Status != workflow.StatusHalted {
+		return opts.From, false, nil
 	}
-	if st.Status == workflow.StatusHalted {
-		if next, ok := chainResumeNoCommitCheck(ctx, rt, c, def, st, checks[0]); ok {
-			return next, true, nil
+	if gate, ok := workflow.GatingRedCheck(def, st); ok {
+		if chainResumeChangesGate(opts) {
+			return gate, false, nil
 		}
+		return gate, true, nil
 	}
-	return "", false, nil
+	return opts.From, false, nil
 }
 
 // chainResumeNoCommitCheck names the feeding check a plain resume re-enters
@@ -125,15 +137,33 @@ func chainResumeNoCommitCheck(ctx context.Context, rt Runtime, c db.ChainRow, de
 
 // chainResumeVisits is the visits a resume starts from: fresh, except a
 // no-commit reroute keeps the arm's count so the re-run check meets the same
-// budget it halted on.
-func chainResumeVisits(before workflow.State, noCommit bool) map[string]int {
+// budget it halted on. A reroute from a non-arm halt keeps the red arm the
+// gating check feeds as well, so a repeat red meets the spent budget.
+func chainResumeVisits(def workflow.Definition, before workflow.State, from string, noCommit bool) map[string]int {
 	if !noCommit {
 		return map[string]int{}
 	}
 	out := map[string]int{}
-	if before.Visits != nil {
-		if v, ok := before.Visits[before.At]; ok {
-			out[before.At] = v
+	if before.Visits == nil {
+		return out
+	}
+	if v, ok := before.Visits[before.At]; ok {
+		out[before.At] = v
+	}
+	if from == "" {
+		return out
+	}
+	step, ok := def.Steps[from]
+	if !ok {
+		return out
+	}
+	for _, edge := range []string{"red", "result=red"} {
+		t, ok := step.On[edge]
+		if !ok || t.Kind != workflow.TargetStep {
+			continue
+		}
+		if v, ok := before.Visits[t.Step]; ok {
+			out[t.Step] = v
 		}
 	}
 	return out

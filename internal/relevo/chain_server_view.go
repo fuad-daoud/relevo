@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/resolve"
@@ -244,6 +245,13 @@ func chainServerResume(ctx context.Context, rt Runtime, c db.ChainRow, opts Resu
 		}
 		if typed := chainServerCreateError(err); errors.Is(typed, resolve.ErrUnknownRole) {
 			return ChainResult{}, fmt.Errorf("server %s: %w", c.Server, typed)
+		}
+		if remoteCode(err, 409, remote.CodeChainHalted) {
+			var httpErr *client.HTTPError
+			if errors.As(err, &httpErr) {
+				return ChainResult{}, refusal.Classed(refusal.ErrRefused, httpErr.Body.Message)
+			}
+			return ChainResult{}, refusal.Classed(refusal.ErrRefused, err.Error())
 		}
 		return ChainResult{}, err
 	}

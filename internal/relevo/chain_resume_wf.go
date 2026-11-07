@@ -132,7 +132,7 @@ func chainResumePreflight(ctx context.Context, rt Runtime, c db.ChainRow, opts R
 	// resets the correction count on the fixed state machine. A no-commit
 	// reroute keeps the arm's count, so a repeat red re-halts on the same
 	// budget instead of opening a repair round.
-	before.Visits = chainResumeVisits(before, noCommit)
+	before.Visits = chainResumeVisits(def, before, from, noCommit)
 	return def, before, from, set, merged, repins, nil
 }
 

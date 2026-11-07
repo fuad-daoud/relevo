@@ -588,6 +588,47 @@ func haltedRoundOpenOnBroken(t *testing.T) {
 	assertRemoteRoundOpen(t, err, false)
 }
 
+// TestShipAllGatedNeedsYouIsAGateRefusal pins the all-gated halt: a
+// needs_you view whose halt carries the all-gated text classifies as the
+// server's gate refusal, with the server-side clear; a spawn-failure halt
+// without it stays the server's fault.
+func TestShipAllGatedNeedsYouIsAGateRefusal(t *testing.T) {
+	t.Parallel()
+	gatedHalt := `every candidate serving "builder" is gated: x (rate-limited until cleared); name one with --candidate to bypass, or clear a gate with relevo gate --clear <provider>: every candidate serving the actor is gated`
+	fr := &fakeRemote{
+		startRoundResp: remote.BindingView{
+			RoundState: remote.RoundNeedsYou,
+			Halt:       gatedHalt,
+		},
+	}
+	rt, st := haltedSendRuntime(t, fr)
+	planFile := writePlan(t, "# Plan")
+	_, err := relevo.Send(context.Background(), rt, "api", planFile, relevo.SendOptions{})
+	if !errors.Is(err, resolve.ErrAllGated) {
+		t.Fatalf("Send err = %v, want errors.Is(err, resolve.ErrAllGated)", err)
+	}
+	if !strings.Contains(err.Error(), "relevo gate --serve --clear") {
+		t.Errorf("Send err = %q, want it naming relevo gate --serve --clear", err)
+	}
+	assertNothingWritten(t, st, err, "could not start", "gated")
+
+	frSpawn := &fakeRemote{
+		startRoundResp: remote.BindingView{
+			RoundState: remote.RoundNeedsYou,
+			Halt:       "builder spawn failed: boom",
+		},
+	}
+	rtSpawn, _ := haltedSendRuntime(t, frSpawn)
+	planSpawn := writePlan(t, "# Plan")
+	_, spawnErr := relevo.Send(context.Background(), rtSpawn, "api", planSpawn, relevo.SendOptions{})
+	if spawnErr == nil {
+		t.Fatal("Send(spawn failure) = nil, want an error")
+	}
+	if errors.Is(spawnErr, resolve.ErrAllGated) {
+		t.Errorf("Send(spawn failure) err = %v, want no ErrAllGated", spawnErr)
+	}
+}
+
 // TestSendRemoteTierPassedToStartRound pins that a Send with a Tier option
 // reaches StartRound over the wire, after the pre-tier probe succeeds.
 func TestSendRemoteTierPassedToStartRound(t *testing.T) {

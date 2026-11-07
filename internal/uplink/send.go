@@ -14,6 +14,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/chain"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
@@ -63,9 +64,20 @@ func Ship(ctx context.Context, rt relevo.Runtime, b store.Binding, planBody []by
 	// it succeeded, and no prompt is recorded, which would reset the round and file
 	// the next halt twice with the same text.
 	if view.RoundState == remote.RoundNeedsYou || view.RoundState == remote.RoundBroken {
-		return remote.BindingView{}, "", nil, fmt.Errorf("%s: round %d could not start on %s: %s", name, b.Round, server, text.OrText(view.Halt, "no reason given"))
+		return remote.BindingView{}, "", nil, couldNotStartError(name, server, b.Round, view)
 	}
 	return view, outRef, snap.Heads, nil
+}
+
+// couldNotStartError answers a round the server could not start: an all-gated
+// halt is the server's own gate refusal, so it classifies as gate_active with
+// the server-side clear; any other halt is the server's fault, still internal.
+func couldNotStartError(name, server string, round int, view remote.BindingView) error {
+	msg := fmt.Sprintf("%s: round %d could not start on %s: %s", name, round, server, text.OrText(view.Halt, "no reason given"))
+	if view.RoundState == remote.RoundNeedsYou && strings.Contains(view.Halt, resolve.ErrAllGated.Error()) {
+		return refusal.Classed(resolve.ErrAllGated, msg+"; the gate is the server's, cleared there with `relevo gate --serve --clear <provider>`")
+	}
+	return errors.New(msg)
 }
 
 // shipServer checks the three clients a ship needs and asks the server one

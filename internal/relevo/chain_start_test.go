@@ -351,6 +351,45 @@ func TestChainStartRefusesATakenMemberName(t *testing.T) {
 	})
 }
 
+// TestChainStartRefusesAnArchivedName pins the local share of the archived
+// reuse: a chain whose members were archived refuses the name with the
+// archived message, cutting no new worktree and writing no live binding.
+func TestChainStartRefusesAnArchivedName(t *testing.T) {
+	t.Parallel()
+
+	rt, fg := chainRuntime(t)
+	res := startedChain(t, rt, ChainOptions{})
+	for _, m := range res.Members {
+		if _, err := rt.Store.Archive(m.Name); err != nil {
+			t.Fatalf("Archive %s: %v", m.Name, err)
+		}
+	}
+	cut := len(fg.addWorktreeCalls)
+	_, err := ChainStart(context.Background(), rt, ChainOptions{
+		Name: "shop", Plans: []string{writePlan(t, "p")}, Feature: "auth", MasterMindID: testMasterMindName,
+	})
+	if err == nil || !strings.Contains(err.Error(), "archived") {
+		t.Fatalf("err = %v, want the archived-chain refusal", err)
+	}
+	if !strings.Contains(err.Error(), `"shop"`) {
+		t.Errorf("err = %q, want it naming the archived chain", err)
+	}
+	if !errors.Is(err, refusal.ErrRefused) {
+		t.Errorf("err = %v, want errors.Is(err, refusal.ErrRefused)", err)
+	}
+	if len(fg.addWorktreeCalls) != cut {
+		t.Errorf("worktrees = %+v, want no new cut after the refusal", fg.addWorktreeCalls)
+	}
+	for _, name := range []string{"shop", "shop-rev", "shop-plan"} {
+		if _, lerr := rt.Store.Load(name); !errors.Is(lerr, store.ErrNotFound) {
+			t.Errorf("binding %q exists after the refusal: %v", name, lerr)
+		}
+		if ok, herr := rt.Store.HasArchived(name); herr != nil || !ok {
+			t.Errorf("HasArchived(%s) = %t, %v; want the archived row untouched", name, ok, herr)
+		}
+	}
+}
+
 // TestChainStartRefusesANameOver27 pins the extra length rule: a name
 // store.ValidName accepts is still refused when the longest member suffix
 // would push a member past the cap. Names are never truncated.

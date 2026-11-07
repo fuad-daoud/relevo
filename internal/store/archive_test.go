@@ -145,6 +145,38 @@ func TestListArchivedSinceListsIdentities(t *testing.T) {
 	}
 }
 
+// TestHasArchivedNamesAnArchivedBinding pins the archived-name read a chain
+// create asks before writing: true after the archive, false for a live and
+// for an unknown name.
+func TestHasArchivedNamesAnArchivedBinding(t *testing.T) {
+	s := New(t.TempDir())
+	if err := s.Save(newBinding("shop", "/repo")); err != nil {
+		t.Fatalf("Save shop: %v", err)
+	}
+	if err := s.Save(newBinding("live", "/other")); err != nil {
+		t.Fatalf("Save live: %v", err)
+	}
+	if _, err := s.Archive("shop"); err != nil {
+		t.Fatalf("Archive shop: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		want bool
+	}{
+		{"shop", true},
+		{"live", false},
+		{"unknown", false},
+	} {
+		got, err := s.HasArchived(tc.name)
+		if err != nil {
+			t.Fatalf("HasArchived(%s): %v", tc.name, err)
+		}
+		if got != tc.want {
+			t.Errorf("HasArchived(%s) = %t, want %t", tc.name, got, tc.want)
+		}
+	}
+}
+
 // TestArchivedLogDecodesEntries pins ArchivedLog against a stored record:
 // entry_json is authoritative and Seq, Confirmed, DeliveredAt and Route come
 // from the promoted columns.

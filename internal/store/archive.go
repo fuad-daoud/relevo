@@ -93,6 +93,24 @@ func (s *Store) ListArchived() ([]ArchivedBinding, error) {
 	return out, nil
 }
 
+// HasArchived reports whether name was used by an archived chain or binding:
+// a live name is free, so a create must ask the record layer rather than
+// reaching into the database around the store.
+func (s *Store) HasArchived(name string) (bool, error) {
+	d, err := s.dbForRead()
+	if err != nil {
+		return false, err
+	}
+	if d == nil {
+		return false, nil
+	}
+	_, ok, err := d.RecordGetArchivedByName(s.owner, name)
+	if err != nil {
+		return false, err
+	}
+	return ok, nil
+}
+
 // RecordID returns name's live record id, the id a caller names a binding by
 // when it holds only the binding's name -- a served binding's view reports it,
 // and the link columns point at it. A binding that does not exist is

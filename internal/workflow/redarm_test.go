@@ -74,6 +74,30 @@ steps:
 	}
 }
 
+// TestGatingRedCheckNamesTheRedCheckBehindAPass pins the exported halt rule:
+// a pass halted at review while check is red names check, an override answers
+// it, and a green check gates nothing.
+func TestGatingRedCheckNamesTheRedCheckBehindAPass(t *testing.T) {
+	t.Parallel()
+
+	def := Default()
+	haltedAtReview := func(results map[string]Result) State {
+		return State{Status: StatusHalted, At: "review", Reason: "review passed while check check is red", Results: results, Visits: map[string]int{}}
+	}
+	if gate, ok := GatingRedCheck(def, haltedAtReview(map[string]Result{"check": {Status: "red"}})); !ok || gate != "check" {
+		t.Errorf("GatingRedCheck(review with red check) = %q, %t; want check, true", gate, ok)
+	}
+	if gate, ok := GatingRedCheck(def, haltedAtReview(map[string]Result{
+		"check":  {Status: "red"},
+		"review": {Status: "done", Override: "why"},
+	})); ok {
+		t.Errorf("GatingRedCheck(review with an override) = %q, true; want none", gate)
+	}
+	if gate, ok := GatingRedCheck(def, haltedAtReview(map[string]Result{"check": {Status: "green"}})); ok {
+		t.Errorf("GatingRedCheck(review with a green check) = %q, true; want none", gate)
+	}
+}
+
 // TestIsZeroBudgetArmSpellsOutTheRule pins the three ways a step is not the
 // halt's arm: no budget at all, a budget with a round left, and a budget whose
 // then target is not a step.

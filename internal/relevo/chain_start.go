@@ -312,8 +312,8 @@ func chainActorOrBuilder(actor string) string {
 	return actor
 }
 
-// chainFreeNames refuses a member name that is invalid, already a binding, or
-// already a chain.
+// chainFreeNames refuses a member name that is invalid, already a binding,
+// already a chain, or used by an archived chain.
 func chainFreeNames(rt Runtime, members []chainMember) error {
 	for _, m := range members {
 		if err := store.ValidName(m.name); err != nil {
@@ -325,9 +325,21 @@ func chainFreeNames(rt Runtime, members []chainMember) error {
 			return err
 		}
 		if _, err := rt.Store.Chain(m.name); err == nil {
+			// A chain row that survives its archived members is the archived
+			// reuse, not a live clash: the live binding is already gone here.
+			if archived, aerr := rt.Store.HasArchived(m.name); aerr != nil {
+				return aerr
+			} else if archived {
+				return refusal.New("chain name %q was used by an archived chain; pick another name", m.name)
+			}
 			return refusal.New("chain %q already exists", m.name)
 		} else if !errors.Is(err, store.ErrNotFound) {
 			return err
+		}
+		if archived, err := rt.Store.HasArchived(m.name); err != nil {
+			return err
+		} else if archived {
+			return refusal.New("chain name %q was used by an archived chain; pick another name", m.name)
 		}
 	}
 	return nil

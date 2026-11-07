@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/resolve"
@@ -35,6 +36,10 @@ func writeChainResumeError(w http.ResponseWriter, err error) {
 		// A --param naming an actor this server's config lacks is the caller's
 		// to fix, not a crash.
 		writeErr(w, http.StatusBadRequest, remote.CodeUnknownActor, msg)
+	case errors.Is(err, refusal.ErrRefused):
+		// A refusal the resume itself raised -- a still-halted chain, a dirty
+		// halt, a fork conflict -- is the caller's next command, not a crash.
+		writeErr(w, http.StatusConflict, remote.CodeChainHalted, msg)
 	default:
 		writeErr(w, http.StatusInternalServerError, "", msg)
 	}
