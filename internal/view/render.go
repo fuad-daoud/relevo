@@ -104,9 +104,21 @@ func writeChainRow(sb *strings.Builder, b BindingStatus) {
 		fmt.Fprintf(sb, "  %s", sanitize.StripControls(pending))
 	}
 	if b.Detail != "" {
-		fmt.Fprintf(sb, "\n  reason   %s", sanitize.StripControls(b.Detail))
+		fmt.Fprintf(sb, "\n  reason   %s", reasonLines(b.Detail))
 	}
 	fmt.Fprint(sb, "\n")
+}
+
+// reasonLines is a chain's reason for the reason line. A reason holds several
+// lines, its sentences and a check's log tail, so each is sanitized alone and
+// continues under the first; stripping the whole text would delete the line
+// breaks and run them together.
+func reasonLines(reason string) string {
+	lines := strings.Split(strings.TrimRight(reason, "\n"), "\n")
+	for i, line := range lines {
+		lines[i] = sanitize.StripControls(line)
+	}
+	return strings.Join(lines, "\n           ")
 }
 
 // indentName is a row's name prefixed with two spaces per level. A fork
