@@ -547,6 +547,45 @@ func TestResumeRedGateGoesBackToCheck(t *testing.T) {
 	}
 }
 
+// TestResumeRedGateGateChangeKeepsToday pins the gate-change guard on the
+// red-gate reroute: replacing the gate while halted on a pass-while-red
+// review re-enters the review with a fresh budget, so the new gate applies to
+// future checks instead of rerunning the check whose red the halt answered.
+func TestResumeRedGateGateChangeKeepsToday(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	haltAtPassWhileRedReview(t, rt)
+	beforeRound := chainBinding(t, rt, "shop").Round
+	before, err := chain.WorkflowState(flowChainRow(t, rt))
+	if err != nil {
+		t.Fatalf("chain.WorkflowState: %v", err)
+	}
+	if before.Visits["repair"] == 0 {
+		t.Fatalf("halt visits[repair] = 0, want the spent budget the guard must drop")
+	}
+
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop", Gate: "make other"}); err != nil {
+		t.Fatalf("ChainResume --gate: %v", err)
+	}
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
+	if err != nil {
+		t.Fatalf("chain.WorkflowState: %v", err)
+	}
+	if st.At != "review" || st.Awaiting.Member != "reviewer" {
+		t.Errorf("engine at %q awaiting %+v, want the halted review step: a gate change keeps today", st.At, st.Awaiting)
+	}
+	if st.Awaiting.Step == "check" {
+		t.Errorf("engine awaiting %+v, want review, not the check: a gate change skips the reroute", st.Awaiting)
+	}
+	if got := st.Visits["repair"]; got != 0 {
+		t.Errorf("visits[repair] = %d, want 0: a gate change keeps the fresh reset, not every count", got)
+	}
+	if got := chainBinding(t, rt, "shop").Round; got != beforeRound {
+		t.Errorf("builder round = %d, want %d: no builder round may be sent", got, beforeRound)
+	}
+}
+
 // TestResumeRedGateExplicitFromWins pins the --from rule on a red-gate halt:
 // a human naming the halted step re-enters it instead of the gate.
 func TestResumeRedGateExplicitFromWins(t *testing.T) {
