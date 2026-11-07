@@ -285,6 +285,24 @@ func TestChainServerCreateErrorTimeoutAndBranchExists(t *testing.T) {
 	}
 }
 
+// TestChainServerCreateErrorMapsAnArchivedName pins the archived refusal's
+// client mapping: a 400 invalid carrying the archived message returns the
+// refusal verbatim, not the upgrade-the-server wrapper.
+func TestChainServerCreateErrorMapsAnArchivedName(t *testing.T) {
+	t.Parallel()
+	msg := `chain name "shop" was used by an archived chain; pick another name`
+	got := chainServerCreateError(&client.HTTPError{
+		Status: http.StatusBadRequest,
+		Body:   remote.ErrorBody{Code: remote.CodeInvalid, Message: msg},
+	})
+	if !errors.Is(got, refusal.ErrRefused) {
+		t.Fatalf("err = %v, want errors.Is(err, refusal.ErrRefused)", got)
+	}
+	if got.Error() != msg {
+		t.Errorf("err = %q, want the server's message unchanged %q", got, msg)
+	}
+}
+
 // TestChainStartServerLocalBranchExistsIsAConflict pins the local branch cut:
 // a taken branch keeps its wording but classifies as the branch conflict, so
 // the CLI names the cleanup instead of reporting an internal failure.

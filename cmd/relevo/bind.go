@@ -108,7 +108,7 @@ type bindFlagValues struct {
 func bindFlagSet(fs *flag.FlagSet) *bindFlagValues {
 	v := &bindFlagValues{}
 	v.name = fs.String("name", "", "binding name (default: sanitized cwd basename)")
-	v.candidate = fs.String("candidate", "", "candidate name or harness/provider/model token to run; omit to take the actor's first ungated candidate")
+	v.candidate = fs.String("candidate", "", "candidate name or harness/provider/model token to run; omit to take the actor's first ungated candidate (a served (--server) bind takes only a candidate configured on that server and in the actor's list there)")
 	v.mastermindFlag = fs.String("mastermind", "", "act as this mastermind (id or name; default: $RELEVO_MASTERMIND, else this session's host)")
 	v.resume = fs.Bool("resume", false, "adopt an existing binding into this mastermind")
 	v.rebind = fs.Bool("rebind", false,

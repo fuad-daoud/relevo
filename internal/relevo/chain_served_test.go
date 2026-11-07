@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/resolve"
@@ -124,6 +125,47 @@ func TestServedChainPreflightRefusesBeforeAnythingExists(t *testing.T) {
 		}
 		assertServedChainAbsent(t, rt, "shop")
 	})
+}
+
+// TestServedChainPreflightRefusesAnArchivedName pins the archived reuse: a
+// chain whose members were archived refuses the name before anything is
+// written, with the archived message and no new live rows.
+func TestServedChainPreflightRefusesAnArchivedName(t *testing.T) {
+	t.Parallel()
+
+	rt, _, _ := servedChainRuntime(t)
+	req := servedChainRequest("shop")
+	res := servedChainStart(t, rt, req)
+	for _, m := range res.Members {
+		if _, err := rt.Store.Archive(m.Name); err != nil {
+			t.Fatalf("Archive %s: %v", m.Name, err)
+		}
+	}
+	_, err := ServedChainPreflight(rt, req)
+	if err == nil || !strings.Contains(err.Error(), "archived") {
+		t.Fatalf("err = %v, want the archived-chain refusal", err)
+	}
+	if !strings.Contains(err.Error(), `"shop"`) {
+		t.Errorf("err = %q, want it naming the archived chain", err)
+	}
+	if !errors.Is(err, refusal.ErrRefused) {
+		t.Errorf("err = %v, want errors.Is(err, refusal.ErrRefused)", err)
+	}
+	for _, name := range []string{"shop", "shop-rev", "shop-plan"} {
+		if _, lerr := rt.Store.Load(name); !errors.Is(lerr, store.ErrNotFound) {
+			t.Errorf("binding %q exists after the refusal: %v", name, lerr)
+		}
+		if ok, herr := rt.Store.HasArchived(name); herr != nil || !ok {
+			t.Errorf("HasArchived(%s) = %t, %v; want the archived row untouched", name, ok, herr)
+		}
+	}
+	stored, cerr := rt.Store.Chain("shop")
+	if cerr != nil {
+		t.Fatalf("Chain: %v", cerr)
+	}
+	if stored.ID != res.Chain.ID {
+		t.Errorf("chain ID = %q, want the old row %q (no new row written)", stored.ID, res.Chain.ID)
+	}
 }
 
 // TestServedChainPreflightRefusesAnAllGatedMemberPick pins the refuse-vs-queue

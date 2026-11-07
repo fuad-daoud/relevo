@@ -365,6 +365,34 @@ func TestCreateChainUnknownActorIsTyped(t *testing.T) {
 	requireChainRepoAbsent(t, env)
 }
 
+func TestCreateChainRefusesAnArchivedName(t *testing.T) {
+	env := setupTestEnv(t)
+	resp, body := createChain(t, env, "shop")
+	requireStatus(t, resp, body, http.StatusCreated)
+	rt := env.runtime(t)
+	for _, name := range []string{"shop", "shop-rev", "shop-plan"} {
+		if _, err := rt.Store.Archive(name); err != nil {
+			t.Fatalf("Archive %s: %v", name, err)
+		}
+	}
+	resp, body = createChain(t, env, "shop")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", resp.StatusCode, string(body))
+	}
+	errBody := decodeErrorBody(t, body)
+	if errBody.Code != remote.CodeInvalid {
+		t.Errorf("error code = %q, want %q; body: %s", errBody.Code, remote.CodeInvalid, string(body))
+	}
+	if !strings.Contains(errBody.Message, "archived") {
+		t.Errorf("message = %q, want it naming the archived chain", errBody.Message)
+	}
+	for _, name := range []string{"shop", "shop-rev", "shop-plan"} {
+		if _, err := rt.Store.Load(name); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("binding %q exists after the refusal: %v", name, err)
+		}
+	}
+}
+
 // TestCreateChainRefusesATierAboveMax pins the preflight's tier mapping: a
 // server whose policy tier for the builder is above its max_tier refuses the
 // create 422 tier_above_max with nothing created.
@@ -1657,5 +1685,23 @@ func TestServedResumeMapsCandidatesToOptions(t *testing.T) {
 	}
 	if empty.Candidates != nil {
 		t.Errorf("candidates = %v, want nil for a resume without pins", empty.Candidates)
+	}
+}
+
+func TestWriteChainResumeErrorMapsAGenericRefusal(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeChainResumeError(rec, refusal.New("chain shop is still halted over uncommitted work: edit the tree"))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusConflict)
+	}
+	var body remote.ErrorBody
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Code != remote.CodeChainStillHalted {
+		t.Errorf("code = %q, want %q", body.Code, remote.CodeChainStillHalted)
+	}
+	if !strings.Contains(body.Message, "uncommitted work") {
+		t.Errorf("message = %q, want the refusal's own text", body.Message)
 	}
 }

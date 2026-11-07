@@ -14,6 +14,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -245,11 +246,34 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 	s.chainFinishCreate(w, r, rt, caller, bare, outRef, req)
 }
 
+// archivedChainName reports whether name was used by an archived chain with
+// no live binding left: the archived reuse the preflight refuses, not a live
+// retry. A live binding means a live chain, whatever history it carries.
+func archivedChainName(rt relevo.Runtime, name string) (bool, error) {
+	archived, err := rt.Store.HasArchived(name)
+	if err != nil || !archived {
+		return false, err
+	}
+	if _, err := rt.Store.Load(name); err == nil {
+		return false, nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return false, err
+	}
+	return true, nil
+}
+
 // chainPrepareCreate is the create's first locked pass: an existing chain of
 // this name is a retry decision, and a fresh name goes through the read-only
 // preflight. done is true when it has already written the response.
 func (s *Server) chainPrepareCreate(w http.ResponseWriter, rt relevo.Runtime, caller remote.ClientID, bare string, req remote.CreateChainRequest) (done bool) {
 	if _, err := rt.Store.Chain(req.Name); err == nil {
+		if archived, aerr := archivedChainName(rt, req.Name); aerr != nil {
+			writeErr(w, http.StatusInternalServerError, "", aerr.Error())
+			return true
+		} else if archived {
+			writeChainPreflightError(w, refusal.New("chain name %q was used by an archived chain; pick another name", req.Name))
+			return true
+		}
 		s.writeChainRetry(w, rt, req)
 		return true
 	} else if !errors.Is(err, store.ErrNotFound) {
@@ -296,6 +320,15 @@ func (s *Server) chainFinishCreate(w http.ResponseWriter, r *http.Request, rt re
 	}
 
 	if _, err := rt.Store.Chain(name); err == nil {
+		if archived, aerr := archivedChainName(rt, name); aerr != nil {
+			unwind(false, false)
+			writeErr(w, http.StatusInternalServerError, "", aerr.Error())
+			return
+		} else if archived {
+			unwind(false, false)
+			writeChainPreflightError(w, refusal.New("chain name %q was used by an archived chain; pick another name", name))
+			return
+		}
 		s.writeChainRetry(w, rt, req)
 		return
 	} else if !errors.Is(err, store.ErrNotFound) {
