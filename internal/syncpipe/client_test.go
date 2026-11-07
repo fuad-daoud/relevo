@@ -954,3 +954,20 @@ func (r verbsRefusingBackend) ClaimIdentity(string, string, time.Time) (string, 
 func (normalBackend) ClaimIdentity(_, token string, at time.Time) (string, time.Time, error) {
 	return token, at, nil
 }
+
+// TestRefusalErrorKeepsACorruptReplicaARefusal pins that a transport reply whose
+// detail also says the replica is unreadable stays a refusal: the rebuild that
+// recovers a corrupt replica acts only on a refusal it can read.
+func TestRefusalErrorKeepsACorruptReplicaARefusal(t *testing.T) {
+	detail := `syncworker: open replica: turso: error: database is corrupt: Post "https://x.turso.io/pull-updates": EOF`
+	err := refusalError(syncworker.Response{OK: false, Error: detail, Code: syncworker.CodeTransport})
+	if !errors.Is(err, ErrRefused) {
+		t.Errorf("err = %v, want a refusal", err)
+	}
+	if errors.Is(err, relevosync.ErrConnectionLost) {
+		t.Errorf("err = %v, want no lost-connection sentinel over an unreadable replica", err)
+	}
+	if !relevosync.IsReplicaCorrupt(err) {
+		t.Errorf("err = %v, want the corrupt-replica check to see it", err)
+	}
+}

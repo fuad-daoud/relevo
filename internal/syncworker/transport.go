@@ -31,3 +31,14 @@ func isTransportError(err error) bool {
 	}
 	return false
 }
+
+// markOpenRefusal classes an error from opening the replica. Opening bootstraps
+// a fresh replica from the remote, so a dropped connection reads as one there
+// too; anything else stays unclassed, the refusal the corrupt-replica check
+// reads when the file itself is unreadable.
+func markOpenRefusal(err error) error {
+	if isTransportError(err) {
+		return MarkRefusal(CodeTransport, err)
+	}
+	return err
+}

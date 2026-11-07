@@ -1,6 +1,8 @@
 package syncworker
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -38,5 +40,35 @@ func TestTransportIgnoresAGoLayerEOF(t *testing.T) {
 	err := fmt.Errorf("read replica: %w", io.EOF)
 	if got := RefusalCodeOf(markTransferRefusal(err)); got == CodeTransport {
 		t.Errorf("%v marked %q", err, got)
+	}
+}
+
+// bootstrapFailDriver is a replica driver whose bootstrap fails with the
+// driver's own text, the way a remote that drops the connection mid-download
+// does.
+type bootstrapFailDriver struct {
+	*localDriver
+	err error
+}
+
+func (d *bootstrapFailDriver) Open(context.Context, Spec) (*sql.DB, error) { return nil, d.err }
+
+// TestOpenMarksADroppedConnection pins that a bootstrap the remote dropped
+// reads as a lost connection through the backend's own Open, while an
+// unreadable replica or any other open failure stays unclassed for the
+// corrupt-replica check.
+func TestOpenMarksADroppedConnection(t *testing.T) {
+	t.Parallel()
+	cases := map[string]RefusalCode{
+		`syncworker: bootstrap relevo-sync.db: turso: error: sync engine operation failed: database sync engine error: Post "https://x.turso.io/pull-updates": EOF`: CodeTransport,
+		`syncworker: bootstrap relevo-sync.db: turso: error: database is corrupt: range 25445.. out of bounds`:                                                      "",
+		`syncworker: bootstrap relevo-sync.db: permission denied`:                                                                                                   "",
+	}
+	for text, want := range cases {
+		b := NewTursoBackend(&bootstrapFailDriver{localDriver: &localDriver{path: tempReplica(t)}, err: errors.New(text)})
+		err := b.Open(Spec{URL: "https://x.turso.io"})
+		if got := RefusalCodeOf(err); got != want {
+			t.Errorf("Open over %q marked %q, want %q", text, got, want)
+		}
 	}
 }

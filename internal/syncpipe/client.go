@@ -408,8 +408,12 @@ func refusalError(resp syncworker.Response) error {
 	switch resp.Code {
 	case syncworker.CodeTransport:
 		// The connection dropped, so the remote refused nothing: the error must
-		// read as a lost connection and carry no refusal sentence, which is also
-		// the marker the corrupt-replica check looks for.
+		// read as a lost connection and carry no refusal sentence. A replica
+		// that is also unreadable outranks the dropped connection, because only
+		// a refusal reaches the rebuild that recovers it.
+		if relevosync.IsReplicaCorrupt(refused) {
+			return refused
+		}
 		return fmt.Errorf("%w: %s", relevosync.ErrConnectionLost, resp.Error)
 	case syncworker.CodeSchema:
 		return fmt.Errorf("%w: %w", refused, relevosync.ErrRemoteSchema)

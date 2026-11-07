@@ -102,7 +102,7 @@ func (b *TursoBackend) Open(spec Spec) error {
 	}
 	db, err := b.driver.Open(ctx, spec)
 	if err != nil {
-		return fmt.Errorf("syncworker: open replica: %w", err)
+		return fmt.Errorf("syncworker: open replica: %w", markOpenRefusal(err))
 	}
 	b.spec = spec
 	b.db = db
