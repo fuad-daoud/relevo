@@ -29,7 +29,17 @@ func TestFreeFollowsSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Free(link): %v", err)
 	}
-	if got != want {
+	// The two readings are separate Statfs calls, so writers elsewhere on
+	// the shared filesystem can land between them; the allowance absorbs
+	// that drift while a different filesystem would miss by far more.
+	const drift = 1 << 20
+	var diff uint64
+	if got > want {
+		diff = got - want
+	} else {
+		diff = want - got
+	}
+	if diff > drift {
 		t.Errorf("Free through the link = %d, want the target's %d", got, want)
 	}
 }
