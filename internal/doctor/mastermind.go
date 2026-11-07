@@ -164,7 +164,7 @@ func mastermindSessionCheck(in MasterMindCheckInput) Check {
 		return Check{
 			Name:     "MasterMind",
 			Severity: SevFail,
-			Detail:   "no relevo MasterMind resolved for this Claude Code session",
+			Detail:   "no relevo MasterMind was resolved for this session",
 			Fix:      "relevo mastermind init (or enable the relevo plugin so its SessionStart hook runs)",
 		}
 	case !in.MCPChild:
