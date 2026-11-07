@@ -17,13 +17,10 @@ const (
 )
 
 // JoinState reduces a machine's join rows to the one shape status renders. A
-// failure wins over every combination, because a join that recorded one is
-// failed even where a marker beside it says otherwise; a marker alone is a
-// join in progress. The enabled mark is read with the rows because the rule
-// is over the machine's marks, though today's precedence never branches on
-// it: a join with sync on and a marker is owed history still sending, which
-// keeps today's wording by construction.
-func JoinState(enabled, hasMarker, hasFailure bool) JoinOutcome {
+// failure wins, because a join that recorded one is failed even where a marker
+// beside it says otherwise; a marker alone is a join in progress, which covers
+// a machine on and still sending its owed history.
+func JoinState(hasMarker, hasFailure bool) JoinOutcome {
 	if hasFailure {
 		return JoinFailed
 	}

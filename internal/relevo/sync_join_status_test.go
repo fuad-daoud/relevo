@@ -10,34 +10,24 @@ import "testing"
 func TestJoinStateReadsTheFailureBesideTheMarker(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name                    string
-		enabled, marker, failed bool
-		want                    JoinOutcome
+		name           string
+		marker, failed bool
+		want           JoinOutcome
 	}{
-		{"a machine at rest is none", false, false, false, JoinNone},
-		{"an enabled machine at rest is none", true, false, false, JoinNone},
-		{"an off machine's marker is joining", false, true, false, JoinJoining},
-		{"an on machine's marker is joining", true, true, false, JoinJoining},
-		{"a failure with no marker is failed", false, false, true, JoinFailed},
-		{"a failure on an enabled machine is failed", true, false, true, JoinFailed},
-		{"a failure beside a marker is failed", false, true, true, JoinFailed},
-		{"a failure beside a marker on an enabled machine is failed", true, true, true, JoinFailed},
+		{"a machine at rest is none", false, false, JoinNone},
+		{"a marker is joining", true, false, JoinJoining},
+		{"a failure with no marker is failed", false, true, JoinFailed},
+		{"a failure beside a marker is failed", true, true, JoinFailed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := JoinState(tc.enabled, tc.marker, tc.failed); got != tc.want {
-				t.Errorf("JoinState(enabled=%t, marker=%t, failed=%t) = %v, want %v",
-					tc.enabled, tc.marker, tc.failed, got, tc.want)
+			if got := JoinState(tc.marker, tc.failed); got != tc.want {
+				t.Errorf("JoinState(marker=%t, failed=%t) = %v, want %v", tc.marker, tc.failed, got, tc.want)
 			}
 		})
 	}
 }
 
-// The table pins each conjunct the line renderer trusts: only a locked key
-// drops the instruction, only while the machine is off, and only while a
-// marker or a failure says a join is what is off. Every other shape keeps
-// whatever dbSyncKeyClause renders.
-// Mutation: flip the || to && and the single-row cases go red.
 func TestSuppressUnlockHintNeedsALockedKeyAnOffMachineAndAJoin(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

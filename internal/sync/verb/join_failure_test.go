@@ -3,6 +3,7 @@ package verb
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -273,5 +274,66 @@ func TestAPlainEnableRefusedAtVerifyStillRecordsItsFailure(t *testing.T) {
 	}
 	if failure.Message != res.Message {
 		t.Errorf("failure message = %q, want the refusal's %q", failure.Message, res.Message)
+	}
+}
+
+// A machine already on, still sending a join's owed history, keeps running when
+// another enable is refused, so the refusal must not read as a dead join.
+func TestARefusedEnableOnARunningJoinLeavesNoRecord(t *testing.T) {
+	t.Parallel()
+
+	runner, local := joinRunner(t)
+	if err := relevosync.WriteJoin(local, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("WriteJoin: %v", err)
+	}
+	if err := relevosync.MarkEnabled(local, true, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("MarkEnabled: %v", err)
+	}
+
+	runner.recordJoinFailure(relevosync.ErrAlreadyEnabled)
+
+	if failure, ok, err := relevosync.ReadJoinFailure(local); err != nil || ok {
+		t.Errorf("ReadJoinFailure = (%+v, %v, %v), want no record on a machine that is on", failure, ok, err)
+	}
+}
+
+// A stop is what a disable asked for, not a failure to report.
+func TestAStoppedEnableLeavesNoRecord(t *testing.T) {
+	t.Parallel()
+
+	for _, stop := range []error{relevosync.ErrEnableStopped, relevosync.ErrStopped} {
+		runner, local := joinRunner(t)
+		if err := relevosync.WriteJoin(local, time.Unix(0, 0).UTC()); err != nil {
+			t.Fatalf("WriteJoin: %v", err)
+		}
+
+		runner.recordJoinFailure(fmt.Errorf("sync: enable: %w", stop))
+
+		if failure, ok, err := relevosync.ReadJoinFailure(local); err != nil || ok {
+			t.Errorf("after %v: ReadJoinFailure = (%+v, %v, %v), want no record", stop, failure, ok, err)
+		}
+	}
+}
+
+// A panic on a machine already on is no dead join either.
+func TestAPanicOnARunningJoinRecordsNothing(t *testing.T) {
+	t.Parallel()
+
+	runner, local := joinRunner(t)
+	if err := relevosync.WriteJoin(local, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("WriteJoin: %v", err)
+	}
+	if err := relevosync.MarkEnabled(local, true, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("MarkEnabled: %v", err)
+	}
+
+	func() {
+		defer func() { _ = recover() }()
+		defer runner.recordJoinPanic()
+		panic("boom")
+	}()
+
+	if failure, ok, err := relevosync.ReadJoinFailure(local); err != nil || ok {
+		t.Errorf("ReadJoinFailure = (%+v, %v, %v), want no record on a machine that is on", failure, ok, err)
 	}
 }

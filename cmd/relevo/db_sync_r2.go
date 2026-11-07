@@ -225,7 +225,7 @@ func dbSyncStatusRead(local relevosync.Local, origin string) (dbSyncStatusDoc, e
 	if err != nil {
 		return dbSyncStatusDoc{}, dbSyncClassify(err)
 	}
-	switch relevo.JoinState(state.Enabled, hasMarker, hasFailure) {
+	switch relevo.JoinState(hasMarker, hasFailure) {
 	case relevo.JoinFailed:
 		doc.JoinFailedAt, doc.JoinFailure = statusStamp(failure.At), failure.Message
 	case relevo.JoinJoining:

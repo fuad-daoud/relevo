@@ -226,15 +226,28 @@ func (v *Runner) enableJoin(ctx context.Context, verb *wire.SyncVerb, token, pas
 	return v.enablePipeline(ctx, verb, token, r2, true, done)
 }
 
-// recordJoinFailure writes the failure beside the join marker when one is set,
-// so a refusal before any marker leaves no record. A write problem folds into
-// the log line rather than masking the error the caller answers with.
-func (v *Runner) recordJoinFailure(err error) {
+// joinStranded reports whether a marker is set on a machine that is off, the
+// only state a failed enable leaves with nothing running. A refusal before any
+// marker stranded nothing, and a machine already on keeps sending its owed
+// history whatever another enable answered.
+func (v *Runner) joinStranded() bool {
 	if v == nil || v.Local == nil {
-		return
+		return false
 	}
-	_, marked, merr := relevosync.ReadJoin(v.Local)
-	if merr != nil || !marked {
+	_, marked, err := relevosync.ReadJoin(v.Local)
+	if err != nil || !marked {
+		return false
+	}
+	on, err := relevosync.Enabled(v.Local)
+	return err == nil && !on
+}
+
+// recordJoinFailure writes the failure beside the join marker of a stranded
+// join. A stop is what a disable asked for, so it records nothing. A write
+// problem folds into the log line rather than masking the error the caller
+// answers with.
+func (v *Runner) recordJoinFailure(err error) {
+	if errors.Is(err, relevosync.ErrEnableStopped) || errors.Is(err, relevosync.ErrStopped) || !v.joinStranded() {
 		return
 	}
 	if werr := relevosync.WriteJoinFailure(v.Local, time.Now(), err.Error()); werr != nil {
@@ -253,13 +266,11 @@ func (v *Runner) recordJoinPanic() {
 	if rec == nil {
 		return
 	}
-	if v != nil && v.Local != nil {
-		if _, marked, merr := relevosync.ReadJoin(v.Local); merr == nil && marked {
-			if werr := relevosync.WriteJoinFailure(v.Local, time.Now(), "sync: the enable did not finish"); werr != nil {
-				slog.Error("sync: enable: the join panicked and its failure could not be recorded")
-			} else {
-				slog.Error("sync: enable: the join panicked")
-			}
+	if v.joinStranded() {
+		if werr := relevosync.WriteJoinFailure(v.Local, time.Now(), "sync: the enable did not finish"); werr != nil {
+			slog.Error("sync: enable: the join panicked and its failure could not be recorded")
+		} else {
+			slog.Error("sync: enable: the join panicked")
 		}
 	}
 	panic(rec)
