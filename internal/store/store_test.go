@@ -271,6 +271,154 @@ func TestViewedRoundTrip(t *testing.T) {
 	}
 }
 
+// TestViewedStampLivesInOverlay pins that a stamp is visible through Load and
+// List while the shared row's column stays empty: the stamp never leaves the
+// machine.
+func TestViewedStampLivesInOverlay(t *testing.T) {
+	s := New(t.TempDir())
+	if err := s.Save(newBinding("webshop", "/repo")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	at := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+	if err := s.MarkViewed("webshop", at); err != nil {
+		t.Fatalf("MarkViewed: %v", err)
+	}
+	loaded, err := s.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.ViewedAt == nil || !loaded.ViewedAt.Equal(at) {
+		t.Errorf("Load ViewedAt = %v, want %v", loaded.ViewedAt, at)
+	}
+	listed, err := s.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(listed) != 1 || listed[0].ViewedAt == nil || !listed[0].ViewedAt.Equal(at) {
+		t.Errorf("List ViewedAt = %v, want [%v]", listed, at)
+	}
+	d, err := s.DB()
+	if err != nil {
+		t.Fatalf("DB: %v", err)
+	}
+	rec, ok, err := d.RecordGet(s.owner, "webshop")
+	if err != nil || !ok {
+		t.Fatalf("RecordGet: ok=%v err=%v", ok, err)
+	}
+	if rec.ViewedAt != nil {
+		t.Errorf("shared row viewed_at = %v, want nil (a stamp writes no shared column)", rec.ViewedAt)
+	}
+}
+
+// TestMarkViewedQueuesNoOutboxRow pins the issue's exact ask: repeated reads
+// queue no binding_record outbox row, while ViewedAt keeps reading each stamp
+// back.
+func TestMarkViewedQueuesNoOutboxRow(t *testing.T) {
+	s := New(t.TempDir())
+	if err := s.Save(newBinding("api", "/repo/a")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	d, err := s.DB()
+	if err != nil {
+		t.Fatalf("DB: %v", err)
+	}
+	if err := d.TruncateOutbox(); err != nil {
+		t.Fatalf("TruncateOutbox: %v", err)
+	}
+	base := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+	for i := 0; i < 5; i++ {
+		at := base.Add(time.Duration(i) * time.Minute)
+		if err := s.MarkViewed("api", at); err != nil {
+			t.Fatalf("MarkViewed %d: %v", i+1, err)
+		}
+		if got, ok := s.ViewedAt("api"); !ok || !got.Equal(at) {
+			t.Fatalf("ViewedAt after stamp %d = (%v, %v), want (%v, true)", i+1, got, ok, at)
+		}
+		if rows := outboxRecordRows(t, d); len(rows) != 0 {
+			t.Fatalf("stamp %d queued %d binding_record rows, want 0", i+1, len(rows))
+		}
+	}
+}
+
+// TestMarkViewedPreservesOverlaySiblings pins the read-modify-write: stamping
+// a binding that already holds an overlay keeps the cursor and the connection
+// fields, and Load returns both the stamp and the siblings.
+func TestMarkViewedPreservesOverlaySiblings(t *testing.T) {
+	s := New(t.TempDir())
+	if err := s.Save(liveBinding()); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	at := time.Date(2026, 3, 4, 6, 7, 8, 0, time.UTC)
+	if err := s.MarkViewed("api", at); err != nil {
+		t.Fatalf("MarkViewed: %v", err)
+	}
+	got, err := s.Load("api")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.ViewedAt == nil || !got.ViewedAt.Equal(at) {
+		t.Errorf("ViewedAt = %v, want %v", got.ViewedAt, at)
+	}
+	if got.Builder.StreamOffset != 9000 {
+		t.Errorf("stream offset = %d, want 9000 (a stamp keeps the cursor)", got.Builder.StreamOffset)
+	}
+	if got.Builder.RemoteStatus != "unreachable" || got.RemoteUnreachableSince.IsZero() {
+		t.Errorf("status %q since %v: a stamp clobbered the connection fields",
+			got.Builder.RemoteStatus, got.RemoteUnreachableSince)
+	}
+}
+
+// TestViewedMissingAndSeedBranches pins the edges: a missing name stamps
+// nothing and reads false, while a row whose column already carries a stamp
+// and which holds no overlay still reads viewed.
+func TestViewedMissingAndSeedBranches(t *testing.T) {
+	s := New(t.TempDir())
+	if err := s.MarkViewed("missing", time.Now().UTC()); err != nil {
+		t.Errorf("MarkViewed(missing) = %v, want nil", err)
+	}
+	if _, ok := s.ViewedAt("missing"); ok {
+		t.Errorf("ViewedAt(missing) = ok true, want false")
+	}
+	d, err := s.DB()
+	if err != nil {
+		t.Fatalf("DB: %v", err)
+	}
+	if keys, err := d.LocalOrSelf().KVKeys("live/"); err != nil {
+		t.Fatalf("KVKeys: %v", err)
+	} else if len(keys) != 0 {
+		t.Errorf("missing-name stamp wrote overlay keys %v, want none", keys)
+	}
+
+	seeded := time.Date(2026, 2, 3, 4, 5, 6, 0, time.UTC)
+	b := newBinding("legacy", "/repo/legacy")
+	raw, err := strippedJSON(b)
+	if err != nil {
+		t.Fatalf("strippedJSON: %v", err)
+	}
+	if _, err := d.RecordPut(db.Record{
+		Owner:    s.owner,
+		Name:     "legacy",
+		State:    string(b.State),
+		Round:    b.Round,
+		CWD:      b.CWD,
+		JSON:     string(raw),
+		ViewedAt: &seeded,
+	}); err != nil {
+		t.Fatalf("RecordPut legacy: %v", err)
+	}
+	got, ok := s.ViewedAt("legacy")
+	if !ok || !got.Equal(seeded) {
+		t.Errorf("ViewedAt(legacy) = (%v, %v), want (%v, true) from the row seed", got, ok, seeded)
+	}
+	loaded, err := s.Load("legacy")
+	if err != nil {
+		t.Fatalf("Load legacy: %v", err)
+	}
+	if loaded.ViewedAt == nil || !loaded.ViewedAt.Equal(seeded) {
+		t.Errorf("Load legacy ViewedAt = %v, want %v", loaded.ViewedAt, seeded)
+	}
+}
+
 func TestValidName(t *testing.T) {
 	for _, ok := range []string{"webshop", "a", "money-ai", "x_1", "shop.1"} {
 		if err := ValidName(ok); err != nil {
