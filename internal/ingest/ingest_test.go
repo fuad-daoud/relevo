@@ -800,8 +800,9 @@ func TestIngestSkipsAConsultPick(t *testing.T) {
 	}
 }
 
-// TestIngestWritesTheRoundAccount pins that the binding's account becomes the
-// round's account, so the per-login gate and the round line up in the record.
+// TestIngestWritesTheRoundAccount pins that the pick note's account becomes
+// the round's account, so the per-login gate and the round line up in the
+// record.
 func TestIngestWritesTheRoundAccount(t *testing.T) {
 	d := openTestDB(t)
 	dir := writePickFixture(t, store.Binding{
@@ -813,7 +814,7 @@ func TestIngestWritesTheRoundAccount(t *testing.T) {
 		BuilderAccount:   "cp2",
 		CreatedAt:        time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC),
 		Round:            1,
-	}, "picked opencode/openrouter/z-ai/glm-5.3-flash for builder: order #1")
+	}, "picked opencode/openrouter/z-ai/glm-5.3-flash for builder: order #1; account cp2")
 
 	if _, err := Ingest(context.Background(), DirSource(dir), d, Deps{}); err != nil {
 		t.Fatalf("Ingest: %v", err)
@@ -825,5 +826,120 @@ func TestIngestWritesTheRoundAccount(t *testing.T) {
 	}
 	if !strEq(rounds[0].Account, "cp2") {
 		t.Errorf("Account = %v, want cp2", rounds[0].Account)
+	}
+}
+
+// TestIngestPinsEachRoundToItsOwnPickAccount pins that a later switch on the
+// binding cannot rewrite an earlier round's account: round 1 keeps the login
+// its own pick drew, round 2 carries the switch's.
+func TestIngestPinsEachRoundToItsOwnPickAccount(t *testing.T) {
+	const (
+		candA = "opencode/openrouter/z-ai/glm-5.3-flash"
+		candB = "agy/google/gemini-3.8-flash-high"
+	)
+	at := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
+	b := store.Binding{
+		Name:             "fixture",
+		CWD:              "/work/fixture",
+		Builder:          store.Endpoint{Kind: "opencode", Mode: store.ModeHeadless},
+		Role:             "builder",
+		BuilderCandidate: candA,
+		BuilderAccount:   "cp1",
+		CreatedAt:        at,
+		Round:            1,
+	}
+	dir := writeLogFixture(t, b, []store.LogEntry{{
+		TS: at, Round: 1, Direction: store.DirToMasterMind,
+		Kind: store.KindPick, Confirmed: true,
+		Note: "picked " + candA + " for builder: order #1; account cp1",
+	}})
+	d := openTestDB(t)
+	if _, err := Ingest(context.Background(), DirSource(dir), d, Deps{}); err != nil {
+		t.Fatalf("first Ingest: %v", err)
+	}
+
+	b.BuilderCandidate = candB
+	b.BuilderAccount = "cp2"
+	b.Round = 2
+	rewriteBindJSON(t, dir, b)
+	appendLogEntries(t, dir, []store.LogEntry{{
+		TS: at.Add(time.Hour), Round: 2, Direction: store.DirToMasterMind,
+		Kind: store.KindSwitch, Confirmed: true,
+		Note: "switched builder (rate-limited): picked " + candB + " for builder: order #2; account cp2",
+	}})
+	if _, err := Ingest(context.Background(), DirSource(dir), d, Deps{}); err != nil {
+		t.Fatalf("re-Ingest: %v", err)
+	}
+
+	rounds := mustRounds(t, d, mustBinding(t, d, "fixture").ID)
+	if len(rounds) != 2 {
+		t.Fatalf("len(rounds) = %d, want 2", len(rounds))
+	}
+	if !strEq(rounds[0].Candidate, candA) || !strEq(rounds[0].Account, "cp1") {
+		t.Errorf("round 1 = %v/%v, want %s/cp1", rounds[0].Candidate, rounds[0].Account, candA)
+	}
+	if !strEq(rounds[1].Candidate, candB) || !strEq(rounds[1].Account, "cp2") {
+		t.Errorf("round 2 = %v/%v, want %s/cp2", rounds[1].Candidate, rounds[1].Account, candB)
+	}
+}
+
+// TestIngestKeepsAStoredAccountWithoutEvidence pins the ambiguous history:
+// a stored account the log never names stays after a re-ingest, while a new
+// round with no account evidence is stored with no account even when the
+// binding names a login.
+func TestIngestKeepsAStoredAccountWithoutEvidence(t *testing.T) {
+	const candA = "opencode/openrouter/z-ai/glm-5.3-flash"
+	at := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
+	b := store.Binding{
+		Name:             "fixture",
+		CWD:              "/work/fixture",
+		Builder:          store.Endpoint{Kind: "opencode", Mode: store.ModeHeadless},
+		Role:             "builder",
+		BuilderCandidate: candA,
+		BuilderAccount:   "cp2",
+		CreatedAt:        at,
+		Round:            1,
+	}
+	dir := writeLogFixture(t, b, []store.LogEntry{{
+		TS: at, Round: 1, Direction: store.DirToMasterMind,
+		Kind: store.KindPick, Confirmed: true,
+		Note: "picked " + candA + " for builder: order #1",
+	}})
+	d := openTestDB(t)
+	if _, err := Ingest(context.Background(), DirSource(dir), d, Deps{}); err != nil {
+		t.Fatalf("first Ingest: %v", err)
+	}
+	rounds := mustRounds(t, d, mustBinding(t, d, "fixture").ID)
+	if len(rounds) != 1 {
+		t.Fatalf("len(rounds) = %d, want 1", len(rounds))
+	}
+	if rounds[0].Account != nil {
+		t.Fatalf("round 1 Account = %v, want nil: the pick names no account", rounds[0].Account)
+	}
+
+	rounds[0].Account = strPtr("cp9")
+	if _, err := d.UpsertRound(rounds[0]); err != nil {
+		t.Fatalf("stamp a stored account: %v", err)
+	}
+
+	b.Round = 2
+	rewriteBindJSON(t, dir, b)
+	appendLogEntries(t, dir, []store.LogEntry{{
+		TS: at.Add(time.Hour), Round: 2, Direction: store.DirToBuilder,
+		Kind: store.KindPrompt, Confirmed: true,
+	}})
+	if _, err := Ingest(context.Background(), DirSource(dir), d, Deps{}); err != nil {
+		t.Fatalf("re-Ingest: %v", err)
+	}
+
+	rounds = mustRounds(t, d, mustBinding(t, d, "fixture").ID)
+	if len(rounds) != 2 {
+		t.Fatalf("len(rounds) = %d, want 2", len(rounds))
+	}
+	if !strEq(rounds[0].Account, "cp9") {
+		t.Errorf("round 1 Account = %v, want the stored cp9", rounds[0].Account)
+	}
+	if rounds[1].Account != nil {
+		t.Errorf("round 2 Account = %v, want nil: no entry names an account", rounds[1].Account)
 	}
 }

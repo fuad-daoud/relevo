@@ -133,6 +133,43 @@ func candidateBeforeNextSwitch(events []store.LogEntry, n int) string {
 	return ""
 }
 
+// accountForRound resolves round n's account from the same entry
+// candidateForRound's first two arms select -- the round's own last builder
+// pick or switch entry, else the builder earlier rounds left running -- and
+// the "; account <name>" clause of that entry's note. A later switch's
+// account names the new candidate's login, never this round's, so there is
+// no third arm; no entry, or an entry naming no account, is unknown, never
+// guessed from the candidate or the binding.
+func accountForRound(events []store.LogEntry, n int, b store.Binding) (string, bool) {
+	_, note, ok := lastBuilderEntry(events, b.WriterRole(), func(round int) bool { return round == n })
+	if !ok {
+		_, note, ok = lastBuilderEntry(events, b.WriterRole(), func(round int) bool { return round > 0 && round < n })
+	}
+	if !ok {
+		return "", false
+	}
+	if acct := parseAccountClause(note); acct != "" {
+		return acct, true
+	}
+	return "", false
+}
+
+// parseAccountClause is the login a pick or switch note records in its
+// "; account <name>" clause, "" when the note names none. The clause sits
+// beside other "; word ..." clauses, so the name ends at the next one.
+func parseAccountClause(note string) string {
+	const prefix = "; account "
+	at := strings.Index(note, prefix)
+	if at < 0 {
+		return ""
+	}
+	rest := note[at+len(prefix):]
+	if i := strings.IndexByte(rest, ';'); i >= 0 {
+		rest = rest[:i]
+	}
+	return strings.TrimSpace(rest)
+}
+
 // isBuilderSwitch reports whether e records the builder changing. The switch
 // kind also carries nudges, stalls, relaunches and a switch that found no one.
 func isBuilderSwitch(e store.LogEntry) bool {
@@ -162,7 +199,16 @@ func switchedFrom(note string) string {
 // lastBuilderToken is the token of the last pick or switch entry in rounds
 // inRound accepts that names the builder actor plays.
 func lastBuilderToken(events []store.LogEntry, actor string, inRound func(int) bool) string {
-	tok := ""
+	tok, _, _ := lastBuilderEntry(events, actor, inRound)
+	return tok
+}
+
+// lastBuilderEntry is the token and note of the last pick or switch entry in
+// rounds inRound accepts that names the builder actor plays. A consult pick
+// names another actor's builder and is skipped; the switch kind also carries
+// nudges and failed switches, which name no one and must not erase the
+// builder an earlier entry named.
+func lastBuilderEntry(events []store.LogEntry, actor string, inRound func(int) bool) (tok, note string, ok bool) {
 	for _, e := range events {
 		if !inRound(e.Round) || (e.Kind != store.KindPick && e.Kind != store.KindSwitch) {
 			continue
@@ -170,13 +216,11 @@ func lastBuilderToken(events []store.LogEntry, actor string, inRound func(int) b
 		if e.Kind == store.KindPick && isOtherActorPick(e.Note, actor) {
 			continue
 		}
-		// The switch kind also carries nudges and failed switches, which name no
-		// one and must not erase the builder an earlier entry named.
 		if named := parseBuilderNote(e.Kind, e.Note); named != "" {
-			tok = named
+			tok, note, ok = named, e.Note, true
 		}
 	}
-	return tok
+	return tok, note, ok
 }
 
 // isOtherActorPick reports whether note is `ask`'s consult pick --

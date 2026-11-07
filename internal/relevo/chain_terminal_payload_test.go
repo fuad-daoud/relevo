@@ -10,16 +10,21 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
-// repairCheckOfRow is the --from an end delivery names for a stored row and
-// state: the single feeding check of the standing, or "" when the row carries
-// no workflow or no single check feeds it. It mirrors what the terminal
-// caller passes, so direct payload tests pin the delivered text.
-func repairCheckOfRow(c db.ChainRow, st workflow.State) string {
-	def, err := chain.WorkflowDef(c)
-	if err != nil {
-		return ""
+// wfPayloadOfRow renders the end delivery of a stored row and state exactly
+// as the terminal caller does, so direct payload tests pin the delivered
+// text: a row without a stored workflow reads the shipped one, since only the
+// pinned substrings matter there.
+func wfPayloadOfRow(t *testing.T, c db.ChainRow, st workflow.State) string {
+	t.Helper()
+	def := workflow.Default()
+	if len(c.WorkflowJSON) > 0 {
+		var err error
+		def, err = chain.WorkflowDef(c)
+		if err != nil {
+			t.Fatalf("chain.WorkflowDef: %v", err)
+		}
 	}
-	return terminalRepairCheck(def, st.At)
+	return chainTerminalWFPayload(c, def, st)
 }
 
 // TestHaltPayloadNamesBothWaysOut pins the halt payload's two hints: a resume
@@ -36,7 +41,7 @@ func TestHaltPayloadNamesBothWaysOut(t *testing.T) {
 		{"workflow", func() string {
 			c := db.ChainRow{Name: "shop", Branch: "relevo/shop"}
 			st := workflow.State{Status: workflow.StatusHalted, At: "repair"}
-			return chainTerminalWFPayload(c, st, repairCheckOfRow(c, st))
+			return wfPayloadOfRow(t, c, st)
 		}},
 		{"legacy", func() string {
 			return chainTerminalPayload(
@@ -67,7 +72,7 @@ func TestEndPayloadWithoutAHaltNamesNeither(t *testing.T) {
 
 	c := db.ChainRow{Name: "shop", Branch: "relevo/shop"}
 	st := workflow.State{Status: workflow.StatusDone, At: "review"}
-	got := chainTerminalWFPayload(c, st, repairCheckOfRow(c, st))
+	got := wfPayloadOfRow(t, c, st)
 	for _, unwanted := range []string{"--resume", "relevo done"} {
 		if strings.Contains(got, unwanted) {
 			t.Errorf("a finished chain's payload %q carries %q", got, unwanted)
@@ -83,7 +88,7 @@ func TestStoppedPayloadNamesNoResume(t *testing.T) {
 
 	c := db.ChainRow{Name: "shop", Branch: "relevo/shop"}
 	st := workflow.State{Status: workflow.StatusStopped, At: "repair"}
-	got := chainTerminalWFPayload(c, st, repairCheckOfRow(c, st))
+	got := wfPayloadOfRow(t, c, st)
 	for _, unwanted := range []string{"--resume", "--from", "relevo done"} {
 		if strings.Contains(got, unwanted) {
 			t.Errorf("a stopped chain's payload %q carries %q", got, unwanted)
@@ -192,5 +197,55 @@ steps:
 				t.Errorf("legacy payload %q names --from = %v, want %v", got, from, tt.fromPair)
 			}
 		})
+	}
+}
+
+// TestHaltPayloadOnRedGateNamesCheckAndOverride pins the red-gate ending: a
+// halt on a pass a red check gated names --from the check with its real step
+// name and the override the halt reason asks for, never the arm pair.
+func TestHaltPayloadOnRedGateNamesCheckAndOverride(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	haltAtPassWhileRedReview(t, rt)
+	c := flowChainRow(t, rt)
+	st, err := chain.WorkflowState(c)
+	if err != nil {
+		t.Fatalf("chain.WorkflowState: %v", err)
+	}
+	got := wfPayloadOfRow(t, c, st)
+	for _, want := range []string{
+		"relevo chain --resume --name shop --from check",
+		"override",
+		"`relevo done shop` closes it",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("payload %q does not carry %q", got, want)
+		}
+	}
+	if strings.Contains(got, "--from review") {
+		t.Errorf("payload %q names the halted step as a repair arm", got)
+	}
+}
+
+// TestHaltPayloadOnChangesRequestedKeepsToday pins the halt-kind rule in the
+// delivery: a correction-budget halt with a red check upstream names today's
+// plain resume, never a --from.
+func TestHaltPayloadOnChangesRequestedKeepsToday(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	haltAtChangesRequestedWithRedCheck(t, rt)
+	c := flowChainRow(t, rt)
+	st, err := chain.WorkflowState(c)
+	if err != nil {
+		t.Fatalf("chain.WorkflowState: %v", err)
+	}
+	got := wfPayloadOfRow(t, c, st)
+	if !strings.Contains(got, "relevo chain --resume --name shop resumes it") {
+		t.Errorf("payload %q does not carry today's resume", got)
+	}
+	if strings.Contains(got, "--from") {
+		t.Errorf("payload %q names --from on a correction-budget halt", got)
 	}
 }

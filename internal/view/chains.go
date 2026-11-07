@@ -231,8 +231,9 @@ func chainFlowFacts(f *ChainFacts, c db.ChainRow) {
 	f.ResumeCheck = flowResumeCheck(c, st)
 }
 
-// flowResumeCheck names the single feeding check when a halted workflow chain
-// stands on a repair arm, so the next move names the --from that re-runs it.
+// flowResumeCheck names the check a halted workflow chain's next move
+// re-runs: the gate a pass stood on, or the single feeding check when the
+// chain stands on a repair arm. Any other standing carries none.
 func flowResumeCheck(c db.ChainRow, st workflow.State) string {
 	if c.Status != string(chain.StatusHalted) {
 		return ""
@@ -240,6 +241,9 @@ func flowResumeCheck(c db.ChainRow, st workflow.State) string {
 	def, err := chain.WorkflowDef(c)
 	if err != nil {
 		return ""
+	}
+	if gate := workflow.GatingRedCheck(def, st); gate != "" {
+		return gate
 	}
 	at := st.At
 	if at == "" {

@@ -481,27 +481,29 @@ func TestChainServerResumeRetypesAChainDone(t *testing.T) {
 	}
 }
 
-// TestChainServerResumeRetypesAStillHaltedRefusal pins the client half of the
-// still-halted mapping: the server's 409 chain_halted becomes the refusal
-// itself, so the CLI reports refused, not internal.
-func TestChainServerResumeRetypesAStillHaltedRefusal(t *testing.T) {
+// TestChainServerResumeRetypesAStillHalted pins the client half of the
+// still-halted mapping: the server's 409 chain_still_halted becomes a refusal
+// carrying the halt's reason, so the CLI answers refused instead of internal.
+func TestChainServerResumeRetypesAStillHalted(t *testing.T) {
 	t.Parallel()
 
-	msg := "chain shop is still halted: no budget left"
 	fr := chainPullFake(chainPullView("shop", string(chain.StatusHalted), 1, 0, 0))
 	fr.chainResumeErr = &client.HTTPError{
 		Status: http.StatusConflict,
-		Body:   remote.ErrorBody{Code: remote.CodeChainHalted, Message: msg},
+		Body:   remote.ErrorBody{Code: remote.CodeChainStillHalted, Message: "chain shop is still halted: repair has no budget left"},
 	}
 	rt := chainPullRuntime(t, fr)
 	seedServerChain(t, rt, "shop")
 
 	_, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"})
-	if !errors.Is(err, refusal.ErrRefused) {
-		t.Fatalf("err = %v, want errors.Is(err, refusal.ErrRefused)", err)
+	if err == nil {
+		t.Fatal("ChainResume = nil, want the still-halted refusal")
 	}
-	if err.Error() != msg {
-		t.Errorf("err = %q, want the server's message unchanged %q", err, msg)
+	if !errors.Is(err, refusal.ErrRefused) {
+		t.Errorf("err = %v, want errors.Is(err, refusal.ErrRefused)", err)
+	}
+	if !strings.Contains(err.Error(), "repair has no budget left") {
+		t.Errorf("err = %q, want it to carry the halt reason", err)
 	}
 }
 

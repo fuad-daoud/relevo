@@ -41,11 +41,10 @@ func chainTerminalWF(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRo
 	if chainServedCarrier(carrier) {
 		return nil
 	}
-	check := terminalRepairCheck(def, next.At)
 	entry := store.LogEntry{
 		TS: rt.Now().UTC(), Round: chainTerminalRound(tx, carrier),
 		Direction: store.DirToMasterMind, Kind: store.KindChain,
-		Payload: chainTerminalWFPayload(c, next, check),
+		Payload: chainTerminalWFPayload(c, def, next),
 	}
 	return delivery.Queue(ctx, deliveryDeps(rt), tx, carrier.Name, entry)
 }
@@ -97,8 +96,10 @@ func chainTerminalCarrier(tx *store.Tx, c db.ChainRow) (store.Binding, bool, err
 // halt) or shows its trace. A halt names both ways out, since a reader who
 // has abandoned the work needs the half that is not a resume at all. A halt on
 // a repair arm with one feeding check names both resumes: --from the check
-// re-runs it, and --from the arm sends the repair round again.
-func chainTerminalWFPayload(c db.ChainRow, s workflow.State, check string) string {
+// re-runs it, and --from the arm sends the repair round again. A halt on a
+// pass a red check gated names only the gate's --from, with the override the
+// halt reason asks for.
+func chainTerminalWFPayload(c db.ChainRow, def workflow.Definition, s workflow.State) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "chain %s %s: status %s, at %s, plans %d/%d, findings %d.",
 		c.Name, chainTerminalVerb(chain.Status(s.Status)), string(s.Status), flowTerminalStep(s), flowPlanPos(s), flowPlanTotal(s), view.FlowFindings(s))
@@ -106,7 +107,9 @@ func chainTerminalWFPayload(c db.ChainRow, s workflow.State, check string) strin
 		fmt.Fprintf(&b, " Reason: %s", reasonSentence(s.Reason))
 	}
 	if s.Status == workflow.StatusHalted {
-		if check != "" {
+		if gate := workflow.GatingRedCheck(def, s); gate != "" {
+			fmt.Fprintf(&b, " relevo chain --resume --name %s --from %s re-runs the check, or record the override on the close; `relevo done %s` closes it instead.", c.Name, gate, c.Name)
+		} else if check := terminalRepairCheck(def, s.At); check != "" {
 			fmt.Fprintf(&b, " relevo chain --resume --name %s --from %s re-runs the check, or --from %s sends the repair round again; `relevo done %s` closes it instead.", c.Name, check, s.At, c.Name)
 		} else {
 			fmt.Fprintf(&b, " relevo chain --resume --name %s resumes it once the cause is fixed; `relevo done %s` closes it instead.", c.Name, c.Name)

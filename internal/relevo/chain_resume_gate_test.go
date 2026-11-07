@@ -271,8 +271,14 @@ func TestResumeWithoutAGateChangeStaysHaltedAndRefused(t *testing.T) {
 	if !errors.Is(err, refusal.ErrRefused) {
 		t.Errorf("ChainResume = %v, want refusal.ErrRefused: a plain error is coded internal by the CLI", err)
 	}
+	if !errors.Is(err, ErrChainStillHalted) {
+		t.Errorf("ChainResume = %v, want ErrChainStillHalted: the served resume maps it, not the text", err)
+	}
 	if !strings.Contains(err.Error(), "no budget left") {
 		t.Errorf("refusal %q does not carry the halt reason", err)
+	}
+	if want := "chain shop is still halted: " + reason; err.Error() != want {
+		t.Errorf("ChainResume = %q, want %q", err.Error(), want)
 	}
 	if row := flowChainRow(t, rt); row.Status != string(workflow.StatusHalted) || row.Reason != reason {
 		t.Errorf("chain = %s (%q), want it left halted with its own reason", row.Status, row.Reason)

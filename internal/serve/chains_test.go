@@ -365,9 +365,6 @@ func TestCreateChainUnknownActorIsTyped(t *testing.T) {
 	requireChainRepoAbsent(t, env)
 }
 
-// TestCreateChainRefusesAnArchivedName pins the archived reuse: a chain name
-// whose members were archived refuses the create as 400 invalid with the
-// archived message, never 500, and writes no new live member rows.
 func TestCreateChainRefusesAnArchivedName(t *testing.T) {
 	env := setupTestEnv(t)
 	resp, body := createChain(t, env, "shop")
@@ -1282,9 +1279,13 @@ func TestWriteChainResumeErrorMapsTheChainDone(t *testing.T) {
 	}
 }
 
+// TestWriteChainResumeErrorMapsTheStillHaltedRefusal pins the still-halted
+// refusal's wire shape: a resume the halt kept is 409 chain_still_halted
+// carrying the halt's reason, so the client rebuilds a refusal instead of the
+// CLI printing internal.
 func TestWriteChainResumeErrorMapsTheStillHaltedRefusal(t *testing.T) {
 	rec := httptest.NewRecorder()
-	writeChainResumeError(rec, refusal.New("chain shop is still halted: no budget left"))
+	writeChainResumeError(rec, refusal.Classed(relevo.ErrChainStillHalted, "chain shop is still halted: repair has no budget left"))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusConflict)
 	}
@@ -1292,11 +1293,32 @@ func TestWriteChainResumeErrorMapsTheStillHaltedRefusal(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if body.Code != remote.CodeChainHalted {
-		t.Errorf("code = %q, want %q", body.Code, remote.CodeChainHalted)
+	if body.Code != remote.CodeChainStillHalted {
+		t.Errorf("code = %q, want %q", body.Code, remote.CodeChainStillHalted)
 	}
-	if !strings.Contains(body.Message, "still halted") {
-		t.Errorf("message = %q, want the refusal's own text", body.Message)
+	if body.Message != "chain shop is still halted: repair has no budget left" {
+		t.Errorf("message = %q, want the halt's own wording", body.Message)
+	}
+}
+
+// TestWriteChainResumeErrorMapsTheDirtyStillHaltedRefusal pins that a resume
+// refused over uncommitted work answers the same 409: the dirty-recovery
+// halts reach a served client through the same arm, not the default 500.
+func TestWriteChainResumeErrorMapsTheDirtyStillHaltedRefusal(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeChainResumeError(rec, refusal.Classed(relevo.ErrChainStillHalted, "chain shop is still halted over uncommitted work: commit or stash first"))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusConflict)
+	}
+	var body remote.ErrorBody
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Code != remote.CodeChainStillHalted {
+		t.Errorf("code = %q, want %q", body.Code, remote.CodeChainStillHalted)
+	}
+	if body.Message != "chain shop is still halted over uncommitted work: commit or stash first" {
+		t.Errorf("message = %q, want the halt's own wording", body.Message)
 	}
 }
 
@@ -1663,5 +1685,23 @@ func TestServedResumeMapsCandidatesToOptions(t *testing.T) {
 	}
 	if empty.Candidates != nil {
 		t.Errorf("candidates = %v, want nil for a resume without pins", empty.Candidates)
+	}
+}
+
+func TestWriteChainResumeErrorMapsAGenericRefusal(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeChainResumeError(rec, refusal.New("chain shop is still halted over uncommitted work: edit the tree"))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusConflict)
+	}
+	var body remote.ErrorBody
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Code != remote.CodeChainStillHalted {
+		t.Errorf("code = %q, want %q", body.Code, remote.CodeChainStillHalted)
+	}
+	if !strings.Contains(body.Message, "uncommitted work") {
+		t.Errorf("message = %q, want the refusal's own text", body.Message)
 	}
 }

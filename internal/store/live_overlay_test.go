@@ -22,6 +22,8 @@ func liveBinding() Binding {
 	b.Builder.RemoteLive = &LiveFacts{At: now, PID: 4711, Tail: []string{"one", "two"}}
 	b.Builder.RemoteStatus = "unreachable"
 	b.RemoteUnreachableSince = now.Add(-time.Hour)
+	viewed := now.Add(-30 * time.Second)
+	b.ViewedAt = &viewed
 	b.Progress = &Progress{
 		SampledAt:  now,
 		Tree:       "treefp",
@@ -72,10 +74,20 @@ func TestLiveOverlayStripMergeRoundTrip(t *testing.T) {
 	if merged := mergeLive(stripped, ov); !SameBinding(b, merged) {
 		t.Errorf("merge did not restore the binding exactly")
 	}
+	if merged := mergeLive(stripped, ov); merged.ViewedAt == nil || !merged.ViewedAt.Equal(*b.ViewedAt) {
+		t.Errorf("merge did not restore the viewed stamp: got %v want %v", merged.ViewedAt, b.ViewedAt)
+	}
+	if stripped.ViewedAt != nil {
+		t.Errorf("strip did not clear the viewed stamp: got %v", stripped.ViewedAt)
+	}
+	if ov.ViewedAt.IsZero() {
+		t.Errorf("strip did not carry the viewed stamp into the overlay")
+	}
 
 	// stripLive must not reach through the pointers it copies.
 	if b.Builder.StreamOffset != 9000 || b.Builder.RemoteLive == nil ||
-		b.Progress == nil || b.Progress.SampledAt.IsZero() || b.Progress.CPUTicks != 123 {
+		b.Progress == nil || b.Progress.SampledAt.IsZero() || b.Progress.CPUTicks != 123 ||
+		b.ViewedAt == nil {
 		t.Errorf("stripLive mutated the caller's binding")
 	}
 
@@ -97,6 +109,9 @@ func TestLiveOverlayStripMergeRoundTrip(t *testing.T) {
 		got.Progress.CPUTicks != b.Progress.CPUTicks || !got.Progress.CPUTicksAt.Equal(b.Progress.CPUTicksAt) ||
 		!got.Progress.OutputAt.Equal(b.Progress.OutputAt) {
 		t.Errorf("store round-trip lost progress clocks: %+v", got.Progress)
+	}
+	if got.ViewedAt == nil || !got.ViewedAt.Equal(*b.ViewedAt) {
+		t.Errorf("store round-trip lost the viewed stamp: got %v want %v", got.ViewedAt, b.ViewedAt)
 	}
 }
 
@@ -134,6 +149,9 @@ func TestSaveStripsLiveFieldsAndLoadMergesThem(t *testing.T) {
 	if got.Progress.Tree != want.Progress.Tree || !got.Progress.TreeAt.Equal(want.Progress.TreeAt) {
 		t.Errorf("synced progress labels lost: got %+v", got.Progress)
 	}
+	if got.ViewedAt == nil || !got.ViewedAt.Equal(*want.ViewedAt) {
+		t.Errorf("Load did not merge the viewed stamp: got %v want %v", got.ViewedAt, want.ViewedAt)
+	}
 
 	// List merges too (decodeRecords is the other choke point).
 	listed, err := s.List()
@@ -142,6 +160,9 @@ func TestSaveStripsLiveFieldsAndLoadMergesThem(t *testing.T) {
 	}
 	if len(listed) != 1 || listed[0].Builder.StreamOffset != 9000 || listed[0].Builder.RemoteLive == nil {
 		t.Errorf("List did not merge the overlay: %+v", listed)
+	}
+	if len(listed) == 1 && (listed[0].ViewedAt == nil || !listed[0].ViewedAt.Equal(*want.ViewedAt)) {
+		t.Errorf("List did not merge the viewed stamp: got %v want %v", listed[0].ViewedAt, want.ViewedAt)
 	}
 }
 
@@ -315,6 +336,7 @@ func TestOverlayIsZeroSeesEveryField(t *testing.T) {
 		"clocks":        {Clocks: &overlayClocks{}},
 		"remote status": {RemoteStatus: "idle"},
 		"unreachable":   {RemoteUnreachableSince: now},
+		"viewed_at":     {ViewedAt: now},
 	} {
 		if ov.isZero() {
 			t.Errorf("an overlay holding only its %s reads as zero", name)

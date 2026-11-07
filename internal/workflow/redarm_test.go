@@ -74,27 +74,99 @@ steps:
 	}
 }
 
-// TestGatingRedCheckNamesTheRedCheckBehindAPass pins the exported halt rule:
-// a pass halted at review while check is red names check, an override answers
-// it, and a green check gates nothing.
-func TestGatingRedCheckNamesTheRedCheckBehindAPass(t *testing.T) {
+// TestGatingRedCheckNamesTheCheckAPassStoodOn pins the red-gate read: a
+// reviewer passing while the check is still red halts, and the halted state
+// names that check.
+func TestGatingRedCheckNamesTheCheckAPassStoodOn(t *testing.T) {
 	t.Parallel()
 
-	def := Default()
-	haltedAtReview := func(results map[string]Result) State {
-		return State{Status: StatusHalted, At: "review", Reason: "review passed while check check is red", Results: results, Visits: map[string]int{}}
+	def := gatedDefault()
+	s, actions := Start(def, StartInputs{Plans: []string{"plan-1.md"}})
+	if a := only(t, actions); a.Kind != ActionSend || a.Step != "build" {
+		t.Fatalf("start action = %+v, want a send to build", a)
 	}
-	if gate, ok := GatingRedCheck(def, haltedAtReview(map[string]Result{"check": {Status: "red"}})); !ok || gate != "check" {
-		t.Errorf("GatingRedCheck(review with red check) = %q, %t; want check, true", gate, ok)
+	s = firstPhaseReview(t, def, s)
+	pass := Event{Kind: EventStepClosed, Step: "review", Member: "reviewer", Status: "done",
+		Outcomes: map[string]string{"verdict": "pass"}}
+	halted, actions := Next(def, s, pass)
+	if halted.Status != StatusHalted {
+		t.Fatalf("status = %q, want halted on the pass over a red check", halted.Status)
 	}
-	if gate, ok := GatingRedCheck(def, haltedAtReview(map[string]Result{
-		"check":  {Status: "red"},
-		"review": {Status: "done", Override: "why"},
-	})); ok {
-		t.Errorf("GatingRedCheck(review with an override) = %q, true; want none", gate)
+	if a := only(t, actions); a.Kind != ActionHalt {
+		t.Fatalf("action = %+v, want a halt", a)
 	}
-	if gate, ok := GatingRedCheck(def, haltedAtReview(map[string]Result{"check": {Status: "green"}})); ok {
-		t.Errorf("GatingRedCheck(review with a green check) = %q, true; want none", gate)
+	if got := GatingRedCheck(def, halted); got != "check" {
+		t.Errorf("GatingRedCheck = %q, want check: the pass stood on its red", got)
+	}
+}
+
+// TestGatingRedCheckEmptyWithoutARedGate pins every shape that is not a
+// pass-while-red halt: a green check, an override answering the red, a close
+// that took no pass edge, a halt on the correction step whose own done close
+// is not a pass, and a run that never halted.
+func TestGatingRedCheckEmptyWithoutARedGate(t *testing.T) {
+	t.Parallel()
+
+	def := tdef("check", map[string]Step{
+		"check":   {Check: "make check", On: map[string]Target{"green": StepTarget("review"), "red": StepTarget("repair")}},
+		"repair":  {Run: "builder", On: map[string]Target{"done": StepTarget("check")}},
+		"review":  {Run: "reviewer", On: map[string]Target{"verdict=pass": DoneTarget(), "verdict=changes": StepTarget("correct")}},
+		"correct": {Run: "planner", On: map[string]Target{"done": StepTarget("repair")}},
+	})
+	pass := Result{Status: "done", Outcomes: map[string]string{"verdict": "pass"}}
+	haltedAt := func(at string, results map[string]Result) State {
+		return State{Status: StatusHalted, At: at, Reason: at + " halted", Results: results}
+	}
+
+	for _, tt := range []struct {
+		name  string
+		state State
+	}{
+		{"green check", haltedAt("review", map[string]Result{
+			"check": {Status: "green"}, "review": pass})},
+		{"recorded override", haltedAt("review", map[string]Result{
+			"check":  {Status: "red"},
+			"review": {Status: "done", Outcomes: map[string]string{"verdict": "pass"}, Override: "the fixture is at fault"}})},
+		{"changes close", haltedAt("review", map[string]Result{
+			"check":  {Status: "red"},
+			"review": {Status: "done", Outcomes: map[string]string{"verdict": "changes"}}})},
+		{"correction halt", haltedAt("correct", map[string]Result{
+			"check":   {Status: "red"},
+			"review":  {Status: "done", Outcomes: map[string]string{"verdict": "changes"}},
+			"correct": {Status: "done"}})},
+		{"no recorded close", haltedAt("review", map[string]Result{
+			"check": {Status: "red"}})},
+		{"running", State{Status: StatusRunning, At: "review", Results: map[string]Result{
+			"check": {Status: "red"}, "review": pass}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := GatingRedCheck(def, tt.state); got != "" {
+				t.Errorf("GatingRedCheck = %q, want empty: %s is not a pass-while-red halt", got, tt.name)
+			}
+		})
+	}
+}
+
+// TestGatingRedCheckEmptyWithTwoGates pins the ambiguity rule: two red checks
+// in front of the passed step name no single gate, so the halt keeps today's
+// routing.
+func TestGatingRedCheckEmptyWithTwoGates(t *testing.T) {
+	t.Parallel()
+
+	def := tdef("left", map[string]Step{
+		"left":   {Check: "make check", On: map[string]Target{"green": StepTarget("review"), "red": StepTarget("review")}},
+		"right":  {Check: "make check", On: map[string]Target{"green": StepTarget("review"), "red": StepTarget("review")}},
+		"review": {Run: "reviewer", On: map[string]Target{"verdict=pass": DoneTarget()}},
+	})
+	st := State{Status: StatusHalted, At: "review", Reason: "review halted", Results: map[string]Result{
+		"left":   {Status: "red"},
+		"right":  {Status: "red"},
+		"review": {Status: "done", Outcomes: map[string]string{"verdict": "pass"}},
+	}}
+	if got := GatingRedCheck(def, st); got != "" {
+		t.Errorf("GatingRedCheck = %q, want empty with two gating checks", got)
 	}
 }
 

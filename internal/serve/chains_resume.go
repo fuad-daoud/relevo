@@ -28,6 +28,12 @@ func writeChainResumeError(w http.ResponseWriter, err error) {
 		// typed refusal so the CLI prints the conflict and its `relevo stop
 		// <member>` next line, exactly as a local refusal does.
 		writeErr(w, http.StatusConflict, remote.CodeRoundOpen, msg)
+	case errors.Is(err, relevo.ErrChainStillHalted):
+		// A resume the halt kept: the reason is the answer, so it is a 409
+		// the client rebuilds as a refusal, never the default 500. Typed
+		// before the text arms below, so a reason naming another state cannot
+		// misroute it.
+		writeErr(w, http.StatusConflict, remote.CodeChainStillHalted, msg)
 	case strings.Contains(msg, "is running"):
 		writeErr(w, http.StatusConflict, remote.CodeChainRunning, msg)
 	case strings.Contains(msg, "is done"):
@@ -37,9 +43,10 @@ func writeChainResumeError(w http.ResponseWriter, err error) {
 		// to fix, not a crash.
 		writeErr(w, http.StatusBadRequest, remote.CodeUnknownActor, msg)
 	case errors.Is(err, refusal.ErrRefused):
-		// A refusal the resume itself raised -- a still-halted chain, a dirty
-		// halt, a fork conflict -- is the caller's next command, not a crash.
-		writeErr(w, http.StatusConflict, remote.CodeChainHalted, msg)
+		// A refusal the resume itself raised -- a dirty halt, a fork
+		// conflict -- is the caller's next command, not a crash: it rides
+		// the still-halted code the client already rebuilds as a refusal.
+		writeErr(w, http.StatusConflict, remote.CodeChainStillHalted, msg)
 	default:
 		writeErr(w, http.StatusInternalServerError, "", msg)
 	}

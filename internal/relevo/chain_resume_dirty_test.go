@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -58,10 +59,17 @@ func TestResumeWhileTreeStillDirtyRefuses(t *testing.T) {
 
 	rt, fg, round := dirtyHaltedChain(t)
 	fg.headCommitID = "commit-after-the-work"
+	reason := flowChainRow(t, rt).Reason
 
 	_, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"})
 	if err == nil || !strings.Contains(err.Error(), "still halted over uncommitted work") {
 		t.Fatalf("ChainResume = %v, want the uncommitted-work refusal", err)
+	}
+	if !errors.Is(err, ErrChainStillHalted) {
+		t.Errorf("ChainResume = %v, want ErrChainStillHalted: the served resume maps it, not the text", err)
+	}
+	if want := "chain shop is still halted over uncommitted work: " + reason; err.Error() != want {
+		t.Errorf("ChainResume = %q, want %q", err.Error(), want)
 	}
 	if staged(rt, round) {
 		t.Errorf("a prompt was staged for round %d: something was sent", round)
@@ -76,10 +84,17 @@ func TestResumeCleanTreeAtBaselineRefuses(t *testing.T) {
 	if chainBinding(t, rt, "shop").RoundClosedBaselineHead == "" {
 		t.Fatal("setup: the closed round kept no baseline HEAD")
 	}
+	reason := flowChainRow(t, rt).Reason
 
 	_, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"})
 	if err == nil || !strings.Contains(err.Error(), chainUncommittedWorkClause) {
 		t.Fatalf("ChainResume = %v, want the uncommitted-work refusal", err)
+	}
+	if !errors.Is(err, ErrChainStillHalted) {
+		t.Errorf("ChainResume = %v, want ErrChainStillHalted: the served resume maps it, not the text", err)
+	}
+	if want := "chain shop is still halted over uncommitted work, and nothing has been committed since the round began: " + reason; err.Error() != want {
+		t.Errorf("ChainResume = %q, want %q", err.Error(), want)
 	}
 	if staged(rt, round) {
 		t.Errorf("a prompt was staged for round %d: something was sent", round)
@@ -97,10 +112,17 @@ func TestResumeCleanTreeWithUnknownBaselineRefuses(t *testing.T) {
 	fg.dirtyResult = false
 	fg.headCommitID = "commit-after-the-work"
 	round := chainBinding(t, rt, "shop").Round
+	reason := flowChainRow(t, rt).Reason
 
 	_, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"})
 	if err == nil || !strings.Contains(err.Error(), "starting commit is unknown") {
 		t.Fatalf("ChainResume = %v, want the unknown-baseline refusal", err)
+	}
+	if !errors.Is(err, ErrChainStillHalted) {
+		t.Errorf("ChainResume = %v, want ErrChainStillHalted: the served resume maps it, not the text", err)
+	}
+	if want := "chain shop is still halted over uncommitted work, and the round's starting commit is unknown: " + reason; err.Error() != want {
+		t.Errorf("ChainResume = %q, want %q", err.Error(), want)
 	}
 	if staged(rt, round) {
 		t.Errorf("a prompt was staged for round %d: something was sent", round)

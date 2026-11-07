@@ -37,6 +37,10 @@ type liveOverlay struct {
 	// reaches the server itself when it takes a binding over.
 	RemoteStatus           string    `json:"remote_status,omitempty"`
 	RemoteUnreachableSince time.Time `json:"remote_unreachable_since,omitzero"`
+	// ViewedAt is when this machine last displayed the binding's newest report.
+	// A read stamps only this machine's view, and every rewrite of the synced
+	// row is an outbox entry every machine pulls, so the stamp stays local.
+	ViewedAt time.Time `json:"viewed_at,omitzero"`
 	// Clocks are the per-sample progress clocks; nil when the binding has
 	// no Progress object at all.
 	Clocks *overlayClocks `json:"clocks,omitempty"`
@@ -54,7 +58,7 @@ type overlayClocks struct {
 
 func (ov liveOverlay) isZero() bool {
 	return ov.StreamOffset == 0 && ov.RemoteLive == nil && ov.Clocks == nil &&
-		ov.RemoteStatus == "" && ov.RemoteUnreachableSince.IsZero()
+		ov.RemoteStatus == "" && ov.RemoteUnreachableSince.IsZero() && ov.ViewedAt.IsZero()
 }
 
 // liveKey is the machine-local kv key of one binding's overlay. The key is
@@ -74,6 +78,9 @@ func stripLive(b Binding) (Binding, liveOverlay) {
 		RemoteStatus:           b.Builder.RemoteStatus,
 		RemoteUnreachableSince: b.RemoteUnreachableSince,
 	}
+	if b.ViewedAt != nil {
+		ov.ViewedAt = *b.ViewedAt
+	}
 	if p := b.Progress; p != nil {
 		ov.Clocks = &overlayClocks{
 			SampledAt:  p.SampledAt,
@@ -89,6 +96,7 @@ func stripLive(b Binding) (Binding, liveOverlay) {
 	b.Builder.RemoteLive = nil
 	b.Builder.RemoteStatus = ""
 	b.RemoteUnreachableSince = time.Time{}
+	b.ViewedAt = nil
 	return b, ov
 }
 
@@ -107,6 +115,10 @@ func mergeLive(b Binding, ov liveOverlay) Binding {
 	}
 	if !ov.RemoteUnreachableSince.IsZero() {
 		b.RemoteUnreachableSince = ov.RemoteUnreachableSince
+	}
+	if !ov.ViewedAt.IsZero() {
+		at := ov.ViewedAt
+		b.ViewedAt = &at
 	}
 	if c := ov.Clocks; c != nil {
 		if b.Progress == nil {
@@ -252,6 +264,37 @@ func (s *Store) writeLiveOverlay(recordID string, b Binding) error {
 	}
 	if ok && bytes.Equal(raw, val) {
 		return nil
+	}
+	return local.KVPut(key, val)
+}
+
+// writeViewedOverlay stamps only the viewed field of one binding's overlay,
+// keeping every sibling field the stored overlay already holds. A missing or
+// malformed stored overlay reads as empty, the same rule readLiveOverlay
+// uses, so a stamp never fails over a blob the next save would overwrite.
+func (s *Store) writeViewedOverlay(recordID string, at time.Time) error {
+	if recordID == "" {
+		return nil
+	}
+	d, err := s.dbForWrite()
+	if err != nil {
+		return err
+	}
+	local := d.LocalOrSelf()
+	key := liveKey(recordID)
+	var ov liveOverlay
+	if raw, ok, err := local.KVGet(key); err != nil {
+		return fmt.Errorf("read live overlay %q: %w", recordID, err)
+	} else if ok {
+		if err := json.Unmarshal(raw, &ov); err != nil {
+			slog.Warn("live overlay malformed, reading synced row", "record", recordID, "err", err)
+			ov = liveOverlay{}
+		}
+	}
+	ov.ViewedAt = at
+	val, err := json.Marshal(ov)
+	if err != nil {
+		return fmt.Errorf("marshal live overlay %q: %w", recordID, err)
 	}
 	return local.KVPut(key, val)
 }

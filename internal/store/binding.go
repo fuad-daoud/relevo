@@ -239,12 +239,12 @@ type Binding struct {
 	// refuses to overwrite a Format it does not know.
 	Format int `json:"format,omitempty"`
 
-	// ViewedAt is the binding's .viewed stamp as read from its record: nil
-	// when the record carries none. It is not part of the stored document --
-	// the record's own viewed_at column is its home -- so it is excluded from
-	// the JSON this struct marshals. List and Load fill it from the row they
-	// just read, so a reader that already has the binding needs no second
-	// RecordGet to learn the stamp.
+	// ViewedAt is the binding's .viewed stamp: nil when this machine has not
+	// displayed it. It is not part of the stored document, so it is excluded
+	// from the JSON this struct marshals. List and Load fill it from the row
+	// they just read, so a reader with the binding needs no second RecordGet:
+	// the machine-local overlay wins when it holds a stamp, and viewed_at is
+	// only the row's seed otherwise.
 	ViewedAt *time.Time `json:"-"`
 
 	Name string `json:"name"`

@@ -25,6 +25,11 @@ const CodeChainRunning Code = "chain_running"
 // round, so the answer is the one that names `relevo done`.
 const CodeChainHalted Code = "chain_halted"
 
+// CodeChainStillHalted is a 409: a resume found the chain still halted, so the
+// answer is the halt's own reason, not an internal failure. It is the wire
+// twin of relevo.ErrChainStillHalted, which the client re-types as a refusal.
+const CodeChainStillHalted Code = "chain_still_halted"
+
 // ChainSettings is a chain create request's resolved configuration. It
 // mirrors chain.Settings; internal/remote does not import internal/chain, so
 // the two are converted at the edges.
