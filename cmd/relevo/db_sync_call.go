@@ -223,6 +223,9 @@ func dbSyncVerbRefusalFor(verb, url string, err error) error {
 		return failNext(codeRefused, "relevo db sync status", "%s", refusal.Message)
 	case wire.SyncCodeAuthRefused:
 		return fail(codeRemoteAuth, "%s", refusal.Message)
+	case wire.SyncCodeBucketRefused:
+		return failNext(codeRemoteAuth, name,
+			"%s; check the R2 key, and a key seconds old can need a minute to work", refusal.Message)
 	case wire.SyncCodeRemoteConflict:
 		return failNext(codeRefused, remoteConflictNext(&relevosync.RemoteConflictError{URL: url}), "%s", refusal.Message)
 	case wire.SyncCodePreflightRefused,

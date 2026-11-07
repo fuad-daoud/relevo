@@ -27,7 +27,9 @@ rounds run here and the defects past builders shipped. Where this file and
   `tmp_*` directories, no regen files left behind, even if you delete them before
   the commit.
 - Run every gate and test in the foreground and read its exit status before the
-  next step. A result you did not see is not a result.
+  next step. A result you did not see is not a result. A tool result that says
+  `background_running` or names a `session_id` has not finished: poll it until it
+  exits and read its exit code.
 
 ## Exact execution
 

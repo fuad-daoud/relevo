@@ -197,6 +197,55 @@ func TestGateOnLimitMuseStructuredStream(t *testing.T) {
 	}
 }
 
+// A clock reset inside its grace reads as lifting now, so its gate closes
+// nothing and the pick lands on the same candidate. Without the switch budget
+// this repeats for as long as the provider keeps refusing.
+func TestGateOnLimitWithAPassedResetEndsInNeedsYou(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := gateOnLimitSetup(t, fr)
+	rt = at(rt, time.Minute)
+	passedReset := "Individual quota reached. Please upgrade your subscription to increase your limits. Resets at " +
+		rt.Now().Add(-5*time.Minute).Format("15:04") + "."
+	first := b.BuilderCandidate
+	limit := rt.Policy.SwitchLimit()
+
+	for i := 1; i <= limit; i++ {
+		got, m, handled, err := gateHeadless(t, rt, b, passedReset, 0, false)
+		if err != nil {
+			t.Fatalf("switch %d: gateOnLimit: %v", i, err)
+		}
+		if !handled {
+			t.Fatalf("switch %d: handled = false, want true", i)
+		}
+		if m.Until.After(rt.Now()) {
+			t.Fatalf("switch %d: Until = %v is after now %v, want a reset that already passed", i, m.Until, rt.Now())
+		}
+		if got.BuilderCandidate != first {
+			t.Errorf("switch %d: BuilderCandidate = %q, want the same candidate %q: nothing gated it", i, got.BuilderCandidate, first)
+		}
+		if got.RoundSwitches != i {
+			t.Errorf("switch %d: RoundSwitches = %d, want %d", i, got.RoundSwitches, i)
+		}
+		b = got
+	}
+
+	got, _, handled, err := gateHeadless(t, rt, b, passedReset, 0, false)
+	if err != nil {
+		t.Fatalf("final gateOnLimit: %v", err)
+	}
+	if !handled {
+		t.Fatal("final: handled = false, want true")
+	}
+	if got.State != store.StateNeedsYou {
+		t.Errorf("state = %s, want needs_you", got.State)
+	}
+	if sw := switches(t, rt); len(sw) != limit {
+		t.Errorf("switch entries = %d, want %d", len(sw), limit)
+	}
+}
+
 func TestGateOnLimit(t *testing.T) {
 	t.Parallel()
 
@@ -230,6 +279,9 @@ func TestGateOnLimit(t *testing.T) {
 		}
 
 		sw := switches(t, rt)
+		if len(sw) == 1 && !strings.Contains(sw[0].Note, store.SwitchReplacedClause) {
+			t.Errorf("switch note %q doesn't name what it replaced", sw[0].Note)
+		}
 		if len(sw) != 1 || !strings.HasPrefix(sw[0].Note, "switched builder (rate-limited: Individual quota reached") {
 			t.Errorf("switch entries = %+v", sw)
 		}

@@ -14,6 +14,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
@@ -535,6 +536,24 @@ func TestChainStartRemoteBuilderUnwindsEveryFailure(t *testing.T) {
 			t.Errorf("calls = %v, want no Unbind when the create itself failed", fr.calls)
 		}
 		assertNothingCreated(t, rt, fg, "shop")
+	})
+
+	t.Run("the local branch is taken: a conflict, not an internal failure", func(t *testing.T) {
+		t.Parallel()
+
+		fr := chainRemoteFake()
+		rt, fg, _ := chainRemoteRuntime(t, fr)
+		fg.createBranchErr = git.ErrBranchExists
+
+		_, err := ChainStart(context.Background(), rt, ChainOptions{
+			Name: "shop", Plans: []string{writePlan(t, "p")}, Feature: "auth", MasterMindID: testMasterMindName,
+		})
+		if !errors.Is(err, git.ErrBranchExists) || !strings.Contains(err.Error(), "relevo/shop exists in this repository") {
+			t.Fatalf("err = %v, want the branch conflict naming this machine's copy", err)
+		}
+		if !slices.Contains(fr.calls, "Unbind:zen:shop") {
+			t.Errorf("calls = %v, want the server binding unbound", fr.calls)
+		}
 	})
 
 	t.Run("the local branch fails: the server binding is unbound", func(t *testing.T) {
