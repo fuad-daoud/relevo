@@ -191,10 +191,18 @@ func (v *Runner) joinWasStopped() bool {
 
 // beginJoin clears a stop a previous disable left, so a fresh enable is not
 // held back by -- or kept off because of -- a stop aimed at an earlier join.
+// A later enable also starts clear of the last run's failure, which is why a
+// success writes no separate clear.
 func (v *Runner) beginJoin() {
 	v.joinMu.Lock()
 	v.joinStopped = false
 	v.joinMu.Unlock()
+	if v.Local == nil {
+		return
+	}
+	// A stale record outlives only a broken local file: every later write this
+	// run makes would fail first, so there is nothing to report.
+	_ = relevosync.ClearJoinFailure(v.Local)
 }
 
 // preempt releases whatever transport this runner has in flight, so a disable or
@@ -341,6 +349,9 @@ func transportReady(transport synclog.LogTransport) bool {
 // behind holds the replica open against the next one; a finished run leaves it
 // on the runner.
 func (v *Runner) enable(ctx context.Context, verb *wire.SyncVerb, tail []byte) *wire.SyncResult {
+	// A panic on the enable path leaves the same trace a failure does, then
+	// re-panics so the owner answers as it does today.
+	defer v.recordJoinPanic()
 	token, passphrase, r2, err := EnableIntake(verb, tail)
 	if err != nil {
 		return Refusal(Classify(err), err)
@@ -355,6 +366,7 @@ func (v *Runner) enable(ctx context.Context, verb *wire.SyncVerb, tail []byte) *
 	if len(bytes.TrimSpace(passphrase)) > 0 {
 		done, err := v.stageAndVerify(ctx, verb.RemoteURL, token, passphrase, false, r2)
 		if err != nil {
+			v.recordJoinFailure(err)
 			return Refusal(Classify(err), err)
 		}
 		staged = done

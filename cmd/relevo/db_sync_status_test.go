@@ -847,3 +847,195 @@ func TestStatusKeyClauseStale(t *testing.T) {
 		t.Fatalf("status line %q does not render the stale clause", line)
 	}
 }
+
+// TestStatusShowsAFailedJoin pins that a join the daemon failed appears on
+// the status surface with its failure time, message and resume hint, on both
+// shapes. The failure record beside the marker is what tells a dead join
+// from one still running, so the line never says joining since -- and a
+// locked key stays locked in the document while the line drops the unlock
+// instruction, because unlock needs sync on.
+func TestStatusShowsAFailedJoin(t *testing.T) {
+	tc := dbSyncStatusCase{
+		name:      "failed join",
+		remote:    syncStatusRemote,
+		namespace: syncStatusNamespace,
+		token:     syncStatusSecret,
+	}
+	serveSyncStatus(t, tc)
+	local := dialledLocal(t)
+	if err := local.KVPut(relevosync.KeyRemoteKDF, []byte("1")); err != nil {
+		t.Fatalf("KVPut: %v", err)
+	}
+	if err := relevosync.WriteJoin(local, syncStatusNow); err != nil {
+		t.Fatalf("WriteJoin: %v", err)
+	}
+	const failure = "sync: the enable did not finish before the daemon restarted"
+	if err := relevosync.WriteJoinFailure(local, syncStatusNow, failure); err != nil {
+		t.Fatalf("WriteJoinFailure: %v", err)
+	}
+
+	text, _, err := captureOutput(t, func() error { return cmdDBSyncStatus(nil) })
+	if err != nil {
+		t.Fatalf("cmdDBSyncStatus: %v", err)
+	}
+	want := "join failed at 2026-10-04T12:00:00Z: " + failure + "; re-run `relevo db sync enable` to resume"
+	if !strings.Contains(string(text), want) {
+		t.Errorf("status line %q does not render %q", string(text), want)
+	}
+	if strings.Contains(string(text), "joining since") {
+		t.Errorf("status line %q shows a dead join as running", string(text))
+	}
+	if strings.Contains(string(text), "relevo db sync unlock") {
+		t.Errorf("status line %q names an unlock that needs sync on", string(text))
+	}
+	if !strings.Contains(string(text), ", key: locked") {
+		t.Errorf("status line %q does not keep the locked state", string(text))
+	}
+
+	jsonOut, _, err := captureOutput(t, func() error { return cmdDBSyncStatus([]string{"--json"}) })
+	if err != nil {
+		t.Fatalf("cmdDBSyncStatus --json: %v", err)
+	}
+	var doc dbSyncStatusDoc
+	if err := json.Unmarshal(jsonOut, &doc); err != nil {
+		t.Fatalf("decode the document: %v", err)
+	}
+	if doc.JoinFailedAt != "2026-10-04T12:00:00Z" || doc.JoinFailure != failure {
+		t.Errorf("document failure = %q %q, want the record's time and message", doc.JoinFailedAt, doc.JoinFailure)
+	}
+	if doc.Joining || doc.JoinSince != "" {
+		t.Errorf("document joining = %t since %q, want a failed join to read as failed", doc.Joining, doc.JoinSince)
+	}
+	if doc.Key != "locked" {
+		t.Errorf("document key = %q, want locked", doc.Key)
+	}
+}
+
+// TestStatusShowsAFailedJoinWithoutAMarker pins the belt-and-braces shape: a
+// failure with no marker beside it renders the same failure, time and resume
+// hint. The message carries a control byte, which an enable's own error text
+// can hold, to pin the render-time rule at the failure's sink: the line makes
+// it inert while the document keeps what the record wrote.
+func TestStatusShowsAFailedJoinWithoutAMarker(t *testing.T) {
+	tc := dbSyncStatusCase{
+		name:      "failed join, no marker",
+		remote:    syncStatusRemote,
+		namespace: syncStatusNamespace,
+		token:     syncStatusSecret,
+	}
+	serveSyncStatus(t, tc)
+	const failure = "sync: enable: import: zen\x1b[2J\x07 held the body"
+	if err := relevosync.WriteJoinFailure(dialledLocal(t), syncStatusNow, failure); err != nil {
+		t.Fatalf("WriteJoinFailure: %v", err)
+	}
+
+	text, _, err := captureOutput(t, func() error { return cmdDBSyncStatus(nil) })
+	if err != nil {
+		t.Fatalf("cmdDBSyncStatus: %v", err)
+	}
+	if strings.Contains(string(text), "joining since") {
+		t.Errorf("status line %q shows a dead join as running", string(text))
+	}
+	for _, want := range []string{"join failed at 2026-10-04T12:00:00Z", "held the body", "re-run `relevo db sync enable` to resume", "\uFFFD"} {
+		if !strings.Contains(string(text), want) {
+			t.Errorf("status line %q is missing %q", string(text), want)
+		}
+	}
+	for _, r := range []rune{'\x1b', '\x07'} {
+		if strings.ContainsRune(string(text), r) {
+			t.Errorf("the status line still carries %q: %q", r, string(text))
+		}
+	}
+
+	jsonOut, _, err := captureOutput(t, func() error { return cmdDBSyncStatus([]string{"--json"}) })
+	if err != nil {
+		t.Fatalf("cmdDBSyncStatus --json: %v", err)
+	}
+	var doc dbSyncStatusDoc
+	if err := json.Unmarshal(jsonOut, &doc); err != nil {
+		t.Fatalf("decode the document: %v", err)
+	}
+	if doc.JoinFailedAt != "2026-10-04T12:00:00Z" || doc.JoinFailure != failure {
+		t.Errorf("document failure = %q %q, want the record untouched", doc.JoinFailedAt, doc.JoinFailure)
+	}
+}
+
+// TestStatusDropsTheUnlockInstructionForAnOffJoinWithALockedKey pins the key
+// clause while a join is what is off: the line keeps `key: locked` but drops
+// the unlock instruction, because unlock needs sync on and the resume hint
+// beside it says what does instead. The join itself keeps today's wording.
+func TestStatusDropsTheUnlockInstructionForAnOffJoinWithALockedKey(t *testing.T) {
+	tc := dbSyncStatusCase{
+		name:      "off join, locked",
+		remote:    syncStatusRemote,
+		namespace: syncStatusNamespace,
+		token:     syncStatusSecret,
+	}
+	serveSyncStatus(t, tc)
+	local := dialledLocal(t)
+	if err := local.KVPut(relevosync.KeyRemoteKDF, []byte("1")); err != nil {
+		t.Fatalf("KVPut: %v", err)
+	}
+	if err := relevosync.WriteJoin(local, syncStatusNow); err != nil {
+		t.Fatalf("WriteJoin: %v", err)
+	}
+
+	text, _, err := captureOutput(t, func() error { return cmdDBSyncStatus(nil) })
+	if err != nil {
+		t.Fatalf("cmdDBSyncStatus: %v", err)
+	}
+	if !strings.Contains(string(text), "joining since 2026-10-04T12:00:00Z") {
+		t.Errorf("status line %q does not show the join in progress", string(text))
+	}
+	if !strings.Contains(string(text), ", key: locked") {
+		t.Errorf("status line %q does not keep the locked state", string(text))
+	}
+	if strings.Contains(string(text), "relevo db sync unlock") {
+		t.Errorf("status line %q names an unlock that needs sync on", string(text))
+	}
+}
+
+// TestStatusKeepsTheUnlockInstructionForAnOnJoinWithALockedKey pins the other
+// half: a locked join with sync on is owed history still sending, so the join
+// keeps today's wording and the locked clause keeps its instruction.
+func TestStatusKeepsTheUnlockInstructionForAnOnJoinWithALockedKey(t *testing.T) {
+	tc := dbSyncStatusCase{
+		name:      "on join, locked",
+		enabled:   true,
+		tickOK:    true,
+		remote:    syncStatusRemote,
+		namespace: syncStatusNamespace,
+		token:     syncStatusSecret,
+	}
+	serveSyncStatus(t, tc)
+	local := dialledLocal(t)
+	if err := local.KVPut(relevosync.KeyRemoteKDF, []byte("1")); err != nil {
+		t.Fatalf("KVPut: %v", err)
+	}
+	if err := relevosync.WriteJoin(local, syncStatusNow); err != nil {
+		t.Fatalf("WriteJoin: %v", err)
+	}
+
+	text, _, err := captureOutput(t, func() error { return cmdDBSyncStatus(nil) })
+	if err != nil {
+		t.Fatalf("cmdDBSyncStatus: %v", err)
+	}
+	if !strings.Contains(string(text), "joining since 2026-10-04T12:00:00Z") {
+		t.Errorf("status line %q does not show the join in progress", string(text))
+	}
+	if !strings.Contains(string(text), "locked: run relevo db sync unlock") {
+		t.Errorf("status line %q does not keep the unlock instruction", string(text))
+	}
+
+	jsonOut, _, err := captureOutput(t, func() error { return cmdDBSyncStatus([]string{"--json"}) })
+	if err != nil {
+		t.Fatalf("cmdDBSyncStatus --json: %v", err)
+	}
+	var doc dbSyncStatusDoc
+	if err := json.Unmarshal(jsonOut, &doc); err != nil {
+		t.Fatalf("decode the document: %v", err)
+	}
+	if doc.Key != "locked" || !doc.Joining {
+		t.Errorf("document key = %q joining = %t, want locked and joining", doc.Key, doc.Joining)
+	}
+}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/store"
+	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 	"github.com/fuad-daoud/relevo/internal/sync/verb"
 )
 
@@ -111,9 +112,22 @@ type Daemon struct {
 
 // SetSyncVerbs shares the owner's verb runner with the tick, so background
 // attempts reuse the client a verb built lazily instead of each path opening
-// its own handle to the same remote.
+// its own handle to the same remote. A restart that stranded a join is
+// recorded here, once per bind: after a restart no enable is running, so a
+// leftover marker must not read as running.
 func (d *Daemon) SetSyncVerbs(v *verb.Runner) {
 	d.syncVerbs = v
+	if v == nil || v.Local == nil {
+		return
+	}
+	wrote, err := relevosync.NoteDaemonRestart(v.Local, time.Now())
+	if err != nil {
+		slog.Warn("relevo daemon: the stranded join marker could not be examined", "err", err)
+		return
+	}
+	if wrote {
+		slog.Warn("relevo daemon: a stranded join was recorded as a failure")
+	}
 }
 
 // BindSyncNow installs this daemon's own trigger into its runtime, so a gate
