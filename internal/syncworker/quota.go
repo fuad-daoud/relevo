@@ -26,5 +26,8 @@ func markTransferRefusal(err error) error {
 	if isQuotaRefusal(err) {
 		return MarkRefusal(CodeQuota, err)
 	}
+	if isTransportError(err) {
+		return MarkRefusal(CodeTransport, err)
+	}
 	return markDriverRefusal(err)
 }

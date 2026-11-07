@@ -331,6 +331,10 @@ const (
 	// moved under the caller: another machine rekeyed first. Nothing was written,
 	// and no retry with the same material can get past it.
 	CodeEpochRace RefusalCode = "epoch_race"
+	// CodeTransport is a connection to the remote that dropped before an answer
+	// came back. Nothing says the remote refused anything, so a later attempt
+	// can get past it.
+	CodeTransport RefusalCode = "transport"
 )
 
 // RefusalError is an error a backend marked with the class of refusal it is, so

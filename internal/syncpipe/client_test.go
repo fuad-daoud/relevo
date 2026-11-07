@@ -45,6 +45,9 @@ const (
 	// modeRefuseTransient answers the handshake and then refuses every verb
 	// with no class, which is a refusal a later attempt can still get past.
 	modeRefuseTransient = "refuse-transient"
+	// modeRefuseTransport answers the handshake and then refuses every verb
+	// with the class of a dropped connection.
+	modeRefuseTransport = "refuse-transport"
 	// modeWrongID answers the handshake for a request that is not the one it
 	// read, which is what a crossed pipe looks like from the daemon's side.
 	modeWrongID = "wrong-id"
@@ -137,6 +140,11 @@ func runFakeWorker(mode string) int {
 		return 0
 	case modeRefuseTransient:
 		if err := syncworker.Serve(os.Stdin, os.Stdout, verbsRefusingBackend{}); err != nil {
+			return 1
+		}
+		return 0
+	case modeRefuseTransport:
+		if err := syncworker.Serve(os.Stdin, os.Stdout, verbsRefusingBackend{code: syncworker.CodeTransport}); err != nil {
 			return 1
 		}
 		return 0
@@ -739,6 +747,32 @@ func TestRefusalErrorMapsAQuotaRefusalToTheQuotaSentinel(t *testing.T) {
 	err := refusalError(syncworker.Response{OK: false, Error: "full", Code: syncworker.CodeQuota})
 	if !errors.Is(err, ErrRefused) || !errors.Is(err, relevosync.ErrQuotaReached) {
 		t.Fatalf("err = %v, want ErrRefused and ErrQuotaReached", err)
+	}
+}
+
+// TestRefusalErrorMapsTransportToLostConnection pins that a dropped connection
+// reads as one: the fixed sentence and the worker's detail, never the refusal
+// sentence, and never a latch.
+func TestRefusalErrorMapsTransportToLostConnection(t *testing.T) {
+	detail := `syncworker: push: turso: Post "https://x.turso.io/v2/pipeline": EOF`
+	err := refusalError(syncworker.Response{OK: false, Error: detail, Code: syncworker.CodeTransport})
+	if !errors.Is(err, relevosync.ErrConnectionLost) {
+		t.Errorf("err = %v, want errors.Is(err, ErrConnectionLost)", err)
+	}
+	if errors.Is(err, ErrRefused) {
+		t.Errorf("err = %v, want it not to be ErrRefused", err)
+	}
+	if relevosync.IsPermanentRefusal(err) {
+		t.Errorf("err = %v, want a transient failure", err)
+	}
+	if !strings.Contains(err.Error(), "lost the connection to Turso") {
+		t.Errorf("err = %q, want the lost-connection sentence", err)
+	}
+	if !strings.Contains(err.Error(), detail) {
+		t.Errorf("err = %q, want the worker's detail", err)
+	}
+	if strings.Contains(err.Error(), relevosync.WorkerRefusedText) {
+		t.Errorf("err = %q, must not carry the refusal sentence", err)
 	}
 }
 

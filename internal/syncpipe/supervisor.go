@@ -330,9 +330,10 @@ func (s *Supervisor) worker() (*Client, error) {
 	return c, nil
 }
 
-// settle records what the call did. Success or refusal clears the marker and keeps
-// the worker; a call never returning drops the worker and counts the death. A
-// Cancelled call clears the marker uncounted.
+// settle records what the call did. Success, a refusal or a lost connection
+// clears the marker and keeps the worker, since the worker answered each; a call
+// never returning drops the worker and counts the death. A Cancelled call clears
+// the marker uncounted.
 func (s *Supervisor) settle(c *Client, err error) error {
 	switch {
 	case err == nil:
@@ -340,7 +341,7 @@ func (s *Supervisor) settle(c *Client, err error) error {
 			return eerr
 		}
 		return s.breaker.Success()
-	case errors.Is(err, ErrRefused):
+	case errors.Is(err, ErrRefused) || errors.Is(err, relevosync.ErrConnectionLost):
 		if eerr := s.breaker.End(); eerr != nil {
 			return errors.Join(err, eerr)
 		}

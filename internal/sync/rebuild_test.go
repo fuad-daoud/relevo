@@ -75,6 +75,27 @@ func TestIsReplicaCorruptClassifiesTheDriverAndTheNullBatch(t *testing.T) {
 	}
 }
 
+// TestTransportFailureIsNeverCorrupt pins that a lost connection never moves
+// the replica aside: its error carries no worker refusal marker, so the
+// classifier reads no answer about the replica's file even when the driver's
+// corrupt words ride along in the detail.
+//
+// Mutation: dropping the worker-marker requirement fails the second case.
+func TestTransportFailureIsNeverCorrupt(t *testing.T) {
+	t.Parallel()
+
+	for name, err := range map[string]error{
+		"the dropped request the issue reported": fmt.Errorf("%w: syncworker: push: turso: Post %q: EOF",
+			ErrConnectionLost, "https://x.turso.io/v2/pipeline"),
+		"a dropped connection with corrupt words in its detail": fmt.Errorf("%w: syncworker: pull: turso: database is corrupt: EOF",
+			ErrConnectionLost),
+	} {
+		if IsReplicaCorrupt(err) {
+			t.Errorf("%s: IsReplicaCorrupt = true, want false (%v)", name, err)
+		}
+	}
+}
+
 // TestRebuildDueWaitsTheWindow pins the cap: a machine that never rebuilt is
 // due at once, one that rebuilt this instant is not, one whose record is a
 // second short of the window is not, one whose record is exactly the window
