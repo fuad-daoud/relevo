@@ -5,10 +5,18 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 )
+
+// slowRequestThreshold is the latency past which the request log line goes
+// out at WARN with the request's duration attached. Two seconds sits an order
+// above healthy binding reads and below the remote prefetch deadline, so
+// pre-deadline slowness on either side shows up in the log; bundle routes may
+// trip it occasionally, which is acceptable one-line evidence.
+var slowRequestThreshold = 2 * time.Second
 
 type responseLogger struct {
 	http.ResponseWriter
@@ -89,7 +97,9 @@ func (s *Server) Handler() http.Handler {
 		}
 
 		rw := &responseLogger{ResponseWriter: w, status: http.StatusOK}
+		started := time.Now()
 		authenticatedMux.ServeHTTP(rw, r)
+		elapsed := time.Since(started)
 
 		owner := ownerLabel(s.clients, callerOf(r))
 		attrs := []any{"method", r.Method, "path", r.URL.Path, "owner", owner, "status", rw.status}
@@ -97,7 +107,13 @@ func (s *Server) Handler() http.Handler {
 		if v := r.Header.Get(remote.HeaderClientVersion); v != "" {
 			attrs = append(attrs, "client_version", v)
 		}
-		slog.Info("http request", attrs...)
+		// One line per request either way: a slow one carries its duration at
+		// WARN, so a client's retry and the server's slow line match by path.
+		if elapsed >= slowRequestThreshold {
+			slog.Warn("http request", append(attrs, "duration", elapsed)...)
+		} else {
+			slog.Info("http request", attrs...)
+		}
 	})
 }
 
