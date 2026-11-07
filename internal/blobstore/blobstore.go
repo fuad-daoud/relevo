@@ -18,6 +18,11 @@ import (
 // the first latching the origin and naming the round, the second retried.
 var ErrNotFound = errors.New("blobstore: object not found")
 
+// ErrCredentialsRefused reports that the bucket answered and turned these
+// credentials down, rather than failing to answer. The way out is the key, or
+// waiting for a new one to work, so it is not a defect in this machine.
+var ErrCredentialsRefused = errors.New("blobstore: the bucket refused these credentials")
+
 // Object is one stored body as a listing describes it.
 type Object struct {
 	Key      string

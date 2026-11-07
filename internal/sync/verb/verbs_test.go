@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/blobstore"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
@@ -774,6 +776,7 @@ func TestSyncVerbClassificationIsTotal(t *testing.T) {
 		{relevosync.ErrRemoteRefused, wire.SyncCodeRemoteRefused},
 		{relevosync.ErrRemoteSchema, wire.SyncCodeRemoteSchemaMissing},
 		{relevosync.ErrJoinOverQuota, wire.SyncCodeOverQuota},
+		{fmt.Errorf("sync: enable: estimate the join: %w", blobstore.ErrCredentialsRefused), wire.SyncCodeBucketRefused},
 		{relevosync.ErrQuotaReached, wire.SyncCodeRemoteRefused},
 		{db.ErrPreflightRefused, wire.SyncCodePreflightRefused},
 		{db.ErrContended, wire.SyncCodeContended},
