@@ -447,3 +447,34 @@ func TestAPlainEnableWithTheWrongPassphraseLeavesAFreshMachineWithNoBucket(t *te
 		t.Errorf("a refused enable left a bucket behind: %+v", stored.Missing())
 	}
 }
+
+// countedLog is a worker that reports a fixed total.
+type countedLog struct {
+	*synclog.MemTransport
+	moved synclog.Stats
+}
+
+func (c *countedLog) Stats() (synclog.Stats, error) { return c.moved, nil }
+
+// A staged worker this enable opened is counted as it is released, since it
+// may have run the bootstrap; one it was handed belongs to another count.
+func TestReleasingAStagedWorkerCountsOnlyOneThisEnableOpened(t *testing.T) {
+	for _, opened := range []bool{true, false} {
+		runner, local := joinRunner(t)
+		worker := &countedLog{MemTransport: synclog.NewMemTransport("m1"), moved: synclog.Stats{TursoReceived: 65709}}
+
+		releaseStagedWorker(runner, &verified{transport: worker, opened: opened})
+
+		got, err := relevosync.ReadBytes(local, time.Now())
+		if err != nil {
+			t.Fatalf("ReadBytes: %v", err)
+		}
+		want := int64(0)
+		if opened {
+			want = 65709
+		}
+		if got.TursoPull != want {
+			t.Errorf("opened=%v: month pulled %d, want %d", opened, got.TursoPull, want)
+		}
+	}
+}

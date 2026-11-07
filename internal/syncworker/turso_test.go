@@ -918,8 +918,10 @@ func TestTursoDriverOpensThroughTheSyncConstructor(t *testing.T) {
 	if err := d.Pull(context.Background()); err != nil || fake.pulls != 1 {
 		t.Errorf("Pull err=%v calls=%d, want one call", err, fake.pulls)
 	}
-	if _, err := d.Stats(context.Background()); err != nil || fake.stats != 1 {
-		t.Errorf("Stats err=%v calls=%d, want one call", err, fake.stats)
+	// A fresh replica's open reads the engine's counters once for the
+	// bootstrap, so the driver's own Stats is the second call.
+	if _, err := d.Stats(context.Background()); err != nil || fake.stats != 2 {
+		t.Errorf("Stats err=%v calls=%d, want the open's reading and this one", err, fake.stats)
 	}
 	if _, err := d.Open(context.Background(), Spec{}); err == nil {
 		t.Error("a second open replaced the replica instead of refusing")
@@ -957,19 +959,19 @@ func TestTursoDriverPropagatesConstructorFailures(t *testing.T) {
 	}
 }
 
-// A replica Open had to create counts its files as downloaded, and one that
-// already existed counts nothing, so a restarted worker doesn't bill it twice.
+// A replica Open had to create counts what the engine says it downloaded, and
+// one that already existed counts nothing, so a restarted worker doesn't bill it
+// twice.
 func TestDriverCountsOnlyABootstrapItDownloaded(t *testing.T) {
 	restore := newSyncDb
 	t.Cleanup(func() { newSyncDb = restore })
 	newSyncDb = func(_ context.Context, cfg turso.TursoSyncDbConfig) (syncDb, error) {
-		if err := os.WriteFile(cfg.Path, make([]byte, 1000), 0o600); err != nil {
+		if err := os.WriteFile(cfg.Path, make([]byte, 10), 0o600); err != nil {
 			return nil, err
 		}
-		if err := os.WriteFile(cfg.Path+"-wal", make([]byte, 24), 0o600); err != nil {
-			return nil, err
-		}
-		return &fakeSyncDb{db: openAt(t, tempReplica(t))}, nil
+		fake := &fakeSyncDb{db: openAt(t, tempReplica(t))}
+		fake.reading.NetworkReceivedBytes = 65709
+		return fake, nil
 	}
 
 	path := tempReplica(t)
@@ -977,8 +979,8 @@ func TestDriverCountsOnlyABootstrapItDownloaded(t *testing.T) {
 	if _, err := fresh.Open(context.Background(), Spec{URL: "u", Token: "t"}); err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if got := fresh.Bootstrapped(); got != 1024 {
-		t.Errorf("fresh replica's Bootstrapped = %d, want the 1024 bytes of its files", got)
+	if got := fresh.Bootstrapped(); got != 65709 {
+		t.Errorf("fresh replica's Bootstrapped = %d, want the engine's 65709", got)
 	}
 
 	again := newTursoDriver(path)

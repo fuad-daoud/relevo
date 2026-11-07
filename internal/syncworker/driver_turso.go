@@ -82,31 +82,21 @@ func (d *tursoDriver) Open(ctx context.Context, spec Spec) (*sql.DB, error) {
 		return nil, fmt.Errorf("syncworker: connect to %s: %w", d.path, err)
 	}
 	if fresh {
-		d.bootstrapped = replicaBytes(d.path)
+		// The engine counts the bootstrap it ran while being built, before any
+		// transfer this worker measures, so its counter now is the download.
+		if stats, serr := sdb.Stats(ctx); serr == nil {
+			d.bootstrapped = stats.NetworkReceivedBytes
+		}
 	}
 	return db, nil
 }
 
-// Bootstrapped is what the last Open downloaded to create the replica, read from
-// the files it left, because the byte totals only start at the first transfer
-// after the open. A real bootstrap's files came within 1% of what the remote
-// billed. A replica that already existed reads zero, so a bootstrap an interrupted
-// join resumed goes uncounted.
+// Bootstrapped is what the last Open downloaded to create the replica, because
+// the byte totals only start at the first transfer after the open. A replica
+// that already existed reads zero, so a bootstrap an interrupted join resumed
+// goes uncounted.
 func (d *tursoDriver) Bootstrapped() int64 {
 	return d.bootstrapped
-}
-
-// replicaBytes is the size of the replica's database and WAL files. A file that
-// can't be read counts as empty: the meter is an estimate, and it never fails an
-// open.
-func replicaBytes(path string) int64 {
-	var total int64
-	for _, name := range []string{path, path + "-wal"} {
-		if info, err := os.Stat(name); err == nil {
-			total += info.Size()
-		}
-	}
-	return total
 }
 
 // Push sends the replica's local changes to the remote.
