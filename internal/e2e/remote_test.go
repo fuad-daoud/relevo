@@ -570,16 +570,31 @@ func TestRemoteServerUnreachableIsNotAHalt(t *testing.T) {
 		return srv.Addr() == nil
 	})
 
-	// client Tick
+	// client ticks: one failed read is noise, so the first tick leaves the
+	// binding alone and the second consecutive failure starts the outage.
+	// Restart a server? Not needed: the assertion is the non-halt.
 	clientDaemon := relevo.NewDaemon(rt, time.Second)
 	if err := clientDaemon.Tick(ctx); err != nil {
-		t.Fatalf("step 3: clientDaemon.Tick: %v", err)
+		t.Fatalf("step 3: clientDaemon.Tick 1: %v", err)
+	}
+	cb, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatalf("step 3: load client binding after one failure: %v", err)
+	}
+	if cb.Builder.RemoteStatus == "unreachable" {
+		t.Fatalf("step 3: Builder.RemoteStatus = %q after one failure, want it left alone", cb.Builder.RemoteStatus)
+	}
+	if !cb.RemoteUnreachableSince.IsZero() {
+		t.Fatalf("step 3: RemoteUnreachableSince set after one failure, want zero")
+	}
+
+	if err := clientDaemon.Tick(ctx); err != nil {
+		t.Fatalf("step 3: clientDaemon.Tick 2: %v", err)
 	}
 
 	// Assert: state stays active, Builder.RemoteStatus == "unreachable",
-	// RemoteUnreachableSince set. Restart a server? Not needed: the assertion
-	// is the non-halt.
-	cb, err := rt.Store.Load("api")
+	// RemoteUnreachableSince set.
+	cb, err = rt.Store.Load("api")
 	if err != nil {
 		t.Fatalf("step 3: load client binding: %v", err)
 	}
