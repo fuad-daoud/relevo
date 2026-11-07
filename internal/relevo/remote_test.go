@@ -1615,6 +1615,31 @@ func TestAddRemoteTakenBranchNeverReachesTheServer(t *testing.T) {
 	}
 }
 
+// A name this machine already binds is the caller's input, refused with the ways
+// out before the server hears of it.
+func TestAddRemoteRefusesANameBoundHere(t *testing.T) {
+	st := store.New(t.TempDir())
+	if err := st.Save(store.Binding{Name: "api", CWD: t.TempDir(), State: store.StateActive}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	fr := &fakeRemote{createBindingResp: remote.BindingView{Name: "api"}}
+	rt := Runtime{
+		Store:       st,
+		MasterMinds: addRemoteMasterMind(t),
+		Git:         &fakeGit{headCommitID: "1111111111111111111111111111111111111111", rootCommitSHA: "2222222222222222222222222222222222222222"},
+		Remote:      fr,
+		Now:         time.Now,
+	}
+
+	_, err := Add(context.Background(), rt, AddOptions{Name: "api", Server: "zen", Repo: "/fake/repo"})
+	if !errors.Is(err, refusal.ErrBadInput) || !strings.Contains(err.Error(), "relevo bind --resume --name api") {
+		t.Fatalf("err = %v, want a bad-input refusal naming the ways out", err)
+	}
+	if slices.Contains(fr.calls, "CreateBinding:zen:api") {
+		t.Errorf("calls = %v, want no CreateBinding", fr.calls)
+	}
+}
+
 // TestAddRemoteExistingBranch pins `add --server --branch`: the client adopts
 // a branch it did not create, sends the branch tip as BaseCommit, creates no
 // branch, and a failure after the server agreed never deletes the branch.
