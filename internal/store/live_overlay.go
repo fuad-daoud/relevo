@@ -281,14 +281,35 @@ func (s *Store) mergeLiveInto(b Binding, recordID string) (Binding, error) {
 }
 
 // mergeLiveList merges each row's overlay into the binding decoded from it;
-// bindings and recs are the same slice in the same order.
+// bindings and recs are the same slice in the same order. The overlays arrive
+// in one statement and are matched by record id, so a listing costs one kv
+// read whatever the row count; a row with no overlay keeps its synced values.
 func (s *Store) mergeLiveList(bindings []Binding, recs []db.Record) ([]Binding, error) {
+	d, err := s.dbForRead()
+	if err != nil {
+		return nil, err
+	}
+	if d == nil {
+		return bindings, nil
+	}
+	overlays, err := d.LocalOrSelf().KVScanLive()
+	if err != nil {
+		return nil, fmt.Errorf("read live overlays: %w", err)
+	}
 	for i := range bindings {
-		merged, err := s.mergeLiveInto(bindings[i], recs[i].ID)
-		if err != nil {
-			return nil, err
+		if recs[i].ID == "" {
+			continue
 		}
-		bindings[i] = merged
+		raw, ok := overlays[liveKey(recs[i].ID)]
+		if !ok {
+			continue
+		}
+		var ov liveOverlay
+		if err := json.Unmarshal(raw, &ov); err != nil {
+			slog.Warn("live overlay malformed, reading synced row", "record", recs[i].ID, "err", err)
+			continue
+		}
+		bindings[i] = mergeLive(bindings[i], ov)
 	}
 	return bindings, nil
 }

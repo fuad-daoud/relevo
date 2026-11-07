@@ -33,6 +33,54 @@ func (d *DB) KVGet(key string) ([]byte, bool, error) {
 
 func (t *Tx) KVGet(key string) ([]byte, bool, error) { return kvGet(t.ctx, t.conn, key) }
 
+// KVScanLive returns every live-overlay document in one statement, keyed by
+// its full kv key. A listing merges these by record id instead of reading one
+// key per row, so its kv cost stays constant whatever the row count.
+func (d *DB) KVScanLive() (map[string][]byte, error) {
+	return kvScanLive(context.Background(), d.sqlDB)
+}
+
+func (t *Tx) KVScanLive() (map[string][]byte, error) { return kvScanLive(t.ctx, t.conn) }
+
+// kvScanLiveRow is one kv row the live scan returns.
+type kvScanLiveRow struct {
+	key   string
+	value []byte
+}
+
+func scanKVScanLiveRow(s rowScanner) (kvScanLiveRow, error) {
+	var key, value string
+	if err := s.Scan(&key, &value); err != nil {
+		return kvScanLiveRow{}, err
+	}
+	return kvScanLiveRow{key: key, value: []byte(value)}, nil
+}
+
+// kvScanLive reads the whole live-overlay namespace in a single ranged
+// statement. The bounds are exactly the `live/` prefix: `/` (0x2F) and `0`
+// (0x30) are adjacent bytes, so the interval holds precisely the keys starting
+// with `live/` whatever follows. A ranged read stays one constant-size
+// statement for any row count, where a batched IN list would grow with it. A
+// missing kv table reads as empty, mirroring kvKeys.
+func kvScanLive(ctx context.Context, q queryer) (map[string][]byte, error) {
+	rows, err := q.QueryContext(ctx, `SELECT key, value_json FROM kv WHERE key >= 'live/' AND key < 'live0'`)
+	if isMissingTable(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("db: kv scan live: %w", mapBusy(err))
+	}
+	pairs, err := collectRows(rows, scanKVScanLiveRow)
+	if err != nil {
+		return nil, fmt.Errorf("db: kv scan live: %w", mapBusy(err))
+	}
+	out := make(map[string][]byte, len(pairs))
+	for _, p := range pairs {
+		out[p.key] = p.value
+	}
+	return out, nil
+}
+
 func kvGet(ctx context.Context, q queryer, key string) ([]byte, bool, error) {
 	var value string
 	err := q.QueryRowContext(ctx, `SELECT value_json FROM kv WHERE key = ?`, key).Scan(&value)
