@@ -84,6 +84,67 @@ func TestFactsOfComputesResumeCheck(t *testing.T) {
 	}
 }
 
+// TestFactsOfComputesResumeCheckOnARedGate pins the fact on a pass-while-red
+// halt: the gate the pass stood on, even though the halt stands on no repair
+// arm.
+func TestFactsOfComputesResumeCheckOnARedGate(t *testing.T) {
+	t.Parallel()
+
+	def, err := json.Marshal(workflow.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := workflow.State{
+		Status:   workflow.StatusHalted,
+		At:       "review",
+		Reason:   "review passed while check check is red",
+		Awaiting: workflow.Awaiting{Step: "review", Member: "reviewer", Round: 1},
+		Results: map[string]workflow.Result{
+			"check":  {Status: "red"},
+			"review": {Status: "done", Outcomes: map[string]string{"verdict": "pass"}},
+		},
+	}
+	raw, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := store.New(t.TempDir())
+	row := putChain(t, s, db.ChainRow{Name: "w", Status: string(chain.StatusHalted), Builder: "w", WorkflowJSON: def, StateJSON: raw}, store.Binding{Name: "w"})
+	if got := FactsOf(s, row).ResumeCheck; got != "check" {
+		t.Errorf("ResumeCheck = %q, want check for a pass-while-red halt", got)
+	}
+}
+
+// TestFactsOfLeavesGreenGateWithoutCheck pins the green half of the same
+// rule: a halted pass with no red upstream carries no resume check.
+func TestFactsOfLeavesGreenGateWithoutCheck(t *testing.T) {
+	t.Parallel()
+
+	def, err := json.Marshal(workflow.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := workflow.State{
+		Status:   workflow.StatusHalted,
+		At:       "review",
+		Reason:   "review halted",
+		Awaiting: workflow.Awaiting{Step: "review", Member: "reviewer", Round: 1},
+		Results: map[string]workflow.Result{
+			"check":  {Status: "green"},
+			"review": {Status: "done", Outcomes: map[string]string{"verdict": "pass"}},
+		},
+	}
+	raw, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := store.New(t.TempDir())
+	row := putChain(t, s, db.ChainRow{Name: "w", Status: string(chain.StatusHalted), Builder: "w", WorkflowJSON: def, StateJSON: raw}, store.Binding{Name: "w"})
+	if got := FactsOf(s, row).ResumeCheck; got != "" {
+		t.Errorf("ResumeCheck = %q with a green check, want empty", got)
+	}
+}
+
 // TestFactsOfNamesACustomCheckStep pins the real step name: a repair arm one
 // custom-named check feeds carries that name, never a literal "check".
 func TestFactsOfNamesACustomCheckStep(t *testing.T) {

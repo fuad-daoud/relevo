@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -401,6 +402,296 @@ func TestResumeNoCommitKeepsArmVisits(t *testing.T) {
 	}
 }
 
+// haltAtPassWhileRedReview drives the shipped workflow to the halt the
+// red-gate reroute exists for: a red check buys one repair round, a second
+// red spends the budget and reaches the reviewer, and the reviewer's pass
+// halts on the still-red check.
+func haltAtPassWhileRedReview(t *testing.T, rt Runtime) {
+	t.Helper()
+	startRegateFlowChain(t, rt)
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	chainRedCheck(t, rt, "shop", "FAIL again\n")
+	chainReaderClose(t, rt, reviewerBinding(t, rt), chainVerdictBody("pass"))
+	c := flowChainRow(t, rt)
+	if c.Status != string(workflow.StatusHalted) {
+		t.Fatalf("chain status = %q (%q), want the pass-while-red halt at review", c.Status, c.Reason)
+	}
+	st, err := chain.WorkflowState(c)
+	if err != nil {
+		t.Fatalf("chain.WorkflowState: %v", err)
+	}
+	if st.At != "review" {
+		t.Fatalf("halted at %q, want the review step", st.At)
+	}
+	if !strings.Contains(c.Reason, "review passed while check check is red") {
+		t.Fatalf("halt reason %q does not name the red gate", c.Reason)
+	}
+}
+
+// reviewerBinding names the shipped workflow's reviewer member.
+func reviewerBinding(t *testing.T, rt Runtime) string {
+	t.Helper()
+	var name string
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		c, err := tx.Chain("shop")
+		if err != nil {
+			return err
+		}
+		name, err = chainFlowMemberName(tx, c, "reviewer")
+		return err
+	}); err != nil {
+		t.Fatalf("reviewer member: %v", err)
+	}
+	return name
+}
+
+// haltAtChangesRequestedWithRedCheck drives the shipped workflow to a
+// correction-budget halt with the check still red upstream: like the red-gate
+// walk, but the reviewer asks for changes and the correction budget is spent.
+func haltAtChangesRequestedWithRedCheck(t *testing.T, rt Runtime) {
+	t.Helper()
+	body, err := json.Marshal(workflow.Default())
+	if err != nil {
+		t.Fatalf("encode the shipped workflow: %v", err)
+	}
+	startedChain(t, rt, ChainOptions{
+		Workflow: writeWorkflowFile(t, string(body)),
+		Params:   map[string]string{"regate": "1", "gate": "make check", "scan": "false", "max_corrections": "0"},
+	})
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	chainRedCheck(t, rt, "shop", "FAIL the gate\n")
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	chainRedCheck(t, rt, "shop", "FAIL again\n")
+	chainReaderClose(t, rt, reviewerBinding(t, rt), chainVerdictBody("changes"))
+	c := flowChainRow(t, rt)
+	if c.Status != string(workflow.StatusHalted) {
+		t.Fatalf("chain status = %q (%q), want the correction-budget halt", c.Status, c.Reason)
+	}
+	st, err := chain.WorkflowState(c)
+	if err != nil {
+		t.Fatalf("chain.WorkflowState: %v", err)
+	}
+	if st.At != "correct" {
+		t.Fatalf("halted at %q, want the correction step", st.At)
+	}
+	if got := st.Results["check"].Status; got != "red" {
+		t.Fatalf("check result = %q, want the red still upstream", got)
+	}
+}
+
+// recordHaltOverride plants an override on the halted close, as a pass that
+// answered the gate would carry: the gate is answered, so the halt is not a
+// red-gate halt anymore.
+func recordHaltOverride(t *testing.T, rt Runtime, step, why string) {
+	t.Helper()
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		c, err := tx.Chain("shop")
+		if err != nil {
+			return err
+		}
+		st, err := chain.WorkflowState(c)
+		if err != nil {
+			return err
+		}
+		r := st.Results[step]
+		r.Override = why
+		st.Results[step] = r
+		raw, err := json.Marshal(st)
+		if err != nil {
+			return err
+		}
+		c.StateJSON = raw
+		return tx.ChainPut(c)
+	}); err != nil {
+		t.Fatalf("record override: %v", err)
+	}
+}
+
+// TestResumeRedGateGoesBackToCheck pins the red-gate reroute: a plain resume
+// on a pass-while-red halt re-enters the gating check, starting a new check
+// run and no new builder round, and keeps the spent repair count.
+func TestResumeRedGateGoesBackToCheck(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	haltAtPassWhileRedReview(t, rt)
+	beforeRound := chainBinding(t, rt, "shop").Round
+	before, err := chain.WorkflowState(flowChainRow(t, rt))
+	if err != nil {
+		t.Fatalf("chain.WorkflowState: %v", err)
+	}
+
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+
+	row := flowChainRow(t, rt)
+	if row.Status != string(workflow.StatusRunning) {
+		t.Fatalf("status = %s (%q), want running: the check must rerun, not re-halt", row.Status, row.Reason)
+	}
+	st, err := chain.WorkflowState(row)
+	if err != nil {
+		t.Fatalf("chain.WorkflowState: %v", err)
+	}
+	if st.Awaiting.Step != "check" {
+		t.Fatalf("engine at %q awaiting %+v, want the check step", st.At, st.Awaiting)
+	}
+	if _, check := flowCheckRun(t, rt, "shop"); check.Command != "make check" {
+		t.Errorf("check command = %q, want the stored gate", check.Command)
+	}
+	if got := chainBinding(t, rt, "shop").Round; got != beforeRound {
+		t.Errorf("builder round = %d, want %d: no builder round may be sent", got, beforeRound)
+	}
+	if got, want := st.Visits["repair"], before.Visits["repair"]; got != want {
+		t.Errorf("visits[repair] = %d, want %d: the reroute keeps every count", got, want)
+	}
+}
+
+// TestResumeRedGateGateChangeKeepsToday pins the gate-change guard on the
+// red-gate reroute: replacing the gate while halted on a pass-while-red
+// review re-enters the review with a fresh budget, so the new gate applies to
+// future checks instead of rerunning the check whose red the halt answered.
+func TestResumeRedGateGateChangeKeepsToday(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	haltAtPassWhileRedReview(t, rt)
+	beforeRound := chainBinding(t, rt, "shop").Round
+	before, err := chain.WorkflowState(flowChainRow(t, rt))
+	if err != nil {
+		t.Fatalf("chain.WorkflowState: %v", err)
+	}
+	if before.Visits["repair"] == 0 {
+		t.Fatalf("halt visits[repair] = 0, want the spent budget the guard must drop")
+	}
+
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop", Gate: "make other"}); err != nil {
+		t.Fatalf("ChainResume --gate: %v", err)
+	}
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
+	if err != nil {
+		t.Fatalf("chain.WorkflowState: %v", err)
+	}
+	if st.At != "review" || st.Awaiting.Member != "reviewer" {
+		t.Errorf("engine at %q awaiting %+v, want the halted review step: a gate change keeps today", st.At, st.Awaiting)
+	}
+	if st.Awaiting.Step == "check" {
+		t.Errorf("engine awaiting %+v, want review, not the check: a gate change skips the reroute", st.Awaiting)
+	}
+	if got := st.Visits["repair"]; got != 0 {
+		t.Errorf("visits[repair] = %d, want 0: a gate change keeps the fresh reset, not every count", got)
+	}
+	if got := chainBinding(t, rt, "shop").Round; got != beforeRound {
+		t.Errorf("builder round = %d, want %d: no builder round may be sent", got, beforeRound)
+	}
+}
+
+// TestResumeRedGateExplicitFromWins pins the --from rule on a red-gate halt:
+// a human naming the halted step re-enters it instead of the gate.
+func TestResumeRedGateExplicitFromWins(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	haltAtPassWhileRedReview(t, rt)
+
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop", From: "review"}); err != nil {
+		t.Fatalf("ChainResume --from review: %v", err)
+	}
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
+	if err != nil {
+		t.Fatalf("chain.WorkflowState: %v", err)
+	}
+	if st.At != "review" || st.Awaiting.Member != "reviewer" {
+		t.Errorf("engine at %q awaiting %+v, want the named step review: --from wins", st.At, st.Awaiting)
+	}
+}
+
+// TestResumeRedGateRecordedOverrideResumesAsToday pins the answered gate: a
+// pass whose override answers the red is not a red-gate halt, so a plain
+// resume re-enters the halted step as it always did.
+func TestResumeRedGateRecordedOverrideResumesAsToday(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	haltAtPassWhileRedReview(t, rt)
+	recordHaltOverride(t, rt, "review", "the fixture is at fault")
+
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
+	if err != nil {
+		t.Fatalf("chain.WorkflowState: %v", err)
+	}
+	if st.At != "review" || st.Awaiting.Member != "reviewer" {
+		t.Errorf("engine at %q awaiting %+v, want the halted review step, not the check", st.At, st.Awaiting)
+	}
+}
+
+// TestResumeRedGateRehaltKeepsBudgets pins the re-run: a red check after a
+// red-gate reroute spends the kept budget reaching the reviewer instead of
+// opening a repair round, and the reviewer's pass re-halts on the same
+// budgets.
+func TestResumeRedGateRehaltKeepsBudgets(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	haltAtPassWhileRedReview(t, rt)
+	haltVisits, err := chain.WorkflowState(flowChainRow(t, rt))
+	if err != nil {
+		t.Fatalf("chain.WorkflowState: %v", err)
+	}
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+	round := chainBinding(t, rt, "shop").Round
+	chainRedCheck(t, rt, "shop", "FAIL once more\n")
+	chainReaderClose(t, rt, reviewerBinding(t, rt), chainVerdictBody("pass"))
+
+	c := flowChainRow(t, rt)
+	if c.Status != string(workflow.StatusHalted) {
+		t.Fatalf("status = %s (%q), want the repeat red to re-halt", c.Status, c.Reason)
+	}
+	st, err := chain.WorkflowState(c)
+	if err != nil {
+		t.Fatalf("chain.WorkflowState: %v", err)
+	}
+	if st.At != "review" {
+		t.Errorf("engine at %q, want the review step again", st.At)
+	}
+	if got := chainBinding(t, rt, "shop").Round; got != round {
+		t.Errorf("builder round = %d, want %d: no repair round opened", got, round)
+	}
+	if got, want := st.Visits["repair"], haltVisits.Visits["repair"]+1; got != want {
+		t.Errorf("visits[repair] = %d, want %d: the re-run spends the kept budget", got, want)
+	}
+}
+
+// TestResumeChangesRequestedWithRedCheckKeepsToday pins the halt-kind rule: a
+// correction-budget halt with a red check upstream is not a pass-while-red
+// halt, so a plain resume re-enters the correction step instead of the check.
+func TestResumeChangesRequestedWithRedCheckKeepsToday(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	haltAtChangesRequestedWithRedCheck(t, rt)
+
+	_, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"})
+	if err == nil {
+		t.Fatal("ChainResume = nil, want the still-halted refusal")
+	}
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
+	if err != nil {
+		t.Fatalf("chain.WorkflowState: %v", err)
+	}
+	if st.At != "correct" {
+		t.Errorf("engine at %q, want the correction step: no red-gate reroute", st.At)
+	}
+	if got := flowChainRow(t, rt).Status; got != string(workflow.StatusHalted) {
+		t.Errorf("status = %s, want it left halted on the correction step", got)
+	}
+}
+
 // TestResumeNoCommitRehaltOpensNoNewRound pins the re-run: a red check after
 // a no-commit reroute re-halts on the arm without opening a new repair round.
 func TestResumeNoCommitRehaltOpensNoNewRound(t *testing.T) {
@@ -512,7 +803,7 @@ func TestHaltPayloadOnRepairArmNamesBothFroms(t *testing.T) {
 	if err != nil {
 		t.Fatalf("chain.WorkflowState: %v", err)
 	}
-	got := chainTerminalWFPayload(c, st, repairCheckOfRow(c, st))
+	got := wfPayloadOfRow(t, c, st)
 	for _, want := range []string{
 		"relevo chain --resume --name shop --from check",
 		"--from repair",
@@ -564,7 +855,7 @@ func TestHaltPayloadOffRepairArmKeepsTodayText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("chain.WorkflowState: %v", err)
 	}
-	got := chainTerminalWFPayload(c, st, repairCheckOfRow(c, st))
+	got := wfPayloadOfRow(t, c, st)
 	if !strings.Contains(got, "relevo chain --resume --name shop resumes it") {
 		t.Errorf("payload %q does not carry today's resume", got)
 	}
@@ -599,7 +890,7 @@ steps:
 	if err != nil {
 		t.Fatalf("chain.WorkflowState: %v", err)
 	}
-	got := chainTerminalWFPayload(c, st, repairCheckOfRow(c, st))
+	got := wfPayloadOfRow(t, c, st)
 	if strings.Contains(got, "--from") {
 		t.Errorf("payload %q names --from with two feeding checks", got)
 	}
@@ -634,7 +925,7 @@ steps:
 	if err != nil {
 		t.Fatalf("chain.WorkflowState: %v", err)
 	}
-	got := chainTerminalWFPayload(c, st, repairCheckOfRow(c, st))
+	got := wfPayloadOfRow(t, c, st)
 	for _, want := range []string{
 		"relevo chain --resume --name shop --from verify",
 		"--from fix",
@@ -806,18 +1097,22 @@ steps:
 }
 
 // TestResumeVisitsHelperPinsFreshAndKept pins the visit helper: fresh on every
-// path but a no-commit reroute, which keeps only the arm's count.
+// path but a reroute, which keeps only the arm's count on a no-commit reroute
+// and every count on a red-gate one.
 func TestResumeVisitsHelperPinsFreshAndKept(t *testing.T) {
 	t.Parallel()
 
 	before := workflow.State{At: "repair", Visits: map[string]int{"repair": 1, "check": 3}}
-	if got := chainResumeVisits(before, true); got["repair"] != 1 || len(got) != 1 {
+	if got := chainResumeVisits(before, keepArm); got["repair"] != 1 || len(got) != 1 {
 		t.Errorf("kept visits = %+v, want only repair=1", got)
 	}
-	if got := chainResumeVisits(before, false); len(got) != 0 {
+	if got := chainResumeVisits(before, keepAll); got["repair"] != 1 || got["check"] != 3 || len(got) != 2 {
+		t.Errorf("kept visits = %+v, want repair=1 and check=3", got)
+	}
+	if got := chainResumeVisits(before, keepFresh); len(got) != 0 {
 		t.Errorf("fresh visits = %+v, want empty", got)
 	}
-	if got := chainResumeVisits(workflow.State{At: "repair"}, true); len(got) != 0 {
+	if got := chainResumeVisits(workflow.State{At: "repair"}, keepArm); len(got) != 0 {
 		t.Errorf("kept visits with no map = %+v, want empty", got)
 	}
 }

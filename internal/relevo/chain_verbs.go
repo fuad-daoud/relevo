@@ -38,6 +38,28 @@ var ErrChainRunning = errors.New("the chain is still running")
 // running sibling has.
 var ErrChainDone = errors.New("the chain is done")
 
+// ErrChainStillHalted marks a resume the halt kept: the post-gate halt and the
+// uncommitted-work halts. As a refusal.Sentinel it unwraps to
+// refusal.ErrRefused, so the CLI answers refused, and the served resume maps
+// it by errors.Is rather than message text.
+var ErrChainStillHalted = refusal.Sentinel("chain is still halted")
+
+// stillHalted is a resume the halt kept, worded as the halt's own answer: the
+// message stays the halt's wording so the served wire and the CLI print what
+// the human acts on, while errors.Is still finds ErrChainStillHalted (and
+// through it refusal.ErrRefused) for the 409 arm and the exit-2 mapping.
+type stillHalted struct {
+	msg string
+}
+
+func (e *stillHalted) Error() string { return e.msg }
+
+func (e *stillHalted) Unwrap() []error { return []error{ErrChainStillHalted} }
+
+func stillHaltedf(format string, args ...any) error {
+	return &stillHalted{msg: fmt.Sprintf(format, args...)}
+}
+
 // ChainStop ends a running chain: `relevo stop <n>` where <n> names a chain.
 // The member the chain is waiting on is stopped exactly as `relevo stop` stops
 // any binding, and that member's stopped close raises the chain's `stopped`

@@ -1251,6 +1251,49 @@ func TestWriteChainResumeErrorMapsTheChainDone(t *testing.T) {
 	}
 }
 
+// TestWriteChainResumeErrorMapsTheStillHaltedRefusal pins the still-halted
+// refusal's wire shape: a resume the halt kept is 409 chain_still_halted
+// carrying the halt's reason, so the client rebuilds a refusal instead of the
+// CLI printing internal.
+func TestWriteChainResumeErrorMapsTheStillHaltedRefusal(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeChainResumeError(rec, refusal.Classed(relevo.ErrChainStillHalted, "chain shop is still halted: repair has no budget left"))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusConflict)
+	}
+	var body remote.ErrorBody
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Code != remote.CodeChainStillHalted {
+		t.Errorf("code = %q, want %q", body.Code, remote.CodeChainStillHalted)
+	}
+	if body.Message != "chain shop is still halted: repair has no budget left" {
+		t.Errorf("message = %q, want the halt's own wording", body.Message)
+	}
+}
+
+// TestWriteChainResumeErrorMapsTheDirtyStillHaltedRefusal pins that a resume
+// refused over uncommitted work answers the same 409: the dirty-recovery
+// halts reach a served client through the same arm, not the default 500.
+func TestWriteChainResumeErrorMapsTheDirtyStillHaltedRefusal(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeChainResumeError(rec, refusal.Classed(relevo.ErrChainStillHalted, "chain shop is still halted over uncommitted work: commit or stash first"))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusConflict)
+	}
+	var body remote.ErrorBody
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Code != remote.CodeChainStillHalted {
+		t.Errorf("code = %q, want %q", body.Code, remote.CodeChainStillHalted)
+	}
+	if body.Message != "chain shop is still halted over uncommitted work: commit or stash first" {
+		t.Errorf("message = %q, want the halt's own wording", body.Message)
+	}
+}
+
 func TestWriteChainResumeErrorMapsAnUnknownActor(t *testing.T) {
 	rec := httptest.NewRecorder()
 	err := fmt.Errorf("step build: rule 2: run names unknown actor %q: %w", "builder-qwen", resolve.ErrUnknownRole)

@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/resolve"
@@ -242,12 +243,27 @@ func chainServerResume(ctx context.Context, rt Runtime, c db.ChainRow, opts Resu
 		if remoteCode(err, 409, remote.CodeRoundOpen) {
 			return ChainResult{}, roundOpenFromWire(err)
 		}
+		if remoteCode(err, 409, remote.CodeChainStillHalted) {
+			return ChainResult{}, chainStillHaltedFromWire(err)
+		}
 		if typed := chainServerCreateError(err); errors.Is(typed, resolve.ErrUnknownRole) {
 			return ChainResult{}, fmt.Errorf("server %s: %w", c.Server, typed)
 		}
 		return ChainResult{}, err
 	}
 	return chainResultFromMirror(ctx, rt, c.Name)
+}
+
+// chainStillHaltedFromWire rebuilds the resume path's still-halted refusal from
+// the server's 409 chain_still_halted, so the CLI answers refused with the
+// halt's reason exactly as a local refusal does. Anything unparseable stays
+// the server's error.
+func chainStillHaltedFromWire(err error) error {
+	var httpErr *client.HTTPError
+	if !errors.As(err, &httpErr) {
+		return err
+	}
+	return refusal.Classed(refusal.ErrRefused, httpErr.Body.Message)
 }
 
 // roundOpenFromWire rebuilds the send path's typed round-open refusal from the

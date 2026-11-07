@@ -121,18 +121,20 @@ func chainResumePreflight(ctx context.Context, rt Runtime, c db.ChainRow, opts R
 	// A resume replacing the check on a zero-budget repair-arm halt goes back
 	// to that arm's check, so the check runs again under the new command. A
 	// plain resume on an arm with no commit since the check goes back too,
-	// keeping the arm's spent visits so the re-run cannot buy new rounds. The
-	// refusal lands here, before the delivery below is superseded and before
-	// the lock writes anything.
-	from, noCommit, err := chainResumeReroute(ctx, rt, c, def, before, opts)
+	// keeping the arm's spent visits so the re-run cannot buy new rounds. A
+	// plain resume on a pass-while-red halt goes back to its gate, keeping
+	// every spent visit. The refusal lands here, before the delivery below is
+	// superseded and before the lock writes anything.
+	from, keep, err := chainResumeReroute(ctx, rt, c, def, before, opts)
 	if err != nil {
 		return fail(err)
 	}
 	// A human has looked at the plan: every budget starts fresh, as a resume
 	// resets the correction count on the fixed state machine. A no-commit
-	// reroute keeps the arm's count, so a repeat red re-halts on the same
-	// budget instead of opening a repair round.
-	before.Visits = chainResumeVisits(before, noCommit)
+	// reroute keeps the arm's count, and a red-gate reroute keeps every
+	// count, so a repeat red re-halts on the same budget instead of opening
+	// a repair round.
+	before.Visits = chainResumeVisits(before, keep)
 	return def, before, from, set, merged, repins, nil
 }
 
@@ -163,7 +165,7 @@ func chainResumePostGate(ctx context.Context, rt Runtime, out ChainResult, opts 
 	// as exit 2 with the reason to act on, and an internal as "send this to
 	// bugreport" on a human-readable row.
 	if out.Chain.Status == string(workflow.StatusHalted) {
-		return out, refusal.New("chain %s is still halted: %s", out.Chain.Name, out.Chain.Reason)
+		return out, stillHaltedf("chain %s is still halted: %s", out.Chain.Name, out.Chain.Reason)
 	}
 	// The resume committed and nothing refused it, so the gate change a placed
 	// writer's server is owed can go out now. No later abort of this resume
