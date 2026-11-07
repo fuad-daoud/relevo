@@ -120,19 +120,29 @@ func getRecord(ctx context.Context, q queryer, origin, owner, name string) (Reco
 
 // RecordRevision is what a mirror reads from a record besides its bytes: the
 // record's own JSON and the extents of its log and sealed round files, cheap
-// enough to read every tick.
+// enough to read every tick, plus the admitted-unconfirmed entry count, which
+// no extent moves.
 type RecordRevision struct {
 	JSON        string
 	EventCount  int
 	EventMaxSeq int
 	FileCount   int
 	FileMaxName string
+	// AdmitsOpen is how many mastermind-bound entries a push route admitted
+	// and has not confirmed. Admit and confirm patch the entry JSON in place,
+	// so the extents miss them, and a caller that decides whether an admitted
+	// payload still needs its settle needs the count beside them.
+	// 'to_planner' is store.DirToMasterMind's persisted value and admitted_at
+	// is the key store's admit writes into the entry JSON: both copies must
+	// agree, and the count lives only in the JSON, as the admit does.
+	AdmitsOpen int
 }
 
-// RecordRevision reads owner's live row for name and the extents of its events
-// and sealed round files in one query. ok false when no such record exists.
-// The extents are counts, not content: a growing log and a sealing round both
-// move them, and nothing else does.
+// RecordRevision reads owner's live row for name, the extents of its events
+// and sealed round files, and its admitted-unconfirmed entry count, in one
+// query. ok false when no such record exists. The extents are counts, not
+// content: a growing log and a sealing round both move them, and nothing else
+// does.
 func (d *DB) RecordRevision(owner, name string) (RecordRevision, bool, error) {
 	var r RecordRevision
 	err := d.sqlDB.QueryRowContext(context.Background(),
@@ -140,9 +150,12 @@ func (d *DB) RecordRevision(owner, name string) (RecordRevision, bool, error) {
 			(SELECT COUNT(*) FROM binding_event e WHERE e.record_id = r.id),
 			(SELECT COALESCE(MAX(e.seq), 0) FROM binding_event e WHERE e.record_id = r.id),
 			(SELECT COUNT(*) FROM round_file f WHERE f.record_id = r.id),
-			(SELECT COALESCE(MAX(f.name), '') FROM round_file f WHERE f.record_id = r.id)
+			(SELECT COALESCE(MAX(f.name), '') FROM round_file f WHERE f.record_id = r.id),
+			(SELECT COUNT(*) FROM binding_event e WHERE e.record_id = r.id
+				AND e.direction = 'to_planner' AND e.confirmed = 0
+				AND json_extract(e.entry_json, '$.admitted_at') IS NOT NULL)
 		 FROM binding_record r WHERE `+writerScope+` AND r.owner = ? AND r.name = ? AND r.archived_at IS NULL`,
-		d.origin, owner, name).Scan(&r.JSON, &r.EventCount, &r.EventMaxSeq, &r.FileCount, &r.FileMaxName)
+		d.origin, owner, name).Scan(&r.JSON, &r.EventCount, &r.EventMaxSeq, &r.FileCount, &r.FileMaxName, &r.AdmitsOpen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RecordRevision{}, false, nil
 	}
@@ -150,119 +163,6 @@ func (d *DB) RecordRevision(owner, name string) (RecordRevision, bool, error) {
 		return RecordRevision{}, false, fmt.Errorf("db: record revision %s/%q: %w", owner, name, mapBusy(err))
 	}
 	return r, true, nil
-}
-
-// RecordList returns one row per live record of owner's, name-ordered.
-func (d *DB) RecordList(owner string) ([]Record, error) {
-	rows, err := d.sqlDB.QueryContext(context.Background(),
-		`SELECT `+recordCols+` FROM binding_record WHERE `+writerScope+` AND owner = ? AND archived_at IS NULL ORDER BY name ASC`,
-		d.origin, owner)
-	if err != nil {
-		return nil, fmt.Errorf("db: record list: %w", mapBusy(err))
-	}
-	out, err := collectRows(rows, scanRecord)
-	if err != nil {
-		return nil, fmt.Errorf("db: record list: %w", mapBusy(err))
-	}
-	return out, nil
-}
-
-// RecordListForMasterMind is RecordList narrowed, in the query, to the records
-// whose binding names mastermindID, so a caller polling for its own bindings
-// does not read every record. '$.planner_id' is the JSON key store.Binding
-// writes MasterMindID under.
-func (d *DB) RecordListForMasterMind(owner, mastermindID string) ([]Record, error) {
-	rows, err := d.sqlDB.QueryContext(context.Background(),
-		`SELECT `+recordCols+` FROM binding_record WHERE `+writerScope+` AND owner = ? AND archived_at IS NULL
-			AND json_extract(record_json, '$.planner_id') = ? ORDER BY name ASC`,
-		d.origin, owner, mastermindID)
-	if err != nil {
-		return nil, fmt.Errorf("db: record list for mastermind: %w", mapBusy(err))
-	}
-	out, err := collectRows(rows, scanRecord)
-	if err != nil {
-		return nil, fmt.Errorf("db: record list for mastermind: %w", mapBusy(err))
-	}
-	return out, nil
-}
-
-// RecordListArchived returns every archived row, oldest archived_at first and by
-// name within one stamp, so archive readers see what RecordGet and RecordList
-// hide.
-func (d *DB) RecordListArchived(owner string) ([]Record, error) {
-	rows, err := d.sqlDB.QueryContext(context.Background(),
-		`SELECT `+recordCols+` FROM binding_record WHERE `+writerScope+` AND owner = ? AND archived_at IS NOT NULL
-			ORDER BY archived_at ASC, name ASC`, d.origin, owner)
-	if err != nil {
-		return nil, fmt.Errorf("db: record list archived: %w", mapBusy(err))
-	}
-	out, err := collectRows(rows, scanRecord)
-	if err != nil {
-		return nil, fmt.Errorf("db: record list archived: %w", mapBusy(err))
-	}
-	return out, nil
-}
-
-// ArchivedRef is one archived row's identity for the mirror's cursor: the row
-// without its JSON, so a tick that only looks for new archives reads no
-// binding documents.
-type ArchivedRef struct {
-	ID         string
-	Name       string
-	ArchivedAt time.Time
-}
-
-// RecordListArchivedSince returns the identity of every archived row stamped
-// at or after since, oldest first and by name within one stamp. The stamp
-// comparison is on the stored text, which orders chronologically. A since
-// equal to a row's stamp still lists the row: rows sharing a stamp are told
-// apart by the caller's seen set, not by the query.
-func (d *DB) RecordListArchivedSince(owner string, since time.Time) ([]ArchivedRef, error) {
-	rows, err := d.sqlDB.QueryContext(context.Background(),
-		`SELECT id, name, archived_at FROM binding_record WHERE `+writerScope+` AND owner = ? AND archived_at IS NOT NULL AND archived_at >= ?
-			ORDER BY archived_at ASC, name ASC`, d.origin, owner, formatTime(since))
-	if err != nil {
-		return nil, fmt.Errorf("db: record list archived since: %w", mapBusy(err))
-	}
-	out, err := collectRows(rows, scanArchivedRef)
-	if err != nil {
-		return nil, fmt.Errorf("db: record list archived since: %w", mapBusy(err))
-	}
-	return out, nil
-}
-
-func scanArchivedRef(s rowScanner) (ArchivedRef, error) {
-	var r ArchivedRef
-	var at string
-	if err := s.Scan(&r.ID, &r.Name, &at); err != nil {
-		return ArchivedRef{}, err
-	}
-	t, err := parseTime(at)
-	if err != nil {
-		return ArchivedRef{}, fmt.Errorf("parse archived_at: %w", err)
-	}
-	r.ArchivedAt = t
-	return r, nil
-}
-
-// RecordListUnlinked returns every remote binding row that carries no link at
-// all -- both link columns NULL. Name-ordered.
-//
-// It is a read and never a repair: a row stays unlinked until it is bound again
-// on purpose. The link columns are read as NULL rather than compared to a
-// sentinel, so a half-written link is still listed rather than treated as bound.
-func (d *DB) RecordListUnlinked() ([]Record, error) {
-	rows, err := d.sqlDB.QueryContext(context.Background(),
-		`SELECT `+recordCols+` FROM binding_record WHERE link_origin IS NULL AND link_id IS NULL
-			ORDER BY name ASC`)
-	if err != nil {
-		return nil, fmt.Errorf("db: record list unlinked: %w", mapBusy(err))
-	}
-	out, err := collectRows(rows, scanRecord)
-	if err != nil {
-		return nil, fmt.Errorf("db: record list unlinked: %w", err)
-	}
-	return out, nil
 }
 
 // RecordGetByID returns the row with this id, live or archived, so an archive

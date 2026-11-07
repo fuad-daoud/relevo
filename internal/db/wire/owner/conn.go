@@ -321,6 +321,7 @@ func (c *conn) run(ctx context.Context, r *request, kind byte, query string, raw
 		c.sendError(r.id, err)
 		return
 	}
+	c.s.noteQuery(kind, c.adHoc, c.local, query)
 	if kind == wire.KindExec {
 		c.exec(ctx, r, pinned, query, args)
 		return

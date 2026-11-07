@@ -602,3 +602,44 @@ func TestServedCheckRunInTheBindingsWorktree(t *testing.T) {
 		t.Errorf("Result = %q a second in, want none", got.Result)
 	}
 }
+
+// TestTickServedChecksLoadsOnlyCheckBindings pins the sweep's narrowed read:
+// with several bindings and one running check, the tick loads only the
+// binding carrying the check, and still advances it to its result. Restoring
+// the full list loads every binding and turns this test red.
+func TestTickServedChecksLoadsOnlyCheckBindings(t *testing.T) {
+	t.Parallel()
+
+	rt, _, fr := servedCheckEnv(t)
+	for _, name := range []string{"plana", "planb"} {
+		plain := store.Binding{
+			Name: name, CWD: "/repo/" + name, Round: 1, State: store.StateActive, RoundCap: 20,
+			MasterMind: store.Endpoint{Kind: "claude"},
+			Builder:    store.Endpoint{Kind: "agy", Mode: store.ModeHeadless},
+		}
+		if err := rt.Store.Save(plain); err != nil {
+			t.Fatalf("save %s: %v", name, err)
+		}
+	}
+	startCheck(t, rt, remote.CreateCheckRequest{ID: "c1", Command: "make check"})
+
+	pid := fr.handles[len(fr.handles)-1].PID
+	fr.script(pid, false)
+	fr.exit(pid, 0)
+
+	loads := map[string]int{}
+	rt.Store.SetLoadHook(func(name string) { loads[name]++ })
+	tickServedChecks(context.Background(), rt)
+	rt.Store.SetLoadHook(nil)
+	if len(loads) != 1 || loads["webshop"] != 1 {
+		t.Fatalf("sweep loads = %v, want only the binding running a check, once", loads)
+	}
+
+	got, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load webshop: %v", err)
+	}
+	if got.CheckRun == nil || got.CheckRun.Result != "pass" {
+		t.Fatalf("CheckRun after the sweep = %+v, want the run settled as pass", got.CheckRun)
+	}
+}

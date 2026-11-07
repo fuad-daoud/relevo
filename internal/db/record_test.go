@@ -1,6 +1,7 @@
 package db
 
 import (
+	"strconv"
 	"testing"
 	"time"
 )
@@ -133,6 +134,44 @@ func TestRecordPutScopesByOwner(t *testing.T) {
 	}
 	if none, err := d.RecordList(""); err != nil || len(none) != 0 {
 		t.Fatalf("RecordList(local) = %v (err %v), want none", recordNames(none), err)
+	}
+}
+
+// TestRecordListWithCheckRunListsOnlyCheckCarriers pins the served-check
+// sweep's candidate query against the JSON it filters on: only live rows whose
+// document carries a check run come back, name-ordered, settled or not. Drop
+// the extract predicate and the plain rows return too.
+func TestRecordListWithCheckRunListsOnlyCheckCarriers(t *testing.T) {
+	d := openTestDB(t)
+
+	if _, err := d.RecordPut(testRecord("plain")); err != nil {
+		t.Fatalf("RecordPut(plain): %v", err)
+	}
+	running := testRecord("running")
+	running.JSON = `{"name":"running","check_run":{"id":"c1","command":"make check"}}`
+	if _, err := d.RecordPut(running); err != nil {
+		t.Fatalf("RecordPut(running): %v", err)
+	}
+	settled := testRecord("settled")
+	settled.JSON = `{"name":"settled","check_run":{"id":"c0","command":"make check","result":"pass"}}`
+	if _, err := d.RecordPut(settled); err != nil {
+		t.Fatalf("RecordPut(settled): %v", err)
+	}
+	archived := testRecord("archived")
+	archived.JSON = `{"name":"archived","check_run":{"id":"c9","command":"make check"}}`
+	if _, err := d.RecordPut(archived); err != nil {
+		t.Fatalf("RecordPut(archived): %v", err)
+	}
+	if err := d.RecordArchive("", "archived", time.Now().UTC()); err != nil {
+		t.Fatalf("RecordArchive: %v", err)
+	}
+
+	got, err := d.RecordListWithCheckRun("")
+	if err != nil {
+		t.Fatalf("RecordListWithCheckRun: %v", err)
+	}
+	if len(got) != 2 || got[0].Name != "running" || got[1].Name != "settled" {
+		t.Fatalf("RecordListWithCheckRun = %v, want [running settled]", recordNames(got))
 	}
 }
 
@@ -305,5 +344,43 @@ func TestEventConfirmPatchesJSON(t *testing.T) {
 	}
 	if all[0].Route != "" {
 		t.Errorf("route = %q, want empty", all[0].Route)
+	}
+}
+
+// TestRecordRevisionCountsOpenAdmits pins the admitted-unconfirmed extent: the
+// admit lives only in the entry JSON, the confirm sets a column, and only a
+// mastermind-bound entry's open admit counts.
+func TestRecordRevisionCountsOpenAdmits(t *testing.T) {
+	d := openTestDB(t)
+
+	id, err := d.RecordPut(testRecord("alpha"))
+	if err != nil {
+		t.Fatalf("RecordPut: %v", err)
+	}
+	add := func(seq int, direction string, confirmed, admitted bool) {
+		ev := testEvent(seq)
+		ev.Direction = direction
+		ev.Confirmed = confirmed
+		if admitted {
+			ev.JSON = `{"seq":` + strconv.Itoa(seq) + `,"admitted_at":"2026-09-10T10:00:00Z"}`
+		}
+		if err := d.EventAppend(id, ev); err != nil {
+			t.Fatalf("EventAppend(%d): %v", seq, err)
+		}
+	}
+	add(1, "to_planner", false, true)  // the open admit: the one count
+	add(2, "to_planner", false, false) // pending but never pushed: no admit
+	add(3, "to_planner", true, true)   // admitted and confirmed: settled
+	add(4, "to_runner", false, true)   // the stamp on a builder-bound entry is not the mastermind's queue
+
+	rev, ok, err := d.RecordRevision("", "alpha")
+	if err != nil || !ok {
+		t.Fatalf("RecordRevision = (ok %v, err %v), want the row", ok, err)
+	}
+	if rev.AdmitsOpen != 1 {
+		t.Errorf("AdmitsOpen = %d, want 1: the count is direction, confirm flag and JSON stamp together", rev.AdmitsOpen)
+	}
+	if rev.EventCount != 4 || rev.EventMaxSeq != 4 {
+		t.Errorf("extents = %d/%d, want the log extents the admits ride in", rev.EventCount, rev.EventMaxSeq)
 	}
 }

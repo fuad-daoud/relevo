@@ -113,7 +113,7 @@ func Sealable(b Binding, round int, streamDrained bool) bool {
 		return false
 	}
 	for _, c := range b.Consults {
-		if c.Round == round && consultActive(c) {
+		if c.Round == round && ConsultActive(c) {
 			return false
 		}
 	}
@@ -219,9 +219,10 @@ func trailerLinesOnly(s string) bool {
 	return true
 }
 
-// consultActive reports whether a consult can still need its round's files:
-// done and silent are terminal, spawning and running are not.
-func consultActive(c Consult) bool {
+// ConsultActive reports whether a consult can still need its round's files:
+// done and silent are terminal, spawning and running are not. The same
+// boundary tells the daemon's tick whether the consult still needs a pass.
+func ConsultActive(c Consult) bool {
 	switch c.State {
 	case ConsultDone, ConsultSilent:
 		return false
