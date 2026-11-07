@@ -71,6 +71,12 @@ func TestPrepareProcRefusesLowDisk(t *testing.T) {
 // reads plenty while a real directory outside it reads low, which is how the
 // tests pin the preflight following the link onto the serve filesystem.
 func resolvingDisk(plentyRoot string) func(string) (uint64, error) {
+	// The root resolves too: on macOS the temp dir itself sits behind
+	// /var -> /private/var, so a resolved path never shares an unresolved
+	// root's prefix.
+	if resolved, err := filepath.EvalSymlinks(plentyRoot); err == nil {
+		plentyRoot = resolved
+	}
 	return func(p string) (uint64, error) {
 		real := p
 		if resolved, err := filepath.EvalSymlinks(p); err == nil {
@@ -108,7 +114,11 @@ func TestPrepareProcStartsThroughTmpLink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepareProc through the link: %v", err)
 	}
-	if got, err := filepath.EvalSymlinks(dir); err != nil || !strings.HasPrefix(got, serveRoot) {
+	resolvedRoot, err := filepath.EvalSymlinks(serveRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := filepath.EvalSymlinks(dir); err != nil || !strings.HasPrefix(got, resolvedRoot) {
 		t.Errorf("tmpDir = %q resolves to %q (%v), want it under the serve root", dir, got, err)
 	}
 }

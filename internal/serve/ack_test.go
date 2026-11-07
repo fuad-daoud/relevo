@@ -153,7 +153,13 @@ func TestServedRoundStartsWhileTmpReadsFull(t *testing.T) {
 			return 1 << 30, nil
 		}
 	})
-	serveRoot = env.srv.cfg.Root
+	// Resolved like the measured paths: on macOS the temp dir sits behind
+	// /var -> /private/var.
+	resolvedRoot, err := filepath.EvalSymlinks(env.srv.cfg.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serveRoot = resolvedRoot
 
 	resp, body := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan 1")
 	requireCreated(t, resp, body, "api")
