@@ -17,6 +17,30 @@ import (
 const notFoundBody = `<?xml version="1.0" encoding="UTF-8"?>
 <Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>`
 
+// A 401 or 403 is the bucket turning the credentials down; anything else isn't,
+// so a caller never tells a person to check a key the bucket didn't refuse.
+func TestS3RefusedCredentialsAreNamed(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		want   bool
+	}{
+		{http.StatusUnauthorized, true},
+		{http.StatusForbidden, true},
+		{http.StatusNotFound, false},
+		{http.StatusInternalServerError, false},
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(tc.status)
+		}))
+		store := NewS3Store(S3Config{Endpoint: srv.URL, Bucket: "bodies", KeyID: "k", Secret: "s"})
+		_, err := store.List(context.Background(), "")
+		srv.Close()
+		if got := errors.Is(err, ErrCredentialsRefused); got != tc.want {
+			t.Errorf("status %d: refused = %v, want %v (err %v)", tc.status, got, tc.want, err)
+		}
+	}
+}
+
 // TestS3NotFoundIsErrNotFound pins that a 404 is reported as ErrNotFound from
 // every operation that can see one. A missing body is the one failure the
 // importer latches on rather than retries, so a client that returned a generic

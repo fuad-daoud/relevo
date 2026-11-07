@@ -107,6 +107,26 @@ type remoteAddInput struct {
 	existingBranch bool
 }
 
+// localBranchFree runs before the server hears of the name, so a clash leaves no
+// archived row there. CreateBranch still refuses a branch cut in between.
+func localBranchFree(ctx context.Context, rt Runtime, repo, branch string) error {
+	taken, err := rt.Git.BranchExists(ctx, repo, branch)
+	if err != nil {
+		return fmt.Errorf("branch %s: %w", branch, err)
+	}
+	if taken {
+		return localBranchTaken(branch)
+	}
+	return nil
+}
+
+// localBranchTaken refuses a name whose branch this repository already holds. It
+// says which copy blocks, because a served binding's branch also lives in the
+// server's repository and the client's copy survives an unbind.
+func localBranchTaken(branch string) error {
+	return refusal.Classed(git.ErrBranchExists, fmt.Sprintf("branch %s exists in this repository on this machine; delete it or pick another name", branch))
+}
+
 // remoteAddBase is the base identity a remote add was resolved to: the repo,
 // the author the remote builder commits as, and the candidate token.
 type remoteAddBase struct {
@@ -167,7 +187,7 @@ func validateRemoteAddInput(ctx context.Context, rt Runtime, opts *AddOptions, r
 		}
 	}
 	if _, err := rt.Store.Load(opts.Name); err == nil {
-		return remoteAddInput{}, fmt.Errorf("binding %q already exists locally", opts.Name)
+		return remoteAddInput{}, refusal.BadInputf("binding %q already exists: `relevo unbind %s` to start fresh, or `relevo bind --resume --name %s` to adopt it", opts.Name, opts.Name, opts.Name)
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return remoteAddInput{}, err
 	}
@@ -193,6 +213,9 @@ func validateRemoteAddInput(ctx context.Context, rt Runtime, opts *AddOptions, r
 		input.existingBranch = true
 		input.base = tip
 	} else {
+		if err := localBranchFree(ctx, rt, opts.Repo, input.branch); err != nil {
+			return remoteAddInput{}, err
+		}
 		if input.base == "" {
 			var err error
 			input.base, err = rt.Git.HeadCommit(ctx, opts.Repo)
@@ -364,7 +387,7 @@ func createAndMirrorBinding(ctx context.Context, rt Runtime, opts AddOptions, in
 	if !input.existingBranch {
 		if err := rt.Git.CreateBranch(ctx, opts.Repo, input.branch, input.base); err != nil {
 			if errors.Is(err, git.ErrBranchExists) {
-				return AddResult{}, fmt.Errorf("branch relevo/%s exists; delete it or pick another name", opts.Name)
+				return AddResult{}, localBranchTaken(input.branch)
 			}
 			return AddResult{}, err
 		}

@@ -8,6 +8,7 @@ package verb
 import (
 	"errors"
 
+	"github.com/fuad-daoud/relevo/internal/blobstore"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
@@ -50,6 +51,8 @@ func Classify(err error) string {
 		return wire.SyncCodeEpochRace
 	case errors.Is(err, relevosync.ErrAuthRefused):
 		return wire.SyncCodeAuthRefused
+	case errors.Is(err, blobstore.ErrCredentialsRefused):
+		return wire.SyncCodeBucketRefused
 	case errors.Is(err, relevosync.ErrQuotaReached):
 		return wire.SyncCodeRemoteRefused
 	case errors.Is(err, relevosync.ErrRemoteSchema):

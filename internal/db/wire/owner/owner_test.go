@@ -148,7 +148,7 @@ const readAllowance = 15 * time.Second
 // readDone reads one frame and requires it to be a done answer.
 func readDone(t *testing.T, w *wire.Conn, nc net.Conn) {
 	t.Helper()
-	readDoneWithin(t, w, nc, 2*time.Second)
+	readDoneWithin(t, w, nc, readAllowance)
 }
 
 // readDoneWithin reads one frame inside d and requires it to be a done answer.

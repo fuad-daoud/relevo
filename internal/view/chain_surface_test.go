@@ -136,3 +136,22 @@ func TestStatuslineChainRowShowsThePlanSegment(t *testing.T) {
 		t.Errorf("a done chain row must not carry the round-and-actor middle: %q", plainDone)
 	}
 }
+
+// A reason's lines stay lines under the first, each sanitized, so two sentences
+// don't run together and a log line can't carry a control sequence.
+func TestRenderChainReasonKeepsItsLines(t *testing.T) {
+	t.Parallel()
+
+	chain := BindingStatus{
+		Name:   "shop",
+		State:  string(store.StateNeedsYou),
+		Detail: "check timed out 2 times in a row\nThe last check \x1b[31mtimed out\x1b[0m after 7s\n",
+		Chain:  &ChainFacts{Status: "halted", Plan: 1, Plans: 1},
+	}
+
+	out := RenderStatus(Report{Bindings: []BindingStatus{chain}})
+	want := "  reason   check timed out 2 times in a row\n           The last check [31mtimed out[0m after 7s\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("reason lines missing from:\n%q\nwant %q", out, want)
+	}
+}
