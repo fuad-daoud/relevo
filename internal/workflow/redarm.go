@@ -24,6 +24,62 @@ func RedArmChecks(def Definition, id string) []string {
 	return out
 }
 
+// GatingRedCheck names the check gating a pass at the halted state's
+// standing, or "" when no single red check gates it. It reuses gatingRedCheck
+// on the state the workflow already holds: the halt kept At at the passed
+// step with the check's red still in Results and no override recorded, since
+// an overridden close never halts. The halted close itself must have taken a
+// pass edge, read from the standing step's recorded close: any other halt on
+// the same standing keeps today's routing.
+func GatingRedCheck(def Definition, st State) string {
+	if st.Status != StatusHalted {
+		return ""
+	}
+	at := st.At
+	if at == "" {
+		return ""
+	}
+	if !haltClosedOnPass(def, st, at) {
+		return ""
+	}
+	gate, ok := gatingRedCheck(def, st, at)
+	if !ok {
+		return ""
+	}
+	if _, ok := gatingRedCheck(def, withoutRed(st, gate), at); ok {
+		return ""
+	}
+	return gate
+}
+
+// haltClosedOnPass reports whether the halted close took a pass edge: the
+// standing step's recorded close matched a pass arm. A halt whose close took
+// any other edge, or recorded none, is not a pass-while-red halt.
+func haltClosedOnPass(def Definition, st State, at string) bool {
+	last, ok := st.Results[at]
+	if !ok {
+		return false
+	}
+	edge, _, matched := matchRun(def.Steps[at].On, last)
+	return matched && passEdge(edge)
+}
+
+// withoutRed answers one gate in a copy of the state, so a second call to
+// gatingRedCheck reports whether another check still gates: only an
+// unambiguous gate reroutes.
+func withoutRed(st State, gate string) State {
+	out := st
+	out.Results = make(map[string]Result, len(st.Results))
+	for id, r := range st.Results {
+		out.Results[id] = r
+	}
+	if r, ok := out.Results[gate]; ok {
+		r.Status = "green"
+		out.Results[gate] = r
+	}
+	return out
+}
+
 func redEdgeNames(step Step, id string) bool {
 	if step.Check == "" {
 		return false

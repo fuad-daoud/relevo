@@ -53,7 +53,7 @@ func TestTerminalPayloadClosesTheReasonOnce(t *testing.T) {
 		"changes": " Reason: changes. relevo chain",
 	} {
 		st := workflow.State{Status: workflow.StatusHalted, Reason: reason}
-		got := chainTerminalWFPayload(c, st, repairCheckOfRow(c, st))
+		got := wfPayloadOfRow(t, c, st)
 		if !strings.Contains(got, want) {
 			t.Errorf("payload = %q, want it to contain %q", got, want)
 		}
