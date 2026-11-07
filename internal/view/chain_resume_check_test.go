@@ -84,6 +84,47 @@ func TestFactsOfComputesResumeCheck(t *testing.T) {
 	}
 }
 
+// TestFactsOfNamesACustomCheckStep pins the real step name: a repair arm one
+// custom-named check feeds carries that name, never a literal "check".
+func TestFactsOfNamesACustomCheckStep(t *testing.T) {
+	t.Parallel()
+
+	const body = `name: onegate
+inputs: { plans: optional }
+params: { gate: make check, budget: 0 }
+start: build
+steps:
+  build: { run: builder, seed: "build it", on: { done: verify } }
+  verify: { check: "{{params.gate}}", on: { green: done, red: fix } }
+  fix: { run: builder, seed: "fix it",
+         budget: { max: "{{params.budget}}", per: build, then: verify },
+         on: { done: verify } }
+`
+	def, err := workflow.Parse([]byte(body))
+	if err != nil {
+		t.Fatalf("parse workflow: %v", err)
+	}
+	rawDef, err := json.Marshal(def)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := workflow.State{
+		Status:   workflow.StatusHalted,
+		At:       "fix",
+		Awaiting: workflow.Awaiting{Step: "fix", Member: "builder", Round: 1},
+		Iter:     map[string]workflow.Iter{"plans": {Index: 0, Items: []string{"a"}}},
+	}
+	raw, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := store.New(t.TempDir())
+	row := putChain(t, s, db.ChainRow{Name: "w", Status: string(chain.StatusHalted), Builder: "w", WorkflowJSON: rawDef, StateJSON: raw}, store.Binding{Name: "w"})
+	if got := FactsOf(s, row); got.ResumeCheck != "verify" {
+		t.Errorf("ResumeCheck = %q, want verify for a custom-named feeding check", got.ResumeCheck)
+	}
+}
+
 // TestFactsOfLeavesAmbiguousArmWithoutCheck pins the multi-check fallback: an
 // arm two checks reach carries no resume check.
 func TestFactsOfLeavesAmbiguousArmWithoutCheck(t *testing.T) {

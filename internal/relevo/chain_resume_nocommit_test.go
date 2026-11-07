@@ -512,7 +512,7 @@ func TestHaltPayloadOnRepairArmNamesBothFroms(t *testing.T) {
 	if err != nil {
 		t.Fatalf("chain.WorkflowState: %v", err)
 	}
-	got := chainTerminalWFPayload(c, st)
+	got := chainTerminalWFPayload(c, st, repairCheckOfRow(c, st))
 	for _, want := range []string{
 		"relevo chain --resume --name shop --from check",
 		"--from repair",
@@ -520,6 +520,32 @@ func TestHaltPayloadOnRepairArmNamesBothFroms(t *testing.T) {
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("payload %q does not carry %q", got, want)
+		}
+	}
+}
+
+// TestEndDeliveryOnRepairArmNamesBothFroms pins the caller wire: the queued
+// end delivery of a real repair-arm halt names the check's --from and the
+// arm's, so the text the direct payload tests pin is what the halt queues.
+func TestEndDeliveryOnRepairArmNamesBothFroms(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	haltAtZeroBudgetRepair(t, rt)
+	entry, found, err := rt.Store.PendingForMasterMind("shop")
+	if err != nil {
+		t.Fatalf("PendingForMasterMind(shop): %v", err)
+	}
+	if !found || entry.Kind != store.KindChain {
+		t.Fatalf("pending on the builder = %+v (found %v), want the halt's KindChain end delivery", entry, found)
+	}
+	for _, want := range []string{
+		"relevo chain --resume --name shop --from check",
+		"--from repair",
+		"`relevo done shop` closes it",
+	} {
+		if !strings.Contains(entry.Payload, want) {
+			t.Errorf("end delivery payload %q does not carry %q", entry.Payload, want)
 		}
 	}
 }
@@ -538,7 +564,7 @@ func TestHaltPayloadOffRepairArmKeepsTodayText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("chain.WorkflowState: %v", err)
 	}
-	got := chainTerminalWFPayload(c, st)
+	got := chainTerminalWFPayload(c, st, repairCheckOfRow(c, st))
 	if !strings.Contains(got, "relevo chain --resume --name shop resumes it") {
 		t.Errorf("payload %q does not carry today's resume", got)
 	}
@@ -573,9 +599,53 @@ steps:
 	if err != nil {
 		t.Fatalf("chain.WorkflowState: %v", err)
 	}
-	got := chainTerminalWFPayload(c, st)
+	got := chainTerminalWFPayload(c, st, repairCheckOfRow(c, st))
 	if strings.Contains(got, "--from") {
 		t.Errorf("payload %q names --from with two feeding checks", got)
+	}
+}
+
+// TestHaltPayloadNamesACustomCheckStep pins the real step names: a repair arm
+// one custom-named check feeds names that check's --from and the arm's, never
+// a literal "check".
+func TestHaltPayloadNamesACustomCheckStep(t *testing.T) {
+	t.Parallel()
+
+	const body = `name: onegate
+inputs: { plans: optional }
+params: { gate: make check, budget: 0 }
+start: build
+steps:
+  build: { run: builder, seed: "build it", on: { done: verify } }
+  verify: { check: "{{params.gate}}", on: { green: done, red: fix } }
+  fix: { run: builder, seed: "fix it",
+         budget: { max: "{{params.budget}}", per: build, then: verify },
+         on: { done: verify } }
+`
+	rt, _ := chainRuntime(t)
+	startFlowChain(t, rt, body)
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	chainRedCheck(t, rt, "shop", "FAIL\n")
+	c := flowChainRow(t, rt)
+	if c.Status != string(workflow.StatusHalted) {
+		t.Fatalf("status = %s (%q), want the zero-budget halt", c.Status, c.Reason)
+	}
+	st, err := chain.WorkflowState(c)
+	if err != nil {
+		t.Fatalf("chain.WorkflowState: %v", err)
+	}
+	got := chainTerminalWFPayload(c, st, repairCheckOfRow(c, st))
+	for _, want := range []string{
+		"relevo chain --resume --name shop --from verify",
+		"--from fix",
+		"`relevo done shop` closes it",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("payload %q does not carry %q", got, want)
+		}
+	}
+	if strings.Contains(got, "--from check") {
+		t.Errorf("payload %q names a literal check step", got)
 	}
 }
 

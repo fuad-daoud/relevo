@@ -41,10 +41,11 @@ func chainTerminalWF(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRo
 	if chainServedCarrier(carrier) {
 		return nil
 	}
+	check := terminalRepairCheck(def, next.At)
 	entry := store.LogEntry{
 		TS: rt.Now().UTC(), Round: chainTerminalRound(tx, carrier),
 		Direction: store.DirToMasterMind, Kind: store.KindChain,
-		Payload: chainTerminalWFPayload(c, next),
+		Payload: chainTerminalWFPayload(c, next, check),
 	}
 	return delivery.Queue(ctx, deliveryDeps(rt), tx, carrier.Name, entry)
 }
@@ -97,7 +98,7 @@ func chainTerminalCarrier(tx *store.Tx, c db.ChainRow) (store.Binding, bool, err
 // has abandoned the work needs the half that is not a resume at all. A halt on
 // a repair arm with one feeding check names both resumes: --from the check
 // re-runs it, and --from the arm sends the repair round again.
-func chainTerminalWFPayload(c db.ChainRow, s workflow.State) string {
+func chainTerminalWFPayload(c db.ChainRow, s workflow.State, check string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "chain %s %s: status %s, at %s, plans %d/%d, findings %d.",
 		c.Name, chainTerminalVerb(chain.Status(s.Status)), string(s.Status), flowTerminalStep(s), flowPlanPos(s), flowPlanTotal(s), view.FlowFindings(s))
@@ -105,8 +106,8 @@ func chainTerminalWFPayload(c db.ChainRow, s workflow.State) string {
 		fmt.Fprintf(&b, " Reason: %s", reasonSentence(s.Reason))
 	}
 	if s.Status == workflow.StatusHalted {
-		if check, arm := terminalRepairFrom(c, s); check != "" {
-			fmt.Fprintf(&b, " relevo chain --resume --name %s --from %s re-runs the check, or --from %s sends the repair round again; `relevo done %s` closes it instead.", c.Name, check, arm, c.Name)
+		if check != "" {
+			fmt.Fprintf(&b, " relevo chain --resume --name %s --from %s re-runs the check, or --from %s sends the repair round again; `relevo done %s` closes it instead.", c.Name, check, s.At, c.Name)
 		} else {
 			fmt.Fprintf(&b, " relevo chain --resume --name %s resumes it once the cause is fixed; `relevo done %s` closes it instead.", c.Name, c.Name)
 		}
@@ -115,17 +116,14 @@ func chainTerminalWFPayload(c db.ChainRow, s workflow.State) string {
 	return b.String()
 }
 
-// terminalRepairFrom names the --from pair a halted repair arm offers: the
-// single feeding check and the arm itself. Any other halt keeps today's text.
-func terminalRepairFrom(c db.ChainRow, s workflow.State) (string, string) {
-	def, err := chain.WorkflowDef(c)
-	if err != nil {
-		return "", ""
+// terminalRepairCheck names the check a halted repair arm's --from re-runs:
+// the single check whose red edge reaches at. Any other standing yields "",
+// which keeps today's text.
+func terminalRepairCheck(def workflow.Definition, at string) string {
+	if checks := workflow.RedArmChecks(def, at); len(checks) == 1 {
+		return checks[0]
 	}
-	if checks := workflow.RedArmChecks(def, s.At); len(checks) == 1 {
-		return checks[0], s.At
-	}
-	return "", ""
+	return ""
 }
 
 // flowTerminalStep is the step a terminal state names: the step it halted
