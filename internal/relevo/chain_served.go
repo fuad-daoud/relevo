@@ -74,11 +74,13 @@ type ServedChainRequest struct {
 }
 
 // servedPick is one member's resolved launch: the server registry's candidate
-// token, its harness kind, and the resolved tier.
+// token, its harness kind, and the resolved tier. pinned marks a token the
+// owner named, so no round's send re-picks it at a window edge.
 type servedPick struct {
-	token string
-	kind  string
-	tier  string
+	token  string
+	kind   string
+	tier   string
+	pinned bool
 }
 
 // servedFacts is what every served member's binding mirrors: the builder's
@@ -317,6 +319,7 @@ func servedChainMember(m chainMember, pick servedPick, f servedFacts) store.Bind
 		Base:             f.base,
 		Builder:          store.Endpoint{Kind: pick.kind, Mode: store.ModeHeadless, AgentName: m.name},
 		BuilderCandidate: pick.token,
+		BuilderPinned:    pick.pinned,
 		Link:             servedMemberLink(linkKey, f.installation, f.clientIDs),
 		Tier:             pick.tier,
 		Role:             resolve.NormRole(m.actor),
@@ -385,7 +388,7 @@ func servedActorPick(rt Runtime, actor, pin string) (servedPick, error) {
 	if err != nil {
 		return servedPick{}, err
 	}
-	return servedPick{token: token, kind: kind, tier: string(tier)}, nil
+	return servedPick{token: token, kind: kind, tier: string(tier), pinned: pin != ""}, nil
 }
 
 // chainSettingsFromWire converts the wire settings to the chain's own type:

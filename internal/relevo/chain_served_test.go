@@ -940,6 +940,103 @@ steps:
 	}
 }
 
+// windowedPinCandidatesJSON is chainPinCandidatesJSON with the first builder
+// limited to a daily window that baseTime (15:33Z) falls inside, so a round
+// sent at baseTime re-picks an unpinned builder onto it.
+const windowedPinCandidatesJSON = `[
+  {"harness":"opencode","provider":"test","model":"m","roles":["builder"],"windows":{"only":[{"from":"14:00Z","to":"00:00Z"}]}},
+  {"harness":"claude","provider":"test","model":"m","roles":["builder","reviewer"]},
+  {"harness":"claude","provider":"test","model":"alt","roles":["reviewer"]}
+]`
+
+// TestServedChainBuilderPinSurvivesAWindowRepick pins a served builder pin
+// through round 1: the first builder's window is open, so an unpinned member
+// moves onto it when its round is sent, but a pinned one keeps the token the
+// owner named, on the settings create and on the workflow create alike.
+func TestServedChainBuilderPinSurvivesAWindowRepick(t *testing.T) {
+	t.Parallel()
+
+	windowed := func(t *testing.T) Runtime {
+		rt := servedPinRuntime(t)
+		rt.Candidates = candidateSet(t, windowedPinCandidatesJSON)
+		rows := chainRows()
+		rows["builder"] = roles.Row{Candidates: []string{"opencode/test/m", "claude/test/m"}}
+		rows["reviewer"] = roles.Row{Candidates: []string{"claude/test/m", "claude/test/alt"}}
+		rt.Registry = rolesFileRegistry(t, rt.Candidates, rt.Policy, rows)
+		return rt
+	}
+	const flow = `name: custom-flow
+inputs:
+  plans: required
+start: b
+steps:
+  b:
+    run: builder
+    on:
+      done: done
+`
+	for _, tc := range []struct {
+		name     string
+		workflow string
+		pins     map[string]string
+		want     string
+		pinned   bool
+	}{
+		{name: "settings pin", pins: map[string]string{"builder": "claude/test/m"}, want: "claude/test/m", pinned: true},
+		{name: "workflow pin", workflow: flow, pins: map[string]string{"builder": "claude/test/m"}, want: "claude/test/m", pinned: true},
+		{name: "no pin follows the window", want: "opencode/test/m"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			rt := windowed(t)
+			req := servedChainRequest("shop")
+			req.Workflow = []byte(tc.workflow)
+			req.Candidates = tc.pins
+			servedChainStart(t, rt, req)
+
+			b := chainBinding(t, rt, "shop")
+			if b.QueuedAt.IsZero() {
+				t.Fatal("round 1 is not queued, so its send never ran")
+			}
+			if b.BuilderCandidate != tc.want {
+				t.Errorf("builder candidate after round 1's send = %q, want %q", b.BuilderCandidate, tc.want)
+			}
+			if b.BuilderPinned != tc.pinned {
+				t.Errorf("BuilderPinned = %v, want %v", b.BuilderPinned, tc.pinned)
+			}
+		})
+	}
+}
+
+// TestServedChainResumeBuilderPinSurvivesAWindowRepick pins a builder re-pin
+// on a served resume: the chain started unpinned on the windowed builder, and
+// the resume's pin is stored as pinned, so the resumed round's send keeps it.
+func TestServedChainResumeBuilderPinSurvivesAWindowRepick(t *testing.T) {
+	t.Parallel()
+
+	rt := servedPinRuntime(t)
+	rt.Candidates = candidateSet(t, windowedPinCandidatesJSON)
+	rows := chainRows()
+	rows["builder"] = roles.Row{Candidates: []string{"opencode/test/m", "claude/test/m"}}
+	rows["reviewer"] = roles.Row{Candidates: []string{"claude/test/m", "claude/test/alt"}}
+	rt.Registry = rolesFileRegistry(t, rt.Candidates, rt.Policy, rows)
+	servedChainStart(t, rt, servedChainRequest("shop"))
+	haltServedChain(t, rt, "shop")
+
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{
+		Name:       "shop",
+		Candidates: map[string]string{"builder": "claude/test/m"},
+	}); err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+
+	b := chainBinding(t, rt, "shop")
+	if b.BuilderCandidate != "claude/test/m" || !b.BuilderPinned {
+		t.Errorf("builder after resume = %q pinned %v, want claude/test/m pinned", b.BuilderCandidate, b.BuilderPinned)
+	}
+}
+
 // TestServedChainPreflightRefusesAnUnknownPin pins the served refusal: a pin
 // serving only another actor refuses the preflight with bind's own wording,
 // and nothing is created -- the default pick is never silently substituted.

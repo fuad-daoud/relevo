@@ -80,6 +80,7 @@ func overlayServedSwapBinding(existing store.Binding, m chainMember, pick served
 	existing.Shape = m.shape
 	existing.Builder.Kind = pick.kind
 	existing.BuilderCandidate = pick.token
+	existing.BuilderPinned = pick.pinned
 	existing.Tier = pick.tier
 	return existing
 }
