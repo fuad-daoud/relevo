@@ -125,8 +125,10 @@ func (s *Server) ensureTenantRoots(owner remote.ClientID, t isolate.Tenant) erro
 	}
 	// The link is resolved after the serve-root layout: it lives under the
 	// hostile /tmp, so a planted path refuses the owner's round start through
-	// the tenant boundary instead of diverting it.
-	if err := ensureTmpLink(s.ownerTmpDir(ownerRoot), s.ownerTmpTarget(ownerRoot), t.UID); err != nil {
+	// the tenant boundary instead of diverting it. Serve makes the link, so it
+	// belongs to serve's euid, not the tenant's, and a tenant cannot repoint
+	// it in the sticky /tmp.
+	if err := ensureTmpLink(s.ownerTmpDir(ownerRoot), s.ownerTmpTarget(ownerRoot), uint32(os.Geteuid())); err != nil {
 		return err
 	}
 	return nil

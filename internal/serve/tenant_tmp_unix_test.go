@@ -4,7 +4,6 @@ package serve
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -156,53 +155,30 @@ func TestEnsureTmpLinkRefusesForeignOwnedLink(t *testing.T) {
 	}
 }
 
-// TestUserModeOwnerTmpDirWrongUidRefused pins that a link another uid owns is
-// refused untouched: the tenant's uid switches to one nothing on disk owns
-// after the layout is created, and the next resolve refuses the start without
-// removing or repointing the link.
-func TestUserModeOwnerTmpDirWrongUidRefused(t *testing.T) {
-	requireTenantBoundary(t)
-	uid := uint32(os.Getuid())
-	env := newUserTestEnv(t, "alice", func(c *Config) {
-		outer := c.LookupUser
-		c.LookupUser = func(name string) (isolate.Tenant, error) {
-			tnt, err := outer(name)
-			if err != nil {
-				return tnt, err
-			}
-			tnt.UID = uid
-			return tnt, nil
-		}
-	})
+// TestUserModeTmpLinkBelongsToServe pins whose link it is in user mode: serve
+// makes it, so it belongs to serve's euid, never the tenant's. The tenant here
+// has a uid nothing on disk owns, so a check against the tenant would refuse
+// the link serve itself made on the first resolution.
+func TestUserModeTmpLinkBelongsToServe(t *testing.T) {
+	env := newUserTestEnv(t, "alice")
 	ownerRoot := ownerRootOf(t, env)
-	_ = env.srv.runtimeAt(ownerRoot)
-	tmpRoot := env.srv.ownerTmpDir(ownerRoot)
-	t.Cleanup(func() { _ = os.RemoveAll(tmpRoot) })
-	before, err := os.Lstat(tmpRoot)
+	link := env.srv.ownerTmpDir(ownerRoot)
+	t.Cleanup(func() { _ = os.RemoveAll(link) })
+	tenant := isolate.Tenant{User: "alice", UID: 4294967294, GID: uint32(os.Getgid()), Home: "/home/alice"}
+	for i := range 2 {
+		if err := env.srv.ensureTenantRoots(env.id, tenant); err != nil {
+			t.Fatalf("resolution %d: %v", i+1, err)
+		}
+	}
+	fi, err := os.Lstat(link)
 	if err != nil {
-		t.Fatalf("Lstat %s: %v", tmpRoot, err)
+		t.Fatal(err)
 	}
-	uid = 4294967294 // no account owns this uid
-	rt := env.srv.runtimeAt(ownerRoot)
-	_, err = rt.Runner.Start(context.Background(), spawn.ProcSpec{Dir: ownerRoot, Argv: []string{"true"}})
-	if !errors.Is(err, spawn.ErrBoundarySetup) {
-		t.Fatalf("Start = %v, want an error wrapping spawn.ErrBoundarySetup", err)
+	if ouid, _, ok := db.StatOwner(fi); ok && ouid != uint32(os.Geteuid()) {
+		t.Errorf("link owner = %d, want serve's euid %d", ouid, os.Geteuid())
 	}
-	if !strings.Contains(err.Error(), tmpRoot) {
-		t.Errorf("halt error = %q, want it to name the foreign-owned path", err)
-	}
-	after, err := os.Lstat(tmpRoot)
-	if err != nil {
-		t.Fatalf("resolve removed %s: %v", tmpRoot, err)
-	}
-	if after.Mode().Perm() != before.Mode().Perm() {
-		t.Errorf("resolve changed %s mode to %04o, want another's link left untouched", tmpRoot, after.Mode().Perm())
-	}
-	if ouid, _, ok := db.StatOwner(after); !ok || ouid != uint32(os.Getuid()) {
-		t.Errorf("resolve changed %s owner to %d, want it left untouched", tmpRoot, ouid)
-	}
-	if got, rerr := os.Readlink(tmpRoot); rerr != nil || got != env.srv.ownerTmpTarget(ownerRoot) {
-		t.Errorf("resolve repointed the refused link at %q (%v), want it untouched", got, rerr)
+	if got, err := os.Readlink(link); err != nil || got != env.srv.ownerTmpTarget(ownerRoot) {
+		t.Errorf("link = %q, %v; want it pointing at the target", got, err)
 	}
 }
 
