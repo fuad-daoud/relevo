@@ -652,3 +652,33 @@ func TestTickEpisodeLogsOneWarnAndOneInfoOnRecovery(t *testing.T) {
 func roundBudgetFor(ms int) time.Duration {
 	return roundBudget(store.Binding{RoundTimeoutMS: ms})
 }
+
+// The backoff's clock reads local time, and every other stamp on a binding is
+// UTC, so the outage's start is normalized as it lands.
+func TestTickStampsTheOutageStartInUTC(t *testing.T) {
+	st := store.New(t.TempDir())
+	if err := st.Save(remoteBinding("zen")); err != nil {
+		t.Fatal(err)
+	}
+	rt := Runtime{Store: st, Remote: unreachableRemote(), Now: func() time.Time { return baseTime }}
+	d := NewDaemon(rt, time.Second)
+	east := baseTime.In(time.FixedZone("east", 3*60*60))
+	d.backoff.now = func() time.Time { return east }
+
+	for range 2 {
+		if err := d.Tick(context.Background()); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+	}
+
+	got, err := st.Load(remoteBinding("zen").Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RemoteUnreachableSince.IsZero() {
+		t.Fatal("no outage stamped after two failed reads")
+	}
+	if _, offset := got.RemoteUnreachableSince.Zone(); offset != 0 {
+		t.Errorf("RemoteUnreachableSince = %v, want UTC", got.RemoteUnreachableSince)
+	}
+}
