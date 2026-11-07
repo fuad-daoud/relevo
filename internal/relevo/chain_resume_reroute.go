@@ -16,10 +16,11 @@ import (
 // red edge names -- goes back to the feeding check, so the check runs again
 // under the new command: re-entering the arm would re-send a builder round
 // naming the old failure, or halt on the arm's zero budget short of the check.
-// A plain resume on a repair arm whose tree made no commit since the check ran
-// goes back to that check too, without granting a fresh repair budget: the
-// check re-runs on the true tree, and a repeat red re-halts without opening a
-// repair round.
+// A plain resume on a halted repair arm whose tree made no commit since the
+// check ran goes back to that check too, without granting a fresh repair
+// budget: the check re-runs on the true tree, and a repeat red re-halts
+// without opening a repair round. A stopped resume keeps the arm so it
+// re-sends the stopped round's own staged prompt.
 //
 // Every other resume re-enters what it asked for. An explicit --from wins; a
 // chain no red edge reaches resumes as before; and several feeding checks keep
@@ -45,8 +46,10 @@ func chainResumeReroute(ctx context.Context, rt Runtime, c db.ChainRow, def work
 	if chainResumeChangesGate(opts) {
 		return checks[0], false, nil
 	}
-	if next, ok := chainResumeNoCommitCheck(ctx, rt, c, def, st, checks[0]); ok {
-		return next, true, nil
+	if st.Status == workflow.StatusHalted {
+		if next, ok := chainResumeNoCommitCheck(ctx, rt, c, def, st, checks[0]); ok {
+			return next, true, nil
+		}
 	}
 	return "", false, nil
 }
