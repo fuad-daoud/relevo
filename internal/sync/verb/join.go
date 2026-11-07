@@ -220,9 +220,49 @@ func (v *Runner) enableJoin(ctx context.Context, verb *wire.SyncVerb, token, pas
 	v.beginJoin()
 	done, err := v.stageAndVerify(ctx, verb.RemoteURL, token, passphrase, true, r2)
 	if err != nil {
+		v.recordJoinFailure(err)
 		return Refusal(Classify(err), err)
 	}
 	return v.enablePipeline(ctx, verb, token, r2, true, done)
+}
+
+// recordJoinFailure writes the failure beside the join marker when one is set,
+// so a refusal before any marker leaves no record. A write problem folds into
+// the log line rather than masking the error the caller answers with.
+func (v *Runner) recordJoinFailure(err error) {
+	if v == nil || v.Local == nil {
+		return
+	}
+	_, marked, merr := relevosync.ReadJoin(v.Local)
+	if merr != nil || !marked {
+		return
+	}
+	if werr := relevosync.WriteJoinFailure(v.Local, time.Now(), err.Error()); werr != nil {
+		slog.Warn("sync: enable: the join failed", "err", err, "code", Classify(err), "write_err", werr)
+		return
+	}
+	slog.Warn("sync: enable: the join failed", "err", err, "code", Classify(err))
+}
+
+// recordJoinPanic records a panic on the enable path beside the join marker
+// and re-panics, so the owner's recover still answers as it does today. Both
+// the record and the log are fixed text: the panic value stays out because a
+// token can be on that stack.
+func (v *Runner) recordJoinPanic() {
+	rec := recover()
+	if rec == nil {
+		return
+	}
+	if v != nil && v.Local != nil {
+		if _, marked, merr := relevosync.ReadJoin(v.Local); merr == nil && marked {
+			if werr := relevosync.WriteJoinFailure(v.Local, time.Now(), "sync: the enable did not finish"); werr != nil {
+				slog.Error("sync: enable: the join panicked and its failure could not be recorded")
+			} else {
+				slog.Error("sync: enable: the join panicked")
+			}
+		}
+	}
+	panic(rec)
 }
 
 // refusedForGood says an enable failed on a rule that re-running cannot clear
@@ -248,6 +288,7 @@ func (v *Runner) enablePipeline(ctx context.Context, verb *wire.SyncVerb, token 
 	if joining && staged != nil {
 		if err := v.settleImportBucket(r2, staged); err != nil {
 			staged.unstage()
+			v.recordJoinFailure(err)
 			return Refusal(Classify(err), err)
 		}
 		opened = staged.transport
@@ -286,6 +327,7 @@ func (v *Runner) enablePipeline(ctx context.Context, verb *wire.SyncVerb, token 
 	res, err := enabler.Enable()
 	v.clearJoin(enabler.Transport)
 	if err != nil {
+		v.recordJoinFailure(err)
 		if enabler.Transport != nil {
 			closeTransport(enabler.Transport)
 		}
