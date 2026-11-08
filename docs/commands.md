@@ -24,14 +24,17 @@
   (for a repo scene) a companion `.svg` beside it. `relevo board url` prints a
   live board's URL and `relevo board promote` copies a live board into the repo.
   Foreground; Ctrl-C stops. See [relevo board](#relevo-board).
-- `relevo board comments [path|--board NAME] [--json]` — list every comment in the
-  resolved scene in scene order (`id, x, y, text, by, at`); `--json` is one compact
-  array. `relevo board comment [path|--board NAME] --text S [--x X --y Y] [--by B]`
-  — append one comment element, leaving every other byte of the scene unchanged.
+- `relevo board comments [path|--board NAME] [--json]` — list every comment: on an
+  HTML board the notes in `annotations.json` beside it (`id, selector, x, y,
+  text, by, at`); on an explicit `.excalidraw` path the scene's comment
+  elements (`id, x, y, text, by, at`). `--json` is one compact array.
+  `relevo board comment [path|--board NAME] --text S [--selector SEL] [--x X --y Y]
+  [--by B]` — append one note to the HTML board, or one comment element to the
+  scene; `--selector` names an HTML element and is refused on a scene.
   See [relevo board](#relevo-board).
 - `relevo board text <file> [--json]`, `relevo board annotate <file> --text S
   [--x X --y Y]` — list the scene's text elements, or append one without
-  touching the rest of the scene. See [relevo board](#relevo-board).
+  touching the rest of the scene. Scenes only. See [relevo board](#relevo-board).
 - `relevo send [NAME|--name N] --file PATH [--dry-run] [--tier T [--allow-yolo]] [--candidate CANDIDATE] [--verify|--no-verify] [--regate N] [--force]` — stage the file as the current round's
   prompt and hand it to the builder as the prompt of a fresh process started in
   the binding's tree. A planner actor's prompt is a seed, capped at 4 KiB, and a
@@ -440,13 +443,31 @@ and `relevo board` names the first one on stderr, and the policy is what blocks
 the load. A missing `board.html` is not an error; the shell says there is no
 board at that path yet, and nothing is created until you save one.
 
+Comment mode is the shell's, entered with the Comment toggle: one dot lands on
+each commented anchor -- grey for a board-level note, amber where the element
+no longer resolves. Clicking the board opens the composer beside the pick,
+naming the anchor the frame derived (`data-board-id` where the element has
+one, else the tag with a few words of its own text); `Ctrl+Enter` posts it.
+The all-comments panel lists one row per thread and opens its card; the card
+shows the thread's notes with a reply box whose `Ctrl+Enter` answers that
+thread. One surface writes at a time, and `Escape` unwinds card, composer, then
+mode. The shell polls `GET /api/board` every two seconds with both etags: a
+changed board re-renders, changed notes redraw the dots, and a post answered
+409 -- or a document that arrived while a draft was open -- banners `the board
+changed on disk` with an Apply button that takes the held update without
+touching the draft. A board whose notes cannot be read still renders, with the
+reason in the panel.
+
 `relevo board promote [--board NAME] [--mastermind M] [--to SLUG] [--force]`
 copies a live board into `<repo>/docs/boards/<SLUG>/board.html`, atomically.
 `--to` renames it; `--force` overwrites an existing repo board. A missing source
 and an existing target without `--force` are both refused (exit 2) naming what to
 do about it; a bad slug and a run outside a repository are usage. It is a peek
 verb: no daemon, no server, and no pointer write -- promoting is not opening, so
-the pointer still names the board you are looking at.
+the pointer still names the board you are looking at. An `annotations.json`
+beside the live board is carried with the copy, with a second
+`board: promoted <annotations> -> <annotations>` line; without one the
+promotion prints one line.
 
 A running live board writes `server.json` (`scene`, `url`, `port`, `pid`,
 `started_at`) beside the board and removes it on shutdown only while it is still
@@ -464,23 +485,32 @@ An explicit `.excalidraw` path opens the
 [Excalidraw](https://excalidraw.com) whiteboard instead, with `--theme` choosing
 the palette for new elements.
 
-`relevo board comments [path|--board NAME] [--json]` reads the resolved scene
-and prints every comment in scene order -- `id, x, y, text, by, at` -- one
-tab-separated row each, or one compact JSON array with `--json` (`[]` when
-there are none). A comment is a text element carrying
-`customData.relevo` `{comment: true, by, at}`; both writers use the theme's
-`comment` colour and `by` distinguishes them. `relevo board comment
-[path|--board NAME] --text S [--x X --y Y] [--by B]` appends one comment, at
-`--x`/`--y` when both are given and otherwise below the scene's bounds so it
-never lands on a drawing, authored by `--by` (default `RELEVO_MASTERMIND`, else
-`human`); every other byte of the scene is unchanged. A missing scene is a new
-one carrying the comment for `comment`, and simply no comments for `comments`.
-A malformed marker, or a file that is not a scene, is `refused` (exit 2) naming
-the element or the path; an author that is empty, longer than 64 bytes or holds
-a control character is `usage` (exit 2). Both verbs resolve like `relevo board`
-and are peek verbs: no daemon, no database, and `comments` never writes the
-pointer. Comments are flat -- no replies, resolve, delete or thread -- and the
-CLI never deletes.
+On an HTML board, `relevo board comments [path|--board NAME] [--json]` reads the
+`annotations.json` beside the board and prints every note in file order --
+`id, selector, x, y, text, by, at` -- one tab-separated row each, or one
+compact JSON array with `--json` (`[]` when there are none).
+`relevo board comment [path|--board NAME] --text S [--selector SEL] [--x X --y Y]
+[--by B]` appends one note there and prints `comment: <id>  <annotations path>`;
+`--selector` is the CSS selector the note is about (empty is a board-level
+note), `--x`/`--y` are fractions of that element's box and need `--selector`,
+and `--by` defaults to `RELEVO_MASTERMIND`, else `human`. The board's own bytes
+are never touched, and a missing board is refused (exit 2), never created. Both
+verbs resolve like `relevo board` and are peek verbs: no daemon, no database,
+and `comments` never writes the pointer. Notes are flat -- no replies, resolve
+or delete -- and the CLI never deletes.
+
+On an explicit `.excalidraw` path the same two verbs keep the scene flow: a
+comment is a text element carrying `customData.relevo` `{comment: true, by,
+at}`, listed as `id, x, y, text, by, at`, and both writers use the theme's
+`comment` colour. `comment` appends at `--x`/`--y` when both are given and
+otherwise below the scene's bounds so it never lands on a drawing, leaving
+every other byte of the scene unchanged; `--selector` names an HTML element, so
+a scene refuses it (exit 2). A missing scene is a new one carrying the comment
+for `comment`, and simply no comments for `comments`. A malformed marker, or a
+file that is not a scene, is `refused` (exit 2) naming the element or the path;
+an author that is empty, longer than 64 bytes or holds a control character is
+`usage` (exit 2). The whiteboard itself has no comment mode: dots, panel and
+composer exist only on the HTML shell.
 
 Both formats are confined the same way. A repo path must end in `/board.html`
 (or `.excalidraw`), its parent directory must be a board slug, and after symlinks
@@ -496,7 +526,9 @@ must name its file, a bare slug directory is never a path, so a board directory
 can never collide with a subverb name.
 
 The theme chooses the colours of **new** elements only -- an existing scene
-keeps the colours it stores. Every palette lives in the `themes` config
+keeps the colours it stores -- and never touches an HTML board: annotations
+carry no colour, so the palette still chooses only new Excalidraw elements.
+Every palette lives in the `themes` config
 section, keyed by name: the release writes `cockpit` and `blueprint` there
 once per database when relevo starts (so `relevo config get themes.cockpit
 --json` prints cockpit's palette on a fresh install), and after that every

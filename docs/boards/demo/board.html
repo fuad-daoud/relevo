@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>demo board</title>
+<style>
+:root { color-scheme: light dark; }
+body { margin: 0; font: 15px/1.6 ui-sans-serif, system-ui, sans-serif; }
+section { padding: 16px 20px; border-bottom: 1px solid #ccc; }
+#hero { background: #eef4ff; }
+h1 { margin: 0 0 8px; }
+ul { margin: 0; padding-left: 20px; }
+footer { padding: 12px 20px; color: #666; font-size: 13px; }
+</style>
+</head>
+<body>
+<section data-board-id="hero">
+  <h1>Demo board</h1>
+  <p>A section carrying a data-board-id, so a click here anchors to
+     <code>[data-board-id="hero"]</code>.</p>
+</section>
+<section>
+  <h2>Pricing</h2>
+  <ul>
+    <li>Starter</li>
+    <li>Team</li>
+    <li>Enterprise</li>
+  </ul>
+  <p>This list has no ids at all, so clicking one of its items must fall back to
+     a CSS path of <code>tag:nth-of-type(n)</code> steps.</p>
+</section>
+<script>
+  // A board's own script, so the hand check covers a board that mutates itself
+  // after load rather than only static markup.
+  var added = document.createElement("section");
+  added.setAttribute("data-board-id", "late");
+  added.innerHTML = "<h2>Added by the board's own script</h2><p>Present from the start.</p>";
+  document.body.insertBefore(added, document.body.lastElementChild);
+</script>
+<footer>demo board for the comments hand check</footer>
+</body>
+</html>
