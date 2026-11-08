@@ -445,6 +445,12 @@ func TestSyncOwedHistoryKeepsTheShortGap(t *testing.T) {
 	if got := f.lastSyncStart(); !got.Equal(at) {
 		t.Errorf("last attempt began %v, want an attempt with owed history at the short gap %v", got, at)
 	}
+	f.d.syncMu.Lock()
+	exported := f.d.live.ExportedAt
+	f.d.syncMu.Unlock()
+	if !exported.Equal(at) {
+		t.Errorf("the owed-history attempt at %v did not export (last export began %v)", at, exported)
+	}
 }
 
 // TestSyncLockedJoinKeepsTheExportGap pins that a locked machine's join marker
@@ -558,6 +564,77 @@ func TestSyncAttemptVerbStartsAnAttempt(t *testing.T) {
 	waitSyncIdle(t, f.d)
 	if got := f.lastSyncStart(); !got.Equal(at) {
 		t.Errorf("last attempt began %v, want the attempt verb's %v inside the export gap", got, at)
+	}
+}
+
+// outboxPendingNow reads whether the fixture's outbox still holds entries, which
+// is what tells a pull-only attempt from one that exported.
+func (f *liveFixture) outboxPendingNow() bool {
+	f.t.Helper()
+	has, err := f.mdb.HasOutboxEntries()
+	if err != nil {
+		f.t.Fatalf("HasOutboxEntries: %v", err)
+	}
+	return has
+}
+
+// warm marks the fixture daemon as having just applied rows, so its pull window
+// is the hot one.
+func (f *liveFixture) warm(at time.Time) {
+	f.d.syncMu.Lock()
+	f.d.live.AppliedAt = at
+	f.d.syncMu.Unlock()
+}
+
+// TestSyncPullWindowInsideTheGapOnlyPulls pins that an attempt the hot pull
+// window starts inside the export gap leaves the outbox alone: two busy machines
+// keep each other's window hot, so an export on every pull would undo the gap.
+func TestSyncPullWindowInsideTheGapOnlyPulls(t *testing.T) {
+	t.Parallel()
+	f := newLiveFixture(t)
+	f.baseline(t)
+	f.tick(baseTime)
+	if f.outboxPendingNow() {
+		t.Fatal("the opening attempt left the outbox holding entries")
+	}
+
+	seedOutboxWrite(t, f.mdb, "pull-only")
+	f.warm(baseTime)
+	at := baseTime.Add(verb.HotWindow)
+	f.tick(at)
+	if got := f.lastSyncStart(); !got.Equal(at) {
+		t.Fatalf("the hot window started no attempt at %v (last began %v)", at, got)
+	}
+	if !f.outboxPendingNow() {
+		t.Errorf("an attempt inside the export gap exported the outbox")
+	}
+
+	f.tick(baseTime.Add(verb.ExportDebounce))
+	if f.outboxPendingNow() {
+		t.Errorf("the attempt at the export gap left the outbox holding entries")
+	}
+}
+
+// TestSyncNowDuringAPullOnlyAttemptExports pins that a SyncNow landing while a
+// pull-only attempt holds the slot is not absorbed by it: the rerun exports.
+func TestSyncNowDuringAPullOnlyAttemptExports(t *testing.T) {
+	t.Parallel()
+	f := newLiveFixture(t)
+	f.baseline(t)
+	ctx := context.Background()
+	f.tick(baseTime)
+
+	seedOutboxWrite(t, f.mdb, "now")
+	f.warm(baseTime)
+	f.setNow(baseTime.Add(verb.HotWindow))
+	entered, release := f.log.hold()
+	f.d.idleSync(ctx)
+	<-entered
+	f.d.SyncNow(ctx)
+	release()
+	waitSyncIdle(t, f.d)
+	if f.outboxPendingNow() {
+		t.Errorf("a SyncNow during a pull-only attempt left the outbox holding entries")
 	}
 }
 

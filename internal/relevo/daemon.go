@@ -162,6 +162,10 @@ func (e syncEngine) QueueSync(ctx context.Context) {
 	e.d.queueSync(ctx)
 }
 
+func (e syncEngine) QueueSyncNow(ctx context.Context) {
+	e.d.queueSyncKind(ctx, true)
+}
+
 // NewDaemon returns a Daemon ticking at interval, floored at minInterval.
 func NewDaemon(rt Runtime, interval time.Duration) *Daemon {
 	if interval < minInterval {
@@ -491,13 +495,14 @@ func (d *Daemon) tickOne(ctx context.Context, b store.Binding) (err error) {
 		return err
 	}
 	d.noteTickPassed(b.Name, rev)
-	// A seal that moved bytes is the moment worth syncing on: the bulk of what
-	// a machine has to hand another machine is a round's files. The sync starts
-	// here rather than inside the seal or the lock, and is not waited on,
-	// because the seal is already committed and neither it nor the tick may
-	// wait on a network.
+	// A seal that moved bytes is the moment worth exporting on, when the export
+	// gap allows it: the bulk of what a machine has to hand another machine is a
+	// round's files, and inside the gap they ride the next due attempt with
+	// everything else. The check runs here rather than inside the seal or the
+	// lock, and is not waited on, because the seal is already committed and
+	// neither it nor the tick may wait on a network.
 	if sealed > 0 {
-		d.queueSync(ctx)
+		d.exportIfPending(ctx, d.syncClock()())
 	}
 	if pre != nil && pre.Settle != nil {
 		return settleCatchUp(ctx, d.rt, pre.Settle, true)

@@ -32,21 +32,28 @@ func (d *Daemon) syncSlot(ctx context.Context, runner *relevosync.Runner, st *st
 		d.syncMu.Lock()
 		d.syncInFlight = false
 		d.live.Dirty = false
+		d.live.ExportNext = false
 		d.signalIdleLocked()
 		d.syncMu.Unlock()
 	}()
+	d.syncMu.Lock()
+	export := d.live.Export
+	d.syncMu.Unlock()
 	for {
-		d.runSync(ctx, runner, st)
+		d.runSync(ctx, runner, st, export)
 
-		// The breaker is read before the lock: it is a local row read, and the
-		// lock is the one a verb waits on.
+		// The breaker and the join marker are read before the lock: they are
+		// local row reads, and the lock is the one a verb waits on.
 		due := verb.BreakerDue(runner)
+		owed := d.sendingOwed()
 		now := d.syncClock()()
 		d.syncMu.Lock()
 		again := d.live.Dirty && due && ctx.Err() == nil
 		d.live.Dirty = false
 		if again {
-			d.live.StartedAt = now
+			d.live.Begin(now, d.live.ExportNext || d.live.ExportDue(now, owed))
+			d.live.ExportNext = false
+			export = d.live.Export
 		} else {
 			d.syncInFlight = false
 			// A verb may be waiting for the slot this attempt held; it has to
@@ -83,18 +90,18 @@ func (d *Daemon) noteApplied(applied int) {
 }
 
 // exportIfPending queues an attempt when the outbox has entries and the last
-// attempt began at least ExportDebounce ago, or OwedDebounce ago while a join's
-// history is owed. The cheap age check runs first, so a tick inside the short
-// gap reads nothing.
+// exporting attempt began at least ExportDebounce ago, or OwedDebounce ago while
+// a join's history is owed. The cheap age check runs first, so a tick inside the
+// short gap reads nothing.
 func (d *Daemon) exportIfPending(ctx context.Context, now time.Time) {
 	d.syncMu.Lock()
-	started := d.live.StartedAt
+	exported := d.live.ExportedAt
 	d.syncMu.Unlock()
-	age := now.Sub(started)
-	if !started.IsZero() && age < verb.OwedDebounce {
+	age := now.Sub(exported)
+	if !exported.IsZero() && age < verb.OwedDebounce {
 		return
 	}
-	if !started.IsZero() && age < verb.ExportDebounce && !d.sendingOwed() {
+	if !exported.IsZero() && age < verb.ExportDebounce && !d.sendingOwed() {
 		return
 	}
 	if !d.outboxPending() {

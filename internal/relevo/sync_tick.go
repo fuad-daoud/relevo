@@ -45,6 +45,13 @@ func (d *Daemon) SyncNow(ctx context.Context) {
 // outbox before the write that caused this trigger, so it runs once more when
 // it ends, and attempts never pile up behind a slow network.
 func (d *Daemon) queueSync(ctx context.Context) {
+	d.queueSyncKind(ctx, false)
+}
+
+// queueSyncKind is queueSync with the export decided here, at queue time: now
+// forces it, otherwise the export gap does. A trigger that finds the slot held
+// and asks for now leaves that ask for the rerun.
+func (d *Daemon) queueSyncKind(ctx context.Context, now bool) {
 	// The store is read here rather than inside the goroutine, so a refresh
 	// that replaces the runtime mid-attempt cannot hand the pipeline a second
 	// handle to the same file.
@@ -65,15 +72,17 @@ func (d *Daemon) queueSync(ctx context.Context) {
 		return
 	}
 
-	now := d.syncClock()()
+	owed := !now && d.sendingOwed()
+	at := d.syncClock()()
 	d.syncMu.Lock()
 	if d.syncInFlight {
 		d.live.Dirty = true
+		d.live.ExportNext = d.live.ExportNext || now
 		d.syncMu.Unlock()
 		return
 	}
 	d.syncInFlight = true
-	d.live.StartedAt = now
+	d.live.Begin(at, now || d.live.ExportDue(at, owed))
 	d.syncMu.Unlock()
 
 	go d.syncSlot(ctx, runner, st)
@@ -114,7 +123,7 @@ func (d *Daemon) idleSync(ctx context.Context) {
 // It asks Enabled here rather than before the slot was taken: a verb replaces
 // the runner's transport under the same slot, and this read is what the slot
 // is for.
-func (d *Daemon) runSync(ctx context.Context, runner *relevosync.Runner, st *store.Store) {
+func (d *Daemon) runSync(ctx context.Context, runner *relevosync.Runner, st *store.Store, export bool) {
 	if !runner.Enabled() {
 		return
 	}
@@ -136,7 +145,7 @@ func (d *Daemon) runSync(ctx context.Context, runner *relevosync.Runner, st *sto
 			return
 		}
 	}
-	out := runner.SyncOnce(ctx, shared)
+	out := runner.SyncAttempt(ctx, shared, export)
 	if out.Err != nil {
 		// A corrupt replica is the one failure the machine recovers from by
 		// itself: the branch moves the replica aside, records the rebuild and
