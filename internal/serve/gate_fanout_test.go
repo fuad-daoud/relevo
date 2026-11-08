@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -115,13 +116,32 @@ func gateRowsCases() []gateRowsCase {
 
 // captureGateLogs routes the log through buf for the test, restoring the
 // default afterwards.
-func captureGateLogs(t *testing.T) *bytes.Buffer {
+func captureGateLogs(t *testing.T) *lockedBuffer {
 	t.Helper()
-	var buf bytes.Buffer
+	buf := &lockedBuffer{}
 	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	slog.SetDefault(slog.New(slog.NewTextHandler(buf, nil)))
 	t.Cleanup(func() { slog.SetDefault(prev) })
-	return &buf
+	return buf
+}
+
+// lockedBuffer is the fan-out log sink: detached fan-out goroutines write to
+// it while the test still reads, so both sides take the lock.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 // TestUnavailableFansOutLiveNodesOnly pins the server-wide unavailable path:
@@ -134,7 +154,8 @@ func TestUnavailableFansOutLiveNodesOnly(t *testing.T) {
 	clock := time.Now().UTC()
 	release := make(chan struct{})
 	held := &nodeScript{unavailableWait: release}
-	failing := &nodeScript{unavailableStatus: http.StatusInternalServerError, unavailableMsg: "node boom"}
+	failing := &nodeScript{unavailableMsg: "node boom"}
+	failing.unavailableStatus.Store(http.StatusInternalServerError)
 	scripts := []*nodeScript{held, failing, {}, {}, {}, {}}
 	env, rows := gateFanoutEnv(t, scripts, &clock)
 	env.srv.mu.Lock()

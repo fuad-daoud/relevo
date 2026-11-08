@@ -197,7 +197,7 @@ type nodeScript struct {
 	// it, so a gate's return can be observed before the node answers. The
 	// hold also ends when the request's context does, so a test that fails
 	// before releasing never wedges the stub's close in cleanup.
-	unavailableStatus int
+	unavailableStatus atomic.Int32
 	unavailableMsg    string
 	unavailableWait   chan struct{}
 	// unavailableHits counts the unavailable answers, apart from every
@@ -341,7 +341,7 @@ func (s *nodeScript) serve() http.Handler {
 				case <-r.Context().Done():
 				}
 			}
-			status := s.unavailableStatus
+			status := int(s.unavailableStatus.Load())
 			if status == 0 {
 				status = http.StatusOK
 			}

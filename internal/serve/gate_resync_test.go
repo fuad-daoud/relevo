@@ -119,7 +119,8 @@ func TestResyncSkipsExpiredGate(t *testing.T) {
 // success marks it heard.
 func TestResyncRetriesFailingNode(t *testing.T) {
 	clock := time.Now().UTC()
-	script := &nodeScript{unavailableStatus: http.StatusInternalServerError, unavailableMsg: "node boom"}
+	script := &nodeScript{unavailableMsg: "node boom"}
+	script.unavailableStatus.Store(http.StatusInternalServerError)
 	env, join := resyncEnv(t, script, &clock)
 	logs := captureGateLogs(t)
 
@@ -139,7 +140,7 @@ func TestResyncRetriesFailingNode(t *testing.T) {
 	env.srv.resyncGates(clock)
 	tickUntil(t, func() bool { return script.unavailableHits.Load() == 2 }, "the failing node was not retried")
 
-	script.unavailableStatus = 0
+	script.unavailableStatus.Store(0)
 	env.srv.resyncGates(clock)
 	tickUntil(t, func() bool { return script.unavailableHits.Load() == 3 }, "the recovered node never saw the gate")
 	tickUntil(t, func() bool { return env.srv.gateHeardBy("b1", "anthropic", until) }, "the landed gate never marked heard")
