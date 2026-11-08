@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/sanitize"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -89,27 +90,65 @@ func (s *Server) handleUnavailable(w http.ResponseWriter, r *http.Request) {
 		token, keys = byProvider, []string{req.Token}
 	}
 
-	// The gate expires when the reason names its own reset, by the same parse
-	// the daemon applies to builder output: a forwarded
-	// "RESOURCE_EXHAUSTED 429: ... Resets in 51m30s" ends at that reset rather
-	// than gating the provider until someone clears it by hand. A reason with
-	// no parseable reset records the zero Until -- until cleared -- because
-	// nothing in it states when the limit lifts.
-	until := time.Time{}
-	if reset, ok := availability.ResetFromReason(req.Reason, rt.Now()); ok {
-		until = reset
+	// The expiry is the wire's when the sender named one; else the same
+	// manual-gate rule the CLIs apply to a hand-recorded reason, so an old
+	// head's zero-Until forward of an unparseable limit still bounds at this
+	// node, and a forwarded credit reason still holds until cleared. The
+	// receive is idempotent: a live entry already holding this gate makes a
+	// re-heard forward (a resend after a head restart) record nothing, while
+	// a re-gate with a new reason still writes.
+	until := req.Until
+	if until.IsZero() {
+		until = availability.ManualGateUntil(req.Reason, time.Time{}, rt.Now(), rt.Policy.LimitGateDefault())
 	}
 
-	if _, err := availability.Unavailable(relevo.AvailabilityDeps(rt), token, until, req.Reason, keys...); err != nil {
+	deps := relevo.AvailabilityDeps(rt)
+	if gateHeard(deps, token, keys, until, req.Reason, rt.Now()) {
+		writeJSON(w, http.StatusOK, map[string]any{})
+		return
+	}
+
+	if _, err := availability.Unavailable(deps, token, until, req.Reason, keys...); err != nil {
 		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
 		return
 	}
 
 	// The ledger is server-wide, so the gate reaches every verified live
-	// node the way the head received it; the node resolves it against its
+	// node the way the head holds it; the node resolves it against its
 	// own candidates. The fan-out is detached: the answer never waits for
 	// a node and a node failure only logs.
-	s.fanoutGateUnavailableAsync(req.Token, req.Reason)
+	s.fanoutGateUnavailableAsync(req.Token, req.Reason, until)
 
 	writeJSON(w, http.StatusOK, map[string]any{})
+}
+
+// gateHeard reports whether the ledger already holds a live rate-limit gate
+// for the same subjects, expiry and note: the same gate re-heard, which
+// records nothing. Subjects resolve the way the write resolves them, so the
+// check sees the provider the token records as. A re-gate with a new reason
+// or expiry still writes.
+func gateHeard(deps availability.Deps, subject string, keys []string, until time.Time, reason string, now time.Time) bool {
+	l, err := availability.LoadLedger(deps.Gates)
+	if err != nil {
+		return false
+	}
+	l = l.Prune(now)
+	_, subjects, err := availability.GateProvider(deps.Candidates, l, subject, keys)
+	if err != nil {
+		return false
+	}
+	in := make(map[string]bool, len(subjects))
+	for _, s := range subjects {
+		in[s] = true
+	}
+	note := sanitize.Text(reason)
+	for _, e := range l.Entries {
+		if e.Kind != availability.RateLimited || !in[e.Subject] {
+			continue
+		}
+		if e.Until.Equal(until) && e.Note == note {
+			return true
+		}
+	}
+	return false
 }

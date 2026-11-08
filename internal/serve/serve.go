@@ -193,6 +193,14 @@ type Server struct {
 	// unbinds: it runs once per dialled node when that node's attempt
 	// lands, carrying nil when the gate landed.
 	gateFanoutHook func(err error)
+	// heard remembers which live head-ledger gates each node already holds,
+	// by node id and gate subject, so the resync pass sends only what the
+	// node has not heard. It is in-memory and pruned to the table members
+	// every pass: a restart forgets it and resends live gates, which the
+	// nodes' idempotent receive turns into a no-op. It is not a NodeRow
+	// field, because merges rebuild rows per provider response and the
+	// table's persistence would carry stale heard state across restarts.
+	heard map[string]map[string]time.Time
 }
 
 // EnsureStateRoot creates the state root's bindings directory, the directory

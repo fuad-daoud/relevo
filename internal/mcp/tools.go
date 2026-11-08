@@ -191,7 +191,7 @@ func Tools() []ToolSpec {
 			Description: "Record that a provider hit a usage limit -- relevo switches and resends -- or clear the gate again. Calls relevo's gate ledger.",
 			InputSchema: schemaObject([]string{"token"}, map[string]any{
 				"token":  map[string]any{"type": "string", "description": "candidate name or token to gate, or the subject to clear"},
-				"for":    map[string]any{"type": "string", "description": "how long the gate holds, as a Go duration (e.g. 2h); omit to hold until cleared"},
+				"for":    map[string]any{"type": "string", "description": "how long the gate holds, as a Go duration (e.g. 2h); omit for the policy default (a credit exhaustion still holds until cleared)"},
 				"reason": map[string]any{"type": "string", "description": "why, for the record"},
 				"clear":  map[string]any{"type": "boolean", "description": "clear the gate instead of setting one"},
 			}),

@@ -19,9 +19,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/uplink"
 )
 
-// parseFor turns --for into an absolute expiry. Empty means "until cleared" (a
-// zero time); anything else must be a positive Go duration, since relevo never
-// invents a provider's reset schedule.
+// parseFor turns --for into an absolute expiry. Empty means no explicit
+// expiry (a zero time), leaving the reason and the policy default to decide;
+// anything else must be a positive Go duration.
 func parseFor(s string, now time.Time) (time.Time, error) {
 	if s == "" {
 		return time.Time{}, nil
@@ -37,19 +37,15 @@ func parseFor(s string, now time.Time) (time.Time, error) {
 }
 
 // gateUntil is when a manually recorded gate expires: --for when the caller
-// gave one, else the reset the --reason names when it names one the parser
-// trusts. A reason naming no reset keeps the until-cleared default.
-func gateUntil(forFlag, reason string, now time.Time) (time.Time, error) {
+// gave one, else the shared manual-gate rule over the --reason -- a credit
+// exhaustion holds until cleared, a reset the parser trusts ends the gate,
+// anything else the policy default.
+func gateUntil(forFlag, reason string, now time.Time, fallback time.Duration) (time.Time, error) {
 	until, err := parseFor(forFlag, now)
 	if err != nil {
 		return time.Time{}, err
 	}
-	if until.IsZero() {
-		if reset, ok := availability.ResetFromReason(reason, now); ok {
-			return reset, nil
-		}
-	}
-	return until, nil
+	return availability.ManualGateUntil(reason, until, now, fallback), nil
 }
 
 type gateFlagValues struct {
@@ -64,7 +60,7 @@ type gateFlagValues struct {
 // it back off the FlagSet.
 func gateFlagSet(fs *flag.FlagSet) *gateFlagValues {
 	v := &gateFlagValues{}
-	v.forFlag = fs.String("for", "", "how long to gate the provider, as a Go `duration` (e.g. 2h); omit to leave it gated until relevo gate --clear")
+	v.forFlag = fs.String("for", "", "how long to gate the provider, as a Go `duration` (e.g. 2h); omit for the policy default (a credit exhaustion still holds until relevo gate --clear)")
 	v.reason = fs.String("reason", "", "why, for the record")
 	v.clear = fs.String("clear", "", "clear a recorded rate limit: --clear <group|group@account|provider|token>")
 	v.serveFlag = fs.Bool("serve", false, "act on the local serve daemon's gates instead of this machine's")
@@ -121,7 +117,7 @@ func gateUnavailable(token, forFlag, reason string, asJSON bool) error {
 		return writeError(err)
 	}
 
-	until, err := gateUntil(forFlag, reason, rt.Now())
+	until, err := gateUntil(forFlag, reason, rt.Now(), rt.Policy.LimitGateDefault())
 	if err != nil {
 		return fail(codeUsage, "%v", err)
 	}

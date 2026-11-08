@@ -275,13 +275,13 @@ func TestContractDocsServeFingerprintJSON(t *testing.T) {
 }
 
 // TestContractDocsGateJSON pins `gate --json` for this machine's ledger: one
-// row per live entry, with an open-ended gate carrying no `until`.
+// row per live entry, with an open-ended credit gate carrying no `until`.
 func TestContractDocsGateJSON(t *testing.T) {
 	docsEnv(t)
 	for _, args := range [][]string{
 		{"config", "set", "candidates", `[{"harness":"claude","provider":"p","model":"m","roles":["builder"]},{"harness":"claude","provider":"q","model":"n","roles":["builder"]}]`},
 		{"gate", "claude/p/m", "--for", "1h", "--reason", "flaky"},
-		{"gate", "claude/q/n"},
+		{"gate", "claude/q/n", "--reason", "insufficient credits to complete the request"},
 	} {
 		runDocs(t, args...)
 	}

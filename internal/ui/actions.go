@@ -106,18 +106,20 @@ func (a *mastermindActions) Unbind(ctx context.Context, key string) widget.Resul
 
 // Gate records a rate limit on subject's provider and forwards it, the same
 // text `relevo gate <token>` prints (cmd/relevo/main.go gateUnavailable).
-// subject is a candidate name or canonical token; forDur 0 means "until
-// cleared".
+// subject is a candidate name or canonical token; without a duration the
+// expiry follows the same manual-gate rule as the CLI.
 func (a *mastermindActions) Gate(ctx context.Context, subject string, forDur time.Duration, reason string) widget.Result {
 	rt, _, ok := a.resolve(subject)
 	if !ok {
 		return widget.Result{Err: errors.New("unknown binding")}
 	}
 
-	var until time.Time
+	now := rt.Now()
+	var explicit time.Time
 	if forDur > 0 {
-		until = rt.Now().Add(forDur)
+		explicit = now.Add(forDur)
 	}
+	until := availability.ManualGateUntil(reason, explicit, now, rt.Policy.LimitGateDefault())
 
 	provider, err := availability.Unavailable(relevo.AvailabilityDeps(rt), subject, until, reason)
 	if err != nil {

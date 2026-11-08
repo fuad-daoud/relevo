@@ -8,13 +8,15 @@ import (
 
 // TestGateUntil pins the manual-gate expiry rule: with no --for, a --reason
 // that names its own reset decides when the gate expires, by the same limit-text
-// parse the decision point applies to builder output. A reason naming no reset
-// the parser trusts stays until cleared, because nothing in it states when the
-// limit lifts.
+// parse the decision point applies to builder output. A credit-classed reason
+// stays until cleared, because no top-up arrives on a clock; any other reason
+// naming no reset the parser trusts takes the policy default, because an
+// unparseable limit text still describes a limit.
 func TestGateUntil(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	fallback := time.Hour
 
 	for _, c := range []struct {
 		name     string
@@ -39,31 +41,36 @@ func TestGateUntil(t *testing.T) {
 		{
 			// "resets at 7pm" is the clock form parseReset accepts. The
 			// wording "try again at <time>" is NOT one it accepts: clockRe
-			// requires the word "resets", so that phrasing still stays until
-			// cleared. Recorded here so the limit parser's real reach is the
-			// pinned behaviour rather than a surprise.
+			// requires the word "resets", so that phrasing takes the
+			// fallback instead. Recorded here so the limit parser's real
+			// reach is the pinned behaviour rather than a surprise.
 			name:    "reason names a clock reset",
 			reason:  "rate limit reached. Resets at 7pm",
 			wantErr: false,
 		},
 		{
-			name:     "try again at a clock time is outside the parser's reach",
-			reason:   "try again at 7pm",
-			wantZero: true,
+			name:   "try again at a clock time is outside the parser's reach",
+			reason: "try again at 7pm",
+			want:   now.Add(fallback),
 		},
 		{
-			name:     "reason names no reset",
-			reason:   "RESOURCE_EXHAUSTED 429: rate limit reached",
-			wantZero: true,
+			name:   "reason names no reset",
+			reason: "RESOURCE_EXHAUSTED 429: rate limit reached",
+			want:   now.Add(fallback),
 		},
 		{
-			name:     "empty reason",
-			reason:   "",
-			wantZero: true,
+			name:   "empty reason",
+			reason: "",
+			want:   now.Add(fallback),
 		},
 		{
-			name:     "a reset beyond the trusted window is not honoured",
-			reason:   "rate limit reached. Resets in 800h",
+			name:   "a reset beyond the trusted window takes the fallback",
+			reason: "rate limit reached. Resets in 800h",
+			want:   now.Add(fallback),
+		},
+		{
+			name:     "credit reason stays until cleared",
+			reason:   "run failed: insufficient credits to complete the request",
 			wantZero: true,
 		},
 		{
@@ -88,7 +95,7 @@ func TestGateUntil(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := gateUntil(c.forFlag, c.reason, now)
+			got, err := gateUntil(c.forFlag, c.reason, now, fallback)
 			if c.wantErr {
 				if err == nil {
 					t.Fatalf("gateUntil(%q, %q) = %v, want an error", c.forFlag, c.reason, got)
@@ -133,7 +140,7 @@ func TestGateUntilUsesTheLimitParser(t *testing.T) {
 		"resets in 4h34m37s",
 		"try again in 5 min",
 	} {
-		got, err := gateUntil("", reason, now)
+		got, err := gateUntil("", reason, now, time.Hour)
 		if err != nil {
 			t.Fatalf("gateUntil(%q) = %v", reason, err)
 		}

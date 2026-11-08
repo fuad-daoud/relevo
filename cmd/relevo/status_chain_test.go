@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"path/filepath"
-	"slices"
 	"testing"
 	"time"
 
@@ -123,8 +122,8 @@ func TestStatusChainLineContract(t *testing.T) {
 }
 
 // TestStatuslineJSONCarriesGates pins the doc's gates: the machine's live
-// gates, with the provider split out of the token and an empty until for a
-// gate that lasts until cleared. No harness is spawned and nothing reaches the
+// gates, with the provider split out of the token and a finite until for a
+// plain reason naming no reset. No harness is spawned and nothing reaches the
 // network.
 func TestStatuslineJSONCarriesGates(t *testing.T) {
 	fx := seedStatusFixture(t)
@@ -145,8 +144,23 @@ func TestStatuslineJSONCarriesGates(t *testing.T) {
 	if err := json.Unmarshal(stdout, &doc); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	want := view.StatusLineGate{Token: "claude/p/m", Provider: "p", Until: "", Reason: "flaky"}
-	if !slices.Contains(doc.Gates, want) {
-		t.Fatalf("gates = %+v, want one to be %+v", doc.Gates, want)
+	var gate view.StatusLineGate
+	for _, g := range doc.Gates {
+		if g.Token == "claude/p/m" && g.Provider == "p" && g.Reason == "flaky" {
+			gate = g
+		}
+	}
+	if gate.Token == "" {
+		t.Fatalf("gates = %+v, want one for claude/p/m with reason flaky", doc.Gates)
+	}
+	if gate.Until == "" {
+		t.Fatalf("gate Until is empty, want the policy default for a reason naming no reset")
+	}
+	until, err := time.Parse(time.RFC3339, gate.Until)
+	if err != nil {
+		t.Fatalf("gate Until = %q, want an RFC3339 expiry: %v", gate.Until, err)
+	}
+	if d := time.Until(until); d <= 0 || d > 2*time.Hour {
+		t.Fatalf("gate Until = %q (%v away), want a finite expiry about an hour out", gate.Until, d)
 	}
 }

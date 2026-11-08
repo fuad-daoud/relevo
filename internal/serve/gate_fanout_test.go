@@ -313,3 +313,73 @@ func TestAdminGatesFanOut(t *testing.T) {
 		t.Errorf("available hits = %d, want still 1: a refused clear fans out nothing", got)
 	}
 }
+
+// TestUnavailableFanoutCarriesRecordedUntil pins that a gate fan-out sends
+// the head's own Until: a gate recorded with an explicit two-hour expiry
+// reaches the node carrying that same expiry on the wire.
+func TestUnavailableFanoutCarriesRecordedUntil(t *testing.T) {
+	clock := time.Now().UTC()
+	script := &nodeScript{}
+	env, _ := gateFanoutEnv(t, []*nodeScript{script}, &clock)
+	join := &hookJoin{}
+	env.srv.gateFanoutHook = join.hook
+
+	const token, reason = "claude/anthropic/haiku", "rate limited test"
+	until := clock.Add(2 * time.Hour)
+	if _, err := AdminUnavailable(env.srv, token, until, reason); err != nil {
+		t.Fatalf("AdminUnavailable: %v", err)
+	}
+	tickUntil(t, func() bool { return script.unavailableHits.Load() == 1 }, "the node never saw the admin gate")
+	tickUntil(t, join.fired, "the admin gate fan-out never landed")
+	if err := join.first(); err != nil {
+		t.Fatalf("fan-out err = %v, want the gate landed", err)
+	}
+	seen := script.gateTokens()
+	if len(seen) != 1 {
+		t.Fatalf("node gates = %+v, want the one admin gate", seen)
+	}
+	if !seen[0].until.Equal(until) {
+		t.Errorf("node until = %v, want the head's %v", seen[0].until, until)
+	}
+}
+
+// TestNoResetHeadGateReachesNodeFinite pins the two halves together: a head
+// gate recorded for a limit reason with no parseable reset and no explicit
+// expiry still reaches the node carrying a finite Until, bounded by the
+// head's policy default.
+func TestNoResetHeadGateReachesNodeFinite(t *testing.T) {
+	clock := time.Now().UTC()
+	script := &nodeScript{}
+	env, _ := gateFanoutEnv(t, []*nodeScript{script}, &clock)
+	join := &hookJoin{}
+	env.srv.gateFanoutHook = join.hook
+
+	const token = "claude/anthropic/haiku"
+	const reason = "API error 429 (FreeUsageLimitError): Free usage limit reached"
+	payload, err := json.Marshal(remote.UnavailableRequest{Token: token, Reason: reason})
+	if err != nil {
+		t.Fatalf("marshal unavailable request: %v", err)
+	}
+	call := postGateAsync(t, env, "/v1/unavailable", payload)
+	if status, _ := awaitGateCall(t, call, "unavailable"); status != http.StatusOK {
+		t.Fatalf("unavailable status = %d, want 200", status)
+	}
+
+	entries := rateLimitedEntries(t, env.srv)
+	if len(entries) != 1 {
+		t.Fatalf("rate-limit entries = %d, want 1: %+v", len(entries), entries)
+	}
+	if entries[0].Until.IsZero() {
+		t.Fatal("head Until is zero: a no-reset limit must bound, not hold until cleared")
+	}
+
+	tickUntil(t, func() bool { return script.unavailableHits.Load() == 1 }, "the node never saw the gate")
+	tickUntil(t, join.fired, "the gate fan-out never landed")
+	seen := script.gateTokens()
+	if len(seen) != 1 {
+		t.Fatalf("node gates = %+v, want the one posted gate", seen)
+	}
+	if !seen[0].until.Equal(entries[0].Until) {
+		t.Errorf("node until = %v, want the head's %v", seen[0].until, entries[0].Until)
+	}
+}
