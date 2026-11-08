@@ -40,7 +40,7 @@ func (d *Daemon) syncSlot(ctx context.Context, runner *relevosync.Runner, st *st
 	export := d.live.Export
 	d.syncMu.Unlock()
 	for {
-		d.runSync(ctx, runner, st, export)
+		ok := d.runSync(ctx, runner, st, export)
 
 		// The breaker and the join marker are read before the lock: they are
 		// local row reads, and the lock is the one a verb waits on.
@@ -48,6 +48,11 @@ func (d *Daemon) syncSlot(ctx context.Context, runner *relevosync.Runner, st *st
 		owed := d.sendingOwed()
 		now := d.syncClock()()
 		d.syncMu.Lock()
+		if export && !ok {
+			// A failed export moved nothing out, so it must not hold the gap
+			// shut: the next attempt the breaker lets run exports.
+			d.live.ExportedAt = time.Time{}
+		}
 		again := d.live.Dirty && due && ctx.Err() == nil
 		d.live.Dirty = false
 		if again {
