@@ -24,7 +24,7 @@ type gateDoc struct {
 }
 
 // gateSetDocOf is the gating document: until is RFC3339, or "" when the gate
-// holds until cleared.
+// holds until cleared, which only a credit exhaustion still does.
 func gateSetDocOf(provider string, until time.Time, candidates int) gateDoc {
 	doc := gateDoc{Subject: provider, Candidates: candidates, Mode: "gated"}
 	if !until.IsZero() {
@@ -41,8 +41,9 @@ func gateClearDocOf(provider string, candidates, removed int) gateDoc {
 }
 
 // parseGateFor turns the tool's `for` into an absolute expiry, as `relevo gate
-// --for` does: empty means "until cleared" (a zero time), anything else must be
-// a positive Go duration.
+// --for` does: empty means no explicit expiry (a zero time), leaving the
+// reason and the policy default to decide; anything else must be a positive
+// Go duration.
 func parseGateFor(s string, now time.Time) (time.Time, error) {
 	if s == "" {
 		return time.Time{}, nil
@@ -94,10 +95,14 @@ func (v *RelevoVerbs) Gate(ctx context.Context, _ string, a GateArgs) (any, erro
 	if now == nil {
 		now = time.Now
 	}
-	until, err := parseGateFor(a.For, now())
+	explicit, err := parseGateFor(a.For, now())
 	if err != nil {
 		return nil, err
 	}
+	// The expiry follows the same manual-gate rule as the CLI: a credit
+	// exhaustion holds until cleared, a reset the parser trusts ends the
+	// gate, anything else the policy default.
+	until := availability.ManualGateUntil(a.Reason, explicit, now(), v.RT.Policy.LimitGateDefault())
 
 	provider, err := availability.Unavailable(relevo.AvailabilityDeps(v.RT), a.Token, until, a.Reason)
 	if err != nil {

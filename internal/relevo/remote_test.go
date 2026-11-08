@@ -274,7 +274,7 @@ func (f *fakeRemote) Ack(ctx context.Context, server, name string, round int) (r
 	return f.ackResp, f.ackErr
 }
 
-func (f *fakeRemote) Unavailable(ctx context.Context, server, name, token, reason string) error {
+func (f *fakeRemote) Unavailable(ctx context.Context, server, name, token, reason string, until time.Time) error {
 	f.calls = append(f.calls, fmt.Sprintf("Unavailable:%s:%s:%s", server, name, token))
 	if f.unavailableErrFor != nil {
 		return f.unavailableErrFor(server, name, token)

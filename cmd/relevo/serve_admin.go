@@ -255,7 +255,8 @@ func serveGateClear(fs *flag.FlagSet, subject string, asJSON bool) error {
 // serveGateUnavailable records a server-side gate: the server ledger's
 // counterpart to gateUnavailable, with no daemon-switch line and no
 // forwarding to another server (the gate is already on the ledger the daemon
-// reads). A head's nodes hear it.
+// reads). The expiry follows the same manual-gate rule, so a --reason naming
+// a reset ends the gate at it. A head's nodes hear it.
 func serveGateUnavailable(fs *flag.FlagSet, token, forFlag, reason string, asJSON bool) error {
 	root, d, err := adminRoot(fs)
 	if err != nil {
@@ -272,10 +273,12 @@ func serveGateUnavailable(fs *flag.FlagSet, token, forFlag, reason string, asJSO
 		return err
 	}
 
-	until, err := parseFor(forFlag, time.Now())
+	now := time.Now()
+	explicit, err := parseFor(forFlag, now)
 	if err != nil {
 		return fail(codeUsage, "%v", err)
 	}
+	until := availability.ManualGateUntil(reason, explicit, now, cfg.Policy.LimitGateDefault())
 
 	provider, err := serve.AdminUnavailable(srv, token, until, reason)
 	if err != nil {

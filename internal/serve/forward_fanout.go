@@ -233,10 +233,10 @@ func isUnbindGone(err error) bool {
 
 // A server-wide gate the head records reaches every verified live node
 // best-effort: the request never waits for it and a failure only logs.
-// The attempt carries the gate as the head received it, so the node resolves
+// The attempt carries the gate as the head holds it, so the node resolves
 // it against its own candidates the way the head did -- an account key keeps
-// its account scope there. A node verified after the gate hears nothing;
-// its own builder gates itself on its next limit instead.
+// its account scope there. A node verified after the gate hears it from the
+// resync pass, not from this fan-out.
 
 // gateRowFor resolves a node a gate fan-out may dial: the stop filter plus
 // problem-free, the placement eligibility a gate needs -- a node the head
@@ -270,8 +270,8 @@ func (s *Server) gateFanoutTargets() []burst.NodeRow {
 // fanoutGateUnavailableAsync sends one unavailable per live node, each on
 // its own goroutine the drain waits for. The empty name is the server-wide
 // route: the node records the gate on its own ledger.
-func (s *Server) fanoutGateUnavailableAsync(token, reason string) {
-	s.fanoutGate(targetGateUnavailable{token: token, reason: reason})
+func (s *Server) fanoutGateUnavailableAsync(token, reason string, until time.Time) {
+	s.fanoutGate(targetGateUnavailable{token: token, reason: reason, until: until})
 }
 
 // fanoutGateAvailableAsync sends one available per live node, each on its
@@ -292,12 +292,13 @@ type targetGate interface {
 type targetGateUnavailable struct {
 	token  string
 	reason string
+	until  time.Time
 }
 
 func (g targetGateUnavailable) kind() string { return "unavailable" }
 
 func (g targetGateUnavailable) send(ctx context.Context, cl *client.Client, node string) error {
-	return cl.Unavailable(ctx, node, "", g.token, g.reason)
+	return cl.Unavailable(ctx, node, "", g.token, g.reason, g.until)
 }
 
 // targetGateAvailable carries an available to one node.

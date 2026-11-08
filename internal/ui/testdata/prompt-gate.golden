@@ -12,7 +12,7 @@
    ●  webshop             r4 · q│ Gate opencode-1  (provider opencode-1)                                   │                                
         ╰ which branch should r4│                                                                          │                                
                                 │ for                                                                      │                                
-     working   3    a round is r│ e.g. 30m, 2h, 1d · empty = until cleared                                 │                                
+     working   3    a round is r│ e.g. 30m, 2h, 1d · empty = policy default                                │                                
    ●  api                 r2 · w│                                                                          │                                
    ●  atlas               r4 · w│ reason                                                                   │                                
  ▍ ●  worker              r2 · w│ optional                                                                 │                                

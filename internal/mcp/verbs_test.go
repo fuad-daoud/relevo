@@ -730,6 +730,39 @@ func TestRelevoVerbsGateSetAndClear(t *testing.T) {
 	}
 }
 
+// TestRelevoVerbsGateBoundsUnparsedReason pins the manual-gate rule on the
+// tool route: a limit reason naming no reset takes the policy default, and a
+// credit-classed reason holds until cleared.
+func TestRelevoVerbsGateBoundsUnparsedReason(t *testing.T) {
+	s := store.New(t.TempDir())
+	set := writeCandidates(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"],"extra_args":["--dangerously-skip-permissions"]}]`)
+	kv := testGateKV(t)
+	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	rt := relevo.Runtime{Store: s, Candidates: set, Gates: kv, Now: func() time.Time { return now }}
+	v := &RelevoVerbs{RT: rt, MasterMind: mcpTestMasterMindA}
+
+	if _, err := v.Gate(context.Background(), "", GateArgs{Token: "agy/test/m", Reason: "API error 429: Free usage limit reached"}); err != nil {
+		t.Fatalf("Gate: %v", err)
+	}
+	if _, err := v.Gate(context.Background(), "", GateArgs{Token: "agy/test/m", Reason: "run failed: insufficient credits to complete the request"}); err != nil {
+		t.Fatalf("Gate: %v", err)
+	}
+
+	ledger, err := availability.LoadLedger(kv)
+	if err != nil {
+		t.Fatalf("LoadLedger: %v", err)
+	}
+	if len(ledger.Entries) != 2 {
+		t.Fatalf("ledger entries = %d, want 2: %+v", len(ledger.Entries), ledger.Entries)
+	}
+	if !ledger.Entries[0].Until.Equal(now.Add(time.Hour)) {
+		t.Errorf("limit entry until = %v, want the policy default %v", ledger.Entries[0].Until, now.Add(time.Hour))
+	}
+	if !ledger.Entries[1].Until.IsZero() {
+		t.Errorf("credit entry until = %v, want the zero time", ledger.Entries[1].Until)
+	}
+}
+
 // TestRelevoVerbsGateRejectsNonPositiveFor pins that a zero or negative
 // duration is refused before anything is written.
 func TestRelevoVerbsGateRejectsNonPositiveFor(t *testing.T) {

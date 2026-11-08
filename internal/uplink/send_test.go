@@ -63,6 +63,7 @@ type fakeRemote struct {
 	candidatesErr       error
 	unavailableErr      error
 	unavailableErrFor   func(server, name, token string) error
+	unavailableUntils   []time.Time
 	availableResp       remote.AvailableResponse
 	availableErr        error
 	availableErrFor     func(server, subject string) error
@@ -94,8 +95,9 @@ func (f *fakeRemote) Candidates(ctx context.Context, server string) (remote.Cand
 
 // Unavailable records one gated binding, answering per-binding when the test
 // fails one binding and succeeds the rest.
-func (f *fakeRemote) Unavailable(ctx context.Context, server, name, token, reason string) error {
+func (f *fakeRemote) Unavailable(ctx context.Context, server, name, token, reason string, until time.Time) error {
 	f.calls = append(f.calls, fmt.Sprintf("Unavailable:%s:%s:%s", server, name, token))
+	f.unavailableUntils = append(f.unavailableUntils, until)
 	if f.unavailableErrFor != nil {
 		return f.unavailableErrFor(server, name, token)
 	}

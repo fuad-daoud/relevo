@@ -561,7 +561,7 @@ func AdminUnavailable(s *Server, token string, until time.Time, reason string) (
 	}
 	// A server-side gate enters through here as well as through the
 	// handler, so it fans out the same way: detached, failures only logged.
-	s.fanoutGateUnavailableAsync(token, reason)
+	s.fanoutGateUnavailableAsync(token, reason, until)
 	return provider, nil
 }
 

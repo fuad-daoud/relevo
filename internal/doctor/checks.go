@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -199,6 +200,70 @@ func serverChecks(probes []relevo.ServerProbe) []Check {
 		checks = append(checks, c)
 	}
 	return checks
+}
+
+// serverGateChecks dials the candidates list of every enrolled server and
+// reports its gated candidates, one row per server. A server whose list
+// cannot be read degrades to the probe's unreachable line instead of
+// blocking the report; a server with nothing gated reports nothing. It
+// stays out of status, whose contract is store-only.
+func serverGateChecks(ctx context.Context, rt relevo.Runtime, probes []relevo.ServerProbe) []Check {
+	if rt.Remote == nil {
+		return nil
+	}
+	var checks []Check
+	for _, p := range probes {
+		if p.State != "enrolled" {
+			continue
+		}
+		resp, err := rt.Remote.Candidates(ctx, p.Name)
+		if c, ok := serverGateCheck(p.Name, resp, err); ok {
+			checks = append(checks, c)
+		}
+	}
+	return checks
+}
+
+// serverGateCheck is one enrolled server's gated-candidates row over a
+// literal candidates response: the gated tokens, with the names the server
+// knows them by when there are any. A read failure degrades to the
+// unreachable line, never blocks. ok is false when there is nothing to
+// report. Pure, so tests use literal responses and no network.
+func serverGateCheck(name string, resp remote.CandidatesResponse, err error) (Check, bool) {
+	if err != nil {
+		return Check{
+			Name:        "servers",
+			Severity:    SevWarn,
+			Detail:      fmt.Sprintf("%s: unreachable: %v", name, err),
+			ProbeFailed: true,
+		}, true
+	}
+	var gated []string
+	for _, c := range resp.Candidates {
+		if !c.Gated {
+			continue
+		}
+		gated = append(gated, serverCandidateLabel(c))
+	}
+	if len(gated) == 0 {
+		return Check{}, false
+	}
+	// A gated provider warns, never fails: it is a fact about right now,
+	// not a broken install, the way the ledger rows read.
+	return Check{
+		Name:     "servers",
+		Severity: SevWarn,
+		Detail:   fmt.Sprintf("%s: gated: %s", name, strings.Join(gated, ", ")),
+	}, true
+}
+
+// serverCandidateLabel names a gated server candidate: its token, with the
+// name the server knows it by when there is one.
+func serverCandidateLabel(c remote.CandidateView) string {
+	if c.Name == "" {
+		return c.Token
+	}
+	return c.Token + " (" + c.Name + ")"
 }
 
 // buildersText is a queue-aware, enrolled probe's runner census, the same

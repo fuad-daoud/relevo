@@ -125,14 +125,35 @@ func structuredReset(ms int64, now time.Time) (time.Time, bool) {
 // provider-supplied --reason rather than to a builder's output, so the same
 // wording that ends a gate when the daemon sees it also ends a gate a human
 // records by hand: a reason reading "RESOURCE_EXHAUSTED 429: ... Resets in
-// 51m30s" expires at that reset instead of staying until cleared.
+// 51m30s" expires at that reset instead of holding past it.
 //
 // ok is false when the reason names no reset this parser trusts -- no reset at
-// all, or one outside the window a vaguer form may claim -- and the caller must
-// then keep the gate until cleared rather than inventing an expiry no provider
-// ever stated. The returned time is UTC.
+// all, or one outside the window a vaguer form may claim -- and the caller
+// decides the fallback: the manual seams bound it by policy, credit stays
+// until cleared. The returned time is UTC.
 func ResetFromReason(reason string, now time.Time) (time.Time, bool) {
 	return parseReset(sanitize.Text(reason), now)
+}
+
+// ManualGateUntil is the expiry for a hand-recorded gate. An explicit --for
+// wins, because the operator stated when the gate lifts; else a
+// credit-classed reason keeps the zero Until, because no top-up arrives on a
+// clock the reason could name; else the reset the reason names, when the
+// parser trusts one; else now plus the policy default, because an
+// unparseable limit text still describes a limit, and a still-limited
+// provider re-gates on its next attempt. The returned time is UTC, except
+// the zero time that means until cleared.
+func ManualGateUntil(reason string, forUntil, now time.Time, fallback time.Duration) time.Time {
+	if !forUntil.IsZero() {
+		return forUntil
+	}
+	if _, ok := MatchCredit(reason); ok {
+		return time.Time{}
+	}
+	if reset, ok := ResetFromReason(reason, now); ok {
+		return reset
+	}
+	return now.Add(fallback).UTC()
 }
 
 func matchesAny(line string, patterns []*regexp.Regexp) bool {

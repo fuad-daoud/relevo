@@ -324,7 +324,7 @@ func gateCmd(env widget.Env, b view.BindingStatus) tea.Cmd {
 	forField := formField{
 		label: "for",
 		input: newFormInput(true),
-		hint:  "e.g. 30m, 2h, 1d · empty = until cleared",
+		hint:  "e.g. 30m, 2h, 1d · empty = policy default",
 	}
 	forField.validate = func(value string) error {
 		s := strings.TrimSpace(value)
