@@ -698,23 +698,24 @@ func TestDoctorMuseSessionShellSiblingMCPChild(t *testing.T) {
 	cases := []struct {
 		name     string
 		rec      *mastermind.Record
+		gone     bool
 		museHost int
 		ok       bool
 		wantPID  int
 	}{
-		{"resolved host wins over the shell", resolved, host, true, host},
-		{"verified walk wins when unresolved", nil, host, true, host},
-		{"unverified walk falls back to the parent", nil, 0, false, shell},
+		{"resolved host wins over the shell", resolved, false, host, true, host},
+		{"verified walk wins when unresolved", nil, false, host, true, host},
+		{"unverified walk falls back to the parent", nil, false, 0, false, shell},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := museMCPHostPID(tc.rec, tc.museHost, tc.ok, shell); got != tc.wantPID {
+			if got := museMCPHostPID(tc.rec, tc.gone, tc.museHost, tc.ok, shell); got != tc.wantPID {
 				t.Errorf("museMCPHostPID = %d, want %d", got, tc.wantPID)
 			}
 		})
 	}
 
-	pid := museMCPHostPID(resolved, host, true, shell)
+	pid := museMCPHostPID(resolved, false, host, true, shell)
 	in := MasterMindCheckInput{MuseSession: true, Resolved: resolved, MCPChild: HasMCPChild(byPID[pid])}
 	if !in.MCPChild {
 		t.Fatalf("MCPChild = false, want true: the resolved host's children hold relevo mcp")
@@ -722,6 +723,38 @@ func TestDoctorMuseSessionShellSiblingMCPChild(t *testing.T) {
 	c := findCheck(Report{Checks: MasterMindChecks(in)}, "", "MasterMind")
 	if c == nil || c.Severity == SevFail {
 		t.Fatalf("mastermind row = %+v, want not FAIL for a resolved host serving tools", c)
+	}
+}
+
+// TestDoctorMuseSessionPrefersLiveWalkOverGoneRecord pins the resumed-session
+// order: a gone recorded host yields to the verified walk host, so the
+// MasterMind row reads the live host's children and stays off FAIL. The stale
+// host serves nothing here, so the stale-wins order would FAIL the row.
+func TestDoctorMuseSessionPrefersLiveWalkOverGoneRecord(t *testing.T) {
+	const shell = 100
+	const stale = 70
+	const live = 80
+	byPID := map[int][]ChildProcess{
+		stale: {{PID: 71, Args: []string{"sh", "-c", "relevo doctor"}}},
+		live:  {{PID: 81, Args: []string{"relevo", "mcp"}}},
+	}
+	resolved := &mastermind.Record{ID: "pl_aaaaaaaabbbb", Name: "muse-2", HarnessKind: "muse", SessionID: "sess", HostPID: stale}
+
+	if got := museMCPHostPID(resolved, true, live, true, shell); got != live {
+		t.Fatalf("museMCPHostPID(gone record, verified walk) = %d, want %d", got, live)
+	}
+	if got := museMCPHostPID(resolved, true, 0, false, shell); got != shell {
+		t.Fatalf("museMCPHostPID(gone record, unverified walk) = %d, want the parent %d", got, shell)
+	}
+
+	pid := museMCPHostPID(resolved, true, live, true, shell)
+	in := MasterMindCheckInput{MuseSession: true, Resolved: resolved, MCPChild: HasMCPChild(byPID[pid])}
+	if !in.MCPChild {
+		t.Fatalf("MCPChild = false, want true: the walk host's children hold relevo mcp")
+	}
+	c := findCheck(Report{Checks: MasterMindChecks(in)}, "", "MasterMind")
+	if c == nil || c.Severity == SevFail {
+		t.Fatalf("mastermind row = %+v, want not FAIL for a live walk host serving tools", c)
 	}
 }
 
