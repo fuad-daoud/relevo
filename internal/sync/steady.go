@@ -70,15 +70,21 @@ func (r *Runner) On() bool {
 	return state.Enabled
 }
 
-// SyncOnce runs one steady attempt and records its outcome in the local markers;
-// every path leaves a tick marker, so a machine that gave up says so rather than
-// looking idle.
+// SyncOnce runs one steady attempt that exports and imports.
 func (r *Runner) SyncOnce(ctx context.Context, shared *db.DB) SteadyResult {
+	return r.SyncAttempt(ctx, shared, true)
+}
+
+// SyncAttempt runs one steady attempt and records its outcome in the local
+// markers; every path leaves a tick marker, so a machine that gave up says so
+// rather than looking idle. An attempt that does not export only imports: the
+// outbox and any owed history wait for an exporting attempt.
+func (r *Runner) SyncAttempt(ctx context.Context, shared *db.DB, export bool) SteadyResult {
 	if !r.Enabled() || shared == nil {
 		return SteadyResult{Err: errNoSync}
 	}
 	start := time.Now()
-	out := r.attempt(ctx, shared)
+	out := r.attempt(ctx, shared, export)
 	r.record(out)
 	r.RecordAttempt(start, out)
 	return out
@@ -88,11 +94,11 @@ func (r *Runner) SyncOnce(ctx context.Context, shared *db.DB) SteadyResult {
 // learns what this machine wrote, then import. The capture runs before the
 // export, so an edit to a hook script or native agent file on disk reaches the
 // peers with this attempt rather than the next.
-func (r *Runner) attempt(ctx context.Context, shared *db.DB) SteadyResult {
+func (r *Runner) attempt(ctx context.Context, shared *db.DB, export bool) SteadyResult {
 	CaptureFiles(shared)
 	t := NewStopTransport(r.Client)
 	defer r.Track(t)()
-	out := r.exchange(ctx, shared, t)
+	out := r.exchange(ctx, shared, t, export)
 	r.countBytes(ctx, t)
 	return out
 }
@@ -100,7 +106,7 @@ func (r *Runner) attempt(ctx context.Context, shared *db.DB) SteadyResult {
 // exchange is the export then the import over one attempt's transport. The marks
 // are published after the import, not inside it: what a publish reports is where
 // this machine has got to, only true once the import has finished moving them.
-func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) SteadyResult {
+func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport, export bool) SteadyResult {
 	var out SteadyResult
 	r.recordRemoteKDF(ctx, t)
 	// An adopted identity checks the claim before either half runs: another
@@ -128,18 +134,19 @@ func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) 
 	}
 	// The outbox waits for the owed history: a row it names may reference a parent
 	// the walk has not sent yet, and an importer applies with foreign keys on.
-	owing, err := r.sendOwed(ctx, shared, t)
-	if err != nil {
-		return r.failed(out, err)
+	var owing, locked bool
+	if export {
+		var err error
+		if owing, err = r.sendOwed(ctx, shared, t); err != nil {
+			return r.failed(out, err)
+		}
 	}
-	var locked bool
-	if !owing {
-		var exported int
-		exported, locked, err = r.exportStep(ctx, shared, t)
+	if export && !owing {
+		exported, held, err := r.exportStep(ctx, shared, t)
 		if err != nil {
 			return r.failed(out, err)
 		}
-		out.Exported = exported
+		out.Exported, locked = exported, held
 	}
 	// The extension vouching for this origin's confirmed tail goes out before the
 	// import reads the cuts, so this attempt's own reads see the fence believed in.

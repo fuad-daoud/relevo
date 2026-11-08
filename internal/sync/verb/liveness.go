@@ -8,13 +8,15 @@ import (
 )
 
 // ExportDebounce is the shortest gap between the starts of two attempts that
-// an outbox entry or a freshen hint may cause. Every machine pulls an attempt's
-// changes as whole pages, and a page that changed in several attempts between
-// two pulls travels once, so fewer, larger batches cost far less per entry.
-// Five minutes trades how soon a peer sees a routine write for that saving; a
-// write that cannot wait -- a gate, a handover, a takeover -- goes through
-// SyncNow, which skips this gap. A freshen shares it
-// because a peer exports no faster than this, so pulling sooner finds little.
+// export, and between two freshen-hinted attempts. Every machine pulls an
+// attempt's changes as whole pages, and a page that changed in several attempts
+// between two pulls travels once, so fewer, larger batches cost far less per
+// entry. An attempt that starts inside the gap -- a pull window, a seal, a
+// freshen -- pulls and leaves the outbox for the next due attempt. Five minutes
+// trades how soon a peer sees a routine write for that saving; a write that
+// cannot wait -- a gate, a handover, a takeover -- goes through SyncNow, which
+// exports regardless. A freshen shares the gap because a peer exports no faster
+// than this, so pulling sooner finds little.
 const ExportDebounce = 5 * time.Minute
 
 // OwedDebounce is the gap while a locked join's owed history is still going
@@ -49,10 +51,18 @@ type Liveness struct {
 	// flight may have read the outbox before the write that caused it, so the
 	// slot's holder runs once more when it ends.
 	Dirty bool
-	// StartedAt is when the last attempt began. The debounce and the freshen
-	// throttle measure from the start, so a slow attempt does not delay the
-	// next one by its own length.
+	// StartedAt is when the last attempt began. The freshen throttle measures
+	// from the start, so a slow attempt does not delay the next one by its own
+	// length.
 	StartedAt time.Time
+	// ExportedAt is when the last attempt that was let export began, which is
+	// what the export gap measures from: a pull-only attempt does not reset it.
+	ExportedAt time.Time
+	// Export is whether the attempt holding the slot exports.
+	Export bool
+	// ExportNext asks the slot's rerun to export: a SyncNow that found the slot
+	// held by a pull-only attempt must not ride it as one more pull.
+	ExportNext bool
 	// AppliedAt is when the last attempt that applied rows ended. Zero means
 	// no attempt has applied anything since this engine started.
 	AppliedAt time.Time
@@ -77,6 +87,26 @@ func BreakerDue(runner *relevosync.Runner) bool {
 		return true
 	}
 	return due
+}
+
+// ExportDue reports whether an attempt starting at now may export: nothing has
+// exported yet, the export gap has passed, or owed history is waiting and the
+// short gap has.
+func (l *Liveness) ExportDue(now time.Time, owed bool) bool {
+	if l.ExportedAt.IsZero() {
+		return true
+	}
+	age := now.Sub(l.ExportedAt)
+	return age >= ExportDebounce || (owed && age >= OwedDebounce)
+}
+
+// Begin records an attempt starting at now and whether it exports.
+func (l *Liveness) Begin(now time.Time, export bool) {
+	l.StartedAt = now
+	l.Export = export
+	if export {
+		l.ExportedAt = now
+	}
 }
 
 // PullWindow is the idle gap in force at now.

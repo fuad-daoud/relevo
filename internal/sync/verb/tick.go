@@ -21,13 +21,16 @@ type Engine interface {
 	// arriving while an attempt holds the slot marks the slot dirty instead of
 	// starting a second one, so attempts never pile up behind a slow network.
 	QueueSync(ctx context.Context)
+	// QueueSyncNow is QueueSync for an attempt that exports whatever the export
+	// gap says, and that makes the slot's rerun export when the slot is held.
+	QueueSyncNow(ctx context.Context)
 }
 
-// SyncNow queues an attempt without the export debounce. The gate write is already
-// stamped and signalled; only the age check is bypassed, so a burst inside one
-// attempt costs the one rerun the in-flight flag provides.
+// SyncNow queues an exporting attempt without the export debounce. The gate write
+// is already stamped and signalled; only the age check is bypassed, so a burst
+// inside one attempt costs the one rerun the in-flight flag provides.
 func SyncNow(ctx context.Context, eng Engine) {
-	eng.QueueSync(ctx)
+	eng.QueueSyncNow(ctx)
 }
 
 // CountOpenRounds counts bindings holding an open round: a prompt out with no

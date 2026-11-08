@@ -454,6 +454,37 @@ func TestTickRestartsACancelledWorker(t *testing.T) {
 // TestSyncDoesNotChangeTheSealStore pins that wiring the seam in changed
 // nothing about sealing itself: the same rounds are considered and the same
 // rows are written with no sync handle at all.
+// TestSealInsideTheExportGapStartsNoAttempt pins that a seal leaves its files to
+// the next due attempt: a busy machine seals often, and an attempt per seal is
+// the small-batch export the gap exists to stop.
+func TestSealInsideTheExportGapStartsNoAttempt(t *testing.T) {
+	t.Parallel()
+
+	b := newSyncBlackhole()
+	rt := sealableReader(t, b)
+	d := NewDaemon(rt, time.Second)
+	now := time.Now()
+	d.syncMu.Lock()
+	d.live.ExportedAt = now
+	d.live.OnSince = now
+	d.syncLast = now
+	d.syncMu.Unlock()
+
+	if err := d.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	names, err := rt.Store.RoundFiles("reader-bind")
+	if err != nil || len(names) == 0 {
+		t.Fatalf("the tick sealed nothing (%d files, %v), so the test proves nothing", len(names), err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if got := b.calls.Load(); got != 0 {
+		t.Errorf("a seal inside the export gap reached the remote %d times", got)
+	}
+	b.Cancel()
+	waitSyncIdle(t, d)
+}
+
 func TestSyncDoesNotChangeTheSealStore(t *testing.T) {
 	t.Parallel()
 
