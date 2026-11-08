@@ -28,22 +28,34 @@ type HTMLServer struct {
 	Name      string
 	Host      string
 	Shell     fs.FS
+
+	// annotations is the write window for POST /api/annotations. It is
+	// unexported because it is not configuration: two servers over one board
+	// get two mutexes, which is the same limitation a lock file would not
+	// have had; a CLI append outside this process still races it.
+	annotations annotationLock
 }
 
 // boardDoc is GET /api/board's body. Html is a string because the payload
-// is HTML, and null is the honest "no board yet" value.
+// is HTML, and null is the honest "no board yet" value. Annotations is []
+// rather than null even when there are none, so the shell never has to tell
+// "no notes" from "notes not loaded yet".
 type boardDoc struct {
-	Html     string   `json:"html"`
-	Etag     string   `json:"etag"`
-	IsNew    bool     `json:"isNew"`
-	Scope    Scope    `json:"scope"`
-	Name     string   `json:"name"`
-	External []string `json:"external"`
+	Html             string       `json:"html"`
+	Etag             string       `json:"etag"`
+	Annotations      []Annotation `json:"annotations"`
+	AnnotationsEtag  string       `json:"annotationsEtag"`
+	AnnotationsError string       `json:"annotationsError"`
+	IsNew            bool         `json:"isNew"`
+	Scope            Scope        `json:"scope"`
+	Name             string       `json:"name"`
+	External         []string     `json:"external"`
 }
 
 func (s *HTMLServer) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/board", s.handleBoard)
+	mux.HandleFunc("/api/annotations", s.handleAnnotations)
 	mux.HandleFunc("/shell.js", s.handleShellScript)
 	mux.HandleFunc("/", s.handleIndex)
 
@@ -70,12 +82,25 @@ func (s *HTMLServer) handleBoard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	annotations, annEtag, annErr := boardAnnotations(s.BoardPath)
+
+	// The shell polls with the etags it already holds. Both matching is the only
+	// way to get 204: a new board re-renders the frame and a new annotations
+	// file redraws the pins, and each of those needs the whole document.
+	if annotationsUnchanged(r, etag, annEtag) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	doc := boardDoc{
-		Etag:     etag,
-		IsNew:    isNew,
-		Scope:    s.Scope,
-		Name:     s.Name,
-		External: ExternalRefs(data),
+		Etag:             etag,
+		Annotations:      annotations,
+		AnnotationsEtag:  annEtag,
+		AnnotationsError: annErr,
+		IsNew:            isNew,
+		Scope:            s.Scope,
+		Name:             s.Name,
+		External:         ExternalRefs(data),
 	}
 	if !isNew {
 		doc.Html = string(data)

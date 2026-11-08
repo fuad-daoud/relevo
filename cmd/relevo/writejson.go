@@ -274,7 +274,7 @@ type AnnotateDoc struct {
 
 // annotateDocOf is annotate's document; the id the human line prints, plus
 // the element's own fields.
-func annotateDocOf(a board.Annotation) AnnotateDoc {
+func annotateDocOf(a board.AnnotateWrite) AnnotateDoc {
 	return AnnotateDoc{ID: a.Element.ID, X: a.Element.X, Y: a.Element.Y, Text: a.Element.Text}
 }
 
