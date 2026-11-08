@@ -7,11 +7,11 @@ import (
 	"testing"
 )
 
-// TestShellPostAdoptsTheEntry pins the post success path. It once called a
-// refresh() that exists nowhere, so every successful post threw into the
-// failure handler and the list never redrew. The handler must fold the posted
-// entry into the document itself: update the etag, append the annotation, push
-// the pins to the frame, and render the list.
+// TestShellPostAdoptsTheEntry pins the post success path. There is no
+// refresh() to call back into: the handler folds the posted entry into the
+// document itself -- update the etag, append the annotation, push the pins to
+// the frame, and render the list -- or every successful post lands in the
+// failure handler and the list never redraws.
 func TestShellPostAdoptsTheEntry(t *testing.T) {
 	data, err := readShellFile("comments.js")
 	if err != nil {
@@ -112,7 +112,7 @@ func TestShellOverlayRunsUnderTheExistingCSP(t *testing.T) {
 	}
 }
 
-// TestShellCommentModeInjectsOverlayIntoTheFrame pins the D1 seam: the overlay
+// TestShellCommentModeInjectsOverlayIntoTheFrame pins the overlay splice: the overlay
 // reaches the frame by being spliced into the board's HTML in the shell, in
 // memory, just before the blob is built. Nothing is written on disk and the
 // server returns the file's bytes, which TestHTMLBoardHTMLIsFileBytesExactly
@@ -402,8 +402,8 @@ func TestShellCommentPanelIsContentSized(t *testing.T) {
 	if !strings.Contains(panel, "overflow-y: auto;") {
 		t.Error("the comments panel does not scroll the list once it reaches its cap")
 	}
-	// The stretch the round removed: a bottom edge turns the panel into a
-	// full-height column whatever the comment count.
+	// No bottom edge: one turns the panel into a full-height column whatever
+	// the comment count.
 	if strings.Contains(panel, "bottom:") {
 		t.Errorf("the comments panel is still anchored to the bottom of the window: %q",
 			strings.TrimSpace(panel))
@@ -792,7 +792,7 @@ func TestShellThreadCardStacksItsEntriesBoxAndActions(t *testing.T) {
 		t.Fatalf("read shell index.html: %v", err)
 	}
 	src := string(data)
-	// The float the round removed: a floated control is a sibling a block box
+	// No floated controls: a floated control is a sibling a block box
 	// then overlaps.
 	if strings.Contains(src, "float: right") {
 		t.Error("index.html still floats a card control, which the reply box then covers")

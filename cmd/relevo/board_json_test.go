@@ -131,7 +131,7 @@ func TestBoardAnnotateJSON(t *testing.T) {
 // TestBoardCommentJSON pins the comment document on an explicit .excalidraw
 // scene: the id and resolved path a follow-up `board comments --json` shows,
 // the pointer the write selects, and the unchanged human line. The bare call
-// has moved to the HTML branch, so the scene cases name the scene explicitly.
+// targets the HTML board, so the scene cases name the scene explicitly.
 func TestBoardCommentJSON(t *testing.T) {
 	home, _ := initRoot(t)
 	t.Chdir(t.TempDir())
@@ -493,7 +493,7 @@ func TestBoardCommentHTMLAppendsAndPrintsLine(t *testing.T) {
 
 // TestBoardCommentHTMLRefusesMissingBoard pins: a comment on an HTML board
 // that is not there is refused with the refused code and exit 2, and creates
-// nothing. A bare call used to create the scene it was commenting on.
+// nothing: a comment must not conjure the scene it names.
 func TestBoardCommentHTMLRefusesMissingBoard(t *testing.T) {
 	home, _ := initRoot(t)
 	t.Setenv("RELEVO_MASTERMIND", "mm_aaaaaaaaaaaa")

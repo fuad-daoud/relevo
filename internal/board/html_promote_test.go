@@ -31,8 +31,8 @@ func writeTargetAnnotations(t *testing.T, dstAnn, body string) {
 	}
 }
 
-// TestPromoteCopiesAnnotations pins D7: promoting a board that has notes brings
-// the notes with it, byte for byte.
+// TestPromoteCopiesAnnotations pins that promoting a board that has notes
+// brings the notes with it, byte for byte.
 func TestPromoteCopiesAnnotations(t *testing.T) {
 	src, dst, _, dstAnn := promotePair(t, true)
 	copied, err := PromoteWithAnnotations(src, dst, false)
@@ -148,9 +148,9 @@ func TestPromoteForceReplacesAnnotations(t *testing.T) {
 	}
 }
 
-// TestPromoteForceRemovesStaleAnnotations pins D7's new sub-decision: with
-// --force and no source annotations, a stale target annotations file is removed,
-// so a promoted board never inherits another board's pins.
+// TestPromoteForceRemovesStaleAnnotations pins that with --force and no source
+// annotations, a stale target annotations file is removed, so a promoted board
+// never inherits another board's pins.
 func TestPromoteForceRemovesStaleAnnotations(t *testing.T) {
 	src, dst, _, dstAnn := promotePair(t, false)
 	writeTargetAnnotations(t, dstAnn,
