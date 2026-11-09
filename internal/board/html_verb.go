@@ -74,9 +74,9 @@ func resolveSceneHTMLDefault(deps Deps, liveRoot, repoRoot, ref, boardName strin
 	return res, nil
 }
 
-// ServeHTML serves a single-file board on a loopback listener. It is
-// Serve's lifecycle with a different handler and no theme, so the two formats
-// cannot drift on how they start or stop.
+// ServeHTML serves a single-file board on a loopback listener. It carries
+// the resolved palette into the server, which paints the shell chrome and
+// the pins at serve time and never writes the board file.
 func ServeHTML(deps Deps, opts Options, shell fs.FS) error {
 	// The offline check runs before the listener binds, so a board that names a
 	// remote resource is named on stderr once rather than discovered in the
@@ -94,6 +94,7 @@ func ServeHTML(deps Deps, opts Options, shell fs.FS) error {
 			Name:      opts.Slug,
 			Host:      host,
 			Shell:     shell,
+			Theme:     opts.Theme,
 		}
 		return srv.Handler()
 	})

@@ -17,6 +17,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/board/theme"
 )
 
 func Listen() (net.Listener, error) { return net.Listen("tcp", "127.0.0.1:0") }
@@ -40,12 +42,29 @@ func RepoRoot(cwd string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// GitConfig reads one repo-local git config key; an unset key is ("", nil),
+// the same fact git reports with exit 1.
+func GitConfig(cwd, key string) (string, error) {
+	cmd := exec.Command("git", "config", "--get", key)
+	cmd.Dir = cwd
+	out, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // Options is what one run of the verb was asked for. scene and slug carry
 // the resolved board twice over: scene is the path the server reads, and slug
 // is the scene name the advertisement carries. They are separate because a
 // board.html path's base name would be "board" for every board in both scopes.
 type Options struct {
 	Scene   string
+	Theme   *theme.Theme
 	NoOpen  bool
 	LiveDir string
 	// Owner names the MasterMind a live board belongs to (its name, else its
@@ -117,15 +136,19 @@ func URL(deps Deps, ref, boardName string) error {
 // foreground server. A board path names a single-file board ending in
 // /board.html, so a bare slug is not a path and cannot collide with a
 // subverb name.
-func Run(deps Deps, cwd, ref, boardName, arg string, noOpen bool, shell fs.FS) error {
-	return runSingleFileBoard(deps, cwd, ref, boardName, arg, noOpen, shell)
+func Run(deps Deps, cwd, ref, themeFlag, boardName, arg string, noOpen bool, shell fs.FS) error {
+	th, err := ResolveTheme(deps, cwd, themeFlag)
+	if err != nil {
+		return err
+	}
+	return runSingleFileBoard(deps, cwd, ref, boardName, arg, noOpen, shell, th)
 }
 
 // runSingleFileBoard is the default flow: a live or repo board.html, or a
 // new board that does not exist yet. The pointer is written for a live board
 // that was not read from the pointer and never for a repo board, so the
 // pointer always names the board the user is looking at.
-func runSingleFileBoard(deps Deps, cwd, ref, boardName, arg string, noOpen bool, shell fs.FS) error {
+func runSingleFileBoard(deps Deps, cwd, ref, boardName, arg string, noOpen bool, shell fs.FS, th *theme.Theme) error {
 	res, err := ResolveSceneHTML(deps, cwd, ref, boardName, arg)
 	if err != nil {
 		return err
@@ -137,6 +160,7 @@ func runSingleFileBoard(deps Deps, cwd, ref, boardName, arg string, noOpen bool,
 	}
 	opts := Options{
 		Scene:   res.Path,
+		Theme:   th,
 		Slug:    res.Scene,
 		Scope:   res.Scope,
 		NoOpen:  noOpen,

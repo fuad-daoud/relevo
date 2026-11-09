@@ -635,7 +635,7 @@ func TestShellPinsAreDotsWithAccessibleNames(t *testing.T) {
 	}
 	// One pin per thread, not one per note: two notes on one element at different
 	// fractions are two pins because their threads differ, not one merged pin.
-	if !strings.Contains(shellFunc(src, "function setPins(entries)"),
+	if !strings.Contains(shellFunc(src, "function setPins(entries, th)"),
 		`var key = "$" + (entry.thread || entry.id);`) {
 		t.Error("overlay.js does not group the pins by thread, so two notes on one element would merge into one pin")
 	}
@@ -1408,6 +1408,80 @@ func TestShellThreadCardHeadsWithLabelThenClose(t *testing.T) {
 	}
 	if strings.Contains(head, "float:") {
 		t.Error("the card's head floats its close, which the reply box then covers")
+	}
+}
+
+// TestShellThemedChromeHasVariableFallbacks pins the colour-source change:
+// every literal the palette overrides keeps today's value as the fallback, so
+// the unthemed page is pixel-identical and the injected block wins by cascade.
+// The :root values and the dark variant stay the unthemed look.
+func TestShellThemedChromeHasVariableFallbacks(t *testing.T) {
+	data, err := readShellFile("index.html")
+	if err != nil {
+		t.Fatalf("read shell index.html: %v", err)
+	}
+	src := string(data)
+	for _, want := range []string{
+		"var(--relevo-muted, #666)",
+		"var(--relevo-warn, #8a5a00)",
+		"var(--relevo-bad, #a33)",
+		"var(--relevo-bg, Canvas)",
+		"var(--relevo-ink, CanvasText)",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("index.html does not carry %q", want)
+		}
+	}
+	for _, want := range []string{
+		"--relevo-accent: #2a6fb5;",
+		"--relevo-surface: Canvas;",
+		"--relevo-accent: #6fb0f0;",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("index.html no longer carries the unthemed %q", want)
+		}
+	}
+}
+
+// TestShellOverlayAdoptsThePalette pins the frame half: the overlay adopts
+// the palette the shell sends, defaulting to today's literals so an unthemed
+// board's frame is unchanged.
+func TestShellOverlayAdoptsThePalette(t *testing.T) {
+	data, err := readShellFile("overlay.js")
+	if err != nil {
+		t.Fatalf("read shell overlay.js: %v", err)
+	}
+	src := string(data)
+	if !strings.Contains(src, "msg.theme") {
+		t.Error("overlay.js does not adopt msg.theme from the pins message")
+	}
+	if !strings.Contains(src, "setPins(msg.annotations, msg.theme)") {
+		t.Error("overlay.js does not pass the palette into setPins")
+	}
+	for _, want := range []string{"#2a6fb5", "#5a5a5a", "#8a5a00", "Canvas", "CanvasText"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("overlay.js does not carry the default %q", want)
+		}
+	}
+	for _, want := range []string{"pinTheme.comment", "pinTheme.muted", "pinTheme.warn", "pinTheme.panel", "pinTheme.ink", "pinTheme.line"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("overlay.js does not map %q from the palette", want)
+		}
+	}
+}
+
+// TestShellPostPinsSendsThePalette pins the channel: the gated send carries
+// the document's theme beside its annotations. Mutant: dropping theme: from
+// postPins reddens this while the server tests stay green, which proves the
+// frame actually receives the palette.
+func TestShellPostPinsSendsThePalette(t *testing.T) {
+	data, err := readShellFile("comments.js")
+	if err != nil {
+		t.Fatalf("read shell comments.js: %v", err)
+	}
+	src := string(data)
+	if !strings.Contains(shellFunc(src, "function postPins()"), "theme: (doc && doc.theme) || null") {
+		t.Error("comments.js postPins does not send the document's theme with the pins")
 	}
 }
 

@@ -61,7 +61,7 @@
   // drew are the ones the shell anchors to and names.
   function postPins() {
     if (!mode) return;
-    postToFrame({ type: "relevo.pins", annotations: (doc && doc.annotations) || [] });
+    postToFrame({ type: "relevo.pins", annotations: (doc && doc.annotations) || [], theme: (doc && doc.theme) || null });
     requestPoints();
     requestLabels();
   }

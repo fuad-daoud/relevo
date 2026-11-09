@@ -20,8 +20,8 @@ var registryBindChain = []verbEntry{
 	{
 		Name:    "board",
 		Summary: "open a live or repo board: a single-file HTML page",
-		Args:    "[path] [--board NAME] [--mastermind M] [--no-open]",
-		Flags:   []string{"--board", "--mastermind", "--no-open"},
+		Args:    "[path] [--board NAME] [--mastermind M] [--theme NAME] [--no-open]",
+		Flags:   []string{"--board", "--mastermind", "--no-open", "--theme"},
 		Exit:    []int{0, 1, 2},
 		Errors:  []string{"internal", "mastermind_not_found", "refused", "usage"},
 	},

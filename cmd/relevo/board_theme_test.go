@@ -2,8 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/fuad-daoud/relevo/internal/board/theme"
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 // The `themes` config section as storage: whole palettes in, the same
@@ -91,5 +96,36 @@ func TestConfigGetThemesPrintsIt(t *testing.T) {
 		return run([]string{"config", "get", "themes.cockpit", "--json"})
 	}); err != nil {
 		t.Fatalf("config get themes.cockpit --json on a seeded machine: %v (stderr: %s)", err, stderr)
+	}
+}
+
+// TestBoardThemeSetsRefusesAMalformedStoredPalette pins the stored read: a
+// themes body carrying no colour reaches the verb as the palette refusal,
+// not a stored write.
+func TestBoardThemeSetsRefusesAMalformedStoredPalette(t *testing.T) {
+	initRoot(t)
+	d, err := openDBDirect(machineDBPath())
+	if err != nil {
+		t.Fatalf("openDBDirect: %v", err)
+	}
+	bad := `{"night":` + strings.Replace(themesNight, `"accent":"#8be9fd"`, `"accent":"red"`, 1) + `}`
+	if err := d.Local().Tx(func(tx *db.Tx) error {
+		return tx.ConfigPut("themes", []byte(bad), time.Now().UTC())
+	}); err != nil {
+		_ = d.Close()
+		t.Fatalf("seed themes: %v", err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	_, _, err = boardThemeSets(t.TempDir())
+	if err == nil {
+		t.Fatal("a malformed stored palette resolved")
+	}
+	if !errors.Is(err, theme.ErrUsage) {
+		t.Errorf("malformed stored palette = %v, want the palette refusal", err)
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "accent") {
+		t.Errorf("refusal %q does not name the field", err)
 	}
 }

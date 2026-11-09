@@ -12,6 +12,8 @@
   var pins = [];             // the threads the shell last sent, each with its entries
   var pinLayer = null;
   var preview = null;        // the small card a hovered dot opens
+  var pinStyle = null;       // the injected element, kept so a palette can repaint it
+  var pinTheme = null;       // the palette the shell last sent, null for the defaults
   var hovered = null;
   var SNIPPET = 40;          // how much of an element's own text a label carries
 
@@ -24,8 +26,8 @@
   // enough to hit on a board scaled to a projector, and its negative margin is half
   // of that so it still sits on the point it names.
   function installStyles() {
-    var style = document.createElement("style");
-    style.textContent =
+    pinStyle = document.createElement("style");
+    pinStyle.textContent =
       ".relevo-hover{outline:2px solid Highlight;outline-offset:-2px;cursor:pointer;}" +
       ".relevo-pins{position:fixed;inset:0;pointer-events:none;z-index:2147483647;}" +
       ".relevo-pin{position:absolute;pointer-events:auto;width:1.3em;height:1.3em;" +
@@ -39,7 +41,37 @@
       "border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.35);}" +
       ".relevo-preview-by,.relevo-preview-text{display:block;}" +
       ".relevo-preview-by{font-size:10px;opacity:0.75;}";
-    (document.head || document.documentElement).appendChild(style);
+    (document.head || document.documentElement).appendChild(pinStyle);
+    applyPinTheme();
+  }
+
+  // applyPinTheme repaints the pins from the palette the shell sent: the
+  // comment pin takes comment, the board pin muted, the orphan pin warn, and
+  // the preview panel, ink and line. A null theme keeps the defaults above,
+  // so an unthemed board's frame is unchanged. The hover outline stays
+  // Highlight: the system already themes it.
+  function applyPinTheme() {
+    if (!pinStyle || !pinTheme) return;
+    var comment = pinTheme.comment || "#2a6fb5";
+    var board = pinTheme.muted || "#5a5a5a";
+    var orphan = pinTheme.warn || "#8a5a00";
+    var panel = pinTheme.panel || "Canvas";
+    var ink = pinTheme.ink || "CanvasText";
+    var line = pinTheme.line || "rgba(128,128,128,0.6)";
+    pinStyle.textContent =
+      ".relevo-hover{outline:2px solid Highlight;outline-offset:-2px;cursor:pointer;}" +
+      ".relevo-pins{position:fixed;inset:0;pointer-events:none;z-index:2147483647;}" +
+      ".relevo-pin{position:absolute;pointer-events:auto;width:1.3em;height:1.3em;" +
+      "margin:-0.65em 0 0 -0.65em;padding:0;border-radius:50%;background:" + comment + ";" +
+      "box-shadow:0 0 0 2px rgba(255,255,255,0.9);cursor:pointer;}" +
+      ".relevo-board-pin{background:" + board + ";}" +
+      ".relevo-orphan-pin{background:" + orphan + ";outline:1px dashed #fff;}" +
+      ".relevo-preview{position:absolute;pointer-events:none;max-width:16rem;padding:5px 7px;" +
+      "background:" + panel + ";color:" + ink + ";word-break:break-word;font:12px/1.35 " +
+      "ui-sans-serif,system-ui,sans-serif;border:1px solid " + line + ";" +
+      "border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.35);}" +
+      ".relevo-preview-by,.relevo-preview-text{display:block;}" +
+      ".relevo-preview-by{font-size:10px;opacity:0.75;}";
   }
 
   // post is every message out of this frame. The origin is "*": the sandbox took the
@@ -53,7 +85,7 @@
     var msg = ev.data;
     if (!msg || typeof msg !== "object") return;
     if (msg.type === "relevo.mode") setMode(msg.on === true);
-    else if (msg.type === "relevo.pins") setPins(msg.annotations);
+    else if (msg.type === "relevo.pins") setPins(msg.annotations, msg.theme);
     else if (msg.type === "relevo.points") post({ type: "relevo.points", points: points() });
     else if (msg.type === "relevo.labels") post({ type: "relevo.labels", labels: labels() });
   });
@@ -173,7 +205,11 @@
   // setPins holds what the shell sent, grouped by thread: each top-level note is
   // its own thread and a reply joins its root's. Presentation only, so the
   // stored file stays flat.
-  function setPins(entries) {
+  function setPins(entries, th) {
+    if (th) {
+      pinTheme = th;
+      applyPinTheme();
+    }
     pins = [];
     var by = {};
     for (var i = 0; i < (entries || []).length; i++) {

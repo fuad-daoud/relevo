@@ -6,6 +6,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/board/theme"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 )
@@ -50,6 +51,8 @@ type Deps struct {
 	// ProcStart reads a process's start time in Unix seconds.
 	ProcStart func(pid int) (int64, error)
 	RepoRoot  func(cwd string) (string, error)
+	GitConfig func(cwd, key string) (string, error)
+	ThemeSets func(cwd string) (repoTheme string, stored map[string]theme.Theme, err error)
 	// Now stamps comment verbs.
 	Now      func() time.Time
 	LiveRoot func() (string, error)

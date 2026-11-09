@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/board/theme"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 )
@@ -32,6 +33,12 @@ func testDeps(t *testing.T) Deps {
 		},
 		RepoRoot: func(string) (string, error) {
 			return "", errors.New("no repository")
+		},
+		GitConfig: func(string, string) (string, error) {
+			return "", nil
+		},
+		ThemeSets: func(string) (string, map[string]theme.Theme, error) {
+			return "", theme.Seed(), nil
 		},
 		Now:      time.Now,
 		LiveRoot: LiveRoot,
@@ -147,7 +154,7 @@ func TestBoardRefusesBadPath(t *testing.T) {
 	deps := testDeps(t)
 	dir := withTempRepoRoot(t, &deps)
 
-	if err := Run(deps, dir, "", "", "notes.txt", false, nil); !errors.Is(err, ErrUsage) {
+	if err := Run(deps, dir, "", "", "", "notes.txt", false, nil); !errors.Is(err, ErrUsage) {
 		t.Errorf("Run(notes.txt) = %v, want ErrUsage", err)
 	}
 }

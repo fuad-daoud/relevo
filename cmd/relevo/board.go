@@ -3,20 +3,28 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/board"
 	"github.com/fuad-daoud/relevo/internal/board/theme"
+	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 type boardFlagValues struct {
 	noOpen     *bool
+	theme      *string
 	board      *string
 	mastermind *string
 }
@@ -26,6 +34,7 @@ type boardFlagValues struct {
 func boardFlagSet(fs *flag.FlagSet) *boardFlagValues {
 	v := &boardFlagValues{}
 	v.noOpen = fs.Bool("no-open", false, "print the URL without opening a browser")
+	v.theme = fs.String("theme", "", "the shell palette: read the stored names with relevo config get themes")
 	v.board = fs.String("board", "", "the live scene name to open (default: the pointer, else board)")
 	v.mastermind = fs.String("mastermind", "", "the MasterMind whose live board to open (id or name)")
 	return v
@@ -104,6 +113,8 @@ func boardDeps() board.Deps {
 		Open:             board.Open,
 		ProcStart:        procStartUnix,
 		RepoRoot:         board.RepoRoot,
+		GitConfig:        board.GitConfig,
+		ThemeSets:        boardThemeSetsOf,
 		Now:              time.Now,
 		LiveRoot:         board.LiveRoot,
 		DialOwner:        dialOwnerAdHoc,
@@ -112,6 +123,14 @@ func boardDeps() board.Deps {
 		OwnerSocket:      ownerSocket,
 		MastermindLookup: mastermindLookup,
 	}
+}
+
+func boardThemeSetsOf(cwd string) (string, map[string]theme.Theme, error) {
+	repo, stored, err := boardThemeSets(cwd)
+	if err != nil {
+		return "", nil, err
+	}
+	return repo.BoardTheme, stored, nil
 }
 
 // cmdBoard parses the verb and runs the foreground server; the subverbs dispatch
@@ -149,7 +168,7 @@ func cmdBoard(args []string) error {
 	if len(fs.Args()) == 1 {
 		arg = fs.Args()[0]
 	}
-	return boardRefusal(board.Run(boardDeps(), cwd, *v.mastermind, *v.board, arg, *v.noOpen, nil))
+	return boardRefusal(board.Run(boardDeps(), cwd, *v.mastermind, *v.theme, *v.board, arg, *v.noOpen, nil))
 }
 
 // cmdBoardURL prints the live board's URL for a shell copy.
@@ -290,4 +309,75 @@ func boardRefusal(err error) error {
 // boardInvalidText is the board.ErrInvalid message without its sentinel word.
 func boardInvalidText(err error) string {
 	return strings.TrimPrefix(err.Error(), board.ErrInvalid.Error()+": ")
+}
+
+// boardThemeSets is where the theme resolution reads this machine's stored
+// sets. It never writes: a board verb keeps creating nothing. A held database
+// is read through the owner an ad-hoc dial reaches; the owner is never
+// started, and when it does not answer the read refuses rather than resolving
+// against the seed, which would paint a section that exists wrong.
+func boardThemeSets(cwd string) (relevo.RepoSettings, map[string]theme.Theme, error) {
+	repo := relevo.RepoSettings{}
+	root, err := tmpdir.DefaultRoot()
+	if err != nil {
+		return repo, nil, err
+	}
+	path := filepath.Join(root, "relevo.db")
+	if !fileExists(path) {
+		return repo, theme.Seed(), nil
+	}
+	d, err := openReadOnlyDB(path, db.Options{})
+	if errors.Is(err, db.ErrNotConverted) {
+		return repo, nil, failWrap(codeRefused, err, "open %s", path)
+	}
+	if errors.Is(err, db.ErrLocked) {
+		d, err = dialOwnerAdHoc(context.Background(), root, verbDialBudget)
+		if err != nil {
+			return repo, nil, boardHeldRefusal(root, err)
+		}
+	} else if err != nil {
+		return repo, nil, failWrap(codeInternal, err, "open %s", path)
+	}
+	defer func() { _ = d.Close() }()
+
+	rt := relevo.Runtime{
+		Git:    git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes),
+		Config: config.Open(d),
+	}
+	repo, err = relevo.RepoSettingsFor(context.Background(), rt, cwd)
+	if err != nil {
+		return repo, nil, err
+	}
+	stored, err := boardThemeStored(rt)
+	if err != nil {
+		return repo, nil, err
+	}
+	return repo, stored, nil
+}
+
+// boardHeldRefusal is the refusal a stored-set read raises when the machine file
+// is held and no owner answers, classified conflict with the lock error as its
+// cause.
+func boardHeldRefusal(root string, lockErr error) error {
+	path := filepath.Join(root, "relevo.db")
+	sock, sockErr := ownerSocket(root)
+	if sockErr != nil {
+		return failWrap(codeConflict, lockErr, "relevo.db is locked (%s) and no owner socket is available: %v", path+".lock", sockErr)
+	}
+	return failWrap(codeConflict, lockErr, "relevo.db is locked (%s) and the owner socket at %s did not answer", path+".lock", sock)
+}
+
+// boardThemeStored is the palette set a lookup resolves against: the seeded
+// `themes` section when the database carries one, else the embedded seed file.
+func boardThemeStored(rt relevo.Runtime) (map[string]theme.Theme, error) {
+	if rt.Config != nil {
+		body, present, err := rt.Config.Body(config.Themes)
+		if err != nil {
+			return nil, err
+		}
+		if present && len(bytes.TrimSpace(body)) > 0 {
+			return config.ParseThemes(body)
+		}
+	}
+	return theme.Seed(), nil
 }

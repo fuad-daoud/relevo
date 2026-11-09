@@ -1,9 +1,12 @@
 package board
 
 import (
+	"bytes"
 	"io/fs"
 	"net/http"
 	"strings"
+
+	"github.com/fuad-daoud/relevo/internal/board/theme"
 )
 
 // htmlSecurityHeaders is the HTML board's policy, and what enforces the
@@ -28,6 +31,10 @@ type HTMLServer struct {
 	Name      string
 	Host      string
 	Shell     fs.FS
+	// Theme is the resolved palette, nil for an unthemed board. It paints
+	// the shell chrome and the pins at serve time; the board file is never
+	// written.
+	Theme *theme.Theme
 
 	// annotations is the write window for POST /api/annotations. It is
 	// unexported because it is not configuration: two servers over one board
@@ -60,6 +67,7 @@ type boardDoc struct {
 	Scope            Scope        `json:"scope"`
 	Name             string       `json:"name"`
 	External         []string     `json:"external"`
+	Theme            *ShellTheme  `json:"theme"`
 }
 
 func (s *HTMLServer) Handler() http.Handler {
@@ -115,6 +123,10 @@ func (s *HTMLServer) handleBoard(w http.ResponseWriter, r *http.Request) {
 		Name:             s.Name,
 		External:         ExternalRefs(data),
 	}
+	if s.Theme != nil {
+		st := ShellThemeFor(*s.Theme)
+		doc.Theme = &st
+	}
 	if !isNew {
 		doc.Html = string(data)
 	}
@@ -123,7 +135,10 @@ func (s *HTMLServer) handleBoard(w http.ResponseWriter, r *http.Request) {
 
 // handleIndex serves the shell at "/" and under one owner segment, so a
 // live board's printed URL names the MasterMind that owns it. The shell needs
-// no token: it cannot read the board until the fragment carries one.
+// no token: it cannot read the board until the fragment carries one. An
+// unthemed board serves the embedded bytes untouched; a themed one carries
+// the palette as an injected block ahead of the page, so the cascade wins at
+// equal specificity and the unthemed file stays the default.
 func (s *HTMLServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if p := strings.Trim(r.URL.Path, "/"); strings.Contains(p, "/") {
 		http.NotFound(w, r)
@@ -135,7 +150,26 @@ func (s *HTMLServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(data)
+	_, _ = w.Write(indexWithTheme(data, s.Theme))
+}
+
+// indexWithTheme injects the palette's block before the shell's head close.
+// A page with no head close serves untouched rather than corrupt.
+func indexWithTheme(data []byte, th *theme.Theme) []byte {
+	if th == nil {
+		return data
+	}
+	at := bytes.Index(data, []byte("</head>"))
+	if at < 0 {
+		return data
+	}
+	st := ShellThemeFor(*th)
+	injected := "<style>" + st.CSS() + "</style>"
+	out := make([]byte, 0, len(data)+len(injected))
+	out = append(out, data[:at]...)
+	out = append(out, injected...)
+	out = append(out, data[at:]...)
+	return out
 }
 
 // handleShellScript serves the shell's scripts, with no token for the same

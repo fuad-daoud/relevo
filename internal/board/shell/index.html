@@ -21,6 +21,8 @@
 body {
   margin: 0;
   font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--relevo-bg, Canvas);
+  color: var(--relevo-ink, CanvasText);
 }
 /* The shell's top bar: the status on the left, the actions pinned to the
    right. It stays at the top without covering the frame, which sizes itself
@@ -42,7 +44,7 @@ body {
   flex: 1 1 auto;
   min-width: 0;
   padding: 8px 0;
-  color: #666;
+  color: var(--relevo-muted, #666);
 }
 /* The bar's right side: the home for the Comment toggle and whatever
    top-right controls come next. It never gives ground to the status. */
@@ -56,7 +58,7 @@ body {
 #banner {
   display: none;
   padding: 8px 12px;
-  background: #8a5a00;
+  background: var(--relevo-warn, #8a5a00);
   color: #fff;
   word-break: break-all;
 }
@@ -97,7 +99,7 @@ body {
   gap: 8px;
   margin-bottom: 6px;
 }
-#comment-panel-title { font-size: 11px; text-transform: uppercase; color: #666; }
+#comment-panel-title { font-size: 11px; text-transform: uppercase; color: var(--relevo-muted, #666); }
 #comments-close, #thread-close, #comment-dialog-close, .relevo-card-actions button {
   border: 1px solid var(--relevo-edge);
   border-radius: 6px;
@@ -184,7 +186,7 @@ body {
   justify-content: space-between;
   gap: 8px;
 }
-#comment-dialog-title { font-size: 11px; text-transform: uppercase; color: #666; }
+#comment-dialog-title { font-size: 11px; text-transform: uppercase; color: var(--relevo-muted, #666); }
 #comment-dialog-actions { justify-content: flex-end; }
 
 /* What the composer is about, and what a thread card heads itself with: the name the
@@ -192,7 +194,7 @@ body {
    this is the body font and not the selector's monospace. */
 #comment-selector, .relevo-anchor {
   font-size: 12px;
-  color: #666;
+  color: var(--relevo-muted, #666);
   overflow-wrap: anywhere;
 }
 .relevo-anchor {
@@ -228,9 +230,9 @@ body {
 .relevo-hint {
   display: block;
   font-size: 11px;
-  color: #666;
+  color: var(--relevo-muted, #666);
 }
-#comment-list h3 { margin: 10px 0 4px; font-size: 11px; text-transform: uppercase; color: #666; }
+#comment-list h3 { margin: 10px 0 4px; font-size: 11px; text-transform: uppercase; color: var(--relevo-muted, #666); }
 .relevo-row {
   display: block;
   width: 100%;
@@ -246,11 +248,11 @@ body {
 }
 .relevo-row.focused { border-color: var(--relevo-accent); }
 .relevo-row.orphan { opacity: 0.75; }
-.relevo-by { display: block; font-size: 11px; color: #666; }
+.relevo-by { display: block; font-size: 11px; color: var(--relevo-muted, #666); }
 .relevo-text { display: block; }
-.relevo-orphan-mark { display: block; font-size: 11px; color: #8a5a00; }
-.relevo-empty, .relevo-error { color: #666; }
-.relevo-error { color: #a33; }
+.relevo-orphan-mark { display: block; font-size: 11px; color: var(--relevo-warn, #8a5a00); }
+.relevo-empty, .relevo-error { color: var(--relevo-muted, #666); }
+.relevo-error { color: var(--relevo-bad, #a33); }
 </style>
 </head>
 <body>
