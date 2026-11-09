@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -56,11 +57,17 @@ func TestBoardPromoteRefusesOutsideARepository(t *testing.T) {
 // not board subverbs: the words fall through to the board flag set, where the
 // extra positional (or the unknown --text flag) is usage before any file
 // work, and the scene is left untouched.
-// TestBoardThemeFlagIsUnknown pins that the board verb takes no palette
-// flag: an unknown --theme is usage before any repository or file work.
-func TestBoardThemeFlagIsUnknown(t *testing.T) {
+// TestBoardThemeFlagReachesResolution pins that the board verb takes a
+// palette flag: an unknown --theme parses and refuses in resolution naming
+// the stored themes, not in flag parsing.
+func TestBoardThemeFlagReachesResolution(t *testing.T) {
 	boardJSONRepo(t)
-	_ = requireCLIError(t, cmdBoard([]string{"--theme", "x"}), codeUsage, "")
+	ce := requireCLIError(t, cmdBoard([]string{"--theme", "nope"}), codeUsage, "")
+	for _, want := range []string{"cockpit", "blueprint", `relevo config set themes.nope '{...}'`} {
+		if !strings.Contains(ce.message, want) {
+			t.Errorf("refusal %q does not carry %q", ce.message, want)
+		}
+	}
 }
 
 func TestBoardTextWordIsRefusedAsAScenePath(t *testing.T) {

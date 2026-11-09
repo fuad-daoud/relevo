@@ -15,7 +15,7 @@
   existing binding's MasterMind side at the calling MasterMind without touching the
   builder; on a resume `--feature` sets the label, `--no-feature` clears it, and
   naming neither keeps it, while `--ticket` sets one. `relevo unbind N` is the other way out.
-- `relevo board [path] [--board NAME] [--mastermind M] [--no-open]` — open
+- `relevo board [path] [--board NAME] [--mastermind M] [--theme NAME] [--no-open]` — open
   a board: a single HTML page served on `127.0.0.1` with a per-run token. A bare
   `relevo board` opens the live board of the calling MasterMind under the state
   root, and a path ending in `/board.html` opens one board in the repo.
@@ -386,7 +386,7 @@ report text here
 
 ## relevo board
 
-`relevo board [path] [--board NAME] [--mastermind M] [--no-open]`
+`relevo board [path] [--board NAME] [--mastermind M] [--theme NAME] [--no-open]`
 opens a board. A bare `relevo board` opens this MasterMind's live board; naming
 a path ending in `/board.html` opens one board in the repository. Either way it
 binds `127.0.0.1:0`, prints one line,
@@ -399,11 +399,18 @@ relevo board                                       opens this MasterMind's live 
 relevo board --board api                           opens the live board "api"
 relevo board --mastermind architect-2              another MasterMind's live board
 relevo board docs/boards/api/board.html            opens a named repo board
+relevo board --theme blueprint                     opens the live board in the blueprint palette
 relevo board url                                   prints a live board's URL
 relevo board promote                               copies a live board into the repo
 relevo board comments                              lists a board's notes
 relevo board comment --text "check state 3"        appends one note
 ```
+
+`--theme` names the shell palette, then the repo `board_theme` set with
+`relevo config repo set board_theme`, then `git config relevo.boardTheme`,
+then no palette. Theming paints only the shell chrome and the comment pins at
+serve time and never the board file; with nothing named the shell serves as
+today. An unknown name is a usage error naming the stored themes.
 
 A board is one HTML file. A live board is
 `<state root>/boards/<mastermind-id>/<name>/board.html` and a repo board is

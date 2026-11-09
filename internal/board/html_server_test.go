@@ -4,12 +4,16 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
+
+	"github.com/fuad-daoud/relevo/internal/board/theme"
 )
 
 const (
@@ -216,6 +220,93 @@ func TestHTMLBoardExternalPopulated(t *testing.T) {
 		if doc.External[i] != ref {
 			t.Errorf("external[%d] = %q, want %q", i, doc.External[i], ref)
 		}
+	}
+}
+
+// TestHTMLShellThemedServesPalette is the themed half: the shell carries
+// every mapped variable with the palette's exact values, and the board
+// document carries the same palette. Mutant: deleting the handleIndex
+// injection, or setting HTMLServer.Theme aside in ServeHTML, reddens the
+// GET / half while the unthemed test stays green.
+func TestHTMLShellThemedServesPalette(t *testing.T) {
+	palette := theme.Seed()["cockpit"]
+	th := palette
+	s, _ := testHTMLServer(t)
+	s.Theme = &th
+
+	w := doHTML(t, s, http.MethodGet, "/", testHost, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET / themed = %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "color-scheme:dark") {
+		t.Error("themed shell does not set color-scheme: dark")
+	}
+	for _, kv := range [][2]string{
+		{"--relevo-bg", palette.BG},
+		{"--relevo-ink", palette.Ink},
+		{"--relevo-muted", palette.Muted},
+		{"--relevo-edge", palette.Line},
+		{"--relevo-surface", palette.Panel},
+		{"--relevo-accent", palette.Accent},
+		{"--relevo-good", palette.Good},
+		{"--relevo-warn", palette.Warn},
+		{"--relevo-bad", palette.Bad},
+		{"--relevo-comment", palette.Comment},
+	} {
+		if !strings.Contains(body, kv[0]+":"+kv[1]) {
+			t.Errorf("themed shell does not carry %s with %q", kv[0], kv[1])
+		}
+	}
+
+	doc := decodeBoardDoc(t, doHTML(t, s, http.MethodGet, "/api/board", testHost, testToken))
+	if doc.Theme == nil {
+		t.Fatal("themed board doc carries no theme")
+	}
+	if doc.Theme.Comment != palette.Comment || doc.Theme.Accent != palette.Accent || doc.Theme.Panel != palette.Panel {
+		t.Errorf("board doc theme = %+v, want the cockpit palette", doc.Theme)
+	}
+	if doc.Theme.Name != "cockpit" {
+		t.Errorf("board doc theme name = %q, want cockpit", doc.Theme.Name)
+	}
+}
+
+// TestHTMLShellUnthemedIsByteIdentical pins the default: an unthemed board
+// serves the embedded shell untouched and the document carries no theme.
+func TestHTMLShellUnthemedIsByteIdentical(t *testing.T) {
+	s, _ := testHTMLServer(t)
+	w := doHTML(t, s, http.MethodGet, "/", testHost, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET / unthemed = %d, want 200", w.Code)
+	}
+	want, err := fs.ReadFile(Shell(), "index.html")
+	if err != nil {
+		t.Fatalf("read shell index.html: %v", err)
+	}
+	if w.Body.String() != string(want) {
+		t.Error("unthemed shell differs from the embedded index.html")
+	}
+	doc := decodeBoardDoc(t, doHTML(t, s, http.MethodGet, "/api/board", testHost, testToken))
+	if doc.Theme != nil {
+		t.Errorf("unthemed board doc theme = %+v, want nil", doc.Theme)
+	}
+}
+
+// TestHTMLShellWithoutHeadServesUnmodified pins the guard: a shell page with
+// no head close serves as is rather than corrupt, even when themed.
+func TestHTMLShellWithoutHeadServesUnmodified(t *testing.T) {
+	raw := "<html><body>no head here</body></html>"
+	palette := theme.Seed()["cockpit"]
+	th := palette
+	s, _ := testHTMLServer(t)
+	s.Theme = &th
+	s.Shell = fstest.MapFS{"index.html": {Data: []byte(raw)}}
+	w := doHTML(t, s, http.MethodGet, "/", testHost, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET / without head = %d, want 200", w.Code)
+	}
+	if w.Body.String() != raw {
+		t.Errorf("shell without </head> = %q, want it unmodified", w.Body.String())
 	}
 }
 
