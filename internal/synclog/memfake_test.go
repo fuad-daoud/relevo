@@ -1,8 +1,10 @@
 package synclog
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 )
 
@@ -333,6 +335,304 @@ func TestSyncFakeHeadComesBackParentsFirst(t *testing.T) {
 	// the child first would have no parent to apply it against.
 	if rows[0].Table != "binding_record" {
 		t.Errorf("head starts at %s, want binding_record first", rows[0].Table)
+	}
+}
+
+// `head` is read off the log's entries, so it holds one row per table and key:
+// the newest entry's sequence and that entry's doc-aware hash. A delete drops
+// the row until a later write brings it back, and each origin reads only the
+// entries it wrote itself.
+func TestMemHeadDerivesNewestPerRow(t *testing.T) {
+	t.Parallel()
+	m1 := NewMemTransport("m1")
+	m2 := m1.OnLog("m2")
+
+	readHead := func(t *testing.T, m *MemTransport, origin string) []HeadRow {
+		t.Helper()
+		rows, err := m.Head(origin)
+		if err != nil {
+			t.Fatalf("head %s: %v", origin, err)
+		}
+		return rows
+	}
+	findRow := func(rows []HeadRow, table, pk string) (HeadRow, bool) {
+		for _, row := range rows {
+			if row.Table == table && row.PK == pk {
+				return row, true
+			}
+		}
+		return HeadRow{}, false
+	}
+
+	// Children-first appends still read back parents-first, and keys in order:
+	// the walk order is the table's place in SharedTables, then the key text.
+	if _, err := m1.Append([]Entry{
+		syncEntry(t, "m1", "binding_event", `["02DEF",1]`, map[string]any{"record_id": "02DEF", "seq": int64(1)}),
+		syncEntry(t, "m1", "binding_record", `["02DEF"]`, map[string]any{"id": "02DEF"}),
+		syncEntry(t, "m1", "binding", `["02DEF"]`, map[string]any{"id": "02DEF"}),
+		syncEntry(t, "m1", "binding", `["01ABC"]`, map[string]any{"id": "01ABC"}),
+	}); err != nil {
+		t.Fatalf("append out of order: %v", err)
+	}
+	rows := readHead(t, m1, "m1")
+	wantOrder := [][2]string{
+		{"binding_record", `["02DEF"]`},
+		{"binding", `["01ABC"]`},
+		{"binding", `["02DEF"]`},
+		{"binding_event", `["02DEF",1]`},
+	}
+	if len(rows) != len(wantOrder) {
+		t.Fatalf("head holds %d rows, want %d", len(rows), len(wantOrder))
+	}
+	for i, want := range wantOrder {
+		if rows[i].Table != want[0] || rows[i].PK != want[1] {
+			t.Errorf("head row %d = %s %s, want %s %s", i, rows[i].Table, rows[i].PK, want[0], want[1])
+		}
+	}
+
+	// A second write to one row replaces its sequence and hash, leaving one row.
+	const pk = `["09UPD"]`
+	if _, err := m1.Append([]Entry{syncEntry(t, "m1", "binding", pk, map[string]any{"id": "09UPD", "note": "first"})}); err != nil {
+		t.Fatalf("first append: %v", err)
+	}
+	rewrite := syncEntry(t, "m1", "binding", pk, map[string]any{"id": "09UPD", "note": "second"})
+	written, err := m1.Append([]Entry{rewrite})
+	if err != nil {
+		t.Fatalf("second append: %v", err)
+	}
+	wantHash, err := entryHash(written[0])
+	if err != nil {
+		t.Fatalf("entryHash: %v", err)
+	}
+	row, ok := findRow(readHead(t, m1, "m1"), "binding", pk)
+	if !ok {
+		t.Fatalf("head has no row for binding %s", pk)
+	}
+	if row.Seq != written[0].Seq || row.Hash != wantHash {
+		t.Errorf("head row = %+v, want seq %d hash %s", row, written[0].Seq, wantHash)
+	}
+
+	// A delete drops the row while a live one stays.
+	if _, err := m1.Append([]Entry{syncDelete(t, "m1", "binding", pk)}); err != nil {
+		t.Fatalf("append the delete: %v", err)
+	}
+	rows = readHead(t, m1, "m1")
+	if _, ok := findRow(rows, "binding", pk); ok {
+		t.Errorf("head still holds binding %s after its delete", pk)
+	}
+	if _, ok := findRow(rows, "binding", `["01ABC"]`); !ok {
+		t.Errorf("head lost a live row when another was deleted")
+	}
+
+	// A write after the delete brings the row back at the new sequence.
+	recreate := syncEntry(t, "m1", "binding", pk, map[string]any{"id": "09UPD", "note": "third"})
+	rewritten, err := m1.Append([]Entry{recreate})
+	if err != nil {
+		t.Fatalf("recreate append: %v", err)
+	}
+	wantRecreate, err := entryHash(rewritten[0])
+	if err != nil {
+		t.Fatalf("entryHash: %v", err)
+	}
+	row, ok = findRow(readHead(t, m1, "m1"), "binding", pk)
+	if !ok {
+		t.Fatalf("head has no row for recreated binding %s", pk)
+	}
+	if row.Seq != rewritten[0].Seq || row.Hash != wantRecreate {
+		t.Errorf("head row = %+v, want seq %d hash %s", row, rewritten[0].Seq, wantRecreate)
+	}
+
+	// Another origin's write to the same row is its own state, not this one's.
+	other := syncEntry(t, "m2", "binding", pk, map[string]any{"id": "09UPD", "note": "elsewhere"})
+	otherWritten, err := m2.Append([]Entry{other})
+	if err != nil {
+		t.Fatalf("other origin append: %v", err)
+	}
+	wantOther, err := entryHash(otherWritten[0])
+	if err != nil {
+		t.Fatalf("entryHash: %v", err)
+	}
+	otherRows := readHead(t, m2, "m2")
+	if len(otherRows) != 1 {
+		t.Fatalf("other origin head holds %d rows, want only its own", len(otherRows))
+	}
+	if otherRows[0].Table != "binding" || otherRows[0].PK != pk || otherRows[0].Hash != wantOther {
+		t.Errorf("other origin head row = %+v, want binding %s at its own hash", otherRows[0], pk)
+	}
+	row, ok = findRow(readHead(t, m1, "m1"), "binding", pk)
+	if !ok || row.Seq != rewritten[0].Seq || row.Hash != wantRecreate {
+		t.Errorf("m1 head row = %+v, want it unchanged at seq %d", row, rewritten[0].Seq)
+	}
+
+	// A doc entry's hash is over its stamp and value, not the row encoding.
+	doc := Entry{
+		Op:    OpUpsert,
+		Table: "doc:config",
+		PK:    `["policy"]`,
+		Body:  json.RawMessage(`{"stamp":"5","value":{"x":1}}`),
+	}
+	docWritten, err := m1.Append([]Entry{doc})
+	if err != nil {
+		t.Fatalf("doc append: %v", err)
+	}
+	wantDoc, err := entryHash(docWritten[0])
+	if err != nil {
+		t.Fatalf("entryHash: %v", err)
+	}
+	if bodyHash, err := BodyHash(docWritten[0].Body); err == nil && bodyHash == wantDoc {
+		t.Fatal("the doc body hashes the same under BodyHash, so the case proves nothing")
+	}
+	docRow, ok := findRow(readHead(t, m1, "m1"), "doc:config", `["policy"]`)
+	if !ok {
+		t.Fatalf("head has no row for doc:config policy")
+	}
+	if docRow.Hash != wantDoc {
+		t.Errorf("doc head hash = %s, want the entry hash %s", docRow.Hash, wantDoc)
+	}
+}
+
+// A stored entry no append could have written still refuses at read time rather
+// than handing reconcile a row with no hash: entries reach the log only
+// through the validating append, so this state is built by hand.
+func TestMemHeadReportsAnUnhashableStoredEntry(t *testing.T) {
+	t.Parallel()
+	m := NewMemTransport("m1")
+	if _, err := m.Append([]Entry{syncEntry(t, "m1", "binding", `["01ABC"]`, map[string]any{"id": "01ABC"})}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	m.log.mu.Lock()
+	m.log.entries = append(m.log.entries, Entry{
+		Op:     OpUpsert,
+		Table:  "binding",
+		PK:     `["09BAD"]`,
+		Origin: "m1",
+		Seq:    2,
+		Body:   json.RawMessage(`not json`),
+	})
+	m.log.mu.Unlock()
+
+	rows, err := m.Head("m1")
+	if err == nil {
+		t.Fatalf("head with an unhashable entry returned %+v, want an error", rows)
+	}
+	if !errors.Is(err, ErrInvalid) {
+		t.Errorf("head err = %v, want ErrInvalid", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("head returned %d rows with an unhashable entry, want none", len(rows))
+	}
+}
+
+// Compaction drops only superseded entries, so one origin's derived head reads
+// the same on either side of it: the newest entry per row survives the floor,
+// and another origin's rows are never in reach.
+func TestMemHeadAfterCompactMatchesBefore(t *testing.T) {
+	t.Parallel()
+	m1 := NewMemTransport("m1")
+	m2 := m1.OnLog("m2")
+
+	// Row A superseded, row B deleted, row C written once: the compactable,
+	// the absent and the untouched shapes in one log.
+	if _, err := m1.Append([]Entry{syncEntry(t, "m1", "binding", `["0AAAA"]`, map[string]any{"id": "0AAAA", "note": "first"})}); err != nil {
+		t.Fatalf("append A first: %v", err)
+	}
+	if _, err := m1.Append([]Entry{syncEntry(t, "m1", "binding", `["0AAAA"]`, map[string]any{"id": "0AAAA", "note": "second"})}); err != nil {
+		t.Fatalf("append A second: %v", err)
+	}
+	if _, err := m1.Append([]Entry{syncEntry(t, "m1", "binding", `["0BBBB"]`, map[string]any{"id": "0BBBB"})}); err != nil {
+		t.Fatalf("append B: %v", err)
+	}
+	if _, err := m1.Append([]Entry{syncDelete(t, "m1", "binding", `["0BBBB"]`)}); err != nil {
+		t.Fatalf("append B delete: %v", err)
+	}
+	last, err := m1.Append([]Entry{syncEntry(t, "m1", "binding", `["0CCCC"]`, map[string]any{"id": "0CCCC"})})
+	if err != nil {
+		t.Fatalf("append C: %v", err)
+	}
+	if _, err := m2.Append([]Entry{syncEntry(t, "m2", "binding", `["0DDDD"]`, map[string]any{"id": "0DDDD"})}); err != nil {
+		t.Fatalf("append m2 row: %v", err)
+	}
+
+	before, err := m1.Head("m1")
+	if err != nil {
+		t.Fatalf("head before: %v", err)
+	}
+	beforeOther, err := m2.Head("m2")
+	if err != nil {
+		t.Fatalf("other head before: %v", err)
+	}
+
+	// The floor is the highest sequence m1 holds, so both superseded entries
+	// sit at or below it and are in reach of the drop.
+	dropped, err := m1.Compact("m1", last[0].Seq)
+	if err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if dropped == 0 {
+		t.Fatal("compaction dropped nothing, so the test pins nothing")
+	}
+
+	after, err := m1.Head("m1")
+	if err != nil {
+		t.Fatalf("head after: %v", err)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Errorf("head after compaction = %+v, want the head from before %+v", after, before)
+	}
+	for _, row := range after {
+		if row.PK == `["0BBBB"]` {
+			t.Errorf("head after compaction holds deleted row %+v", row)
+		}
+	}
+	afterOther, err := m2.Head("m2")
+	if err != nil {
+		t.Fatalf("other head after: %v", err)
+	}
+	if !reflect.DeepEqual(afterOther, beforeOther) {
+		t.Errorf("other head after compacting m1 = %+v, want %+v", afterOther, beforeOther)
+	}
+}
+
+// An entry no hash can digest never enters the log: the append refuses the
+// whole batch, so a later head has nothing to refuse and the log holds nothing.
+func TestMemAppendRefusesAnUnhashableBodyAtAppend(t *testing.T) {
+	t.Parallel()
+
+	m := NewMemTransport("m1")
+	bad := Entry{Op: OpUpsert, Table: "binding", PK: `["01ABC"]`, Body: json.RawMessage(`not json`)}
+	if _, err := m.Append([]Entry{
+		syncEntry(t, "m1", "binding", `["02DEF"]`, map[string]any{"id": "02DEF"}),
+		bad,
+	}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("append with an unhashable body: err = %v, want ErrInvalid", err)
+	}
+	if stats, _ := m.Stats(); stats.Entries != 0 {
+		t.Errorf("a refused append left %d entries in the log", stats.Entries)
+	}
+	rows, err := m.Head("m1")
+	if err != nil {
+		t.Fatalf("head after a refused append: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("head after a refused append holds %+v, want nothing", rows)
+	}
+
+	// The doc half of the hash refuses the same way: a stamp with no value is
+	// not a document, so the append carrying it is refused whole.
+	docs := NewMemTransport("m1")
+	docBad := Entry{Op: OpUpsert, Table: "doc:config", PK: `["policy"]`, Body: json.RawMessage(`{"stamp":"5"}`)}
+	if _, err := docs.Append([]Entry{docBad}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("append with an unhashable doc body: err = %v, want ErrInvalid", err)
+	}
+	if stats, _ := docs.Stats(); stats.Entries != 0 {
+		t.Errorf("a refused doc append left %d entries in the log", stats.Entries)
+	}
+	docRows, err := docs.Head("m1")
+	if err != nil {
+		t.Fatalf("doc head after a refused append: %v", err)
+	}
+	if len(docRows) != 0 {
+		t.Errorf("doc head after a refused append holds %+v, want nothing", docRows)
 	}
 }
 

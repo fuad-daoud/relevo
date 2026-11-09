@@ -16,21 +16,21 @@ import (
 // installation's handle: it appends as its own origin, reads what other origins
 // wrote, and numbers from the log's high-water mark rather than a kept counter,
 // so a backup-restored file cannot reissue a held number.
-// It holds entries, per-row latest state, and each origin's sequence, writing each
-// append as one unit so a reader sees batch ends. It is the spec exporter and
-// importer are written against, so seq, mark or head disagreements show up here first.
+// It holds entries and each origin's sequence, deriving per-row latest state on
+// read, writing each append as one unit so a reader sees batch ends. It is the
+// spec exporter and importer are written against, so seq, mark or head
+// disagreements show up here first.
 type MemTransport struct {
 	origin string
 	log    *memLog
 }
 
-// memLog is the log itself: entries in append order, per-row latest state, each
-// origin's sequence, and published marks. It is separate from the transport so
-// two installations can hold the same log, the arrangement the exchange runs in.
+// memLog is the log itself: entries in append order, each origin's sequence,
+// and published marks. It is separate from the transport so two installations
+// can hold the same log, the arrangement the exchange runs in.
 type memLog struct {
 	mu      sync.Mutex
 	entries []Entry
-	head    map[string][]HeadRow
 	// marks is keyed by reader then origin: a handle records only its own reader's
 	// rows, and a second handle on the same log sees them, which is the rule the
 	// remote enforces by key.
@@ -62,7 +62,7 @@ func NewMemTransport(origin string) *MemTransport {
 
 // newMemLog is an empty log.
 func newMemLog() *memLog {
-	return &memLog{head: make(map[string][]HeadRow), marks: make(map[string]map[string]Mark)}
+	return &memLog{marks: make(map[string]map[string]Mark)}
 }
 
 // OnLog returns a second installation's handle on the same log: each keeps its own
@@ -78,8 +78,7 @@ func (m *memLog) append(origin string, entries []Entry, boundary Boundary) ([]En
 	if len(entries) == 0 {
 		return nil, nil
 	}
-	hashes := make([]string, len(entries))
-	for i, e := range entries {
+	for _, e := range entries {
 		if e.Origin != "" && e.Origin != origin {
 			return nil, fmt.Errorf("synclog: append %s %s as %s: %w",
 				e.Table, e.PK, e.Origin, ErrInvalid)
@@ -88,11 +87,12 @@ func (m *memLog) append(origin string, entries []Entry, boundary Boundary) ([]En
 			return nil, err
 		}
 		if e.Op == OpUpsert {
-			hash, err := entryHash(e)
-			if err != nil {
+			// The hash itself is not kept, since Head derives it on read. The
+			// check runs here, before the lock and before any write, so a bad
+			// body refuses the whole batch rather than failing later at Head.
+			if _, err := entryHash(e); err != nil {
 				return nil, fmt.Errorf("synclog: append %s %s: %w", e.Table, e.PK, err)
 			}
-			hashes[i] = hash
 		}
 	}
 
@@ -113,7 +113,6 @@ func (m *memLog) append(origin string, entries []Entry, boundary Boundary) ([]En
 		// batch ends and applies them whole.
 		e.Batch = next
 		m.entries = append(m.entries, e)
-		m.writeHead(e, hashes[i])
 		written = append(written, e)
 	}
 	m.recordSignedFrom(written, boundary)
@@ -140,20 +139,45 @@ func (m *memLog) pull(origin string, marks map[string]int) []Entry {
 	return out
 }
 
-// headOf returns one origin's latest state per row, table then key order, so a
-// page walk sees the same sequence every time.
-func (m *memLog) headOf(origin string) []HeadRow {
+// headOf derives one origin's latest state per row from the log's entries: the
+// entry with the highest sequence per row wins, a newest delete drops the row,
+// and each surviving upsert is hashed at read time, in table then key order so
+// a page walk sees the same sequence every time. Entries arrive only through
+// the validating append, so a hash failure here is defensive; it is still
+// refused rather than zeroed, since a wrong hash would have reconcile propose
+// against state that was never written.
+func (m *memLog) headOf(origin string) ([]HeadRow, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	rows := append([]HeadRow(nil), m.head[origin]...)
+	newest := make(map[rowKey]Entry)
+	for _, e := range m.entries {
+		if e.Origin != origin {
+			continue
+		}
+		key := rowKey{table: e.Table, pk: e.PK}
+		if held, seen := newest[key]; !seen || e.Seq > held.Seq {
+			newest[key] = e
+		}
+	}
+	rows := make([]HeadRow, 0, len(newest))
+	for key, e := range newest {
+		if e.Op == OpDelete {
+			continue
+		}
+		hash, err := entryHash(e)
+		if err != nil {
+			return nil, fmt.Errorf("synclog: head %s %s: %w", key.table, key.pk, err)
+		}
+		rows = append(rows, HeadRow{Table: e.Table, PK: e.PK, Seq: e.Seq, Hash: hash})
+	}
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].Table != rows[j].Table {
 			return tableIndex(rows[i].Table) < tableIndex(rows[j].Table)
 		}
 		return rows[i].PK < rows[j].PK
 	})
-	return rows
+	return rows, nil
 }
 
 // stats reports the log's size: entries held, machines written, highest sequence.
@@ -179,40 +203,6 @@ func (m *memLog) latestSeq(origin string) int {
 		}
 	}
 	return high
-}
-
-// writeHead moves one origin's latest state for the row the entry names: an
-// upsert replaces it, a delete drops it as no longer proposable.
-func (m *memLog) writeHead(e Entry, hash string) {
-	if e.Op == OpDelete {
-		m.head[e.Origin] = removeHead(m.head[e.Origin], e.Table, e.PK)
-		return
-	}
-	m.head[e.Origin] = replaceHead(m.head[e.Origin], e, hash)
-}
-
-// replaceHead records e as the latest state of its row, keeping length and order.
-func replaceHead(rows []HeadRow, e Entry, hash string) []HeadRow {
-	updated := HeadRow{Table: e.Table, PK: e.PK, Seq: e.Seq, Hash: hash}
-	for i := range rows {
-		if rows[i].Table == e.Table && rows[i].PK == e.PK {
-			rows[i] = updated
-			return rows
-		}
-	}
-	return append(rows, updated)
-}
-
-// removeHead drops the row from an origin's latest state.
-func removeHead(rows []HeadRow, table, pk string) []HeadRow {
-	out := rows[:0]
-	for _, row := range rows {
-		if row.Table == table && row.PK == pk {
-			continue
-		}
-		out = append(out, row)
-	}
-	return out
 }
 
 // origins is every origin the log holds entries for, in first-appearance order.
@@ -267,7 +257,7 @@ func (m *MemTransport) Pull(marks map[string]int) ([]Entry, error) {
 
 // Head returns one origin's latest entry per row.
 func (m *MemTransport) Head(origin string) ([]HeadRow, error) {
-	return m.log.headOf(origin), nil
+	return m.log.headOf(origin)
 }
 
 // Stats reports what the log holds, telling an empty log from a refusing transport.
