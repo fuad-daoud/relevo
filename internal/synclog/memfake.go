@@ -87,9 +87,9 @@ func (m *memLog) append(origin string, entries []Entry, boundary Boundary) ([]En
 			return nil, err
 		}
 		if e.Op == OpUpsert {
-			// The hash is discarded: nothing stores it now. The check still
-			// runs here, before the lock and before any write, so a bad body
-			// refuses the whole batch rather than failing later at Head.
+			// The hash itself is not kept, since Head derives it on read. The
+			// check runs here, before the lock and before any write, so a bad
+			// body refuses the whole batch rather than failing later at Head.
 			if _, err := entryHash(e); err != nil {
 				return nil, fmt.Errorf("synclog: append %s %s: %w", e.Table, e.PK, err)
 			}
