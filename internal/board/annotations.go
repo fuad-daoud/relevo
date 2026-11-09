@@ -271,6 +271,24 @@ func parseAnnotation(raw json.RawMessage) (Annotation, error) {
 	return a, nil
 }
 
+// validateBy is the author rule: a non-empty value after trimming, at most
+// 64 bytes, and no control characters. A default resolved from a bogus
+// environment is validated too, so it refuses rather than lands in the store.
+func validateBy(by string) error {
+	if by == "" {
+		return usagef("comment: the author must not be empty")
+	}
+	if len(by) > 64 {
+		return usagef("comment: the author is %d bytes, want at most 64", len(by))
+	}
+	for _, r := range by {
+		if r < 0x20 || r == 0x7f {
+			return usagef("comment: the author contains a control character")
+		}
+	}
+	return nil
+}
+
 // newAnnotation validates a request and builds the entry, except for its id,
 // which depends on what is already in the file.
 func newAnnotation(req AnnotationRequest) (Annotation, error) {

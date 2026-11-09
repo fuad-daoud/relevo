@@ -1,30 +1,33 @@
 package board
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // ErrConflict reports an If-Match that does not match the bytes on disk: the
-// caller's view of the scene is stale.
+// caller's view of the board is stale.
 var ErrConflict = errors.New("conflict")
 
-// ErrInvalid reports a body that is not an Excalidraw scene or not an svg.
+// ErrInvalid reports a body the board cannot read: a malformed document, a
+// symlink where a file belongs, or an over-large board.
 var ErrInvalid = errors.New("invalid")
 
-// ErrNotFound reports a scene the caller named but which is not on disk. The
-// agent leg refuses it rather than treating a missing file as a new scene.
+// ErrNotFound reports a board the caller named but which is not on disk. A
+// write refuses it rather than treating a missing file as a new board.
 var ErrNotFound = errors.New("not found")
 
-// Load reads the scene at path. A missing file is not an error: it is a new
-// scene with an empty etag, and nothing is created until the first save.
+// notFoundError carries ErrNotFound while printing the refusal text alone.
+type notFoundError struct{ msg string }
+
+func (e *notFoundError) Error() string { return e.msg }
+func (e *notFoundError) Unwrap() error { return ErrNotFound }
+
+// Load reads the board at path. A missing file is not an error: it is a new
+// board with an empty etag, and nothing is created until the first write.
 func Load(path string) (data []byte, etag string, isNew bool, err error) {
 	data, err = os.ReadFile(path)
 	if err != nil {
@@ -37,78 +40,9 @@ func Load(path string) (data []byte, etag string, isNew bool, err error) {
 	return data, hex.EncodeToString(sum[:]), false, nil
 }
 
-// ValidateScene reports whether body is an Excalidraw scene: a JSON object
-// whose type is "excalidraw" and whose elements is an array.
-func ValidateScene(body []byte) error {
-	var doc map[string]json.RawMessage
-	if err := json.Unmarshal(body, &doc); err != nil {
-		return fmt.Errorf("%w: scene is not a JSON object: %w", ErrInvalid, err)
-	}
-	var typ string
-	if raw, ok := doc["type"]; !ok || json.Unmarshal(raw, &typ) != nil || typ != "excalidraw" {
-		return fmt.Errorf("%w: scene type is not %q", ErrInvalid, "excalidraw")
-	}
-	raw, ok := doc["elements"]
-	if !ok {
-		return fmt.Errorf("%w: scene has no elements", ErrInvalid)
-	}
-	var elems []json.RawMessage
-	if err := json.Unmarshal(raw, &elems); err != nil || elems == nil {
-		return fmt.Errorf("%w: scene elements is not an array", ErrInvalid)
-	}
-	return nil
-}
-
-// ValidateSVG reports whether body is an svg document: it starts with "<svg"
-// after an optional XML prolog and leading whitespace.
-func ValidateSVG(body []byte) error {
-	s := body
-	if bytes.HasPrefix(s, []byte("<?xml")) {
-		end := bytes.Index(s, []byte("?>"))
-		if end < 0 {
-			return fmt.Errorf("%w: unterminated XML prolog", ErrInvalid)
-		}
-		s = s[end+2:]
-	}
-	s = bytes.TrimLeft(s, " \t\r\n")
-	if !bytes.HasPrefix(s, []byte("<svg")) {
-		return fmt.Errorf("%w: svg does not start with <svg", ErrInvalid)
-	}
-	return nil
-}
-
-// renameFile is the rename Save steps through, a seam a test replaces to prove
-// a crash before the rename leaves the old file and no temp file.
+// renameFile is the rename writeAtomic steps through, a seam a test replaces
+// to prove a crash before the rename leaves the old file and no temp file.
 var renameFile = os.Rename
-
-// Save writes scene to path and its companion svg beside it, atomically.
-// If-Match must equal the etag of the bytes on disk (empty for a new file)
-// or the save is refused with ErrConflict. The scene is renamed into place
-// first, then the svg. It returns the scene's new etag.
-func Save(path string, scene, svg []byte, ifMatch string) (string, error) {
-	current := ""
-	if old, err := os.ReadFile(path); err == nil {
-		sum := sha256.Sum256(old)
-		current = hex.EncodeToString(sum[:])
-	} else if !os.IsNotExist(err) {
-		return "", err
-	}
-	if ifMatch != current {
-		return "", ErrConflict
-	}
-	if err := writeAtomic(path, scene); err != nil {
-		return "", err
-	}
-	if err := writeAtomic(svgPath(path), svg); err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(scene)
-	return hex.EncodeToString(sum[:]), nil
-}
-
-func svgPath(scene string) string {
-	return strings.TrimSuffix(scene, sceneExt) + ".svg"
-}
 
 // writeAtomic writes data to a temp file in path's directory and renames it
 // into place. A failure removes the temp file, so an interrupted save leaves

@@ -19,8 +19,8 @@ const htmlSecurityHeaders = "default-src 'none'; " +
 	"base-uri 'none'; form-action 'none'"
 
 // HTMLServer is the single-file board's HTTP surface. Host must be the
-// bound 127.0.0.1:<port> and is checked on every request, exactly as on the
-// Excalidraw server.
+// bound 127.0.0.1:<port> and is checked on every request, which defends
+// against DNS rebinding.
 type HTMLServer struct {
 	Token     string
 	BoardPath string

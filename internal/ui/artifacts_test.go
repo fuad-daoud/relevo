@@ -179,16 +179,14 @@ func TestArtifactsEnterOpensByKind(t *testing.T) {
 	}
 }
 
-// TestArtifactsExcalidrawFallback pins both states of the .excalidraw cockpit
-// fallback: a scene with a companion .svg opens that svg in the browser with
-// no hint; a scene without one opens in $EDITOR and the tab carries the faint
-// hint line naming the edit command.
-func TestArtifactsExcalidrawFallback(t *testing.T) {
+// TestArtifactsExcalidrawOpensInEditor pins the plain extension rule: an
+// .excalidraw artifact opens in $EDITOR and shows no edit hint, even with a
+// companion .svg beside it; the .svg itself still opens in the browser.
+func TestArtifactsExcalidrawOpensInEditor(t *testing.T) {
 	st := store.New(t.TempDir())
 	seedReaderArtifacts(t, st, "review-568", "reviewer", 1, map[string]string{
-		"board.excalidraw":  `{"type":"excalidraw","elements":[]}`,
-		"board.svg":         "<svg></svg>\n",
-		"lonely.excalidraw": `{"type":"excalidraw","elements":[]}`,
+		"board.excalidraw": `{"type":"excalidraw","elements":[]}`,
+		"board.svg":        "<svg></svg>\n",
 	}, railNow)
 
 	fa := &fakeActions{}
@@ -201,14 +199,12 @@ func TestArtifactsExcalidrawFallback(t *testing.T) {
 	rv.pane, _ = rv.pane.switchTab(tabArtifacts)
 	dir := st.ArtifactDir("review-568", 1, "reviewer")
 
-	// A companion .svg beside the scene: browser on the svg, no hint.
+	// The scene opens in the editor at its own path, companion or not, and
+	// the tab names no edit command.
 	rv = loadArtifactsAt(t, rv, "board.excalidraw")
 	content := rv.pane.detail.cache[tabArtifacts]
-	if opens := artifactOpensIn(content, "board.excalidraw"); opens != "browser" {
-		t.Errorf("OPENS IN = %q, want browser", opens)
-	}
-	if hint := artifactEditHint(content); hint != "" {
-		t.Errorf("hint = %q, want none beside a companion", hint)
+	if opens := artifactOpensIn(content, "board.excalidraw"); opens != "$EDITOR" {
+		t.Errorf("OPENS IN = %q, want $EDITOR", opens)
 	}
 	next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyEnter}, env)
 	rv = next.(roundView)
@@ -219,31 +215,27 @@ func TestArtifactsExcalidrawFallback(t *testing.T) {
 		t.Fatal("enter did not call OpenArtifact")
 	}
 	got := fa.opened[len(fa.opened)-1]
-	if want := filepath.Join(dir, "board.svg"); got.kind != "browser" || got.path != want {
-		t.Errorf("OpenArtifact = (%q, %q), want (%q, %q)", got.path, got.kind, want, "browser")
+	if want := filepath.Join(dir, "board.excalidraw"); got.kind != "editor" || got.path != want {
+		t.Errorf("OpenArtifact = (%q, %q), want (%q, %q)", got.path, got.kind, want, "editor")
+	}
+	if plain := stripANSI(artifactsBody(content)); strings.Contains(plain, "relevo board") {
+		t.Errorf("the tab body carries an edit command hint:\n%s", plain)
 	}
 
-	// No companion: the editor on the scene, with the hint line.
-	rv = loadArtifactsAt(t, rv, "lonely.excalidraw")
+	// The companion .svg itself still opens in the browser.
+	rv = loadArtifactsAt(t, rv, "board.svg")
 	content = rv.pane.detail.cache[tabArtifacts]
-	if opens := artifactOpensIn(content, "lonely.excalidraw"); opens != "$EDITOR" {
-		t.Errorf("OPENS IN = %q, want $EDITOR", opens)
-	}
-	wantHint := "run relevo board " + filepath.Join(dir, "lonely.excalidraw") + " to edit"
-	if hint := artifactEditHint(content); hint != wantHint {
-		t.Errorf("hint = %q, want %q", hint, wantHint)
-	}
-	if plain := stripANSI(artifactsBody(content)); !strings.Contains(plain, wantHint) {
-		t.Errorf("the tab body does not carry the hint %q:\n%s", wantHint, plain)
+	if opens := artifactOpensIn(content, "board.svg"); opens != "browser" {
+		t.Errorf("OPENS IN = %q, want browser", opens)
 	}
 	next, cmd = rv.Update(tea.KeyMsg{Type: tea.KeyEnter}, env)
 	rv = next.(roundView)
 	if cmd == nil {
-		t.Fatal("enter on the companionless scene returned no command")
+		t.Fatal("enter on the svg returned no command")
 	}
 	got = fa.opened[len(fa.opened)-1]
-	if want := filepath.Join(dir, "lonely.excalidraw"); got.kind != "editor" || got.path != want {
-		t.Errorf("OpenArtifact = (%q, %q), want (%q, %q)", got.path, got.kind, want, "editor")
+	if want := filepath.Join(dir, "board.svg"); got.kind != "browser" || got.path != want {
+		t.Errorf("OpenArtifact = (%q, %q), want (%q, %q)", got.path, got.kind, want, "browser")
 	}
 }
 

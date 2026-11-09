@@ -1,5 +1,5 @@
-// Package board owns the board scenes `relevo board` serves: Excalidraw
-// scenes and single-file HTML boards, in the repo scope and the live scope.
+// Package board owns the single-file HTML boards `relevo board` serves, in
+// the repo scope and the live scope.
 package board
 
 import (

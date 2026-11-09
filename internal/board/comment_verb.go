@@ -8,10 +8,10 @@ import (
 )
 
 // CommentInput is what one `board comment` asks for: Ref is the --mastermind
-// value, BoardName the --board name, Arg an optional scene path, and the
+// value, BoardName the --board name, Arg an optional board path, and the
 // comment text, author, selector and position. A nil X/Y places the comment
-// below the scene; Selector is read only on the HTML branch, where it names
-// the element the note is about and empty means a board-level note.
+// below the board; Selector names the element the note is about, and empty
+// means a board-level note.
 type CommentInput struct {
 	Ref       string
 	BoardName string
@@ -22,48 +22,24 @@ type CommentInput struct {
 	X, Y      *float64
 }
 
-// Comments prints every comment in the resolved board in file order. An
-// explicit .excalidraw path keeps the Excalidraw flow byte for byte, and every
-// other shape -- no path, --board, or the pointer -- is an HTML board. Both
-// branches are read-only: a missing board is no comments, exit 0, nothing
-// created, and the pointer is never written.
+// Comments prints every comment in the resolved HTML board in file order. It
+// is read-only: a missing board is no comments, exit 0, nothing created, and
+// the pointer is never written.
 func Comments(deps Deps, cwd, ref, boardName, arg string, asJSON bool) error {
-	if !excalidrawArg(arg) {
-		res, err := ResolveSceneHTML(deps, cwd, ref, boardName, arg)
-		if err != nil {
-			return err
-		}
-		entries, _, err := ReadAnnotations(res.Path)
-		if err != nil {
-			return err
-		}
-		if asJSON {
-			return json.NewEncoder(os.Stdout).Encode(entries)
-		}
-		for _, a := range entries {
-			fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-				a.ID, a.Selector, number(a.X), number(a.Y), a.Text, a.By, a.At)
-		}
-		return nil
-	}
-	res, err := ResolveScene(deps, cwd, ref, boardName, arg)
+	res, err := ResolveSceneHTML(deps, cwd, ref, boardName, arg)
 	if err != nil {
 		return err
 	}
-
-	comments, err := ReadComments(res.Path)
+	entries, _, err := ReadAnnotations(res.Path)
 	if err != nil {
 		return err
 	}
 	if asJSON {
-		if comments == nil {
-			comments = []Comment{}
-		}
-		return json.NewEncoder(os.Stdout).Encode(comments)
+		return json.NewEncoder(os.Stdout).Encode(entries)
 	}
-	for _, c := range comments {
-		fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n",
-			c.ID, number(c.X), number(c.Y), c.Text, c.By, c.At)
+	for _, a := range entries {
+		fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			a.ID, a.Selector, number(a.X), number(a.Y), a.Text, a.By, a.At)
 	}
 	return nil
 }
@@ -76,11 +52,9 @@ type CommentWrite struct {
 	Path string
 }
 
-// WriteComment appends one comment to the resolved board and returns what it
-// wrote; printing is the caller's. An explicit .excalidraw path keeps the
-// scene flow byte for byte and refuses --selector, which an Excalidraw scene
-// has no elements to satisfy. A live board whose name did not come from the
-// pointer writes the pointer; a repo board never does.
+// WriteComment appends one comment to the resolved HTML board and returns
+// what it wrote; printing is the caller's. A live board whose name did not
+// come from the pointer writes the pointer; a repo board never does.
 func WriteComment(deps Deps, cwd string, in CommentInput) (CommentWrite, error) {
 	if in.Text == "" {
 		return CommentWrite{}, usagef("relevo board comment: --text is required and must not be empty")
@@ -88,42 +62,7 @@ func WriteComment(deps Deps, cwd string, in CommentInput) (CommentWrite, error) 
 	if (in.X == nil) != (in.Y == nil) {
 		return CommentWrite{}, usagef("relevo board comment: --x and --y go together")
 	}
-	if !excalidrawArg(in.Arg) {
-		return writeBoardAnnotation(deps, cwd, in)
-	}
-	// --selector names an HTML element, and a scene has no elements selectors
-	// name, so it is refused rather than silently dropped.
-	if in.Selector != "" {
-		return CommentWrite{}, usagef("relevo board comment: --selector needs an HTML board, not %s", in.Arg)
-	}
-	res, err := ResolveScene(deps, cwd, in.Ref, in.BoardName, in.Arg)
-	if err != nil {
-		return CommentWrite{}, err
-	}
-	if res.Scope == ScopeLive && !res.FromPointer {
-		if err := WritePointer(res.LiveDir, res.Scene); err != nil {
-			return CommentWrite{}, err
-		}
-	}
-
-	theme, err := ResolveTheme(deps, cwd, "")
-	if err != nil {
-		return CommentWrite{}, err
-	}
-	by := in.By
-	if by == "" {
-		by = DefaultBy(os.Getenv("RELEVO_MASTERMIND"))
-	}
-	req := CommentRequest{Text: in.Text, By: by, At: deps.Now(), Theme: theme}
-	if in.X != nil {
-		req.X, req.Y = in.X, in.Y
-	}
-
-	c, err := AddComment(res.Path, req)
-	if err != nil {
-		return CommentWrite{}, err
-	}
-	return CommentWrite{ID: c.ID, Path: res.Path}, nil
+	return writeBoardAnnotation(deps, cwd, in)
 }
 
 // writeBoardAnnotation is the HTML branch of one comment write: the note lands
@@ -169,6 +108,19 @@ func writeBoardAnnotation(deps Deps, cwd string, in CommentInput) (CommentWrite,
 		return CommentWrite{}, err
 	}
 	return CommentWrite{ID: entry.ID, Path: AnnotationsPath(res.Path)}, nil
+}
+
+// humanBy is the author a comment gets when neither --by nor the
+// RELEVO_MASTERMIND environment names one.
+const humanBy = "human"
+
+// DefaultBy resolves the comment author: the explicit value, else the
+// environment's MasterMind, else human.
+func DefaultBy(env string) string {
+	if env != "" {
+		return env
+	}
+	return humanBy
 }
 
 // derefOr is the position of a flag the writer was not given: the store

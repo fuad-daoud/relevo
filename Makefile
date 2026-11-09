@@ -6,7 +6,7 @@ BIN     := $(HOME)/.local/bin/relevo
 BUILD_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo devel)
 LDFLAGS := -X main.version=$(if $(VERSION),$(VERSION),$(BUILD_VERSION))
 
-.PHONY: check check-quick check-affected check-static check-scripts check-test lint build install service uninstall release release-bump release-tag board-assets mod-test
+.PHONY: check check-quick check-affected check-static check-scripts check-test lint build install service uninstall release release-bump release-tag mod-test
 
 # lint runs golangci-lint with .golangci.yml. The binary is not vendored and
 # CI installs it in a setup step, so a machine without it still gets the rest
@@ -53,7 +53,6 @@ check-static:
 	rm -f go.mod.check go.sum.check
 	sh scripts/check-plugin-version.sh
 	sh scripts/check-name.sh
-	sh scripts/check-board-theme.sh
 	sh scripts/serviceunit-dist.sh --check
 	$(MAKE) check-scripts
 
@@ -69,12 +68,6 @@ check-scripts:
 		echo "shellcheck not installed; skipping shell lint"; \
 	fi
 	@for t in scripts/*_test.sh; do echo "==> $$t"; sh "$$t" || exit 1; done
-
-# board-assets rebuilds the vendored page under internal/board/assets from the
-# wrapper under board/. Dev-only: it needs node and network, and CI never runs
-# it. The built assets are committed, so `check` only reads them.
-board-assets:
-	sh scripts/board-assets.sh
 
 # check-affected is the builder's inner gate: the static checks, then go test
 # (no -race, no -count=1, so Go's test cache applies) over only the packages

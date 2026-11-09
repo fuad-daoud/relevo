@@ -7,56 +7,6 @@ import (
 	"strings"
 )
 
-// DefaultScene is the scene `relevo board` opens when no path is named.
-const DefaultScene = "docs/boards/board.excalidraw"
-
-// sceneExt is the only extension the verb accepts, so a scene path can never
-// collide with a future subverb name.
-const sceneExt = ".excalidraw"
-
-// SceneExt is the Excalidraw scene extension, so a caller can route a path
-// to the Excalidraw flow without repeating the literal.
-func SceneExt() string { return sceneExt }
-
-// Resolve turns arg into the scene path the server reads and writes. An
-// empty arg is the repo default. A named path must end in .excalidraw and,
-// after symlinks are resolved, sit under repoRoot, so neither ".." nor a
-// symlinked parent can steer a write outside the repository. A missing file
-// is accepted: it is a new scene, created on the first save.
-func Resolve(repoRoot, cwd, arg string) (string, error) {
-	root := filepath.Clean(repoRoot)
-	if real, err := filepath.EvalSymlinks(repoRoot); err == nil {
-		root = real
-	}
-
-	if arg == "" {
-		return filepath.Join(root, filepath.FromSlash(DefaultScene)), nil
-	}
-	if !strings.HasSuffix(arg, sceneExt) {
-		return "", usagef("scene path must end in %s: %s", sceneExt, arg)
-	}
-
-	path := arg
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(cwd, path)
-	}
-	path = filepath.Clean(path)
-
-	tail, anchor, err := splitExisting(path)
-	if err != nil {
-		return "", usagef("%v", err)
-	}
-	real, err := filepath.EvalSymlinks(anchor)
-	if err != nil {
-		return "", usagef("resolve %s: %v", anchor, err)
-	}
-	full := filepath.Join(real, tail)
-	if !underRoot(root, full) {
-		return "", usagef("%s is outside the repository root %s", path, root)
-	}
-	return path, nil
-}
-
 func splitExisting(path string) (tail, anchor string, err error) {
 	cur := path
 	for {

@@ -107,8 +107,8 @@ func ResolveLiveHTMLArg(liveRoot, cwd, arg string) (Resolved, bool, error) {
 }
 
 // ResolveLiveHTMLDir resolves name inside one MasterMind's live directory as
-// <liveDir>/<name>/board.html. Like ResolveLiveDir it refuses a bad slug and two
-// scopes that nest, so the scopes can never overlap.
+// <liveDir>/<name>/board.html. It refuses a bad slug and two scopes that
+// nest, so the scopes can never overlap.
 func ResolveLiveHTMLDir(repoRoot, liveDir, name string) (Resolved, error) {
 	if err := ValidSceneName(name); err != nil {
 		return Resolved{}, err

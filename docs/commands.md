@@ -15,26 +15,20 @@
   existing binding's MasterMind side at the calling MasterMind without touching the
   builder; on a resume `--feature` sets the label, `--no-feature` clears it, and
   naming neither keeps it, while `--ticket` sets one. `relevo unbind N` is the other way out.
-- `relevo board [path] [--board NAME] [--mastermind M] [--theme NAME] [--no-open]` — open
+- `relevo board [path] [--board NAME] [--mastermind M] [--no-open]` — open
   a board: a single HTML page served on `127.0.0.1` with a per-run token. A bare
   `relevo board` opens the live board of the calling MasterMind under the state
-  root, and a path ending in `/board.html` opens one board in the repo. A path
-  ending in `.excalidraw` opens the
-  [Excalidraw](https://excalidraw.com) whiteboard instead, saving the scene and
-  (for a repo scene) a companion `.svg` beside it. `relevo board url` prints a
+  root, and a path ending in `/board.html` opens one board in the repo.
+  `relevo board url` prints a
   live board's URL and `relevo board promote` copies a live board into the repo.
   Foreground; Ctrl-C stops. See [relevo board](#relevo-board).
-- `relevo board comments [path|--board NAME] [--json]` — list every comment: on an
-  HTML board the notes in `annotations.json` beside it (`id, selector, x, y,
-  text, by, at`); on an explicit `.excalidraw` path the scene's comment
-  elements (`id, x, y, text, by, at`). `--json` is one compact array.
+- `relevo board comments [path|--board NAME] [--json]` — list every note in
+  `annotations.json` beside the HTML board (`id, selector, x, y,
+  text, by, at`). `--json` is one compact array.
   `relevo board comment [path|--board NAME] --text S [--selector SEL] [--x X --y Y]
-  [--by B]` — append one note to the HTML board, or one comment element to the
-  scene; `--selector` names an HTML element and is refused on a scene.
+  [--by B]` — append one note to the HTML board;
+  `--selector` names the HTML element the note is about.
   See [relevo board](#relevo-board).
-- `relevo board text <file> [--json]`, `relevo board annotate <file> --text S
-  [--x X --y Y]` — list the scene's text elements, or append one without
-  touching the rest of the scene. Scenes only. See [relevo board](#relevo-board).
 - `relevo send [NAME|--name N] --file PATH [--dry-run] [--tier T [--allow-yolo]] [--candidate CANDIDATE] [--verify|--no-verify] [--regate N] [--force]` — stage the file as the current round's
   prompt and hand it to the builder as the prompt of a fresh process started in
   the binding's tree. A planner actor's prompt is a seed, capped at 4 KiB, and a
@@ -392,7 +386,7 @@ report text here
 
 ## relevo board
 
-`relevo board [path] [--board NAME] [--mastermind M] [--theme NAME] [--no-open]`
+`relevo board [path] [--board NAME] [--mastermind M] [--no-open]`
 opens a board. A bare `relevo board` opens this MasterMind's live board; naming
 a path ending in `/board.html` opens one board in the repository. Either way it
 binds `127.0.0.1:0`, prints one line,
@@ -407,13 +401,8 @@ relevo board --mastermind architect-2              another MasterMind's live boa
 relevo board docs/boards/api/board.html            opens a named repo board
 relevo board url                                   prints a live board's URL
 relevo board promote                               copies a live board into the repo
-relevo board docs/boards/api.excalidraw            edits a named Excalidraw scene
-relevo board --theme blueprint                     a palette for new scene elements
-relevo board comments                              lists a scene's comments
-relevo board comment --text "check state 3"        appends one comment
-relevo board text docs/boards/api.excalidraw       lists the scene's text elements
-relevo board annotate docs/boards/api.excalidraw --text "step 1"
-                                                   appends one text element
+relevo board comments                              lists a board's notes
+relevo board comment --text "check state 3"        appends one note
 ```
 
 A board is one HTML file. A live board is
@@ -483,10 +472,6 @@ A live board's URL names its owner in the path,
 board it is; the token still rides only the fragment. The URL also appears in the
 statusline (below).
 
-An explicit `.excalidraw` path opens the
-[Excalidraw](https://excalidraw.com) whiteboard instead, with `--theme` choosing
-the palette for new elements.
-
 On an HTML board, `relevo board comments [path|--board NAME] [--json]` reads the
 `annotations.json` beside the board and prints every note in file order --
 one tab-separated row each (`id, selector, x, y, text, by, at`), or one
@@ -507,101 +492,18 @@ older entries written without `thread` read as threads of their own. Notes have
 no resolve or delete -- and the CLI never deletes, and it posts top-level notes
 only.
 
-On an explicit `.excalidraw` path the same two verbs keep the scene flow: a
-comment is a text element carrying `customData.relevo` `{comment: true, by,
-at}`, listed as `id, x, y, text, by, at`, and both writers use the theme's
-`comment` colour. `comment` appends at `--x`/`--y` when both are given and
-otherwise below the scene's bounds so it never lands on a drawing, leaving
-every other byte of the scene unchanged; `--selector` names an HTML element, so
-a scene refuses it (exit 2). A missing scene is a new one carrying the comment
-for `comment`, and simply no comments for `comments`. A malformed marker, or a
-file that is not a scene, is `refused` (exit 2) naming the element or the path;
-an author that is empty, longer than 64 bytes or holds a control character is
-`usage` (exit 2). The whiteboard itself has no comment mode: dots, panel and
-composer exist only on the HTML shell.
-
-Both formats are confined the same way. A repo path must end in `/board.html`
-(or `.excalidraw`), its parent directory must be a board slug, and after symlinks
+Both scopes are confined the same way. A repo path must end in `/board.html`,
+its parent directory must be a board slug, and after symlinks
 are resolved on its deepest existing ancestor the whole path must sit under the
 git top level, so neither `..` nor a symlinked parent escapes. A live path must
 be exactly `<live root>/<mastermind-id>/<slug>/board.html` under the state root.
-A missing file is a new board or a new scene, and nothing is created on disk
+A missing file is a new board, and nothing is created on disk
 until the first save. An explicit repo path outside a repository is a usage
 error, exit 2; a bare `relevo board` is the live board and never requires a
 repository. A live board refuses a state root that sits inside a repository (or a
 repository inside it), because the two scopes may not nest. Because every path
 must name its file, a bare slug directory is never a path, so a board directory
 can never collide with a subverb name.
-
-The theme chooses the colours of **new** elements only -- an existing scene
-keeps the colours it stores -- and never touches an HTML board: annotations
-carry no colour, so the palette still chooses only new Excalidraw elements.
-Every palette lives in the `themes` config
-section, keyed by name: the release writes `cockpit` and `blueprint` there
-once per database when relevo starts (so `relevo config get themes.cockpit
---json` prints cockpit's palette on a fresh install), and after that every
-lookup reads the section -- `relevo config set themes.<name> '{...}'` changes
-what the board paints, `config unset themes.<name>` is what unsets one, and a
-palette you unset stays unset: the seed runs once, not on every open. A user
-palette is whole -- all eleven colour fields (`bg ink muted faint line panel
-accent good warn bad comment`) are required, and each is a `#` followed by 3,
-4, 6 or 8 hex digits -- so a missing or unknown field, and any other colour
-form, is refused at write time naming the entry and the field. Precedence is
-`--theme`, then the repository's own stored setting (`relevo config repo set
-board_theme <name>`), then the repo-local git config key `relevo.boardTheme`
-(`git config relevo.boardTheme blueprint`), then `cockpit`. A `relevo board` that runs before the state root
-has a database at all -- a fresh install that has never opened it writable --
-paints the palettes the embedded seed file carries. An unknown name is a
-usage error, exit 2, that lists the names the consulted set holds and says
-how to add one: `relevo config set themes.<name> '{...}'`.
-
-On save the page writes the scene and a companion `<name>.svg` beside it,
-exported for the cockpit, agents and PR diffs; both are committed. The export
-runs with dark mode off and the view background set from the palette, so what
-is stored, shown and exported is the same colour. `Ctrl-S` (or the Save button)
-writes the scene and its companion `.svg`.
-
-The page and its assets (bundle, stylesheet and self-hosted fonts) are vendored,
-committed and embedded, so no CDN is contacted. The page talks to three
-loopback-only routes: `GET /` and `GET /assets/*` are the page, `GET /api/scene`
-returns the scene, and `PUT /api/scene` saves it. A per-run token, carried in
-the URL fragment and sent on every `/api/*` call, plus a `Host` check, guard the
-API; `If-Match` carries the scene's etag, and a stale one is a 409 the page
-reports as `the file changed on disk; reload to continue`. `make board-assets`
-regenerates the vendored assets and their integrity manifest; it is dev-only,
-and CI only reads them.
-
-The agent leg is pure Go, so an agent reads and writes a scene without the
-page: `relevo board text <file>` prints one row per non-deleted text element --
-id, x, y, then the raw text -- and `--json` prints one line,
-`[{"id":"…","x":10,"y":20,"text":"…"}]` (`[]` for a scene with none, never
-`null`). `relevo board annotate <file> --text S [--x X --y Y]` appends one text
-element and prints `board: annotated <path> (id <id>)`; it never unmarshals and
-re-marshals the scene, so every other byte keeps its position and a diff shows
-only the insertion. Without `--x/--y` the element lands below the scene's
-current bounds, left-aligned with its leftmost element, so an agent's note
-never lands on a drawing.
-
-Both subverbs require a scene path that ends in `.excalidraw` and sits under
-the repository root, and both refuse rather than create one: a missing scene is
-`no scene at <path>` (exit 2), and an invalid scene is refused with the
-validator's own words. The other usage refusals are exit 2 as well: a path that
-is missing or repeated, `--text` absent or empty, `--x` without `--y` (they
-come together), and a non-finite coordinate.
-
-Annotate's element is built for Excalidraw 0.18.1: `fontFamily` 3 (Cascadia),
-`lineHeight` 1.2, `fontSize` 20, `roughness` 0, and `strokeColor` from the
-resolved theme's ink. Font safety is explicit -- `autoResize` is true and the
-width is an estimate (twelve pixels per byte of the widest line, so it errs
-upward) that the emitted element never falls below, which is what keeps
-CLI-made text from rendering clipped before the font loads. Only the id (16
-random bytes), the seed and the timestamp are random.
-
-In the cockpit, an `.excalidraw` artifact opens its companion `.svg` in the
-browser when one sits beside it; without one it opens in `$EDITOR` and the tab
-shows the faint line `run relevo board <path> to edit`, so the scene can be
-opened on the board. The OPENS IN cell and the open action share one decision,
-so they cannot disagree.
 
 ## done and unbind are the destructive verbs
 

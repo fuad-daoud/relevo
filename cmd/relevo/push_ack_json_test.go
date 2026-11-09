@@ -374,12 +374,11 @@ func TestConfigJSONFlagIsOnTheSurface(t *testing.T) {
 }
 
 // TestBoardJSONFlagIsOnTheSurface: the flag reaches the registry row and the
-// installer together for the three board writes, so `relevo help --json` and
-// `relevo board annotate -h` cannot disagree about it, and each row names the
+// installer together for the two board writes, so `relevo help --json` and
+// `relevo board comment -h` cannot disagree about it, and each row names the
 // document its verb prints.
 func TestBoardJSONFlagIsOnTheSurface(t *testing.T) {
 	for _, c := range []struct{ verb, doc string }{
-		{"board annotate", "json:AnnotateDoc"},
 		{"board comment", "json:CommentDoc"},
 		{"board promote", "json:PromoteDoc"},
 	} {

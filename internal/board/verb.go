@@ -2,11 +2,9 @@ package board
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
-	"math"
 	"net"
 	"net/http"
 	neturl "net/url"
@@ -18,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"text/tabwriter"
 	"time"
 )
 
@@ -43,29 +40,12 @@ func RepoRoot(cwd string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// GitConfig reads one repo-local git config key; an unset key is
-// ("", nil), the same fact git reports with exit 1.
-func GitConfig(cwd, key string) (string, error) {
-	cmd := exec.Command("git", "config", "--get", key)
-	cmd.Dir = cwd
-	out, err := cmd.Output()
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-			return "", nil
-		}
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
 // Options is what one run of the verb was asked for. scene and slug carry
 // the resolved board twice over: scene is the path the server reads, and slug
 // is the scene name the advertisement carries. They are separate because a
 // board.html path's base name would be "board" for every board in both scopes.
 type Options struct {
 	Scene   string
-	Theme   *Theme
 	NoOpen  bool
 	LiveDir string
 	// Owner names the MasterMind a live board belongs to (its name, else its
@@ -132,46 +112,13 @@ func URL(deps Deps, ref, boardName string) error {
 	return nil
 }
 
-// Run parses the verb, resolves the scene and scope, writes the pointer
+// Run parses the verb, resolves the board and scope, writes the pointer
 // for a live board that was not read from the pointer, and then runs the
-// foreground server. A scene path names a format rather than a scope: an
-// explicit .excalidraw path keeps the Excalidraw flow and everything else is
-// a single-file board ending in /board.html. So a bare slug is not a path in
-// either format and cannot collide with a subverb name.
-func Run(deps Deps, cwd, ref, themeFlag, boardName, arg string, noOpen bool, shell fs.FS) error {
-	// The theme is resolved before anything else so an unknown theme flag
-	// refuses regardless of which format the path selects. Only the Excalidraw
-	// flow consumes it: a single-file board brings its own colours.
-	theme, err := ResolveTheme(deps, cwd, themeFlag)
-	if err != nil {
-		return err
-	}
-
-	// An explicit Excalidraw path keeps the Excalidraw flow: the scene keeps
-	// its own verbs and its own server.
-	if strings.HasSuffix(arg, SceneExt()) {
-		return runExcalidrawBoard(deps, cwd, ref, boardName, arg, noOpen, theme)
-	}
+// foreground server. A board path names a single-file board ending in
+// /board.html, so a bare slug is not a path and cannot collide with a
+// subverb name.
+func Run(deps Deps, cwd, ref, boardName, arg string, noOpen bool, shell fs.FS) error {
 	return runSingleFileBoard(deps, cwd, ref, boardName, arg, noOpen, shell)
-}
-
-// runExcalidrawBoard serves an explicit .excalidraw path with the
-// Excalidraw server and the theme.
-func runExcalidrawBoard(deps Deps, cwd, ref, boardName, arg string, noOpen bool, theme *Theme) error {
-	res, err := ResolveScene(deps, cwd, ref, boardName, arg)
-	if err != nil {
-		return err
-	}
-	opts := Options{
-		Scene:   res.Path,
-		Slug:    res.Scene,
-		Scope:   res.Scope,
-		Theme:   theme,
-		NoOpen:  noOpen,
-		LiveDir: liveDirOf(res),
-		Owner:   res.Owner,
-	}
-	return Serve(deps, opts)
 }
 
 // runSingleFileBoard is the default flow: a live or repo board.html, or a
@@ -208,97 +155,6 @@ func liveDirOf(res Resolved) string {
 	return res.LiveDir
 }
 
-// agentPath resolves a subverb's scene path. A path outside a repository is
-// usage.
-func agentPath(deps Deps, cwd, arg string) (string, string, error) {
-	root, err := deps.RepoRoot(cwd)
-	if err != nil {
-		return "", "", usagef("not inside a git repository: %v", err)
-	}
-	path, err := Resolve(root, cwd, arg)
-	if err != nil {
-		return "", "", err
-	}
-	return cwd, path, nil
-}
-
-// Text lists a scene's text elements: one JSON document with asJSON, one
-// tabwriter row each otherwise.
-func Text(deps Deps, cwd, arg string, asJSON bool) error {
-	_, path, err := agentPath(deps, cwd, arg)
-	if err != nil {
-		return err
-	}
-	elements, err := TextElements(path)
-	if err != nil {
-		return err
-	}
-	if asJSON {
-		return json.NewEncoder(os.Stdout).Encode(elements)
-	}
-	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	for _, e := range elements {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", e.ID,
-			strconv.FormatFloat(e.X, 'f', -1, 64),
-			strconv.FormatFloat(e.Y, 'f', -1, 64),
-			e.Text)
-	}
-	return tw.Flush()
-}
-
-// AnnotateRequest is what one `board annotate` asks for. Every usage check
-// runs before any repository, theme or file work.
-type AnnotateRequest struct {
-	Text       string
-	HasText    bool
-	HasX, HasY bool
-	X, Y       float64
-}
-
-// AnnotateWrite is what an annotate wrote: the element appended, and the
-// resolved scene path it was appended to. The caller prints both, so the
-// human line and the JSON document can never disagree about the same write.
-type AnnotateWrite struct {
-	Path    string
-	Element AgentText
-}
-
-// AnnotateScene appends one text element to a scene and returns what it
-// wrote; printing is the caller's.
-func AnnotateScene(deps Deps, cwd, arg string, req AnnotateRequest) (AnnotateWrite, error) {
-	if !req.HasText {
-		return AnnotateWrite{}, usagef("--text is required")
-	}
-	if req.Text == "" {
-		return AnnotateWrite{}, usagef("--text must not be empty")
-	}
-	if req.HasX != req.HasY {
-		return AnnotateWrite{}, usagef("--x and --y come together")
-	}
-	if req.HasX && (math.IsNaN(req.X) || math.IsInf(req.X, 0)) {
-		return AnnotateWrite{}, usagef("--x must be a finite number")
-	}
-	if req.HasY && (math.IsNaN(req.Y) || math.IsInf(req.Y, 0)) {
-		return AnnotateWrite{}, usagef("--y must be a finite number")
-	}
-
-	cwd, path, err := agentPath(deps, cwd, arg)
-	if err != nil {
-		return AnnotateWrite{}, err
-	}
-	theme, err := ResolveTheme(deps, cwd, "")
-	if err != nil {
-		return AnnotateWrite{}, err
-	}
-	el, err := Annotate(path, AnnotateOptions{
-		Text: req.Text, X: req.X, Y: req.Y, HasX: req.HasX, HasY: req.HasY, Theme: theme,
-	})
-	if err != nil {
-		return AnnotateWrite{}, err
-	}
-	return AnnotateWrite{Path: path, Element: el}, nil
-}
-
 // FormatURL is the printed board URL: the loopback host, the owner segment
 // when there is one, and the per-run token in the fragment, so the token
 // never rides a request line.
@@ -310,14 +166,7 @@ func FormatURL(host, owner, token string) string {
 	return "http://" + host + path + "#t=" + token
 }
 
-func Serve(deps Deps, opts Options) error {
-	return serve(deps, opts, func(host, token string) http.Handler {
-		srv := &Server{Token: token, ScenePath: opts.Scene, Theme: opts.Theme, Host: host}
-		return srv.Handler()
-	})
-}
-
-// serve is the lifecycle both formats share: bind, advertise, print, open
+// serve is the lifecycle the board shares: bind, advertise, print, open
 // the browser, then serve until a signal and drain. newHandler runs once the
 // listener has bound, because the bound host and the per-run token are both
 // part of what a handler needs. The scene name in server.json is the resolved

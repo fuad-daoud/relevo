@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-
-	"github.com/fuad-daoud/relevo/internal/mastermind"
 )
 
 // Scope names which of the two board scopes a resolved scene belongs to:
@@ -51,75 +49,6 @@ type Resolved struct {
 	// Owner names the MasterMind a live board belongs to: its name when known,
 	// else its id. It is empty for the repo scope and only shapes the URL.
 	Owner string
-}
-
-// ResolveLiveArg classifies arg as a live scene path: ok when arg names
-// <liveRoot>/<id>/<name>.excalidraw, not ok when arg is not under the live
-// root at all, so the caller falls back to the repo scope. A path under
-// the live root that is not live-shaped is a usage refusal.
-func ResolveLiveArg(liveRoot, cwd, arg string) (Resolved, bool, error) {
-	path := arg
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(cwd, path)
-	}
-	path = filepath.Clean(path)
-
-	// Classification is textual, so a path under the live root by name that
-	// escapes it through a symlink is still classified live and refused below,
-	// not treated as a repo path.
-	rawRoot := filepath.Clean(liveRoot)
-	rel, err := filepath.Rel(rawRoot, path)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return Resolved{}, false, nil
-	}
-
-	parts := strings.Split(rel, string(filepath.Separator))
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return Resolved{}, false, usagef("live scene path must be <live root>/<mastermind-id>/<name>%s: %s", sceneExt, arg)
-	}
-	id, file := parts[0], parts[1]
-	if err := mastermind.ValidID(id); err != nil {
-		return Resolved{}, false, usagef("%v", err)
-	}
-	if !strings.HasSuffix(file, sceneExt) {
-		return Resolved{}, false, usagef("scene path must end in %s: %s", sceneExt, arg)
-	}
-	name := strings.TrimSuffix(file, sceneExt)
-	if err := ValidSceneName(name); err != nil {
-		return Resolved{}, false, err
-	}
-
-	// Confinement: after symlinks are resolved the path must still sit
-	// under <live root>/<id>, so a symlinked parent can never steer a write
-	// outside the live directory.
-	realRoot := evalExisting(liveRoot)
-	liveDir := filepath.Join(realRoot, id)
-	full := evalExisting(path)
-	if !underRoot(liveDir, full) {
-		return Resolved{}, false, usagef("%s is outside the live directory %s", path, liveDir)
-	}
-	// Both paths leave canonicalized, so callers never compare two spellings
-	// of one directory (macOS /var vs /private/var).
-	return Resolved{Scope: ScopeLive, Scene: name, Path: full, LiveDir: liveDir}, true, nil
-}
-
-// ResolveLiveDir resolves name inside one MasterMind's live directory. When
-// both roots are known it refuses two scopes that nest, so the scopes can
-// never overlap.
-func ResolveLiveDir(repoRoot, liveDir, name string) (Resolved, error) {
-	if err := ValidSceneName(name); err != nil {
-		return Resolved{}, err
-	}
-	if err := DisjointScopes(repoRoot, liveDir); err != nil {
-		return Resolved{}, err
-	}
-	liveDir = filepath.Clean(liveDir)
-	return Resolved{
-		Scope:   ScopeLive,
-		Scene:   name,
-		Path:    filepath.Join(liveDir, name+sceneExt),
-		LiveDir: liveDir,
-	}, nil
 }
 
 // DisjointScopes refuses two scopes that nest. It is a no-op when
