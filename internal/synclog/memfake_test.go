@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 )
 
@@ -519,6 +520,119 @@ func TestMemHeadReportsAnUnhashableStoredEntry(t *testing.T) {
 	}
 	if len(rows) != 0 {
 		t.Errorf("head returned %d rows with an unhashable entry, want none", len(rows))
+	}
+}
+
+// Compaction drops only superseded entries, so one origin's derived head reads
+// the same on either side of it: the newest entry per row survives the floor,
+// and another origin's rows are never in reach.
+func TestMemHeadAfterCompactMatchesBefore(t *testing.T) {
+	t.Parallel()
+	m1 := NewMemTransport("m1")
+	m2 := m1.OnLog("m2")
+
+	// Row A superseded, row B deleted, row C written once: the compactable,
+	// the absent and the untouched shapes in one log.
+	if _, err := m1.Append([]Entry{syncEntry(t, "m1", "binding", `["0AAAA"]`, map[string]any{"id": "0AAAA", "note": "first"})}); err != nil {
+		t.Fatalf("append A first: %v", err)
+	}
+	if _, err := m1.Append([]Entry{syncEntry(t, "m1", "binding", `["0AAAA"]`, map[string]any{"id": "0AAAA", "note": "second"})}); err != nil {
+		t.Fatalf("append A second: %v", err)
+	}
+	if _, err := m1.Append([]Entry{syncEntry(t, "m1", "binding", `["0BBBB"]`, map[string]any{"id": "0BBBB"})}); err != nil {
+		t.Fatalf("append B: %v", err)
+	}
+	if _, err := m1.Append([]Entry{syncDelete(t, "m1", "binding", `["0BBBB"]`)}); err != nil {
+		t.Fatalf("append B delete: %v", err)
+	}
+	last, err := m1.Append([]Entry{syncEntry(t, "m1", "binding", `["0CCCC"]`, map[string]any{"id": "0CCCC"})})
+	if err != nil {
+		t.Fatalf("append C: %v", err)
+	}
+	if _, err := m2.Append([]Entry{syncEntry(t, "m2", "binding", `["0DDDD"]`, map[string]any{"id": "0DDDD"})}); err != nil {
+		t.Fatalf("append m2 row: %v", err)
+	}
+
+	before, err := m1.Head("m1")
+	if err != nil {
+		t.Fatalf("head before: %v", err)
+	}
+	beforeOther, err := m2.Head("m2")
+	if err != nil {
+		t.Fatalf("other head before: %v", err)
+	}
+
+	// The floor is the highest sequence m1 holds, so both superseded entries
+	// sit at or below it and are in reach of the drop.
+	dropped, err := m1.Compact("m1", last[0].Seq)
+	if err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if dropped == 0 {
+		t.Fatal("compaction dropped nothing, so the test pins nothing")
+	}
+
+	after, err := m1.Head("m1")
+	if err != nil {
+		t.Fatalf("head after: %v", err)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Errorf("head after compaction = %+v, want the head from before %+v", after, before)
+	}
+	for _, row := range after {
+		if row.PK == `["0BBBB"]` {
+			t.Errorf("head after compaction holds deleted row %+v", row)
+		}
+	}
+	afterOther, err := m2.Head("m2")
+	if err != nil {
+		t.Fatalf("other head after: %v", err)
+	}
+	if !reflect.DeepEqual(afterOther, beforeOther) {
+		t.Errorf("other head after compacting m1 = %+v, want %+v", afterOther, beforeOther)
+	}
+}
+
+// An entry no hash can digest never enters the log: the append refuses the
+// whole batch, so a later head has nothing to refuse and the log holds nothing.
+func TestMemAppendRefusesAnUnhashableBodyAtAppend(t *testing.T) {
+	t.Parallel()
+
+	m := NewMemTransport("m1")
+	bad := Entry{Op: OpUpsert, Table: "binding", PK: `["01ABC"]`, Body: json.RawMessage(`not json`)}
+	if _, err := m.Append([]Entry{
+		syncEntry(t, "m1", "binding", `["02DEF"]`, map[string]any{"id": "02DEF"}),
+		bad,
+	}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("append with an unhashable body: err = %v, want ErrInvalid", err)
+	}
+	if stats, _ := m.Stats(); stats.Entries != 0 {
+		t.Errorf("a refused append left %d entries in the log", stats.Entries)
+	}
+	rows, err := m.Head("m1")
+	if err != nil {
+		t.Fatalf("head after a refused append: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("head after a refused append holds %+v, want nothing", rows)
+	}
+
+	// The doc half of the hash refuses the same way: a stamp with no value is
+	// not a document, so the append carrying it is refused whole.
+	docs := NewMemTransport("m1")
+	docBad := Entry{Op: OpUpsert, Table: "doc:config", PK: `["policy"]`, Body: json.RawMessage(`{"stamp":"5"}`)}
+	if _, err := docs.Append([]Entry{docBad}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("append with an unhashable doc body: err = %v, want ErrInvalid", err)
+	}
+	if stats, _ := docs.Stats(); stats.Entries != 0 {
+		t.Errorf("a refused doc append left %d entries in the log", stats.Entries)
+	}
+	docRows, err := docs.Head("m1")
+	if err != nil {
+		t.Fatalf("doc head after a refused append: %v", err)
+	}
+	if len(docRows) != 0 {
+		t.Errorf("doc head after a refused append holds %+v, want nothing", docRows)
 	}
 }
 
