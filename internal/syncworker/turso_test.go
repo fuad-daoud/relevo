@@ -1333,6 +1333,37 @@ func TestBackendPullRefusesARowItCannotScan(t *testing.T) {
 	}
 }
 
+// TestHeadRefusesARowItCannotRead pins that a corrupt newest row of the log is
+// reported rather than surfacing as an empty hash or a zero sequence: a peer
+// reconciles against exactly what the head returns, so a default read of a
+// row the worker cannot even interpret would silently present a different
+// state than the origin holds.
+func TestHeadRefusesARowItCannotRead(t *testing.T) {
+	driver := &localDriver{path: tempReplica(t)}
+	b := backendFor(t, driver, "origin-a")
+	if _, err := b.Append([]Entry{upsertEntry("origin-a", "board", `["b"]`, `{"title":"one"}`)}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	execOn(t, driver.path, "INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at)"+
+		" VALUES ('origin-a', 2, 2, 'board', '[\"b\"]', 'upsert', 3, 'not json', '2026-10-08T09:30:00Z')")
+	if _, err := b.Head("origin-a", "", 0); err == nil {
+		t.Error("head read a newest row whose body is not a JSON object")
+	} else if !strings.HasPrefix(err.Error(), "syncworker: hash board") {
+		t.Errorf("head error = %v, want the hash refusal naming the row it could not hash", err)
+	}
+	// The body stays a valid object here, so only the sequence can be what
+	// the read refuses on: the scan fails before any hashing runs.
+	execOn(t, driver.path,
+		"DELETE FROM log WHERE origin = 'origin-a' AND seq = 2",
+		"INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at)"+
+			" VALUES ('origin-a', 'xx', 2, 'board', '[\"b\"]', 'upsert', 3, '{\"title\":\"two\"}', '2026-10-08T09:30:00Z')")
+	if _, err := b.Head("origin-a", "", 0); err == nil {
+		t.Error("head read a newest row whose sequence is not a number")
+	} else if !strings.HasPrefix(err.Error(), "syncworker: read a head row") {
+		t.Errorf("head error = %v, want the scan refusal naming the row read", err)
+	}
+}
+
 // TestBackendOpenTwiceReleasesTheFirstReplica pins that a second handshake on
 // one pipe does not leave the first replica held.
 func TestBackendOpenTwiceReleasesTheFirstReplica(t *testing.T) {
