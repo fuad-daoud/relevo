@@ -330,9 +330,10 @@ var formatFourSeedStatements = []string{
 // recordingDriver wraps the production driver and totals what each push
 // moved, from the engine's own counters either side of it. The upgrade push
 // runs inside Open, so bracketing it from outside would also catch the
-// bootstrap; the wrapper brackets the push itself. A join's download rides
-// inside Open and is read from Bootstrapped instead, and pulls need no
-// wrapper: an append only pushes.
+// bootstrap; the wrapper brackets the push itself. A join's pull rides
+// inside Open too, so its sent side is read from the engine counters right
+// after Open, with Bootstrapped as the received cross-check, and pulls need
+// no wrapper: an append only pushes.
 type recordingDriver struct {
 	*tursoDriver
 	pushSent, pushRecv int64
@@ -347,8 +348,8 @@ func (d *recordingDriver) Push(ctx context.Context) error {
 	if err := d.tursoDriver.Push(ctx); err != nil {
 		return err
 	}
-	// A stats read that fails records nothing: the transfer path reads the
-	// same counters and reports that failure itself.
+	// A stats read that fails records nothing: the push already happened,
+	// and losing a measurement must not fail it.
 	after, err := d.Stats(ctx)
 	if err != nil {
 		return nil
@@ -497,11 +498,16 @@ func TestScratchFormatFiveUpgradeAndTraffic(t *testing.T) {
 	if err := backendB.Open(Spec{Version: ProtocolVersion, Origin: origin + "-reader", URL: url, Token: token}); err != nil {
 		t.Fatalf("join the upgraded remote: %v", err)
 	}
+	joinStats, err := recB.Stats(ctx)
+	if err != nil {
+		t.Fatalf("read the join counters: %v", err)
+	}
+	joinSent := joinStats.NetworkSentBytes
 	t.Cleanup(func() { _ = backendB.Close() })
 	if recB.pushSent != 0 || recB.pushRecv != 0 {
 		t.Errorf("the join pushed (sent %d, received %d), want none: the remote was already current", recB.pushSent, recB.pushRecv)
 	}
-	t.Logf("join pull: downloaded %d", recB.Bootstrapped())
+	t.Logf("join pull: sent %d, received %d (bootstrap downloaded %d)", joinSent, joinStats.NetworkReceivedBytes, recB.Bootstrapped())
 	assertUpgraded(t, backendB, bulkRows)
 
 	// Phase 4: per-entry traffic on the upgraded log, about 200 entries in
@@ -531,7 +537,7 @@ func TestScratchFormatFiveUpgradeAndTraffic(t *testing.T) {
 
 	total := seeder.Bootstrapped() + seedSent + seedRecv +
 		recA.Bootstrapped() + recA.pushSent + recA.pushRecv +
-		recB.Bootstrapped() + recB.pushSent + recB.pushRecv
+		joinSent + recB.Bootstrapped() + recB.pushSent + recB.pushRecv
 	t.Logf("total scratch traffic: %d bytes over %d seeded and %d appended rows", total, bulkRows, n6+n32)
 	if total > 100<<20 {
 		t.Errorf("scratch traffic = %d bytes, want under 100 MB: the test must stay inside the shared quota", total)
