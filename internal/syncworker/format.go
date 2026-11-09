@@ -19,7 +19,7 @@ import (
 // remote whose meta carries another value defines the log differently, so this
 // build refuses it rather than read columns it may have moved -- except the
 // versions below, which this build knows how to bring forward in place.
-const logFormatVersion = 4
+const logFormatVersion = 5
 
 // formatOneVersion is the previous format: the same log without the marks
 // table. A remote at it is upgraded rather than refused.
@@ -34,6 +34,11 @@ const formatTwoVersion = 2
 // Older entries keep NULL in those columns, which reads as having no dependency.
 const formatThreeVersion = 3
 
+// formatFourVersion is the format that still stores the head table beside the
+// log. A remote at it is upgraded in place by dropping that table, and its
+// rows stay answered from the log.
+const formatFourVersion = 4
+
 // metaFormatKey names the meta row that carries the format version.
 const metaFormatKey = "format"
 
@@ -47,6 +52,11 @@ const (
 	addAfterOriginStatement = "ALTER TABLE log ADD COLUMN after_origin TEXT"
 	addAfterSeqStatement    = "ALTER TABLE log ADD COLUMN after_seq INTEGER"
 )
+
+// dropHeadStatement is the DDL every upgrade to this build's format runs. The
+// head is answered from the log rather than stored, so a remote that still
+// stores it drops the table.
+const dropHeadStatement = "DROP TABLE head"
 
 // upgrade is what one older format needs to reach this build's own: the
 // statements to run, and the tables the remote must hold for this build to
@@ -64,15 +74,19 @@ type upgrade struct {
 var upgrades = map[int]upgrade{
 	formatOneVersion: {
 		tables:     []string{"head", "log", "meta"},
-		statements: []string{createMarksStatement, addMACStatement, addAfterOriginStatement, addAfterSeqStatement},
+		statements: []string{createMarksStatement, addMACStatement, addAfterOriginStatement, addAfterSeqStatement, dropHeadStatement},
 	},
 	formatTwoVersion: {
 		tables:     []string{"head", "log", "marks", "meta"},
-		statements: []string{addMACStatement, addAfterOriginStatement, addAfterSeqStatement},
+		statements: []string{addMACStatement, addAfterOriginStatement, addAfterSeqStatement, dropHeadStatement},
 	},
 	formatThreeVersion: {
 		tables:     []string{"head", "log", "marks", "meta"},
-		statements: []string{addAfterOriginStatement, addAfterSeqStatement},
+		statements: []string{addAfterOriginStatement, addAfterSeqStatement, dropHeadStatement},
+	},
+	formatFourVersion: {
+		tables:     []string{"head", "log", "marks", "meta"},
+		statements: []string{dropHeadStatement},
 	},
 }
 
@@ -86,10 +100,6 @@ var createStatements = []string{
 		"schema_version INTEGER NOT NULL, body TEXT, at TEXT NOT NULL, mac BLOB, " +
 		"after_origin TEXT, after_seq INTEGER, " +
 		"PRIMARY KEY (origin, seq))",
-	"CREATE TABLE head (" +
-		"origin TEXT NOT NULL, tbl TEXT NOT NULL, pk TEXT NOT NULL, " +
-		"seq INTEGER NOT NULL, hash TEXT NOT NULL, " +
-		"PRIMARY KEY (origin, tbl, pk))",
 	"CREATE TABLE meta (key TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL)",
 	createMarksStatement,
 }
@@ -112,7 +122,7 @@ func (b *TursoBackend) ensureLog(ctx context.Context, url string) error {
 	// this build would refuse is often one whose meta table does not exist to
 	// read -- and that has to answer as a refusal naming the remote, not as a
 	// SQL failure about a table.
-	if !isLogTables(tables) && !isFormatOneTables(tables) {
+	if !isLogTables(tables) && !isFormatOneTables(tables) && !isFormatFourTables(tables) {
 		return errNotALog(url)
 	}
 	format, err := readFormat(ctx, b.db)
@@ -247,11 +257,11 @@ func engineTable(name string) bool {
 	return false
 }
 
-// isLogTables reports whether the remote holds exactly the log's four tables.
+// isLogTables reports whether the remote holds exactly the log's three tables.
 // Anything else -- another database's tables, a partial create, a log missing
 // its meta -- is a remote this build will not write into.
 func isLogTables(tables []string) bool {
-	return slices.Equal(tables, []string{"head", "log", "marks", "meta"})
+	return slices.Equal(tables, []string{"log", "marks", "meta"})
 }
 
 // isFormatOneTables reports whether the remote holds exactly the previous
@@ -259,6 +269,13 @@ func isLogTables(tables []string) bool {
 // bring forward, not a partial create of the current set.
 func isFormatOneTables(tables []string) bool {
 	return slices.Equal(tables, []string{"head", "log", "meta"})
+}
+
+// isFormatFourTables reports whether the remote holds exactly the format with
+// the stored head beside the log. It is a format to bring forward, not a
+// partial create of the current set.
+func isFormatFourTables(tables []string) bool {
+	return slices.Equal(tables, []string{"head", "log", "marks", "meta"})
 }
 
 // readFormat is the format version the remote's meta carries, and empty when it
