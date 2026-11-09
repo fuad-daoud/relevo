@@ -48,9 +48,10 @@ const (
 	Roughness  = 0
 )
 
-// DefaultName is the theme a resolution falls back to when the flag, the
-// repository's setting and the repo-local git config key all name nothing.
-const DefaultName = "cockpit"
+// DefaultName is the palette a resolution falls back to when the flag, the
+// repository's setting and the repo-local git config key all name nothing: a
+// board nobody themed still paints, in blueprint.
+const DefaultName = "blueprint"
 
 // paletteFields are the eleven colours one palette carries, in the order the
 // seed file and every refusal name them.

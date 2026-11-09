@@ -38,7 +38,8 @@ func withBoardRepo(t *testing.T, deps *Deps, repoTheme string, stored map[string
 }
 
 // TestResolveThemeNamePrecedence pins the tiers as a pure rule: the flag,
-// the repository's own setting, the repo-local git key, then unthemed.
+// the repository's own setting, the repo-local git key, then the blueprint
+// default.
 func TestResolveThemeNamePrecedence(t *testing.T) {
 	for _, tc := range []struct {
 		name, flag, repo, git, want string
@@ -46,7 +47,7 @@ func TestResolveThemeNamePrecedence(t *testing.T) {
 		{"flag wins over both", "flag", "repo", "git", "flag"},
 		{"repo wins over git", "", "repo", "git", "repo"},
 		{"git alone", "", "", "git", "git"},
-		{"all empty is unthemed", "", "", "", ""},
+		{"all empty is the blueprint default", "", "", "", "blueprint"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := ResolveThemeName(tc.flag, tc.repo, tc.git); got != tc.want {
@@ -57,7 +58,8 @@ func TestResolveThemeNamePrecedence(t *testing.T) {
 }
 
 // TestResolveThemeTiers pins how the verb feeds the pure rule: --theme, then
-// the repository's board_theme, then the repo-local git key, then unthemed.
+// the repository's board_theme, then the repo-local git key, then the
+// blueprint default.
 func TestResolveThemeTiers(t *testing.T) {
 	boardStateRoot(t)
 	deps := testDeps(t)
@@ -78,8 +80,10 @@ func TestResolveThemeTiers(t *testing.T) {
 
 	withBoardSets(t, &deps, theme.Seed())
 	deps.GitConfig = func(string, string) (string, error) { return "", nil }
-	if th, err := ResolveTheme(deps, "", ""); err != nil || th != nil {
-		t.Errorf("unthemed = %v, %v; want (nil, nil)", th, err)
+	if th, err := ResolveTheme(deps, "", ""); err != nil || th == nil || th.Name != "blueprint" {
+		t.Errorf("all empty = %v, %v; want the blueprint palette", th, err)
+	} else if th.BG != theme.Seed()["blueprint"].BG {
+		t.Errorf("all empty bg = %q, want %q", th.BG, theme.Seed()["blueprint"].BG)
 	}
 }
 

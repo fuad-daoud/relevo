@@ -8,8 +8,8 @@ import (
 
 // ResolveThemeName is the precedence rule as a pure decision: the flag wins,
 // then the repository's own board_theme, then the repo-local git config key.
-// A board nobody themed keeps today's look, so the empty tier resolves to
-// unthemed rather than a palette; flipping that default is one return.
+// A board nobody themed paints with the default palette, so the empty tier
+// resolves to the default name.
 func ResolveThemeName(flagTheme, repoTheme, gitTheme string) string {
 	switch {
 	case flagTheme != "":
@@ -19,12 +19,12 @@ func ResolveThemeName(flagTheme, repoTheme, gitTheme string) string {
 	case gitTheme != "":
 		return gitTheme
 	}
-	return ""
+	return theme.DefaultName
 }
 
 // ResolveTheme resolves the palette a run paints with. It reads the stored
-// sets once and refuses an unknown name whatever tier named it. An empty
-// resolution is unthemed, reported as a nil palette with no error.
+// sets once and refuses an unknown name whatever tier named it. The empty
+// tier resolves to the default palette, so every run paints with one.
 func ResolveTheme(deps Deps, cwd, flagTheme string) (*theme.Theme, error) {
 	repoTheme, stored, err := deps.ThemeSets(cwd)
 	if err != nil {
@@ -38,9 +38,6 @@ func ResolveTheme(deps Deps, cwd, flagTheme string) (*theme.Theme, error) {
 		}
 	}
 	name := ResolveThemeName(flagTheme, repoTheme, git)
-	if name == "" {
-		return nil, nil
-	}
 	th, err := theme.Lookup(name, stored)
 	if err != nil {
 		return nil, err

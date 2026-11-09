@@ -408,9 +408,9 @@ relevo board comment --text "check state 3"        appends one note
 
 `--theme` names the shell palette, then the repo `board_theme` set with
 `relevo config repo set board_theme`, then `git config relevo.boardTheme`,
-then no palette. Theming paints only the shell chrome and the comment pins at
-serve time and never the board file; with nothing named the shell serves as
-today. An unknown name is a usage error naming the stored themes.
+then the blueprint palette. Theming paints only the shell chrome and the comment pins at
+serve time and never the board file; with nothing named the shell paints in
+blueprint. An unknown name is a usage error naming the stored themes.
 
 A board is one HTML file. A live board is
 `<state root>/boards/<mastermind-id>/<name>/board.html` and a repo board is
