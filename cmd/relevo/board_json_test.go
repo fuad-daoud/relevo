@@ -687,15 +687,36 @@ func TestBoardPromotePrintsAnnotationsLine(t *testing.T) {
 		t.Fatalf("board promote: %v", err)
 	}
 	dst := filepath.Join(repo, "docs", "boards", "api", "board.html")
-	wantSecond := "board: promoted " + board.AnnotationsPath(live) +
-		" -> " + board.AnnotationsPath(dst) + "\n"
-	if !strings.HasSuffix(string(stdout), wantSecond) {
-		t.Errorf("stdout = %q, want it to end with %q", stdout, wantSecond)
+	// The repo destination leaves canonicalized (git resolves the temp root)
+	// while the test built its paths from the raw root, so each printed path
+	// is compared by evaluated directory plus basename: the test pins the
+	// targets, not the spelling.
+	split := func(line string) (src, printed string) {
+		t.Helper()
+		rest, ok := strings.CutPrefix(line, "board: promoted ")
+		if !ok {
+			t.Fatalf("line = %q, want the promoted line", line)
+		}
+		src, printed, ok = strings.Cut(rest, " -> ")
+		if !ok {
+			t.Fatalf("line = %q, want the source and destination", line)
+		}
+		return src, printed
+	}
+	lines := strings.Split(strings.TrimSuffix(string(stdout), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("stdout = %q, want the board line and the annotations line", stdout)
 	}
 	// The first line is still the board's own, unchanged.
-	first, _, _ := strings.Cut(string(stdout), "\n")
-	if !strings.HasPrefix(first, "board: promoted ") || !strings.HasSuffix(first, dst) {
-		t.Errorf("first line = %q, want the board promotion line", first)
+	boardSrc, boardDst := split(lines[0])
+	if !evaluatedPathsEqual(t, boardSrc, live) || !evaluatedPathsEqual(t, boardDst, dst) {
+		t.Errorf("first line = %q, want the promoted board %s -> %s", lines[0], live, dst)
+	}
+	annSrc, annDst := split(lines[1])
+	if !evaluatedPathsEqual(t, annSrc, board.AnnotationsPath(live)) ||
+		!evaluatedPathsEqual(t, annDst, board.AnnotationsPath(dst)) {
+		t.Errorf("second line = %q, want the promoted notes %s -> %s",
+			lines[1], board.AnnotationsPath(live), board.AnnotationsPath(dst))
 	}
 }
 

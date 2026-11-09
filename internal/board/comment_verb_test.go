@@ -32,6 +32,26 @@ func writeSceneAt(t *testing.T, path, body string) {
 	}
 }
 
+// resolvedPathEqual compares a resolver-returned path against the raw temp
+// path the test built it from: the resolver canonicalizes symlinked parents,
+// so the test evaluates the directory both spellings share and compares from
+// there. The test pins the target, not the spelling.
+func resolvedPathEqual(t *testing.T, got, want string) bool {
+	t.Helper()
+	if filepath.Base(got) != filepath.Base(want) {
+		return false
+	}
+	gotDir, err := filepath.EvalSymlinks(filepath.Dir(got))
+	if err != nil {
+		t.Fatalf("EvalSymlinks(%s): %v", filepath.Dir(got), err)
+	}
+	wantDir, err := filepath.EvalSymlinks(filepath.Dir(want))
+	if err != nil {
+		t.Fatalf("EvalSymlinks(%s): %v", filepath.Dir(want), err)
+	}
+	return gotDir == wantDir
+}
+
 // TestBoardCommentsJSONShape pins the machine shape: one compact JSON array
 // whose objects are exactly id, x, y, text, by, at in order, and [] -- never
 // null -- when there are none.
@@ -126,7 +146,7 @@ func TestBoardCommentWritesPointer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("board comment: %v", err)
 	}
-	if want := filepath.Join(liveRoot, id, "board.excalidraw"); w.Path != want || w.ID == "" {
+	if want := filepath.Join(liveRoot, id, "board.excalidraw"); w.ID == "" || !resolvedPathEqual(t, w.Path, want) {
 		t.Errorf("write = %+v, want an id at %s", w, want)
 	}
 	got, err := os.ReadFile(filepath.Join(liveRoot, id, "current"))
@@ -181,7 +201,7 @@ func TestBoardCommentWriteReturnsIDAndAppends(t *testing.T) {
 	if err != nil {
 		t.Fatalf("board comment: %v", err)
 	}
-	if w.Path != scene {
+	if !resolvedPathEqual(t, w.Path, scene) {
 		t.Errorf("write path = %q, want %s", w.Path, scene)
 	}
 	comments, err := ReadComments(scene)
@@ -316,7 +336,7 @@ func TestBoardCommentHTMLWritesAnnotation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("board comment on an HTML board: %v", err)
 	}
-	if w.ID == "" || w.Path != AnnotationsPath(board) {
+	if w.ID == "" || !resolvedPathEqual(t, w.Path, AnnotationsPath(board)) {
 		t.Errorf("write = %+v, want an id at %s", w, AnnotationsPath(board))
 	}
 	entries, etag, err := ReadAnnotations(board)
