@@ -16,7 +16,9 @@ import (
 // server. They live in a machine-local kv blob
 // keyed by binding_record id instead of the synced record_json, because every
 // rewrite of the synced row is an outbox entry every machine pulls, and a
-// tick that moves only these fields changes no synced fact. On save they are
+// tick that moves only these fields changes no synced fact. A server's stamp of
+// when a client last polled a served binding is the same kind of fact: only the
+// server reads it. On save they are
 // stripped from record_json; on load they are merged back, so callers keep
 // reading store.Binding whole.
 //
@@ -41,6 +43,11 @@ type liveOverlay struct {
 	// A read stamps only this machine's view, and every rewrite of the synced
 	// row is an outbox entry every machine pulls, so the stamp stays local.
 	ViewedAt time.Time `json:"viewed_at,omitzero"`
+	// ServeLastSeen is when a client last polled this served binding, which the
+	// server stamps at most hourly. Only the server reads it -- the owner census
+	// and the abandoned sweep -- so a stamp on every polled binding must not
+	// rewrite the synced row each hour.
+	ServeLastSeen time.Time `json:"serve_last_seen,omitzero"`
 	// Clocks are the per-sample progress clocks; nil when the binding has
 	// no Progress object at all.
 	Clocks *overlayClocks `json:"clocks,omitempty"`
@@ -58,7 +65,8 @@ type overlayClocks struct {
 
 func (ov liveOverlay) isZero() bool {
 	return ov.StreamOffset == 0 && ov.RemoteLive == nil && ov.Clocks == nil &&
-		ov.RemoteStatus == "" && ov.RemoteUnreachableSince.IsZero() && ov.ViewedAt.IsZero()
+		ov.RemoteStatus == "" && ov.RemoteUnreachableSince.IsZero() && ov.ViewedAt.IsZero() &&
+		ov.ServeLastSeen.IsZero()
 }
 
 // liveKey is the machine-local kv key of one binding's overlay. The key is
@@ -68,8 +76,8 @@ func (ov liveOverlay) isZero() bool {
 func liveKey(recordID string) string { return "live/" + recordID }
 
 // stripLive returns b with the overlay fields removed and the overlay those
-// fields carried. The caller's binding is not changed: Progress is a pointer,
-// so it is cloned before its clocks are zeroed.
+// fields carried. The caller's binding is not changed: Progress and Serve are
+// pointers, so each is cloned before its fields are zeroed.
 func stripLive(b Binding) (Binding, liveOverlay) {
 	ov := liveOverlay{
 		StreamOffset: b.Builder.StreamOffset,
@@ -80,6 +88,12 @@ func stripLive(b Binding) (Binding, liveOverlay) {
 	}
 	if b.ViewedAt != nil {
 		ov.ViewedAt = *b.ViewedAt
+	}
+	if sf := b.Serve; sf != nil {
+		ov.ServeLastSeen = sf.LastSeen
+		c := *sf
+		c.LastSeen = time.Time{}
+		b.Serve = &c
 	}
 	if p := b.Progress; p != nil {
 		ov.Clocks = &overlayClocks{
@@ -119,6 +133,14 @@ func mergeLive(b Binding, ov liveOverlay) Binding {
 	if !ov.ViewedAt.IsZero() {
 		at := ov.ViewedAt
 		b.ViewedAt = &at
+	}
+	if !ov.ServeLastSeen.IsZero() {
+		var sf ServeFacts
+		if b.Serve != nil {
+			sf = *b.Serve
+		}
+		sf.LastSeen = ov.ServeLastSeen
+		b.Serve = &sf
 	}
 	if c := ov.Clocks; c != nil {
 		if b.Progress == nil {
@@ -174,6 +196,7 @@ func strippedJSON(b Binding) ([]byte, error) {
 	}
 	dropFrom(doc, "runner", "stream_offset", "remote_live", "remote_status")
 	delete(doc, "remote_unreachable_since")
+	dropFrom(doc, "serve", "last_seen")
 	dropFrom(doc, "progress", "sampled_at", "output_at", "cpu_ticks", "cpu_ticks_at")
 	out, err := json.Marshal(doc)
 	if err != nil {
