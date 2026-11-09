@@ -86,9 +86,9 @@ func TestScratchRemoteExportPullRoundTrip(t *testing.T) {
 }
 
 // TestScratchRemoteMovesAHeadRowTwice pins the second write of one row on a
-// real sync connection. The first append inserts the row's head; every later
-// append of that row has to move the head it already holds, which is the path
-// a sync connection's own change capture refuses for an upsert that updates.
+// real sync connection. The second append moves the row's derived latest
+// state, which is the path a sync connection's own change capture exercises
+// for the log write.
 func TestScratchRemoteMovesAHeadRowTwice(t *testing.T) {
 	url := os.Getenv("RELEVO_SCRATCH_SYNC_URL")
 	token := os.Getenv("RELEVO_SCRATCH_SYNC_TOKEN")

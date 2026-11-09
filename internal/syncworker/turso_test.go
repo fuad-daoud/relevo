@@ -795,6 +795,154 @@ func TestHeadPagesInSeqOrder(t *testing.T) {
 	}
 }
 
+// TestHeadDerivesNewestPerRow pins the derived read: the newest entry per row
+// wins across separate batches, a newest delete drops the row, a deleted row
+// recreated later comes back, and the digest of each survivor is the worker's
+// own bodyHash of the stored body. The head table is dropped first, so a read
+// from stored state answers empty or refuses. Paging the derived head a row at
+// a time meets the whole head exactly, which is what keeps a newest-is-delete
+// row inside the page range from ending the walk early. Compacting away the
+// superseded entries leaves the head unchanged, since compaction keeps the
+// newest per row.
+func TestHeadDerivesNewestPerRow(t *testing.T) {
+	path := tempReplica(t)
+	b := backendFor(t, &localDriver{path: path}, "origin-a")
+	appendOne := func(e Entry) int {
+		t.Helper()
+		written, err := b.Append([]Entry{e})
+		if err != nil {
+			t.Fatalf("append %s %s: %v", e.Tbl, e.PK, err)
+		}
+		if len(written) != 1 {
+			t.Fatalf("append %s %s wrote %d entries, want one", e.Tbl, e.PK, len(written))
+		}
+		return written[0].Seq
+	}
+	mkDelete := func(tbl, pk string) Entry {
+		return Entry{Origin: "origin-a", Tbl: tbl, PK: pk, Op: opDelete, SchemaVersion: 3, At: pinnedAt}
+	}
+	seq1 := appendOne(upsertEntry("origin-a", "board", `["k1"]`, `{"title":"one"}`))
+	seq2 := appendOne(upsertEntry("origin-a", "board", `["k1"]`, `{"b":"two","a":"one"}`))
+	seq3 := appendOne(upsertEntry("origin-a", "board", `["k2"]`, `{"title":"three"}`))
+	seq4 := appendOne(mkDelete("board", `["k2"]`))
+	seq5 := appendOne(upsertEntry("origin-a", "board", `["k3"]`, `{"title":"four"}`))
+	seq6 := appendOne(mkDelete("board", `["k3"]`))
+	seq7 := appendOne(upsertEntry("origin-a", "board", `["k3"]`, `{"title":"five"}`))
+	docBody := json.RawMessage(`{"stamp":"5","value":{"title":"one"}}`)
+	seq8 := appendOne(upsertEntry("origin-a", "doc:notes", `["d1"]`, string(docBody)))
+	if seq1 != 1 || seq2 != 2 || seq3 != 3 || seq4 != 4 || seq5 != 5 || seq6 != 6 || seq7 != 7 || seq8 != 8 {
+		t.Fatalf("seqs = %d %d %d %d %d %d %d %d, want 1 through 8 in separate batches",
+			seq1, seq2, seq3, seq4, seq5, seq6, seq7, seq8)
+	}
+	other := backendFor(t, &localDriver{path: path}, "origin-b")
+	if _, err := other.Append([]Entry{upsertEntry("origin-b", "board", `["other"]`, `{"title":"elsewhere"}`)}); err != nil {
+		t.Fatalf("append as origin-b: %v", err)
+	}
+	// The table the stored read answered from is gone: what follows answers
+	// from the log alone.
+	execOn(t, path, "DROP TABLE head")
+	whole, err := b.Head("origin-a", "", 0)
+	if err != nil {
+		t.Fatalf("derived head: %v", err)
+	}
+	wantBodies := map[string]json.RawMessage{
+		`["k1"]`: json.RawMessage(`{"b":"two","a":"one"}`),
+		`["k3"]`: json.RawMessage(`{"title":"five"}`),
+		`["d1"]`: docBody,
+	}
+	wantSeqs := map[string]int{`["k1"]`: 2, `["k3"]`: 7, `["d1"]`: 8}
+	wantTbls := map[string]string{`["k1"]`: "board", `["k3"]`: "board", `["d1"]`: "doc:notes"}
+	if len(whole) != 3 {
+		t.Fatalf("derived head = %+v, want the three surviving rows", whole)
+	}
+	for n, row := range whole {
+		if n > 0 && whole[n-1].Seq >= row.Seq {
+			t.Errorf("derived head not ascending: %+v", whole)
+			break
+		}
+		if wantTbls[row.PK] != row.Tbl || wantSeqs[row.PK] != row.Seq {
+			t.Errorf("row %+v, want tbl %s at seq %d", row, wantTbls[row.PK], wantSeqs[row.PK])
+		}
+		wantHash, err := bodyHash(wantBodies[row.PK])
+		if err != nil {
+			t.Fatalf("bodyHash(%s): %v", wantBodies[row.PK], err)
+		}
+		if row.Hash != wantHash {
+			t.Errorf("row %s hash = %s, want bodyHash of the stored body %s", row.PK, row.Hash, wantHash)
+		}
+	}
+	for _, row := range whole {
+		if row.PK == `["other"]` || row.PK == `["k2"]` {
+			t.Errorf("derived head carries %+v, want only origin-a's surviving rows", row)
+		}
+	}
+	mine, err := other.Head("origin-b", "", 0)
+	if err != nil {
+		t.Fatalf("other origin's head: %v", err)
+	}
+	if len(mine) != 1 || mine[0].PK != `["other"]` {
+		t.Errorf("origin-b's head = %+v, want only its own row", mine)
+	}
+	paged := pageHead(t, b, "origin-a")
+	if !reflect.DeepEqual(paged, whole) {
+		t.Errorf("paged head = %+v, whole head = %+v; a delete inside the range ended the walk early", paged, whole)
+	}
+	before, err := b.Head("origin-a", "", 0)
+	if err != nil {
+		t.Fatalf("head before compact: %v", err)
+	}
+	if _, err := b.Compact(8); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	after, err := b.Head("origin-a", "", 0)
+	if err != nil {
+		t.Fatalf("head after compact: %v", err)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Errorf("head after compact = %+v, before = %+v; compaction moved the newest", after, before)
+	}
+	if _, err := b.Head("origin-a", "not a number", 0); err == nil {
+		t.Error("head accepted a cursor that is not a sequence")
+	}
+	if _, err := b.Head("", "", 0); err == nil {
+		t.Error("head accepted a request with no origin")
+	}
+}
+
+// BenchmarkTursoBackendHeadDerived measures one whole derived head over a
+// single-origin log, built outside the timed section.
+func BenchmarkTursoBackendHeadDerived(b *testing.B) {
+	path := filepath.Join(b.TempDir(), "relevo-sync.db")
+	driver := &localDriver{path: path}
+	be := NewTursoBackend(driver)
+	if err := be.Open(Spec{Version: ProtocolVersion, Origin: "origin-a", URL: "libsql://bench.example", Token: "the-token"}); err != nil {
+		b.Fatalf("open: %v", err)
+	}
+	defer func() { _ = be.Close() }()
+	const n = 20000
+	const batch = 1000
+	for base := 0; base < n; base += batch {
+		entries := make([]Entry, 0, batch)
+		for i := 0; i < batch && base+i < n; i++ {
+			n := base + i
+			entries = append(entries, upsertEntry("origin-a", "board", `["k`+strconv.Itoa(n)+`"]`, `{"title":"`+strconv.Itoa(n)+`"}`))
+		}
+		if _, err := be.Append(entries); err != nil {
+			b.Fatalf("build the log: %v", err)
+		}
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rows, err := be.Head("origin-a", "", 0)
+		if err != nil {
+			b.Fatalf("head: %v", err)
+		}
+		if len(rows) != n {
+			b.Fatalf("head = %d rows, want %d", len(rows), n)
+		}
+	}
+}
+
 // TestBodyHashMatchesTheExchange pins the digest the worker stores against the
 // one the exchange compares with. The worker cannot import synclog (that would
 // drag internal/db across the boundary the worker keeps), so the canonical
@@ -1143,8 +1291,9 @@ func TestBackendAnswersAnEmptyBatch(t *testing.T) {
 	}
 }
 
-// TestBackendRefusesWhenTheLogIsGone pins that a replica whose tables vanished
-// is reported, not answered from.
+// TestBackendRefusesWhenTheLogIsGone pins that a replica whose log vanished
+// is reported, not answered from. The head is derived from the log, so a
+// missing head table leaves the read answering from what the log holds.
 func TestBackendRefusesWhenTheLogIsGone(t *testing.T) {
 	driver := &localDriver{path: tempReplica(t)}
 	b := backendFor(t, driver, "origin-a")
@@ -1152,8 +1301,12 @@ func TestBackendRefusesWhenTheLogIsGone(t *testing.T) {
 		t.Fatalf("append: %v", err)
 	}
 	execOn(t, driver.path, "DROP TABLE head")
-	if _, err := b.Head("origin-a", "", 0); err == nil {
-		t.Error("head succeeded over a missing head table")
+	head, err := b.Head("origin-a", "", 0)
+	if err != nil {
+		t.Fatalf("head over a missing head table: %v", err)
+	}
+	if len(head) != 1 || head[0].PK != `["b"]` || head[0].Seq != 1 {
+		t.Errorf("head over a missing head table = %+v, want the one log row at seq 1", head)
 	}
 	execOn(t, driver.path, "DROP TABLE log")
 	if _, err := b.Pull(nil); err == nil {
