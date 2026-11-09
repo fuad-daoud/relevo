@@ -170,18 +170,18 @@
     return Math.round(v < 0 ? 0 : v > limit ? limit : v);
   }
 
-  // setPins holds what the shell sent, grouped by anchor: the same selector string is
-  // one thread, an empty selector the board. Presentation only, so the stored file
-  // stays flat.
+  // setPins holds what the shell sent, grouped by thread: each top-level note is
+  // its own thread and a reply joins its root's. Presentation only, so the
+  // stored file stays flat.
   function setPins(entries) {
     pins = [];
     var by = {};
     for (var i = 0; i < (entries || []).length; i++) {
       var entry = entries[i];
-      var key = "$" + (entry.selector || "");
+      var key = "$" + (entry.thread || entry.id);
       var thread = by[key];
       if (!thread) {
-        thread = by[key] = { key: entry.selector || "", id: entry.id, entries: [] };
+        thread = by[key] = { key: entry.selector || "", id: entry.thread || entry.id, entries: [] };
         pins.push(thread);
       }
       thread.entries.push(entry);

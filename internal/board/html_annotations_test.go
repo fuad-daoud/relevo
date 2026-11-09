@@ -138,6 +138,113 @@ func TestHTMLAnnotationsStaleIfMatchIs409(t *testing.T) {
 	}
 }
 
+// TestHTMLAnnotationsTopLevelPostStartsItsOwnThread pins that a post naming no
+// thread starts one: the stored note's thread is its own id, so each placed
+// comment draws its own pin.
+func TestHTMLAnnotationsTopLevelPostStartsItsOwnThread(t *testing.T) {
+	s, board := annotationsBoardServer(t)
+	w := postAnnotations(t, s, `{"selector":"#hero","x":0.5,"y":0.25,"text":"a note"}`, "", testToken)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("post = %d, want 201 (%s)", w.Code, w.Body.String())
+	}
+	var doc annotationPostDoc
+	if err := json.Unmarshal(w.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("decode: %v (%s)", err, w.Body.String())
+	}
+	if doc.Annotation.ID == "" || doc.Annotation.Thread != doc.Annotation.ID {
+		t.Errorf("annotation = %+v, want the thread to be its own id", doc.Annotation)
+	}
+	entries, _, err := ReadAnnotations(board)
+	if err != nil || len(entries) != 1 || entries[0].Thread != entries[0].ID {
+		t.Errorf("entries = %+v err = %v, want one note threaded to itself", entries, err)
+	}
+}
+
+// TestHTMLAnnotationsReplyRoundTrip pins the reply path through the real
+// endpoint: a post naming a root note's id with the root's anchor is 201, the
+// stored reply keeps the root's thread and anchor, and the board document
+// carries both notes under that one thread.
+func TestHTMLAnnotationsReplyRoundTrip(t *testing.T) {
+	s, board := annotationsBoardServer(t)
+	first := postAnnotations(t, s, `{"selector":"#hero","x":0.5,"y":0.25,"text":"root"}`, "", testToken)
+	if first.Code != http.StatusCreated {
+		t.Fatalf("root post = %d, want 201 (%s)", first.Code, first.Body.String())
+	}
+	var root annotationPostDoc
+	if err := json.Unmarshal(first.Body.Bytes(), &root); err != nil {
+		t.Fatalf("decode root: %v", err)
+	}
+	replyBody := `{"selector":"#hero","x":0.5,"y":0.25,"text":"reply","thread":"` + root.Annotation.ID + `"}`
+	w := postAnnotations(t, s, replyBody, root.AnnotationsEtag, testToken)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("reply post = %d, want 201 (%s)", w.Code, w.Body.String())
+	}
+	var reply annotationPostDoc
+	if err := json.Unmarshal(w.Body.Bytes(), &reply); err != nil {
+		t.Fatalf("decode reply: %v (%s)", err, w.Body.String())
+	}
+	if reply.Annotation.Thread != root.Annotation.ID {
+		t.Errorf("reply thread = %q, want the root's %q", reply.Annotation.Thread, root.Annotation.ID)
+	}
+	if reply.Annotation.Selector != "#hero" || reply.Annotation.X != 0.5 || reply.Annotation.Y != 0.25 {
+		t.Errorf("reply anchor = %q (%v, %v), want the root's",
+			reply.Annotation.Selector, reply.Annotation.X, reply.Annotation.Y)
+	}
+	entries, _, err := ReadAnnotations(board)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("entries = %+v err = %v, want two", entries, err)
+	}
+	for i, e := range entries {
+		if e.Thread != root.Annotation.ID {
+			t.Errorf("entry %d thread = %q, want the one thread %q", i, e.Thread, root.Annotation.ID)
+		}
+	}
+}
+
+// TestHTMLAnnotationsReplyThreadIsValidated pins the reply refusals at the
+// endpoint: an unknown, non-root or mismatched thread is 422 and writes
+// nothing, so a bad reply costs no note.
+func TestHTMLAnnotationsReplyThreadIsValidated(t *testing.T) {
+	s, board := annotationsBoardServer(t)
+	first := postAnnotations(t, s, `{"selector":"#hero","x":0.5,"y":0.25,"text":"root"}`, "", testToken)
+	if first.Code != http.StatusCreated {
+		t.Fatalf("root post = %d, want 201", first.Code)
+	}
+	var root annotationPostDoc
+	if err := json.Unmarshal(first.Body.Bytes(), &root); err != nil {
+		t.Fatalf("decode root: %v", err)
+	}
+	second := postAnnotations(t, s,
+		`{"selector":"#hero","x":0.5,"y":0.25,"text":"reply","thread":"`+root.Annotation.ID+`"}`, root.AnnotationsEtag, testToken)
+	if second.Code != http.StatusCreated {
+		t.Fatalf("reply post = %d, want 201 (%s)", second.Code, second.Body.String())
+	}
+	var reply annotationPostDoc
+	if err := json.Unmarshal(second.Body.Bytes(), &reply); err != nil {
+		t.Fatalf("decode reply: %v", err)
+	}
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"unknown thread", `{"selector":"#hero","x":0.5,"y":0.25,"text":"x","thread":"a000000000000"}`},
+		{"non-root thread", `{"selector":"#hero","x":0.5,"y":0.25,"text":"x","thread":"` + reply.Annotation.ID + `"}`},
+		{"selector mismatch", `{"selector":"#other","x":0.5,"y":0.25,"text":"x","thread":"` + root.Annotation.ID + `"}`},
+		{"fraction mismatch", `{"selector":"#hero","x":0.9,"y":0.25,"text":"x","thread":"` + root.Annotation.ID + `"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			before, _ := os.ReadFile(AnnotationsPath(board))
+			if w := postAnnotations(t, s, tc.body, reply.AnnotationsEtag, testToken); w.Code != http.StatusUnprocessableEntity {
+				t.Errorf("post %s = %d, want 422 (%s)", tc.name, w.Code, w.Body.String())
+			}
+			if after, _ := os.ReadFile(AnnotationsPath(board)); string(after) != string(before) {
+				t.Errorf("a refused reply wrote anyway:\n%s", after)
+			}
+		})
+	}
+}
+
 // TestHTMLAnnotationsMissingBoardIs404 pins that a post cannot create a board.
 // The store refuses a missing board.html, and the route reports that as 404
 // rather than creating a file to hold the note.

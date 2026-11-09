@@ -36,7 +36,10 @@ const (
 // Annotation is one note on an HTML board. Selector is a CSS selector for the
 // element the note is about, and empty means the note is about the board
 // itself. X and Y are fractions of the anchored element's box rather than page
-// pixels, so a pin lands in the same relative place after a resize.
+// pixels, so a pin lands in the same relative place after a resize. Thread is
+// the thread the note belongs to: its own ID for a top-level note, its root
+// note's ID for a reply. Notes written before threads existed carry none, and
+// readers treat each of those as a thread of its own.
 type Annotation struct {
 	ID       string  `json:"id"`
 	Selector string  `json:"selector"`
@@ -45,17 +48,21 @@ type Annotation struct {
 	Text     string  `json:"text"`
 	By       string  `json:"by"`
 	At       string  `json:"at"`
+	Thread   string  `json:"thread,omitempty"`
 }
 
 // AnnotationRequest is what one append asks for. By is filled in by the
 // caller: the CLI from --by or the environment, the server always human, so a
-// page post can never author a note in someone else's name.
+// page post can never author a note in someone else's name. Thread names the
+// thread a reply joins: empty starts a thread, a root note's ID joins it. The
+// CLI never sets it, so every CLI note starts a thread.
 type AnnotationRequest struct {
 	Selector string
 	X, Y     float64
 	Text     string
 	By       string
 	At       time.Time
+	Thread   string
 }
 
 // AnnotationsPath returns the annotations file beside the board at boardPath.
@@ -82,7 +89,22 @@ func ReadAnnotations(boardPath string) ([]Annotation, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
+	// Notes written before threads existed carry no thread. Each was placed on
+	// its own, so each reads as a thread of its own rather than merging with
+	// its selector's. The file is untouched: this is the read copy only.
+	for i := range entries {
+		entries[i].Thread = effectiveThread(entries[i])
+	}
 	return entries, etag, nil
+}
+
+// effectiveThread is the thread an entry belongs to: the one it names, or its
+// own when it names none.
+func effectiveThread(a Annotation) string {
+	if a.Thread != "" {
+		return a.Thread
+	}
+	return a.ID
 }
 
 // AppendAnnotation adds one note beside the board at boardPath and returns it
@@ -126,6 +148,13 @@ func AppendAnnotation(boardPath string, req AnnotationRequest, ifMatch *string) 
 	if err != nil {
 		return Annotation{}, "", err
 	}
+	if req.Thread == "" {
+		// A note that names no thread starts one: the thread is the note
+		// itself, so every placed comment is its own thread.
+		entry.Thread = entry.ID
+	} else if entry.Thread, err = replyThread(existing, entry, req.Thread); err != nil {
+		return Annotation{}, "", err
+	}
 	line, err := json.Marshal(entry)
 	if err != nil {
 		return Annotation{}, "", err
@@ -138,6 +167,32 @@ func AppendAnnotation(boardPath string, req AnnotationRequest, ifMatch *string) 
 		return Annotation{}, "", err
 	}
 	return entry, annotationsEtag(out), nil
+}
+
+// replyThread checks a reply against the notes already filed and returns the
+// thread it joins. The thread must name a root note -- one whose own thread is
+// itself -- and the reply must repeat that root's anchor, so it lands where
+// the root sits rather than opening a pin of its own. Anything else is refused
+// without writing.
+func replyThread(existing []Annotation, entry Annotation, thread string) (string, error) {
+	var root *Annotation
+	for i := range existing {
+		if existing[i].ID == thread {
+			root = &existing[i]
+			break
+		}
+	}
+	if root == nil {
+		return "", fmt.Errorf("%w: annotation: thread %q names no note", ErrInvalid, thread)
+	}
+	if effectiveThread(*root) != root.ID {
+		return "", fmt.Errorf("%w: annotation: thread %q is a reply, not a root note", ErrInvalid, thread)
+	}
+	if entry.Selector != root.Selector || entry.X != root.X || entry.Y != root.Y {
+		return "", fmt.Errorf("%w: annotation: a reply repeats its root's anchor, want selector %q at (%v, %v)",
+			ErrInvalid, root.Selector, root.X, root.Y)
+	}
+	return root.ID, nil
 }
 
 // readAnnotationsFile reads the annotations file at path. A missing file is nil

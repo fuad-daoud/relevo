@@ -1,6 +1,7 @@
 package board
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -304,6 +305,168 @@ func TestAppendAnnotationIDsAreUnique(t *testing.T) {
 	}
 	if len(seen) != 25 {
 		t.Errorf("ids = %d, want 25", len(seen))
+	}
+}
+
+// TestAppendAnnotationTopLevelStoresThreadEqualToID pins that every placed
+// comment starts its own thread: a top-level append stores thread equal to its
+// own id, and two notes on one element at different fractions get different
+// threads, so each draws its own pin and row.
+func TestAppendAnnotationTopLevelStoresThreadEqualToID(t *testing.T) {
+	board := htmlBoardFor(t, t.TempDir(), "api")
+	at := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	var ids []string
+	for i, y := range []float64{0.25, 0.75} {
+		got, _, err := AppendAnnotation(board, AnnotationRequest{
+			Selector: "#hero", X: 0.5, Y: y, Text: "note", By: "human", At: at.Add(time.Duration(i) * time.Second),
+		}, nil)
+		if err != nil {
+			t.Fatalf("AppendAnnotation %d: %v", i, err)
+		}
+		if got.Thread != got.ID || got.ID == "" {
+			t.Errorf("top-level note %d has thread %q id %q, want the thread to be its own id", i, got.Thread, got.ID)
+		}
+		ids = append(ids, got.ID)
+	}
+	if ids[0] == ids[1] {
+		t.Fatalf("two appends share id %q", ids[0])
+	}
+	entries, _, err := ReadAnnotations(board)
+	if err != nil {
+		t.Fatalf("ReadAnnotations: %v", err)
+	}
+	if len(entries) != 2 || entries[0].Thread != entries[0].ID || entries[1].Thread != entries[1].ID {
+		t.Errorf("entries = %+v, want each thread to be its own id", entries)
+	}
+	if entries[0].Thread == entries[1].Thread {
+		t.Errorf("two notes on one element share thread %q, want separate threads", entries[0].Thread)
+	}
+	got, err := os.ReadFile(AnnotationsPath(board))
+	if err != nil {
+		t.Fatalf("read annotations: %v", err)
+	}
+	if strings.Count(string(got), `"thread":`) != 2 {
+		t.Errorf("file carries %d thread keys, want one per stored note:\n%s", strings.Count(string(got), `"thread":`), got)
+	}
+}
+
+// TestAppendAnnotationReplyJoinsRootThread pins the reply path: a reply naming
+// a root note's id with the root's anchor stores the root's thread and keeps
+// the root's selector and fractions, so it lands in the root's card and adds
+// no pin or row of its own.
+func TestAppendAnnotationReplyJoinsRootThread(t *testing.T) {
+	board := htmlBoardFor(t, t.TempDir(), "api")
+	at := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	root, _, err := AppendAnnotation(board, AnnotationRequest{
+		Selector: "#hero", X: 0.5, Y: 0.25, Text: "root", By: "human", At: at,
+	}, nil)
+	if err != nil {
+		t.Fatalf("append root: %v", err)
+	}
+	reply, _, err := AppendAnnotation(board, AnnotationRequest{
+		Selector: "#hero", X: 0.5, Y: 0.25, Text: "reply", By: "human",
+		At: at.Add(time.Second), Thread: root.ID,
+	}, nil)
+	if err != nil {
+		t.Fatalf("append reply: %v", err)
+	}
+	if reply.Thread != root.ID {
+		t.Errorf("reply thread = %q, want the root's %q", reply.Thread, root.ID)
+	}
+	if reply.Selector != root.Selector || reply.X != root.X || reply.Y != root.Y {
+		t.Errorf("reply anchor = %q (%v, %v), want the root's %q (%v, %v)",
+			reply.Selector, reply.X, reply.Y, root.Selector, root.X, root.Y)
+	}
+	entries, _, err := ReadAnnotations(board)
+	if err != nil {
+		t.Fatalf("ReadAnnotations: %v", err)
+	}
+	if len(entries) != 2 || entries[0].Thread != root.ID || entries[1].Thread != root.ID {
+		t.Errorf("entries = %+v, want one thread of two", entries)
+	}
+}
+
+// TestReadAnnotationsLegacyEntriesNormalizeToSeparateThreads pins the storage
+// migration for notes written before threads existed: each reads with its
+// thread set to its own id, so two notes on one element stop merging, and the
+// file's bytes are untouched by the read.
+func TestReadAnnotationsLegacyEntriesNormalizeToSeparateThreads(t *testing.T) {
+	board := htmlBoardFor(t, t.TempDir(), "api")
+	writeAnnotations(t, board, "[\n"+
+		`{"id":"a1","selector":"#hero","x":0.5,"y":0.25,"text":"one","by":"human","at":"2026-10-01T00:00:00Z"},`+"\n"+
+		`{"id":"a2","selector":"#hero","x":0.1,"y":0.9,"text":"two","by":"human","at":"2026-10-01T00:00:01Z"}`+"\n"+
+		"]\n")
+	before, err := os.ReadFile(AnnotationsPath(board))
+	if err != nil {
+		t.Fatalf("read annotations: %v", err)
+	}
+	entries, _, err := ReadAnnotations(board)
+	if err != nil {
+		t.Fatalf("ReadAnnotations: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("entries = %+v, want two", entries)
+	}
+	for i, want := range []string{"a1", "a2"} {
+		if entries[i].Thread != want {
+			t.Errorf("entry %d thread = %q, want its own id %q", i, entries[i].Thread, want)
+		}
+	}
+	if after, _ := os.ReadFile(AnnotationsPath(board)); string(after) != string(before) {
+		t.Errorf("reading normalized the file:\nbefore %q\nafter %q", before, after)
+	}
+}
+
+// TestAppendAnnotationReplyRefusals pins what a reply must not do: name a note
+// that is not there, join a reply rather than a root, or carry an anchor that
+// is not its root's. Each is refused naming the thread, and none writes.
+func TestAppendAnnotationReplyRefusals(t *testing.T) {
+	board := htmlBoardFor(t, t.TempDir(), "api")
+	at := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	root, _, err := AppendAnnotation(board, AnnotationRequest{
+		Selector: "#hero", X: 0.5, Y: 0.25, Text: "root", By: "human", At: at,
+	}, nil)
+	if err != nil {
+		t.Fatalf("append root: %v", err)
+	}
+	reply, _, err := AppendAnnotation(board, AnnotationRequest{
+		Selector: "#hero", X: 0.5, Y: 0.25, Text: "reply", By: "human",
+		At: at.Add(time.Second), Thread: root.ID,
+	}, nil)
+	if err != nil {
+		t.Fatalf("append reply: %v", err)
+	}
+	cases := []struct {
+		name string
+		req  AnnotationRequest
+		want string
+	}{
+		{"unknown thread", AnnotationRequest{Selector: "#hero", X: 0.5, Y: 0.25, Text: "x", By: "human", At: at, Thread: "a000000000000"}, "names no note"},
+		{"non-root thread", AnnotationRequest{Selector: "#hero", X: 0.5, Y: 0.25, Text: "x", By: "human", At: at, Thread: reply.ID}, "not a root note"},
+		{"selector mismatch", AnnotationRequest{Selector: "#other", X: 0.5, Y: 0.25, Text: "x", By: "human", At: at, Thread: root.ID}, "anchor"},
+		{"x mismatch", AnnotationRequest{Selector: "#hero", X: 0.9, Y: 0.25, Text: "x", By: "human", At: at, Thread: root.ID}, "anchor"},
+		{"y mismatch", AnnotationRequest{Selector: "#hero", X: 0.5, Y: 0.9, Text: "x", By: "human", At: at, Thread: root.ID}, "anchor"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			before, err := os.ReadFile(AnnotationsPath(board))
+			if err != nil {
+				t.Fatalf("read annotations: %v", err)
+			}
+			_, _, err = AppendAnnotation(board, tc.req, nil)
+			if err == nil {
+				t.Fatalf("AppendAnnotation accepted %+v", tc.req)
+			}
+			if !errors.Is(err, ErrInvalid) {
+				t.Errorf("refusal %q is not ErrInvalid", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("refusal %q does not name %q", err, tc.want)
+			}
+			if after, _ := os.ReadFile(AnnotationsPath(board)); string(after) != string(before) {
+				t.Errorf("a refused reply wrote anyway:\n%s", after)
+			}
+		})
 	}
 }
 

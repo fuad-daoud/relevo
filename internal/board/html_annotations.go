@@ -10,8 +10,8 @@ import (
 )
 
 // maxAnnotationBody is the largest annotations POST body accepted. The body
-// carries a selector and a note and nothing else, so a ceiling far below the
-// board's own cap cannot refuse a real comment.
+// carries a selector, a thread and a note and nothing else, so a ceiling far
+// below the board's own cap cannot refuse a real comment.
 const maxAnnotationBody = 64 << 10
 
 // annotationPostDoc is what a successful post answers: the note that was
@@ -29,6 +29,8 @@ type annotationPostDoc struct {
 // The author is set here and read from nowhere in the body: a board's own
 // script shares the frame with the comment overlay and can post a pick, but it
 // cannot post a note, and if it could it still could not sign it as anyone.
+// The thread is the one field read from the body: empty starts a thread and
+// a root note's id joins it, which the store checks against the file.
 func (s *HTMLServer) handleAnnotations(w http.ResponseWriter, r *http.Request) {
 	if !authorizedToken(r, s.Token) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -76,6 +78,7 @@ func readAnnotationRequest(w http.ResponseWriter, r *http.Request) (AnnotationRe
 		X        float64 `json:"x"`
 		Y        float64 `json:"y"`
 		Text     string  `json:"text"`
+		Thread   string  `json:"thread"`
 	}
 	if err := json.Unmarshal(body, &in); err != nil {
 		http.Error(w, "the body is not a JSON annotation", http.StatusUnprocessableEntity)
@@ -87,6 +90,7 @@ func readAnnotationRequest(w http.ResponseWriter, r *http.Request) (AnnotationRe
 		Y:        in.Y,
 		Text:     in.Text,
 		By:       humanBy,
+		Thread:   in.Thread,
 	}, nil
 }
 

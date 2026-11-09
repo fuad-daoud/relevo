@@ -142,9 +142,13 @@
     pane.classList.toggle("dirty", dirty);
   }
 
+  // post sends one note: a fresh pick names no thread and starts one, while a
+  // card reply names its thread and joins it. A missing thread is dropped from
+  // the JSON, so a top-level post reads the same as before.
   function post(anchor, text) {
     if (!anchor) return;
     var body = JSON.stringify({
+      thread: anchor.thread,
       selector: anchor.selector,
       x: anchor.x,
       y: anchor.y,
@@ -269,7 +273,7 @@
   draftEl.addEventListener("input", function () { draft = draftEl.value; });
   list.submitOnCtrlEnter(draftEl, submitDraft);
 
-  // The card's reply box posts here too, onto the anchor of the thread it answers.
+  // The card's reply box posts here too, naming the thread it answers.
   list.setReplyHandler(post);
   // And the card puts the composer away when it opens, whichever way it was
   // reached: a pick, a dot, or a row in the panel.

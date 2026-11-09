@@ -473,9 +473,9 @@ func TestShellDrawsPinsOnlyInCommentMode(t *testing.T) {
 }
 
 // TestShellGroupsCommentsIntoThreads pins the thread view. Notes are grouped by
-// their anchor for presentation only -- one pin, one row, one card per anchor,
-// the file still flat and the posting shape unchanged -- and the card's reply
-// box posts onto the anchor of the thread it answers.
+// their thread for presentation only -- one pin, one row, one card per thread,
+// the file still flat -- and the card's reply box posts onto the thread it
+// answers, naming the thread's id.
 func TestShellGroupsCommentsIntoThreads(t *testing.T) {
 	list, err := readShellFile("commentlist.js")
 	if err != nil {
@@ -489,7 +489,7 @@ func TestShellGroupsCommentsIntoThreads(t *testing.T) {
 	}
 	for _, want := range []string{
 		"function threads() {",
-		`var key = "$" + (entry.selector || "");`,
+		`var key = "$" + (entry.thread || entry.id);`,
 		"function threadById(id) {",
 		"function addRow(thread) {",
 		"function openCard(id, x, y) {",
@@ -525,18 +525,19 @@ func TestShellGroupsCommentsIntoThreads(t *testing.T) {
 		t.Fatalf("read shell comments.js: %v", err)
 	}
 	c := string(shell)
-	// The reply posts the anchor it was handed, not the last pick, and posts it
-	// through the shape the API already takes.
+	// The reply posts the thread it was handed, not the last pick, naming the
+	// thread's id with the root's anchor so the store can file it there.
 	for _, want := range []string{
 		"list.setReplyHandler(post);",
 		"function post(anchor, text) {",
+		"thread: anchor.thread,",
 		"selector: anchor.selector,",
 		"x: anchor.x,",
 		"y: anchor.y,",
 		"text: text",
 	} {
 		if !strings.Contains(c, want) {
-			t.Errorf("comments.js does not carry %q, which a thread-anchored reply needs", want)
+			t.Errorf("comments.js does not carry %q, which a thread-joined reply needs", want)
 		}
 	}
 	// And the selector readout the reply path writes to is declared: the toggle,
@@ -544,6 +545,50 @@ func TestShellGroupsCommentsIntoThreads(t *testing.T) {
 	// ReferenceError on each of them.
 	if !strings.Contains(c, `var selEl = document.getElementById("comment-selector");`) {
 		t.Error("comments.js does not declare selEl, so every write to the selector readout throws")
+	}
+}
+
+// TestShellSameSelectorNotesDrawSeparatePins pins that the thread view keys on
+// the thread, never the selector: two top-level notes on one element group
+// apart in both the list and the overlay, so each gets its own pin and row.
+func TestShellSameSelectorNotesDrawSeparatePins(t *testing.T) {
+	for _, file := range []string{"commentlist.js", "overlay.js"} {
+		data, err := readShellFile(file)
+		if err != nil {
+			t.Fatalf("read shell %s: %v", file, err)
+		}
+		if !strings.Contains(string(data), `var key = "$" + (entry.thread || entry.id);`) {
+			t.Errorf("shell/%s does not group by thread, so two notes on one element would share a pin", file)
+		}
+		if strings.Contains(string(data), `var key = "$" + (entry.selector || "");`) {
+			t.Errorf("shell/%s still groups by selector, so two notes on one element merge into one pin", file)
+		}
+	}
+}
+
+// TestShellReplyJoinsItsThread pins the reply path end to end: the card hands
+// the reply its thread's id with the root's anchor, the post sends that id,
+// and the groups the reply renders into are keyed by it -- so a reply lands
+// in its card and adds no pin or row.
+func TestShellReplyJoinsItsThread(t *testing.T) {
+	list, err := readShellFile("commentlist.js")
+	if err != nil {
+		t.Fatalf("read shell commentlist.js: %v", err)
+	}
+	for _, want := range []string{
+		`return { thread: thread.id, selector: thread.key, x: first.x, y: first.y };`,
+		`var key = "$" + (entry.thread || entry.id);`,
+	} {
+		if !strings.Contains(string(list), want) {
+			t.Errorf("commentlist.js does not carry %q, so a reply cannot rejoin its thread", want)
+		}
+	}
+	comments, err := readShellFile("comments.js")
+	if err != nil {
+		t.Fatalf("read shell comments.js: %v", err)
+	}
+	if !strings.Contains(string(comments), "thread: anchor.thread,") {
+		t.Error("comments.js does not post the thread, so a reply would start a pin instead of joining its card")
 	}
 }
 
@@ -588,10 +633,11 @@ func TestShellPinsAreDotsWithAccessibleNames(t *testing.T) {
 	if !strings.Contains(drawPin, `thread.entries.length + " comments: "`) {
 		t.Error("overlay.js drawPin does not say how many notes the thread holds")
 	}
-	// One pin per anchor, not one per note.
+	// One pin per thread, not one per note: two notes on one element at different
+	// fractions are two pins because their threads differ, not one merged pin.
 	if !strings.Contains(shellFunc(src, "function setPins(entries)"),
-		`var key = "$" + (entry.selector || "");`) {
-		t.Error("overlay.js does not group the pins by anchor, so one thread would get one pin per note")
+		`var key = "$" + (entry.thread || entry.id);`) {
+		t.Error("overlay.js does not group the pins by thread, so two notes on one element would merge into one pin")
 	}
 	// The dot is drawn bigger, and bigger is a placement decision: the margin is
 	// half the width so the dot still sits on the point it names rather than

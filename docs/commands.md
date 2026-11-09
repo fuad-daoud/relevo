@@ -444,7 +444,7 @@ the load. A missing `board.html` is not an error; the shell says there is no
 board at that path yet, and nothing is created until you save one.
 
 Comment mode is the shell's, entered with the Comment toggle: one dot lands on
-each commented anchor -- grey for a board-level note, amber where the element
+each thread -- grey for a board-level note, amber where the element
 no longer resolves. Clicking the board opens the composer beside the pick,
 naming the anchor the frame derived (`data-board-id` where the element has
 one, else the tag with a few words of its own text); `Ctrl+Enter` posts it.
@@ -487,17 +487,23 @@ the palette for new elements.
 
 On an HTML board, `relevo board comments [path|--board NAME] [--json]` reads the
 `annotations.json` beside the board and prints every note in file order --
-`id, selector, x, y, text, by, at` -- one tab-separated row each, or one
-compact JSON array with `--json` (`[]` when there are none).
+one tab-separated row each (`id, selector, x, y, text, by, at`), or one
+compact JSON array with `--json` (`[]` when there are none) whose objects also
+carry each note's `thread`.
 `relevo board comment [path|--board NAME] --text S [--selector SEL] [--x X --y Y]
-[--by B]` appends one note there and prints `comment: <id>  <annotations path>`;
+[--by B]` appends one top-level note there and prints `comment: <id>  <annotations path>`;
 `--selector` is the CSS selector the note is about (empty is a board-level
 note), `--x`/`--y` are fractions of that element's box and need `--selector`,
 and `--by` defaults to `RELEVO_MASTERMIND`, else `human`. The board's own bytes
 are never touched, and a missing board is refused (exit 2), never created. Both
 verbs resolve like `relevo board` and are peek verbs: no daemon, no database,
-and `comments` never writes the pointer. Notes are flat -- no replies, resolve
-or delete -- and the CLI never deletes.
+and `comments` never writes the pointer. Each placed comment starts its own
+thread: a top-level note's `thread` is its own id. A reply is posted from the
+shell's thread card and carries its root note's id in `thread` with the root's
+selector and fractions, so it lands in that card rather than starting a pin;
+older entries written without `thread` read as threads of their own. Notes have
+no resolve or delete -- and the CLI never deletes, and it posts top-level notes
+only.
 
 On an explicit `.excalidraw` path the same two verbs keep the scene flow: a
 comment is a text element carrying `customData.relevo` `{comment: true, by,

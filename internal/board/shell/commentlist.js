@@ -66,19 +66,19 @@
     return labels[thread.key] || "element";
   }
 
-  // threads groups the flat annotations by their anchor, in file order: the same
-  // selector string is one thread, an empty selector the board. Presentation only,
-  // so the stored file stays flat; a thread's handle is its first entry's id.
+  // threads groups the flat annotations by thread, in file order: each placed
+  // note is its own thread and a reply joins its root's. Presentation only,
+  // so the stored file stays flat; a thread's handle is its root's id.
   function threads() {
     var entries = (doc && doc.annotations) || [];
     var out = [];
     var by = {};
     for (var i = 0; i < entries.length; i++) {
       var entry = entries[i];
-      var key = "$" + (entry.selector || "");
+      var key = "$" + (entry.thread || entry.id);
       var thread = by[key];
       if (!thread) {
-        thread = by[key] = { key: entry.selector || "", id: entry.id, entries: [] };
+        thread = by[key] = { key: entry.selector || "", id: entry.thread || entry.id, entries: [] };
         out.push(thread);
       }
       thread.entries.push(entry);
@@ -149,8 +149,8 @@
     return line("span", "relevo-orphan-mark", "element not found");
   }
 
-  // addRow is one thread rather than one note: the row carries the first note on
-  // that anchor, and opens the card on the whole conversation.
+  // addRow is one thread rather than one note: the row carries the thread's root
+  // note, and opens the card on the whole conversation.
   function addRow(thread) {
     var first = thread.entries[0];
     var row = document.createElement("button");
@@ -184,7 +184,7 @@
 
   // ---- the floating card ---------------------------------------------------
 
-  // openCard shows one thread beside its dot: what it is about, every note on that anchor
+  // openCard shows one thread beside its dot: what it is about, every note on that thread
   // in file order, then the box that answers them and the row of controls under it. One
   // card at a time, and re-opening the open one is how a second click closes it.
   // onOpenCard is how comments.js keeps the composer out of the way: the card is
@@ -217,7 +217,7 @@
   // replyBox is the card's bottom section: the box that answers the thread, and
   // the row of controls under it -- the keyboard hint left, the way out right,
   // a row rather than a control floated beside the box, which the box then
-  // covered. It posts through the handler comments.js gave the thread's anchor:
+  // covered. It posts through the handler comments.js gave the thread:
   // a reply lands on the thread, not on the last pick.
   function replyBox(thread) {
     var box = document.createElement("textarea");
@@ -250,10 +250,11 @@
     });
   }
 
-  // anchorOf is where a reply goes: the thread's selector, at the first note's fractions.
+  // anchorOf is where a reply goes: the thread's id with the root's selector and
+  // fractions, so the post joins the thread instead of starting a new pin for it.
   function anchorOf(thread) {
     var first = thread.entries[0];
-    return { selector: thread.key, x: first.x, y: first.y };
+    return { thread: thread.id, selector: thread.key, x: first.x, y: first.y };
   }
 
   // setReplyHandler is how comments.js takes the posting back from this file.

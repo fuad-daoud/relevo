@@ -351,8 +351,9 @@ func boardJSONAnnotations(t *testing.T, page, body string) string {
 }
 
 // TestBoardCommentsHTMLJSONShape pins the machine shape on an HTML board: one
-// compact JSON array whose objects are exactly id, selector, x, y, text, by,
-// at in order, and [] -- never null -- when there are none.
+// compact JSON array whose objects are id, selector, x, y, text, by, at and the
+// normalized thread in order, and [] -- never null -- when there are none. The
+// stored entries name no thread, so each reads as a thread of its own.
 func TestBoardCommentsHTMLJSONShape(t *testing.T) {
 	home, _ := initRoot(t)
 	page := boardJSONHTMLBoard(t, home, "mm_aaaaaaaaaaaa", "api")
@@ -369,8 +370,8 @@ func TestBoardCommentsHTMLJSONShape(t *testing.T) {
 	if len(stderr) != 0 {
 		t.Errorf("stderr = %q, want empty", stderr)
 	}
-	want := `[{"id":"a1","selector":"#hero","x":0.5,"y":0.25,"text":"hi","by":"human","at":"2026-10-01T12:00:00Z"},` +
-		`{"id":"a2","selector":"","x":0,"y":0,"text":"board level","by":"human","at":"2026-10-02T12:00:00Z"}]` + "\n"
+	want := `[{"id":"a1","selector":"#hero","x":0.5,"y":0.25,"text":"hi","by":"human","at":"2026-10-01T12:00:00Z","thread":"a1"},` +
+		`{"id":"a2","selector":"","x":0,"y":0,"text":"board level","by":"human","at":"2026-10-02T12:00:00Z","thread":"a2"}]` + "\n"
 	if string(stdout) != want {
 		t.Errorf("stdout = %q, want %q", stdout, want)
 	}

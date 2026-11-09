@@ -328,6 +328,10 @@ func TestBoardCommentHTMLWritesAnnotation(t *testing.T) {
 		entries[0].Text != "hi" || entries[0].By != "human" || etag == "" {
 		t.Errorf("entries = %+v etag %q, want the note under %q", entries, etag, w.ID)
 	}
+	// A CLI note names no thread to join, so it starts one: thread is its own id.
+	if entries[0].Thread != w.ID {
+		t.Errorf("entries[0].Thread = %q, want the note's own id %q", entries[0].Thread, w.ID)
+	}
 	after, err := os.ReadFile(board)
 	if err != nil {
 		t.Fatalf("re-read board: %v", err)
@@ -442,7 +446,9 @@ func TestBoardCommentsHTMLRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("board comments --json: %v", err)
 	}
-	if got := string(stdout); got != want+"\n" {
-		t.Errorf("stdout = %q, want the store JSON", got)
+	// The stored entry names no thread, so --json carries the normalized one:
+	// each legacy note reads as a thread of its own.
+	if got := string(stdout); got != `[{"id":"a1","selector":"#hero","x":0.5,"y":0.25,"text":"hi","by":"human","at":"2026-10-01T12:00:00Z","thread":"a1"}]`+"\n" {
+		t.Errorf("stdout = %q, want the store JSON with the normalized thread", got)
 	}
 }
