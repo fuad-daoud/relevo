@@ -200,8 +200,15 @@
     cardId = id;
     var point = pinPoints[id] || (x != null ? { x: x, y: y } : null);
     cardEl.textContent = "";
+    // The card's head: the anchor's name on the left, the way out at the top
+    // right. The label stays the same node the label reports rewrite in place,
+    // so a late name never empties a reply already being typed.
+    var head = document.createElement("div");
+    head.className = "relevo-card-head";
     cardLabel = line("div", "relevo-anchor", labelFor(thread));
-    cardEl.appendChild(cardLabel);
+    head.appendChild(cardLabel);
+    head.appendChild(closeButton());
+    cardEl.appendChild(head);
     for (var i = 0; i < thread.entries.length; i++) {
       var entry = thread.entries[i];
       cardEl.appendChild(byLine(entry));
@@ -215,10 +222,10 @@
   }
 
   // replyBox is the card's bottom section: the box that answers the thread, and
-  // the row of controls under it -- the keyboard hint left, the way out right,
-  // a row rather than a control floated beside the box, which the box then
-  // covered. It posts through the handler comments.js gave the thread:
-  // a reply lands on the thread, not on the last pick.
+  // the hint under it saying how to post it. The way out lives in the card's
+  // head now, so this row carries the hint alone. It posts through the handler
+  // comments.js gave the thread: a reply lands on the thread, not on the last
+  // pick.
   function replyBox(thread) {
     var box = document.createElement("textarea");
     box.id = "thread-reply";
@@ -227,7 +234,6 @@
     var row = document.createElement("div");
     row.className = "relevo-card-actions";
     row.appendChild(line("span", "relevo-hint", HINT));
-    row.appendChild(closeButton());
     var wrap = document.createElement("div");
     wrap.appendChild(box);
     wrap.appendChild(row);
@@ -322,11 +328,25 @@
     var left = px + 14;
     if (left + wide > window.innerWidth - 8) left = px - wide - 14;
     if (left < 8) left = 8;
+    // The top floor is the bar's own bottom, not the viewport's: a placed card
+    // or composer must never cover the bar's Comment button. The side flip and
+    // the bottom clamp above are untouched.
+    var floor = barFloor();
     var top = py - tall / 2;
-    if (top < 8) top = 8;
+    if (top < floor) top = floor;
     if (top + tall > window.innerHeight - 8) top = window.innerHeight - tall - 8;
     el.style.left = left + "px";
-    el.style.top = Math.max(8, top) + "px";
+    el.style.top = Math.max(floor, top) + "px";
+  }
+
+  // barFloor is the lowest a floating surface may sit. It is read off the bar
+  // itself, so the one height lives in the stylesheet and the placement cannot
+  // drift from it.
+  function barFloor() {
+    var bar = document.getElementById("bar");
+    var box = bar && bar.getBoundingClientRect ? bar.getBoundingClientRect() : null;
+    if (!box || typeof box.bottom !== "number") return 8;
+    return Math.max(8, Math.round(box.bottom) + 8);
   }
 
   window.__relevoList = {

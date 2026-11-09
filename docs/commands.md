@@ -443,13 +443,15 @@ and `relevo board` names the first one on stderr, and the policy is what blocks
 the load. A missing `board.html` is not an error; the shell says there is no
 board at that path yet, and nothing is created until you save one.
 
-Comment mode is the shell's, entered with the Comment toggle: one dot lands on
+Comment mode is the shell's, entered with the Comment toggle at the top bar's
+right (the bar carries the board status on its left): one dot lands on
 each thread -- grey for a board-level note, amber where the element
 no longer resolves. Clicking the board opens the composer beside the pick,
 naming the anchor the frame derived (`data-board-id` where the element has
 one, else the tag with a few words of its own text); `Ctrl+Enter` posts it.
 The all-comments panel lists one row per thread and opens its card; the card
-shows the thread's notes with a reply box whose `Ctrl+Enter` answers that
+heads itself with the anchor's name and a close at its top right, showing the
+thread's notes with a reply box whose `Ctrl+Enter` answers that
 thread. One surface writes at a time, and `Escape` unwinds card, composer, then
 mode. The shell polls `GET /api/board` every two seconds with both etags: a
 changed board re-renders, changed notes redraw the dots, and a post answered

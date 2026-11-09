@@ -11,6 +11,9 @@
   --relevo-surface: Canvas;
   --relevo-edge: rgba(128, 128, 128, 0.45);
   --relevo-shadow: rgba(0, 0, 0, 0.3);
+  /* The shell's top bar is one fixed height, so the frame and the floating
+     panes below it can all measure from the same edge. */
+  --relevo-bar-h: 2.75rem;
 }
 @media (prefers-color-scheme: dark) {
   :root { --relevo-accent: #6fb0f0; --relevo-shadow: rgba(0, 0, 0, 0.6); }
@@ -19,7 +22,37 @@ body {
   margin: 0;
   font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
-#bar { display: flex; gap: 8px; align-items: center; padding: 6px 12px; }
+/* The shell's top bar: the status on the left, the actions pinned to the
+   right. It stays at the top without covering the frame, which sizes itself
+   from the same height below. */
+#bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-height: var(--relevo-bar-h);
+  box-sizing: border-box;
+  padding: 6px 12px;
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background: var(--relevo-surface);
+  border-bottom: 1px solid var(--relevo-edge);
+}
+#status {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 0;
+  color: #666;
+}
+/* The bar's right side: the home for the Comment toggle and whatever
+   top-right controls come next. It never gives ground to the status. */
+#bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex: none;
+}
 #banner {
   display: none;
   padding: 8px 12px;
@@ -28,12 +61,11 @@ body {
   word-break: break-all;
 }
 #banner.on { display: block; }
-#status { padding: 8px 12px; color: #666; }
-
 /* The canvas is the whole page, in comment mode as much as out of it. Nothing
    below narrows #frame, so opening or closing a panel cannot move the board out
-   from under the pointer -- that is the whole reason the panes float. */
-#frame { display: block; width: 100%; height: calc(100vh - 4rem); border: 0; }
+   from under the pointer -- that is the whole reason the panes float. Its
+   height is what the viewport has left under the top bar. */
+#frame { display: block; width: 100%; height: calc(100vh - var(--relevo-bar-h)); border: 0; }
 
 /* All-comments panel: a floating pane over the canvas, not a dock beside it.
    It is as tall as its content and no taller -- a short list must not leave a
@@ -43,11 +75,11 @@ body {
   display: none;
   position: fixed;
   z-index: 20;
-  top: 3.4rem;
+  top: calc(var(--relevo-bar-h) + 8px);
   right: 12px;
   width: 20rem;
   max-width: calc(100vw - 24px);
-  max-height: calc(100vh - 4rem);
+  max-height: calc(100vh - var(--relevo-bar-h) - 16px);
   overflow-y: auto;
   padding: 10px 12px;
   background: var(--relevo-surface);
@@ -100,6 +132,22 @@ body {
 #thread-card.open { display: block; }
 #thread-card .relevo-text { margin: 2px 0 4px; }
 
+/* The card's head: the anchor's name on the left, the way out fixed at the
+   top right. The name wraps and shrinks; the close never moves. */
+.relevo-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.relevo-card-head .relevo-anchor {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.relevo-card-head #thread-close {
+  flex: none;
+}
+
 /* The card is a column: the thread's entries stacked, the box answering them
    under them, and the controls in one row beneath that. A control floated beside
    the box is what let the textarea cover Reply and the close. */
@@ -117,7 +165,7 @@ body {
   display: none;
   position: fixed;
   z-index: 22;
-  top: 3.4rem;
+  top: calc(var(--relevo-bar-h) + 8px);
   left: 12px;
   width: 24rem;
   max-width: calc(100vw - 24px);
@@ -165,7 +213,7 @@ body {
   cursor: pointer;
 }
 #comment-toggle.on { background: var(--relevo-accent); border-color: var(--relevo-accent); color: #fff; }
-#banner-apply { margin-left: 8px; padding: 2px 8px; cursor: pointer; }
+#banner-apply { padding: 2px 8px; cursor: pointer; }
 #comment-draft, #thread-reply {
   display: block;
   width: 100%;
@@ -207,11 +255,13 @@ body {
 </head>
 <body>
 <div id="bar">
-  <button id="comment-toggle" type="button" aria-pressed="false" aria-controls="comments">Comment</button>
-  <button id="banner-apply" type="button" style="display:none">Apply</button>
+  <div id="status">loading board&hellip;</div>
+  <div id="bar-actions">
+    <button id="comment-toggle" type="button" aria-pressed="false" aria-controls="comments">Comment</button>
+    <button id="banner-apply" type="button" style="display:none">Apply</button>
+  </div>
 </div>
 <div id="banner"></div>
-<div id="status">loading board&hellip;</div>
 <aside id="comments" aria-label="comments">
   <div id="comment-panel-head">
     <span id="comment-panel-title">all comments</span>

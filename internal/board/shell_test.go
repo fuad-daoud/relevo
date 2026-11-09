@@ -1185,3 +1185,248 @@ func TestShellRepositionReportsFreshPoints(t *testing.T) {
 		t.Error("overlay.js reposition does not report the moved dots, so the shell anchors the open card to a stale point")
 	}
 }
+
+// TestShellTopBarHoldsStatusAndActions pins the shell's top bar. The status
+// lives in the bar's left area and the Comment toggle with the stale-board
+// Apply in a right group of their own, so the status can shrink without
+// pushing the actions off-screen. The bar stays at the top without covering
+// the frame, with its own surface and bottom edge.
+func TestShellTopBarHoldsStatusAndActions(t *testing.T) {
+	data, err := readShellFile("index.html")
+	if err != nil {
+		t.Fatalf("read shell index.html: %v", err)
+	}
+	src := string(data)
+	// One height for the whole chrome: the frame and the floating panes below
+	// measure from it.
+	if !strings.Contains(src, "--relevo-bar-h:") {
+		t.Error("index.html defines no bar height, so the frame and the panes cannot measure from one edge")
+	}
+	bar := shellRule(src, "#bar")
+	if bar == "" {
+		t.Fatal("index.html has no rule for the top bar")
+	}
+	for _, want := range []string{
+		"position: sticky;",
+		"top: 0;",
+		"background: var(--relevo-surface);",
+		"border-bottom:",
+		"min-height: var(--relevo-bar-h);",
+	} {
+		if !strings.Contains(bar, want) {
+			t.Errorf("the top bar rule does not carry %q, which keeps it a distinct bar above the frame", want)
+		}
+	}
+	// The status shrinks instead of shoving the actions away.
+	status := shellRule(src, "#status")
+	if status == "" {
+		t.Fatal("index.html has no rule for the bar's status")
+	}
+	for _, want := range []string{"flex: 1 1 auto;", "min-width: 0;"} {
+		if !strings.Contains(status, want) {
+			t.Errorf("the status rule does not carry %q, so a long message pushes the actions off-screen", want)
+		}
+	}
+	// The right group, pinned right with room for whatever comes next.
+	actions := shellRule(src, "#bar-actions")
+	if actions == "" {
+		t.Fatal("index.html has no rule for the bar's right actions group")
+	}
+	for _, want := range []string{"margin-left: auto;", "display: flex;"} {
+		if !strings.Contains(actions, want) {
+			t.Errorf("the actions group rule does not carry %q, which pins it to the bar's right", want)
+		}
+	}
+	// The status sits in the bar's left area, the toggle and the Apply in the
+	// right group, and the stale banner stays below the bar.
+	barAt := strings.Index(src, `<div id="bar">`)
+	statusAt := strings.Index(src, `id="status"`)
+	actionsAt := strings.Index(src, `id="bar-actions"`)
+	toggleAt := strings.Index(src, `id="comment-toggle"`)
+	applyAt := strings.Index(src, `id="banner-apply"`)
+	bannerAt := strings.Index(src, `<div id="banner"`)
+	for _, missing := range []string{`<div id="bar">`, `id="status"`, `id="bar-actions"`,
+		`id="comment-toggle"`, `id="banner-apply"`, `<div id="banner"`} {
+		if !strings.Contains(src, missing) {
+			t.Errorf("index.html does not carry %q", missing)
+		}
+	}
+	if barAt < 0 || barAt >= statusAt || statusAt >= actionsAt ||
+		actionsAt >= toggleAt || actionsAt >= applyAt || barAt >= bannerAt {
+		t.Error("the top bar does not hold the status on the left and the Comment toggle with Apply in a right group above the banner")
+	}
+	// The toggle keeps its identity, text and state; the Apply stays hidden
+	// until the stale board shows it.
+	for _, want := range []string{
+		`id="comment-toggle" type="button" aria-pressed="false" aria-controls="comments">Comment</button>`,
+		`id="banner-apply" type="button" style="display:none">Apply</button>`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("the bar's actions do not carry %q", want)
+		}
+	}
+}
+
+// TestShellCommentToggleKeepsItsBehavior pins that moving the toggle into the
+// bar's right group changed nothing but where it sits: the same click still
+// flips comment mode, the pressed state still follows it, and Escape still
+// hands focus back to it.
+func TestShellCommentToggleKeepsItsBehavior(t *testing.T) {
+	shell, err := readShellFile("comments.js")
+	if err != nil {
+		t.Fatalf("read shell comments.js: %v", err)
+	}
+	c := string(shell)
+	for _, want := range []string{
+		`commentBtn.addEventListener("click", function () { setMode(!mode); });`,
+		`commentBtn.setAttribute("aria-pressed", mode ? "true" : "false")`,
+		"commentBtn.focus();",
+	} {
+		if !strings.Contains(c, want) {
+			t.Errorf("comments.js does not carry %q, which the Comment toggle needs wherever it sits", want)
+		}
+	}
+}
+
+// TestShellFrameSizedBelowTheBar pins that the board keeps the viewport the
+// bar does not take, and that every floating surface falls back below the bar
+// rather than over its Comment button. The runtime placement reads the same
+// edge off the bar itself.
+func TestShellFrameSizedBelowTheBar(t *testing.T) {
+	data, err := readShellFile("index.html")
+	if err != nil {
+		t.Fatalf("read shell index.html: %v", err)
+	}
+	src := string(data)
+	frame := shellRule(src, "#frame")
+	if frame == "" {
+		t.Fatal("index.html has no rule sizing the canvas")
+	}
+	if !strings.Contains(frame, "height: calc(100vh - var(--relevo-bar-h));") {
+		t.Error("the canvas is not sized from the viewport left under the top bar")
+	}
+	for _, sel := range []string{"#comments", "#comment-dialog"} {
+		rule := shellRule(src, sel)
+		if rule == "" {
+			t.Errorf("index.html has no rule for %s", sel)
+			continue
+		}
+		if !strings.Contains(rule, "top: calc(var(--relevo-bar-h) + 8px);") {
+			t.Errorf("%s does not fall back below the top bar, so it can cover the Comment button", sel)
+		}
+	}
+	list, err := readShellFile("commentlist.js")
+	if err != nil {
+		t.Fatalf("read shell commentlist.js: %v", err)
+	}
+	l := string(list)
+	beside := shellFunc(l, "function placeBeside(el, point) {")
+	if beside == "" {
+		t.Fatal("commentlist.js has no shared placement, so the card and the composer place from different rules")
+	}
+	// The top floor is the bar's own bottom, not the viewport's old top.
+	if !strings.Contains(beside, "barFloor()") {
+		t.Error("commentlist.js placeBeside does not floor on the bar, so a placed surface can cover it")
+	}
+	floor := shellFunc(l, "function barFloor() {")
+	if floor == "" {
+		t.Error("commentlist.js has no barFloor, so the placement floor reads from nowhere")
+	} else if !strings.Contains(floor, `document.getElementById("bar")`) {
+		t.Error("commentlist.js barFloor does not read the bar, so a placed surface can cover it")
+	}
+	for _, banned := range []string{
+		"if (top < 8) top = 8;",
+		`Math.max(8, top)`,
+	} {
+		if strings.Contains(beside, banned) {
+			t.Errorf("commentlist.js placeBeside still carries %q, the viewport top the bar replaced", banned)
+		}
+	}
+	// The side flip and the bottom clamp are untouched by the new floor.
+	for _, want := range []string{
+		"if (left + wide > window.innerWidth - 8) left = px - wide - 14;",
+		"if (top + tall > window.innerHeight - 8) top = window.innerHeight - tall - 8;",
+	} {
+		if !strings.Contains(beside, want) {
+			t.Errorf("commentlist.js placeBeside no longer carries %q, which keeps the box on screen", want)
+		}
+	}
+}
+
+// TestShellThreadCardHeadsWithLabelThenClose pins the card's head: the
+// anchor's name on the left and the one close at the top right, built first so
+// the entries and the reply box stack under it. The label stays the node the
+// late names rewrite, and the close keeps its identity and behavior.
+func TestShellThreadCardHeadsWithLabelThenClose(t *testing.T) {
+	list, err := readShellFile("commentlist.js")
+	if err != nil {
+		t.Fatalf("read shell commentlist.js: %v", err)
+	}
+	l := string(list)
+	card := shellFunc(l, "function openCard(id, x, y) {")
+	if card == "" {
+		t.Fatal("commentlist.js has no openCard, so no card heads anything")
+	}
+	for _, want := range []string{
+		`head.className = "relevo-card-head";`,
+		`cardLabel = line("div", "relevo-anchor", labelFor(thread));`,
+		"head.appendChild(cardLabel);",
+		"head.appendChild(closeButton());",
+		"cardEl.appendChild(head);",
+	} {
+		if !strings.Contains(card, want) {
+			t.Errorf("commentlist.js openCard does not carry %q, which the card's head needs", want)
+		}
+	}
+	// The head comes first: entries and reply box stack under it.
+	headAt := strings.Index(card, `cardEl.appendChild(head);`)
+	entryAt := strings.Index(card, `line("span", "relevo-text"`)
+	boxAt := strings.Index(card, "cardEl.appendChild(replyBox(thread));")
+	if headAt < 0 || entryAt < 0 || boxAt < 0 || headAt >= entryAt || entryAt >= boxAt {
+		t.Error("commentlist.js openCard does not stack the head above the entries and the reply box")
+	}
+	// One close, in the head: the bottom row carries the hint alone.
+	if got := strings.Count(l, `btn.id = "thread-close";`); got != 1 {
+		t.Errorf("commentlist.js defines the thread close %d times, want the head's alone", got)
+	}
+	if !strings.Contains(shellFunc(l, "function closeButton() {"),
+		`btn.setAttribute("aria-label", "close this comment");`) {
+		t.Error("commentlist.js closeButton lost the name a reader who cannot see the cross needs")
+	}
+	page, err := readShellFile("index.html")
+	if err != nil {
+		t.Fatalf("read shell index.html: %v", err)
+	}
+	head := shellRule(string(page), ".relevo-card-head")
+	if head == "" {
+		t.Fatal("index.html has no rule for the card's head")
+	}
+	for _, want := range []string{"display: flex;", "justify-content: space-between;"} {
+		if !strings.Contains(head, want) {
+			t.Errorf("the card's head rule does not carry %q, which lines the label and the close up", want)
+		}
+	}
+	if strings.Contains(head, "float:") {
+		t.Error("the card's head floats its close, which the reply box then covers")
+	}
+}
+
+// TestShellReplyBoxCarriesOnlyTheHint pins the card's bottom row after the
+// close moved up: the keyboard hint alone, still posting through the thread's
+// handler.
+func TestShellReplyBoxCarriesOnlyTheHint(t *testing.T) {
+	list, err := readShellFile("commentlist.js")
+	if err != nil {
+		t.Fatalf("read shell commentlist.js: %v", err)
+	}
+	box := shellFunc(string(list), "function replyBox(thread) {")
+	if box == "" {
+		t.Fatal("commentlist.js has no replyBox, so the card answers nothing")
+	}
+	if !strings.Contains(box, `row.appendChild(line("span", "relevo-hint", HINT));`) {
+		t.Error("commentlist.js replyBox lost the hint saying how to post")
+	}
+	if strings.Contains(box, "closeButton()") {
+		t.Error("commentlist.js replyBox still appends the close, so the card carries two of them")
+	}
+}
