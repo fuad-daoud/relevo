@@ -298,22 +298,55 @@ func (b *TursoBackend) Head(origin, after string, limit int) ([]HeadRow, error) 
 		start = n
 	}
 	ctx := context.Background()
+	newest, err := b.newestPerRow(ctx, origin)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := b.db.QueryContext(ctx,
-		"SELECT tbl, pk, seq, op, body FROM log WHERE origin = ? AND seq IN ("+
-			"SELECT MAX(seq) FROM log WHERE origin = ? GROUP BY tbl, pk) AND seq > ? ORDER BY seq",
-		origin, origin, start)
+		"SELECT tbl, pk, seq, op, body FROM log WHERE origin = ? AND seq > ? ORDER BY seq", origin, start)
 	if err != nil {
 		return nil, fmt.Errorf("syncworker: read head: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	return collectHead(rows, limit)
+	return collectHead(rows, newest, limit)
 }
 
-// collectHead reads the derived rows in sequence order, skipping a row whose
-// newest entry deletes it and hashing each survivor's body as it scans, so no
-// page holds bodies. The limit applies after the delete filter, so a deleted
-// row inside the range cannot end the walk early.
-func collectHead(rows *sql.Rows, limit int) ([]HeadRow, error) {
+// headKey names one row of a table, the unit the head keeps a latest state for.
+type headKey struct{ tbl, pk string }
+
+// newestPerRow maps each of the origin's rows to its highest sequence, reading no
+// bodies. The grouping is done here rather than as a grouped subquery in SQL: the
+// engine evaluates that subquery about a hundred times slower than this one scan
+// on a log of tens of thousands of entries, slow enough to time a reconcile out.
+func (b *TursoBackend) newestPerRow(ctx context.Context, origin string) (map[headKey]int, error) {
+	rows, err := b.db.QueryContext(ctx, "SELECT tbl, pk, seq FROM log WHERE origin = ?", origin)
+	if err != nil {
+		return nil, fmt.Errorf("syncworker: read head: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	newest := make(map[headKey]int)
+	for rows.Next() {
+		var key headKey
+		var seq int
+		if err := rows.Scan(&key.tbl, &key.pk, &seq); err != nil {
+			return nil, fmt.Errorf("syncworker: read a head row: %w", err)
+		}
+		if seq > newest[key] {
+			newest[key] = seq
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("syncworker: read head: %w", err)
+	}
+	return newest, nil
+}
+
+// collectHead reads the origin's entries in sequence order and keeps only each
+// row's newest one, skipping a row whose newest entry deletes it and hashing each
+// survivor's body as it scans, so no page holds bodies. The limit applies after
+// both filters, so a superseded or deleted row inside the range cannot end the
+// walk early.
+func collectHead(rows *sql.Rows, newest map[headKey]int, limit int) ([]HeadRow, error) {
 	var out []HeadRow
 	for rows.Next() {
 		var tbl, pk, op string
@@ -322,7 +355,7 @@ func collectHead(rows *sql.Rows, limit int) ([]HeadRow, error) {
 		if err := rows.Scan(&tbl, &pk, &seq, &op, &body); err != nil {
 			return nil, fmt.Errorf("syncworker: read a head row: %w", err)
 		}
-		if op == opDelete {
+		if seq != newest[headKey{tbl: tbl, pk: pk}] || op == opDelete {
 			continue
 		}
 		hash, err := bodyHash(json.RawMessage(body.String))
