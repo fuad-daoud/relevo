@@ -6,7 +6,16 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+// excalidrawArg reports whether arg names an Excalidraw scene explicitly. It
+// is the comment verbs' fork: an explicit .excalidraw path keeps the scene
+// flow byte for byte, and everything else -- no path, --board, or the
+// pointer -- is the HTML board.
+func excalidrawArg(arg string) bool {
+	return strings.HasSuffix(arg, ".excalidraw")
+}
 
 // ResolveSceneHTML resolves one `relevo board` invocation to a single-file
 // board. It is the sibling of ResolveScene and keeps its precedence; the

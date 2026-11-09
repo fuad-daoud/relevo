@@ -65,20 +65,22 @@ func boardCommentsFlagSet(fs *flag.FlagSet) *boardCommentsFlagValues {
 }
 
 type boardCommentFlagValues struct {
-	board  *string
-	text   *string
-	x      *float64
-	y      *float64
-	by     *string
-	asJSON *bool
+	board    *string
+	text     *string
+	selector *string
+	x        *float64
+	y        *float64
+	by       *string
+	asJSON   *bool
 }
 
 func boardCommentFlagSet(fs *flag.FlagSet) *boardCommentFlagValues {
 	v := &boardCommentFlagValues{}
-	v.board = fs.String("board", "", "the live scene name to write (default: the pointer, else board)")
+	v.board = fs.String("board", "", "the live board name to write (default: the pointer, else board)")
 	v.text = fs.String("text", "", "the comment text (required)")
-	v.x = fs.Float64("x", 0, "the comment's x position, with --y (default: below the scene)")
-	v.y = fs.Float64("y", 0, "the comment's y position, with --x (default: below the scene)")
+	v.selector = fs.String("selector", "", "the CSS selector the comment is about (default: a board-level note)")
+	v.x = fs.Float64("x", 0, "the comment's x, a fraction of the element's box, with --y (default: below the scene)")
+	v.y = fs.Float64("y", 0, "the comment's y, a fraction of the element's box, with --x (default: below the scene)")
 	v.by = fs.String("by", "", "the comment's author (default: RELEVO_MASTERMIND, else human)")
 	v.asJSON = fs.Bool("json", false, "print the document the write produced")
 	return v
@@ -255,7 +257,7 @@ func cmdBoardComment(args []string) error {
 	if len(fs.Args()) == 1 {
 		arg = fs.Args()[0]
 	}
-	in := board.CommentInput{Text: *v.text, By: *v.by, BoardName: *v.board, Arg: arg}
+	in := board.CommentInput{Text: *v.text, By: *v.by, BoardName: *v.board, Arg: arg, Selector: *v.selector}
 	if flagGiven(fs, "x") {
 		in.X = v.x
 	}
@@ -357,6 +359,13 @@ func cmdBoardPromote(args []string) error {
 		return printDoc(promoteDocOf(p))
 	}
 	fmt.Printf("board: promoted %s -> %s\n", p.Live, p.Dst)
+	// A second line only when there was an annotations file to copy, so a
+	// forced promotion of a board without notes still names no file that does
+	// not exist.
+	if p.CopiedAnnotations {
+		fmt.Printf("board: promoted %s -> %s\n",
+			board.AnnotationsPath(p.Live), board.AnnotationsPath(p.Dst))
+	}
 	return nil
 }
 

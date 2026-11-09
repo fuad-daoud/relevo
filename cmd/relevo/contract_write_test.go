@@ -124,7 +124,7 @@ func writeDocFixtures() []struct {
 		// and scene a comment landed in, and the two paths a promote copied.
 		// The positions and ids here are the literal inputs the builder passes
 		// through; a dropped assignment prints empty and reddens its golden.
-		{"board-annotate-json", annotateDocOf(board.Annotation{
+		{"board-annotate-json", annotateDocOf(board.AnnotateWrite{
 			Path:    "/repo/docs/boards/api.excalidraw",
 			Element: board.AgentText{ID: "0123456789abcdef0123456789abcdef", X: 5, Y: 6, Text: "hello"},
 		})},

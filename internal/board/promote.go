@@ -8,6 +8,9 @@ import "path/filepath"
 type Promotion struct {
 	Live string
 	Dst  string
+	// CopiedAnnotations says the live board had an annotations.json and it
+	// landed beside the copy; the caller prints the second line from it.
+	CopiedAnnotations bool
 }
 
 // PromoteToRepo copies a live board into the repo and returns what it copied;
@@ -20,6 +23,7 @@ type Promotion struct {
 // The destination is <repo>/docs/boards/<name>/board.html and the copy is
 // atomic. A missing source is refused, an existing destination without
 // --force is refused, and a bad slug or a run outside a repository is usage.
+// An annotations.json beside the live board is carried with the copy.
 func PromoteToRepo(deps Deps, cwd, ref, boardName, to string, force bool) (Promotion, error) {
 	repoRoot, err := deps.RepoRoot(cwd)
 	if err != nil {
@@ -53,8 +57,9 @@ func PromoteToRepo(deps Deps, cwd, ref, boardName, to string, force bool) (Promo
 
 	live := filepath.Join(liveDir, name, "board.html")
 	dst := filepath.Join(repoRoot, "docs", "boards", slug, "board.html")
-	if err := Promote(live, dst, force); err != nil {
+	copied, err := PromoteWithAnnotations(live, dst, force)
+	if err != nil {
 		return Promotion{}, err
 	}
-	return Promotion{Live: live, Dst: dst}, nil
+	return Promotion{Live: live, Dst: dst, CopiedAnnotations: copied}, nil
 }
