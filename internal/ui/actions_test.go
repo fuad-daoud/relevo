@@ -11,6 +11,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -1232,6 +1234,49 @@ func TestFooterDropsWholeKeys(t *testing.T) {
 				t.Errorf("width %d: %q is not a whole key (cleaned %q)", width, part, cleaned)
 			}
 		}
+	}
+}
+
+// TestCockpitGateBoundsUnparsedReason pins the manual-gate rule on the
+// cockpit route: a limit reason naming no reset takes the policy default,
+// and a credit-classed reason holds until cleared.
+func TestCockpitGateBoundsUnparsedReason(t *testing.T) {
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	st := store.New(t.TempDir())
+	path := filepath.Join(t.TempDir(), "candidates.json")
+	if err := os.WriteFile(path, []byte(`[{"harness":"agy","provider":"test","model":"m","roles":["builder"]}]`), 0o644); err != nil {
+		t.Fatalf("write candidates: %v", err)
+	}
+	set, err := candidate.Load(path)
+	if err != nil {
+		t.Fatalf("candidate.Load: %v", err)
+	}
+	gates, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = gates.Close() })
+	a := &mastermindActions{live: newLiveRuntime(relevo.Runtime{Store: st, Candidates: set, Gates: gates, Now: func() time.Time { return now }})}
+
+	if res := a.Gate(context.Background(), "agy/test/m", 0, "API error 429: Free usage limit reached"); res.Err != nil {
+		t.Fatalf("Gate: %v", res.Err)
+	}
+	if res := a.Gate(context.Background(), "agy/test/m", 0, "run failed: insufficient credits to complete the request"); res.Err != nil {
+		t.Fatalf("Gate: %v", res.Err)
+	}
+
+	ledger, err := availability.LoadLedger(gates)
+	if err != nil {
+		t.Fatalf("LoadLedger: %v", err)
+	}
+	if len(ledger.Entries) != 2 {
+		t.Fatalf("ledger entries = %d, want 2: %+v", len(ledger.Entries), ledger.Entries)
+	}
+	if !ledger.Entries[0].Until.Equal(now.Add(time.Hour)) {
+		t.Errorf("limit entry until = %v, want the policy default %v", ledger.Entries[0].Until, now.Add(time.Hour))
+	}
+	if !ledger.Entries[1].Until.IsZero() {
+		t.Errorf("credit entry until = %v, want the zero time", ledger.Entries[1].Until)
 	}
 }
 

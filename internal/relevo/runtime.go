@@ -545,7 +545,7 @@ type RemoteClient interface {
 	RoundArtifact(ctx context.Context, server, name string, round int, rel string) (io.ReadCloser, error)
 	RoundBundle(ctx context.Context, server, name string, round int, since string) (io.ReadCloser, error)
 	Ack(ctx context.Context, server, name string, round int) (remote.BindingView, error)
-	Unavailable(ctx context.Context, server, name, token, reason string) error
+	Unavailable(ctx context.Context, server, name, token, reason string, until time.Time) error
 	Available(ctx context.Context, server, subject string) (remote.AvailableResponse, error)
 	Done(ctx context.Context, server, name string) (remote.BindingView, error)
 	Unbind(ctx context.Context, server, name string, force bool) (remote.UnbindResponse, error)

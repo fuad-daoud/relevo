@@ -53,6 +53,9 @@ func museMasterMindFacts(rt relevo.Runtime, in *MasterMindCheckInput, resolver c
 			ProcStart: rt.ProcStart,
 			MuseHost:  rt.MuseHost,
 			Now:       rt.Now(),
+			// Re-point a gone record at this live session, so the row
+			// below reads the live host instead of the stale one.
+			Heal: true,
 		})
 		if err == nil {
 			in.Resolved = &rec
@@ -66,13 +69,28 @@ func museMasterMindFacts(rt relevo.Runtime, in *MasterMindCheckInput, resolver c
 			}
 		}
 	}
-	in.MCPChild = HasMCPChild(hostChildProcesses(museMCPHostPID(in.Resolved, museHost, museOK, ppid)))
+	// A nil ProcStart leaves liveness unknowable: the record reads as not
+	// gone, so it keeps its order below.
+	resolvedGone := false
+	if in.Resolved != nil && rt.ProcStart != nil {
+		resolvedGone = mastermind.RecordState(*in.Resolved, rt.ProcStart) == mastermind.StateGone
+	}
+	in.MCPChild = HasMCPChild(hostChildProcesses(museMCPHostPID(in.Resolved, resolvedGone, museHost, museOK, ppid)))
 }
 
 // museMCPHostPID picks whose children prove the session's tools are up: the
-// resolved record's host, else the verified muse ancestor, else the direct
-// parent. Pure, so the shell-sibling order is testable without /proc.
-func museMCPHostPID(resolved *mastermind.Record, museHost int, ok bool, ppid int) int {
+// resolved record's host, unless the record is gone and the muse walk
+// verified a live ancestor, in which case that ancestor, else the direct
+// parent. A gone record names a dead host, so its children prove nothing;
+// the walk host is already verified by the caller. Pure, so the
+// shell-sibling order is testable without /proc.
+func museMCPHostPID(resolved *mastermind.Record, resolvedGone bool, museHost int, ok bool, ppid int) int {
+	if resolvedGone {
+		if ok && museHost > 0 {
+			return museHost
+		}
+		return ppid
+	}
 	if resolved != nil && resolved.HostPID > 0 {
 		return resolved.HostPID
 	}

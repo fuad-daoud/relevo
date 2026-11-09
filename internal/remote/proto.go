@@ -316,8 +316,9 @@ type BuildersView struct {
 }
 
 type UnavailableRequest struct {
-	Token  string `json:"token"`
-	Reason string `json:"reason"`
+	Token  string    `json:"token"`
+	Reason string    `json:"reason"`
+	Until  time.Time `json:"until,omitzero"`
 }
 
 // AvailableRequest lifts recorded unavailability: subject is a provider name

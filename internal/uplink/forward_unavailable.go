@@ -91,7 +91,7 @@ func forwardAccountKeys(ctx context.Context, rt relevo.Runtime, server string, k
 			continue
 		}
 		for _, key := range keys {
-			err := rt.Remote.Unavailable(ctx, b.Builder.Server, b.Name, key, g.reason)
+			err := rt.Remote.Unavailable(ctx, b.Builder.Server, b.Name, key, g.reason, g.until)
 			if err == nil {
 				continue
 			}
@@ -333,7 +333,7 @@ func postUnavailable(ctx context.Context, rt relevo.Runtime, server, subject str
 		if b.Builder.Server != server {
 			continue
 		}
-		err := rt.Remote.Unavailable(ctx, b.Builder.Server, b.Name, subject, f.g.reason)
+		err := rt.Remote.Unavailable(ctx, b.Builder.Server, b.Name, subject, f.g.reason, f.g.until)
 		if err == nil {
 			continue
 		}

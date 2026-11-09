@@ -173,7 +173,7 @@
             ]
           },
           "for": {
-            "description": "how long the gate holds, as a Go duration (e.g. 2h); omit to hold until cleared",
+            "description": "how long the gate holds, as a Go duration (e.g. 2h); omit for the policy default (a credit exhaustion still holds until cleared)",
             "type": [
               "string",
               "null"

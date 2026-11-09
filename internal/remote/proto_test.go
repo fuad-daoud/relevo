@@ -191,6 +191,42 @@ func TestBindingViewUsageRoundTrip(t *testing.T) {
 	}
 }
 
+// TestUnavailableRequestUntilRoundTrip checks that an unavailable request
+// carrying an expiry round-trips, and that one without it ships no "until"
+// key -- so a request from a node that predates the field decodes to the
+// zero time, which the serve handler derives locally.
+func TestUnavailableRequestUntilRoundTrip(t *testing.T) {
+	until := time.Date(2026, 10, 2, 14, 30, 0, 0, time.UTC)
+	with := UnavailableRequest{Token: "agy/openai/gpt-4", Reason: "limit", Until: until}
+	data, err := json.Marshal(with)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var got UnavailableRequest
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if !got.Until.Equal(until) {
+		t.Fatalf("Until round-trip = %v, want %v", got.Until, until)
+	}
+
+	without := UnavailableRequest{Token: "agy/openai/gpt-4", Reason: "limit"}
+	data, err = json.Marshal(without)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(data), `"until"`) {
+		t.Fatalf("expected no until key when Until is zero, got: %s", string(data))
+	}
+	var decoded UnavailableRequest
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if !decoded.Until.IsZero() {
+		t.Fatalf("absent Until decoded = %v, want the zero time", decoded.Until)
+	}
+}
+
 // TestBindingViewNodeRoundTrip checks that a view naming the burst node
 // running its round round-trips, and that a view with no node ships no
 // "node" key -- so a local round stays indistinguishable from a view a

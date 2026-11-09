@@ -13,6 +13,7 @@
     "name": "n",
     "kind": "rate_limited",
     "since": "<TIME>",
+    "note": "insufficient credits to complete the request",
     "source": "planner"
   },
   {

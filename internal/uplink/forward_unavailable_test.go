@@ -563,3 +563,29 @@ func TestForwardUnavailableReportsOneLinePerServerWhenNothingMatches(t *testing.
 		}
 	}
 }
+
+// TestForwardUnavailableCarriesLocalUntil pins that every fan-out leg sends
+// the local gate's expiry: the forwarded calls carry the local Until, not a
+// re-derived one, so the server holds the same gate this machine recorded.
+func TestForwardUnavailableCarriesLocalUntil(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	saveOpenGate(t, st, "one", "zen")
+	saveOpenGate(t, st, "two", "zen")
+	fr := &fakeRemote{}
+	rt := relevo.Runtime{Store: st, Remote: fr, Candidates: candidateSet(t, testTwoProviderJSON), Now: func() time.Time { return baseTime }}
+
+	until := baseTime.Add(2 * time.Hour)
+	if lines := ForwardUnavailable(context.Background(), rt, "test", "hit a limit", until); len(lines) != 0 {
+		t.Fatalf("lines = %v, want none", lines)
+	}
+	if got := callsWithPrefix(fr, "Unavailable:"); len(got) != 2 {
+		t.Fatalf("Unavailable calls = %v, want one per open binding", got)
+	}
+	for _, have := range fr.unavailableUntils {
+		if !have.Equal(until) {
+			t.Errorf("forwarded Until = %v, want the local gate's %v", have, until)
+		}
+	}
+}

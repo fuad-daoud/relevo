@@ -30,7 +30,10 @@ func serverProbeChecks(rt relevo.Runtime, L config.Loaded) (checks []Check, hasS
 	if key, kerr := remote.ParsePrivate(L.ClientKey); kerr == nil {
 		enrollLine = client.EnrollLine(key)
 	}
-	return serverChecks(relevo.ProbeServers(context.Background(), rt, L.Servers, enrollLine)), true
+	ctx := context.Background()
+	probes := relevo.ProbeServers(ctx, rt, L.Servers, enrollLine)
+	checks = serverChecks(probes)
+	return append(checks, serverGateChecks(ctx, rt, probes)...), true
 }
 
 // appendInfraRows adds the machine-local global rows.

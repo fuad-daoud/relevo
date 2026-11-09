@@ -46,6 +46,7 @@ func (s *Server) burstTick(ctx context.Context) {
 	confirmed := s.sendForwards(ctx, now)
 	closed := s.observeForwards(ctx)
 	s.verifyNodes(ctx)
+	s.resyncGates(now)
 	s.reportCycle(now, placed+confirmed, closed)
 }
 

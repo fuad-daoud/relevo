@@ -108,14 +108,14 @@ func (c *Client) AlignRound(ctx context.Context, server, name string, round int)
 	return postNoBody[remote.BindingView](c, ctx, server, path, "decode binding view")
 }
 
-func (c *Client) Unavailable(ctx context.Context, server, name, token, reason string) error {
+func (c *Client) Unavailable(ctx context.Context, server, name, token, reason string, until time.Time) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	path := "/v1/unavailable"
 	if name != "" {
 		path = fmt.Sprintf("/v1/bindings/%s/unavailable", url.PathEscape(name))
 	}
-	return post(c, ctx, server, path, remote.UnavailableRequest{Token: token, Reason: reason}, "marshal unavailable request")
+	return post(c, ctx, server, path, remote.UnavailableRequest{Token: token, Reason: reason, Until: until}, "marshal unavailable request")
 }
 
 // Available clears the server-wide ledger's gate on subject's provider; there
