@@ -24,6 +24,7 @@ func liveBinding() Binding {
 	b.RemoteUnreachableSince = now.Add(-time.Hour)
 	viewed := now.Add(-30 * time.Second)
 	b.ViewedAt = &viewed
+	b.Serve = &ServeFacts{RepoID: "repo-1", BareRepo: "/srv/repo-1.git", LastSeen: now.Add(-2 * time.Hour)}
 	b.Progress = &Progress{
 		SampledAt:  now,
 		Tree:       "treefp",
@@ -37,7 +38,7 @@ func liveBinding() Binding {
 }
 
 // strippedKeys are the record_json paths that must never survive a save.
-var strippedKeys = []string{"stream_offset", "remote_live", "remote_status", "remote_unreachable_since", "sampled_at", "output_at", "cpu_ticks", "cpu_ticks_at"}
+var strippedKeys = []string{"stream_offset", "remote_live", "remote_status", "remote_unreachable_since", "sampled_at", "output_at", "cpu_ticks", "cpu_ticks_at", "last_seen"}
 
 func assertNoStrippedKeys(t *testing.T, raw []byte, where string) {
 	t.Helper()
@@ -328,6 +329,23 @@ func TestSameBindingSyncedIgnoresConnectionFields(t *testing.T) {
 
 // TestOverlayIsZeroSeesEveryField keeps a binding holding only one live field
 // from having its overlay deleted as empty.
+// TestSameBindingSyncedIgnoresTheServeStamp pins that a poll stamp alone is not
+// a synced change, so the gates that skip a save, an emit and an outbox row for
+// an overlay-only move skip it too, while the server's own facts still count.
+func TestSameBindingSyncedIgnoresTheServeStamp(t *testing.T) {
+	a := newBinding("api", "/repo/a")
+	a.Serve = &ServeFacts{RepoID: "repo-1", LastSeen: time.Date(2026, 11, 8, 20, 0, 0, 0, time.UTC)}
+	b := newBinding("api", "/repo/a")
+	b.Serve = &ServeFacts{RepoID: "repo-1", LastSeen: a.Serve.LastSeen.Add(time.Hour)}
+	if !SameBindingSynced(a, b) {
+		t.Error("two bindings differing only in the serve stamp read as a synced change")
+	}
+	b.Serve.RepoID = "repo-2"
+	if SameBindingSynced(a, b) {
+		t.Error("a changed serve repo read as no synced change")
+	}
+}
+
 func TestOverlayIsZeroSeesEveryField(t *testing.T) {
 	now := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
 	for name, ov := range map[string]liveOverlay{
@@ -337,6 +355,7 @@ func TestOverlayIsZeroSeesEveryField(t *testing.T) {
 		"remote status": {RemoteStatus: "idle"},
 		"unreachable":   {RemoteUnreachableSince: now},
 		"viewed_at":     {ViewedAt: now},
+		"serve stamp":   {ServeLastSeen: now},
 	} {
 		if ov.isZero() {
 			t.Errorf("an overlay holding only its %s reads as zero", name)
@@ -379,6 +398,50 @@ func TestOverlayWithoutConnectionFieldsKeepsTheSyncedOnes(t *testing.T) {
 	if got.Builder.RemoteStatus != "unreachable" || !got.RemoteUnreachableSince.Equal(b.RemoteUnreachableSince) {
 		t.Errorf("status %q since %v: an overlay silent about them blanked the row's values",
 			got.Builder.RemoteStatus, got.RemoteUnreachableSince)
+	}
+	if got.Serve == nil || !got.Serve.LastSeen.Equal(b.Serve.LastSeen) || got.Serve.RepoID != b.Serve.RepoID {
+		t.Errorf("serve facts %+v: an overlay silent about the stamp blanked the row's", got.Serve)
+	}
+}
+
+// TestServePollStampQueuesNoOutboxRows is the served-binding poll: the server
+// stamps when a client last polled, at most hourly, on every polled binding. The
+// stamp reads back, and no stamp queues a binding_record row for the peers.
+func TestServePollStampQueuesNoOutboxRows(t *testing.T) {
+	s := New(t.TempDir())
+	b := newBinding("api", "/repo/a")
+	b.Serve = &ServeFacts{RepoID: "repo-1", BareRepo: "/srv/repo-1.git"}
+	if err := s.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	d, err := s.DB()
+	if err != nil {
+		t.Fatalf("DB: %v", err)
+	}
+	if err := d.TruncateOutbox(); err != nil {
+		t.Fatalf("TruncateOutbox: %v", err)
+	}
+	seen := time.Date(2026, 11, 8, 20, 23, 5, 0, time.UTC)
+	for i := range 3 {
+		at := seen.Add(time.Duration(i) * time.Hour)
+		fresh, err := s.Load("api")
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		fresh.Serve.LastSeen = at
+		if err := s.Save(fresh); err != nil {
+			t.Fatalf("Save stamp %d: %v", i, err)
+		}
+		if rows := outboxRecordRows(t, d); len(rows) != 0 {
+			t.Fatalf("poll stamp %d queued %d binding_record rows", i, len(rows))
+		}
+		got, err := s.Load("api")
+		if err != nil {
+			t.Fatalf("Load after stamp %d: %v", i, err)
+		}
+		if got.Serve == nil || !got.Serve.LastSeen.Equal(at) || got.Serve.RepoID != "repo-1" {
+			t.Fatalf("after stamp %d serve facts = %+v, want LastSeen %v with the synced facts kept", i, got.Serve, at)
+		}
 	}
 }
 
