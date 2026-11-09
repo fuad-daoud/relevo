@@ -2,7 +2,6 @@
 /dist/*.tar.gz
 /.coverage.txt
 /.shard/
-board/node_modules/
 claude-plugin/.claude-plugin/types/
 claude-plugin/tsconfig.json
 /docs/plans/

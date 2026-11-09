@@ -6,21 +6,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
-// excalidrawArg reports whether arg names an Excalidraw scene explicitly. It
-// is the comment verbs' fork: an explicit .excalidraw path keeps the scene
-// flow byte for byte, and everything else -- no path, --board, or the
-// pointer -- is the HTML board.
-func excalidrawArg(arg string) bool {
-	return strings.HasSuffix(arg, ".excalidraw")
-}
-
 // ResolveSceneHTML resolves one `relevo board` invocation to a single-file
-// board. It is the sibling of ResolveScene and keeps its precedence; the
-// only difference is the target shape -- <slug>/board.html -- and that a repo
-// path needs no --board, exactly as the Excalidraw path does not.
+// board. The target shape is <slug>/board.html, and a repo path needs no
+// --board, exactly as a live path does not.
 //
 // The pointer is written for a live board that was not read from the pointer
 // and never for a repo board, so the pointer always names the board the user

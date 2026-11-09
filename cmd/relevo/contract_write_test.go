@@ -120,16 +120,12 @@ func writeDocFixtures() []struct {
 			Tier:          "edit",
 			PromptHead:    []string{"# plan", "do the thing"},
 		}},
-		// The board writes: the element an annotate appended, the comment id
-		// and scene a comment landed in, and the two paths a promote copied.
-		// The positions and ids here are the literal inputs the builder passes
-		// through; a dropped assignment prints empty and reddens its golden.
-		{"board-annotate-json", annotateDocOf(board.AnnotateWrite{
-			Path:    "/repo/docs/boards/api.excalidraw",
-			Element: board.AgentText{ID: "0123456789abcdef0123456789abcdef", X: 5, Y: 6, Text: "hello"},
-		})},
+		// The board writes: the comment id and scene a comment landed in, and
+		// the two paths a promote copied. The positions and ids here are the
+		// literal inputs the builder passes through; a dropped assignment
+		// prints empty and reddens its golden.
 		{"board-comment-json", commentDocOf(board.CommentWrite{
-			ID: "0123456789abcdef0123456789abcdef", Path: "/state/relevo/boards/mm_aaaaaaaaaaaa/board.excalidraw",
+			ID: "0123456789abcdef0123456789abcdef", Path: "/state/relevo/boards/mm_aaaaaaaaaaaa/api/annotations.json",
 		})},
 		{"board-promote-json", promoteDocOf(board.Promotion{
 			Live: "/state/relevo/boards/mm_aaaaaaaaaaaa/api/board.html",

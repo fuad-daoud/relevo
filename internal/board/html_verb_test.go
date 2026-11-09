@@ -164,64 +164,25 @@ func TestResolveBoardHTMLRefusesBadShapes(t *testing.T) {
 	}
 }
 
-// TestResolveBoardHTMLExcalidrawStillResolvesThroughTheOldPath: the legacy flow
-// is untouched by the HTML one. The two resolvers take the same arguments and
-// reach different targets for the same .excalidraw path.
-func TestResolveBoardHTMLExcalidrawStillResolvesThroughTheOldPath(t *testing.T) {
+// TestResolveSceneHTMLRefusesAnExcalidrawPath pins that the surviving
+// resolver refuses an .excalidraw path as usage in both scopes: the refusal
+// names the board.html shape.
+func TestResolveSceneHTMLRefusesAnExcalidrawPath(t *testing.T) {
 	_, liveDir := boardHTMLEnv(t)
 	deps := testDeps(t)
-	scene := filepath.Join(liveDir, "api.excalidraw")
+	repo := withTempRepoRoot(t, &deps)
 
-	legacy, err := ResolveScene(deps, t.TempDir(), "", "", scene)
-	if err != nil {
-		t.Fatalf("ResolveScene: %v", err)
+	args := []string{
+		filepath.Join(liveDir, "mm_aaaaaaaaaaaa", "board.excalidraw"),
+		filepath.Join(repo, "docs", "boards", "api.excalidraw"),
 	}
-	// Temp roots can carry symlinks (/var -> /private/var on macos), and the
-	// resolver may return either form. The scene file itself need not exist,
-	// so evaluate the directory both paths share and compare from there: the
-	// test pins the target, not the spelling.
-	wantDir, werr := filepath.EvalSymlinks(filepath.Dir(scene))
-	if werr != nil {
-		t.Fatalf("EvalSymlinks scene dir: %v", werr)
-	}
-	gotDir, gerr := filepath.EvalSymlinks(filepath.Dir(legacy.Path))
-	if gerr != nil {
-		t.Fatalf("EvalSymlinks legacy dir: %v", gerr)
-	}
-	if gotDir != wantDir || filepath.Base(legacy.Path) != filepath.Base(scene) {
-		t.Errorf("ResolveScene path = %q, want %q", legacy.Path, scene)
-	}
-	if _, err := ResolveSceneHTML(deps, t.TempDir(), "", "", scene); err == nil {
-		t.Error("ResolveSceneHTML on an .excalidraw path = nil, want a refusal")
-	}
-}
-
-// TestCmdBoardDispatchesExcalidrawToTheLegacyFlow: the run routes on the path
-// alone, so an explicit .excalidraw path reaches the legacy resolver and the
-// Excalidraw server, and only a board.html path (or a bare board) reaches the
-// single-file flow. The route is proved by the refusals each flow produces:
-// the legacy one accepts a .excalidraw path the HTML one refuses, and the two
-// subverb-shaped paths cannot both be accepted.
-func TestCmdBoardDispatchesExcalidrawToTheLegacyFlow(t *testing.T) {
-	_, liveDir := boardHTMLEnv(t)
-	deps := testDeps(t)
-
-	excalidraw := filepath.Join(liveDir, "api.excalidraw")
-	if _, err := ResolveScene(deps, t.TempDir(), "alpha", "", excalidraw); err != nil {
-		t.Errorf("the legacy resolver refused its own scene: %v", err)
-	}
-	if _, err := ResolveSceneHTML(deps, t.TempDir(), "alpha", "", excalidraw); err == nil {
-		t.Error("the HTML resolver accepted an .excalidraw path, so the dispatch cannot be on the file name")
-	}
-
-	// The HTML flow's own target, which the legacy resolver refuses: the two
-	// shapes are disjoint in both directions.
-	html := filepath.Join(liveDir, "api", "board.html")
-	if _, err := ResolveSceneHTML(deps, t.TempDir(), "alpha", "", html); err != nil {
-		t.Errorf("ResolveSceneHTML refused its own board: %v", err)
-	}
-	if _, err := ResolveScene(deps, t.TempDir(), "alpha", "", html); err == nil {
-		t.Error("the legacy resolver accepted a board.html path")
+	for _, arg := range args {
+		_, err := ResolveSceneHTML(deps, t.TempDir(), "", "", arg)
+		if !errors.Is(err, ErrUsage) {
+			t.Errorf("ResolveSceneHTML(%q) = %v, want ErrUsage", arg, err)
+		} else if !strings.Contains(err.Error(), "board.html") {
+			t.Errorf("ResolveSceneHTML(%q) refusal %q does not name the board shape", arg, err)
+		}
 	}
 }
 

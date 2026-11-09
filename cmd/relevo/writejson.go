@@ -263,21 +263,6 @@ func serviceDocOf(action, unit, outcome string) ServiceDoc {
 	return ServiceDoc{Action: action, Unit: unit, Outcome: outcome}
 }
 
-// AnnotateDoc is `relevo board annotate --json`: the text element the run
-// appended, as the scene now holds it.
-type AnnotateDoc struct {
-	ID   string  `json:"id"`
-	X    float64 `json:"x"`
-	Y    float64 `json:"y"`
-	Text string  `json:"text"`
-}
-
-// annotateDocOf is annotate's document; the id the human line prints, plus
-// the element's own fields.
-func annotateDocOf(a board.AnnotateWrite) AnnotateDoc {
-	return AnnotateDoc{ID: a.Element.ID, X: a.Element.X, Y: a.Element.Y, Text: a.Element.Text}
-}
-
 // CommentDoc is `relevo board comment --json`: the comment's id and the
 // resolved scene path it was appended to.
 type CommentDoc struct {

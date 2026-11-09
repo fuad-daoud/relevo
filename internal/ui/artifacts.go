@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -39,17 +38,9 @@ func artifactOpenKind(rel string) string {
 	}
 }
 
-// artifactOpenTarget decides how one artifact opens. An .excalidraw scene with
-// a companion .svg beside it opens that svg in the browser; every other file
-// opens by its own extension kind, at its own path.
+// artifactOpenTarget decides how one artifact opens: every file opens by its
+// own extension kind, at its own path.
 func artifactOpenTarget(rel, path string) (kind, target string) {
-	if strings.EqualFold(filepath.Ext(rel), ".excalidraw") {
-		companion := strings.TrimSuffix(path, filepath.Ext(path)) + ".svg"
-		if _, err := os.Stat(companion); err == nil {
-			return "browser", companion
-		}
-		return "editor", path
-	}
 	return artifactOpenKind(rel), path
 }
 
@@ -60,21 +51,6 @@ func artifactOpensIn(c tabContent, rel string) string {
 		return "$EDITOR"
 	}
 	return kind
-}
-
-// artifactEditHint is the faint line an .excalidraw scene with no companion
-// shows: the command that edits it. It is empty for every other file, and for
-// a scene whose companion already opens in the browser.
-func artifactEditHint(c tabContent) string {
-	if !strings.EqualFold(filepath.Ext(c.artifactRel), ".excalidraw") {
-		return ""
-	}
-	path := filepath.Join(c.artifactDir, filepath.FromSlash(c.artifactRel))
-	kind, target := artifactOpenTarget(c.artifactRel, path)
-	if kind != "editor" {
-		return ""
-	}
-	return "run relevo board " + target + " to edit"
 }
 
 func artifactsWord(n int) string {
@@ -135,10 +111,6 @@ func artifactsBody(c tabContent) string {
 	b.WriteByte('\n')
 	b.WriteString(widget.FaintStyle.Render(artifactCaption(c)))
 	b.WriteByte('\n')
-	if hint := artifactEditHint(c); hint != "" {
-		b.WriteString(widget.FaintStyle.Render(hint))
-		b.WriteByte('\n')
-	}
 
 	if c.artifactErr != nil {
 		b.WriteString(widget.ErrorStyle.Render("error: " + sanitizeText(c.artifactErr.Error())))

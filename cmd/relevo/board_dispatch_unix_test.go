@@ -56,31 +56,6 @@ func isolateDispatchState(t *testing.T) string {
 	return stateHome
 }
 
-// TestBoardResolutionNeverStartsTheDaemon is R5's proof: resolving a name
-// against a seeded database starts nothing, binds no socket and writes nothing.
-func TestBoardResolutionNeverStartsTheDaemon(t *testing.T) {
-	stateHome := isolateDispatchState(t)
-	seedDispatchRecords(t, stateHome, dispatchRecord("mm_aaaaaaaaaaaa", "alpha"))
-
-	var calls int32
-	daemonStarter = func() error { atomic.AddInt32(&calls, 1); return nil }
-	t.Cleanup(func() { daemonStarter = startDaemon })
-
-	res, err := board.ResolveScene(boardDeps(), t.TempDir(), "alpha", "", "")
-	if err != nil {
-		t.Fatalf("ResolveScene(name): %v", boardRefusal(err))
-	}
-	if res.Scope != board.ScopeLive || res.Scene != board.DefaultBoard {
-		t.Errorf("ResolveScene(name) = %+v, want the live default", res)
-	}
-	if got := atomic.LoadInt32(&calls); got != 0 {
-		t.Errorf("resolution started the daemon %d times, want 0", got)
-	}
-	if _, err := os.Stat(filepath.Join(stateHome, "relevo", "relevo.sock")); !os.IsNotExist(err) {
-		t.Errorf("resolution created a socket: stat error = %v, want not-exist", err)
-	}
-}
-
 // TestResolveBoardHTMLNeverStartsTheDaemon extends R5 to the HTML resolver:
 // resolving a name against a seeded database starts nothing and writes nothing.
 func TestResolveBoardHTMLNeverStartsTheDaemon(t *testing.T) {

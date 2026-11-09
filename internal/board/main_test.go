@@ -2,6 +2,7 @@ package board
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -11,4 +12,15 @@ import (
 func TestMain(m *testing.M) {
 	_ = os.Unsetenv("RELEVO_MASTERMIND")
 	os.Exit(m.Run())
+}
+
+// realDir returns path with symlinks resolved, so a test compares against
+// the canonical root the resolver computes.
+func realDir(t *testing.T, path string) string {
+	t.Helper()
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(%s): %v", path, err)
+	}
+	return real
 }

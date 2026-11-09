@@ -2,10 +2,7 @@ package main
 
 import (
 	"os"
-	"strings"
 	"testing"
-
-	"github.com/fuad-daoud/relevo/internal/board"
 )
 
 // TestBoardIsAPeekVerb pins the route: board and its subverbs neither dial the
@@ -55,27 +52,34 @@ func TestBoardPromoteRefusesOutsideARepository(t *testing.T) {
 	_ = requireCLIError(t, cmdBoardPromote([]string{"--mastermind", "alpha"}), codeUsage, "")
 }
 
-// TestBoardCommentSelectorOnExcalidrawIsUsage pins the other side of the fork:
-// an explicit .excalidraw path has no elements to select, so --selector is a
-// mistake there too, and it is refused rather than silently dropped.
-func TestBoardCommentSelectorOnExcalidrawIsUsage(t *testing.T) {
-	t.Chdir(t.TempDir())
-	scene := "board.excalidraw"
-	if err := os.WriteFile(scene, []byte(`{"type":"excalidraw","elements":[]}`), 0o600); err != nil {
-		t.Fatalf("write scene: %v", err)
-	}
+// TestBoardTextWordIsRefusedAsAScenePath pins that text and annotate are
+// not board subverbs: the words fall through to the board flag set, where the
+// extra positional (or the unknown --text flag) is usage before any file
+// work, and the scene is left untouched.
+// TestBoardThemeFlagIsUnknown pins that the board verb takes no palette
+// flag: an unknown --theme is usage before any repository or file work.
+func TestBoardThemeFlagIsUnknown(t *testing.T) {
+	boardJSONRepo(t)
+	_ = requireCLIError(t, cmdBoard([]string{"--theme", "x"}), codeUsage, "")
+}
 
-	ce := requireCLIError(t,
-		cmdBoardComment([]string{scene, "--text", "x", "--selector", "#hero"}), codeUsage, "")
-	if !strings.Contains(ce.message, "selector") {
-		t.Errorf("refusal %q does not name the selector", ce.message)
-	}
-	// Nothing was written: the flag was refused before any append.
-	comments, err := board.ReadComments(scene)
-	if err != nil {
-		t.Fatalf("ReadComments: %v", err)
-	}
-	if len(comments) != 0 {
-		t.Errorf("comments = %+v, want none", comments)
+func TestBoardTextWordIsRefusedAsAScenePath(t *testing.T) {
+	textArgs := []string{"text", "board.excalidraw"}
+	annotateArgs := []string{"annotate", "board.excalidraw", "--text", "hi"}
+	for _, args := range [][]string{textArgs, annotateArgs} {
+		boardJSONRepo(t)
+		scene := "board.excalidraw"
+		before := []byte(`{"type":"excalidraw","elements":[]}`)
+		if err := os.WriteFile(scene, before, 0o600); err != nil {
+			t.Fatalf("write scene: %v", err)
+		}
+		_ = requireCLIError(t, cmdBoard(args), codeUsage, "")
+		after, err := os.ReadFile(scene)
+		if err != nil {
+			t.Fatalf("ReadFile: %v", err)
+		}
+		if string(after) != string(before) {
+			t.Errorf("cmdBoard(%q) wrote the scene: before %q, after %q", args, before, after)
+		}
 	}
 }

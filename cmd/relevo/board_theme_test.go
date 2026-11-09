@@ -2,58 +2,16 @@ package main
 
 import (
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
-
-	"github.com/fuad-daoud/relevo/internal/board"
-	"github.com/fuad-daoud/relevo/internal/board/theme"
 )
 
-// The board's theme tiers: the flag, the repository's own setting, the
-// repo-local git key, the stored section, and the seed file behind them.
+// The `themes` config section as storage: whole palettes in, the same
+// palettes out, and the validation the set path enforces.
 
-// themesNight is the palette the resolution tests store, as the section
+// themesNight is the palette the section tests store, as the section
 // carries it: whole, valid, and distinct in every colour from the seed's two.
 const themesNight = `{"bg":"#0d1b1e","ink":"#dfe6e8","muted":"#7f9599","faint":"#475d61","line":"#284044","panel":"#132428","accent":"#8be9fd","good":"#6ff2a8","warn":"#ffd166","bad":"#ff6f8e","comment":"#c9a0ff"}`
-
-// nightPalette is that palette as one stored entry.
-func nightPalette() board.Theme {
-	out, err := theme.Parse("night", []byte(themesNight))
-	if err != nil {
-		panic(err)
-	}
-	return out
-}
-
-// TestBoardWithoutADatabaseReadsTheSeedFile pins the one fallback: a runtime
-// with no stored section -- no database, or one never seeded -- resolves
-// against the embedded seed file, so a fresh install opens in cockpit and
-// names blueprint like the release does.
-func TestBoardWithoutADatabaseReadsTheSeedFile(t *testing.T) {
-	initRoot(t)
-
-	rt, _, err := newRuntimeReadOnly()
-	if err != nil {
-		t.Fatalf("newRuntimeReadOnly: %v", err)
-	}
-	stored, err := boardThemeStored(rt)
-	if err != nil {
-		t.Fatalf("boardThemeStored: %v", err)
-	}
-	if len(stored) != len(theme.Seed()) {
-		t.Fatalf("fallback set has %d palettes, want the seed's %d", len(stored), len(theme.Seed()))
-	}
-	for name, want := range theme.Seed() {
-		if stored[name] != want {
-			t.Errorf("fallback %q = %+v, want the seed's %+v", name, stored[name], want)
-		}
-	}
-	th, err := theme.Lookup(theme.DefaultName, stored)
-	if err != nil || th.Name != "cockpit" {
-		t.Errorf("the fallback resolves a bare run = %v, %v; want cockpit", th, err)
-	}
-}
 
 // TestConfigSetThemesStoresAPalette pins the CLI write half: a whole palette
 // stores through `config set themes.<name>`, and a body with a bad colour, a
@@ -134,37 +92,4 @@ func TestConfigGetThemesPrintsIt(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("config get themes.cockpit --json on a seeded machine: %v (stderr: %s)", err, stderr)
 	}
-}
-
-// TestBoardKeepsCreatingNothing pins the peek shape the resolution rides on:
-// resolving a theme under an empty state root -- the read-only runtime the
-// resolution opens -- writes nothing there, so `relevo board` creates no
-// database and no config.
-func TestBoardKeepsCreatingNothing(t *testing.T) {
-	initRoot(t)
-
-	if _, err := board.ResolveTheme(boardDeps(), ".", ""); err != nil {
-		t.Fatalf("ResolveTheme over an empty state: %v", err)
-	}
-	if entries := stateEntries(t, os.Getenv("XDG_STATE_HOME")); len(entries) != 0 {
-		t.Errorf("resolving a theme wrote %v under the state root, want nothing", entries)
-	}
-}
-
-// stateEntries lists dir's entries; a directory that does not exist yet is
-// the empty set it must stay as.
-func stateEntries(t *testing.T, dir string) []string {
-	t.Helper()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		t.Fatalf("read %s: %v", dir, err)
-	}
-	out := make([]string, 0, len(entries))
-	for _, e := range entries {
-		out = append(out, e.Name())
-	}
-	return out
 }
