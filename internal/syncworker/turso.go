@@ -150,8 +150,8 @@ func (b *TursoBackend) AppendSigned(entries []Entry, boundary Boundary) ([]Entry
 	return written, nil
 }
 
-// writeBatch numbers one batch and writes its log rows and head updates in one
-// transaction: a reader sees the whole batch or none of it.
+// writeBatch numbers one batch and writes its log rows in one transaction: a
+// reader sees the whole batch or none of it.
 func (b *TursoBackend) writeBatch(ctx context.Context, entries []Entry, boundary Boundary) ([]Entry, error) {
 	tx, err := b.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -171,10 +171,14 @@ func (b *TursoBackend) writeBatch(ctx context.Context, entries []Entry, boundary
 		// Every entry carries the request's first sequence, so a reader can tell
 		// where the batch ends and apply it whole.
 		e.Batch = next
-		if err := insertEntry(ctx, tx, e); err != nil {
-			return nil, err
+		if e.Op == opUpsert {
+			// The digest is checked here so an unhashable body refuses the
+			// batch at append, rather than failing the later derived read.
+			if _, err := bodyHash(e.Body); err != nil {
+				return nil, fmt.Errorf("syncworker: hash %s %s: %w", e.Tbl, e.PK, err)
+			}
 		}
-		if err := updateHead(ctx, tx, e); err != nil {
+		if err := insertEntry(ctx, tx, e); err != nil {
 			return nil, err
 		}
 		written = append(written, e)
@@ -215,47 +219,6 @@ func insertEntry(ctx context.Context, tx *sql.Tx, e Entry) error {
 		e.Origin, e.Seq, e.Batch, e.Tbl, e.PK, e.Op, e.SchemaVersion, body,
 		e.At.UTC().Format(time.RFC3339Nano), mac, afterOrigin, afterSeq); err != nil {
 		return fmt.Errorf("syncworker: append %s %s: %w", e.Tbl, e.PK, err)
-	}
-	return nil
-}
-
-// updateHead moves the row's latest state: an upsert replaces it with this
-// entry's hash, and a delete drops it, because a removed row is not one
-// reconcile should keep proposing.
-func updateHead(ctx context.Context, tx *sql.Tx, e Entry) error {
-	if e.Op == opDelete {
-		if _, err := tx.ExecContext(ctx,
-			"DELETE FROM head WHERE origin = ? AND tbl = ? AND pk = ?", e.Origin, e.Tbl, e.PK); err != nil {
-			return fmt.Errorf("syncworker: head %s %s: %w", e.Tbl, e.PK, err)
-		}
-		return nil
-	}
-	hash, err := bodyHash(e.Body)
-	if err != nil {
-		return fmt.Errorf("syncworker: hash %s %s: %w", e.Tbl, e.PK, err)
-	}
-	// An update, then an insert when it moved nothing, rather than one upsert:
-	// on a sync connection the engine can refuse an upsert landing on an
-	// existing head row as a corrupt record. The worker is the replica's only
-	// writer, so the two statements in one transaction cannot race another
-	// insert of the row.
-	res, err := tx.ExecContext(ctx,
-		"UPDATE head SET seq = ?, hash = ? WHERE origin = ? AND tbl = ? AND pk = ?",
-		e.Seq, hash, e.Origin, e.Tbl, e.PK)
-	if err != nil {
-		return fmt.Errorf("syncworker: head %s %s: %w", e.Tbl, e.PK, err)
-	}
-	moved, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("syncworker: head %s %s: %w", e.Tbl, e.PK, err)
-	}
-	if moved > 0 {
-		return nil
-	}
-	if _, err := tx.ExecContext(ctx,
-		"INSERT INTO head (origin, tbl, pk, seq, hash) VALUES (?, ?, ?, ?, ?)",
-		e.Origin, e.Tbl, e.PK, e.Seq, hash); err != nil {
-		return fmt.Errorf("syncworker: head %s %s: %w", e.Tbl, e.PK, err)
 	}
 	return nil
 }
@@ -334,28 +297,45 @@ func (b *TursoBackend) Head(origin, after string, limit int) ([]HeadRow, error) 
 		}
 		start = n
 	}
-	query := "SELECT tbl, pk, seq, hash FROM head WHERE origin = ? AND seq > ? ORDER BY seq"
-	args := []any{origin, start}
-	if limit > 0 {
-		query += " LIMIT ?"
-		args = append(args, limit)
-	}
 	ctx := context.Background()
-	rows, err := b.db.QueryContext(ctx, query, args...)
+	rows, err := b.db.QueryContext(ctx,
+		"SELECT tbl, pk, seq, op, body FROM log WHERE origin = ? AND seq IN ("+
+			"SELECT MAX(seq) FROM log WHERE origin = ? GROUP BY tbl, pk) AND seq > ? ORDER BY seq",
+		origin, origin, start)
 	if err != nil {
 		return nil, fmt.Errorf("syncworker: read head: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
+	return collectHead(rows, limit)
+}
+
+// collectHead reads the derived rows in sequence order, skipping a row whose
+// newest entry deletes it and hashing each survivor's body as it scans, so no
+// page holds bodies. The limit applies after the delete filter, so a deleted
+// row inside the range cannot end the walk early.
+func collectHead(rows *sql.Rows, limit int) ([]HeadRow, error) {
 	var out []HeadRow
 	for rows.Next() {
-		var row HeadRow
-		if err := rows.Scan(&row.Tbl, &row.PK, &row.Seq, &row.Hash); err != nil {
+		var tbl, pk, op string
+		var seq int
+		var body sql.NullString
+		if err := rows.Scan(&tbl, &pk, &seq, &op, &body); err != nil {
 			return nil, fmt.Errorf("syncworker: read a head row: %w", err)
 		}
-		out = append(out, row)
+		if op == opDelete {
+			continue
+		}
+		hash, err := bodyHash(json.RawMessage(body.String))
+		if err != nil {
+			return nil, fmt.Errorf("syncworker: hash %s %s: %w", tbl, pk, err)
+		}
+		out = append(out, HeadRow{Tbl: tbl, PK: pk, Seq: seq, Hash: hash})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("syncworker: read head: %w", err)
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
 	}
 	return out, nil
 }

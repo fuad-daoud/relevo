@@ -15,12 +15,12 @@ import (
 // refuses, and what a MAC that never existed looks like in the rows the upgrade
 // left alone.
 
-// TestHelloUpgradesFormatTwoToThreeInPlace pins the upgrade a machine that
-// synced unsigned and has not synced since needs. Its tables are this build's
-// already, so the only thing that changes is the mac column -- and the entries
-// it holds have to survive with that column NULL, which reads as unsigned
-// rather than as a signature that failed.
-func TestHelloUpgradesFormatTwoToThreeInPlace(t *testing.T) {
+// TestHelloUpgradesFormatTwoToFiveInPlace pins the upgrade a machine that
+// synced unsigned and has not synced since needs. Its tables still carry the
+// stored head, so the upgrade drops that table and adds the mac column -- and
+// the entries it holds have to survive with that column NULL, which reads as
+// unsigned rather than as a signature that failed.
+func TestHelloUpgradesFormatTwoToFiveInPlace(t *testing.T) {
 	path := tempReplica(t)
 	seedFormatTwoRemote(t, path)
 	// Two entries written by a build that had no mac column at all.
@@ -35,6 +35,9 @@ func TestHelloUpgradesFormatTwoToThreeInPlace(t *testing.T) {
 
 	if got := metaFormat(t, path); got != strconv.Itoa(logFormatVersion) {
 		t.Errorf("meta format = %q, want %d after the upgrade", got, logFormatVersion)
+	}
+	if tables := replicaTables(t, path); tables["head"] {
+		t.Errorf("the upgrade left %v, want no head table: the head is answered from the log", tables)
 	}
 	if !tablesHaveColumn(t, path, "log", "mac") {
 		t.Error("the upgrade left the log without a mac column")
@@ -81,10 +84,10 @@ func TestHelloUpgradesFormatTwoToThreeInPlace(t *testing.T) {
 	}
 }
 
-// TestHelloUpgradesFormatThreeToFourInPlace pins the upgrade from format three (with mac)
-// to format four (with after_origin and after_seq). Older entries survive with NULL in
-// those columns.
-func TestHelloUpgradesFormatThreeToFourInPlace(t *testing.T) {
+// TestHelloUpgradesFormatThreeToFiveInPlace pins the upgrade from format three
+// (with mac) to format five. It drops the stored head and adds after_origin
+// and after_seq, and older entries survive with NULL in those columns.
+func TestHelloUpgradesFormatThreeToFiveInPlace(t *testing.T) {
 	path := tempReplica(t)
 	seedFormatThreeRemote(t, path)
 	for seq, pk := range []string{`["a"]`, `["b"]`} {
@@ -98,6 +101,9 @@ func TestHelloUpgradesFormatThreeToFourInPlace(t *testing.T) {
 
 	if got := metaFormat(t, path); got != strconv.Itoa(logFormatVersion) {
 		t.Errorf("meta format = %q, want %d after the upgrade", got, logFormatVersion)
+	}
+	if tables := replicaTables(t, path); tables["head"] {
+		t.Errorf("the upgrade left %v, want no head table: the head is answered from the log", tables)
 	}
 	if !tablesHaveColumn(t, path, "log", "after_origin") {
 		t.Error("the upgrade left the log without an after_origin column")
@@ -124,6 +130,91 @@ func TestHelloUpgradesFormatThreeToFourInPlace(t *testing.T) {
 	_ = b.Close()
 }
 
+// TestHelloUpgradesFormatFourToFiveInPlace pins the upgrade from the format
+// that still stores the head beside the log. The upgrade drops that table in
+// the same transaction that moves the format row, the log rows stay where
+// they are, and the derived head answers what the stored one held.
+func TestHelloUpgradesFormatFourToFiveInPlace(t *testing.T) {
+	path := tempReplica(t)
+	execOn(t, path, createStatements[0], headTableStatement, createStatements[1], createStatements[2],
+		"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '4')")
+	// One row written twice, so the stored head names its newest entry, and
+	// one row written once.
+	execOn(t, path,
+		"INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at)"+
+			" VALUES ('origin-a', 1, 1, 'board', '[\"a\"]', 'upsert', 3, '{\"title\":\"first\"}', '2026-10-08T09:30:00Z')",
+		"INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at)"+
+			" VALUES ('origin-a', 2, 2, 'board', '[\"b\"]', 'upsert', 3, '{\"title\":\"one\"}', '2026-10-08T09:30:00Z')",
+		"INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at)"+
+			" VALUES ('origin-a', 3, 3, 'board', '[\"a\"]', 'upsert', 3, '{\"title\":\"second\"}', '2026-10-08T09:30:00Z')")
+	hashSecond, err := bodyHash(json.RawMessage(`{"title":"second"}`))
+	if err != nil {
+		t.Fatalf("hash the stored head's body: %v", err)
+	}
+	hashOne, err := bodyHash(json.RawMessage(`{"title":"one"}`))
+	if err != nil {
+		t.Fatalf("hash the stored head's body: %v", err)
+	}
+	execOn(t, path,
+		"INSERT INTO head (origin, tbl, pk, seq, hash) VALUES ('origin-a', 'board', '[\"a\"]', 3, '"+hashSecond+"')",
+		"INSERT INTO head (origin, tbl, pk, seq, hash) VALUES ('origin-a', 'board', '[\"b\"]', 2, '"+hashOne+"')")
+
+	// The stored head as the remote holds it, read before the backend opens.
+	var stored []HeadRow
+	rows, err := openAt(t, path).Query("SELECT tbl, pk, seq, hash FROM head ORDER BY seq")
+	if err != nil {
+		t.Fatalf("read the stored head: %v", err)
+	}
+	for rows.Next() {
+		var h HeadRow
+		if err := rows.Scan(&h.Tbl, &h.PK, &h.Seq, &h.Hash); err != nil {
+			_ = rows.Close()
+			t.Fatalf("scan the stored head: %v", err)
+		}
+		stored = append(stored, h)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		t.Fatalf("read the stored head: %v", err)
+	}
+	_ = rows.Close()
+
+	driver := &localDriver{path: path}
+	b := backendFor(t, driver, "origin-b")
+
+	if tables := replicaTables(t, path); tables["head"] {
+		t.Errorf("the upgrade left %v, want no head table: the head is answered from the log", tables)
+	}
+	if got := metaFormat(t, path); got != strconv.Itoa(logFormatVersion) {
+		t.Errorf("meta format = %q, want %d after the upgrade", got, logFormatVersion)
+	}
+	if driver.pushes != 1 {
+		t.Errorf("the upgrade pushed %d times, want once: the remote learns the new schema from a push", driver.pushes)
+	}
+
+	var entries int
+	if err := openAt(t, path).QueryRow("SELECT COUNT(*) FROM log").Scan(&entries); err != nil {
+		t.Fatalf("read the upgraded log: %v", err)
+	}
+	if entries != 3 {
+		t.Errorf("the upgraded log holds %d entries, want the 3 it had", entries)
+	}
+
+	derived, err := b.Head("origin-a", "", 0)
+	if err != nil {
+		t.Fatalf("head from the upgraded log: %v", err)
+	}
+	if len(derived) != len(stored) {
+		t.Fatalf("derived head = %+v, want the %d stored rows", derived, len(stored))
+	}
+	for i := range stored {
+		if derived[i] != stored[i] {
+			t.Errorf("derived head row %d = %+v, want stored %+v", i, derived[i], stored[i])
+		}
+	}
+	_ = b.Close()
+}
+
 // TestUpgradeToleratesDuplicateColumnConcurrently pins that a concurrent worker's
 // ALTER adding a column is tolerated and not treated as a failure (C6).
 func TestUpgradeToleratesDuplicateColumnConcurrently(t *testing.T) {
@@ -137,6 +228,9 @@ func TestUpgradeToleratesDuplicateColumnConcurrently(t *testing.T) {
 
 	if got := metaFormat(t, path); got != strconv.Itoa(logFormatVersion) {
 		t.Errorf("meta format = %q, want %d after upgrade", got, logFormatVersion)
+	}
+	if tables := replicaTables(t, path); tables["head"] {
+		t.Errorf("the upgrade left %v, want no head table: the head is answered from the log", tables)
 	}
 	if !tablesHaveColumn(t, path, "log", "after_origin") || !tablesHaveColumn(t, path, "log", "after_seq") {
 		t.Error("missing after columns after upgrade")
@@ -205,12 +299,12 @@ func TestIsDuplicateColumnError(t *testing.T) {
 	}
 }
 
-// TestHelloRefusesFormatFive pins that the upgrade path stops where this build's
+// TestHelloRefusesFormatSix pins that the upgrade path stops where this build's
 // knowledge does. A remote one format ahead defines the log differently.
-func TestHelloRefusesFormatFive(t *testing.T) {
+func TestHelloRefusesFormatSix(t *testing.T) {
 	path := tempReplica(t)
 	execOn(t, path, append(append([]string(nil), createStatements...),
-		"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '5')")...)
+		"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '6')")...)
 
 	b := NewTursoBackend(&localDriver{path: path})
 	resp := startWorker(t, b).ask(helloRequest("h"))
