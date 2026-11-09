@@ -33,12 +33,14 @@
   }
 
   // setPoints records where the frame drew each dot, the only place the card can anchor from.
+  // An open card moves to its own dot's fresh point, so a card opened from the list
+  // lands beside the dot once the frame answers.
   function setPoints(points) {
     pinPoints = {};
     for (var i = 0; i < (points || []).length; i++) {
       pinPoints[points[i].id] = points[i];
     }
-    if (cardId) placeCard();
+    if (cardId) placeCard(pinPoints[cardId]);
   }
 
   // setLabels records what the frame calls each anchor, so a card can head itself with a

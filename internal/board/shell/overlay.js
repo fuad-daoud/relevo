@@ -313,10 +313,15 @@
     }
   }
 
+  // reposition moves the dots after a scroll or a resize, and reports where they
+  // landed: the shell anchors the open card from its own copy, so without the
+  // report the card would stay where the dot was.
   function reposition() {
+    if (!pinLayer) return;
     eachPin(function (pin, thread, i) {
       placePin(pin, thread, thread.key ? resolve(thread.key) : null, i);
     });
+    post({ type: "relevo.points", points: points() });
   }
 
   // points reports where each dot sits, so the shell anchors a card beside one from

@@ -57,9 +57,13 @@
   }
 
   // postPins sends the annotations only in comment mode: out of it the board has none.
+  // The points and the labels are asked for with them, so the dots the frame just
+  // drew are the ones the shell anchors to and names.
   function postPins() {
     if (!mode) return;
     postToFrame({ type: "relevo.pins", annotations: (doc && doc.annotations) || [] });
+    requestPoints();
+    requestLabels();
   }
 
   // requestPoints asks the frame where it drew the dots: only the frame can see them.
@@ -224,8 +228,6 @@
     if (boardMoved) api.render(next.html);
     postPins();
     list.setDocument(doc);
-    requestPoints();
-    requestLabels();
     if (next.external && next.external.length) {
       api.showBanner(
         "this board references " + next.external.length +
@@ -314,8 +316,6 @@
       aetag = next.annotationsEtag || "";
       postPins();
       list.setDocument(doc);
-      requestPoints();
-      requestLabels();
       startPolling();
     });
   }

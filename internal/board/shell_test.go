@@ -1061,3 +1061,81 @@ func TestShellShowsTheAnchorNameNotTheSelector(t *testing.T) {
 		t.Error("index.html sets the anchor readout in a monospace, which is the selector's own face")
 	}
 }
+
+// TestShellPinDeliveryRefreshesPointsAndLabels pins the shell side of the
+// shell/frame seam: every pins delivery while comment mode is on is followed
+// by a points and a labels request, so the dots the frame just drew are the
+// ones the shell anchors to and names. Mode entry, the overlay-ready
+// re-announce and a successful post all send through the gated path, so one
+// pin in that path covers them all.
+func TestShellPinDeliveryRefreshesPointsAndLabels(t *testing.T) {
+	shell, err := readShellFile("comments.js")
+	if err != nil {
+		t.Fatalf("read shell comments.js: %v", err)
+	}
+	c := string(shell)
+	pins := shellFunc(c, "function postPins() {")
+	if pins == "" {
+		t.Fatal("comments.js has no postPins, so no pins delivery refreshes anything")
+	}
+	for _, want := range []string{
+		"requestPoints();",
+		"requestLabels();",
+	} {
+		if !strings.Contains(pins, want) {
+			t.Errorf("comments.js postPins does not carry %q, so a pins delivery leaves dots unnamed and unanchored", want)
+		}
+	}
+	// Mode entry sends through the gated path rather than around it.
+	if !strings.Contains(shellFunc(c, "function setMode(on)"), "postPins();") {
+		t.Error("comments.js setMode does not send the pins through the gated path, so mode entry draws dots the shell cannot anchor to")
+	}
+	// A successful post sends through the same path rather than drawing alone.
+	if !strings.Contains(shellFunc(c, "function post(anchor, text) {"), "postPins();") {
+		t.Error("comments.js post does not send the pins through the gated path, so a new dot stays unanchored")
+	}
+	// The overlay-ready re-announce does too.
+	if !strings.Contains(c, "relevo.overlayReady") || !strings.Contains(shellFunc(c, `if (msg.type === "relevo.overlayReady")`),
+		"postPins();") {
+		t.Error("comments.js does not resend the pins when the overlay re-announces, so a reloaded frame draws dots the shell cannot anchor to")
+	}
+}
+
+// TestShellSetPointsMovesTheOpenCard pins the list side of the same seam: a
+// points report moves the open card to its own dot's fresh point. A card
+// opened from the all-comments list has no click point of its own, so without
+// the stored point it would stay where the fallback left it.
+func TestShellSetPointsMovesTheOpenCard(t *testing.T) {
+	list, err := readShellFile("commentlist.js")
+	if err != nil {
+		t.Fatalf("read shell commentlist.js: %v", err)
+	}
+	set := shellFunc(string(list), "function setPoints(points) {")
+	if set == "" {
+		t.Fatal("commentlist.js has no setPoints, so no points report can move a card")
+	}
+	if !strings.Contains(set, "placeCard(pinPoints[cardId])") {
+		t.Error("commentlist.js setPoints does not move the open card to its stored point, so a list-opened card never reaches its dot")
+	}
+	if strings.Contains(set, "if (cardId) placeCard();") {
+		t.Error("commentlist.js setPoints places with no point, so an open card is left where the fallback put it")
+	}
+}
+
+// TestShellRepositionReportsFreshPoints pins the frame side of the same seam:
+// a scroll or a resize moves the dots and reports where they landed, so the
+// shell's copy for the open card stays current and the card tracks its dot.
+func TestShellRepositionReportsFreshPoints(t *testing.T) {
+	overlay, err := readShellFile("overlay.js")
+	if err != nil {
+		t.Fatalf("read shell overlay.js: %v", err)
+	}
+	o := string(overlay)
+	move := shellFunc(o, "function reposition() {")
+	if move == "" {
+		t.Fatal("overlay.js has no reposition, so a scroll leaves every dot where it was")
+	}
+	if !strings.Contains(move, `post({ type: "relevo.points", points: points() });`) {
+		t.Error("overlay.js reposition does not report the moved dots, so the shell anchors the open card to a stale point")
+	}
+}
