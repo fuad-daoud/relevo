@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/url"
 	"os"
 )
@@ -71,6 +72,7 @@ func convertLegacy(path string) error {
 	if fresh || (!shm && marked) {
 		return nil
 	}
+	logSidecars(slog.Default(), "convert-begin", path)
 
 	pool, err := openConvertPool(path)
 	if err != nil {
@@ -119,6 +121,7 @@ func runConversion(path string, pool *sql.DB) error {
 	if err != nil {
 		return fail(fmt.Errorf("db: convert %s: conn: %w", path, err))
 	}
+	logSidecars(slog.Default(), "convert-checkpoint", path)
 	busy, err := checkpointTruncate(ctx, conn)
 	if err != nil {
 		_ = conn.Close()
@@ -144,6 +147,7 @@ func runConversion(path string, pool *sql.DB) error {
 	// The marker goes in after the repair, never before: a kill between the two
 	// leaves the file unmarked, so the next open converts it again instead of
 	// trusting a half-done conversion.
+	logSidecars(slog.Default(), "mark-checkpoint", path)
 	if err := markConverted(ctx, conn); err != nil {
 		_ = conn.Close()
 		return fail(fmt.Errorf("db: convert %s: %w", path, err))

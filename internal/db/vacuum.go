@@ -161,6 +161,7 @@ func (d *DB) swapInVacuum(sibling string) error {
 	}
 	// The old -shm describes the replaced file and would confuse the reopen.
 	_ = os.Remove(d.path + "-shm")
+	logSidecars(slog.Default(), "vacuum-shm-remove", d.path)
 
 	pool, err := openPool(d.path, d.busy, false)
 	if err != nil {
