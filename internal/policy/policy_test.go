@@ -759,71 +759,15 @@ func TestMaxPlannersOrDefault(t *testing.T) {
 	}
 }
 
-// TestBurstPolicyDefaultsAndOverrides pins the serve.burst block: the node
-// lost wait defaults to 10 m, converts from milliseconds, and refuses 0 or
-// negative naming the key; the command reads back as configured, nil without
-// the block, and as a copy.
-func TestBurstPolicyDefaultsAndOverrides(t *testing.T) {
-	if got := (Policy{}).BurstNodeLostAfter(); got != 10*time.Minute {
-		t.Fatalf("Policy{}.BurstNodeLostAfter() = %v, want 10 m", got)
-	}
-	if got := (Policy{}).BurstCommand(); got != nil {
-		t.Fatalf("Policy{}.BurstCommand() = %q, want nil without the block", got)
-	}
-
-	tests := []struct {
-		name        string
-		body        string
-		wantAfter   time.Duration
-		wantCommand []string
-		wantErr     bool
-	}{
-		{name: "absent defaults", body: `{}`, wantAfter: 10 * time.Minute},
-		{name: "block alone defaults", body: `{"serve":{"burst":{}}}`, wantAfter: 10 * time.Minute},
-		{name: "custom wait", body: `{"serve":{"burst":{"node_lost_after_ms":60000}}}`, wantAfter: time.Minute},
-		{name: "command reads back", body: `{"serve":{"burst":{"command":["/usr/local/bin/burst","report"]}}}`,
-			wantAfter: 10 * time.Minute, wantCommand: []string{"/usr/local/bin/burst", "report"}},
-		{name: "zero wait is refused", body: `{"serve":{"burst":{"node_lost_after_ms":0}}}`, wantErr: true},
-		{name: "negative wait is refused", body: `{"serve":{"burst":{"node_lost_after_ms":-5}}}`, wantErr: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			p, err := load(t, tt.body)
-			if tt.wantErr {
-				if err == nil {
-					t.Fatalf("Load: got nil error, want one wrapping ErrBadPolicy")
-				}
-				if !errors.Is(err, ErrBadPolicy) {
-					t.Fatalf("Load error %v does not wrap ErrBadPolicy", err)
-				}
-				for _, want := range []string{"serve.burst.node_lost_after_ms", "must be > 0"} {
-					if !strings.Contains(err.Error(), want) {
-						t.Fatalf("Load error %q does not contain %q", err.Error(), want)
-					}
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("Load: %v", err)
-			}
-			if got := p.BurstNodeLostAfter(); got != tt.wantAfter {
-				t.Errorf("BurstNodeLostAfter() = %v, want %v", got, tt.wantAfter)
-			}
-			if got := p.BurstCommand(); !reflect.DeepEqual(got, tt.wantCommand) {
-				t.Errorf("BurstCommand() = %q, want %q", got, tt.wantCommand)
-			}
-		})
-	}
-
-	p, err := load(t, `{"serve":{"burst":{"command":["burst","report"]}}}`)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	got := p.BurstCommand()
-	got[0] = "changed"
-	if again := p.BurstCommand(); again[0] != "burst" {
-		t.Errorf("BurstCommand() = %q after the caller wrote the result, want the loaded policy untouched", again)
+// TestLoadLegacyServeBurstWarnsUnknownKey pins that a policy body with a
+// serve.burst block loads, reporting the block as one unknown-key warning
+// naming serve.burst rather than an error. The zero wait is deliberate: it
+// is not a usable wait, so loading it without error proves the block is
+// never validated, only warned on.
+func TestLoadLegacyServeBurstWarnsUnknownKey(t *testing.T) {
+	_, warnings := loadWarnings(t, `{"serve":{"burst":{"command":["burst","report"],"node_lost_after_ms":0}}}`)
+	if len(warnings) != 1 || !strings.Contains(warnings[0], `unknown key "serve.burst"`) {
+		t.Fatalf("warnings = %v, want one naming serve.burst", warnings)
 	}
 }
 
