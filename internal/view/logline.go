@@ -42,6 +42,15 @@ func LogLine(e store.LogEntry) string {
 	}
 	if e.Kind == store.KindReport && e.Rusage != nil {
 		first += fmt.Sprintf(" cpu %s peak %s", shortCPU(e.Rusage.CPUMS), shortBytes(e.Rusage.PeakMemBytes))
+		if e.Rusage.BaseBytes != nil {
+			first += " base " + shortBytes(*e.Rusage.BaseBytes)
+		}
+		if e.Rusage.BurstBytes != nil {
+			first += " burst " + shortBytes(*e.Rusage.BurstBytes)
+		}
+		if e.Rusage.BurstSecs != nil {
+			first += fmt.Sprintf(" burst-secs %d", *e.Rusage.BurstSecs)
+		}
 	}
 	if e.Usage == nil {
 		return sanitize.Text(first)

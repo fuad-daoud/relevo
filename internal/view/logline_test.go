@@ -245,6 +245,46 @@ func TestLogLineRusageUsesSecondsResolution(t *testing.T) {
 	}
 }
 
+// Base, burst and burst-secs render only when measured; a nil pointer
+// leaves no fragment, so a rusage without them prints the old line.
+func TestLogLineRusageBaseBurst(t *testing.T) {
+	t.Parallel()
+
+	ts := time.Date(2026, 9, 18, 14, 31, 7, 0, time.UTC)
+	head := ts.Local().Format("2006-01-02 15:04:05") + "  round 1   to_planner report    /p/001-report.md n cpu 8.6s peak 358MB"
+
+	all := store.LogEntry{
+		TS: ts, Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
+		Path: "/p/001-report.md", Note: "n",
+		Rusage: &store.Rusage{CPUMS: 8550, PeakMemBytes: 341 << 20,
+			BaseBytes: ptr(int64(128 << 20)), BurstBytes: ptr(int64(341 << 20)), BurstSecs: ptr(int64(0))},
+	}
+	if got := LogLine(all); got != head+" base 134MB burst 358MB burst-secs 0" {
+		t.Errorf("\n got  %q\n want %q", got, head+" base 134MB burst 358MB burst-secs 0")
+	}
+
+	onlyBase := store.LogEntry{
+		Kind:   store.KindReport,
+		Rusage: &store.Rusage{CPUMS: 8550, PeakMemBytes: 341 << 20, BaseBytes: ptr(int64(128 << 20))},
+	}
+	gotBase := LogLine(onlyBase)
+	if !strings.Contains(gotBase, " base 134MB") {
+		t.Errorf("want base fragment in %q", gotBase)
+	}
+	if strings.Contains(gotBase, "burst") {
+		t.Errorf("want no burst fragment in %q", gotBase)
+	}
+
+	none := store.LogEntry{
+		TS: ts, Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
+		Path: "/p/001-report.md", Note: "n",
+		Rusage: &store.Rusage{CPUMS: 8550, PeakMemBytes: 341 << 20},
+	}
+	if got := LogLine(none); got != head {
+		t.Errorf("\n got  %q\n want %q", got, head)
+	}
+}
+
 // TestLogLineStripsControlBytes pins that a log entry's note cannot smuggle a
 // control sequence into the printed line.
 func TestLogLineStripsControlBytes(t *testing.T) {

@@ -64,10 +64,24 @@ type ForkRef struct {
 }
 
 // Rusage is the cgroup's usage_usec and memory.peak for a round's systemd
-// scope, read after the builder exits.
+// scope, read after the builder exits. The pointer fields are nil when the
+// supervisor could not read them; a measured zero is non-nil, so it reads
+// differently from an unreadable cgroup file.
 type Rusage struct {
-	CPUMS        int64 `json:"cpu_ms,omitempty"`
-	PeakMemBytes int64 `json:"peak_mem_bytes,omitempty"`
+	CPUMS        int64  `json:"cpu_ms,omitempty"`
+	PeakMemBytes int64  `json:"peak_mem_bytes,omitempty"`
+	BaseBytes    *int64 `json:"base_bytes,omitempty"`
+	BurstBytes   *int64 `json:"burst_bytes,omitempty"`
+	BurstSecs    *int64 `json:"burst_secs,omitempty"`
+	CPUSomeUsec  *int64 `json:"cpu_some_usec,omitempty"`
+	CPUFullUsec  *int64 `json:"cpu_full_usec,omitempty"`
+	MemSomeUsec  *int64 `json:"mem_some_usec,omitempty"`
+	MemFullUsec  *int64 `json:"mem_full_usec,omitempty"`
+	IOSomeUsec   *int64 `json:"io_some_usec,omitempty"`
+	IOFullUsec   *int64 `json:"io_full_usec,omitempty"`
+	EvHigh       *int64 `json:"ev_high,omitempty"`
+	EvMax        *int64 `json:"ev_max,omitempty"`
+	EvOOMKill    *int64 `json:"ev_oom_kill,omitempty"`
 }
 
 // Progress is the current round's sampled progress clock. relevo never acts on

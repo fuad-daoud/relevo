@@ -303,8 +303,8 @@ func TestMigration031AddsWriterColumn(t *testing.T) {
 	defer func() { _ = d.Close() }()
 
 	have, know := d.SchemaVersions()
-	if have != 32 || know != 32 {
-		t.Errorf("SchemaVersions = (%d, %d), want (32, 32)", have, know)
+	if have != 33 || know != 33 {
+		t.Errorf("SchemaVersions = (%d, %d), want (33, 33)", have, know)
 	}
 }
 
@@ -370,8 +370,8 @@ func TestMigration032AddsRoundStatsColumns(t *testing.T) {
 	defer func() { _ = d.Close() }()
 
 	have, know := d.SchemaVersions()
-	if have != 32 || know != 32 {
-		t.Errorf("SchemaVersions = (%d, %d), want (32, 32)", have, know)
+	if have != 33 || know != 33 {
+		t.Errorf("SchemaVersions = (%d, %d), want (33, 33)", have, know)
 	}
 
 	// A 032 row round-trips the four columns through the round write path,
@@ -425,6 +425,202 @@ func TestMigration032AddsRoundStatsColumns(t *testing.T) {
 		byName[col.Name] = col.Value
 	}
 	for _, name := range []string{"queue_wait_ms", "start_kind", "rusage_cpu_ms", "rusage_peak_mem_bytes"} {
+		if _, ok := byName[name]; !ok {
+			t.Errorf("exchange row misses column %s: %+v", name, row.Columns)
+		}
+	}
+}
+
+// TestMigration033AddsRoundMeasurementColumns pins the round-measurement
+// columns: a database at 032 with a round row gains the twelve columns as
+// NULL, a second apply of 033 is a no-op, and a fresh database writes and
+// reads the twelve columns through the round write path and the row exchange
+// alike.
+func TestMigration033AddsRoundMeasurementColumns(t *testing.T) {
+	// 1. Upgraded DB from version 32 to 33
+	sqlDB := rawSQLDB(t, filepath.Join(t.TempDir(), "relevo.db"))
+
+	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 32)); err != nil {
+		t.Fatalf("applyMigrations through 032: %v", err)
+	}
+
+	if _, err := sqlDB.Exec(`INSERT INTO binding
+		(id, origin, name, cwd, builder_mode, created_at, ingest_source)
+		VALUES ('b1', 'inst1', 'test1', '/work/1', 'pane', '2026-10-17T10:00:00Z', 'live')`); err != nil {
+		t.Fatalf("insert binding at 032: %v", err)
+	}
+	if _, err := sqlDB.Exec(`INSERT INTO round (id, binding_id, number, started_at, outcome, switches)
+		VALUES ('r1', 'b1', 1, '2026-10-17T10:00:00.000Z', 'reported', 0)`); err != nil {
+		t.Fatalf("insert round at 032: %v", err)
+	}
+
+	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 33)); err != nil {
+		t.Fatalf("applyMigrations through 033: %v", err)
+	}
+
+	// A row recorded before 033 reads NULL for the twelve columns; the SELECT
+	// itself proves the columns exist.
+	var cols [12]sql.Null[int64]
+	colPtrs := make([]any, len(cols))
+	for i := range cols {
+		colPtrs[i] = &cols[i]
+	}
+	if err := sqlDB.QueryRow(`SELECT rusage_base_bytes, rusage_burst_bytes,
+		rusage_burst_secs, rusage_cpu_some_usec, rusage_cpu_full_usec,
+		rusage_mem_some_usec, rusage_mem_full_usec, rusage_io_some_usec,
+		rusage_io_full_usec, rusage_ev_high, rusage_ev_max, rusage_ev_oom_kill
+		FROM round WHERE id = 'r1'`).Scan(colPtrs...); err != nil {
+		t.Fatalf("select round-measurement columns: %v", err)
+	}
+	for i, c := range cols {
+		if c.Valid {
+			t.Errorf("pre-033 round-measurement column %d = %v, want all NULL", i, c)
+		}
+	}
+
+	// A second apply of 033 is a no-op: the version guard means the ALTERs,
+	// which have no IF NOT EXISTS form, never run twice.
+	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 33)); err != nil {
+		t.Fatalf("second applyMigrations 033: %v", err)
+	}
+	var rows int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM schema_version WHERE version = 33`).Scan(&rows); err != nil {
+		t.Fatalf("count schema_version: %v", err)
+	}
+	if rows != 1 {
+		t.Errorf("schema_version rows for 33 = %d, want 1", rows)
+	}
+
+	// 2. Fresh DB
+	freshPath := filepath.Join(t.TempDir(), "fresh.db")
+	d, err := Open(freshPath)
+	if err != nil {
+		t.Fatalf("Open fresh db: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	have, know := d.SchemaVersions()
+	if have != 33 || know != 33 {
+		t.Errorf("SchemaVersions = (%d, %d), want (33, 33)", have, know)
+	}
+
+	// A 033 row round-trips the twelve columns through the round write path,
+	// and the row exchange surfaces them.
+	bindingID, err := d.UpsertBinding(Binding{
+		Name: "roundmeas", CWD: "/work/roundmeas", BuilderMode: "headless", IngestSource: IngestLive,
+		CreatedAt: time.Date(2026, 10, 17, 10, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("UpsertBinding: %v", err)
+	}
+	vals := [12]int64{100, 200, 15, 11, 12, 13, 14, 19, 16, 17, 18, 0}
+	roundID, err := d.UpsertRound(Round{
+		BindingID: bindingID, Number: 1, Outcome: OutcomeReported,
+		RusageBaseBytes: &vals[0], RusageBurstBytes: &vals[1], RusageBurstSecs: &vals[2],
+		RusageCPUSomeUsec: &vals[3], RusageCPUFullUsec: &vals[4],
+		RusageMemSomeUsec: &vals[5], RusageMemFullUsec: &vals[6],
+		RusageIOSomeUsec: &vals[7], RusageIOFullUsec: &vals[8],
+		RusageEvHigh: &vals[9], RusageEvMax: &vals[10], RusageEvOOMKill: &vals[11],
+	})
+	if err != nil {
+		t.Fatalf("UpsertRound: %v", err)
+	}
+	rounds, err := d.Rounds(bindingID)
+	if err != nil {
+		t.Fatalf("Rounds: %v", err)
+	}
+	if len(rounds) != 1 {
+		t.Fatalf("Rounds = %d rows, want 1", len(rounds))
+	}
+	fields := []struct {
+		name string
+		got  *int64
+		want int64
+	}{
+		{"RusageBaseBytes", rounds[0].RusageBaseBytes, vals[0]},
+		{"RusageBurstBytes", rounds[0].RusageBurstBytes, vals[1]},
+		{"RusageBurstSecs", rounds[0].RusageBurstSecs, vals[2]},
+		{"RusageCPUSomeUsec", rounds[0].RusageCPUSomeUsec, vals[3]},
+		{"RusageCPUFullUsec", rounds[0].RusageCPUFullUsec, vals[4]},
+		{"RusageMemSomeUsec", rounds[0].RusageMemSomeUsec, vals[5]},
+		{"RusageMemFullUsec", rounds[0].RusageMemFullUsec, vals[6]},
+		{"RusageIOSomeUsec", rounds[0].RusageIOSomeUsec, vals[7]},
+		{"RusageIOFullUsec", rounds[0].RusageIOFullUsec, vals[8]},
+		{"RusageEvHigh", rounds[0].RusageEvHigh, vals[9]},
+		{"RusageEvMax", rounds[0].RusageEvMax, vals[10]},
+		{"RusageEvOOMKill", rounds[0].RusageEvOOMKill, vals[11]},
+	}
+	for _, f := range fields {
+		if f.got == nil || *f.got != f.want {
+			t.Errorf("%s = %v, want %d", f.name, f.got, f.want)
+		}
+	}
+
+	// A second upsert of the same round rewrites the twelve columns: every
+	// value differs from the first upsert because the update writes nothing
+	// when nothing changed. The set stays pairwise-distinct so a crossed
+	// pair fails, not just a dropped one.
+	vals2 := [12]int64{1100, 1200, 1015, 1011, 1012, 1013, 1014, 2015, 1016, 1017, 1018, 2}
+	roundID2, err := d.UpsertRound(Round{
+		BindingID: bindingID, Number: 1, Outcome: OutcomeReported,
+		RusageBaseBytes: &vals2[0], RusageBurstBytes: &vals2[1], RusageBurstSecs: &vals2[2],
+		RusageCPUSomeUsec: &vals2[3], RusageCPUFullUsec: &vals2[4],
+		RusageMemSomeUsec: &vals2[5], RusageMemFullUsec: &vals2[6],
+		RusageIOSomeUsec: &vals2[7], RusageIOFullUsec: &vals2[8],
+		RusageEvHigh: &vals2[9], RusageEvMax: &vals2[10], RusageEvOOMKill: &vals2[11],
+	})
+	if err != nil {
+		t.Fatalf("second UpsertRound: %v", err)
+	}
+	if roundID2 != roundID {
+		t.Errorf("second UpsertRound id = %s, want %s", roundID2, roundID)
+	}
+	rounds2, err := d.Rounds(bindingID)
+	if err != nil {
+		t.Fatalf("Rounds after second upsert: %v", err)
+	}
+	if len(rounds2) != 1 {
+		t.Fatalf("Rounds after second upsert = %d rows, want 1", len(rounds2))
+	}
+	fields2 := []struct {
+		name string
+		got  *int64
+		want int64
+	}{
+		{"RusageBaseBytes", rounds2[0].RusageBaseBytes, vals2[0]},
+		{"RusageBurstBytes", rounds2[0].RusageBurstBytes, vals2[1]},
+		{"RusageBurstSecs", rounds2[0].RusageBurstSecs, vals2[2]},
+		{"RusageCPUSomeUsec", rounds2[0].RusageCPUSomeUsec, vals2[3]},
+		{"RusageCPUFullUsec", rounds2[0].RusageCPUFullUsec, vals2[4]},
+		{"RusageMemSomeUsec", rounds2[0].RusageMemSomeUsec, vals2[5]},
+		{"RusageMemFullUsec", rounds2[0].RusageMemFullUsec, vals2[6]},
+		{"RusageIOSomeUsec", rounds2[0].RusageIOSomeUsec, vals2[7]},
+		{"RusageIOFullUsec", rounds2[0].RusageIOFullUsec, vals2[8]},
+		{"RusageEvHigh", rounds2[0].RusageEvHigh, vals2[9]},
+		{"RusageEvMax", rounds2[0].RusageEvMax, vals2[10]},
+		{"RusageEvOOMKill", rounds2[0].RusageEvOOMKill, vals2[11]},
+	}
+	for _, f := range fields2 {
+		if f.got == nil || *f.got != f.want {
+			t.Errorf("after second upsert %s = %v, want %d", f.name, f.got, f.want)
+		}
+	}
+
+	row, found, err := d.ReadExchangeRow("round", `["`+roundID+`"]`)
+	if err != nil {
+		t.Fatalf("ReadExchangeRow: %v", err)
+	}
+	if !found {
+		t.Fatalf("ReadExchangeRow: round %s not found", roundID)
+	}
+	byName := make(map[string]any, len(row.Columns))
+	for _, col := range row.Columns {
+		byName[col.Name] = col.Value
+	}
+	for _, name := range []string{"rusage_base_bytes", "rusage_burst_bytes",
+		"rusage_burst_secs", "rusage_cpu_some_usec", "rusage_cpu_full_usec",
+		"rusage_mem_some_usec", "rusage_mem_full_usec", "rusage_io_some_usec",
+		"rusage_io_full_usec", "rusage_ev_high", "rusage_ev_max", "rusage_ev_oom_kill"} {
 		if _, ok := byName[name]; !ok {
 			t.Errorf("exchange row misses column %s: %+v", name, row.Columns)
 		}

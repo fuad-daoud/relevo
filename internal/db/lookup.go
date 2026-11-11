@@ -58,7 +58,12 @@ const roundColumns = `id, binding_id, number, started_at, closed_at, outcome, ac
 	commits, tree, gate_result, gate_exit, gate_duration_ms,
 	in_tokens, cache_tokens, write_tokens, out_tokens, cost_usd, cost_basis,
 	report_outcome, switches,
-	queue_wait_ms, start_kind, rusage_cpu_ms, rusage_peak_mem_bytes`
+	queue_wait_ms, start_kind, rusage_cpu_ms, rusage_peak_mem_bytes,
+	rusage_base_bytes, rusage_burst_bytes, rusage_burst_secs,
+	rusage_cpu_some_usec, rusage_cpu_full_usec,
+	rusage_mem_some_usec, rusage_mem_full_usec,
+	rusage_io_some_usec, rusage_io_full_usec,
+	rusage_ev_high, rusage_ev_max, rusage_ev_oom_kill`
 
 func scanRound(s rowScanner) (Round, error) {
 	var r Round
@@ -73,6 +78,7 @@ func scanRound(s rowScanner) (Round, error) {
 	var costUSD sql.Null[float64]
 	var costBasis, reportOutcome sql.Null[string]
 	var queueWaitMS, rusageCPUMS, rusagePeakMemBytes sql.Null[int64]
+	var measurements roundScanMeasurements
 	var startKind sql.Null[string]
 
 	if err := s.Scan(&r.ID, &r.BindingID, &r.Number, &startedAt, &closedAt, &r.Outcome, &r.Actor,
@@ -80,7 +86,12 @@ func scanRound(s rowScanner) (Round, error) {
 		&commits, &tree, &gateResult, &gateExit, &gateDurationMS,
 		&inTokens, &cacheTokens, &writeTokens, &outTokens, &costUSD, &costBasis,
 		&reportOutcome, &r.Switches,
-		&queueWaitMS, &startKind, &rusageCPUMS, &rusagePeakMemBytes); err != nil {
+		&queueWaitMS, &startKind, &rusageCPUMS, &rusagePeakMemBytes,
+		&measurements.base, &measurements.burst, &measurements.bsecs,
+		&measurements.cpuSome, &measurements.cpuFull,
+		&measurements.memSome, &measurements.memFull,
+		&measurements.ioSome, &measurements.ioFull,
+		&measurements.evHigh, &measurements.evMax, &measurements.evOOM); err != nil {
 		return Round{}, fmt.Errorf("scan: %w", err)
 	}
 
@@ -115,8 +126,36 @@ func scanRound(s rowScanner) (Round, error) {
 	r.StartKind = ptrIfValid(startKind)
 	r.RusageCPUMS = ptrIfValid(rusageCPUMS)
 	r.RusagePeakMemBytes = ptrIfValid(rusagePeakMemBytes)
+	assignRoundMeasurements(&r, measurements)
 
 	return r, nil
+}
+
+// roundScanMeasurements is the twelve nullable measurement columns in
+// roundColumns order, scanned and assigned as one group.
+type roundScanMeasurements struct {
+	base, burst, bsecs   sql.Null[int64]
+	cpuSome, cpuFull     sql.Null[int64]
+	memSome, memFull     sql.Null[int64]
+	ioSome, ioFull       sql.Null[int64]
+	evHigh, evMax, evOOM sql.Null[int64]
+}
+
+// assignRoundMeasurements copies one scanned measurement group onto the row:
+// a NULL stays nil, so a pre-change row reads as no measurement.
+func assignRoundMeasurements(r *Round, m roundScanMeasurements) {
+	r.RusageBaseBytes = ptrIfValid(m.base)
+	r.RusageBurstBytes = ptrIfValid(m.burst)
+	r.RusageBurstSecs = ptrIfValid(m.bsecs)
+	r.RusageCPUSomeUsec = ptrIfValid(m.cpuSome)
+	r.RusageCPUFullUsec = ptrIfValid(m.cpuFull)
+	r.RusageMemSomeUsec = ptrIfValid(m.memSome)
+	r.RusageMemFullUsec = ptrIfValid(m.memFull)
+	r.RusageIOSomeUsec = ptrIfValid(m.ioSome)
+	r.RusageIOFullUsec = ptrIfValid(m.ioFull)
+	r.RusageEvHigh = ptrIfValid(m.evHigh)
+	r.RusageEvMax = ptrIfValid(m.evMax)
+	r.RusageEvOOMKill = ptrIfValid(m.evOOM)
 }
 
 func (d *DB) Rounds(bindingID string) ([]Round, error) {

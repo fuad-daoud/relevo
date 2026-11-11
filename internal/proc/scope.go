@@ -302,9 +302,11 @@ func ParseScopeResult(lines []byte, since time.Time) spawn.ScopeResult {
 	return res
 }
 
-// ParseRusageTrailer parses a RusageTrailer line. Missing fields stay zero,
-// unknown keys and malformed numbers are ignored, and a line not matching the
-// prefix is not ok.
+// ParseRusageTrailer parses a RusageTrailer line. Unknown keys and malformed
+// numbers are ignored, and a line not matching the prefix is not ok. The two
+// original fields stay plain values; the newer fields stay nil when the
+// supervisor could not read them, so a measured zero reads differently from
+// an unreadable cgroup file.
 func ParseRusageTrailer(line string) (spawn.ProcRusage, bool) {
 	if !strings.HasPrefix(line, trail.RusageTrailerPrefix) {
 		return spawn.ProcRusage{}, false
@@ -314,6 +316,12 @@ func ParseRusageTrailer(line string) (spawn.ProcRusage, bool) {
 	for _, field := range strings.Fields(rest) {
 		key, value, ok := strings.Cut(field, "=")
 		if !ok {
+			continue
+		}
+		if dst := ptrRusageField(&r, key); dst != nil {
+			if n, err := strconv.ParseInt(value, 10, 64); err == nil {
+				*dst = &n
+			}
 			continue
 		}
 		switch key {
@@ -328,4 +336,38 @@ func ParseRusageTrailer(line string) (spawn.ProcRusage, bool) {
 		}
 	}
 	return r, true
+}
+
+// ptrRusageField is the address of the pointer field key names, or nil for
+// the two original keys and unknown ones. One switch keeps the parser flat
+// as keys grow; a value that does not parse leaves the field alone, so a
+// repeated key's bad spelling never clears its good reading.
+func ptrRusageField(r *spawn.ProcRusage, key string) **int64 {
+	switch key {
+	case "base":
+		return &r.BaseBytes
+	case "burst":
+		return &r.BurstBytes
+	case "burst_secs":
+		return &r.BurstSecs
+	case "cpu_some_usec":
+		return &r.CPUSomeUsec
+	case "cpu_full_usec":
+		return &r.CPUFullUsec
+	case "mem_some_usec":
+		return &r.MemSomeUsec
+	case "mem_full_usec":
+		return &r.MemFullUsec
+	case "io_some_usec":
+		return &r.IOSomeUsec
+	case "io_full_usec":
+		return &r.IOFullUsec
+	case "ev_high":
+		return &r.EvHigh
+	case "ev_max":
+		return &r.EvMax
+	case "ev_oom_kill":
+		return &r.EvOOMKill
+	}
+	return nil
 }

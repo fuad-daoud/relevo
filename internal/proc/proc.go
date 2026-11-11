@@ -27,13 +27,16 @@ import (
 // DefaultKillGrace is how long Kill waits after SIGTERM before SIGKILL.
 const DefaultKillGrace = 5 * time.Second
 
-// ReapFragment and supervisorScript are aliases of the spawn package's
-// exported script fragments, which live in internal/spawn so the cross-platform
-// isolate core can name them without importing this unix-only package. The
-// names stay so this package's buildArgv and its tests read unchanged.
+// ReapFragment, SampleAggFragment, PressureTotalFragment and supervisorScript
+// are aliases of the spawn package's exported script fragments, which live in
+// internal/spawn so the cross-platform isolate core can name them without
+// importing this unix-only package. The names stay so this package's
+// buildArgv and its tests read unchanged.
 const (
-	ReapFragment     = spawn.ReapFragment
-	supervisorScript = spawn.SupervisorScript
+	ReapFragment          = spawn.ReapFragment
+	SampleAggFragment     = spawn.SampleAggFragment
+	PressureTotalFragment = spawn.PressureTotalFragment
+	supervisorScript      = spawn.SupervisorScript
 )
 
 type probeState int

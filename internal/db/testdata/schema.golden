@@ -486,7 +486,7 @@ CREATE TABLE round (
     cost_basis TEXT,
     report_outcome TEXT,
     switches INTEGER NOT NULL
-, actor TEXT NOT NULL DEFAULT 'builder', account TEXT, queue_wait_ms INTEGER, start_kind TEXT, rusage_cpu_ms INTEGER, rusage_peak_mem_bytes INTEGER)
+, actor TEXT NOT NULL DEFAULT 'builder', account TEXT, queue_wait_ms INTEGER, start_kind TEXT, rusage_cpu_ms INTEGER, rusage_peak_mem_bytes INTEGER, rusage_base_bytes INTEGER, rusage_burst_bytes INTEGER, rusage_burst_secs INTEGER, rusage_cpu_some_usec INTEGER, rusage_cpu_full_usec INTEGER, rusage_mem_some_usec INTEGER, rusage_mem_full_usec INTEGER, rusage_io_some_usec INTEGER, rusage_io_full_usec INTEGER, rusage_ev_high INTEGER, rusage_ev_max INTEGER, rusage_ev_oom_kill INTEGER)
 
 table round_file round_file
 CREATE TABLE round_file (
@@ -929,4 +929,4 @@ CREATE TRIGGER sync_outbox_transcript_upd AFTER UPDATE ON transcript BEGIN
         END);
 END
 
-schema_versions have=32 know=32
+schema_versions have=33 know=33

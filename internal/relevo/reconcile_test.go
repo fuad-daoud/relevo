@@ -608,10 +608,38 @@ func TestQueueReportRecordsRusage(t *testing.T) {
 
 	t.Run("ok true", func(t *testing.T) {
 		rt, b, fr := setup(t)
-		fr.setRusage(b.Builder.PID, spawn.ProcRusage{CPUMS: 12300, PeakMemBytes: 850 << 20})
+		fr.setRusage(b.Builder.PID, spawn.ProcRusage{CPUMS: 12300, PeakMemBytes: 850 << 20,
+			BaseBytes: ptr(int64(100)), BurstBytes: ptr(int64(200)), BurstSecs: ptr(int64(15)),
+			CPUSomeUsec: ptr(int64(11)), CPUFullUsec: ptr(int64(12)),
+			MemSomeUsec: ptr(int64(13)), MemFullUsec: ptr(int64(14)),
+			IOSomeUsec: ptr(int64(16)), IOFullUsec: ptr(int64(19)),
+			EvHigh: ptr(int64(17)), EvMax: ptr(int64(18)), EvOOMKill: ptr(int64(0))})
 		entry := closeRound(t, rt, b)
 		if entry.Rusage == nil || entry.Rusage.CPUMS != 12300 || entry.Rusage.PeakMemBytes != 850<<20 {
 			t.Errorf("report entry Rusage = %+v, want {12300 %d}", entry.Rusage, int64(850<<20))
+		}
+		fields := []struct {
+			name string
+			got  *int64
+			want int64
+		}{
+			{"BaseBytes", entry.Rusage.BaseBytes, 100},
+			{"BurstBytes", entry.Rusage.BurstBytes, 200},
+			{"BurstSecs", entry.Rusage.BurstSecs, 15},
+			{"CPUSomeUsec", entry.Rusage.CPUSomeUsec, 11},
+			{"CPUFullUsec", entry.Rusage.CPUFullUsec, 12},
+			{"MemSomeUsec", entry.Rusage.MemSomeUsec, 13},
+			{"MemFullUsec", entry.Rusage.MemFullUsec, 14},
+			{"IOSomeUsec", entry.Rusage.IOSomeUsec, 16},
+			{"IOFullUsec", entry.Rusage.IOFullUsec, 19},
+			{"EvHigh", entry.Rusage.EvHigh, 17},
+			{"EvMax", entry.Rusage.EvMax, 18},
+			{"EvOOMKill", entry.Rusage.EvOOMKill, 0},
+		}
+		for _, f := range fields {
+			if f.got == nil || *f.got != f.want {
+				t.Errorf("report entry Rusage.%s = %v, want %d", f.name, f.got, f.want)
+			}
 		}
 	})
 	t.Run("ok false", func(t *testing.T) {

@@ -1205,6 +1205,107 @@ func TestReapScopeIsSilentAndZeroOnAMissingFile(t *testing.T) {
 	}
 }
 
+// runSampleAgg runs SampleAggFragment as the supervisor's trailer does,
+// against a fake memsample file.
+func runSampleAgg(t *testing.T, samp string) (string, error) {
+	t.Helper()
+	out, err := exec.Command("/bin/sh", "-c", SampleAggFragment+"relevo_sample_agg '"+samp+"'\n").CombinedOutput()
+	return string(out), err
+}
+
+// runPressureTotal runs PressureTotalFragment as the supervisor's trailer
+// does, against a fake pressure file.
+func runPressureTotal(t *testing.T, file, kind string) (string, error) {
+	t.Helper()
+	out, err := exec.Command("/bin/sh", "-c", PressureTotalFragment+"relevo_pressure_total '"+file+"' "+kind+"\n").CombinedOutput()
+	return string(out), err
+}
+
+// The trailer's base, burst and burst_secs come from the per-sample anon+swap
+// sums: the median, the max, and five seconds per sample above half the max.
+func TestMemSampleAggregationComputesMedianMaxAndBurstSecs(t *testing.T) {
+	samp := filepath.Join(t.TempDir(), "memsamp.log")
+	if err := os.WriteFile(samp, []byte("60 40\n100 100\n150 150\n200 200\n"), 0o644); err != nil {
+		t.Fatalf("write samp file: %v", err)
+	}
+	out, err := runSampleAgg(t, samp)
+	if err != nil {
+		t.Fatalf("aggregate: %v (output %q)", err, out)
+	}
+	if out != "200 400 10" {
+		t.Errorf("aggregate = %q, want %q: sums 100 200 300 400 give median 200, max 400, two samples above half the max times five seconds", out, "200 400 10")
+	}
+
+	if err := os.WriteFile(samp, []byte("30 20\n"), 0o644); err != nil {
+		t.Fatalf("write samp file: %v", err)
+	}
+	out, err = runSampleAgg(t, samp)
+	if err != nil {
+		t.Fatalf("aggregate one sample: %v (output %q)", err, out)
+	}
+	if out != "50 50 5" {
+		t.Errorf("aggregate = %q, want %q", out, "50 50 5")
+	}
+
+	if err := os.WriteFile(samp, []byte("0 0\n"), 0o644); err != nil {
+		t.Fatalf("write samp file: %v", err)
+	}
+	out, err = runSampleAgg(t, samp)
+	if err != nil {
+		t.Fatalf("aggregate zero sample: %v (output %q)", err, out)
+	}
+	if out != "0 0 0" {
+		t.Errorf("aggregate = %q, want %q", out, "0 0 0")
+	}
+
+	if err := os.WriteFile(samp, nil, 0o644); err != nil {
+		t.Fatalf("truncate samp file: %v", err)
+	}
+	out, err = runSampleAgg(t, samp)
+	if err == nil {
+		t.Error("aggregate of an empty file = nil error; want a non-zero exit")
+	}
+	if out != "" {
+		t.Errorf("aggregate output = %q, want empty: an empty file prints nothing", out)
+	}
+}
+
+// The trailer's cpu_some_usec comes from the some line's total, never the
+// full line's: the two lines carry independent counters.
+func TestPressureTotalReadsItsOwnLine(t *testing.T) {
+	pressure := filepath.Join(t.TempDir(), "cpu.pressure")
+	if err := os.WriteFile(pressure, []byte("some avg10=1.23 avg60=0.45 avg300=0.00 total=111\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=222\n"), 0o644); err != nil {
+		t.Fatalf("write pressure file: %v", err)
+	}
+	for _, tc := range []struct{ kind, want string }{
+		{"some", "111"},
+		{"full", "222"},
+	} {
+		out, err := runPressureTotal(t, pressure, tc.kind)
+		if err != nil {
+			t.Fatalf("pressure %s: %v (output %q)", tc.kind, err, out)
+		}
+		if out != tc.want+"\n" {
+			t.Errorf("pressure %s = %q, want %q", tc.kind, out, tc.want+"\n")
+		}
+	}
+
+	// The trailer asks each pressure file for its own class: the some and
+	// full totals feed different trailer keys, so each call names its line.
+	for _, call := range []string{
+		`relevo_pressure_total "/sys/fs/cgroup$cg/cpu.pressure" some`,
+		`relevo_pressure_total "/sys/fs/cgroup$cg/cpu.pressure" full`,
+		`relevo_pressure_total "/sys/fs/cgroup$cg/memory.pressure" some`,
+		`relevo_pressure_total "/sys/fs/cgroup$cg/memory.pressure" full`,
+		`relevo_pressure_total "/sys/fs/cgroup$cg/io.pressure" some`,
+		`relevo_pressure_total "/sys/fs/cgroup$cg/io.pressure" full`,
+	} {
+		if !strings.Contains(supervisorScript, call) {
+			t.Errorf("supervisorScript lacks %q: each pressure key must read its own line", call)
+		}
+	}
+}
+
 // The fragment comes first, the reap sits after the rusage line and inside the
 // */"$want" branch, and the exit trailer is still the last thing printed.
 func TestSupervisorScriptReapsInsideTheWantBranch(t *testing.T) {
@@ -1223,12 +1324,53 @@ func TestSupervisorScriptReapsInsideTheWantBranch(t *testing.T) {
 	rusageAt := strings.Index(supervisorScript, `printf '\n`+trail.RusageTrailerPrefix)
 	readAt := strings.Index(supervisorScript, "read -r self _ </proc/self/stat")
 	reapAt := strings.Index(supervisorScript, reapCall)
-	esacAt := strings.Index(supervisorScript, "esac")
+	// The sampler's pre-launch match has its own case, so the branch's close
+	// is the first esac at or after the reap.
+	esacAt := -1
+	if reapAt >= 0 {
+		if rel := strings.Index(supervisorScript[reapAt:], "esac"); rel >= 0 {
+			esacAt = reapAt + rel
+		}
+	}
 	if caseAt < 0 || rusageAt < 0 || readAt < 0 || reapAt < 0 || esacAt < 0 {
 		t.Fatalf("supervisorScript lacks one of the branch, the rusage line, the self-pid read, the reap call or its esac: %q", supervisorScript)
 	}
 	if caseAt >= rusageAt || rusageAt >= readAt || readAt >= reapAt || reapAt >= esacAt {
 		t.Errorf("the read at %d and the reap at %d must sit inside the branch [%d,%d), after the rusage line at %d", readAt, reapAt, caseAt, esacAt, rusageAt)
+	}
+}
+
+// The sampler starts before the builder when the cgroup already matches, and
+// it is dead before the rusage line prints: the reap TERMs every other pid
+// in the cgroup, and a lingering sampler would delay the exit trailer.
+func TestSupervisorScriptSamplerDiesBeforeTheRusageLine(t *testing.T) {
+	for _, sub := range []string{
+		"memory.stat",
+		"memory.swap.current",
+		"sleep 5",
+		"read -r sampself _ </proc/self/stat",
+		"relevo-memsamp-",
+		"cpu.pressure",
+		"memory.pressure",
+		"io.pressure",
+		"memory.events",
+	} {
+		if !strings.Contains(supervisorScript, sub) {
+			t.Errorf("supervisorScript lacks %q", sub)
+		}
+	}
+	launchAt := strings.Index(supervisorScript, "sampjob=$!")
+	builderAt := strings.Index(supervisorScript, `"$@" </dev/null`)
+	killAt := strings.Index(supervisorScript, `then kill "$sampjob"`)
+	rusageAt := strings.Index(supervisorScript, `printf '\n`+trail.RusageTrailerPrefix)
+	reapAt := strings.Index(supervisorScript, reapCall)
+	trailerAt := strings.LastIndex(supervisorScript, trail.ExitTrailer)
+	if launchAt < 0 || builderAt < 0 || killAt < 0 || rusageAt < 0 || reapAt < 0 || trailerAt < 0 {
+		t.Fatalf("supervisorScript lacks one of the sampler launch, the builder, its kill, the rusage line, the reap or the exit trailer")
+	}
+	if launchAt >= builderAt || builderAt >= killAt || killAt >= rusageAt || rusageAt >= reapAt || reapAt >= trailerAt {
+		t.Errorf("order = launch %d, builder %d, kill %d, rusage %d, reap %d, trailer %d; want launch < builder < kill < rusage < reap < trailer",
+			launchAt, builderAt, killAt, rusageAt, reapAt, trailerAt)
 	}
 }
 

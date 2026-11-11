@@ -107,10 +107,24 @@ func GoMaxProcsFor(s ScopeSpec) (int, bool) {
 	return n, have
 }
 
-// ProcRusage is what the supervisor measured for the round's cgroup.
+// ProcRusage is what the supervisor measured for the round's cgroup. The
+// pointer fields are nil when the supervisor could not read them; a measured
+// zero is non-nil, so it reads differently from an unreadable cgroup file.
 type ProcRusage struct {
 	CPUMS        int64
 	PeakMemBytes int64
+	BaseBytes    *int64
+	BurstBytes   *int64
+	BurstSecs    *int64
+	CPUSomeUsec  *int64
+	CPUFullUsec  *int64
+	MemSomeUsec  *int64
+	MemFullUsec  *int64
+	IOSomeUsec   *int64
+	IOFullUsec   *int64
+	EvHigh       *int64
+	EvMax        *int64
+	EvOOMKill    *int64
 }
 
 // ProcHandle names a running process well enough to tell it from a later

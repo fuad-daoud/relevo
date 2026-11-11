@@ -249,6 +249,7 @@ func TestRoundFactsQueuedLocalRoundRecordsWaitAndKind(t *testing.T) {
 	if r.RusageCPUMS != nil || r.RusagePeakMemBytes != nil {
 		t.Errorf("rusage = %v/%v, want nil without a report rusage", r.RusageCPUMS, r.RusagePeakMemBytes)
 	}
+	checkRusageUnset(t, unsetMeasurements(r))
 }
 
 func TestRoundFactsNeverQueuedRoundKeepsWaitNil(t *testing.T) {
@@ -271,17 +272,103 @@ func TestRoundFactsReportRusageLandsVerbatim(t *testing.T) {
 	events := []store.LogEntry{
 		{TS: queued, Round: 1, Kind: store.KindPrompt},
 		{TS: queued.Add(time.Minute), Round: 1, Kind: store.KindReport, Outcome: "done",
-			Rusage: &store.Rusage{CPUMS: 0, PeakMemBytes: 12345}},
+			Rusage: &store.Rusage{CPUMS: 0, PeakMemBytes: 12345,
+				BaseBytes: ptr(int64(100)), BurstBytes: ptr(int64(200)), BurstSecs: ptr(int64(15)),
+				CPUSomeUsec: ptr(int64(11)), CPUFullUsec: ptr(int64(12)),
+				MemSomeUsec: ptr(int64(13)), MemFullUsec: ptr(int64(14)),
+				IOSomeUsec: ptr(int64(15)), IOFullUsec: ptr(int64(16)),
+				EvHigh: ptr(int64(17)), EvMax: ptr(int64(18)), EvOOMKill: ptr(int64(0))}},
 	}
 
 	r := roundFacts(events, 1, false)
 
 	// A zero CPU total is presence, not absence: the report carried rusage.
+	// A zero oom-kill count is presence too, for the same reason.
 	checkPtr(t, "RusageCPUMS", r.RusageCPUMS, int64(0))
 	checkPtr(t, "RusagePeakMemBytes", r.RusagePeakMemBytes, int64(12345))
+	checkPtr(t, "RusageBaseBytes", r.RusageBaseBytes, int64(100))
+	checkPtr(t, "RusageBurstBytes", r.RusageBurstBytes, int64(200))
+	checkPtr(t, "RusageBurstSecs", r.RusageBurstSecs, int64(15))
+	checkPtr(t, "RusageCPUSomeUsec", r.RusageCPUSomeUsec, int64(11))
+	checkPtr(t, "RusageCPUFullUsec", r.RusageCPUFullUsec, int64(12))
+	checkPtr(t, "RusageMemSomeUsec", r.RusageMemSomeUsec, int64(13))
+	checkPtr(t, "RusageMemFullUsec", r.RusageMemFullUsec, int64(14))
+	checkPtr(t, "RusageIOSomeUsec", r.RusageIOSomeUsec, int64(15))
+	checkPtr(t, "RusageIOFullUsec", r.RusageIOFullUsec, int64(16))
+	checkPtr(t, "RusageEvHigh", r.RusageEvHigh, int64(17))
+	checkPtr(t, "RusageEvMax", r.RusageEvMax, int64(18))
+	checkPtr(t, "RusageEvOOMKill", r.RusageEvOOMKill, int64(0))
 	checkPtr(t, "StartKind", r.StartKind, "local")
 	if r.QueueWaitMS != nil {
 		t.Errorf("QueueWaitMS = %v, want nil for a round that never queued", r.QueueWaitMS)
+	}
+}
+
+func TestRoundFactsPartialRusageSetsOnlyThoseColumns(t *testing.T) {
+	queued := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
+	events := []store.LogEntry{
+		{TS: queued, Round: 1, Kind: store.KindPrompt},
+		{TS: queued.Add(time.Minute), Round: 1, Kind: store.KindReport, Outcome: "done",
+			Rusage: &store.Rusage{CPUMS: 7, PeakMemBytes: 8,
+				CPUSomeUsec: ptr(int64(11)), EvOOMKill: ptr(int64(0))}},
+	}
+
+	r := roundFacts(events, 1, false)
+
+	checkPtr(t, "RusageCPUSomeUsec", r.RusageCPUSomeUsec, int64(11))
+	checkPtr(t, "RusageEvOOMKill", r.RusageEvOOMKill, int64(0))
+	checkRusageUnset(t, []rusageField{
+		{"RusageBaseBytes", r.RusageBaseBytes},
+		{"RusageBurstBytes", r.RusageBurstBytes},
+		{"RusageBurstSecs", r.RusageBurstSecs},
+		{"RusageCPUFullUsec", r.RusageCPUFullUsec},
+		{"RusageMemSomeUsec", r.RusageMemSomeUsec},
+		{"RusageMemFullUsec", r.RusageMemFullUsec},
+		{"RusageIOSomeUsec", r.RusageIOSomeUsec},
+		{"RusageIOFullUsec", r.RusageIOFullUsec},
+		{"RusageEvHigh", r.RusageEvHigh},
+		{"RusageEvMax", r.RusageEvMax},
+	})
+}
+
+// ptr is the address of one measured value: the report rusage's pointer
+// fields are nil when the supervisor could not read them.
+func ptr[T any](v T) *T { return &v }
+
+// rusageField is one measurement column under test: its row field's name and
+// value.
+type rusageField struct {
+	name string
+	got  *int64
+}
+
+// checkRusageUnset pins that the named measurements stayed NULL: the report
+// never named them, so the row must not invent them.
+func checkRusageUnset(t *testing.T, fields []rusageField) {
+	t.Helper()
+	for _, f := range fields {
+		if f.got != nil {
+			t.Errorf("%s = %v, want nil for a measurement the report never carried", f.name, *f.got)
+		}
+	}
+}
+
+// unsetMeasurements is every measurement column applyRoundMeasurements can
+// set, for the cases that must leave them all NULL.
+func unsetMeasurements(r db.Round) []rusageField {
+	return []rusageField{
+		{"RusageBaseBytes", r.RusageBaseBytes},
+		{"RusageBurstBytes", r.RusageBurstBytes},
+		{"RusageBurstSecs", r.RusageBurstSecs},
+		{"RusageCPUSomeUsec", r.RusageCPUSomeUsec},
+		{"RusageCPUFullUsec", r.RusageCPUFullUsec},
+		{"RusageMemSomeUsec", r.RusageMemSomeUsec},
+		{"RusageMemFullUsec", r.RusageMemFullUsec},
+		{"RusageIOSomeUsec", r.RusageIOSomeUsec},
+		{"RusageIOFullUsec", r.RusageIOFullUsec},
+		{"RusageEvHigh", r.RusageEvHigh},
+		{"RusageEvMax", r.RusageEvMax},
+		{"RusageEvOOMKill", r.RusageEvOOMKill},
 	}
 }
 
@@ -444,4 +531,5 @@ func checkNoMeasurements(t *testing.T, r db.Round) {
 		t.Errorf("measurements = %v/%v/%v/%v, want all nil",
 			r.QueueWaitMS, r.StartKind, r.RusageCPUMS, r.RusagePeakMemBytes)
 	}
+	checkRusageUnset(t, unsetMeasurements(r))
 }

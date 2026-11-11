@@ -86,9 +86,23 @@ type Round struct {
 	// StartKind is 'local' on the host that ran the round, nil elsewhere.
 	StartKind *string
 	// RusageCPUMS and RusagePeakMemBytes copy the report entry's rusage,
-	// nil when the report carried none.
+	// nil when the report carried none. The remaining fields copy the
+	// report rusage's base/burst sample, pressure stall totals and memory
+	// event counts, nil when the report carried none of that measurement.
 	RusageCPUMS        *int64
 	RusagePeakMemBytes *int64
+	RusageBaseBytes    *int64
+	RusageBurstBytes   *int64
+	RusageBurstSecs    *int64
+	RusageCPUSomeUsec  *int64
+	RusageCPUFullUsec  *int64
+	RusageMemSomeUsec  *int64
+	RusageMemFullUsec  *int64
+	RusageIOSomeUsec   *int64
+	RusageIOFullUsec   *int64
+	RusageEvHigh       *int64
+	RusageEvMax        *int64
+	RusageEvOOMKill    *int64
 }
 
 type Event struct {
