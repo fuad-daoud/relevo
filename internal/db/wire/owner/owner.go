@@ -78,6 +78,12 @@ type Server struct {
 	// only way to end a statement the engine cannot interrupt.
 	OnAbandoned func()
 
+	// OnShortReadWAL, when set, runs once when a statement fails with a short
+	// WAL-frame read. The pool behind the server is poisoned: every statement
+	// through it fails the same way until the pool is rebuilt, so the daemon
+	// uses it to ask for a re-exec, which rebuilds every pool at once.
+	OnShortReadWAL func()
+
 	// OnSyncVerb, when set, runs one sync verb against the handles the server
 	// already holds, so a writing verb never contends with the daemon for the
 	// file lock.
@@ -103,6 +109,29 @@ type Server struct {
 	reapMu      sync.Mutex
 	reapPending map[<-chan struct{}]struct{}
 	reapFired   bool
+
+	// walMu guards whether the short-read hook already fired. It sits apart
+	// from reapMu because a poisoned pool and an abandoned statement are
+	// independent reasons to re-exec; one must not consume the other's hook.
+	walMu    sync.Mutex
+	walFired bool
+}
+
+// fireShortReadWAL calls the hook at most once. One re-exec rebuilds every
+// poisoned pool, so the first short read is enough; a later one does not ask
+// again.
+func (s *Server) fireShortReadWAL() {
+	s.walMu.Lock()
+	if s.walFired {
+		s.walMu.Unlock()
+		return
+	}
+	s.walFired = true
+	hook := s.OnShortReadWAL
+	s.walMu.Unlock()
+	if hook != nil {
+		hook()
+	}
 }
 
 // New wraps a database handle, its schema versions and the installation id

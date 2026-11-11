@@ -21,6 +21,10 @@ type Env interface {
 	// DaemonInfo reads the daemon's own record; a missing one is
 	// (zero, false, nil) and means a daemon that predates it.
 	DaemonInfo() (store.DaemonInfo, bool, error)
+	// WALHealFailure reads the daemon's abandoned-heal marker; a missing one
+	// is (zero, false, nil). It reads the store file, never the database,
+	// because the marker exists exactly when the database cannot be read.
+	WALHealFailure() (store.WALHealFailure, bool, error)
 	LookPath(binary string) (string, error)
 	HomePath(rel string) (string, error)
 	Stat(path string) error
@@ -93,6 +97,13 @@ func (e *realEnv) DaemonInfo() (store.DaemonInfo, bool, error) {
 		return store.DaemonInfo{}, false, nil
 	}
 	return e.store.ReadDaemonInfo()
+}
+
+func (e *realEnv) WALHealFailure() (store.WALHealFailure, bool, error) {
+	if e.store == nil {
+		return store.WALHealFailure{}, false, nil
+	}
+	return e.store.ReadWALHealFailure()
 }
 
 func (e *realEnv) LookPath(binary string) (string, error) {

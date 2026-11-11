@@ -573,6 +573,11 @@ func (c *conn) refuse(code, message string) error {
 func (c *conn) sendError(id int, err error) {
 	code, ext := c.s.errorCode(err)
 	_ = c.send(wire.KindError, wire.NewError(id, code, ext, err.Error()), nil)
+	// The error goes out first, so the client still learns its statement
+	// failed; the hook only asks the daemon to rebuild the pool behind it.
+	if wire.IsShortReadWAL(err) {
+		c.s.fireShortReadWAL()
+	}
 }
 
 func decodeArgs(raw []byte) ([]any, error) {

@@ -99,12 +99,18 @@ func releaseFix(kind release.Kind, latest, goos, goarch string) string {
 }
 
 // daemonCheck builds the daemon row while the daemon is running: no
-// record, a refused binary, a version behind the CLI, and equal.
+// record, a refused binary, a version behind the CLI, and equal. A heal the
+// daemon gave up on outranks the version states: a poisoned pool answers
+// nothing until a human looks at it.
 func daemonCheck(env Env) Check {
 	cli, _, _, _ := env.ReleaseState()
 	info, ok, err := env.DaemonInfo()
 	if err != nil {
 		ok = false // unreadable is "no record": tell the human to restart once
+	}
+	heal, healOK, healErr := env.WALHealFailure()
+	if healErr != nil {
+		healOK = false // unreadable is "no marker": the pool may still heal
 	}
 
 	switch {
@@ -114,6 +120,13 @@ func daemonCheck(env Env) Check {
 			Severity: SevWarn,
 			Detail:   "running, but started before relevo recorded its version: it will not follow upgrades until restarted once",
 			Fix:      "systemctl --user restart relevo.service, or make service",
+		}
+	case healOK:
+		return Check{
+			Name:     "daemon",
+			Severity: SevWarn,
+			Detail:   fmt.Sprintf("the WAL heal failed after %d attempts (%s); the pool is still poisoned", heal.Attempts, heal.Reason),
+			Fix:      "inspect the database WAL (relevo doctor), then restart the daemon",
 		}
 	case info.ReexecFailed != nil:
 		return Check{
