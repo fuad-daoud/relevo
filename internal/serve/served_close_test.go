@@ -551,3 +551,41 @@ func TestRuntimeAtWiresCloseServedRound(t *testing.T) {
 		t.Fatalf("CostRoot = %q, want %q", rt.CostRoot, root)
 	}
 }
+
+func TestCloseServedRoundRecordsSameNameFromTwoOwners(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	repoID := strings.Repeat("e", 64)
+	costRoot := t.TempDir()
+	burst, base := int64(2<<30), int64(1<<30)
+	for _, owner := range []string{"owner-a", "owner-b"} {
+		env := setupTestEnv(t)
+		rt := env.runtime(t)
+		b := store.Binding{
+			Name:  "api",
+			Owner: owner,
+			CWD:   "/build/shop",
+			Round: 2,
+			Shape: store.ShapeReader,
+			Serve: &store.ServeFacts{BareRepo: "/bare/shop.git", RepoID: repoID},
+		}
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatalf("save %s: %v", owner, err)
+		}
+		if err := rt.Store.AppendLog("api", store.LogEntry{
+			Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
+			Rusage: &store.Rusage{BaseBytes: &base, BurstBytes: &burst},
+		}); err != nil {
+			t.Fatalf("append log %s: %v", owner, err)
+		}
+		CloseServedRound(ctx, relevo.Runtime{Git: &stubGit{}, Store: rt.Store, CostRoot: costRoot}, b)
+	}
+	cf, err := loadCostFile(costFilePath(costRoot, repoID, "builder"))
+	if err != nil {
+		t.Fatalf("load cost file: %v", err)
+	}
+	if len(cf.Samples) != 2 {
+		t.Fatalf("samples = %d, want 2: another owner's binding of the same name closed its own round", len(cf.Samples))
+	}
+}

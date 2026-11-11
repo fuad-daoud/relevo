@@ -18,8 +18,9 @@ const costHistoryMaxSamples = 20
 // costFile is one repo-role's cost history. Samples are newest-last, and
 // LastBinding with LastRound name the round the file already holds:
 // CloseServedRound can retry after a git failure, so the retry must not record
-// the round twice. The binding is part of the key because every binding of the
-// same repo and role counts its rounds from 1.
+// the round twice. The binding, as owner/name, is part of the key because every
+// binding of the same repo and role counts its rounds from 1, and two owners
+// may pick the same name.
 type costFile struct {
 	LastBinding string       `json:"last_binding"`
 	LastRound   int          `json:"last_round"`
@@ -183,7 +184,7 @@ func recordClosedCost(rt relevo.Runtime, b store.Binding, closed int) {
 	if !ok {
 		return
 	}
-	if _, err := appendCostSample(rt.CostRoot, b.Serve.RepoID, b.WriterRole(), b.Name, closed, sample); err != nil {
+	if _, err := appendCostSample(rt.CostRoot, b.Serve.RepoID, b.WriterRole(), b.Owner+"/"+b.Name, closed, sample); err != nil {
 		slog.Warn("cost history append failed", "binding", b.Name, "round", closed, "err", err)
 	}
 }
