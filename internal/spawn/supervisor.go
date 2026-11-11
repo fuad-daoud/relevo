@@ -28,6 +28,25 @@ const ReapFragment = `relevo_reap_scope() {
 }
 `
 
+// SampleAggFragment aggregates one memsample file the way the trailer does:
+// per-line anon+swap sums, sorted, give the median, the max, and five seconds
+// per sample above half the max (the 5 is the sampler's sleep). A named
+// function, not inline code, so a test runs the exact shell the trailer
+// prints; an empty file still prints nothing and exits non-zero.
+const SampleAggFragment = `relevo_sample_agg() {
+  awk '{print $1+$2}' "$1" 2>/dev/null | sort -n 2>/dev/null | awk '{a[NR]=$1; if($1>m)m=$1} END{if(NR==0)exit 1; b=a[int((NR+1)/2)]; c=0; for(i=1;i<=NR;i++) if(a[i]>m/2)c++; printf "%d %d %d", b, m, c*5}' 2>/dev/null
+}
+`
+
+// PressureTotalFragment prints one pressure file's total for the named class,
+// some or full: the two lines carry independent counters, so the trailer asks
+// for each by name. A named function, not inline code, so a test runs the
+// exact shell against a synthetic file.
+const PressureTotalFragment = `relevo_pressure_total() {
+  awk -v want="$2" '$1==want{for(i=1;i<=NF;i++) if($i~/^total=/){sub(/^total=/,"",$i); print $i; exit}}' "$1" 2>/dev/null
+}
+`
+
 // SupervisorScript runs the builder with stdin closed and appends the trailer
 // whatever happens to it; plain sh, no bash-isms. Its first argument is the
 // scope unit, or "" for a plain spawn. It raises oom_score_adj so the kernel
@@ -38,7 +57,7 @@ const ReapFragment = `relevo_reap_scope() {
 // The reap's self pid comes from /proc/self/stat, never $$, which systemd-run's
 // unit syntax rewrites and which would make the supervisor reap itself; a TERM
 // exits 143 before the trailer.
-const SupervisorScript = ReapFragment + `want=$1
+const SupervisorScript = ReapFragment + SampleAggFragment + PressureTotalFragment + `want=$1
 shift
 trap 'kill "$sampjob" 2>/dev/null; [ -n "$samp" ] && rm -f "$samp" 2>/dev/null; exit 143' TERM
 { echo 500 >/proc/self/oom_score_adj; } 2>/dev/null || true
@@ -71,17 +90,17 @@ if [ -n "$want" ]; then
     m=$(cat "/sys/fs/cgroup$cg/memory.peak" 2>/dev/null)
     base=""; burst=""; bsecs=""
     if [ -f "$samp" ]; then
-      agg=$(awk '{print $1+$2}' "$samp" 2>/dev/null | sort -n 2>/dev/null | awk '{a[NR]=$1; if($1>m)m=$1} END{if(NR==0)exit 1; b=a[int((NR+1)/2)]; c=0; for(i=1;i<=NR;i++) if(a[i]>m/2)c++; printf "%d %d %d", b, m, c*5}' 2>/dev/null)
+      agg=$(relevo_sample_agg "$samp" 2>/dev/null)
       if [ -n "$agg" ]; then
         base=${agg%% *}; tmp=${agg#* }; burst=${tmp%% *}; bsecs=${tmp#* }
       fi
     fi
-    cs=$(awk '/^some /{for(i=1;i<=NF;i++) if($i~/^total=/){sub(/^total=/,"",$i); print $i; exit}}' "/sys/fs/cgroup$cg/cpu.pressure" 2>/dev/null)
-    cf=$(awk '/^full /{for(i=1;i<=NF;i++) if($i~/^total=/){sub(/^total=/,"",$i); print $i; exit}}' "/sys/fs/cgroup$cg/cpu.pressure" 2>/dev/null)
-    ms=$(awk '/^some /{for(i=1;i<=NF;i++) if($i~/^total=/){sub(/^total=/,"",$i); print $i; exit}}' "/sys/fs/cgroup$cg/memory.pressure" 2>/dev/null)
-    mf=$(awk '/^full /{for(i=1;i<=NF;i++) if($i~/^total=/){sub(/^total=/,"",$i); print $i; exit}}' "/sys/fs/cgroup$cg/memory.pressure" 2>/dev/null)
-    ios=$(awk '/^some /{for(i=1;i<=NF;i++) if($i~/^total=/){sub(/^total=/,"",$i); print $i; exit}}' "/sys/fs/cgroup$cg/io.pressure" 2>/dev/null)
-    iof=$(awk '/^full /{for(i=1;i<=NF;i++) if($i~/^total=/){sub(/^total=/,"",$i); print $i; exit}}' "/sys/fs/cgroup$cg/io.pressure" 2>/dev/null)
+    cs=$(relevo_pressure_total "/sys/fs/cgroup$cg/cpu.pressure" some 2>/dev/null)
+    cf=$(relevo_pressure_total "/sys/fs/cgroup$cg/cpu.pressure" full 2>/dev/null)
+    ms=$(relevo_pressure_total "/sys/fs/cgroup$cg/memory.pressure" some 2>/dev/null)
+    mf=$(relevo_pressure_total "/sys/fs/cgroup$cg/memory.pressure" full 2>/dev/null)
+    ios=$(relevo_pressure_total "/sys/fs/cgroup$cg/io.pressure" some 2>/dev/null)
+    iof=$(relevo_pressure_total "/sys/fs/cgroup$cg/io.pressure" full 2>/dev/null)
     eh=$(awk '/^high /{print $2; exit}' "/sys/fs/cgroup$cg/memory.events" 2>/dev/null)
     em=$(awk '/^max /{print $2; exit}' "/sys/fs/cgroup$cg/memory.events" 2>/dev/null)
     ek=$(awk '/^oom_kill /{print $2; exit}' "/sys/fs/cgroup$cg/memory.events" 2>/dev/null)

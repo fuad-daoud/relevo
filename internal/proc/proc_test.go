@@ -1205,6 +1205,107 @@ func TestReapScopeIsSilentAndZeroOnAMissingFile(t *testing.T) {
 	}
 }
 
+// runSampleAgg runs SampleAggFragment as the supervisor's trailer does,
+// against a fake memsample file.
+func runSampleAgg(t *testing.T, samp string) (string, error) {
+	t.Helper()
+	out, err := exec.Command("/bin/sh", "-c", SampleAggFragment+"relevo_sample_agg '"+samp+"'\n").CombinedOutput()
+	return string(out), err
+}
+
+// runPressureTotal runs PressureTotalFragment as the supervisor's trailer
+// does, against a fake pressure file.
+func runPressureTotal(t *testing.T, file, kind string) (string, error) {
+	t.Helper()
+	out, err := exec.Command("/bin/sh", "-c", PressureTotalFragment+"relevo_pressure_total '"+file+"' "+kind+"\n").CombinedOutput()
+	return string(out), err
+}
+
+// The trailer's base, burst and burst_secs come from the per-sample anon+swap
+// sums: the median, the max, and five seconds per sample above half the max.
+func TestMemSampleAggregationComputesMedianMaxAndBurstSecs(t *testing.T) {
+	samp := filepath.Join(t.TempDir(), "memsamp.log")
+	if err := os.WriteFile(samp, []byte("60 40\n100 100\n150 150\n200 200\n"), 0o644); err != nil {
+		t.Fatalf("write samp file: %v", err)
+	}
+	out, err := runSampleAgg(t, samp)
+	if err != nil {
+		t.Fatalf("aggregate: %v (output %q)", err, out)
+	}
+	if out != "200 400 10" {
+		t.Errorf("aggregate = %q, want %q: sums 100 200 300 400 give median 200, max 400, two samples above half the max times five seconds", out, "200 400 10")
+	}
+
+	if err := os.WriteFile(samp, []byte("30 20\n"), 0o644); err != nil {
+		t.Fatalf("write samp file: %v", err)
+	}
+	out, err = runSampleAgg(t, samp)
+	if err != nil {
+		t.Fatalf("aggregate one sample: %v (output %q)", err, out)
+	}
+	if out != "50 50 5" {
+		t.Errorf("aggregate = %q, want %q", out, "50 50 5")
+	}
+
+	if err := os.WriteFile(samp, []byte("0 0\n"), 0o644); err != nil {
+		t.Fatalf("write samp file: %v", err)
+	}
+	out, err = runSampleAgg(t, samp)
+	if err != nil {
+		t.Fatalf("aggregate zero sample: %v (output %q)", err, out)
+	}
+	if out != "0 0 0" {
+		t.Errorf("aggregate = %q, want %q", out, "0 0 0")
+	}
+
+	if err := os.WriteFile(samp, nil, 0o644); err != nil {
+		t.Fatalf("truncate samp file: %v", err)
+	}
+	out, err = runSampleAgg(t, samp)
+	if err == nil {
+		t.Error("aggregate of an empty file = nil error; want a non-zero exit")
+	}
+	if out != "" {
+		t.Errorf("aggregate output = %q, want empty: an empty file prints nothing", out)
+	}
+}
+
+// The trailer's cpu_some_usec comes from the some line's total, never the
+// full line's: the two lines carry independent counters.
+func TestPressureTotalReadsItsOwnLine(t *testing.T) {
+	pressure := filepath.Join(t.TempDir(), "cpu.pressure")
+	if err := os.WriteFile(pressure, []byte("some avg10=1.23 avg60=0.45 avg300=0.00 total=111\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=222\n"), 0o644); err != nil {
+		t.Fatalf("write pressure file: %v", err)
+	}
+	for _, tc := range []struct{ kind, want string }{
+		{"some", "111"},
+		{"full", "222"},
+	} {
+		out, err := runPressureTotal(t, pressure, tc.kind)
+		if err != nil {
+			t.Fatalf("pressure %s: %v (output %q)", tc.kind, err, out)
+		}
+		if out != tc.want+"\n" {
+			t.Errorf("pressure %s = %q, want %q", tc.kind, out, tc.want+"\n")
+		}
+	}
+
+	// The trailer asks each pressure file for its own class: the some and
+	// full totals feed different trailer keys, so each call names its line.
+	for _, call := range []string{
+		`relevo_pressure_total "/sys/fs/cgroup$cg/cpu.pressure" some`,
+		`relevo_pressure_total "/sys/fs/cgroup$cg/cpu.pressure" full`,
+		`relevo_pressure_total "/sys/fs/cgroup$cg/memory.pressure" some`,
+		`relevo_pressure_total "/sys/fs/cgroup$cg/memory.pressure" full`,
+		`relevo_pressure_total "/sys/fs/cgroup$cg/io.pressure" some`,
+		`relevo_pressure_total "/sys/fs/cgroup$cg/io.pressure" full`,
+	} {
+		if !strings.Contains(supervisorScript, call) {
+			t.Errorf("supervisorScript lacks %q: each pressure key must read its own line", call)
+		}
+	}
+}
+
 // The fragment comes first, the reap sits after the rusage line and inside the
 // */"$want" branch, and the exit trailer is still the last thing printed.
 func TestSupervisorScriptReapsInsideTheWantBranch(t *testing.T) {
