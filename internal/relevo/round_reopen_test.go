@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // This file holds the reproductions for a remote round that never closes after
@@ -35,7 +36,7 @@ func haltedRemoteBinding(server string) store.Binding {
 // empty, and a fake server whose answers a test sets.
 func reopenRemoteRuntime(t *testing.T, b store.Binding) (Runtime, *fakeRemote) {
 	t.Helper()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
 	}

@@ -59,11 +59,6 @@ func takeRenders(shared *db.DB) []string {
 	return names
 }
 
-// agentInstallEnv is the InstallEnv the re-render installs through, a
-// variable so a test can point it at a temp home. Production never replaces
-// it.
-var agentInstallEnv = AgentInstallEnv
-
 // renderPendingAgents re-renders every queued agent in name order. It never
 // fails the import it follows: an unrenderable definition is one warning,
 // exactly as refreshRoles treats one, and the entry stays applied.
@@ -73,11 +68,10 @@ func renderPendingAgents(shared *db.DB) {
 		return
 	}
 	cfg := machineConfig(shared)
-	env, err := agentInstallEnv()
-	if err != nil {
-		slog.Warn("agent definitions not re-rendered", "err", err)
-		return
-	}
+	// The manifest is read and written through the handle the import already
+	// holds: opening the machine database again here would leave a second
+	// handle on it, never closed, in the daemon.
+	env := harness.OSInstallEnvKV(shared.LocalOrSelf())
 	for _, name := range names {
 		// No Force: an agent definition a person edited is kept, and doctor
 		// names it. Forcing it here would make every arrival a silent

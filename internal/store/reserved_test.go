@@ -15,7 +15,7 @@ import (
 // reserved-key test starts from a directory that holds only what it plants.
 func seedReservedStore(t *testing.T) (*Store, string) {
 	t.Helper()
-	s := New(t.TempDir())
+	s := newStore(t)
 	const binding = "webshop"
 	if err := s.Save(newBinding(binding, "/repo")); err != nil {
 		t.Fatalf("Save: %v", err)

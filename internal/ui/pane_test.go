@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -581,7 +582,7 @@ func TestRoundTokensLineCostWord(t *testing.T) {
 }
 
 func TestRoundsOfIdleAfterReport(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	end := railNow.Add(-10 * time.Minute)
 	b := view.BindingStatus{
@@ -626,7 +627,7 @@ func TestRoundsOfIdleAfterReport(t *testing.T) {
 }
 
 func TestRoundsOfWorking(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	b := view.BindingStatus{
 		Name:          "work-b",
@@ -653,7 +654,7 @@ func TestRoundsOfWorking(t *testing.T) {
 }
 
 func TestRoundContextNarrowDropsWholeParts(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	b := view.BindingStatus{
 		Name:           "narrow-b",

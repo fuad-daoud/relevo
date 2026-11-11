@@ -47,7 +47,7 @@ func chainEventFor(c db.ChainRow) db.ChainEventRow {
 
 func seededChainStore(t *testing.T) (*Store, db.ChainRow) {
 	t.Helper()
-	s := New(t.TempDir())
+	s := newStore(t)
 	c := testStoreChain("x")
 	if err := s.WithLock(func(tx *Tx) error { return tx.ChainPut(c) }); err != nil {
 		t.Fatalf("ChainPut: %v", err)
@@ -72,7 +72,7 @@ func memberNames(t *testing.T, d *db.DB) []string {
 // members of one chain may share a tree, a later save of either is exempt
 // through chain_member, and a writer that is in no chain is still refused.
 func TestCWDExemptOnlyAmongSameChain(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	first := newBinding("x", "/repo")
 	second := newBinding("x-fix", "/repo")
 	second.Role = "builder"
@@ -102,7 +102,7 @@ func TestCWDExemptOnlyAmongSameChain(t *testing.T) {
 // member row.
 func TestCreateChainWritesEveryMemberAndTheChainAtomically(t *testing.T) {
 	root := t.TempDir()
-	s := New(root)
+	s := storeAt(t, root)
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatalf("mkdir root: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestCreateChainWritesEveryMemberAndTheChainAtomically(t *testing.T) {
 // prepared at all -- so it fails when the members and the chain row are written
 // in two separate transactions.
 func TestCreateChainWritesNoMemberWhenTheChainRowIsRefused(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	// A chain row ChainPut refuses: no plans.
 	refused := testStoreChain("x")
 	refused.Plans = 0
@@ -172,7 +172,7 @@ func TestCreateChainWritesNoMemberWhenTheChainRowIsRefused(t *testing.T) {
 // as the ordinary binding it is: format and shape stamped, the builder actor
 // defaulted, and the binding's own round kept.
 func TestCreateChainSetsTheStoredBindingDefaults(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	builder := newBinding("x", "/repo")
 	reviewer := newBinding("x-rev", "/repo")
 	reviewer.Role = "reviewer"
@@ -276,7 +276,7 @@ func chainMemberCount(t *testing.T, s *Store) int {
 // argument order, and a refused create stores none.
 func TestCreateChainWritesMemberRowsAtomically(t *testing.T) {
 	t.Run("a successful create", func(t *testing.T) {
-		s := New(t.TempDir())
+		s := newStore(t)
 		builder := newBinding("x", "/repo")
 		reviewer := newBinding("x-rev", "/repo")
 		reviewer.Role = "reviewer"
@@ -304,7 +304,7 @@ func TestCreateChainWritesMemberRowsAtomically(t *testing.T) {
 	})
 
 	t.Run("a refused create", func(t *testing.T) {
-		s := New(t.TempDir())
+		s := newStore(t)
 		refused := testStoreChain("x")
 		refused.Plans = 0
 
@@ -463,7 +463,7 @@ func TestChainByMemberAfterARenameIsGone(t *testing.T) {
 // source path's own binding and round file; a path outside the root, or one the
 // store cannot resolve to a binding round file, resolves no copy.
 func TestChainInputPathKeysACopyByItsSource(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 
 	cases := []struct {
 		name   string
@@ -505,7 +505,7 @@ func TestChainInputPathKeysACopyByItsSource(t *testing.T) {
 // plant at a reserved round-file name is never a disk record, while a plain
 // report is; a symlink is never one either.
 func TestDiskRegularFileRefusesAPlantAtARowOnlyKey(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	const binding = "shop"
 
 	for _, tc := range reservedKeyCases() {

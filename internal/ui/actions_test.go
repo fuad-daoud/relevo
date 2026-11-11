@@ -19,6 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -400,7 +401,7 @@ func key(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []run
 // actionModel is a loaded shell at 140x40 with a as its widget.Actions seam.
 func actionModel(t *testing.T, a widget.Actions, rows ...view.BindingStatus) Model {
 	t.Helper()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Actions: a})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
@@ -414,7 +415,7 @@ func actionModel(t *testing.T, a widget.Actions, rows ...view.BindingStatus) Mod
 // the widget.Actions seam.
 func goldenActionModel(t *testing.T, width, height int, a widget.Actions, rep view.Report) Model {
 	t.Helper()
-	return goldenActionModelWithStore(t, width, height, a, rep, store.New(t.TempDir()))
+	return goldenActionModelWithStore(t, width, height, a, rep, storetest.New(t))
 }
 
 // goldenActionModelWithStore is goldenActionModel over st, so a fixture whose
@@ -1057,7 +1058,7 @@ func TestLastPlannedRound(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			st := store.New(t.TempDir())
+			st := storetest.New(t)
 			for _, f := range tc.files {
 				path := filepath.Join(st.Dir("atlas"), filepath.FromSlash(f))
 				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -1080,7 +1081,7 @@ func TestLastPlannedRound(t *testing.T) {
 // afterwards -- the human view reads, and only a delivery confirms.
 func TestReportReadyRowOpensReportTabWithoutClaiming(t *testing.T) {
 	const name = "atlas"
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(store.Binding{Name: name, CWD: t.TempDir(), Round: 4, State: store.StateActive}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -1242,7 +1243,7 @@ func TestFooterDropsWholeKeys(t *testing.T) {
 // and a credit-classed reason holds until cleared.
 func TestCockpitGateBoundsUnparsedReason(t *testing.T) {
 	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	path := filepath.Join(t.TempDir(), "candidates.json")
 	if err := os.WriteFile(path, []byte(`[{"harness":"agy","provider":"test","model":"m","roles":["builder"]}]`), 0o644); err != nil {
 		t.Fatalf("write candidates: %v", err)
@@ -1281,7 +1282,7 @@ func TestCockpitGateBoundsUnparsedReason(t *testing.T) {
 }
 
 func TestCockpitUnbindOfAKeptWorktreeShowsTheHint(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	wt := t.TempDir()
 	b := store.Binding{
 		Name: "webshop", CWD: wt, Worktree: wt, State: store.StateActive,

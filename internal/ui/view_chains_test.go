@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -92,7 +93,7 @@ func chainsModelForTest(t *testing.T, st *store.Store, doc relevo.ChainsDoc, cha
 }
 
 func TestChainDrillOpensStepRound(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	seedPlanFixture(t, st, "feature-auth", 2, railNow.Add(-6*time.Minute), "# Round 2 plan\n")
 	// The member's own row stands on a later round than the step closed on,
 	// so opening round 0 (the row's default) cannot pass for opening the
@@ -129,7 +130,7 @@ func TestChainDrillOpensStepRound(t *testing.T) {
 }
 
 func TestChainDrillSurvivesStatusRefresh(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	seedPlanFixture(t, st, "feature-auth", 2, railNow.Add(-6*time.Minute), "# Round 2 plan\n")
 	m := chainsModelForTest(t, st, chainsFixtureDoc(), "feature-auth")
 	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -155,7 +156,7 @@ func TestChainDrillSurvivesStatusRefresh(t *testing.T) {
 }
 
 func TestChainDrillNoRoundYetNotices(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	m := chainsModelForTest(t, st, chainsFixtureDoc(), "feature-auth")
 	sv := m.top().(chainStepsView)
 	sv.cur = 3 // the repair step, which never ran
@@ -176,7 +177,7 @@ func TestChainDrillNoRoundYetNotices(t *testing.T) {
 }
 
 func TestChainEscReturnsToChain(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	m := chainsModelForTest(t, st, chainsFixtureDoc(), "feature-auth")
 	if _, ok := m.top().(chainStepsView); !ok {
 		t.Fatalf("setup did not reach the steps view: %T", m.top())
@@ -456,7 +457,7 @@ func TestChainTraceErrorBodySanitizes(t *testing.T) {
 // TestChainEscFromDrillStopsAtSteps pins the drill's own esc: one level back
 // to the step list, never past it to the chains list.
 func TestChainEscFromDrillStopsAtSteps(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	seedPlanFixture(t, st, "feature-auth", 2, railNow.Add(-6*time.Minute), "# Round 2 plan\n")
 	m := chainsModelForTest(t, st, chainsFixtureDoc(), "feature-auth")
 	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})

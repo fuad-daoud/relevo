@@ -11,7 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/resolve"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 func TestPickRefusalFromWireRebuildsTheTypedRefusal(t *testing.T) {
@@ -77,7 +77,7 @@ func TestAddRemoteAllGatedIsARefusal(t *testing.T) {
 		Message: `every candidate serving "builder" is gated: x (rate-limited until cleared): every candidate serving the actor is gated`,
 	}}}
 	rt := Runtime{
-		Store:       store.New(t.TempDir()),
+		Store:       storetest.New(t),
 		MasterMinds: addRemoteMasterMind(t),
 		Git:         fg,
 		Remote:      fr,
@@ -103,7 +103,7 @@ func TestAddRemoteUnconfiguredCandidateIsRefused(t *testing.T) {
 		}},
 	}
 	rt := Runtime{
-		Store:       store.New(t.TempDir()),
+		Store:       storetest.New(t),
 		MasterMinds: addRemoteMasterMind(t),
 		Git:         fg,
 		Remote:      fr,

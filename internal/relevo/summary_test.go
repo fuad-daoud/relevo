@@ -12,6 +12,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -413,7 +414,7 @@ func TestReaderFallbackIsMarkedForTheMasterMind(t *testing.T) {
 
 	// The same round through Show: a saved fallback is marked above the text, a
 	// file-first close is not marked at all.
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := Runtime{Store: st}
 	b := testReaderBinding()
 	b.CWD = "/repo"
@@ -460,7 +461,7 @@ func TestReaderFallbackIsMarkedForTheMasterMind(t *testing.T) {
 
 	// A round whose close kept the runner's own file carries no header, so the
 	// marker cannot be mistaken for a property of every reader output.
-	st2 := store.New(t.TempDir())
+	st2 := storetest.New(t)
 	rt2 := Runtime{Store: st2}
 	b2 := testReaderBinding()
 	b2.CWD = "/repo"
@@ -569,7 +570,7 @@ func TestWriteReaderSummaryRefusesASymlinkedArtifactDir(t *testing.T) {
 func TestWriteReaderOutputRefusesEscapingArtifactDir(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := os.MkdirAll(st.OutDir("reader-bind"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -601,7 +602,7 @@ func TestWriteReaderOutputRefusesEscapingArtifactDir(t *testing.T) {
 func TestReplaceReaderOutputRefusesEscapingArtifactDir(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := os.MkdirAll(st.OutDir("reader-bind"), 0o755); err != nil {
 		t.Fatal(err)
 	}

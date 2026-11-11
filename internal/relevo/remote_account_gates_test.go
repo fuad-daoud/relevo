@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/remote"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // TestReconcileRemoteTakesTheServersAccount: a served round's account is the
@@ -14,7 +14,7 @@ import (
 func TestReconcileRemoteTakesTheServersAccount(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)

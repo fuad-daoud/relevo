@@ -80,7 +80,7 @@ func decodeLegacyAndNewBinding(t *testing.T) (Binding, Binding) {
 // stored JSON carries the A4 keys and none of the old ones.
 func assertBindingReEncodesNewKeys(t *testing.T, got Binding) {
 	t.Helper()
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.Save(got); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestBindingEmptyRoleReadsAsBuilder(t *testing.T) {
 // stamp -- decodes, and the next save writes it back without the key. Nothing
 // read it, so nothing may break on the way in.
 func TestBindingDropsARemovedKey(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	putRecordJSON(t, s, "webshop", fmt.Sprintf(
 		`{"format":%d,"name":"webshop","cwd":"/repo","actor":"builder","state":"needs_you","stale_since":"2026-10-01T09:00:00Z","stale_notified_at":"2026-10-01T09:30:00Z"}`,
 		BindingFormat))

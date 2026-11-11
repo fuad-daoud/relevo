@@ -9,7 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // liveSeedToken and liveNewToken are the canonical refs of the two candidates
@@ -54,7 +54,7 @@ func addStoredCandidate(t *testing.T, st *config.Store, in relevo.CandidateInput
 // liveRuntimeIn loads st's sections into a fresh runtime.
 func liveRuntimeIn(t *testing.T, st *config.Store, d *db.DB) relevo.Runtime {
 	t.Helper()
-	rt, err := relevo.ReloadConfig(relevo.Runtime{Store: store.New(t.TempDir()), Config: st, DB: d})
+	rt, err := relevo.ReloadConfig(relevo.Runtime{Store: storetest.New(t), Config: st, DB: d})
 	if err != nil {
 		t.Fatalf("ReloadConfig: %v", err)
 	}

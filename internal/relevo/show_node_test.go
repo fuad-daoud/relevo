@@ -12,6 +12,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // errNodeFetch is the error a test remote answers with: any read path that
@@ -45,7 +46,7 @@ func stageNodeFile(t *testing.T, path, body string) {
 func TestShowRemoteBindingReadsHeadStoreFiles(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	api := store.Binding{
 		Name: "api", CWD: "/repo", Round: 2, State: store.StateActive,
 		BuilderCandidate: testAgyRef,

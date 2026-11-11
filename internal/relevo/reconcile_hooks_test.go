@@ -10,6 +10,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 type recordDispatcher struct {
@@ -250,7 +251,7 @@ func TestSettleCatchUpAnnouncesAfterItsSave(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}

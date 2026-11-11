@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // relevoBlock wraps body in the fenced block a report or a findings file ends
@@ -149,7 +150,7 @@ func TestParseVerdict(t *testing.T) {
 func TestStageVerifyQuestionRecordsARowAndNoFile(t *testing.T) {
 	t.Parallel()
 
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	if err := s.Save(store.Binding{Name: "webshop", CWD: "/repo"}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}

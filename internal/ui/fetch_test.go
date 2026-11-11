@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 func newTestBinding(name string) store.Binding {
@@ -36,7 +37,7 @@ func TestTabOrderStartsWithPlan(t *testing.T) {
 }
 
 func TestFetchPlanLive(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 
@@ -75,7 +76,7 @@ func TestFetchPlanLive(t *testing.T) {
 // TestFetchPlanTimeIsWhenThePlanWasSent pins the plan tab's time to the plan
 // log entry's TS, not to the moment the tab was read.
 func TestFetchPlanTimeIsWhenThePlanWasSent(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 
@@ -109,7 +110,7 @@ func TestFetchPlanTimeIsWhenThePlanWasSent(t *testing.T) {
 // TestFetchReportTimeIsWhenTheReportArrived pins the report tab's time to the
 // report log entry's TS.
 func TestFetchReportTimeIsWhenTheReportArrived(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 
@@ -134,7 +135,7 @@ func TestFetchReportTimeIsWhenTheReportArrived(t *testing.T) {
 }
 
 func TestFetchStatusReturnsExactlyOneMessage(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{
 		Store: st,
 	}
@@ -154,7 +155,7 @@ func TestFetchStatusReturnsExactlyOneMessage(t *testing.T) {
 }
 
 func TestFetchReportScrapedPayloadDoesNotTouchPath(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 
@@ -197,7 +198,7 @@ func TestFetchReportScrapedPayloadDoesNotTouchPath(t *testing.T) {
 }
 
 func TestFetchReportEmptyLogReturnsRoundOneInFlight(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	name := "emptybinding"
 
@@ -225,7 +226,7 @@ func TestFetchReportEmptyLogReturnsRoundOneInFlight(t *testing.T) {
 // report entry, not the newest one logged -- stepping back to an earlier
 // round must show that round's report, not a later round's.
 func TestFetchReportTakesRound(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 
@@ -262,7 +263,7 @@ func TestFetchReportTakesRound(t *testing.T) {
 // only ever belongs to its current round; a past round it never captured
 // a log for reads as prose, not as an error, and must never reach a pane.
 func TestFetchDiffRoundZero(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 
 	cmd := fetchDiff(context.Background(), mastermindSource{rt}, "webshop", 0)
@@ -281,7 +282,7 @@ func TestFetchDiffRoundZero(t *testing.T) {
 }
 
 func TestFetchDiffRoundNoStoredPatch(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 
@@ -306,7 +307,7 @@ func TestFetchDiffRoundNoStoredPatch(t *testing.T) {
 }
 
 func TestFetchLogTwoEntriesByteIdentical(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 
@@ -360,7 +361,7 @@ func TestFetchLogTwoEntriesByteIdentical(t *testing.T) {
 // TestFetchLogFiltersRound pins round-scoped log reads: fetchLog scopes to round rather
 // than dumping the whole binding log.
 func TestFetchLogFiltersRound(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 
@@ -392,7 +393,7 @@ func TestFetchLogFiltersRound(t *testing.T) {
 }
 
 func TestFetchForRouting(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 
@@ -421,7 +422,7 @@ func TestFetchForRouting(t *testing.T) {
 // server restart. fetchTerminal has already located the live agent, so it must
 // address that agent, not replay a name that may no longer resolve.
 func TestFetchTerminalHeadlessReadsTheLogNotThePane(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 
 	logPath := filepath.Join(t.TempDir(), "002-builder.log")
@@ -451,7 +452,7 @@ func TestFetchTerminalHeadlessReadsTheLogNotThePane(t *testing.T) {
 }
 
 func TestFetchTerminalHeadlessReturnsWholeLog(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 
@@ -490,7 +491,7 @@ func TestFetchTerminalHeadlessReturnsWholeLog(t *testing.T) {
 }
 
 func TestFetchTerminalHeadlessIdleAndMissingLog(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 
 	b := newTestBinding("webshop")
@@ -515,7 +516,7 @@ func TestFetchTerminalHeadlessIdleAndMissingLog(t *testing.T) {
 }
 
 func TestFetchTerminalHeadlessBetweenRoundsShowsTheLastRoundsLog(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 
 	b := newTestBinding("webshop")
@@ -547,7 +548,7 @@ func TestFetchTerminalHeadlessBetweenRoundsShowsTheLastRoundsLog(t *testing.T) {
 // builder shows the round's local builder log when relevo has one, and
 // otherwise a single line naming the server.
 func TestFetchTerminalRemoteBuilder(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 
 	logPath := st.BuilderLogPath("webshop", 2)
@@ -586,7 +587,7 @@ func TestFetchTerminalRemoteBuilder(t *testing.T) {
 // renders the stream too; and an endpoint naming its own log reads that file
 // even when a stream exists.
 func TestFetchTerminalHeadlessRendersTheStream(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 
 	stream := "stream line one\nstream line two\n"
@@ -658,7 +659,7 @@ func TestFetchTerminalHeadlessRendersTheStream(t *testing.T) {
 // A round whose stream is only NNN-builder.jsonl still renders, and the tab
 // labels it under the name it was read from.
 func TestFetchTerminalRendersThePreRenameStream(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 
 	stream := "stream line one\nstream line two\n"

@@ -9,6 +9,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -20,7 +21,7 @@ import (
 func seedReadVerbStore(t *testing.T) (*store.Store, relevo.Runtime, []store.LogEntry) {
 	t.Helper()
 
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	if err := s.Save(store.Binding{
 		Name: "api", CWD: t.TempDir(), Round: 2, State: store.StateActive,
 	}); err != nil {

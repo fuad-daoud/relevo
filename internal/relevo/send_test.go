@@ -24,6 +24,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 func writePlan(t *testing.T, body string) string {
@@ -453,7 +454,7 @@ func TestComposePromptWithoutAGateNamesNoCheck(t *testing.T) {
 func TestComposePromptReaderNamesTheOutputFile(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := Runtime{Store: st}
 	b := store.Binding{Name: "reader-bind", CWD: "/repo", Round: 1, Shape: store.ShapeReader, Role: "reviewer"}
 
@@ -491,7 +492,7 @@ func TestComposePromptReaderNamesTheOutputFile(t *testing.T) {
 func TestComposePromptReaderPutsTheBlockMessageLast(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := Runtime{Store: st}
 	b := store.Binding{Name: "reader-bind", CWD: "/repo", Round: 1, Shape: store.ShapeReader, Role: "reviewer"}
 
@@ -518,7 +519,7 @@ func TestComposePromptReaderPutsTheBlockMessageLast(t *testing.T) {
 func TestChainReaderPromptNamesTheOutputFile(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := Runtime{Store: st}
 	b := store.Binding{Name: "shop-rev", CWD: "/repo", Round: 2, Shape: store.ShapeReader, Role: "reviewer"}
 

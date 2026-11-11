@@ -10,13 +10,14 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 func TestRoundDiff_NilGit(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	d := Deps{Store: s}
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineTree: "abc"}
 
@@ -39,7 +40,7 @@ func TestRoundDiff_ErrNotRepo(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	fg := &fakeGit{snapshotTreeErr: git.ErrNotRepo}
 	d := Deps{Store: s, Git: fg}
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineTree: "abc"}
@@ -63,7 +64,7 @@ func TestRoundDiff_GitFailure(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	fg := &fakeGit{snapshotTreeErr: errors.New("boom: git broken")}
 	d := Deps{Store: s, Git: fg}
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineTree: "abc"}
@@ -91,7 +92,7 @@ func TestRoundDiff_EmptyDiff(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	fg := &fakeGit{
 		snapshotTreeID: "tree-end",
 		diffResult:     git.Diff{Stat: git.Stat{FilesChanged: 0}},
@@ -128,7 +129,7 @@ func TestRoundDiff_TruncatedDiff(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	fg := &fakeGit{
 		snapshotTreeID: "tree-end",
 		diffResult: git.Diff{
@@ -171,7 +172,7 @@ func TestRoundDiff_NormalDiff(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	fg := &fakeGit{
 		snapshotTreeID: "tree-end",
 		diffResult: git.Diff{
@@ -245,7 +246,7 @@ func TestBaseline(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	b := store.Binding{Name: "webshop", CWD: "/repo"}
 	newDeps := func(g Git) Deps {
 		return Deps{Store: s, Git: g}
@@ -277,7 +278,7 @@ func TestRoundDiff_EmptyBaselineSkipsSnapshot(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	fg := &fakeGit{snapshotTreeID: "tree-end"}
 	d := Deps{Store: s, Git: fg}
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineTree: ""}
@@ -414,7 +415,7 @@ func TestRoundDiff_EndTree(t *testing.T) {
 func runRoundDiffEndTree(t *testing.T, tc roundDiffEndTreeCase) {
 	t.Helper()
 	ctx := context.Background()
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	var fg *fakeGit
 	var g Git
 	if !tc.nilGit {
@@ -540,7 +541,7 @@ var commitFactsCases = []commitFactsCase{
 func TestCommitFacts(t *testing.T) {
 	t.Parallel()
 
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	for _, tc := range commitFactsCases {
 		t.Run(tc.name, func(t *testing.T) {
 			var fg *fakeGit
@@ -732,7 +733,7 @@ func TestPlanDiffWritesThePatchAndComparesStartWithEnd(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	fg := &fakeGit{diffResult: git.Diff{
 		Stat:  git.Stat{FilesChanged: 3, Insertions: 40, Deletions: 2},
 		Patch: []byte("--- a/x\n+++ b/x\n@@ ...\n"),
@@ -781,7 +782,7 @@ func TestPlanDiffReportsUnavailableWithoutBothEnds(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	fg := &fakeGit{}
 	d := Deps{Store: s, Git: fg}
 
@@ -820,7 +821,7 @@ func TestPlanDiffIsSilentWithoutGit(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	var res DiffResult
 	if err := s.WithLock(func(tx *store.Tx) error {
 		res = PlanDiff(ctx, Deps{Store: s}, tx, PlanDiffSpec{Name: "webshop", Round: 1, Dir: "/repo", From: "a", End: "b", Path: "/p"})
@@ -840,7 +841,7 @@ func TestPlanDiffRefusesAMissingPathOrRecord(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	if err := s.Save(store.Binding{Name: "webshop", CWD: "/repo", Round: 1}); err != nil {
 		t.Fatal(err)
 	}
@@ -873,7 +874,7 @@ func TestPlanDiffNeverFailsTheCaller(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	if err := s.Save(store.Binding{Name: "webshop", CWD: "/repo", Round: 1}); err != nil {
 		t.Fatal(err)
 	}

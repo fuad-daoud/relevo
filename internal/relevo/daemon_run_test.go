@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // The upgrade hook is consulted exactly once: there is no second tick after
@@ -14,7 +14,7 @@ import (
 func TestRunReturnsErrReexecAfterOneTick(t *testing.T) {
 	t.Parallel()
 
-	rt := Runtime{Store: store.New(t.TempDir())}
+	rt := Runtime{Store: storetest.New(t)}
 
 	calls := 0
 	d := NewDaemon(rt, 10*time.Millisecond).WithUpgrade(func(context.Context) bool {

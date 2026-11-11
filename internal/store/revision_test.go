@@ -13,7 +13,7 @@ import (
 // and a store nothing wrote to keeps it.
 func TestRevisionTracksEveryMirrorSignal(t *testing.T) {
 	root := t.TempDir()
-	s := New(root)
+	s := storeAt(t, root)
 	b := Binding{Name: "webshop", CWD: "/repo", State: StateActive, Round: 1}
 	if err := s.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -85,7 +85,7 @@ func TestRevisionTracksEveryMirrorSignal(t *testing.T) {
 // revision follow that file: the key is dead bytes, not a mirror signal.
 func TestRevisionIgnoresAnOldTranscriptLocatorKey(t *testing.T) {
 	root := t.TempDir()
-	s := New(root)
+	s := storeAt(t, root)
 	transcript := filepath.Join(t.TempDir(), "session.jsonl")
 	if err := os.WriteFile(transcript, []byte("one\n"), 0o644); err != nil {
 		t.Fatalf("write transcript: %v", err)
@@ -149,7 +149,7 @@ func TestRevisionIgnoresAnOldTranscriptLocatorKey(t *testing.T) {
 // TestRevisionMissingBinding pins that a name with no record is not a failure
 // to report: the caller has nothing to mirror.
 func TestRevisionMissingBinding(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if _, err := s.Revision("nobody"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Revision(nobody) err = %v, want ErrNotFound", err)
 	}
@@ -162,7 +162,7 @@ func TestRevisionMissingBinding(t *testing.T) {
 // the daemon must not inherit.
 func TestTickStateCarriesTheDigestAndTheInPlaceStates(t *testing.T) {
 	root := t.TempDir()
-	s := New(root)
+	s := storeAt(t, root)
 	if err := s.Save(Binding{Name: "webshop", CWD: "/repo", State: StateDone, Round: 1}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestTickStateCarriesTheDigestAndTheInPlaceStates(t *testing.T) {
 // TestTickStateMissingBinding pins the same nothing-to-guard answer Revision
 // gives: no record is not a failure to report.
 func TestTickStateMissingBinding(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if _, err := s.TickState("nobody"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("TickState(nobody) err = %v, want ErrNotFound", err)
 	}

@@ -16,6 +16,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/jsonshape"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // update rewrites the golden file, but only when MasterMindFormat was bumped.
@@ -208,7 +209,7 @@ func TestRegistryWriteRefusesANewerFormat(t *testing.T) {
 // format 1 may still carry the removed transcript_locator key, and both load
 // without error and come back without it after a save.
 func TestOldTranscriptLocatorKeyLoadsAndIsDroppedOnSave(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	const name = "webshop"
 	if err := s.Save(store.Binding{Name: name, CWD: "/repo", State: store.StateActive}); err != nil {
 		t.Fatalf("Save: %v", err)

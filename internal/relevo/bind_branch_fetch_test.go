@@ -10,7 +10,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // The `bind --branch` fetch fallback: when the named branch is on neither the
@@ -184,7 +184,7 @@ func TestAddBranchFetchedButStillAbsentRefuses(t *testing.T) {
 func TestAddRemoteBranchFetchesMissingBranch(t *testing.T) {
 	ctx := context.Background()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	fg := &fakeGit{
 		branchExists:   false,
 		refSHA:         map[string]string{"refs/heads/feature/x": "tip"},
@@ -232,7 +232,7 @@ func TestAddRemoteBranchFetchFailureRefuses(t *testing.T) {
 		{name: "fetched but still absent", pop: map[string]string{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			st := store.New(t.TempDir())
+			st := storetest.New(t)
 			fg := &fakeGit{
 				branchExists:   false,
 				refSHA:         map[string]string{},

@@ -9,6 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 	"github.com/fuad-daoud/relevo/internal/sync/verb"
 	"github.com/fuad-daoud/relevo/internal/synclog"
@@ -42,7 +43,7 @@ type cfgMachine struct {
 // machine, and enabled is whether sync is already on.
 func newCfgMachine(t *testing.T, log *synclog.MemTransport, key []byte, enabled bool) *cfgMachine {
 	t.Helper()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	mdb, err := st.DB()
 	if err != nil {
 		t.Fatalf("store db: %v", err)

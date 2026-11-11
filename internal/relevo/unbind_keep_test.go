@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 func keptWorktreeRuntime(t *testing.T, kind, name string) (Runtime, *fakeDeleter, string) {
@@ -93,7 +94,7 @@ func TestUnbindForceArchivesKeptWorktree(t *testing.T) {
 func TestUnbindRemoteWorktreeKeptLeavesLocalBinding(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +117,7 @@ func TestUnbindRemoteWorktreeKeptLeavesLocalBinding(t *testing.T) {
 func TestUnbindRemoteForwardedRoundIsARefusal(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +140,7 @@ func TestUnbindRemoteForwardedRoundIsARefusal(t *testing.T) {
 func TestUnbindRemoteForcePassesForce(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +160,7 @@ const oldServerKeptBody = "binding api kept: worktree /p/api kept (uncommitted c
 func TestUnbindAdoptsServerKeptWorktree(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +186,7 @@ func TestUnbindAdoptsServerKeptWorktree(t *testing.T) {
 func TestUnbindOfAServedBindingNamesTheServerAndTheReason(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}

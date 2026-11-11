@@ -6,7 +6,7 @@ import "testing"
 // filter against what Save actually writes: a renamed JSON key for
 // MasterMindID would make the narrowed list come back empty.
 func TestListForMasterMindReadsOnlyThatMasterMindsLiveBindings(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	for _, b := range []struct{ name, mm string }{
 		{"mine-b", "pl_mine"},
 		{"mine-a", "pl_mine"},
@@ -39,7 +39,7 @@ func TestListForMasterMindReadsOnlyThatMasterMindsLiveBindings(t *testing.T) {
 		t.Errorf("ListForMasterMind(pl_mine) = %v, want [mine-a mine-b]", names)
 	}
 
-	if got, err := New(t.TempDir()).ListForMasterMind("pl_mine"); err != nil || len(got) != 0 {
+	if got, err := newStore(t).ListForMasterMind("pl_mine"); err != nil || len(got) != 0 {
 		t.Errorf("an empty root = (%v, %v), want none and no error", got, err)
 	}
 }

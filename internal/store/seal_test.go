@@ -123,7 +123,7 @@ func TestStreamDrained(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := New(t.TempDir())
+			s := newStore(t)
 			b := newBinding("webshop", "/home/dev/webshop")
 			b.Round = 4
 			b.Builder.StreamRound = drained
@@ -184,7 +184,7 @@ func TestStreamDrainedReadsOnlyTheTail(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := New(t.TempDir())
+			s := newStore(t)
 			b := newBinding("webshop", "/home/dev/webshop")
 			b.Round = 4
 			b.Builder.StreamRound = drained
@@ -207,7 +207,7 @@ func TestStreamDrainedReadsOnlyTheTail(t *testing.T) {
 // files and consult files become rows and leave the directory, other rounds
 // and non-NNN files stay, ReadFile is unchanged, and a second seal is a no-op.
 func TestSealRoundMovesOneRound(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("webshop", "/home/dev/webshop")
 	b.Round = 4
 	if err := s.Save(b); err != nil {
@@ -312,7 +312,7 @@ func checkSealedFiles(t *testing.T, s *Store, sealed, kept map[string][]byte) {
 // TestReadFileMissingStaysErrNotExist pins that an unsealed path still reports
 // os.ReadFile's own error.
 func TestReadFileMissingStaysErrNotExist(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("webshop", "/home/dev/webshop")
 	b.Round = 2
 	if err := s.Save(b); err != nil {
@@ -346,7 +346,7 @@ func TestReadFileMissingStaysErrNotExist(t *testing.T) {
 // removed: the seal reads through the out/ root, skips a non-regular plant, and
 // leaves the outside target byte-identical.
 func TestSealRefusesFileBehindEscapingSymlink(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("webshop", "/home/dev/webshop")
 	b.Round = 5
 	if err := s.Save(b); err != nil {
@@ -403,7 +403,7 @@ func TestSealRefusesFileBehindEscapingSymlink(t *testing.T) {
 // still writes. The log must stay on disk so the check's whole output is what
 // ReadFile returns once it settles.
 func TestSealHoldsARoundWhileItsCheckStreams(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("webshop", "/home/dev/webshop")
 	b.Round = 2
 	b.CheckRun = &CheckRun{ID: "c1", Command: "make check", Round: 2, LogPath: s.ServedCheckLogPath("webshop", 2)}

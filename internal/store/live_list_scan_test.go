@@ -15,7 +15,7 @@ import (
 // malformed blob ruins only its own row, and a valid overlay-shaped document
 // past the namespace bound reaches no row.
 func TestListMergesBatchedOverlaysByRecordID(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	save := func(b Binding) {
 		t.Helper()
 		if err := s.Save(b); err != nil {
@@ -95,7 +95,7 @@ func TestListMergesBatchedOverlaysByRecordID(t *testing.T) {
 // TestMergeLiveListWithoutDatabaseLeavesBindingsAlone pins the no-database
 // read: with no database file there are no overlays, so the rows pass through.
 func TestMergeLiveListWithoutDatabaseLeavesBindingsAlone(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	bindings := []Binding{newBinding("ghost", "/repo/ghost")}
 	recs := []db.Record{{ID: "01GHOST", Name: "ghost"}}
 	got, err := s.mergeLiveList(bindings, recs)
@@ -110,7 +110,7 @@ func TestMergeLiveListWithoutDatabaseLeavesBindingsAlone(t *testing.T) {
 // TestMergeLiveListSkipsEmptyRecordIDs pins the empty-id guard: no record id
 // means no overlay key, so even a stored `live/` key itself merges nowhere.
 func TestMergeLiveListSkipsEmptyRecordIDs(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.Save(newBinding("seed", "/repo/seed")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestMergeLiveListSkipsEmptyRecordIDs(t *testing.T) {
 // TestListFailsWhenTheOverlayScanFails pins that a dead overlay file fails the
 // whole listing rather than returning half-merged rows.
 func TestListFailsWhenTheOverlayScanFails(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.Save(newBinding("api", "/repo/a")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // readPushLine reads one NDJSON push event.
@@ -283,7 +284,7 @@ func TestRunPushSecondHolderRefused(t *testing.T) {
 	if err := claims.Write(Claim{MasterMind: testClaimMasterMind, PID: 4242, StartedAt: baseTime, SeenAt: baseTime}, baseTime); err != nil {
 		t.Fatalf("seed claim: %v", err)
 	}
-	rt := Deps{Store: store.New(t.TempDir()), Now: func() time.Time { return baseTime }, Channels: claims}
+	rt := Deps{Store: storetest.New(t), Now: func() time.Time { return baseTime }, Channels: claims}
 
 	err := RunPush(context.Background(), rt, testClaimMasterMind, io.Discard)
 	if !errors.Is(err, ErrClaimHeld) {

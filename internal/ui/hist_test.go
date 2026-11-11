@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/ingest"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/transcript"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -40,7 +41,7 @@ var histFixtureBindFiles = map[string]bool{
 func seedArchivedHistBinding(t *testing.T) (relevo.Runtime, relevo.HistoryBinding) {
 	t.Helper()
 	root := t.TempDir()
-	s := store.New(root)
+	s := storetest.At(t, root)
 	if err := os.MkdirAll(s.Dir("fixture"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -90,7 +91,7 @@ func seedArchivedHistBinding(t *testing.T) (relevo.Runtime, relevo.HistoryBindin
 	}
 	seedRoundMirror(t, d, histFixtureDir)
 
-	rt := relevo.Runtime{Store: store.New(t.TempDir()), DB: d}
+	rt := relevo.Runtime{Store: storetest.New(t), DB: d}
 
 	rows, err := relevo.Bindings(context.Background(), rt, "")
 	if err != nil {

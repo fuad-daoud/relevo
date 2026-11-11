@@ -12,6 +12,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // TestIngestStoreSourceFillsTheMirror pins that a binding held in the store's
@@ -71,7 +72,7 @@ func TestIngestStoreSourceFillsTheMirror(t *testing.T) {
 func TestIngestAdoptsTheSessionMasterMindID(t *testing.T) {
 	ctx := context.Background()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{Name: "webshop", CWD: "/repo", State: store.StateActive, Round: 1}
 	b.MasterMind.Kind = "claude"
 	b.MasterMind.SessionID = "sess-live"
@@ -105,7 +106,7 @@ func TestIngestAdoptsTheSessionMasterMindID(t *testing.T) {
 // home and the files no longer exist.
 func adoptIntoStore(t *testing.T, dir string) *store.Store {
 	t.Helper()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := os.MkdirAll(st.Dir("fixture"), 0o755); err != nil {
 		t.Fatal(err)
 	}

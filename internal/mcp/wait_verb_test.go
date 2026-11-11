@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 func writeStoreFile(t *testing.T, path, content string) {
@@ -48,7 +49,7 @@ func waitText(t *testing.T, call func() (any, error)) string {
 }
 
 func TestRelevoVerbsWaitTimeoutResolutionAndClamps(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	saveVerbBinding(t, s, store.Binding{Name: "b1", CWD: "/repo1", RoundTimeoutMS: int(time.Hour / time.Millisecond)})
 	saveVerbBinding(t, s, store.Binding{Name: "bdef", CWD: "/repo2"})
 
@@ -119,7 +120,7 @@ func TestRelevoVerbsWaitRejectsBadArgs(t *testing.T) {
 }
 
 func TestRelevoVerbsWaitRefusesChain(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	if err := s.WithLock(func(tx *store.Tx) error {
 		return tx.ChainPut(db.ChainRow{
 			ID:     "ch_123",
@@ -148,7 +149,7 @@ func TestRelevoVerbsWaitRefusesChain(t *testing.T) {
 
 func TestRelevoVerbsWaitRefusesUnresolvableTargets(t *testing.T) {
 	t.Run("a binding that does not exist", func(t *testing.T) {
-		v := waitVerbsFor(store.New(t.TempDir()), time.Now)
+		v := waitVerbsFor(storetest.New(t), time.Now)
 		if _, err := v.Wait(context.Background(), "", WaitArgs{Name: "missing"}); err == nil {
 			t.Fatal("wait on a missing binding = nil error, want an error")
 		} else if !strings.Contains(err.Error(), "binding not found") {
@@ -157,7 +158,7 @@ func TestRelevoVerbsWaitRefusesUnresolvableTargets(t *testing.T) {
 	})
 
 	t.Run("a mastermind with no active bindings", func(t *testing.T) {
-		v := waitVerbsFor(store.New(t.TempDir()), time.Now)
+		v := waitVerbsFor(storetest.New(t), time.Now)
 		_, err := v.Wait(context.Background(), "", WaitArgs{})
 		if err == nil {
 			t.Fatal("wait with no owned bindings = nil error, want an error naming the mastermind")
@@ -169,7 +170,7 @@ func TestRelevoVerbsWaitRefusesUnresolvableTargets(t *testing.T) {
 }
 
 func TestRelevoVerbsWaitDeliversClosedRoundOnce(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	saveVerbBinding(t, s, store.Binding{Name: "webshop", CWD: "/repo-ws", MasterMindID: mcpTestMasterMindA, Round: 1, State: store.StateActive})
 
 	reportBody := "# Report\nRound 1 completed successfully."
@@ -198,7 +199,7 @@ func TestRelevoVerbsWaitDeliversClosedRoundOnce(t *testing.T) {
 }
 
 func TestRelevoVerbsWaitStillOpenWhenBoundElapses(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	saveVerbBinding(t, s, store.Binding{Name: "active", CWD: "/repo-act", MasterMindID: mcpTestMasterMindA, Round: 1, State: store.StateActive})
 	if err := s.AppendLog("active", store.LogEntry{
 		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt,
@@ -234,7 +235,7 @@ func TestRelevoVerbsWaitStillOpenWhenBoundElapses(t *testing.T) {
 // old branch printed appears nowhere. Every pointer carries --peek, so reading
 // one back is not a second claim.
 func TestRelevoVerbsWaitOversizeDeliversEveryEntry(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	saveVerbBinding(t, s, store.Binding{Name: "big", CWD: "/repo-big", MasterMindID: mcpTestMasterMindA, Round: 2, State: store.StateActive})
 
 	// Two rounds of 60 KiB each, plus their headers, pass the cap that a
@@ -295,7 +296,7 @@ func TestRelevoVerbsWaitOversizeDeliversEveryEntry(t *testing.T) {
 // named in the cut line, so the caller gets most of the report rather than a
 // filename -- the old branch answered this case with the path alone.
 func TestRelevoVerbsWaitOversizeSingleEntryIsCutNotPointedAt(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	saveVerbBinding(t, s, store.Binding{Name: "one", CWD: "/repo-one", MasterMindID: mcpTestMasterMindA, Round: 1, State: store.StateActive})
 
 	// A 40 KiB origin line plus a 60 KiB report: past the 96 KiB cap on its
@@ -335,7 +336,7 @@ func TestRelevoVerbsWaitOversizeSingleEntryIsCutNotPointedAt(t *testing.T) {
 // delivered whole rather than reduced to its peek pointer at the one moment it
 // was the most useful thing in the result.
 func TestRelevoVerbsWaitOversizeDeliversAHaltEntryWhole(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	now := func() time.Time { return time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC) }
 	halt := "builder exited (code 1) without a report"
 	saveVerbBinding(t, s, store.Binding{
@@ -422,7 +423,7 @@ func TestPeekRefIsNeverClaiming(t *testing.T) {
 }
 
 func TestRelevoVerbsWaitCancelledContextIsNormalResult(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	saveVerbBinding(t, s, store.Binding{Name: "canc", CWD: "/repo-canc", MasterMindID: mcpTestMasterMindA, Round: 1, State: store.StateActive})
 	if err := s.AppendLog("canc", store.LogEntry{
 		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt,
@@ -444,7 +445,7 @@ func TestRelevoVerbsWaitCancelledContextIsNormalResult(t *testing.T) {
 // answers with its needs-you line and no error, which is what toolResultFrom
 // turns into an isError:false result the model can act on.
 func TestRelevoVerbsWaitNeedsYouIsANormalResult(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	halt := "rate limit: gate the builder before the next round"
 	saveVerbBinding(t, s, store.Binding{
 		Name: "stalled", CWD: "/repo-stalled", MasterMindID: mcpTestMasterMindA,
@@ -477,7 +478,7 @@ func TestRelevoVerbsWaitNeedsYouIsANormalResult(t *testing.T) {
 // makes the first call carry the payload and the second carry nothing, so both
 // are asserted rather than either.
 func TestRelevoVerbsWaitPullsAHaltEntryOnce(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	now := func() time.Time { return time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC) }
 	halt := "builder exited (code 1) without a report"
 	saveVerbBinding(t, s, store.Binding{
@@ -530,7 +531,7 @@ func TestRelevoVerbsWaitPullsAHaltEntryOnce(t *testing.T) {
 // timeout, the store's own default is the budget the poll runs on, so it has
 // to arrive at the poll positive -- a zero there is refused outright.
 func TestRelevoVerbsWaitNoNameTakesTheDefaultBudget(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	saveVerbBinding(t, s, store.Binding{Name: "owned", CWD: "/repo-owned", MasterMindID: mcpTestMasterMindA, Round: 1, State: store.StateActive})
 	if err := s.AppendLog("owned", store.LogEntry{
 		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt,
@@ -565,7 +566,7 @@ func TestRelevoVerbsWaitNoNameTakesTheDefaultBudget(t *testing.T) {
 // named nothing while implying that it had. Both renderers share one header
 // function, so this and the delivery-side case cannot drift apart.
 func TestOversizeWaitBodyLabelsAnEntryWithNoPath(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 
 	res := relevo.WaitResult{
 		Round: 1,
@@ -597,7 +598,7 @@ func TestOversizeWaitBodyLabelsAnEntryWithNoPath(t *testing.T) {
 // budget the report still had. Without this the halt degraded to a peek
 // pointer at exactly the moment it was the most useful thing in the result.
 func TestOversizeWaitBodyKeepsAHaltWhole(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 
 	const halt = "scope refusal: the plan names a path outside the repo"
 	// Same round both: the report is the big one and is the entry a wait

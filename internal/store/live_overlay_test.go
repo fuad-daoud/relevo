@@ -95,7 +95,7 @@ func TestLiveOverlayStripMergeRoundTrip(t *testing.T) {
 	// The round-trip over the whole store: a Save and a Load cross the
 	// strip/merge seam, so a read path that skips the overlay loses the
 	// cursor no matter how the pure helpers behave.
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestLiveOverlayStripMergeRoundTrip(t *testing.T) {
 // Load returns the full binding while the stored record_json holds none of
 // the stripped keys (asserted on the raw JSON).
 func TestSaveStripsLiveFieldsAndLoadMergesThem(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.Save(liveBinding()); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -204,7 +204,7 @@ func outboxRecordRows(t *testing.T, d *db.DB) []db.DrainedEntry {
 // binding_record outbox rows and rewrite no shared row; one save that moves a
 // synced field queues exactly one.
 func TestOverlayTickQueuesNoOutboxRows(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.Save(liveBinding()); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -259,7 +259,7 @@ func TestOverlayTickQueuesNoOutboxRows(t *testing.T) {
 // flips every served binding at once, so a flip must stay on this machine while
 // the machine itself still reads the flip back.
 func TestConnectionFlipsQueueNoOutboxRows(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.Save(newBinding("api", "/repo/a")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -370,7 +370,7 @@ func TestOverlayIsZeroSeesEveryField(t *testing.T) {
 // both written before these fields moved: the overlay exists but is silent about
 // them, so the row's values stand until its next save moves them across.
 func TestOverlayWithoutConnectionFieldsKeepsTheSyncedOnes(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := liveBinding()
 	if err := s.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -408,7 +408,7 @@ func TestOverlayWithoutConnectionFieldsKeepsTheSyncedOnes(t *testing.T) {
 // stamps when a client last polled, at most hourly, on every polled binding. The
 // stamp reads back, and no stamp queues a binding_record row for the peers.
 func TestServePollStampQueuesNoOutboxRows(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("api", "/repo/a")
 	b.Serve = &ServeFacts{RepoID: "repo-1", BareRepo: "/srv/repo-1.git"}
 	if err := s.Save(b); err != nil {
@@ -449,7 +449,7 @@ func TestServePollStampQueuesNoOutboxRows(t *testing.T) {
 // change persists locally and reports the shared row unchanged; a synced
 // change reports it changed.
 func TestSaveWithOverlayVerdict(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.Save(liveBinding()); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -493,7 +493,7 @@ func TestSaveWithOverlayVerdict(t *testing.T) {
 // TestOverlayDeletedOnRemoveAndRebind pins case 5 across incarnations: a name
 // deleted and re-added reads no stale cursor, and the dead row's key is gone.
 func TestOverlayDeletedOnRemoveAndRebind(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.Save(liveBinding()); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -533,7 +533,7 @@ func TestOverlayDeletedOnRemoveAndRebind(t *testing.T) {
 
 // TestOverlayDeletedOnArchive drops the key on the archive path too.
 func TestOverlayDeletedOnArchive(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.Save(liveBinding()); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -590,7 +590,7 @@ func seedPreOverlayRow(t *testing.T, s *Store, b Binding) db.Record {
 // change) reads whole from its own synced values, migrates its keys into the
 // overlay on the first save, and stays quiet after that.
 func TestOverlaySeedsFromSyncedRow(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := liveBinding()
 	if err := s.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -652,7 +652,7 @@ func TestOverlaySeedsFromSyncedRow(t *testing.T) {
 // save-with-log with advanced live fields leaves a stripped row and a current
 // overlay.
 func TestSaveWithLogKeepsOverlayCurrent(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.Save(liveBinding()); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -680,7 +680,7 @@ func TestSaveWithLogKeepsOverlayCurrent(t *testing.T) {
 // TestLiveKeyScopedPerStoreRoot documents the key's home: a machine-local kv
 // row under a namespace the export never reads.
 func TestLiveKeyScopedPerStoreRoot(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.Save(liveBinding()); err != nil {
 		t.Fatalf("Save: %v", err)
 	}

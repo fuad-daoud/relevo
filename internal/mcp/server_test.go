@@ -12,6 +12,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // fakeVerbs is a Verbs whose methods are swappable per test; a nil field returns (nil, nil).
@@ -472,7 +473,7 @@ func TestServerPassesCallSessionFromMeta(t *testing.T) {
 // silently empty binding list, and the resolver refuses the empty session;
 // all:true still lists every binding without any identity.
 func TestServerStatusWithoutSessionIsAToolError(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	rt := relevo.Runtime{Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
 	saveVerbBinding(t, s, store.Binding{Name: "mine", CWD: "/repo/mine", MasterMindID: mcpTestMasterMindA, Round: 1, State: store.StateActive})
 

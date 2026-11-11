@@ -10,7 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // tierUnsupportedWire is the 422 invalid answer a server's launch render
@@ -31,7 +31,7 @@ func tierUnsupportedWire() *client.HTTPError {
 func TestAddRemoteTierUnsupportedWraps(t *testing.T) {
 	// No t.Parallel: addRemoteMasterMind sets env, like TestAddRemoteServerConflict.
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	fg := &fakeGit{
 		headCommitID:  "1111111111111111111111111111111111111111",
 		rootCommitSHA: "2222222222222222222222222222222222222222",

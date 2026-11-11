@@ -191,7 +191,7 @@ func TestStoredFormat(t *testing.T) {
 // TestSaveWritesCurrentFormat pins that every record carries the current
 // format, so an older relevo refuses it rather than erasing the shape key.
 func TestSaveWritesCurrentFormat(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.Save(newBinding("webshop", "/home/dev/projects/webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestBindingShapeDefaultsToWriter(t *testing.T) {
 		t.Errorf("format-8 record Shape = %q, want %q", old.Shape, ShapeWriter)
 	}
 
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.Save(newBinding("webshop", "/home/dev/projects/webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -231,7 +231,7 @@ func TestBindingShapeDefaultsToWriter(t *testing.T) {
 // current format with the dropped keys gone: unknown keys decode to nothing,
 // so the rewrite is what drops them.
 func TestLegacyBurstRecordLoadsAndResavesWithoutBurst(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.Save(newBinding("webshop", "/home/dev/projects/webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestLegacyBurstRecordLoadsAndResavesWithoutBurst(t *testing.T) {
 // TestSaveRefusesANewerFormat pins that a binding written by a newer relevo is
 // refused, both by Save and by the read.
 func TestSaveRefusesANewerFormat(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("webshop", "/home/dev/projects/webshop")
 	b.Format = BindingFormat + 1
 

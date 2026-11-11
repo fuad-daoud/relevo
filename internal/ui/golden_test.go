@@ -20,6 +20,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/stats"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
 	uistats "github.com/fuad-daoud/relevo/internal/ui/stats"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
@@ -35,7 +36,7 @@ const goldenVersion = "v0.13.0-28-gb66c6fc"
 // goldenModel is a shell loaded with a full view.Report.
 func goldenModel(t *testing.T, width, height int, rep view.Report) Model {
 	t.Helper()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Version: goldenVersion})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
@@ -326,7 +327,7 @@ func goldenRoundModel(t *testing.T, width, height int) Model {
 // fed.
 func goldenArchivedRoundModel(t *testing.T, width, height int) Model {
 	t.Helper()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Version: goldenVersion})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
@@ -375,7 +376,7 @@ func roundReaderArtifactsModel(t *testing.T, width, height int) Model {
 		name  = "review-568"
 		actor = "reviewer"
 	)
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	seedReaderArtifacts(t, st, name, actor, 1, roundReaderFiles(), railNow.Add(-2*time.Minute))
 
 	m := goldenActionModelWithStore(t, width, height, &fakeActions{},
@@ -444,7 +445,7 @@ func realRoundModel(t *testing.T, width, height int) Model {
 		}
 	}
 	planBody := "# Round diff and consult findings go straight into round_file\n\nDate: 2026-09-24. Base: origin/main `b66c6fcc` (#441).\nThere is **one round** in this plan. builder.log, NNN-<id>-ask.md and NNN-plan.md\nare out of scope. Do not touch them.\n\n## Scope\n\n- builder.log is out of scope.\n- Do not touch them.\n\n```go\nfunc main() {}\n```\n"
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	seedPlanFixture(t, st, "spool-db", 1, railNow.Add(-5*time.Minute), planBody)
 
 	m := goldenActionModelWithStore(t, width, height, &fakeActions{}, rep, st)
@@ -464,7 +465,7 @@ func realRoundNeedsYouModel(t *testing.T, width, height int) Model {
 		}
 	}
 	planBody := "# Fix 433 Plan\n\nDedupe bindings across stores.\n"
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	seedPlanFixture(t, st, "fix-433", 2, railNow.Add(-3*time.Minute), planBody)
 
 	m := goldenActionModelWithStore(t, width, height, &fakeActions{}, rep, st)
@@ -483,7 +484,7 @@ func goldenRoundsModel(t *testing.T, width, height int) Model {
 		t.Fatalf("db.Open: %v", err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st, DB: d}},
 		Options{Interval: time.Second, Start: "rounds", Version: goldenVersion})
 	m.now = func() time.Time { return railNow }
@@ -581,7 +582,7 @@ func goldenLogModel(t *testing.T, width, height int) Model {
 		t.Fatalf("db.Open: %v", err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st, DB: d}},
 		Options{Interval: time.Second, Start: "log", Version: goldenVersion})
 	m.now = func() time.Time { return railNow }
@@ -618,7 +619,7 @@ func goldenStatsModel(t *testing.T, width, height int, rep stats.Report) Model {
 		t.Fatalf("db.Open: %v", err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st, DB: d}},
 		Options{Interval: time.Second, Start: "stats", Version: goldenVersion})
 	m.now = func() time.Time { return railNow }
@@ -1089,7 +1090,7 @@ func chainStepsHaltedModel(t *testing.T, width, height int) Model {
 // builder's round 2, opened under the crumbs chains › feature-auth › build.
 func chainDrillModel(t *testing.T, width, height int) Model {
 	t.Helper()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	seedPlanFixture(t, st, "feature-auth", 2, railNow.Add(-6*time.Minute),
 		"# Round 2 plan\n\nAdd the token refresh path and its tests.\n")
 	fa := &fakeActions{chainsDoc: chainsFixtureDoc()}
@@ -1470,7 +1471,7 @@ func TestGoldenViews(t *testing.T) {
 		{
 			name: "fleet-error-before-load", width: 140, height: 40,
 			build: func(t *testing.T) Model {
-				st := store.New(t.TempDir())
+				st := storetest.New(t)
 				m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Version: goldenVersion})
 				m.now = func() time.Time { return railNow }
 				res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})

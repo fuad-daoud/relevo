@@ -9,7 +9,7 @@ import (
 // promotes it into binding_record's link columns and keeps it in the binding
 // JSON, so a load returns it. The link is a field recordFormat does not stamp.
 func TestSaveKeepsRemoteLink(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("api", "/repo")
 	b.Builder = Endpoint{Mode: ModeRemote, Server: "zen"}
 	b.Link = &RemoteLink{Installation: "01SERVER", ID: "01SRVRECORD"}
@@ -41,7 +41,7 @@ func TestSaveKeepsRemoteLink(t *testing.T) {
 // TestSaveWithoutLinkStoresNone pins the row shape for every other binding: a
 // binding with no link stores no link columns.
 func TestSaveWithoutLinkStoresNone(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.Save(newBinding("api", "/repo")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestSaveWithoutLinkStoresNone(t *testing.T) {
 // row takes that id, and Store.RecordID reads it back. RecordID is not part of
 // the binding JSON: a load leaves it empty.
 func TestSaveUsesPreMintedRecordID(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("api", "/repo")
 	b.RecordID = "01MINTEDRECORD"
 	if err := s.Save(b); err != nil {
@@ -92,7 +92,7 @@ func TestSaveUsesPreMintedRecordID(t *testing.T) {
 // TestRecordIDMissingIsNotFound pins the error a caller gets for a binding that
 // does not exist.
 func TestRecordIDMissingIsNotFound(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if _, err := s.RecordID("nope"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("RecordID on a missing binding = %v, want ErrNotFound", err)
 	}

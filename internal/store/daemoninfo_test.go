@@ -11,7 +11,7 @@ import (
 )
 
 func TestDaemonInfoRoundTrip(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	base := time.Date(2026, 9, 23, 9, 0, 0, 0, time.UTC)
 	want := DaemonInfo{
 		Version:    "v1.2.3",
@@ -47,7 +47,7 @@ func TestDaemonInfoRoundTrip(t *testing.T) {
 // empty reexec_from and a null reexec_failed, and it reads back.
 func TestWriteDaemonInfoPlainStart(t *testing.T) {
 	root := t.TempDir()
-	s := New(root)
+	s := storeAt(t, root)
 	if err := s.WriteDaemonInfo(DaemonInfo{Version: "v1"}); err != nil {
 		t.Fatalf("WriteDaemonInfo: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestWriteDaemonInfoPlainStart(t *testing.T) {
 }
 
 func TestReadDaemonInfoMissingIsNotAnError(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	info, ok, err := s.ReadDaemonInfo()
 	if err != nil {
 		t.Fatalf("ReadDaemonInfo on a missing record: %v", err)
@@ -98,7 +98,7 @@ func TestReadDaemonInfoMissingIsNotAnError(t *testing.T) {
 // record is an error, not a silent (zero, false, nil).
 func TestReadDaemonInfoMalformedIsAnError(t *testing.T) {
 	root := t.TempDir()
-	s := New(root)
+	s := storeAt(t, root)
 	d, err := s.DB()
 	if err != nil {
 		t.Fatalf("DB: %v", err)
@@ -113,7 +113,7 @@ func TestReadDaemonInfoMalformedIsAnError(t *testing.T) {
 
 func TestRemoveDaemonInfo(t *testing.T) {
 	root := t.TempDir()
-	s := New(root)
+	s := storeAt(t, root)
 	if err := s.WriteDaemonInfo(DaemonInfo{Version: "v1"}); err != nil {
 		t.Fatalf("WriteDaemonInfo: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestRemoveDaemonInfo(t *testing.T) {
 // The daemon record is machine-local: written to the shared file, the split
 // pass moves it out, with a full backup, on every daemon start.
 func TestDaemonInfoLeavesTheSplitNothingToMove(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	d, err := s.DB()
 	if err != nil {
 		t.Fatalf("DB: %v", err)

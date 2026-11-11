@@ -157,3 +157,24 @@ func TestOwnerModeOffOpensDirectly(t *testing.T) {
 		t.Errorf("a direct Open did not create %s: %v", path, err)
 	}
 }
+
+// TestCheckNoOpenHandlesFailsOnAHandleLeftOpen pins the guard Main runs after
+// the tests: a handle still open fails the binary, and closing it clears it.
+func TestCheckNoOpenHandlesFailsOnAHandleLeftOpen(t *testing.T) {
+	if code := checkNoOpenHandles(); code != 0 {
+		t.Fatalf("checkNoOpenHandles with nothing open = %d, want 0", code)
+	}
+	d, err := db.Open(filepath.Join(t.TempDir(), "left-open.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	if code := checkNoOpenHandles(); code != 1 {
+		t.Errorf("checkNoOpenHandles with a handle open = %d, want 1", code)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if code := checkNoOpenHandles(); code != 0 {
+		t.Errorf("checkNoOpenHandles after the close = %d, want 0", code)
+	}
+}

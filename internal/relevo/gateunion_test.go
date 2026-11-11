@@ -8,7 +8,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // servedShapeRuntime returns rt as internal/serve's runtimeAt builds one: the
@@ -170,7 +170,7 @@ func TestGateUnionKeepsWritesInTheirOwnRows(t *testing.T) {
 		Candidates: candidateSet(t, `[
   {"harness":"claude","provider":"test","model":"a","roles":["builder"]}
 ]`),
-		Store: store.New(t.TempDir()),
+		Store: storetest.New(t),
 		Gates: testGateKV(t),
 		Now:   func() time.Time { return baseTime },
 	})

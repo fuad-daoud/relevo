@@ -2,6 +2,7 @@ package db
 
 import (
 	"path/filepath"
+	"sort"
 	"sync"
 )
 
@@ -166,4 +167,19 @@ func handleCount(path string) int {
 		return h.count
 	}
 	return 0
+}
+
+// OpenHandles lists, sorted, every path this process still holds a direct
+// handle on. A test binary checks it once its tests are done: a handle left
+// open holds the engine's page cache and file descriptors until the process
+// exits, so leaks add up across a package's tests.
+func OpenHandles() []string {
+	directHandles.Lock()
+	defer directHandles.Unlock()
+	paths := make([]string, 0, len(directHandles.paths))
+	for p := range directHandles.paths {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	return paths
 }

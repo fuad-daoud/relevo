@@ -11,7 +11,7 @@ import (
 // TestArchiveSealsAndFreesTheName pins the archive: round files sealed into
 // round_file, the directory gone, and the name free to bind again.
 func TestArchiveSealsAndFreesTheName(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.Save(newBinding("webshop", "/repo")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestArchiveSealsAndFreesTheName(t *testing.T) {
 // TestReadFileResolvesTheMostRecentlyArchivedRecord pins the archived half of
 // sealedLookup, and ListArchived's oldest-first order.
 func TestReadFileResolvesTheMostRecentlyArchivedRecord(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	for _, round := range []string{"first", "second"} {
 		if err := s.Save(newBinding("webshop", "/repo")); err != nil {
 			t.Fatalf("Save: %v", err)
@@ -106,7 +106,7 @@ func TestReadFileResolvesTheMostRecentlyArchivedRecord(t *testing.T) {
 // carrying no binding. Rows sharing a stamp are all listed, so a same-
 // millisecond archive is never hidden from the caller.
 func TestListArchivedSinceListsIdentities(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	for _, name := range []string{"first", "second"} {
 		if err := s.Save(newBinding(name, "/repo")); err != nil {
 			t.Fatalf("Save %s: %v", name, err)
@@ -149,7 +149,7 @@ func TestListArchivedSinceListsIdentities(t *testing.T) {
 // create asks before writing: true after the archive, false for a live and
 // for an unknown name.
 func TestHasArchivedNamesAnArchivedBinding(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.Save(newBinding("shop", "/repo")); err != nil {
 		t.Fatalf("Save shop: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestHasArchivedNamesAnArchivedBinding(t *testing.T) {
 // entry_json is authoritative and Seq, Confirmed, DeliveredAt and Route come
 // from the promoted columns.
 func TestArchivedLogDecodesEntries(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("webshop", "/repo")
 	delivered := time.Date(2026, 9, 10, 10, 2, 0, 0, time.UTC)
 	e1 := LogEntry{TS: time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC), Round: 1, Direction: DirToBuilder, Kind: KindPrompt, Confirmed: true}

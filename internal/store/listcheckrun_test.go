@@ -6,7 +6,7 @@ import "testing"
 // what Save actually writes: a renamed JSON key for CheckRun would make the
 // narrowed list come back empty.
 func TestListWithCheckRunReadsOnlyCheckCarriers(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.Save(newBinding("plain", "/repo/plain")); err != nil {
 		t.Fatalf("Save plain: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestListWithCheckRunReadsOnlyCheckCarriers(t *testing.T) {
 		t.Errorf("ListWithCheckRun = %v, want [running settled]", names)
 	}
 
-	if got, err := New(t.TempDir()).ListWithCheckRun(); err != nil || len(got) != 0 {
+	if got, err := newStore(t).ListWithCheckRun(); err != nil || len(got) != 0 {
 		t.Errorf("an empty root = (%v, %v), want none and no error", got, err)
 	}
 }

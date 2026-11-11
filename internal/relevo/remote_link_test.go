@@ -8,7 +8,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/installation"
 	"github.com/fuad-daoud/relevo/internal/remote"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // TestAddRemoteRecordsLink pins the client half of the link: a server that
@@ -17,7 +17,7 @@ import (
 // the client row's link, and the stored row carries the id the server was told.
 func TestAddRemoteRecordsLink(t *testing.T) {
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	fg := &fakeGit{
 		headCommitID:  "1111111111111111111111111111111111111111",
 		rootCommitSHA: "2222222222222222222222222222222222222222",

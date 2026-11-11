@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // probeBase is the instant every probe test starts its fake clock at.
@@ -66,7 +66,7 @@ func probeRuntime(t *testing.T, setBody string) (Runtime, *time.Time) {
 	t.Helper()
 	now := probeBase
 	rt := Runtime{
-		Store:      store.New(t.TempDir()),
+		Store:      storetest.New(t),
 		Candidates: candidateSet(t, setBody),
 		History:    testHistoryDB(t),
 		Now:        func() time.Time { return now },

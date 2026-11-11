@@ -110,7 +110,7 @@ func TestRootReadDir(t *testing.T) {
 // TestOutRootAndWorktreeRoot pins that a binding's out/ and .worktrees/ open as
 // confined roots when they exist, and report an error when they do not.
 func TestOutRootAndWorktreeRoot(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := os.MkdirAll(s.OutDir("webshop"), 0o700); err != nil {
 		t.Fatal(err)
 	}

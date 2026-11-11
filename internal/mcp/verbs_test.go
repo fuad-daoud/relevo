@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -84,7 +85,7 @@ func saveVerbBinding(t *testing.T, s *store.Store, b store.Binding) {
 }
 
 func TestRelevoVerbsStatusFiltersByMasterMindThenName(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	rt := relevo.Runtime{
 		Store: s,
 		Now:   func() time.Time { return time.Unix(0, 0) },
@@ -133,7 +134,7 @@ func TestRelevoVerbsStatusFiltersByMasterMindThenName(t *testing.T) {
 
 // TestMCPStatusFiltersByMasterMind: the two bindings here share a pane, so only the mastermind id tells them apart.
 func TestMCPStatusFiltersByMasterMind(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	rt := relevo.Runtime{
 		Store: s,
 		Now:   func() time.Time { return time.Unix(0, 0) },
@@ -160,7 +161,7 @@ func TestMCPStatusFiltersByMasterMind(t *testing.T) {
 // binding needing no harness or live pane, and the plan path to send.
 func newHeadlessSendFixture(t *testing.T) (*RelevoVerbs, string) {
 	t.Helper()
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	set := writeCandidates(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"],"extra_args":["--dangerously-skip-permissions"]}]`)
 	rt := relevo.Runtime{
 		Store:      s,
@@ -221,7 +222,7 @@ func TestRelevoVerbsSendHeadless(t *testing.T) {
 }
 
 func TestRelevoVerbsDoneForwardsAndReportsText(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	rt := relevo.Runtime{Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
 	saveVerbBinding(t, s, store.Binding{
 		Name: "webshop", CWD: "/repo",
@@ -253,7 +254,7 @@ func TestRelevoVerbsDoneForwardsAndReportsText(t *testing.T) {
 }
 
 func TestRelevoVerbsDoneErrorPropagates(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	rt := relevo.Runtime{Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
 	v := &RelevoVerbs{RT: rt, MasterMind: mcpTestMasterMindA}
 
@@ -301,7 +302,7 @@ func seedVerbChain(t *testing.T, s *store.Store, name, status string) {
 // that is a chain calls relevo.ChainDone, so every member is released and the
 // chain is marked done -- the same one row status shows for the chain.
 func TestRelevoVerbsDoneOnAChainReleasesEveryMember(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	rt := relevo.Runtime{Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
 	seedVerbChain(t, s, "shop", "stopped")
 
@@ -340,7 +341,7 @@ func TestRelevoVerbsDoneOnAChainReleasesEveryMember(t *testing.T) {
 // done on a running chain's name is the chain refusal, done on one of its
 // members is the running-chain-member refusal, and neither marks anything done.
 func TestRelevoVerbsDoneRefusedOnARunningChain(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	rt := relevo.Runtime{Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
 	seedVerbChain(t, s, "shop", "running")
 
@@ -372,7 +373,7 @@ func TestRelevoVerbsDoneRefusedOnARunningChain(t *testing.T) {
 // resolver that yields "" with a nil error is an error naming the session, and
 // --all needs no identity at all.
 func TestRelevoVerbsStatusResolvesSession(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	rt := relevo.Runtime{
 		Store: s,
 		Now:   func() time.Time { return time.Unix(0, 0) },
@@ -419,7 +420,7 @@ func TestRelevoVerbsStatusResolvesSession(t *testing.T) {
 // fix instead of filtering every binding away, and returns no report. all:true
 // still needs no identity.
 func TestRelevoVerbsStatusWithoutIdentityErrors(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	rt := relevo.Runtime{Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
 	saveVerbBinding(t, s, store.Binding{Name: "mine", CWD: "/repo/mine", MasterMindID: mcpTestMasterMindA, Round: 1, State: store.StateActive})
 
@@ -440,7 +441,7 @@ func TestRelevoVerbsStatusWithoutIdentityErrors(t *testing.T) {
 // TestRelevoVerbsStatusRetriesResolveSession pins the late-record path: a
 // resolver that fails until the record appears makes the next Status succeed.
 func TestRelevoVerbsStatusRetriesResolveSession(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	rt := relevo.Runtime{Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
 	saveVerbBinding(t, s, store.Binding{Name: "mine", CWD: "/repo/mine", MasterMindID: mcpTestMasterMindA, Round: 1, State: store.StateActive})
 
@@ -474,7 +475,7 @@ func TestRelevoVerbsStatusRetriesResolveSession(t *testing.T) {
 // therefore the newest completed round.
 func newShowVerbStore(t *testing.T) *store.Store {
 	t.Helper()
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	saveVerbBinding(t, s, store.Binding{Name: "webshop", CWD: "/repo", Round: 2, State: store.StateActive})
 
 	write := func(path, content string) {
@@ -613,7 +614,7 @@ func TestRelevoVerbsShowClaimsOnlyWhatItPrinted(t *testing.T) {
 // finds a report section and only the round-1 read has a payload to claim.
 func pendingShowVerbStore(t *testing.T) *store.Store {
 	t.Helper()
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	saveVerbBinding(t, s, store.Binding{Name: "webshop", CWD: "/repo", Round: 3, State: store.StateActive})
 
 	write := func(path, content string) {
@@ -663,7 +664,7 @@ func assertGateSetDoc(t *testing.T, doc gateDoc, provider string, candidates int
 // candidate set and a real gates database: the ledger entry a set writes, and
 // the removed count a clear reports and prints.
 func TestRelevoVerbsGateSetAndClear(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	set := writeCandidates(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"],"extra_args":["--dangerously-skip-permissions"]},
 		{"harness":"claude","provider":"test","model":"n","roles":["builder"],"extra_args":["--dangerously-skip-permissions"]}]`)
 	kv := testGateKV(t)
@@ -734,7 +735,7 @@ func TestRelevoVerbsGateSetAndClear(t *testing.T) {
 // tool route: a limit reason naming no reset takes the policy default, and a
 // credit-classed reason holds until cleared.
 func TestRelevoVerbsGateBoundsUnparsedReason(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	set := writeCandidates(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"],"extra_args":["--dangerously-skip-permissions"]}]`)
 	kv := testGateKV(t)
 	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
@@ -766,7 +767,7 @@ func TestRelevoVerbsGateBoundsUnparsedReason(t *testing.T) {
 // TestRelevoVerbsGateRejectsNonPositiveFor pins that a zero or negative
 // duration is refused before anything is written.
 func TestRelevoVerbsGateRejectsNonPositiveFor(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	set := writeCandidates(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"]}]`)
 	kv := testGateKV(t)
 	rt := relevo.Runtime{Store: s, Candidates: set, Gates: kv, Now: func() time.Time { return time.Unix(0, 0) }}

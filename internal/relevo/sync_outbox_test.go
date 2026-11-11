@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
@@ -22,7 +22,7 @@ import (
 // counts what the tick left behind.
 func outboxRuntime(t *testing.T) (Runtime, *sql.DB) {
 	t.Helper()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	mdb, err := st.DB()
 	if err != nil {
 		t.Fatalf("store db: %v", err)

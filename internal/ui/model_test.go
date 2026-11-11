@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -48,7 +49,7 @@ func hasTabMsg(batch []tea.Cmd) bool {
 }
 
 func TestSingleFlightStatusInFlightBlocksSecondFetch(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 
@@ -68,7 +69,7 @@ func TestSingleFlightStatusInFlightBlocksSecondFetch(t *testing.T) {
 }
 
 func TestSingleFlightTabInFlightStillIssuesStatus(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 
@@ -91,7 +92,7 @@ func TestSingleFlightTabInFlightStillIssuesStatus(t *testing.T) {
 // fetch guard (the second of the two guards): a tick while tabInFlight is
 // set must not issue a second tab fetch.
 func TestSingleFlightTabInFlightBlocksSecondTabFetch(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -110,7 +111,7 @@ func TestSingleFlightTabInFlightBlocksSecondTabFetch(t *testing.T) {
 }
 
 func TestStatusMsgErrorPreservesReport(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 
@@ -138,7 +139,7 @@ func TestStatusMsgErrorPreservesReport(t *testing.T) {
 }
 
 func TestStatusMsgSuccessClearsError(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 
@@ -167,7 +168,7 @@ func TestStatusMsgSuccessClearsError(t *testing.T) {
 // TestTabMsgMismatchedBindingDiscarded ports the pane's name check: a reply
 // for another binding is dropped, and the reply still ends the fetch.
 func TestTabMsgMismatchedBindingDiscarded(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -195,7 +196,7 @@ func TestTabMsgMismatchedBindingDiscarded(t *testing.T) {
 }
 
 func TestWindowSizeMsgSetsReady(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 
@@ -245,7 +246,7 @@ func TestRowHelper(t *testing.T) {
 }
 
 func TestStaleRoundReplyDiscardedForDiff(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -273,7 +274,7 @@ func TestStaleRoundReplyDiscardedForDiff(t *testing.T) {
 // report reply is round-scoped exactly like diff, so a reply for a round that
 // is no longer on screen must be discarded.
 func TestStaleRoundReplyDiscardedForReport(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -298,7 +299,7 @@ func TestStaleRoundReplyDiscardedForReport(t *testing.T) {
 }
 
 func TestMaybeInvalidateBlockedWhenTabInFlight(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -328,7 +329,7 @@ func TestMaybeInvalidateBlockedWhenTabInFlight(t *testing.T) {
 // to the pane's own guard: while a tab fetch is in flight the view issues no
 // second one.
 func TestRoundPaneIssuesOneFetchAtATime(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -349,7 +350,7 @@ func TestRoundPaneIssuesOneFetchAtATime(t *testing.T) {
 }
 
 func TestTickBeforeFirstStatusIssuesNoSecondFetch(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 
@@ -368,7 +369,7 @@ func TestTickBeforeFirstStatusIssuesNoSecondFetch(t *testing.T) {
 // first status the fleet body is loading prose, and an empty report reads
 // as "no bindings".
 func TestLoadingThenEmptyFleet(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -409,7 +410,7 @@ func TestEmptyFleetEnterDoesNothing(t *testing.T) {
 // detail.round within [1, detail.rounds], clamping at either edge, and
 // invalidate every tab's cache.
 func TestStepRoundBackRefetchesEveryTab(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 
@@ -464,7 +465,7 @@ func TestStepRoundBackRefetchesEveryTab(t *testing.T) {
 // TestStepRoundEdgesNoop ports the stepping clamp: stepping past either edge
 // of [1, detail.rounds] changes nothing -- not the round, not the cache.
 func TestStepRoundEdgesNoop(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	b := newTestBinding("webshop")
 	b.Round = 3
@@ -498,7 +499,7 @@ func TestStepRoundEdgesNoop(t *testing.T) {
 // TestPointDetailAtMarksViewed ports the viewed mark: opening a live binding's
 // round view stamps its viewed mark through the widget.Source.
 func TestPointDetailAtMarksViewed(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(store.Binding{Name: "webshop", CWD: "/repo", Round: 2, State: store.StateActive}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -537,7 +538,7 @@ func TestPaneRound(t *testing.T) {
 }
 
 func TestPointDetailAtOpensOnPlanRound(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(store.Binding{Name: "inflight", CWD: "/repo/inflight", Round: 1, State: store.StateActive}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -572,7 +573,7 @@ func TestPointDetailAtOpensOnPlanRound(t *testing.T) {
 // member's current round, not the row's absent plan (which would read round
 // -1 of 0).
 func TestFleetChainRowOpensTheBuilderMembersRound(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(store.Binding{Name: "cc-w2", CWD: "/repo/cc-w2", Round: 3, State: store.StateActive}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}

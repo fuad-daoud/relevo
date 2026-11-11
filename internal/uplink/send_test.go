@@ -21,6 +21,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // fakeGit is the git seam a send needs: branch resolution, the out-ref move
@@ -183,7 +184,7 @@ func remoteBinding(server string) store.Binding {
 // branch resolves, and a fake transport.
 func remoteBuilderRT(t *testing.T, fr *fakeRemote) (relevo.Runtime, *store.Store, *fakeTransport) {
 	t.Helper()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{
 		Name:             "api",
 		CWD:              "/fake/repo",
@@ -245,7 +246,7 @@ func haltedRemoteBinding(server string) store.Binding {
 // empty, and a fake server whose answers a test sets.
 func reopenRemoteRuntime(t *testing.T, b store.Binding) (relevo.Runtime, *fakeRemote) {
 	t.Helper()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +264,7 @@ func TestSendRemoteRecordsOnlyOnSuccess(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{
 		Name:   "api",
 		CWD:    "/fake/repo",
@@ -337,7 +338,7 @@ func TestSendRemoteRoundStartedIsSuccess(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{
 		Name:   "api",
 		CWD:    "/fake/repo",
@@ -434,7 +435,7 @@ func TestSendRemoteHaltedIsAnError(t *testing.T) {
 // remote binding with a shipped head the refused send must leave alone.
 func haltedSendRuntime(t *testing.T, fr *fakeRemote) (relevo.Runtime, *store.Store) {
 	t.Helper()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{
 		Name:   "api",
 		CWD:    "/fake/repo",
@@ -637,7 +638,7 @@ func TestSendRemoteTierPassedToStartRound(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{
 		Name:   "api",
 		CWD:    "/fake/repo",
@@ -735,7 +736,7 @@ func TestSendRemoteRefusesASymlinkedPlanFile(t *testing.T) {
 // It returns the runtime, the store, the binding as saved, and the sentinel.
 func symlinkedPlanFixture(t *testing.T) (relevo.Runtime, *store.Store, store.Binding, string) {
 	t.Helper()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -783,7 +784,7 @@ func TestSendRemoteForcePassedToStartRound(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{
 		Name:   "api",
 		CWD:    "/fake/repo",
@@ -842,7 +843,7 @@ func TestSendRemoteForceRefusedWithoutTheFeature(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{
 		Name:   "api",
 		CWD:    "/fake/repo",
@@ -913,7 +914,7 @@ func TestSendRemoteStartRoundRetryFollowsTheFeature(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			st := store.New(t.TempDir())
+			st := storetest.New(t)
 			b := store.Binding{
 				Name:   "api",
 				CWD:    "/fake/repo",
@@ -965,7 +966,7 @@ func TestSendRemoteTierAboveMaxWraps(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{
 		Name:   "api",
 		CWD:    "/fake/repo",
@@ -1029,7 +1030,7 @@ func TestSendRemoteSnapshotDeadlineRetriesOnce(t *testing.T) {
 
 	sendFixture := func(t *testing.T, ft *fakeTransport) (relevo.Runtime, string) {
 		t.Helper()
-		st := store.New(t.TempDir())
+		st := storetest.New(t)
 		b := remoteBinding("zen")
 		if err := st.Save(b); err != nil {
 			t.Fatal(err)
@@ -1087,7 +1088,7 @@ func TestSendRemoteFirstSendFullBundle(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{
 		Name:   "api",
 		CWD:    "/fake/repo",
@@ -1148,7 +1149,7 @@ func TestSendRemoteShipsTags(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{
 		Name:   "api",
 		CWD:    "/fake/repo",
@@ -1204,7 +1205,7 @@ func TestSendRemoteSetsLastShipped(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{
 		Name:   "api",
 		CWD:    "/fake/repo",
@@ -1536,7 +1537,7 @@ func TestShipRefusesAPreTierServer(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -1572,7 +1573,7 @@ func TestShipRefusesAPreTierServer(t *testing.T) {
 func TestRecordRefusesARoundThatAdvanced(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -1607,7 +1608,7 @@ func TestRecordRefusesARoundThatAdvanced(t *testing.T) {
 func TestRecordResetsTheRoundForAChainMember(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := haltedRemoteBinding("zen")
 	b.OwedHalt = &store.OwedHalt{Round: 1, Text: "round 1 needs a hand"}
 	if err := st.Save(b); err != nil {
@@ -1692,7 +1693,7 @@ func TestSendRemoteTierUnsupportedWraps(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{
 		Name:   "api",
 		CWD:    "/fake/repo",
@@ -1743,7 +1744,7 @@ func TestSendRemoteInvalidWithoutTierStaysGeneric(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{
 		Name:   "api",
 		CWD:    "/fake/repo",

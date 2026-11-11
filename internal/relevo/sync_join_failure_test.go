@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 	"github.com/fuad-daoud/relevo/internal/sync/verb"
 )
@@ -31,7 +31,7 @@ func TestSetSyncVerbsRecordsAStrandedJoin(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			st := store.New(t.TempDir())
+			st := storetest.New(t)
 			mdb, err := st.DB()
 			if err != nil {
 				t.Fatalf("store db: %v", err)

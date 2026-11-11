@@ -20,7 +20,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	datastats "github.com/fuad-daoud/relevo/internal/stats"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -153,7 +153,7 @@ func statsTestEnv(t *testing.T, width, height int) widget.Env {
 	t.Helper()
 	return widget.Env{
 		Ctx:    context.Background(),
-		Src:    statsTestSource{rt: relevo.Runtime{Store: store.New(t.TempDir())}},
+		Src:    statsTestSource{rt: relevo.Runtime{Store: storetest.New(t)}},
 		Report: view.Report{}, Loaded: true,
 		StatusAt: railNow, Now: railNow, Width: width, Height: height,
 	}
@@ -1516,7 +1516,7 @@ func statsRolesEnv(t *testing.T, set *candidate.Set, reg *roles.Registry) widget
 	t.Helper()
 	env := statsTestEnv(t, 132, 40)
 	env.Src = statsTestSource{rt: relevo.Runtime{
-		Store: store.New(t.TempDir()), Candidates: set, Registry: reg,
+		Store: storetest.New(t), Candidates: set, Registry: reg,
 	}}
 	return env
 }

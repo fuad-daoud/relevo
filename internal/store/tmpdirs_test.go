@@ -13,7 +13,7 @@ import (
 // reports its absolute path, and that Remove deletes the entry alone -- the
 // parent it sits in survives for the next entry.
 func TestEnsureRemoveTmpEntryRoundTrip(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	tmpRoot := t.TempDir()
 
 	dir, err := s.EnsureTmpEntry(tmpRoot, "rounds/x-001")
@@ -41,7 +41,7 @@ func TestEnsureRemoveTmpEntryRoundTrip(t *testing.T) {
 // TestRemoveMissingTmpEntryIsSuccess pins the sweep's idempotence rule: an
 // entry that is not there is not an error.
 func TestRemoveMissingTmpEntryIsSuccess(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.RemoveTmpEntry(t.TempDir(), "rounds/gone-001"); err != nil {
 		t.Errorf("RemoveTmpEntry on a missing entry = %v, want nil", err)
 	}
@@ -51,7 +51,7 @@ func TestRemoveMissingTmpEntryIsSuccess(t *testing.T) {
 // swapped for a symlink out of the tmp root is refused, the target gains
 // nothing, and the link itself stays exactly where it was planted.
 func TestEnsureTmpEntryRefusesSymlinkedDir(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	tmpRoot := t.TempDir()
 	outside := t.TempDir()
 	link := filepath.Join(tmpRoot, "rounds")
@@ -75,7 +75,7 @@ func TestEnsureTmpEntryRefusesSymlinkedDir(t *testing.T) {
 // leaf -- and nothing else: never the pre-existing parent on a second entry,
 // and never the tmp root itself.
 func TestEnsureTmpEntryChownsEachCreatedDir(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	tmpRoot := t.TempDir()
 	var got []string
 	s.SetTenantChown(func(path string) error {
@@ -102,7 +102,7 @@ func TestEnsureTmpEntryChownsEachCreatedDir(t *testing.T) {
 // TestTmpEntryHelpersRefuseEscapingRels pins that a rel containing .. is
 // refused by all three helpers, before anything is created.
 func TestTmpEntryHelpersRefuseEscapingRels(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	tmpRoot := t.TempDir()
 
 	for _, rel := range []string{"../escape", "rounds/../../escape", ".."} {
@@ -125,7 +125,7 @@ func TestTmpEntryHelpersRefuseEscapingRels(t *testing.T) {
 // direct children of the named sub, each with a fresh mtime, siblings under
 // other subs absent, and a missing sub reading empty.
 func TestListTmpEntriesReturnsChildrenWithMtimes(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	tmpRoot := t.TempDir()
 	before := time.Now().Add(-time.Second)
 	for _, rel := range []string{"rounds/x-001", "rounds/x-002", "checks/y-001"} {

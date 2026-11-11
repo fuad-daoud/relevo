@@ -10,7 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // baseTime is the instant every moved test's fixed clock reports.
@@ -93,7 +93,7 @@ func testDeps(t *testing.T) Deps {
 		t.Fatalf("roles.Build: %v", err)
 	}
 	return Deps{
-		Store:        store.New(t.TempDir()),
+		Store:        storetest.New(t),
 		Candidates:   set,
 		Gates:        testGates(t),
 		History:      testShared(t),
@@ -111,7 +111,7 @@ func testDepsWith(t *testing.T, set *candidate.Set) Deps {
 		t.Fatalf("roles.Build: %v", err)
 	}
 	return Deps{
-		Store:        store.New(t.TempDir()),
+		Store:        storetest.New(t),
 		Candidates:   set,
 		Gates:        testGates(t),
 		History:      testShared(t),

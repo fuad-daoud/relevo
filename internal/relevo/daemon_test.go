@@ -20,6 +20,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 func TestTickReconcilesAndPersists(t *testing.T) {
@@ -909,7 +910,7 @@ func TestMasterMindPruneDue(t *testing.T) {
 func TestPruneMasterMindsForgetsAndStamps(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	now := time.Unix(1757000000, 0).UTC()
 	d, err := st.DB()
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // TestChainReadDir pins the one place the chain-membership decision is made
@@ -14,7 +15,7 @@ import (
 func TestChainReadDir(t *testing.T) {
 	t.Parallel()
 
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	member := store.Binding{Name: "shop", CWD: t.TempDir(), Round: 1, State: store.StateActive}
 	if err := s.Save(member); err != nil {
 		t.Fatalf("Save(member): %v", err)
@@ -71,7 +72,7 @@ func TestChainReadDir(t *testing.T) {
 func TestChainReadDirNoChains(t *testing.T) {
 	t.Parallel()
 
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	if err := s.Save(store.Binding{Name: "solo", CWD: t.TempDir(), Round: 1, State: store.StateActive}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}

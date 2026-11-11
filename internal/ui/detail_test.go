@@ -11,14 +11,14 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/muesli/termenv"
 )
 
 func TestEnteringDetailFetchesPlanTabAndNoOther(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	name := "webshop"
 
 	if err := st.Save(newTestBinding(name)); err != nil {
@@ -47,7 +47,7 @@ func TestEnteringDetailFetchesPlanTabAndNoOther(t *testing.T) {
 }
 
 func TestSwitchingToUnloadedTabFetchesOnlyThatOne(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -75,7 +75,7 @@ func TestSwitchingToUnloadedTabFetchesOnlyThatOne(t *testing.T) {
 }
 
 func TestScrollParkAndRestore(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -134,7 +134,7 @@ func TestEmptyContentNotStyledAsError(t *testing.T) {
 }
 
 func TestTabErrorDoesNotCorruptOtherTabs(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -158,7 +158,7 @@ func TestTabErrorDoesNotCorruptOtherTabs(t *testing.T) {
 }
 
 func TestResizeReflowsViewportWithoutLosingActiveTab(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -182,7 +182,7 @@ func TestResizeReflowsViewportWithoutLosingActiveTab(t *testing.T) {
 }
 
 func TestPanicOnShrinkingContent(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -210,7 +210,7 @@ func TestPanicOnShrinkingContent(t *testing.T) {
 }
 
 func TestSwitchTabBackIntoInvalidatedTabNoPanic(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -231,7 +231,7 @@ func TestSwitchTabBackIntoInvalidatedTabNoPanic(t *testing.T) {
 }
 
 func TestRefreshActiveTabPreservesLiveScroll(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -259,7 +259,7 @@ func TestRefreshActiveTabPreservesLiveScroll(t *testing.T) {
 }
 
 func TestInvalidationResetsParkedOffset(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -291,7 +291,7 @@ func TestInvalidationResetsParkedOffset(t *testing.T) {
 }
 
 func TestNonRoundKeyedTabsAccepted(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 	b := newTestBinding(name)
@@ -329,7 +329,7 @@ func TestNonRoundKeyedTabsAccepted(t *testing.T) {
 }
 
 func TestFiveTabsLoadContentEndToEnd(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 	b := newTestBinding(name)

@@ -11,7 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/muesli/termenv"
@@ -82,7 +82,7 @@ func TestBodyHeight(t *testing.T) {
 // tenBindings builds a shell at 80 x height showing b00..b{count-1}.
 func tenBindings(t *testing.T, height, count int) Model {
 	t.Helper()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 	m.now = func() time.Time { return railNow }
@@ -188,7 +188,7 @@ func TestFleetRewindowsWhenBindingRemoved(t *testing.T) {
 }
 
 func TestCursorFollowsBindingByNameAcrossInsert(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 	m.now = func() time.Time { return railNow }
@@ -221,7 +221,7 @@ func TestCursorFollowsBindingByNameAcrossInsert(t *testing.T) {
 }
 
 func TestCursorClampsWhenBindingRemoved(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 	m.now = func() time.Time { return railNow }
@@ -252,7 +252,7 @@ func TestCursorClampsWhenBindingRemoved(t *testing.T) {
 }
 
 func TestEmptyBindingsList(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 	m.now = func() time.Time { return railNow }
@@ -277,7 +277,7 @@ func TestEmptyBindingsList(t *testing.T) {
 }
 
 func TestQuitFromList(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 
@@ -318,7 +318,7 @@ func TestStateStylesDistinguishable(t *testing.T) {
 // before the first status, an unavailable status after only a failure, and
 // "no bindings" after a successful empty report.
 func TestFleetThreeStates(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 
 	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
@@ -367,7 +367,7 @@ func TestFleetThreeStates(t *testing.T) {
 // TestRenderErrorAndErrorBlock ports the error-block tests to the frame
 // (R2.10).
 func TestRenderErrorAndErrorBlock(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 
 	// 1. A three-line error renders as three lines, none wider than width.

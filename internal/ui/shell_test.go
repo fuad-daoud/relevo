@@ -11,7 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -339,7 +339,7 @@ func TestWheelRouting(t *testing.T) {
 // TestSnapshotRoutingForwardsToEveryView: a tabMsg reaches a round view
 // that is under a pushed view (bottom-to-top forwarding).
 func TestSnapshotRoutingForwardsToEveryView(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -449,7 +449,7 @@ func TestRootThenDeliversInitAfterRoot(t *testing.T) {
 // - The message must be a widget.PushMsg, with no tabMsg among the messages that cmd produces.
 // - Feed it to Update, run the returned init, and feed its tabMsg to Update. The plan tab is loaded and tabInFlight is false.
 func TestOpenRoundReplyNeverBeatsPush(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 	b := newTestBinding(name)

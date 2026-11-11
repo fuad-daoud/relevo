@@ -14,7 +14,7 @@ import (
 // drift-shaped patch for a saved binding becomes a round_file row, reads back
 // through ReadFile, is listed by RoundFiles, and never lands on disk.
 func TestPutRoundFileWritesARowWithNoFile(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("webshop", "/home/dev/webshop")
 	b.Round = 2
 	if err := s.Save(b); err != nil {
@@ -54,7 +54,7 @@ func TestPutRoundFileWritesARowWithNoFile(t *testing.T) {
 // TestPutRoundFileUnknownBindingIsErrNotFound pins the lookup: a name with no
 // live record is an error wrapping ErrNotFound, not a silent no-op.
 func TestPutRoundFileUnknownBindingIsErrNotFound(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 
 	err := s.WithLock(func(tx *Tx) error {
 		return tx.PutRoundFile("ghost", 2, s.DriftPath("ghost", 2), []byte("x"))
@@ -68,7 +68,7 @@ func TestPutRoundFileUnknownBindingIsErrNotFound(t *testing.T) {
 // binding dir, a basename without the NNN- prefix, a round/base mismatch and a
 // basename whose NNN- is round 0 are all errors, and none writes a row.
 func TestPutRoundFileRefusesBadInput(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("webshop", "/home/dev/webshop")
 	b.Round = 2
 	if err := s.Save(b); err != nil {

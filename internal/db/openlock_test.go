@@ -221,13 +221,13 @@ func TestTwoSpellingsOfOnePathShareTheLock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open through a symlink while the file is open: %v", err)
 	}
+	t.Cleanup(func() { _ = second.Close() })
 	third, err := openDirect(indirect, Options{})
 	if err != nil {
 		t.Fatalf("open through %s while the file is open: %v", indirect, err)
 	}
+	t.Cleanup(func() { _ = third.Close() })
 	if got := handleCount(link); got != 3 {
 		t.Errorf("handleCount of the symlink = %d, want the three handles on one file", got)
 	}
-	_ = second
-	_ = third
 }

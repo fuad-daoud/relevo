@@ -101,6 +101,9 @@ type Store struct {
 	dbOnce sync.Once
 	dbh    *db.DB
 	dbErr  error
+	// closeOnce makes Close idempotent without writing dbh, which readers
+	// load outside any lock once dbOnce has run.
+	closeOnce sync.Once
 }
 
 // Tx is a locked view of the store. Its methods assume the state lock is

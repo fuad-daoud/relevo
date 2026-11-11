@@ -70,7 +70,7 @@ func formatCases() []formatCase {
 func TestSaveWritesCurrentFormatAndAlwaysNamesTheActor(t *testing.T) {
 	for _, tc := range formatCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			s := New(t.TempDir())
+			s := newStore(t)
 			b := newBinding("webshop", "/home/dev/projects/webshop")
 			tc.mutate(&b)
 			if err := s.Save(b); err != nil {

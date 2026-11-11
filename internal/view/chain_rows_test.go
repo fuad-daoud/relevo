@@ -9,6 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -67,7 +68,7 @@ func TestMembersOfListsTheFilledPartsInOrder(t *testing.T) {
 func TestReadAndEndMembersFollowChainMemberForAWorkflowRow(t *testing.T) {
 	t.Parallel()
 
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	row := putChain(t, s, db.ChainRow{Name: "w", Status: string(chain.StatusRunning), Builder: "w", Reviewer: "legacy-rev",
 		WorkflowJSON: []byte(`{}`)}, store.Binding{Name: "w"})
 	if err := s.WithLock(func(tx *store.Tx) error {
@@ -107,7 +108,7 @@ func TestChainStoreStateKeepsALiveChainOffDone(t *testing.T) {
 func TestChainRowCarriesTheHaltAndTheManualRound(t *testing.T) {
 	t.Parallel()
 
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	row := putChain(t, s, db.ChainRow{Name: "h", Status: string(chain.StatusHalted), Reason: "gate red", Phase: "build", Step: "checking",
 		Builder: "h", Reviewer: "h-rev", AwaitingMember: chain.MemberBuilder, AwaitingRound: 3, MasterMindID: "mm_x"},
 		store.Binding{Name: "h", Round: 3}, store.Binding{Name: "h-rev", Round: 1})
@@ -160,7 +161,7 @@ func TestFactsOfReadsAWorkflowChainsState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	row := putChain(t, s, db.ChainRow{Name: "w", Status: string(chain.StatusRunning), Builder: "w", WorkflowJSON: def, StateJSON: state},
 		store.Binding{Name: "w"})
 
@@ -182,7 +183,7 @@ func TestFactsOfReadsAWorkflowChainsState(t *testing.T) {
 func TestApplyChainsFoldsMembersAndNestsForkChildren(t *testing.T) {
 	t.Parallel()
 
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	running := string(chain.StatusRunning)
 	parent := putChain(t, s, db.ChainRow{Name: "p", Status: running, Builder: "p", Reviewer: "p-rev"},
 		store.Binding{Name: "p"}, store.Binding{Name: "p-rev"})

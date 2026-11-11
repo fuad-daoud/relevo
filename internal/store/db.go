@@ -98,6 +98,28 @@ func (s *Store) DB() (*db.DB, error) { return s.dbForWrite() }
 // DBIfExists is the exported form of dbForRead.
 func (s *Store) DBIfExists() (*db.DB, error) { return s.dbForRead() }
 
+// ErrClosed is what a store closed before its first write returns from that
+// write.
+var ErrClosed = errors.New("store closed")
+
+// Close closes the database this store opened, if it opened one; a shared
+// store's handle belongs to its caller and is left open. A store that never
+// opened its database is marked closed without opening it, so a later write
+// cannot open a handle nobody will close. Close is idempotent.
+func (s *Store) Close() error {
+	if s.shared != nil {
+		return nil
+	}
+	s.dbOnce.Do(func() { s.dbErr = ErrClosed })
+	var err error
+	s.closeOnce.Do(func() {
+		if s.dbh != nil {
+			err = s.dbh.Close()
+		}
+	})
+	return err
+}
+
 // recordEventOf projects a LogEntry onto the binding_event columns.
 func recordEventOf(e LogEntry, entryJSON string) db.RecordEvent {
 	return db.RecordEvent{

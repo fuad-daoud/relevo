@@ -14,7 +14,7 @@ import (
 // TestForkStateCopiesRoundFilesAndLog pins the copy: everything through the
 // cut, paths rewritten into dst's directory, src untouched.
 func TestForkStateCopiesRoundFilesAndLog(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	srcName, dstName := "webshop", "webshop-fork"
 	seedForkSource(t, s, srcName, 5)
 	srcDir := s.Dir(srcName)
@@ -221,7 +221,7 @@ func checkSourceUntouched(t *testing.T, s *Store, srcName, srcDir string, entrie
 }
 
 func TestForkStateValidationAndErrors(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	srcName := "webshop"
 
 	if err := s.Save(newBinding(srcName, "/repo")); err != nil {
@@ -317,7 +317,7 @@ func TestForkStateMidCopyFailureLeavesNoDst(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := New(t.TempDir())
+			s := newStore(t)
 			srcName := "webshop"
 			if err := s.Save(newBinding(srcName, "/repo")); err != nil {
 				t.Fatalf("Save: %v", err)
@@ -344,7 +344,7 @@ func TestForkStateMidCopyFailureLeavesNoDst(t *testing.T) {
 // TestForkWritesNoFiles pins that a fork copies both on-disk and sealed files
 // into round_file rows, and never puts a file in dst's directory.
 func TestForkWritesNoFiles(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	srcName, dstName := "webshop", "webshop-fork"
 	onDisk, sealed := seedSealedForkSource(t, s, srcName)
 

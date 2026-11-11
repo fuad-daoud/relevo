@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // fakeClaimStore is the ClaimStore the plan asks for: a claim present for a
@@ -62,7 +63,7 @@ func (f *fakeClaimStore) Remove(mastermind string, pid int) error {
 func routeRuntime(t *testing.T) Deps {
 	t.Helper()
 	return Deps{
-		Store: store.New(t.TempDir()),
+		Store: storetest.New(t),
 		Now:   func() time.Time { return baseTime },
 	}
 }

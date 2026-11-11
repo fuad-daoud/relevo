@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 func TestRefuseRunningMemberRefusesOnlyARunningChain(t *testing.T) {
@@ -23,7 +24,7 @@ func TestRefuseRunningMemberRefusesOnlyARunningChain(t *testing.T) {
 		t.Run(string(tc.status), func(t *testing.T) {
 			t.Parallel()
 
-			s := store.New(t.TempDir())
+			s := storetest.New(t)
 			member := newMemberChainRow(t, s, "c", string(tc.status), "")
 
 			storeErr := RefuseRunningMemberStore(s, member.Name)
@@ -54,7 +55,7 @@ func TestRefuseRunningMemberRefusesOnlyARunningChain(t *testing.T) {
 func TestRefuseRunningMemberPassesANonMember(t *testing.T) {
 	t.Parallel()
 
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	newMemberChainRow(t, s, "c", string(StatusRunning), "")
 	if err := RefuseRunningMemberStore(s, "plain"); err != nil {
 		t.Errorf("store: %v, want nil", err)

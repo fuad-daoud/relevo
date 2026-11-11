@@ -15,7 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/roles"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // fakeSource is the ConfigSource test seam: it returns whatever version,
@@ -583,7 +583,7 @@ func TestDaemonUsesAServerAddedWhileRunning(t *testing.T) {
 		t.Fatalf("PutSecret: %v", err)
 	}
 
-	rt := Runtime{Store: store.New(t.TempDir()), Config: st}
+	rt := Runtime{Store: storetest.New(t), Config: st}
 	w := NewConfigWatcher(st, t.TempDir(), nil)
 	daemon := NewDaemon(rt, time.Second).WithRefresh(w.Refresh)
 

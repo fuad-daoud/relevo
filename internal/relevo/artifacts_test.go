@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // seedArtifactRound saves a reader binding with round 1 closed and its
@@ -19,7 +20,7 @@ import (
 func seedArtifactRound(t *testing.T, name string) *store.Store {
 	t.Helper()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{
 		Name: name, CWD: "/repo", Round: 2, State: store.StateActive,
 		Shape: store.ShapeReader, Role: "reviewer",
@@ -318,7 +319,7 @@ func TestArtifactsOverTheCapHoldTheSeal(t *testing.T) {
 func TestOutputFallsBackToSummaryMd(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{Name: "legacy", CWD: "/repo", Round: 2, State: store.StateActive, Shape: store.ShapeReader, Role: "reviewer"}
 	if err := st.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)

@@ -9,6 +9,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // driftCase is one scripted Drift outcome. The table lives at package level so
@@ -285,7 +286,7 @@ func TestDrift_Cases(t *testing.T) {
 func runDriftCase(t *testing.T, tc driftCase) {
 	t.Helper()
 	ctx := context.Background()
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	var fg *fakeGit
 	var g Git
 	if !tc.nilGit {
@@ -355,7 +356,7 @@ func TestDrift_DiffTreesArgOrder(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	fg := &fakeGit{
 		diffResult: git.Diff{
 			Stat:  git.Stat{FilesChanged: 1, Insertions: 2, Deletions: 0},
@@ -484,7 +485,7 @@ func TestDriftRenderers_Goldens(t *testing.T) {
 func TestReadDrift(t *testing.T) {
 	t.Parallel()
 
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 5}
 	if err := s.Save(b); err != nil {

@@ -78,7 +78,7 @@ func bindingEvents(t *testing.T, s *Store, name string) []db.RecordEvent {
 
 func seedBinding(t *testing.T) (*Store, string) {
 	t.Helper()
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.Save(newBinding("webshop", "/repo")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}

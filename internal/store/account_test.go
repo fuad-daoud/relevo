@@ -9,7 +9,7 @@ import (
 // written and read back, and that a record from before the field decodes with
 // none, so an old binding is not mistaken for one on a login.
 func TestBindingAccountRoundTrips(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("webshop", "/repo")
 	b.BuilderAccount = "cp2"
 	if err := s.Save(b); err != nil {

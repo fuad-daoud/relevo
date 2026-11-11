@@ -13,7 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/relevo"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // Gates, latency, the claims, the wait claims, the run log and the registry
@@ -268,7 +268,7 @@ func TestAReadOnlyOpenOfAnUnsplitDatabaseStillAnswers(t *testing.T) {
 // itself. Without the local file attached, every surface bound through it falls
 // back to the shared file, and none of the tests above would see it.
 func TestTheStoreHandleCarriesTheMachineLocalFile(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	d, err := st.DB()
 	if err != nil {
 		t.Fatalf("st.DB: %v", err)

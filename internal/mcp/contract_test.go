@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/relevo"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // update rewrites every testdata/contract/*.golden file this test binary touches.
@@ -152,7 +152,7 @@ func TestContractShowAndGateToolResults(t *testing.T) {
 	showVerbs := &RelevoVerbs{RT: relevo.Runtime{Store: newShowVerbStore(t), Now: func() time.Time { return now }}}
 	gateVerbs := &RelevoVerbs{
 		RT: relevo.Runtime{
-			Store:      store.New(t.TempDir()),
+			Store:      storetest.New(t),
 			Candidates: writeCandidates(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"]}]`),
 			Gates:      testGateKV(t),
 			Now:        func() time.Time { return now },

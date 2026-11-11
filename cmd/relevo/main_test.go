@@ -30,6 +30,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/tmpdir"
 	"github.com/fuad-daoud/relevo/internal/upgrade"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -1105,7 +1106,7 @@ func TestBindingArgTakesEitherForm(t *testing.T) {
 }
 
 func TestResolveBindingAcceptsAPositionalName(t *testing.T) {
-	rt := relevo.Runtime{Store: store.New(t.TempDir())}
+	rt := relevo.Runtime{Store: storetest.New(t)}
 
 	// A named binding must be used, not discarded in favour of whatever owns
 	// the cwd.
@@ -1119,7 +1120,7 @@ func TestResolveBindingAcceptsAPositionalName(t *testing.T) {
 }
 
 func TestResolveBindingRefusesTwoNames(t *testing.T) {
-	rt := relevo.Runtime{Store: store.New(t.TempDir())}
+	rt := relevo.Runtime{Store: storetest.New(t)}
 
 	if _, err := resolveBinding(rt, "webshop", []string{"frontend"}); err == nil {
 		t.Fatal("naming the binding twice must be refused rather than one silently winning")

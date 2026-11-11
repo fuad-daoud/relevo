@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // The history retention pass as the daemon runs it: on the maintenance tick
@@ -66,7 +66,7 @@ func historyDaemonFile(t *testing.T) (Runtime, *db.DB, time.Time) {
 func TestTickPrunesAgedHistoryRows(t *testing.T) {
 	t.Parallel()
 	rt, d, _ := historyDaemonFile(t)
-	rt.Store = store.New(t.TempDir())
+	rt.Store = storetest.New(t)
 
 	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
 		t.Fatalf("Tick: %v", err)

@@ -12,7 +12,7 @@ import (
 // a saved record is scoped to this installation and to nothing else.
 func TestSavedRecordCarriesTheInstallationOrigin(t *testing.T) {
 	root := t.TempDir()
-	s := New(root)
+	s := storeAt(t, root)
 
 	inst, err := installation.Load(root)
 	if err != nil {

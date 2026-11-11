@@ -75,7 +75,25 @@ func Main(m *testing.M) int {
 	code := m.Run()
 	ownerCleanup()
 	cleanup()
+	if code == 0 {
+		code = checkNoOpenHandles()
+	}
 	return code
+}
+
+// checkNoOpenHandles fails the binary when a test left a database open: each
+// leaked handle keeps the engine's page cache and descriptors for the rest of
+// the run, and a package's leaks together outgrow the machines that run it.
+func checkNoOpenHandles() int {
+	open := db.OpenHandles()
+	if len(open) == 0 {
+		return 0
+	}
+	fmt.Fprintf(os.Stderr, "dbtest: %d database handle(s) still open after the tests; close each store (storetest.New) and handle (t.Cleanup):\n", len(open))
+	for _, p := range open {
+		fmt.Fprintln(os.Stderr, "  "+p)
+	}
+	return 1
 }
 
 // RawOpen opens path with the package's selected engine, without migrating it

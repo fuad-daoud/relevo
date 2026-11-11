@@ -7,6 +7,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // fakeClaimStore is the map-backed ClaimStore the route tests use: a claim
@@ -32,7 +33,7 @@ func (f fakeClaimStore) Remove(mastermind string, pid int) error {
 func routeRuntime(t *testing.T) Runtime {
 	t.Helper()
 	return Runtime{
-		Store: store.New(t.TempDir()),
+		Store: storetest.New(t),
 		Now:   func() time.Time { return baseTime },
 	}
 }

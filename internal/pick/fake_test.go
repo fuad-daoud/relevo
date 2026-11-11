@@ -6,6 +6,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -27,7 +28,7 @@ func testBinding(name string) store.Binding {
 // clock panics.
 func testRuntime(t *testing.T, bindings ...store.Binding) relevo.Runtime {
 	t.Helper()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	for _, b := range bindings {
 		if err := st.Save(b); err != nil {
 			t.Fatalf("Save %s: %v", b.Name, err)

@@ -8,6 +8,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -65,7 +66,7 @@ func TestFactsOfComputesResumeCheck(t *testing.T) {
 		return db.ChainRow{Name: "w", Status: string(chain.StatusHalted), Builder: "w", WorkflowJSON: def, StateJSON: raw}
 	}
 
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	row := putChain(t, s, haltedRepair(), store.Binding{Name: "w"})
 	if got := FactsOf(s, row); got.ResumeCheck != "check" {
 		t.Errorf("ResumeCheck = %q, want check for a halted repair arm", got.ResumeCheck)
@@ -108,7 +109,7 @@ func TestFactsOfComputesResumeCheckOnARedGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	row := putChain(t, s, db.ChainRow{Name: "w", Status: string(chain.StatusHalted), Builder: "w", WorkflowJSON: def, StateJSON: raw}, store.Binding{Name: "w"})
 	if got := FactsOf(s, row).ResumeCheck; got != "check" {
 		t.Errorf("ResumeCheck = %q, want check for a pass-while-red halt", got)
@@ -138,7 +139,7 @@ func TestFactsOfLeavesGreenGateWithoutCheck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	row := putChain(t, s, db.ChainRow{Name: "w", Status: string(chain.StatusHalted), Builder: "w", WorkflowJSON: def, StateJSON: raw}, store.Binding{Name: "w"})
 	if got := FactsOf(s, row).ResumeCheck; got != "" {
 		t.Errorf("ResumeCheck = %q with a green check, want empty", got)
@@ -179,7 +180,7 @@ steps:
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	row := putChain(t, s, db.ChainRow{Name: "w", Status: string(chain.StatusHalted), Builder: "w", WorkflowJSON: rawDef, StateJSON: raw}, store.Binding{Name: "w"})
 	if got := FactsOf(s, row); got.ResumeCheck != "verify" {
 		t.Errorf("ResumeCheck = %q, want verify for a custom-named feeding check", got.ResumeCheck)
@@ -221,7 +222,7 @@ steps:
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	row := putChain(t, s, db.ChainRow{Name: "m", Status: string(chain.StatusHalted), Builder: "m", WorkflowJSON: rawDef, StateJSON: raw}, store.Binding{Name: "m"})
 	if got := FactsOf(s, row); got.ResumeCheck != "" {
 		t.Errorf("ResumeCheck = %q with two feeding checks, want empty", got.ResumeCheck)
