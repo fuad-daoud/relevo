@@ -258,9 +258,6 @@ type BindingView struct {
 	// linked to. Both are empty from a pre-origin server.
 	ID           string `json:"id,omitempty"`
 	Installation string `json:"installation,omitempty"`
-	// Node is the burst node running the binding's round; "" when the round
-	// runs here, or from a server that predates forwarding.
-	Node string `json:"node,omitempty"`
 
 	WorktreeKept string `json:"worktree_kept,omitempty"`
 	KeptReason   string `json:"kept_reason,omitempty"`

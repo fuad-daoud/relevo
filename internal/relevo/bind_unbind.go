@@ -194,17 +194,6 @@ func UnbindWith(ctx context.Context, rt Runtime, name string, archive, force boo
 		return UnbindResult{}, err
 	}
 
-	// A round still out on a burst node belongs to that node's forward, and
-	// no local process can stop it: only force releases it. The forced
-	// release below then fans the unbind out, the forward's node included,
-	// so the node stops holding a round the head has walked away from.
-	if !force {
-		if fwd := burstForwardOf(b); fwd != nil && (fwd.Phase == "sending" || fwd.Phase == "running") {
-			return UnbindResult{}, fmt.Errorf("round %d runs on burst node %s; relevo stop %s to stop it, or unbind --force to release it anyway: %w",
-				b.Round, fwd.Node, b.Name, ErrForwardRunning)
-		}
-	}
-
 	var serverResp remote.UnbindResponse
 	if b.Builder.Remote() {
 		var err error
@@ -253,13 +242,6 @@ func UnbindWith(ctx context.Context, rt Runtime, name string, archive, force boo
 		if err := rt.Store.Delete(name); err != nil {
 			return res, err
 		}
-	}
-
-	// The record is gone, and with it the only list of the nodes this
-	// binding shipped to: the fan-out runs on the record captured above, so
-	// a forced release of a live forward reaches the forward's node too.
-	if rt.UnbindNodes != nil && b.Burst != nil {
-		rt.UnbindNodes(b)
 	}
 
 	return res, nil

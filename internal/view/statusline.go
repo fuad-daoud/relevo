@@ -140,7 +140,7 @@ func statusLineRowText(row StatusLineRow, nameW, statusW, clockW, columns int, d
 	if statusColour != "" {
 		status = statusColour + status + ansiReset
 	}
-	mid = truncate(dropServerToFit(mid, row.On, midW), midW)
+	mid = truncate(mid, midW)
 	return dot + " " + pad(row.Name, nameW) + "  " + pad(mid, midW) + " " + status + "  " + padLeft(row.Clock, clockW) + "\n"
 }
 

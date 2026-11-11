@@ -295,7 +295,6 @@ func applyStatusBuilderBranch(ctx context.Context, rt Runtime, b store.Binding, 
 		row.BuilderStatus, row.Headless = headlessStatus(ctx, rt, b, detail, loads.aliveMap())
 	} else if b.Builder.Remote() {
 		row.Server = b.Builder.Server
-		row.Node = b.Builder.RemoteNode
 		row.BuilderStatus = b.Builder.RemoteStatus
 		if row.BuilderStatus == "" {
 			row.BuilderStatus = "unknown"

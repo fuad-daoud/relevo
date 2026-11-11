@@ -39,15 +39,6 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		return b, nil
 	}
 
-	// A round the head forwarded to a burst node runs there, not here: while
-	// the node owns it the local tick leaves it alone, marker or no marker.
-	// A closed forward waits only for the node's ack, which must not hold
-	// the next round back, so only sending and running forwards return here.
-	if b.Burst != nil && b.Burst.Forward != nil &&
-		(b.Burst.Forward.Phase == "sending" || b.Burst.Forward.Phase == "running") {
-		return b, nil
-	}
-
 	// The marker close runs in reconcileMarkedClose below.
 	// queueReport's reset clears RoundVerify: read the verify flag before the
 	// close consumes it, as the pane path does.
