@@ -324,16 +324,16 @@ cmd_create() {
 		# the sandbox on a machine that never configured relevo. The path rule
 		# mirrors store.DefaultRoot.
 		#
-		# The seed order matters: an actor's placement is cross-checked against
-		# the servers section when it is written, so servers must be set before
-		# actors or a host that places on a remote server refuses the actors
-		# write and the sandbox silently starts without one.
+		# The seed order matters: an actor is cross-checked when it is written,
+		# its placement against the servers section and its agent against the
+		# agents section, so both must be set before actors or the actors write
+		# is refused and the sandbox silently starts without one.
 		_hostdb="${XDG_STATE_HOME:-$HOME/.local/state}/relevo/relevo.db"
 		_seeded=0
 		if [ ! -f "$_hostdb" ]; then
 			note "no host database at $_hostdb, so no config to copy; the sandbox starts unseeded"
 		else
-			for _s in candidates policy servers actors agents; do
+			for _s in candidates policy servers agents actors; do
 				if _val=$(relevo config get "$_s" 2>/dev/null); then
 					if sb_relevo config set "$_s" "$_val"; then
 						_seeded=1

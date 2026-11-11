@@ -216,3 +216,31 @@ func TestConfigSetRefusesUnknownPolicyKey(t *testing.T) {
 		t.Errorf("message = %q, want it to name policy.round_cap and the known keys", ce.message)
 	}
 }
+
+func TestUnknownAgentKeysLetsOnlyTheEntryFilesMemberThrough(t *testing.T) {
+	body := []byte(`{"x":{"shape":"writer","native":{"claude":{"agent":"x","files":{}}},"files":{"claude":"eA=="},"fils":1}}`)
+	got := unknownAgentKeys(body)
+	want := []string{"x.fils", "x.native.claude.files"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("unknownAgentKeys = %v, want %v", got, want)
+	}
+}
+
+// A native agent's section, as config get prints it with its files member, is
+// accepted by config set into a store that has never held it.
+func TestConfigGetAgentsRoundTripsThroughSetIntoAFreshStore(t *testing.T) {
+	docsEnv(t)
+	entry := `{"x":{"shape":"writer","native":{"claude":{"agent":"x"}},"files":{"claude":"LS0tCm5hbWU6IHgKLS0tCg=="}}}`
+	runDocs(t, "config", "set", "agents", entry)
+	printed := runDocs(t, "config", "get", "agents")
+	if !bytes.Contains(printed, []byte(`"files"`)) {
+		t.Fatalf("config get agents printed no files member: %s", printed)
+	}
+
+	docsEnv(t)
+	runDocs(t, "config", "set", "agents", string(bytes.TrimSpace(printed)))
+	again := runDocs(t, "config", "get", "agents")
+	if !bytes.Equal(bytes.TrimSpace(again), bytes.TrimSpace(printed)) {
+		t.Fatalf("round trip changed the section:\n got %s\nwant %s", again, printed)
+	}
+}

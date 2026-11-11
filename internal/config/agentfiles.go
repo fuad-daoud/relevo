@@ -23,9 +23,9 @@ import (
 // the member does not is filled in by the capture.
 // A source agent carries no file: its definitions derive from its source text.
 
-// agentsFilesMember is the reserved member of an agents item that carries the
+// AgentsFilesMember is the reserved member of an agents item that carries the
 // harness files a native entry names.
-const agentsFilesMember = "files"
+const AgentsFilesMember = "files"
 
 // Caps. One file over the first is refused on its own; an item over the second is
 // refused whole, because a peer would have to carry it. They are the hooks caps:
@@ -91,20 +91,20 @@ func ParseAgentEntryDoc(name string, body json.RawMessage) (AgentEntryDoc, error
 	if err := json.Unmarshal(body, &members); err != nil || members == nil {
 		return doc, nil
 	}
-	raw, ok := members[agentsFilesMember]
+	raw, ok := members[AgentsFilesMember]
 	if !ok {
 		return doc, nil
 	}
 	var files map[string]string
 	if err := json.Unmarshal(raw, &files); err != nil {
 		return AgentEntryDoc{}, fmt.Errorf("%s: %s: %s is not a kind-to-file map: %w",
-			Agents, name, agentsFilesMember, err)
+			Agents, name, AgentsFilesMember, err)
 	}
 	for kind, encoded := range files {
 		contents, err := base64.StdEncoding.DecodeString(encoded)
 		if err != nil {
 			return AgentEntryDoc{}, fmt.Errorf("%s: %s: %s: %s is not base64: %w",
-				Agents, name, agentsFilesMember, kind, err)
+				Agents, name, AgentsFilesMember, kind, err)
 		}
 		doc.Files[kind] = AgentFile{Kind: kind, Contents: contents}
 	}
@@ -132,7 +132,7 @@ func (d AgentEntryDoc) Encode() (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	members[agentsFilesMember] = files
+	members[AgentsFilesMember] = files
 	body, err := json.Marshal(members)
 	if err != nil {
 		return nil, err
@@ -147,7 +147,7 @@ func (d AgentEntryDoc) entryOnly() (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	delete(members, agentsFilesMember)
+	delete(members, AgentsFilesMember)
 	body, err := json.Marshal(members)
 	if err != nil {
 		return nil, err

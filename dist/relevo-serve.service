@@ -3,7 +3,7 @@ Description=relevo serve - remote builders for enrolled relevo clients
 # relevo serve reaches relevo.db through the local daemon's owner socket like
 # any other client, so the unit pulls the user daemon in and starts after it.
 Wants=relevo.service
-After=default.target relevo.service
+After=relevo.service
 
 [Service]
 Type=simple

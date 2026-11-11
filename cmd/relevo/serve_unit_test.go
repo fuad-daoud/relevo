@@ -83,3 +83,47 @@ func TestServiceUnitsCarryTheGoBinOnPath(t *testing.T) {
 		}
 	}
 }
+
+// afterItsInstallTarget names a target the unit is both WantedBy= and After=.
+// A target is ordered after the units it wants, so that pair is a cycle, and
+// systemd breaks it at boot by dropping a start job.
+func afterItsInstallTarget(body string) string {
+	var after, wantedBy []string
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if rest, ok := strings.CutPrefix(line, "After="); ok {
+			after = append(after, strings.Fields(rest)...)
+		}
+		if rest, ok := strings.CutPrefix(line, "WantedBy="); ok {
+			wantedBy = append(wantedBy, strings.Fields(rest)...)
+		}
+	}
+	for _, target := range wantedBy {
+		if hasArg(after, target) {
+			return target
+		}
+	}
+	return ""
+}
+
+// TestServiceUnitsAreNotOrderedAfterTheirInstallTarget keeps relevo-serve
+// starting after a reboot: with both units After=default.target, systemd found
+// relevo-serve -> relevo -> default.target -> relevo-serve and deleted the
+// serve's start job.
+func TestServiceUnitsAreNotOrderedAfterTheirInstallTarget(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"relevo.service", "relevo-serve.service"} {
+		path := filepath.Join("..", "..", "dist", name)
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if target := afterItsInstallTarget(string(body)); target != "" {
+			t.Errorf("%s is WantedBy= and After= %s, an ordering cycle", path, target)
+		}
+	}
+	if afterItsInstallTarget("[Unit]\nAfter=default.target x.service\n[Install]\nWantedBy=default.target\n") != "default.target" {
+		t.Error("afterItsInstallTarget missed the cycle")
+	}
+}
