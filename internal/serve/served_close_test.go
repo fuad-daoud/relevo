@@ -355,6 +355,112 @@ func TestCloseServedRoundRecordsCost(t *testing.T) {
 	}
 }
 
+// TestCloseServedRoundBranchlessReaderRecordsCost pins the branchless cost
+// path: a reader close with no branch still records the round's burst, since
+// the hook runs on the round facts rather than the git facts.
+func TestCloseServedRoundBranchlessReaderRecordsCost(t *testing.T) {
+	t.Parallel()
+
+	env := setupTestEnv(t)
+	ctx := context.Background()
+	repoID := strings.Repeat("a", 64)
+	at := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	burst, base := int64(2<<30), int64(1<<30)
+
+	rt := env.runtime(t)
+	b := store.Binding{
+		Name:  "api",
+		Owner: string(env.id),
+		CWD:   "/build/shop",
+		Round: 2,
+		Shape: store.ShapeReader,
+		Serve: &store.ServeFacts{BareRepo: "/bare/shop.git", RepoID: repoID},
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if err := rt.Store.AppendLog("api", store.LogEntry{
+		Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
+		TS: at, Rusage: &store.Rusage{BaseBytes: &base, BurstBytes: &burst},
+	}); err != nil {
+		t.Fatalf("append log: %v", err)
+	}
+
+	costRoot := t.TempDir()
+	costRT := relevo.Runtime{Git: &stubGit{}, Store: rt.Store, CostRoot: costRoot}
+
+	res := CloseServedRound(ctx, costRT, b)
+	if res.Serve.ClosedRound != 1 {
+		t.Fatalf("ClosedRound: got %d, want 1", res.Serve.ClosedRound)
+	}
+	cf, err := loadCostFile(costFilePath(costRoot, repoID, "builder"))
+	if err != nil {
+		t.Fatalf("load cost file: %v", err)
+	}
+	if cf.LastRound != 1 || len(cf.Samples) != 1 {
+		t.Fatalf("cost file = last %d samples %d, want 1 and 1", cf.LastRound, len(cf.Samples))
+	}
+	if cf.Samples[0] != (costSample{Base: base, Burst: burst, At: at}) {
+		t.Fatalf("sample = %+v, want base %d burst %d at %v", cf.Samples[0], base, burst, at)
+	}
+}
+
+// TestCloseServedRoundGitFailureRecordsNoCost pins the dirty-check failure's
+// exclusion: a close that cannot stamp its facts records no cost, since the
+// hook runs only after the facts land.
+func TestCloseServedRoundGitFailureRecordsNoCost(t *testing.T) {
+	t.Parallel()
+
+	env := setupTestEnv(t)
+	ctx := context.Background()
+	repoID := strings.Repeat("a", 64)
+	at := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	burst, base := int64(2<<30), int64(1<<30)
+
+	rt := env.runtime(t)
+	b := store.Binding{
+		Name:     "api",
+		Owner:    string(env.id),
+		CWD:      "/build/shop",
+		Branch:   "relevo/api",
+		Worktree: "/tmp/fake-wt",
+		Round:    2,
+		Serve: &store.ServeFacts{
+			BareRepo:     "/fake/bare",
+			RepoID:       repoID,
+			ClosedRound:  0,
+			ResultCommit: "old-head",
+			DirtyCommit:  "",
+		},
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if err := rt.Store.AppendLog("api", store.LogEntry{
+		Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
+		TS: at, Rusage: &store.Rusage{BaseBytes: &base, BurstBytes: &burst},
+	}); err != nil {
+		t.Fatalf("append log: %v", err)
+	}
+
+	costRoot := t.TempDir()
+	fGit := &stubGit{
+		refSHA: map[string]string{
+			"refs/heads/relevo/api": "commit123",
+		},
+		dirtyErr: errors.New("dirty failure"),
+	}
+	costRT := relevo.Runtime{Git: fGit, Store: rt.Store, CostRoot: costRoot}
+
+	res := CloseServedRound(ctx, costRT, b)
+	if res.Serve.ClosedRound != 0 {
+		t.Fatalf("ClosedRound changed on git error: got %d, want 0", res.Serve.ClosedRound)
+	}
+	if _, err := os.Stat(costFilePath(costRoot, repoID, "builder")); !os.IsNotExist(err) {
+		t.Fatalf("cost file exists after git failure: err=%v", err)
+	}
+}
+
 // TestCloseServedRoundCostFailureKeepsFacts pins the hook's warn-only rule: a
 // corrupt cost file never stops the close from stamping its facts.
 func TestCloseServedRoundCostFailureKeepsFacts(t *testing.T) {
@@ -440,5 +546,8 @@ func TestRuntimeAtWiresCloseServedRound(t *testing.T) {
 	rt := s.runtimeAt(filepath.Join(root, "bindings", "aaa"))
 	if rt.CloseServedRound == nil {
 		t.Fatal("CloseServedRound is nil: owner runtimes must serve the close")
+	}
+	if rt.CostRoot != root {
+		t.Fatalf("CostRoot = %q, want %q", rt.CostRoot, root)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -188,6 +189,87 @@ func TestSampleForEntry(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRecordClosedCostGuards pins the hook's guards: without a cost root or
+// a store the call records nothing, and without a matching report entry a
+// store-backed runtime still writes nothing.
+func TestRecordClosedCostGuards(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty root records nothing", func(t *testing.T) {
+		t.Parallel()
+
+		env := setupTestEnv(t)
+		repoID := strings.Repeat("e", 64)
+		at := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+		burst, base := int64(2<<30), int64(1<<30)
+
+		rt := env.runtime(t)
+		b := store.Binding{
+			Name:  "api",
+			Owner: string(env.id),
+			CWD:   "/build/shop",
+			Round: 2,
+			Serve: &store.ServeFacts{BareRepo: "/fake/bare", RepoID: repoID},
+		}
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatalf("save: %v", err)
+		}
+		if err := rt.Store.AppendLog("api", store.LogEntry{
+			Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
+			TS: at, Rusage: &store.Rusage{BaseBytes: &base, BurstBytes: &burst},
+		}); err != nil {
+			t.Fatalf("append log: %v", err)
+		}
+
+		recordClosedCost(relevo.Runtime{Store: rt.Store}, b, 1)
+		if _, err := os.Stat(costFilePath("", repoID, "builder")); !os.IsNotExist(err) {
+			t.Fatalf("cost file exists with empty root: err=%v", err)
+		}
+	})
+
+	t.Run("nil store returns without panicking", func(t *testing.T) {
+		t.Parallel()
+
+		costRoot := t.TempDir()
+		repoID := strings.Repeat("f", 64)
+		b := store.Binding{
+			Name:  "api",
+			CWD:   "/build/shop",
+			Round: 2,
+			Serve: &store.ServeFacts{BareRepo: "/fake/bare", RepoID: repoID},
+		}
+		recordClosedCost(relevo.Runtime{CostRoot: costRoot}, b, 1)
+		if _, err := os.Stat(costFilePath(costRoot, repoID, "builder")); !os.IsNotExist(err) {
+			t.Fatalf("cost file exists with nil store: err=%v", err)
+		}
+	})
+
+	t.Run("store miss records nothing", func(t *testing.T) {
+		t.Parallel()
+
+		env := setupTestEnv(t)
+		repoID := strings.Repeat("g", 64)
+
+		rt := env.runtime(t)
+		b := store.Binding{
+			Name:  "api",
+			Owner: string(env.id),
+			CWD:   "/build/shop",
+			Round: 2,
+			Serve: &store.ServeFacts{BareRepo: "/fake/bare", RepoID: repoID},
+		}
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatalf("save: %v", err)
+		}
+
+		costRoot := t.TempDir()
+		recordClosedCost(relevo.Runtime{Store: rt.Store, CostRoot: costRoot}, b, 1)
+		if _, err := os.Stat(costFilePath(costRoot, repoID, "builder")); !os.IsNotExist(err) {
+			t.Fatalf("cost file exists with no matching entry: err=%v", err)
+		}
+	})
 }
 
 func TestReportEntryForLastMatchWins(t *testing.T) {
