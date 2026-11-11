@@ -678,6 +678,50 @@ func TestStopRemoteKillsAndCollects(t *testing.T) {
 	}
 }
 
+// TestStopRemoteStillOpenReportsStopping pins the still-open answer: the
+// server took the stop but the round is still open, so Stop reports the
+// request with no error and claims no close.
+func TestStopRemoteStillOpenReportsStopping(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	fr := &fakeRemote{whoAmIResp: remote.WhoAmI{Features: []string{remote.FeatureStop}}}
+	rt, _ := remoteStopFixture(t, fr)
+
+	open := remote.BindingView{RoundState: remote.RoundRunning, Round: 1}
+	fr.stopResp = open
+	fr.getBindingResp = open
+
+	res, err := Stop(ctx, rt, "api", StopOptions{})
+	if err != nil {
+		t.Fatalf("Stop: %v, want success when the server took the stop", err)
+	}
+	if res.Action != "stopping" {
+		t.Errorf("Action = %q, want stopping, not a close the round never saw", res.Action)
+	}
+	const want = "api round 1 stop requested; the round is still open and closes as stopped"
+	if text := StopText("api", res); text != want {
+		t.Errorf("StopText = %q, want %q", text, want)
+	}
+
+	got, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Round != 1 {
+		t.Errorf("Round = %d, want 1: the round is still open", got.Round)
+	}
+	found := false
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "Stop:") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("calls = %v, want the server Stop among them", fr.calls)
+	}
+}
+
 // TestStopRemotePreStopServerRefuses pins the pre-stop-server refusal: a
 // server whose WhoAmI advertises no FeatureStop is told nothing, and the hint
 // names relevo unbind.
