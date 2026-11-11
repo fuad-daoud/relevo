@@ -130,8 +130,17 @@ func newSlowShell(t *testing.T) slowShell {
 
 	pend := pending{src: src, done: make(chan tea.Msg, 1)}
 	fetch := fetchStatus(m.ctx, src)
-	go func() { pend.done <- fetch() }()
-	t.Cleanup(src.unblock)
+	finished := make(chan struct{})
+	go func() {
+		pend.done <- fetch()
+		close(finished)
+	}()
+	// Release a fetch the test left parked and wait for it: the store's own
+	// cleanup closes the database next, under a fetch still reading it.
+	t.Cleanup(func() {
+		src.unblock()
+		<-finished
+	})
 
 	res, cmd := m.Update(watchdogMsg(time.Now()))
 	m = res.(Model)
