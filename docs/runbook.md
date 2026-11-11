@@ -49,13 +49,12 @@ This is an ops step, not code.
   at a time. Killing the local `ssh` does not stop it; run
   `ssh home systemctl --user stop relevo-gate`.
 - A gate that falls back to every package (a change to the Makefile, `go.mod`
-  or a root path), or one that reaches `internal/relevo`, does not fit on any
-  gate machine: `internal/relevo`'s tests leave database handles open, and the
-  test binary grows past 10 GB. Leave those to CI until the leak is fixed.
+  or a root path) fits the default cap: the whole run peaks at about 4 GB and
+  takes about 15 minutes on home-01. `dbtest.Main` fails a package whose tests
+  leave a database open, which is what kept `internal/relevo` past 10 GB.
 - The full local run is optional -- the static checks, then `make check-test`,
-  the modernc leg, and `make e2e`. It needs a machine with room for
-  `internal/relevo`'s tests (above); contabo (7G) and home-01 (15G, most of it
-  the builders' slice) OOM-kill it. The modernc leg is:
+  the modernc leg, and `make e2e`. `internal/relevo` under `-race` peaks at
+  about 4.3 GB on its own. The modernc leg is:
   `go vet -tags modernc ./internal/db/...` and
   `go test -race -count=1 -tags modernc ./internal/db/... ./internal/store/...`.
   CI runs that leg without `-race` on pull requests, so the command above is
