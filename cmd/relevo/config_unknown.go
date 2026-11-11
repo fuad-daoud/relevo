@@ -63,7 +63,9 @@ var agentContractField = map[string]bool{"outcomes": true, "outputs": true, "rol
 // nils mean the section's keys are not checked.
 func unknownKeyFuncs(sec config.Section) (func([]byte) []string, func() []string) {
 	switch sec {
-	case config.Agents, config.Actors:
+	case config.Agents:
+		return unknownAgentKeys, func() []string { return roles.KnownFields(string(sec)) }
+	case config.Actors:
 		return func(b []byte) []string { return roles.UnknownKeys(string(sec), b) },
 			func() []string { return roles.KnownFields(string(sec)) }
 	case config.Candidates:
@@ -72,4 +74,21 @@ func unknownKeyFuncs(sec config.Section) (func([]byte) []string, func() []string
 		return policy.UnknownKeys, policy.KnownFields
 	}
 	return nil, nil
+}
+
+// unknownAgentKeys is the agents section's unknown keys less each entry's files
+// member: the store keeps a native entry's harness files there and config get
+// prints them, so a section copied by get-then-set must pass the guard. Only the
+// entry-level member is let through; a files key inside a native definition is
+// still a typo.
+func unknownAgentKeys(body []byte) []string {
+	var out []string
+	for _, path := range roles.UnknownKeys(string(config.Agents), body) {
+		entry, isFiles := strings.CutSuffix(path, "."+config.AgentsFilesMember)
+		if isFiles && !strings.Contains(entry, ".") {
+			continue
+		}
+		out = append(out, path)
+	}
+	return out
 }

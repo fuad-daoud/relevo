@@ -32,7 +32,7 @@ func nativeItem(name, shape string, native map[string]roles.DefRow, files map[st
 		entry["native"] = native
 	}
 	if files != nil {
-		entry[agentsFilesMember] = agentFilesValue(files)
+		entry[AgentsFilesMember] = agentFilesValue(files)
 	}
 	body, err := json.Marshal(map[string]any{name: entry})
 	if err != nil {
@@ -414,7 +414,7 @@ func TestAgentFilesMemberSurvivesASectionRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("splits: %v", err)
 	}
-	if !strings.Contains(string(items["my-agent"]), agentsFilesMember) {
+	if !strings.Contains(string(items["my-agent"]), AgentsFilesMember) {
 		t.Errorf("the stored item = %s, want the files member", items["my-agent"])
 	}
 	if _, err := joins(Agents, items); err != nil {

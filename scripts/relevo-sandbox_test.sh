@@ -580,6 +580,8 @@ if [ "$1 $2" = "config get" ]; then
 	case $3 in
 	candidates) printf '[{"stub":1}]' ;;
 	servers) printf '{"s":2}' ;;
+	agents) printf '{"a":3}' ;;
+	actors) printf '{"b":4}' ;;
 	*) exit 1 ;;
 	esac
 elif [ "$1 $2" = "config set" ]; then
@@ -597,6 +599,13 @@ if ! printf '%s' "$stub_out" | grep -qF 'config set candidates [{"stub":1}]'; th
 fi
 if ! printf '%s' "$stub_out" | grep -qF 'config set servers {"s":2}'; then
 	echo "FAIL: the seed drops the servers section: $stub_out"
+	fail=1
+fi
+# An actor naming a custom agent is refused unless that agent is already set.
+agents_at=$(printf '%s\n' "$stub_out" | grep -nF 'config set agents {"a":3}' | cut -d: -f1)
+actors_at=$(printf '%s\n' "$stub_out" | grep -nF 'config set actors {"b":4}' | cut -d: -f1)
+if [ -z "$agents_at" ] || [ -z "$actors_at" ] || [ "$agents_at" -gt "$actors_at" ]; then
+	echo "FAIL: the seed does not set agents before actors: $stub_out"
 	fail=1
 fi
 if ! printf '%s' "$stub_out" | grep -qF 'no host policy to copy; skipping'; then
