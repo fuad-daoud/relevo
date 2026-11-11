@@ -342,3 +342,49 @@ func TestReportEntryForLastMatchWins(t *testing.T) {
 		t.Fatal("reportEntryFor(3): match, want none")
 	}
 }
+
+func TestSeatCostFor(t *testing.T) {
+	t.Parallel()
+
+	set, err := builderCandidateSet(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := plannerAdmitRegistry(t, set)
+	repo := strings.Repeat("f", 64)
+	root := t.TempDir()
+	for round := 1; round <= 10; round++ {
+		s := costSample{Base: int64(round) << 20, Burst: int64(round) << 30}
+		if _, err := appendCostSample(root, repo, "builder", "o/b", round, s); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+	corrupt := strings.Repeat("9", 64)
+	if err := os.WriteFile(costFilePath(root, corrupt, "builder"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bind := func(role, repoID string) store.Binding {
+		return store.Binding{Name: "x", Role: role, Serve: &store.ServeFacts{RepoID: repoID}}
+	}
+	cases := []struct {
+		name        string
+		root        string
+		b           store.Binding
+		base, burst int64
+	}{
+		{"history p90", root, bind("", repo), 9 << 20, 9 << 30},
+		{"no history: builder defaults", root, bind("", strings.Repeat("0", 64)), seatBuilderBase, seatBuilderBurst},
+		{"corrupt history: defaults, not zero", root, bind("", corrupt), seatBuilderBase, seatBuilderBurst},
+		{"no root: defaults", "", bind("", repo), seatBuilderBase, seatBuilderBurst},
+		{"no serve facts: defaults", root, store.Binding{Name: "x"}, seatBuilderBase, seatBuilderBurst},
+		{"planner", root, bind("lite-planner", repo), seatPlannerBase, seatPlannerBurst},
+		{"reviewer", root, bind("reviewer", repo), seatReviewerBase, seatReviewerBurst},
+		{"unknown role: builder defaults", root, bind("nosuch", repo), seatBuilderBase, seatBuilderBurst},
+	}
+	for _, tc := range cases {
+		base, burst := seatCostFor(tc.root, reg, tc.b)
+		if base != tc.base || burst != tc.burst {
+			t.Errorf("%s: got %d/%d, want %d/%d", tc.name, base, burst, tc.base, tc.burst)
+		}
+	}
+}

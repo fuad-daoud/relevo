@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -187,4 +189,28 @@ func recordClosedCost(rt relevo.Runtime, b store.Binding, closed int) {
 	if _, err := appendCostSample(rt.CostRoot, b.Serve.RepoID, b.WriterRole(), b.Owner+"/"+b.Name, closed, sample); err != nil {
 		slog.Warn("cost history append failed", "binding", b.Name, "round", closed, "err", err)
 	}
+}
+
+// seatCostFor answers a binding's seat from its repo-role history, classified
+// the way admission classifies it: a planner round takes planner defaults, any
+// other consult-shaped role reviewer defaults. A missing or unreadable history
+// reads as the class defaults, never as a zero cost.
+func seatCostFor(root string, reg *roles.Registry, b store.Binding) (base, burst int64) {
+	planner := relevo.IsPlannerRound(reg, b)
+	reader := false
+	if reg != nil {
+		if r, ok := reg.Role(b.WriterRole()); ok {
+			reader = r.Shape == harness.ShapeConsult
+		}
+	}
+	var samples []costSample
+	if root != "" && b.Serve != nil {
+		cf, err := loadCostFile(costFilePath(root, b.Serve.RepoID, b.WriterRole()))
+		if err != nil {
+			slog.Warn("cost history unreadable, using defaults", "binding", b.Name, "err", err)
+		} else {
+			samples = cf.Samples
+		}
+	}
+	return lookupSeat(samples, planner, reader)
 }
