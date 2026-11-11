@@ -582,6 +582,7 @@ func TestSweepKeepsTheCurrentRoundsScratchBeforeItOpens(t *testing.T) {
 // "scratch sweep" warning, while a newly failing entry warns once more. The
 // removal itself is retried every sweep: only the warning is deduped.
 func TestSweepReaderScratchWarnsOncePerFailingEntry(t *testing.T) {
+	forgetScratchSweepWarnings(t)
 	buf := captureLog(t)
 	ctx := context.Background()
 	fg := &fakeGit{removeWorktreeErr: errors.New("test stuck scratch removal")}
@@ -961,4 +962,14 @@ func TestReaderSentencesUseTheOutputWord(t *testing.T) {
 	if got := nudgePromptFor(rt, writer); !strings.Contains(got, "write the report to "+rt.Store.ReportPath("webshop", 1)) {
 		t.Errorf("writer nudge = %q, want the report path", got)
 	}
+}
+
+// forgetScratchSweepWarnings clears the process-wide warn-once memory for the
+// test and again after it: a failure warned about in an earlier test, or an
+// earlier run of this one (-count), would otherwise stay silent. Only a test
+// that does not run in parallel may call it.
+func forgetScratchSweepWarnings(t *testing.T) {
+	t.Helper()
+	scratchSweepWarned.Clear()
+	t.Cleanup(scratchSweepWarned.Clear)
 }

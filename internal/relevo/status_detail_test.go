@@ -40,7 +40,7 @@ func newDetailFixture(t *testing.T, name string) detailFixture {
 
 	// The round's baseline is what liveStat diffs the working tree against, and
 	// the builder log is what the tail reads.
-	b.RoundBaselineTree = "baseline-" + name
+	b.RoundBaselineTree = "baseline-" + name + runSuffix()
 	b.CWD = "/repo"
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("save binding: %v", err)

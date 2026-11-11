@@ -18,6 +18,9 @@ import (
 // where none exists.
 func seedLogStore(t *testing.T, name string, state store.State, n int) *store.Store {
 	t.Helper()
+	// A state root of its own: the package shares one, and a repeated run
+	// (-count) would otherwise find the previous run's rows under this name.
+	t.Setenv("XDG_STATE_HOME", shortStateRoot(t))
 	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)

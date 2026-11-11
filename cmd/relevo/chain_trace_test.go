@@ -20,6 +20,9 @@ import (
 // the chain. Store-only -- no harness and no network.
 func seedChainTrace(t *testing.T, name string) {
 	t.Helper()
+	// A state root of its own: the package shares one, and a repeated run
+	// (-count) would otherwise find the previous run's rows under this name.
+	t.Setenv("XDG_STATE_HOME", shortStateRoot(t))
 
 	root, err := tmpdir.DefaultRoot()
 	if err != nil {

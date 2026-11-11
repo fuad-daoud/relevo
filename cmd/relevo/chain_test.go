@@ -873,6 +873,9 @@ func seedCLIOpenMemberChain(t *testing.T, name string) {
 // the open round are log entries, so no harness and no process are involved.
 func seedCLIReportlessRound(t *testing.T, name string) {
 	t.Helper()
+	// A state root of its own: the package shares one, and a repeated run
+	// (-count) would otherwise find the previous run's rows under this name.
+	t.Setenv("XDG_STATE_HOME", shortStateRoot(t))
 
 	seedCLIChain(t, name, "stopped")
 	root, err := tmpdir.DefaultRoot()
