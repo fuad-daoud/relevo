@@ -513,7 +513,7 @@ func TestMigration033AddsRoundMeasurementColumns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpsertBinding: %v", err)
 	}
-	vals := [12]int64{100, 200, 15, 11, 12, 13, 14, 15, 16, 17, 18, 0}
+	vals := [12]int64{100, 200, 15, 11, 12, 13, 14, 19, 16, 17, 18, 0}
 	roundID, err := d.UpsertRound(Round{
 		BindingID: bindingID, Number: 1, Outcome: OutcomeReported,
 		RusageBaseBytes: &vals[0], RusageBurstBytes: &vals[1], RusageBurstSecs: &vals[2],
