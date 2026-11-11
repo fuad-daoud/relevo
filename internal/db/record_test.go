@@ -1,6 +1,7 @@
 package db
 
 import (
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -374,5 +375,34 @@ func TestRecordRevisionCountsOpenAdmits(t *testing.T) {
 	}
 	if rev.EventCount != 4 || rev.EventMaxSeq != 4 {
 		t.Errorf("extents = %d/%d, want the log extents the admits ride in", rev.EventCount, rev.EventMaxSeq)
+	}
+}
+
+// TestRecordOwnersListsTheServedClients pins what a server's idle count walks:
+// each client owner with a live record, once, sorted; never the local owner,
+// and never an owner whose only record is archived.
+func TestRecordOwnersListsTheServedClients(t *testing.T) {
+	d := openTestDB(t)
+	for _, r := range []Record{
+		{Owner: "", Name: "local", State: "active", Round: 1, CWD: "/work/local", JSON: "{}"},
+		{Owner: "client-b", Name: "b1", State: "active", Round: 1, CWD: "/work/b1", JSON: "{}"},
+		{Owner: "client-a", Name: "a1", State: "active", Round: 1, CWD: "/work/a1", JSON: "{}"},
+		{Owner: "client-a", Name: "a2", State: "active", Round: 1, CWD: "/work/a2", JSON: "{}"},
+		{Owner: "client-gone", Name: "g1", State: "done", Round: 1, CWD: "/work/g1", JSON: "{}"},
+	} {
+		if _, err := d.RecordPut(r); err != nil {
+			t.Fatalf("RecordPut(%s/%s): %v", r.Owner, r.Name, err)
+		}
+	}
+	if err := d.RecordArchive("client-gone", "g1", time.Now().UTC()); err != nil {
+		t.Fatalf("RecordArchive: %v", err)
+	}
+
+	got, err := d.RecordOwners()
+	if err != nil {
+		t.Fatalf("RecordOwners: %v", err)
+	}
+	if want := []string{"client-a", "client-b"}; !slices.Equal(got, want) {
+		t.Errorf("RecordOwners = %v, want %v", got, want)
 	}
 }
