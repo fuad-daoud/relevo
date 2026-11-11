@@ -6637,8 +6637,8 @@ func TestObserveRemoteSkipsSwitchWhenCandidateAlreadyRecorded(t *testing.T) {
 	}
 }
 
-// A round out on a burst node has no log on its head, and that answer comes on
-// every sync, so it must not reach the log.
+// The server may hold no log bytes past the local mirror yet, and that answer
+// comes on every sync, so it must not reach the log.
 func TestMirrorLogMissingOnTheServerIsQuiet(t *testing.T) {
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")

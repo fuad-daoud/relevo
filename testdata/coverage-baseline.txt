@@ -1,5 +1,5 @@
 # measured with go1.27 linux/amd64
-github.com/fuad-daoud/relevo/cmd/relevo 71.5
+github.com/fuad-daoud/relevo/cmd/relevo 72.2
 github.com/fuad-daoud/relevo/internal/account 97.6
 github.com/fuad-daoud/relevo/internal/agentsrc 92.3
 github.com/fuad-daoud/relevo/internal/availability 87.0
@@ -26,7 +26,7 @@ github.com/fuad-daoud/relevo/internal/harness 88.8
 github.com/fuad-daoud/relevo/internal/histq 94.5
 github.com/fuad-daoud/relevo/internal/hooks 87.6
 github.com/fuad-daoud/relevo/internal/housekeep 75.9
-github.com/fuad-daoud/relevo/internal/ingest 82.7
+github.com/fuad-daoud/relevo/internal/ingest 84.8
 github.com/fuad-daoud/relevo/internal/installation 76.5
 github.com/fuad-daoud/relevo/internal/isolate 95.0
 github.com/fuad-daoud/relevo/internal/jsonshape 89.5
@@ -35,25 +35,25 @@ github.com/fuad-daoud/relevo/internal/mcp 81.5
 github.com/fuad-daoud/relevo/internal/patch 100.0
 github.com/fuad-daoud/relevo/internal/pathscope 86.1
 github.com/fuad-daoud/relevo/internal/pick 48.4
-github.com/fuad-daoud/relevo/internal/policy 97.9
+github.com/fuad-daoud/relevo/internal/policy 97.8
 github.com/fuad-daoud/relevo/internal/proc 88.9
 github.com/fuad-daoud/relevo/internal/refusal 100.0
 github.com/fuad-daoud/relevo/internal/release 87.6
-github.com/fuad-daoud/relevo/internal/relevo 84.3
-github.com/fuad-daoud/relevo/internal/remote 90.8
-github.com/fuad-daoud/relevo/internal/remote/client 75.8
+github.com/fuad-daoud/relevo/internal/relevo 85.0
+github.com/fuad-daoud/relevo/internal/remote 92.5
+github.com/fuad-daoud/relevo/internal/remote/client 76.5
 github.com/fuad-daoud/relevo/internal/reporttail 97.6
 github.com/fuad-daoud/relevo/internal/resolve 76.0
 github.com/fuad-daoud/relevo/internal/roles 92.3
 github.com/fuad-daoud/relevo/internal/sanitize 100.0
-github.com/fuad-daoud/relevo/internal/serve 76.9
+github.com/fuad-daoud/relevo/internal/serve 79.3
 github.com/fuad-daoud/relevo/internal/serviceunit 74.5
 github.com/fuad-daoud/relevo/internal/setup 70.5
 github.com/fuad-daoud/relevo/internal/shipped 100.0
 github.com/fuad-daoud/relevo/internal/skill 100.0
 github.com/fuad-daoud/relevo/internal/spawn 60.0
 github.com/fuad-daoud/relevo/internal/stats 97.9
-github.com/fuad-daoud/relevo/internal/store 81.1
+github.com/fuad-daoud/relevo/internal/store 80.6
 github.com/fuad-daoud/relevo/internal/sync 77.5
 github.com/fuad-daoud/relevo/internal/sync/verb 58.9
 github.com/fuad-daoud/relevo/internal/synclog 94.0
@@ -69,5 +69,5 @@ github.com/fuad-daoud/relevo/internal/ui/widget 0.0
 github.com/fuad-daoud/relevo/internal/upgrade 64.6
 github.com/fuad-daoud/relevo/internal/uplink 87.5
 github.com/fuad-daoud/relevo/internal/usage 93.8
-github.com/fuad-daoud/relevo/internal/view 91.1
+github.com/fuad-daoud/relevo/internal/view 92.6
 github.com/fuad-daoud/relevo/internal/workflow 97.2
