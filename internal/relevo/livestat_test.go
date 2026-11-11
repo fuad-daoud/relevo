@@ -2,6 +2,8 @@ package relevo
 
 import (
 	"context"
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,6 +34,14 @@ func openRound(name, cwd, worktree, tree string) store.Binding {
 
 var wantLiveStat = view.LiveDiff{Files: 4, Added: 40, Removed: 8}
 
+// runSeq numbers the test runs that call runSuffix.
+var runSeq atomic.Int64
+
+// runSuffix is a suffix unique to one run of a test, for the baseline trees it
+// names: the live diff cache is process-wide and keyed on the tree, so a
+// repeated run (-count) would otherwise be served the previous run's entry.
+func runSuffix() string { return fmt.Sprintf("-run%d", runSeq.Add(1)) }
+
 // TestLiveStatCacheIsKeyedOnCWDNotName pins what one live diff read actually
 // decides: a working directory against a baseline tree. Two callers naming the
 // same pair are one read, so keying the cache on the binding's name -- which
@@ -39,10 +49,11 @@ var wantLiveStat = view.LiveDiff{Files: 4, Added: 40, Removed: 8}
 // already been handed. A different tree is a different read.
 func TestLiveStatCacheIsKeyedOnCWDNotName(t *testing.T) {
 	rt, fg := liveStatRuntime(t)
+	treeA, treeB := "tree-a"+runSuffix(), "tree-b"+runSuffix()
 
-	first := liveStat(context.Background(), rt, openRound("first", "/repo-shared", "/wt-shared", "tree-a"))
-	second := liveStat(context.Background(), rt, openRound("second", "/repo-shared", "/wt-shared", "tree-a"))
-	other := liveStat(context.Background(), rt, openRound("third", "/repo-shared", "/wt-shared", "tree-b"))
+	first := liveStat(context.Background(), rt, openRound("first", "/repo-shared", "/wt-shared", treeA))
+	second := liveStat(context.Background(), rt, openRound("second", "/repo-shared", "/wt-shared", treeA))
+	other := liveStat(context.Background(), rt, openRound("third", "/repo-shared", "/wt-shared", treeB))
 
 	for name, got := range map[string]*view.LiveDiff{"first": first, "second": second, "other": other} {
 		if got == nil || *got != wantLiveStat {
@@ -52,8 +63,8 @@ func TestLiveStatCacheIsKeyedOnCWDNotName(t *testing.T) {
 	if fg.worktreeStatCalls != 2 {
 		t.Fatalf("worktreeStatCalls for two trees over two names on one worktree = %d, want 2", fg.worktreeStatCalls)
 	}
-	if fg.lastWorktreeStatDir != "/repo-shared" || fg.lastWorktreeStatTree != "tree-b" {
-		t.Errorf("second read = %s@%s, want /repo-shared@tree-b", fg.lastWorktreeStatDir, fg.lastWorktreeStatTree)
+	if fg.lastWorktreeStatDir != "/repo-shared" || fg.lastWorktreeStatTree != treeB {
+		t.Errorf("second read = %s@%s, want /repo-shared@%s", fg.lastWorktreeStatDir, fg.lastWorktreeStatTree, treeB)
 	}
 }
 
@@ -64,10 +75,11 @@ func TestLiveStatCacheIsKeyedOnCWDNotName(t *testing.T) {
 // filled in on the way out of the cache and never stored.
 func TestLiveStatSharedIsPerBinding(t *testing.T) {
 	rt, fg := liveStatRuntime(t)
+	tree := "tree-a" + runSuffix()
 
-	owned := liveStat(context.Background(), rt, openRound("owns-worktree", "/repo-shared-flag", "/wt-owned", "tree-a"))
+	owned := liveStat(context.Background(), rt, openRound("owns-worktree", "/repo-shared-flag", "/wt-owned", tree))
 	// Worktree left empty: this binding shares the directory's tree.
-	shares := liveStat(context.Background(), rt, openRound("shares-cwd", "/repo-shared-flag", "", "tree-a"))
+	shares := liveStat(context.Background(), rt, openRound("shares-cwd", "/repo-shared-flag", "", tree))
 
 	if owned == nil || owned.Shared {
 		t.Fatalf("owns-worktree Live = %+v, want non-nil Shared false", owned)
@@ -81,7 +93,7 @@ func TestLiveStatSharedIsPerBinding(t *testing.T) {
 
 	// The cached entry itself carries no Shared, so a third reader resolves it
 	// from its own binding rather than inheriting the first one's answer.
-	third := liveStat(context.Background(), rt, openRound("third", "/repo-shared-flag", "", "tree-a"))
+	third := liveStat(context.Background(), rt, openRound("third", "/repo-shared-flag", "", tree))
 	if third == nil || !third.Shared {
 		t.Fatalf("third Live = %+v, want non-nil Shared true", third)
 	}

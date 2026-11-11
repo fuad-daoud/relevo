@@ -878,7 +878,7 @@ func TestStatusLiveDiffCached(t *testing.T) {
 	b := store.Binding{
 		Name: "cached", CWD: "/repo-cached", State: store.StateActive, Round: 2,
 		RoundStartedAt:    now,
-		RoundBaselineTree: "tree-cached",
+		RoundBaselineTree: "tree-cached" + runSuffix(),
 		Worktree:          "/wt-cached",
 	}
 	if err := rt.Store.Save(b); err != nil {

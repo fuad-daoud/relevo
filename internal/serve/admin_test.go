@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -572,13 +573,13 @@ func TestAdminAvailableRecordsServerClear(t *testing.T) {
 	if err != nil {
 		t.Fatalf("history.LoadHistory: %v", err)
 	}
-	if len(h.Events) == 0 {
-		t.Fatal("the availability row has no events, want a Cleared event")
+	// The rate limit and its clear can share a millisecond, and the history
+	// orders a tie by a random id, so the clear is looked up, not taken last.
+	i := slices.IndexFunc(h.Events, func(e availability.Event) bool { return e.Kind == availability.Cleared })
+	if i < 0 {
+		t.Fatalf("the availability history has no Cleared event: %+v", h.Events)
 	}
-	ev := h.Events[len(h.Events)-1]
-	if ev.Kind != availability.Cleared {
-		t.Errorf("kind = %q, want %q", ev.Kind, availability.Cleared)
-	}
+	ev := h.Events[i]
 	if ev.Source != availability.ClearedByServer {
 		t.Errorf("source = %q, want %q", ev.Source, availability.ClearedByServer)
 	}
