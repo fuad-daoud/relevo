@@ -556,6 +556,56 @@ func TestMigration033AddsRoundMeasurementColumns(t *testing.T) {
 		}
 	}
 
+	// A second upsert of the same round rewrites the twelve columns: every
+	// value differs from the first upsert because the update writes nothing
+	// when nothing changed. The set stays pairwise-distinct so a crossed
+	// pair fails, not just a dropped one.
+	vals2 := [12]int64{1100, 1200, 1015, 1011, 1012, 1013, 1014, 2015, 1016, 1017, 1018, 2}
+	roundID2, err := d.UpsertRound(Round{
+		BindingID: bindingID, Number: 1, Outcome: OutcomeReported,
+		RusageBaseBytes: &vals2[0], RusageBurstBytes: &vals2[1], RusageBurstSecs: &vals2[2],
+		RusageCPUSomeUsec: &vals2[3], RusageCPUFullUsec: &vals2[4],
+		RusageMemSomeUsec: &vals2[5], RusageMemFullUsec: &vals2[6],
+		RusageIOSomeUsec: &vals2[7], RusageIOFullUsec: &vals2[8],
+		RusageEvHigh: &vals2[9], RusageEvMax: &vals2[10], RusageEvOOMKill: &vals2[11],
+	})
+	if err != nil {
+		t.Fatalf("second UpsertRound: %v", err)
+	}
+	if roundID2 != roundID {
+		t.Errorf("second UpsertRound id = %s, want %s", roundID2, roundID)
+	}
+	rounds2, err := d.Rounds(bindingID)
+	if err != nil {
+		t.Fatalf("Rounds after second upsert: %v", err)
+	}
+	if len(rounds2) != 1 {
+		t.Fatalf("Rounds after second upsert = %d rows, want 1", len(rounds2))
+	}
+	fields2 := []struct {
+		name string
+		got  *int64
+		want int64
+	}{
+		{"RusageBaseBytes", rounds2[0].RusageBaseBytes, vals2[0]},
+		{"RusageBurstBytes", rounds2[0].RusageBurstBytes, vals2[1]},
+		{"RusageBurstSecs", rounds2[0].RusageBurstSecs, vals2[2]},
+		{"RusageCPUSomeUsec", rounds2[0].RusageCPUSomeUsec, vals2[3]},
+		{"RusageCPUFullUsec", rounds2[0].RusageCPUFullUsec, vals2[4]},
+		{"RusageMemSomeUsec", rounds2[0].RusageMemSomeUsec, vals2[5]},
+		{"RusageMemFullUsec", rounds2[0].RusageMemFullUsec, vals2[6]},
+		{"RusageIOSomeUsec", rounds2[0].RusageIOSomeUsec, vals2[7]},
+		{"RusageIOFullUsec", rounds2[0].RusageIOFullUsec, vals2[8]},
+		{"RusageEvHigh", rounds2[0].RusageEvHigh, vals2[9]},
+		{"RusageEvMax", rounds2[0].RusageEvMax, vals2[10]},
+		{"RusageEvOOMKill", rounds2[0].RusageEvOOMKill, vals2[11]},
+	}
+	for _, f := range fields2 {
+		if f.got == nil || *f.got != f.want {
+			t.Errorf("after second upsert %s = %v, want %d", f.name, f.got, f.want)
+		}
+	}
+
 	row, found, err := d.ReadExchangeRow("round", `["`+roundID+`"]`)
 	if err != nil {
 		t.Fatalf("ReadExchangeRow: %v", err)
