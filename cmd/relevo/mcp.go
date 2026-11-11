@@ -102,6 +102,10 @@ func cmdMCP(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// A client that went away must fail the write, not the process: without
+	// this, an EPIPE on fd 1 kills the server before writeLine can log it.
+	signal.Ignore(syscall.SIGPIPE)
+
 	serveErr := srv.Serve(ctx, os.Stdin, os.Stdout)
 
 	if serveErr != nil && !errors.Is(serveErr, context.Canceled) {

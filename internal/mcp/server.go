@@ -178,7 +178,7 @@ func (s *Server) handleLine(ctx context.Context, line []byte) {
 			RequestID json.RawMessage `json:"requestId"`
 		}
 		if err := json.Unmarshal(req.Params, &cp); err == nil && len(cp.RequestID) > 0 {
-			s.cancelWait(string(bytes.TrimSpace(cp.RequestID)))
+			s.cancelWait(cancelKey(cp.RequestID))
 		}
 	default:
 		if !isNotification {
@@ -274,7 +274,7 @@ func (s *Server) handleWaitCall(ctx context.Context, req Request, params toolCal
 	hasProgress := len(rawProg) > 0 && !bytes.Equal(rawProg, []byte("null"))
 	a.HasProgressToken = hasProgress
 
-	reqIDKey := string(bytes.TrimSpace(req.ID))
+	reqIDKey := cancelKey(req.ID)
 	callCtx, cancel := context.WithCancel(ctx)
 	s.recordWaitCancel(reqIDKey, cancel)
 
@@ -309,6 +309,11 @@ func (s *Server) handleWaitCall(ctx context.Context, req Request, params toolCal
 		}()
 
 		res, err := s.Verbs.Wait(callCtx, params.Meta.session(), a)
+		// A cancelled call has no reader left: answering it writes a
+		// response onto a pipe the client may already have closed.
+		if callCtx.Err() != nil {
+			return
+		}
 		out, rpcErr := toolResultFrom(res, err)
 		if rpcErr != nil {
 			s.writeResponse(Response{JSONRPC: "2.0", ID: req.ID, Error: rpcErr})
@@ -333,6 +338,18 @@ func (s *Server) emitProgress(token any, progress int, msg string) {
 		return
 	}
 	s.writeLine(raw)
+}
+
+// cancelKey canonicalizes a request ID so a numeric id and its quoted string
+// form share one map entry: a client may cancel id 42 with requestId "42",
+// which compares unequal as raw JSON.
+func cancelKey(raw json.RawMessage) string {
+	trimmed := bytes.TrimSpace(raw)
+	var str string
+	if err := json.Unmarshal(trimmed, &str); err == nil {
+		return str
+	}
+	return string(trimmed)
 }
 
 func (s *Server) recordWaitCancel(id string, cancel context.CancelFunc) {

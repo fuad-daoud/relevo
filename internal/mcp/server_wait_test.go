@@ -221,6 +221,49 @@ func TestServerProgressWithAndWithoutToken(t *testing.T) {
 	})
 }
 
+// TestServerCancelStringRequestIDStopsNumericWait pins the canonical cancel
+// key: a wait started with numeric id 42 stops when the client cancels with
+// the string form "42", which compares unequal as raw JSON.
+func TestServerCancelStringRequestIDStopsNumericWait(t *testing.T) {
+	t.Parallel()
+
+	waitStarted := make(chan struct{})
+	pollStopped := make(chan struct{})
+
+	verbs := &fakeVerbs{
+		waitFn: func(ctx context.Context, session string, a WaitArgs) (any, error) {
+			close(waitStarted)
+			select {
+			case <-ctx.Done():
+				close(pollStopped)
+				return "cancelled", nil
+			case <-time.After(10 * time.Second):
+				t.Error("wait was not cancelled within 10s")
+				return "timed out", nil
+			}
+		},
+	}
+	srv := &Server{Verbs: verbs, Version: "test", Mode: ModeTools}
+	is := newInteractiveServer(t, srv)
+
+	is.write(`{"jsonrpc":"2.0","id":42,"method":"tools/call","params":{"name":"wait","arguments":{"name":"webshop"}}}`)
+
+	select {
+	case <-waitStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("wait did not start within 2s")
+	}
+
+	// The client cancels with the string form of the numeric id.
+	is.write(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"42"}}`)
+
+	select {
+	case <-pollStopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("poll did not stop on string-form cancellation within 2s")
+	}
+}
+
 func TestServerCancellationStopsPoll(t *testing.T) {
 	t.Parallel()
 
@@ -239,6 +282,9 @@ func TestServerCancellationStopsPoll(t *testing.T) {
 				return "timed out", nil
 			}
 		},
+		statusFn: func(ctx context.Context, session string, a StatusArgs) (any, error) {
+			return map[string]string{"state": "serving"}, nil
+		},
 	}
 	srv := &Server{Verbs: verbs, Version: "test", Mode: ModeTools}
 	is := newInteractiveServer(t, srv)
@@ -251,8 +297,10 @@ func TestServerCancellationStopsPoll(t *testing.T) {
 		t.Fatal("wait did not start within 2s")
 	}
 
-	// Send cancellation notification naming request ID 42.
-	is.write(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":42}}`)
+	// Cancel with the string form of the numeric id, then ask for status:
+	// the cancelled wait must stay silent, so the status reply is the only
+	// line and the server stays up for the next tool call.
+	is.write(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"42"}}`)
 
 	select {
 	case <-pollStopped:
@@ -260,17 +308,42 @@ func TestServerCancellationStopsPoll(t *testing.T) {
 		t.Fatal("poll did not stop on cancellation within 2s")
 	}
 
-	// Wait response arrives with cancelled result.
+	// A stray wait response would land ahead of status; let it settle so the
+	// order below pins its absence instead of racing it.
+	time.Sleep(200 * time.Millisecond)
+
+	is.write(`{"jsonrpc":"2.0","id":43,"method":"tools/call","params":{"name":"status","arguments":{}}}`)
+
 	line := is.readLine(t, 2*time.Second)
 	var resp Response
 	if err := json.Unmarshal([]byte(line), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if string(resp.ID) != "42" {
-		t.Fatalf("expected response ID 42, got %s", string(resp.ID))
+	if string(resp.ID) != "43" {
+		t.Fatalf("first reply after cancel = id %s, want 43 (the cancelled wait must not answer)", string(resp.ID))
 	}
 	rawResult, _ := json.Marshal(resp.Result)
-	if !strings.Contains(string(rawResult), "cancelled") {
-		t.Fatalf("result = %s, want it to contain 'cancelled'", rawResult)
+	if !strings.Contains(string(rawResult), "serving") {
+		t.Fatalf("result = %s, want the status marker", rawResult)
+	}
+
+	// Nothing else may arrive: the cancelled wait stays silent.
+	got := make(chan string, 1)
+	go func() {
+		if is.in.Scan() {
+			got <- is.in.Text()
+		}
+	}()
+	select {
+	case extra := <-got:
+		t.Fatalf("unexpected extra reply after cancel: %s", extra)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	// Serve is still up for the next tool call.
+	select {
+	case err := <-is.done:
+		t.Fatalf("Serve returned %v while the session is still open", err)
+	default:
 	}
 }
