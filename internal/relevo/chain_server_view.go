@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
+	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -295,19 +296,9 @@ func roundOpenFromWire(err error) error {
 // chain, and a server no longer in this machine's config has nothing this
 // machine can release: either way the mirror is settled locally below.
 func chainServerDone(ctx context.Context, rt Runtime, c db.ChainRow) (DoneResult, error) {
-	if rt.Remote == nil {
-		return DoneResult{}, ErrRemoteUnavailable
-	}
-	var chainView remote.ChainView
-	_, err := chainResultFromMirror(ctx, rt, c.Name)
-	forgotten, err := chainServerForgotten(c, err)
-	if err != nil && !remote.Is404(err) {
+	chainView, err := chainServerRelease(ctx, rt, c)
+	if err != nil {
 		return DoneResult{}, err
-	}
-	if !forgotten {
-		if chainView, err = chainServerPostDone(ctx, rt, c); err != nil {
-			return DoneResult{}, err
-		}
 	}
 
 	row, err := rt.Store.Chain(c.Name)
@@ -347,6 +338,50 @@ func chainServerDone(ctx context.Context, rt Runtime, c db.ChainRow) (DoneResult
 		return DoneResult{}, err
 	}
 	return out, nil
+}
+
+// chainServerRelease has the server release the chain before the mirror
+// settles, and returns the server's view of what it kept. A server that
+// already released the chain, or that this machine no longer knows, has
+// nothing to release: the empty view lets the mirror settle locally.
+func chainServerRelease(ctx context.Context, rt Runtime, c db.ChainRow) (remote.ChainView, error) {
+	if rt.Remote == nil {
+		return remote.ChainView{}, chainServerWithoutClient(rt, c)
+	}
+	_, err := chainResultFromMirror(ctx, rt, c.Name)
+	forgotten, err := chainServerForgotten(c, err)
+	if err != nil && !remote.Is404(err) {
+		return remote.ChainView{}, err
+	}
+	if forgotten {
+		return remote.ChainView{}, nil
+	}
+	return chainServerPostDone(ctx, rt, c)
+}
+
+// chainServerWithoutClient decides a done on a machine with no remote client,
+// which is every machine whose last server was retired. A chain whose server
+// is still configured waits for the client key; one whose server is gone
+// settles as a forgotten server's does.
+func chainServerWithoutClient(rt Runtime, c db.ChainRow) error {
+	if rt.Config == nil {
+		return ErrRemoteUnavailable
+	}
+	body, ok, err := rt.Config.Body(config.Servers)
+	if err != nil {
+		return err
+	}
+	if ok {
+		servers, err := remote.ParseServers(body)
+		if err != nil {
+			return err
+		}
+		if _, listed := servers[c.Server]; listed {
+			return ErrRemoteUnavailable
+		}
+	}
+	_, err = chainServerForgotten(c, client.ErrUnknownServer)
+	return err
 }
 
 // chainServerPostDone asks the server to release the chain. A 404 is no

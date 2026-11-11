@@ -6,7 +6,9 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
+	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
+	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -91,5 +93,58 @@ func TestUnbindDoneSweepSettlesADoneChainWhoseServerIsNotConfigured(t *testing.T
 	}
 	if err != nil {
 		t.Fatalf("GCDoneChains: %v", err)
+	}
+}
+
+// noClientRuntime is a pulled server chain on a machine left with no remote
+// client, its config holding servers; a nil Remote means any server call
+// would panic, so a test that passes made none.
+func noClientRuntime(t *testing.T, servers remote.Servers) Runtime {
+	t.Helper()
+	fr := chainPullFake(chainPullView("shop", string(chain.StatusHalted), 0, 0, 0))
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "shop")
+	pullRounds(t, rt, "shop")
+	rt.Remote = nil
+	rt.Config = auditStore(t)
+	body, err := client.EncodeServers(servers)
+	if err != nil {
+		t.Fatalf("EncodeServers: %v", err)
+	}
+	if _, err := rt.Config.As("test", "seed servers").Put(config.Servers, body); err != nil {
+		t.Fatalf("Put servers: %v", err)
+	}
+	return rt
+}
+
+// TestChainDoneWithNoClientSettlesAChainWhoseServerWasRetired pins the machine
+// whose last server was retired: no remote client is built, and the chain on
+// that server still settles locally.
+func TestChainDoneWithNoClientSettlesAChainWhoseServerWasRetired(t *testing.T) {
+	t.Parallel()
+
+	rt := noClientRuntime(t, remote.Servers{})
+
+	if _, err := ChainDone(context.Background(), rt, "shop"); err != nil {
+		t.Fatalf("ChainDone with no client and no such server = %v, want it settled locally", err)
+	}
+	if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusDone) {
+		t.Errorf("mirror status = %q, want done", row.Status)
+	}
+}
+
+// TestChainDoneWithNoClientWaitsForAServerStillConfigured pins the other side:
+// a server still in config is only missing the client key, so the chain is
+// not settled behind its back.
+func TestChainDoneWithNoClientWaitsForAServerStillConfigured(t *testing.T) {
+	t.Parallel()
+
+	rt := noClientRuntime(t, remote.Servers{"zen": {URL: "https://zen:7777", Fingerprint: "sha256:00"}})
+
+	if _, err := ChainDone(context.Background(), rt, "shop"); !errors.Is(err, ErrRemoteUnavailable) {
+		t.Fatalf("ChainDone with no client and the server configured = %v, want ErrRemoteUnavailable", err)
+	}
+	if row := chainStoredRow(t, rt, "shop"); row.Status == string(chain.StatusDone) {
+		t.Error("the mirror was settled while its server is still configured")
 	}
 }
