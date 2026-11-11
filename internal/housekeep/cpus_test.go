@@ -2,6 +2,7 @@ package housekeep
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strconv"
 	"strings"
@@ -527,6 +528,11 @@ func TestAssignRoundCPUExhaustedSetClearsBoth(t *testing.T) {
 		if err != nil {
 			return err
 		}
+		// The second round arrives with a stale set on the cores the first
+		// live round already holds, so the exhausted pool must clear it.
+		stale := 0
+		b2.RoundCPUs = []int{0, 1}
+		b2.RoundCPU = &stale
 		second = AssignRoundCPU(deps, tx, b2)
 		return tx.Save(second)
 	})
@@ -539,6 +545,58 @@ func TestAssignRoundCPUExhaustedSetClearsBoth(t *testing.T) {
 	}
 	if second.RoundCPU != nil {
 		t.Errorf("an exhausted pool left RoundCPU = %s, want none", cpuPtrText(second.RoundCPU))
+	}
+}
+
+// TestAssignRoundCPUCensusErrorClearsStaleSet pins the census-error rule: a
+// stale set on the binding is cleared when the held-cores census fails, so
+// the round runs unpinned rather than on a set no census vetted.
+func TestAssignRoundCPUCensusErrorClearsStaleSet(t *testing.T) {
+	t.Parallel()
+
+	st := storetest.New(t)
+	saveCPUBinding(t, st, "webshop")
+	deps := Deps{Store: st, AllowedCPUs: "0-3", RoundCPUs: 2,
+		HeldCPUs: func(*store.Tx, string) ([]int, error) { return nil, errors.New("census down") }}
+
+	stale := 0
+	var got store.Binding
+	err := st.WithLock(func(tx *store.Tx) error {
+		b, err := tx.Load("webshop")
+		if err != nil {
+			return err
+		}
+		b.RoundCPUs = []int{0, 1}
+		b.RoundCPU = &stale
+		got = AssignRoundCPU(deps, tx, b)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WithLock: %v", err)
+	}
+
+	if got.RoundCPUs != nil {
+		t.Errorf("a failed census left RoundCPUs = %v, want none", got.RoundCPUs)
+	}
+	if got.RoundCPU != nil {
+		t.Errorf("a failed census left RoundCPU = %s, want none", cpuPtrText(got.RoundCPU))
+	}
+}
+
+// TestAssignRoundCPUNilTxClearsStaleSet pins the nil-tx rule: a caller with
+// no round to pin clears a stale set, so the round runs unpinned.
+func TestAssignRoundCPUNilTxClearsStaleSet(t *testing.T) {
+	t.Parallel()
+
+	stale := 0
+	b := store.Binding{Name: "webshop", RoundCPUs: []int{0, 1}, RoundCPU: &stale}
+	got := AssignRoundCPU(Deps{AllowedCPUs: "0-3", RoundCPUs: 2}, nil, b)
+
+	if got.RoundCPUs != nil {
+		t.Errorf("a nil tx left RoundCPUs = %v, want none", got.RoundCPUs)
+	}
+	if got.RoundCPU != nil {
+		t.Errorf("a nil tx left RoundCPU = %s, want none", cpuPtrText(got.RoundCPU))
 	}
 }
 
@@ -571,6 +629,80 @@ func TestAssignRoundCPUKeepsSetOnRelaunch(t *testing.T) {
 	}
 	if got.RoundCPU == nil || *got.RoundCPU != 1 {
 		t.Errorf("RoundCPU = %s, want the kept core 1", cpuPtrText(got.RoundCPU))
+	}
+}
+
+// TestAssignRoundCPURePicksWhenStoredSetHeld pins the relaunch-held rule: a
+// stored set with a core another live round holds is re-picked, not kept.
+func TestAssignRoundCPURePicksWhenStoredSetHeld(t *testing.T) {
+	t.Parallel()
+
+	st := storetest.New(t)
+	saveCPUBinding(t, st, "webshop")
+	saveCPUBinding(t, st, "holder")
+	deps := cpuTestSetDeps(st, "0-3", 2)
+
+	one := 1
+	var got store.Binding
+	err := st.WithLock(func(tx *store.Tx) error {
+		holder, err := tx.Load("holder")
+		if err != nil {
+			return err
+		}
+		holder.RoundCPUs = []int{1}
+		holder.Builder.PID = 4001
+		if err := tx.Save(holder); err != nil {
+			return err
+		}
+		b, err := tx.Load("webshop")
+		if err != nil {
+			return err
+		}
+		b.RoundCPUs = []int{1, 2}
+		b.RoundCPU = &one
+		got = AssignRoundCPU(deps, tx, b)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WithLock: %v", err)
+	}
+	if !reflect.DeepEqual(got.RoundCPUs, []int{0, 2}) {
+		t.Errorf("RoundCPUs = %v, want the re-picked set [0 2]", got.RoundCPUs)
+	}
+	if got.RoundCPU == nil || *got.RoundCPU != 0 {
+		t.Errorf("RoundCPU = %s, want the re-picked set's first core 0", cpuPtrText(got.RoundCPU))
+	}
+}
+
+// TestAssignRoundCPURePicksWhenStoredCoreLeftPool pins the relaunch-pool
+// rule: a stored set with a core outside the pool is re-picked, not kept.
+func TestAssignRoundCPURePicksWhenStoredCoreLeftPool(t *testing.T) {
+	t.Parallel()
+
+	st := storetest.New(t)
+	saveCPUBinding(t, st, "webshop")
+	deps := cpuTestSetDeps(st, "0-2", 2)
+
+	two := 2
+	var got store.Binding
+	err := st.WithLock(func(tx *store.Tx) error {
+		b, err := tx.Load("webshop")
+		if err != nil {
+			return err
+		}
+		b.RoundCPUs = []int{2, 3}
+		b.RoundCPU = &two
+		got = AssignRoundCPU(deps, tx, b)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WithLock: %v", err)
+	}
+	if !reflect.DeepEqual(got.RoundCPUs, []int{0, 1}) {
+		t.Errorf("RoundCPUs = %v, want the re-picked set [0 1]", got.RoundCPUs)
+	}
+	if got.RoundCPU == nil || *got.RoundCPU != 0 {
+		t.Errorf("RoundCPU = %s, want the re-picked set's first core 0", cpuPtrText(got.RoundCPU))
 	}
 }
 

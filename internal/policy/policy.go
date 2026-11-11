@@ -110,8 +110,10 @@ type ScopePolicy struct {
 	CPUQuota  string `json:"cpu_quota,omitempty"`  // "" = none; else ^[0-9]+%$, at least 1%
 	// GateCPUQuota is the gate's own CPU ceiling; "" uses CPUQuota.
 	GateCPUQuota string `json:"gate_cpu_quota,omitempty"`
-	// AllowedCPUs is the pool of cores relevo hands out, one per round; ""
-	// means no pinning. Needs cpuset delegated to the user manager.
+	// AllowedCPUs is the pool a round's set of round_cpus cores is picked
+	// from; "" names no delegated pool, so the set comes from every online
+	// CPU and no single pin is stamped. Needs cpuset delegated to the
+	// user manager.
 	AllowedCPUs string `json:"allowed_cpus,omitempty"`
 	// RoundCPUs is how many pool cores one round gets, as its least-used
 	// set; 0 is DefaultRoundCPUs.
