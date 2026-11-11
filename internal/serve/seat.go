@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// costSample is one closed round's memory footprint for the seat model. Plan 2
-// appends these to the cost history file, so the JSON shape is the file's
+// costSample is one closed round's memory footprint for the seat model. These
+// are appended to the cost history file, so the JSON shape is the file's
 // contract. A Base of 0 means the round produced no base reading, and lookups
 // ignore it.
 type costSample struct {

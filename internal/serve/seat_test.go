@@ -38,14 +38,14 @@ func TestLookupSeatP90(t *testing.T) {
 		{
 			name:      "no samples take builder defaults",
 			samples:   nil,
-			wantBase:  seatBuilderBase,
-			wantBurst: seatBuilderBurst,
+			wantBase:  1 << 30,
+			wantBurst: 5 << 30,
 		},
 		{
 			name:      "four samples still take builder defaults",
 			samples:   seatSamples([]int64{10, 20, 30, 40}, []int64{5, 15, 25, 35}),
-			wantBase:  seatBuilderBase,
-			wantBurst: seatBuilderBurst,
+			wantBase:  1 << 30,
+			wantBurst: 5 << 30,
 		},
 		{
 			name:      "five samples switch to p90",
@@ -62,7 +62,7 @@ func TestLookupSeatP90(t *testing.T) {
 		{
 			name:      "zero bases fall back to the default while burst keeps p90",
 			samples:   zeroBaseSamples,
-			wantBase:  seatBuilderBase,
+			wantBase:  1 << 30,
 			wantBurst: 55,
 		},
 		{
@@ -90,11 +90,11 @@ func TestLookupSeatDefaults(t *testing.T) {
 		base    int64
 		burst   int64
 	}{
-		{name: "planner", planner: true, reader: false, base: seatPlannerBase, burst: seatPlannerBurst},
-		{name: "reviewer-shaped reader", planner: false, reader: true, base: seatReviewerBase, burst: seatReviewerBurst},
-		{name: "builder", planner: false, reader: false, base: seatBuilderBase, burst: seatBuilderBurst},
-		{name: "unknown role takes builder defaults", planner: false, reader: false, base: seatBuilderBase, burst: seatBuilderBurst},
-		{name: "planner wins over reader", planner: true, reader: true, base: seatPlannerBase, burst: seatPlannerBurst},
+		{name: "planner", planner: true, reader: false, base: 512 << 20, burst: 1 << 30},
+		{name: "reviewer-shaped reader", planner: false, reader: true, base: 512 << 20, burst: 2 << 30},
+		{name: "builder", planner: false, reader: false, base: 1 << 30, burst: 5 << 30},
+		{name: "unknown role takes builder defaults", planner: false, reader: false, base: 1 << 30, burst: 5 << 30},
+		{name: "planner wins over reader", planner: true, reader: true, base: 512 << 20, burst: 1 << 30},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
