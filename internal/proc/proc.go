@@ -76,6 +76,15 @@ type Runner struct {
 	// pinOK is that verdict: false means later Starts drop the pin only.
 	pinOK bool
 
+	// affOnce guards the lazy affinity probe: the first Start whose scope
+	// carries AffinityCPUs probes taskset with it, and later Starts reuse that.
+	affOnce sync.Once
+	// affOK is that verdict: false means later Starts drop the wrap only.
+	affOK bool
+	// affinityProbe runs the affinity probe; nil means ProbeTaskset, tests
+	// inject one.
+	affinityProbe func(ctx context.Context, cpus string) error
+
 	// expandOnce guards the one systemd-run version read, and noExpand is its
 	// verdict: whether every scope passes --expand-environment=no.
 	expandOnce sync.Once
@@ -152,14 +161,19 @@ func (r *Runner) nowTime() time.Time {
 }
 
 // buildArgv builds the argv Start execs: bin under supervisorScript, wrapped in
-// a systemd scope when spec.Scope is set. The supervisor's first argument is the
-// scope unit, or "" for a plain spawn.
+// a systemd scope when spec.Scope is set and under taskset when the scope
+// carries AffinityCPUs, so the pin survives without a delegated cpuset. The
+// supervisor's first argument is the scope unit, or "" for a plain spawn.
 func buildArgv(spec spawn.ProcSpec, bin string) []string {
 	var want string
 	if spec.Scope != nil {
 		want = ScopeUnitFileName(spec.Scope.Unit)
 	}
-	inner := append([]string{"/bin/sh", "-c", supervisorScript, "relevo-supervisor", want, bin}, spec.Argv[1:]...)
+	head := []string{"/bin/sh", "-c", supervisorScript, "relevo-supervisor", want}
+	if spec.Scope != nil && spec.Scope.AffinityCPUs != "" {
+		head = append(head, "taskset", "-c", spec.Scope.AffinityCPUs)
+	}
+	inner := append(append(head, bin), spec.Argv[1:]...)
 	if spec.Scope != nil {
 		return ScopeArgv(*spec.Scope, inner)
 	}
@@ -303,9 +317,10 @@ func (r *Runner) requireScope(ctx context.Context, spec spawn.ProcSpec) error {
 
 // resolveScope applies the lazy probes and their fallbacks: a scope whose probe
 // fails is dropped, a systemd-run that takes --expand-environment=no gets
-// NoExpand, and a refused AllowedCPUs is cleared while the scope and its quota
-// stay. Both fallbacks copy the ScopeSpec first: spec came by value but Scope
-// is a pointer the caller still holds.
+// NoExpand, a refused AllowedCPUs is cleared while the scope and its quota
+// stay, and a refused taskset wrap is dropped while the scope and its pin
+// stay. Every fallback copies the ScopeSpec first: spec came by value but
+// Scope is a pointer the caller still holds.
 func (r *Runner) resolveScope(ctx context.Context, spec spawn.ProcSpec) spawn.ProcSpec {
 	if spec.Scope == nil {
 		return spec
@@ -319,21 +334,39 @@ func (r *Runner) resolveScope(ctx context.Context, spec spawn.ProcSpec) spawn.Pr
 		sc.NoExpand = true
 		spec.Scope = &sc
 	}
-	if spec.Scope.AllowedCPUs == "" {
-		return spec
-	}
-	r.pinOnce.Do(func() {
-		if err := ProbeAllowedCPUs(ctx, spec.Scope.Slice, spec.Scope.AllowedCPUs); err != nil {
-			slog.Warn("cpu pinning unavailable; scopes will run without AllowedCPUs", "allowed_cpus", spec.Scope.AllowedCPUs, "err", err)
-			r.pinOK = false
-			return
+	if spec.Scope.AllowedCPUs != "" {
+		r.pinOnce.Do(func() {
+			if err := ProbeAllowedCPUs(ctx, spec.Scope.Slice, spec.Scope.AllowedCPUs); err != nil {
+				slog.Warn("cpu pinning unavailable; scopes will run without AllowedCPUs", "allowed_cpus", spec.Scope.AllowedCPUs, "err", err)
+				r.pinOK = false
+				return
+			}
+			r.pinOK = true
+		})
+		if !r.pinOK {
+			sc := *spec.Scope
+			sc.AllowedCPUs = ""
+			spec.Scope = &sc
 		}
-		r.pinOK = true
-	})
-	if !r.pinOK {
-		sc := *spec.Scope
-		sc.AllowedCPUs = ""
-		spec.Scope = &sc
+	}
+	if spec.Scope.AffinityCPUs != "" {
+		r.affOnce.Do(func() {
+			probe := r.affinityProbe
+			if probe == nil {
+				probe = ProbeTaskset
+			}
+			if err := probe(ctx, spec.Scope.AffinityCPUs); err != nil {
+				slog.Warn("cpu affinity unavailable; scopes will run without taskset", "cpus", spec.Scope.AffinityCPUs, "err", err)
+				r.affOK = false
+				return
+			}
+			r.affOK = true
+		})
+		if !r.affOK {
+			sc := *spec.Scope
+			sc.AffinityCPUs = ""
+			spec.Scope = &sc
+		}
 	}
 	return spec
 }

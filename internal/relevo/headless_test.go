@@ -606,7 +606,8 @@ func TestScopeUnitNameFor(t *testing.T) {
 // carries the template's other fields, a gate uses GateCPUQuota when set and
 // falls back to CPUQuota when not, the returned spec always zeroes
 // GateCPUQuota and RoundCPUs, a pin overrides AllowedCPUs only when the
-// template names a pool, and the template is never mutated.
+// template names a pool, only a round carries AffinityCPUs, and the template
+// is never mutated.
 func TestScopeFor(t *testing.T) {
 	t.Parallel()
 
@@ -697,6 +698,9 @@ func TestScopeFor(t *testing.T) {
 		if got.AllowedCPUs != "0,1" {
 			t.Errorf("round AllowedCPUs = %q, want the pin 0,1", got.AllowedCPUs)
 		}
+		if got.AffinityCPUs != "0,1" {
+			t.Errorf("round AffinityCPUs = %q, want the pin 0,1", got.AffinityCPUs)
+		}
 	})
 
 	t.Run("a pin without a pool leaves AllowedCPUs empty", func(t *testing.T) {
@@ -710,15 +714,36 @@ func TestScopeFor(t *testing.T) {
 		if got.AllowedCPUs != "" {
 			t.Errorf("round AllowedCPUs = %q, want empty without a pool", got.AllowedCPUs)
 		}
+		if got.AffinityCPUs != "0,1" {
+			t.Errorf("round AffinityCPUs = %q, want the pin even without a pool", got.AffinityCPUs)
+		}
+	})
+
+	t.Run("only a round carries affinity", func(t *testing.T) {
+		for _, kind := range []scopeKind{scopeGate, scopeConsult, scopeVerify} {
+			tmpl := base
+			tmpl.AllowedCPUs = "0-3"
+			rt := Runtime{Scope: &tmpl}
+			if got := scopeFor(rt, kind, "unit", "0,1"); got == nil || got.AffinityCPUs != "" {
+				t.Errorf("%s AffinityCPUs = %+v, want empty", kind, got)
+			}
+		}
+		tmpl := base
+		tmpl.AllowedCPUs = "0-3"
+		if got := scopeFor(Runtime{Scope: &tmpl}, scopeRound, "unit", ""); got == nil || got.AffinityCPUs != "" {
+			t.Errorf("round with cpus=\"\" AffinityCPUs = %+v, want empty", got)
+		}
 	})
 
 	t.Run("template is not mutated", func(t *testing.T) {
 		tmpl := base
 		tmpl.GateCPUQuota = "300%"
+		tmpl.AllowedCPUs = "0-3"
 		before := tmpl
 		rt := Runtime{Scope: &tmpl}
 		_ = scopeFor(rt, scopeGate, "unit", "")
 		_ = scopeFor(rt, scopeConsult, "unit", "")
+		_ = scopeFor(rt, scopeRound, "unit", "0,1")
 		if tmpl != before {
 			t.Errorf("rt.Scope mutated: %+v, want %+v", tmpl, before)
 		}

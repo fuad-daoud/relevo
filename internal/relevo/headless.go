@@ -96,7 +96,9 @@ func scopeUnitName(b store.Binding) string {
 // nil when the template is nil (scopes off), else a copy of the template with
 // Unit set, GateCPUQuota and RoundCPUs zeroed, and AllowedCPUs set to cpus
 // only when cpus is non-empty and the template names a pool: without a pool
-// the round runs on the whole machine, so there is no pin to stamp. When
+// the round runs on the whole machine, so there is no pin to stamp. A round
+// also carries cpus as AffinityCPUs with or without a pool, so the runner can
+// pin it with taskset where the cpuset is undelegated. When
 // kind is scopeGate and the template sets GateCPUQuota, the gate's spec uses
 // it as CPUQuota; every other kind keeps the template's CPUQuota. It never
 // mutates rt.Scope.
@@ -110,6 +112,9 @@ func scopeFor(rt Runtime, kind scopeKind, unit, cpus string) *spawn.ScopeSpec {
 	s.RoundCPUs = 0
 	if cpus != "" && rt.Scope.AllowedCPUs != "" {
 		s.AllowedCPUs = cpus
+	}
+	if kind == scopeRound && cpus != "" {
+		s.AffinityCPUs = cpus
 	}
 	if kind == scopeGate && rt.Scope.GateCPUQuota != "" {
 		s.CPUQuota = rt.Scope.GateCPUQuota

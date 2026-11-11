@@ -51,6 +51,11 @@ type ScopeSpec struct {
 	// systemd cpu-list ("2" or "0-2") pinning the process to those cores.
 	AllowedCPUs string
 
+	// AffinityCPUs is a real launch field: "" runs the process directly,
+	// otherwise the runner prefixes it with taskset -c <list> so the process
+	// and every child inherit the pin even without a delegated cpuset.
+	AffinityCPUs string
+
 	// NoExpand passes --expand-environment=no. From systemd 258 a scope's
 	// systemd-run expands $VAR, ${VAR} and $$ in the command line itself, which
 	// rewrites a gate's shell command or a prompt carried in argv before the

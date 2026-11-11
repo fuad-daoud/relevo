@@ -76,6 +76,26 @@ func ProbeAllowedCPUs(ctx context.Context, slice, cpus string) error {
 	return runScopeProbe(ctx, spec, "systemd-run AllowedCPUs="+cpus)
 }
 
+// ProbeTaskset confirms taskset can pin to cpus before the daemon wraps every
+// round with it; a missing or refusing taskset leaves the scope and its pin
+// but drops the wrap. The list is named in the error as the pin probe names
+// its own.
+func ProbeTaskset(ctx context.Context, cpus string) error {
+	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, "taskset", "-c", cpus, "true")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		line := firstNonEmptyLine(stderr.String())
+		if line == "" {
+			line = err.Error()
+		}
+		return fmt.Errorf("taskset -c %s: %s", cpus, line)
+	}
+	return nil
+}
+
 // runScopeProbe runs spec's throwaway scope, returning systemd-run's first
 // stderr line, or its exit status when it printed nothing, prefixed with prefix.
 func runScopeProbe(ctx context.Context, spec spawn.ScopeSpec, prefix string) error {

@@ -259,6 +259,62 @@ func TestProbeStubs(t *testing.T) {
 	}
 }
 
+// writeTasksetStub puts a fake taskset on dir, for a test to prepend to PATH,
+// so the probe never calls the real binary.
+func writeTasksetStub(t *testing.T, dir, script string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "taskset"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestProbeTasksetStubs puts a fake taskset on PATH so the probe never calls
+// the real one (CI has no taskset guarantee): an accepting stub, refusals
+// reproducing the stderr line a refusing taskset prints, and a missing binary.
+func TestProbeTasksetStubs(t *testing.T) {
+	const list = "0,1"
+	cases := []struct {
+		name      string
+		stub      string
+		wantInErr string
+	}{
+		{"taskset probe succeeds", "#!/bin/sh\nexit 0\n", ""},
+		{"taskset probe reports stderr", "#!/bin/sh\necho 'taskset: failed to set affinity: Permission denied' >&2\nexit 1\n", "failed to set affinity"},
+		{"probe without stderr reports its exit status", "#!/bin/sh\nexit 1\n", "exit status 1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeTasksetStub(t, dir, tc.stub)
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+			err := ProbeTaskset(context.Background(), list)
+			if tc.wantInErr == "" {
+				if err != nil {
+					t.Fatalf("probe: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantInErr) {
+				t.Fatalf("probe error = %v; want it to contain %q", err, tc.wantInErr)
+			}
+			if !strings.Contains(err.Error(), "taskset -c "+list) {
+				t.Errorf("probe error = %v; want it to name taskset -c %s", err, list)
+			}
+		})
+	}
+	t.Run("missing taskset names the list", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir())
+		err := ProbeTaskset(context.Background(), list)
+		if err == nil {
+			t.Fatal("probe without taskset = nil, want an error")
+		}
+		if !strings.Contains(err.Error(), "taskset -c "+list) {
+			t.Errorf("probe error = %v; want it to name taskset -c %s", err, list)
+		}
+	})
+}
+
 // TestFirstNonEmptyLine pins the pure trimming logic shared by the scope
 // probes: it returns the first non-empty trimmed line, which is the Result
 // value systemctl prints. This test does not run systemctl.
