@@ -126,6 +126,18 @@ Set up once per machine:
    or `cert changed` (the pinned fingerprint no longer matches -- a hard
    refusal the client never overrides silently).
 
+**Retiring a server.** `relevo config server rm zen` refuses while any
+binding still names `zen`, and the refusal points at
+`relevo config server rm zen --retire`. The retire archives every binding
+naming `zen` locally, without contacting the server: the server keeps its
+own copy, which is never released. It refuses, naming each hold, while a
+binding still has a live local process or a chain naming `zen` has not
+finished (only `done` and `stopped` chains release their members).
+`--dry-run` lists what the retire would archive first and changes nothing.
+A failure part-way keeps the server entry, so rerunning the retire archives
+the rest. Once no server entry names it, the daemon stops pulling that
+server's chains.
+
 **Version skew.** Signatures are bound to the server's
 identity, so the two ends upgrade together -- no window accepts
 both the old and the new signed string. A pre-upgrade client against an

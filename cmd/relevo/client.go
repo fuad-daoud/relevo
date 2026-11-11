@@ -168,20 +168,24 @@ func addServerDoc(asJSON bool, name, url string) error {
 }
 
 type clientRmServerFlagValues struct {
+	retire *bool
+	dryRun *bool
 	asJSON *bool
 }
 
-// clientRmServerFlagSet defines that flag on fs and returns what it parses
-// into, so the registry's parity test finds exactly one installer per verb.
+// clientRmServerFlagSet defines those flags on fs and returns what they
+// parse into, so the registry's parity test walks the same surface the verb
+// does.
 func clientRmServerFlagSet(fs *flag.FlagSet) *clientRmServerFlagValues {
 	v := &clientRmServerFlagValues{}
+	v.retire = fs.Bool("retire", false, "archive the server's bindings locally instead of refusing while any names it")
+	v.dryRun = fs.Bool("dry-run", false, "with --retire: list what would be archived, change nothing")
 	v.asJSON = fs.Bool("json", false, "print the document the write produced")
 	return v
 }
 
-// cmdClientRmServer refuses while any binding still names the server;
-// uplink.ServerInUse is the pure rule this checks, so this wrapper needs no
-// harness or network to test the refusal shape.
+// cmdClientRmServer forgets a configured server, or archives its bindings
+// first under --retire.
 func cmdClientRmServer(args []string) error {
 	return outcomeError(cmdClientRmServerRun(args))
 }
@@ -194,6 +198,9 @@ func cmdClientRmServerRun(args []string) error {
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
+	if *v.dryRun && !*v.retire {
+		return fail(codeUsage, "--dry-run needs --retire")
+	}
 	rest := fs.Args()
 	if len(rest) != 1 {
 		return fail(codeUsage, "config server rm wants <name>")
@@ -204,12 +211,22 @@ func cmdClientRmServerRun(args []string) error {
 	if err != nil {
 		return err
 	}
+	if *v.retire {
+		return retireServerRun(rt, name, *v.dryRun, *asJSON)
+	}
+	return plainServerRmRun(rt, name, *asJSON)
+}
+
+// plainServerRmRun forgets a configured server while nothing still names it;
+// uplink.ServerInUse is the pure rule this checks, so this wrapper needs no
+// harness or network to test the refusal shape.
+func plainServerRmRun(rt relevo.Runtime, name string, asJSON bool) error {
 	bindings, err := rt.Store.List()
 	if err != nil {
 		return err
 	}
 	if inUse := uplink.ServerInUse(bindings, name); len(inUse) > 0 {
-		return fail(codeConflict, "server %q is used by %s; unbind them first", name, strings.Join(inUse, ", "))
+		return failNext(codeConflict, "relevo config server rm "+name+" --retire", "server %q is used by %s; unbind them first", name, strings.Join(inUse, ", "))
 	}
 
 	L, err := rt.Config.Load()
@@ -228,11 +245,91 @@ func cmdClientRmServerRun(args []string) error {
 	if _, err := rt.Config.As("cli", "config server rm "+name).Put(config.Servers, body); err != nil {
 		return err
 	}
-	if *asJSON {
-		return printDoc(configServerRmDocOf(name))
+	if asJSON {
+		return printDoc(configServerRmDocOf(name, nil))
 	}
 	fmt.Printf("removed server %s\n", name)
 	return nil
+}
+
+// retireServerRun archives every binding naming a dead server without
+// contacting it, then forgets the entry. A dry run lists the plan and
+// changes nothing.
+func retireServerRun(rt relevo.Runtime, name string, dryRun, asJSON bool) error {
+	L, err := rt.Config.Load()
+	if err != nil {
+		return err
+	}
+	if _, ok := L.Servers[name]; !ok {
+		return fail(codeServerNotFound, "no such server %q", name)
+	}
+	res, err := relevo.RetireServerBindings(context.Background(), rt, name, dryRun)
+	if dryRun {
+		if err != nil {
+			return err
+		}
+		if perr := printRetirePlan(res.Plan, asJSON); perr != nil {
+			return perr
+		}
+		if len(res.Plan.Refusals) > 0 {
+			return retireRefusalsError(name, res.Plan)
+		}
+		if asJSON {
+			return printDoc(configServerRmDocOf(name, res.Plan.Archive))
+		}
+		return nil
+	}
+	if len(res.Plan.Refusals) > 0 {
+		return retireRefusalsError(name, res.Plan)
+	}
+	if err != nil {
+		landed := strings.Join(res.Archived, ", ")
+		if landed == "" {
+			landed = "nothing"
+		}
+		return failWrap(codeInternal, err, "archived %s; server %q is kept, rerun relevo config server rm %s --retire to archive the rest", landed, name, name)
+	}
+	servers := L.Servers
+	delete(servers, name)
+	body, err := client.EncodeServers(servers)
+	if err != nil {
+		return err
+	}
+	if _, err := rt.Config.As("cli", "config server rm "+name).Put(config.Servers, body); err != nil {
+		return err
+	}
+	if asJSON {
+		return printDoc(configServerRmDocOf(name, res.Archived))
+	}
+	fmt.Printf("removed server %s (%d bindings archived)\n", name, len(res.Archived))
+	return nil
+}
+
+// printRetirePlan lists what a retire would archive and what holds it back,
+// on stderr under --json where stdout carries the document alone.
+func printRetirePlan(plan relevo.RetirePlan, asJSON bool) error {
+	w := noticeWriter(asJSON)
+	for _, archived := range plan.Archive {
+		if _, err := fmt.Fprintf(w, "would archive %s\n", archived); err != nil {
+			return fmt.Errorf("write retire report: %w", err)
+		}
+	}
+	for _, refused := range plan.Refusals {
+		if _, err := fmt.Fprintf(w, "refused %s: %s\n", refused.Name, refused.Reason); err != nil {
+			return fmt.Errorf("write retire report: %w", err)
+		}
+	}
+	return nil
+}
+
+// retireRefusalsError names every binding and chain a retire held back, so
+// the operator sees what still pins the server.
+func retireRefusalsError(name string, plan relevo.RetirePlan) error {
+	held := make([]string, 0, len(plan.Refusals))
+	for _, r := range plan.Refusals {
+		held = append(held, r.Name+" ("+r.Reason+")")
+	}
+	return fail(codeConflict, "server %q is still held by %s", name, strings.Join(held, ", "))
 }
 
 type serversFlagValues struct {

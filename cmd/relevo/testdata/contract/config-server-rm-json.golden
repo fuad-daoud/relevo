@@ -1,4 +1,9 @@
 {
   "name": "zen",
-  "removed": true
+  "removed": true,
+  "archived": [
+    "api",
+    "web"
+  ],
+  "archived_count": 2
 }

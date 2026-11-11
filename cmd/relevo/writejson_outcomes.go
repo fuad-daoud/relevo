@@ -170,14 +170,20 @@ func configServerAddDocOf(name, url string) ConfigServerAddDoc {
 	return ConfigServerAddDoc{Name: name, URL: url}
 }
 
-// ConfigServerRmDoc is `config server rm --json`.
+// ConfigServerRmDoc is `config server rm --json`. Archived is never nil: an
+// empty archive marshals as [], so scripts read a list either way.
 type ConfigServerRmDoc struct {
-	Name    string `json:"name"`
-	Removed bool   `json:"removed"`
+	Name          string   `json:"name"`
+	Removed       bool     `json:"removed"`
+	Archived      []string `json:"archived"`
+	ArchivedCount int      `json:"archived_count"`
 }
 
-func configServerRmDocOf(name string) ConfigServerRmDoc {
-	return ConfigServerRmDoc{Name: name, Removed: true}
+func configServerRmDocOf(name string, archived []string) ConfigServerRmDoc {
+	if archived == nil {
+		archived = []string{}
+	}
+	return ConfigServerRmDoc{Name: name, Removed: true, Archived: archived, ArchivedCount: len(archived)}
 }
 
 // ConfigWorkflowAddDoc is `config workflow add --json`: the stored name.
@@ -410,7 +416,7 @@ func outcomeDocFixtures() []struct {
 			{Kind: "opencode", Role: "researcher", Path: "~/.config/opencode/agent/researcher.md", Outcome: harness.OutcomeError, Err: "permission denied"},
 		})},
 		{"config-server-add-json", configServerAddDocOf("zen", "https://zen.example.test:7777")},
-		{"config-server-rm-json", configServerRmDocOf("zen")},
+		{"config-server-rm-json", configServerRmDocOf("zen", []string{"api", "web"})},
 		{"config-workflow-add-json", configWorkflowAddDocOf("custom")},
 		{"config-workflow-rm-json", configWorkflowRmDocOf("custom")},
 		{"config-workflow-edit-json", configWorkflowEditDocOf("custom", 11)},
