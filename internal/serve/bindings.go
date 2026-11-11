@@ -554,10 +554,6 @@ func (s *Server) handleAvailable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The ledger is server-wide, so the lifted gate reaches every verified
-	// live node too. Detached like the unavailable fan-out: the answer
-	// never waits for a node and a node failure only logs.
-	s.fanoutGateAvailableAsync(req.Subject)
-
+	// The ledger is server-wide, so this one write lifts the gate for every owner.
 	writeJSON(w, http.StatusOK, remote.AvailableResponse{Provider: provider, Removed: removed})
 }

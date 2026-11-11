@@ -9,6 +9,16 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
+// headOwnerPath returns the head owner's store root for mirror keys.
+func headOwnerPath(t *testing.T, env *testEnv) string {
+	t.Helper()
+	root, err := env.srv.ownerRoot(env.id)
+	if err != nil {
+		t.Fatalf("ownerRoot: %v", err)
+	}
+	return root
+}
+
 func saveMirrorBinding(t *testing.T, env *testEnv, name string) {
 	t.Helper()
 	rt, err := env.srv.runtime(env.id)

@@ -85,31 +85,6 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 		s.applyContainer(root, &rt)
 	}
 	rt.CloseServedRound = CloseServedRound
-	// NodeLive serves the cached node view observe fills.
-	rt.NodeLive = func(b store.Binding) *remote.LiveView {
-		v, _ := s.nodeLive.get(nodeLiveKey(root, b.Name), b.Round, s.cfg.Now())
-		return v
-	}
-	// StopForward fans a recorded forward stop out to the node running the
-	// round. The closure carries the owner's root, since the hook is called
-	// with the binding alone.
-	rt.StopForward = func(b store.Binding) {
-		if b.Burst == nil || b.Burst.Forward == nil {
-			return
-		}
-		s.fanoutStopAsync(root, b.Name, *b.Burst.Forward)
-	}
-	// UnbindNodes fans a settled release's unbinds out to every node the
-	// record's ship facts name, on the owner's node-side binding name. A
-	// release of a binding that never forwarded dials nothing.
-	rt.UnbindNodes = func(b store.Binding) {
-		ids := unbindFanoutTargets(b)
-		if len(ids) == 0 {
-			return
-		}
-		forgetForwardRef(rt, ownerIDOf(root), b)
-		s.fanoutUnbindAsync(ownerIDOf(root), b.Name, ids)
-	}
 	// The remote send runs above the engine: the served runtime ships through
 	// the same uplink functions as the CLI runtime.
 	rt.RemoteSend = relevo.RemoteSendDeps{

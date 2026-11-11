@@ -339,11 +339,9 @@ func serveAdminConfigWithPolicy(root string, d *db.DB) (serve.Config, error) {
 	return serveStatusConfigFrom(root, d, L), nil
 }
 
-// serveStatusConfigFrom is the status verb's config. It carries the client key.
+// serveStatusConfigFrom is the status verb's config.
 func serveStatusConfigFrom(root string, d *db.DB, L config.Loaded) serve.Config {
-	cfg := withIsolation(serveAdminConfigFrom(root, d, L), L.Policy.ServeIsolation())
-	cfg.ClientKey = L.ClientKey
-	return cfg
+	return withIsolation(serveAdminConfigFrom(root, d, L), L.Policy.ServeIsolation())
 }
 
 // serveAdminConfigWithCandidates is serveAdminConfigFrom plus the configured
@@ -361,11 +359,10 @@ func serveAdminConfigWithCandidates(root string, d *db.DB) (serve.Config, error)
 	return serveGateConfigFrom(root, d, L), nil
 }
 
-// serveGateConfigFrom is the gate verbs' config. It carries the client key.
+// serveGateConfigFrom is the gate verbs' config.
 func serveGateConfigFrom(root string, d *db.DB, L config.Loaded) serve.Config {
 	cfg := serveAdminConfigFrom(root, d, L)
 	cfg.Candidates = L.Candidates
-	cfg.ClientKey = L.ClientKey
 	return cfg
 }
 

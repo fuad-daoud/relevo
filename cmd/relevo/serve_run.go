@@ -172,7 +172,6 @@ func buildServeConfig(w serveRunWiring) serve.Config {
 		ReaperFor:      userReaperFor(L.Policy.ServeIsolationSharedLogins()),
 		Installation:   w.inst,
 		Audiences:      w.audiences,
-		ClientKey:      L.ClientKey,
 	}
 }
 
