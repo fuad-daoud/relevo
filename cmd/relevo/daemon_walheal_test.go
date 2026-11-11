@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db/wire"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -72,6 +74,82 @@ func TestWALHealDueResetsTheBudgetAfterAHeal(t *testing.T) {
 	}
 	if _, ok, err := h.rt.Store.ReadWALHealFailure(); err != nil || ok {
 		t.Fatalf("marker after a successful probe = (ok=%v, err=%v), want cleared", ok, err)
+	}
+}
+
+// TestWALHealDueKeepsTheBudgetAndMarkerOnAFailedProbe pins the success
+// gate: only a probe that answers clears anything. A probe that fails for
+// another reason leaves the count, the marker and the request untouched, so
+// the next tick retries instead of spending the budget on a healthy pool.
+func TestWALHealDueKeepsTheBudgetAndMarkerOnAFailedProbe(t *testing.T) {
+	d := walTestDB(t)
+	if err := d.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if _, err := d.Version(); err == nil || wire.IsShortReadWAL(err) {
+		t.Fatalf("Version after Close = %v, want a non-short-read error", err)
+	}
+	h := walTestHandles(t, d)
+	h.walAttempt = 2
+	if err := h.rt.Store.WriteWALHealFailure(2, time.Now(), walHealExhaustedReason); err != nil {
+		t.Fatalf("WriteWALHealFailure: %v", err)
+	}
+
+	if h.walHealDue(context.Background()) {
+		t.Fatal("walHealDue on a failed probe = true, want false")
+	}
+	if h.walAttempt != 2 {
+		t.Fatalf("walAttempt = %d after a failed probe, want the kept 2", h.walAttempt)
+	}
+	if _, ok, err := h.rt.Store.ReadWALHealFailure(); err != nil || !ok {
+		t.Fatalf("marker after a failed probe = (ok=%v, err=%v), want still present", ok, err)
+	}
+	if h.walRequested.Load() {
+		t.Fatal("failed probe set the request, want it unset")
+	}
+}
+
+// TestWALHealDueClearsAStaleMarkerAtAttemptZero pins the restart case: a
+// daemon restarted after a give-up inherits no count, so a probe that
+// answers at attempt 0 still clears the stale marker.
+func TestWALHealDueClearsAStaleMarkerAtAttemptZero(t *testing.T) {
+	h := walTestHandles(t, walTestDB(t))
+	if err := h.rt.Store.WriteWALHealFailure(2, time.Now(), walHealExhaustedReason); err != nil {
+		t.Fatalf("WriteWALHealFailure: %v", err)
+	}
+
+	if h.walHealDue(context.Background()) {
+		t.Fatal("walHealDue after a heal = true, want false")
+	}
+	if h.walAttempt != 0 {
+		t.Fatalf("walAttempt = %d, want the kept 0", h.walAttempt)
+	}
+	if _, ok, err := h.rt.Store.ReadWALHealFailure(); err != nil || ok {
+		t.Fatalf("marker after a successful probe = (ok=%v, err=%v), want cleared", ok, err)
+	}
+}
+
+// TestWALHealDueRetriesTheClearWhenItFails pins the clear-first ordering: a
+// marker the store cannot remove keeps the count, so the next tick retries
+// the clear instead of losing the record of the give-up.
+func TestWALHealDueRetriesTheClearWhenItFails(t *testing.T) {
+	root := t.TempDir()
+	h := walTestHandles(t, walTestDB(t))
+	h.rt.Store = store.New(root)
+	h.walAttempt = 2
+	marker := filepath.Join(root, "wal-heal-failed.json")
+	if err := os.Mkdir(marker, 0o755); err != nil {
+		t.Fatalf("Mkdir marker dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(marker, "lock"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("WriteFile lock: %v", err)
+	}
+
+	if h.walHealDue(context.Background()) {
+		t.Fatal("walHealDue when the clear fails = true, want false")
+	}
+	if h.walAttempt != 2 {
+		t.Fatalf("walAttempt = %d after a failed clear, want the kept 2", h.walAttempt)
 	}
 }
 

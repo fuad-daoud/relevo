@@ -91,15 +91,23 @@ func (h *daemonHandles) walHealDue(context.Context) bool {
 		if h.d == nil {
 			return false
 		}
-		if _, err := h.d.Version(); !wire.IsShortReadWAL(err) {
-			if h.walAttempt > 0 {
-				// A probe that succeeds after a heal hands the next,
-				// unrelated poisoning the full budget again.
-				h.walAttempt = 0
-				if cerr := h.rt.Store.ClearWALHealFailure(); cerr != nil {
-					slog.Warn("relevo daemon: wal heal marker not cleared", "err", cerr)
-				}
+		_, err := h.d.Version()
+		if err == nil {
+			// A probe that answers hands the next, unrelated poisoning
+			// the full budget again. Clearing comes first and on every
+			// answer: a restarted daemon inherits no count (only the
+			// exec child gets one), so attempt 0 with a stale marker
+			// is the normal post-restart state, not one to skip. A
+			// clear that fails keeps the count so the next tick
+			// retries it.
+			if cerr := h.rt.Store.ClearWALHealFailure(); cerr != nil {
+				slog.Warn("relevo daemon: wal heal marker not cleared", "err", cerr)
+				return false
 			}
+			h.walAttempt = 0
+			return false
+		}
+		if !wire.IsShortReadWAL(err) {
 			return false
 		}
 		h.walRequested.Store(true)
