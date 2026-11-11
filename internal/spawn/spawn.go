@@ -62,6 +62,12 @@ type ScopeSpec struct {
 	// with GateCPUQuota zeroed. The local Runner never reads it, so a spec
 	// handed to Start must have it empty.
 	GateCPUQuota string
+
+	// RoundCPUs is how many pool cores one round gets, template only:
+	// scopeFor copies the template and always returns a spec with RoundCPUs
+	// zeroed. The local Runner never reads it, so a spec handed to Start
+	// must have it empty.
+	RoundCPUs int
 }
 
 // GoMaxProcsFor reports the GOMAXPROCS a process launched under s should get:

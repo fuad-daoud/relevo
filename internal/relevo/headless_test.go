@@ -605,7 +605,8 @@ func TestScopeUnitNameFor(t *testing.T) {
 // TestScopeFor is the scopeFor table: nil template gives nil, the spec
 // carries the template's other fields, a gate uses GateCPUQuota when set and
 // falls back to CPUQuota when not, the returned spec always zeroes
-// GateCPUQuota, and the template is never mutated.
+// GateCPUQuota and RoundCPUs, a pin overrides AllowedCPUs only when the
+// template names a pool, and the template is never mutated.
 func TestScopeFor(t *testing.T) {
 	t.Parallel()
 
@@ -679,6 +680,35 @@ func TestScopeFor(t *testing.T) {
 			if got := scopeFor(rt, kind, "unit", "1"); got == nil || got.AllowedCPUs != "1" {
 				t.Errorf("%s with cpus=\"1\" AllowedCPUs = %+v, want 1", kind, got)
 			}
+		}
+	})
+
+	t.Run("round cpus is zeroed", func(t *testing.T) {
+		tmpl := base
+		tmpl.RoundCPUs = 2
+		tmpl.AllowedCPUs = "0-3"
+		got := scopeFor(Runtime{Scope: &tmpl}, scopeRound, "unit", "0,1")
+		if got == nil {
+			t.Fatal("scopeFor = nil, want a spec")
+		}
+		if got.RoundCPUs != 0 {
+			t.Errorf("round RoundCPUs = %d, want it zeroed", got.RoundCPUs)
+		}
+		if got.AllowedCPUs != "0,1" {
+			t.Errorf("round AllowedCPUs = %q, want the pin 0,1", got.AllowedCPUs)
+		}
+	})
+
+	t.Run("a pin without a pool leaves AllowedCPUs empty", func(t *testing.T) {
+		tmpl := base
+		tmpl.RoundCPUs = 2
+		rt := Runtime{Scope: &tmpl}
+		got := scopeFor(rt, scopeRound, "unit", "0,1")
+		if got == nil {
+			t.Fatal("scopeFor = nil, want a spec")
+		}
+		if got.AllowedCPUs != "" {
+			t.Errorf("round AllowedCPUs = %q, want empty without a pool", got.AllowedCPUs)
 		}
 	})
 

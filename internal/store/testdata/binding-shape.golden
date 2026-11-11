@@ -216,6 +216,7 @@ round_cap
 round_closed_baseline_head
 round_closed_tree
 round_cpu
+round_cpus[]
 round_excluded[]
 round_oom_kills
 round_repo_baseline_tree

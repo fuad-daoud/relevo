@@ -260,6 +260,12 @@ type Binding struct {
 	RoundTier string `json:"round_tier,omitempty"`
 	// RoundCPU is a pointer because core 0 is valid; nil means none.
 	RoundCPU *int `json:"round_cpu,omitempty"`
+	// RoundCPUs is the set of pool cores the round may run on; nil means
+	// none. It is not stamped into the format: an older relevo that drops
+	// it loses only the pin — the round re-picks its set or runs unpinned;
+	// it cannot double-run, run in the wrong directory, or erase a staged
+	// fact — so the record stays readable.
+	RoundCPUs []int `json:"round_cpus,omitempty"`
 	// Gate is the acceptance command run through `sh -c` when the round's
 	// completion marker appears; "" means no gate.
 	Gate          string   `json:"gate,omitempty"`

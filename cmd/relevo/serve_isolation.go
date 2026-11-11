@@ -100,7 +100,7 @@ func scopeFromPolicy(sc *policy.ScopePolicy) *spawn.ScopeSpec {
 	if sc != nil && sc.Enabled != nil && !*sc.Enabled {
 		return nil
 	}
-	spec := &spawn.ScopeSpec{CPUWeight: 100}
+	spec := &spawn.ScopeSpec{CPUWeight: 100, RoundCPUs: policy.DefaultRoundCPUs}
 	if sc != nil {
 		spec.Slice = sc.Slice
 		if sc.CPUWeight != 0 {
@@ -110,6 +110,9 @@ func scopeFromPolicy(sc *policy.ScopePolicy) *spawn.ScopeSpec {
 		spec.CPUQuota = sc.CPUQuota
 		spec.GateCPUQuota = sc.GateCPUQuota
 		spec.AllowedCPUs = sc.AllowedCPUs
+		if sc.RoundCPUs != 0 {
+			spec.RoundCPUs = sc.RoundCPUs
+		}
 		spec.TasksMax = sc.TasksMax
 	}
 	return spec

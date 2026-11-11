@@ -72,8 +72,12 @@ type Deps struct {
 	Admit     func(ctx context.Context, name string) error
 	NotQueued error
 	// AllowedCPUs is the runtime scope's allowed_cpus the round pool is
-	// parsed from. Empty means no pool: the round runs unpinned.
+	// parsed from. Empty means every online CPU: the round still gets a
+	// set, but no single pin.
 	AllowedCPUs string
+	// RoundCPUs sizes the set one round gets; 0 is a single core, the
+	// directly built default.
+	RoundCPUs int
 	// HeldCPUs returns the cores held by live rounds other than self. Nil
 	// means the local census, which reads only the caller's tx.
 	HeldCPUs func(tx *store.Tx, self string) ([]int, error)

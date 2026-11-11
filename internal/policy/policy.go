@@ -113,7 +113,10 @@ type ScopePolicy struct {
 	// AllowedCPUs is the pool of cores relevo hands out, one per round; ""
 	// means no pinning. Needs cpuset delegated to the user manager.
 	AllowedCPUs string `json:"allowed_cpus,omitempty"`
-	TasksMax    int    `json:"tasks_max,omitempty"` // 0 = none; else >= 1
+	// RoundCPUs is how many pool cores one round gets, as its least-used
+	// set; 0 is DefaultRoundCPUs.
+	RoundCPUs int `json:"round_cpus,omitempty"`
+	TasksMax  int `json:"tasks_max,omitempty"` // 0 = none; else >= 1
 }
 
 // ChainPolicy configures the chain runner's settings: the correction budget
@@ -211,6 +214,11 @@ const DefaultGateTimeout = 10 * time.Minute
 
 // DefaultMaxPlanners is the planner cap when serve.max_planners is unset.
 const DefaultMaxPlanners = 4
+
+// DefaultRoundCPUs is how many pool cores one round gets when
+// serve.scope.round_cpus is unset: a pair, so a two-core pool still spreads
+// two live rounds without sharing.
+const DefaultRoundCPUs = 2
 
 // Rotation modes for policy.accounts.rotation.
 const (

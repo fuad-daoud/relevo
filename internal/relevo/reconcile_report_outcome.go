@@ -393,6 +393,7 @@ func advanceToNextRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 	b.RoundVerify = false
 	b.RoundTier = ""
 	b.RoundCPU = nil
+	b.RoundCPUs = nil
 	b.RoundBaselineTree = ""
 	b.RoundClosedBaselineHead = b.RoundBaselineHead
 	b.RoundBaselineHead = ""

@@ -67,6 +67,9 @@ func validateScope(path, prefix string, sc *ScopePolicy) error {
 	if sc.TasksMax != 0 && sc.TasksMax < 1 {
 		return fmt.Errorf("%s: %s.tasks_max: must be at least 1, got %d: %w", path, prefix, sc.TasksMax, ErrBadPolicy)
 	}
+	if sc.RoundCPUs < 0 {
+		return fmt.Errorf("%s: %s.round_cpus: must be at least 1, got %d: %w", path, prefix, sc.RoundCPUs, ErrBadPolicy)
+	}
 	return nil
 }
 
