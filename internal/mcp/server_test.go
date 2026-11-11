@@ -322,6 +322,42 @@ func TestServerPingRepliesEmptyObject(t *testing.T) {
 	}
 }
 
+// errWriter fails every write, standing in for a stdout pipe whose reader
+// went away: the failure must be logged, never fatal to the session.
+type errWriter struct{ err error }
+
+func (w errWriter) Write([]byte) (int, error) { return 0, w.err }
+
+// TestServerWriteErrorKeepsServing pins the broken-pipe contract: a failing
+// stdout never ends the session — Serve consumes the rest of stdin and
+// returns nil at EOF, and each failure is logged instead of answered.
+func TestServerWriteErrorKeepsServing(t *testing.T) {
+	var logBuf bytes.Buffer
+	srv := &Server{Verbs: &fakeVerbs{}, Version: "test", Mode: ModeTools, Log: &logBuf}
+
+	pr, pw := io.Pipe()
+	done := make(chan error, 1)
+	go func() { done <- srv.Serve(context.Background(), pr, errWriter{err: errors.New("broken pipe")}) }()
+
+	for _, line := range []string{
+		`{"jsonrpc":"2.0","id":1,"method":"ping"}`,
+		`{"jsonrpc":"2.0","id":2,"method":"ping"}`,
+	} {
+		if _, err := pw.Write([]byte(line + "\n")); err != nil {
+			t.Fatalf("write request: %v", err)
+		}
+	}
+	if err := pw.Close(); err != nil {
+		t.Fatalf("close pipe: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("Serve = %v, want nil", err)
+	}
+	if got := logBuf.String(); strings.Count(got, "write:") != 2 {
+		t.Fatalf("log = %q, want two write failures (one per ping)", got)
+	}
+}
+
 func TestServerOnInitializedFiresAfterNotification(t *testing.T) {
 	fired := false
 	srv := &Server{Verbs: &fakeVerbs{}, OnInitialized: func() { fired = true }}
