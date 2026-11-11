@@ -261,6 +261,60 @@ func TestBackoffThreeSlowFailuresInsideThirtySecondsStaySuspect(t *testing.T) {
 	}
 }
 
+func TestBackoffTwoSlowFailuresSpanningThirtySecondsStaySuspect(t *testing.T) {
+	t.Parallel()
+
+	// Two slow failures already span the slow rule's window, so only the
+	// third counted failure may confirm: count and span stay separate inputs.
+	soft := func() error {
+		return fmt.Errorf("%w: %w", client.ErrUnreachable, context.DeadlineExceeded)
+	}
+	clock := baseTime
+	rb := testBackoffAt(&clock)
+	rb.recordFailure("zen", soft(), 1)
+	clock = clock.Add(softConfirmSpan)
+	if rep := rb.recordFailure("zen", soft(), 2); rep.confirmed || rep.inEpisode {
+		t.Fatalf("two slow failures spanning 30s report %+v, want suspicion", rep)
+	}
+	if rb.skip("zen") {
+		t.Fatal("skip = true after two slow failures spanning 30s, want suspicion")
+	}
+	rep := rb.recordFailure("zen", soft(), 3)
+	if !rep.confirmed {
+		t.Fatalf("third slow failure report = %+v, want confirmed spanning 30s", rep)
+	}
+	if !rep.start.Equal(baseTime) {
+		t.Errorf("episode start = %v, want the first failure's time %v", rep.start, baseTime)
+	}
+}
+
+func TestBackoffSoftThenHardFailureStaysOnTheSlowRule(t *testing.T) {
+	t.Parallel()
+
+	// The latch keeps the episode slow once a slow probe opened it: judging
+	// only the latest failure would let a refusal confirm on the hard rule.
+	hard := errors.New("connection refused")
+	soft := fmt.Errorf("%w: %w", client.ErrUnreachable, context.DeadlineExceeded)
+	clock := baseTime
+	rb := testBackoffAt(&clock)
+	rb.recordFailure("zen", soft, 1)
+	clock = clock.Add(hardConfirmSpan)
+	if rep := rb.recordFailure("zen", hard, 2); rep.confirmed || rep.inEpisode {
+		t.Fatalf("one slow plus one refused failure reports %+v, want suspicion on the slow rule", rep)
+	}
+	if rb.skip("zen") {
+		t.Fatal("skip = true after a slow plus a refused failure, want suspicion")
+	}
+	clock = clock.Add(softConfirmSpan - hardConfirmSpan)
+	rep := rb.recordFailure("zen", hard, 3)
+	if !rep.confirmed {
+		t.Fatalf("mixed failures spanning 30s report %+v, want confirmed on the slow rule", rep)
+	}
+	if !rep.start.Equal(baseTime) {
+		t.Errorf("episode start = %v, want the first failure's time %v", rep.start, baseTime)
+	}
+}
+
 func TestBackoffSameGenerationCountsOnce(t *testing.T) {
 	t.Parallel()
 
