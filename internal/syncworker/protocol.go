@@ -65,10 +65,6 @@ const (
 	VerbPull Verb = "pull"
 	// VerbHead reads one page of an origin's head.
 	VerbHead Verb = "head"
-	// VerbPutBlob uploads one staged body into R2 under a key.
-	VerbPutBlob Verb = "put_blob"
-	// VerbGetBlob fetches one body out of R2 into a staged file.
-	VerbGetBlob Verb = "get_blob"
 	// VerbStats reports what the log holds.
 	VerbStats Verb = "stats"
 	// VerbPublishMarks records how far this worker has applied of every other
@@ -181,20 +177,8 @@ type Request struct {
 	// machine may sync rows with no bucket; the blob verbs are then refused
 	// rather than failing on a nil.
 	R2 *R2Config `json:"r2,omitempty"`
-	// Key names the object a blob verb addresses, as "<origin>/<sha256>". It is
-	// never a path into the bucket: both halves are checked, so a key cannot
-	// reach outside its own origin's prefix.
-	Key string `json:"key,omitempty"`
-	// Staging is the absolute local path the body is read from or written to.
-	// Bodies never cross the pipe, so this is the only thing either blob verb
-	// carries about them.
-	Staging string `json:"staging,omitempty"`
-	// Max is the most bytes get_blob may write: the length the ref declares. A
-	// body that runs past it is cut off there rather than downloaded whole.
-	Max int64 `json:"max,omitempty"`
 	// Blobs is the batch put_blobs uploads or get_blobs fetches, one item per
-	// key. The single verbs read Key, Staging and Max instead, so this field
-	// is absent on any other verb.
+	// key; it is absent on any other verb.
 	Blobs []BlobItem `json:"blobs,omitempty"`
 	// Entries is the batch an export appends as one write.
 	Entries []Entry `json:"entries,omitempty"`
@@ -265,13 +249,6 @@ type Response struct {
 	Entries []Entry `json:"entries,omitempty"`
 	// Head is a page of an origin's latest state per row.
 	Head []HeadRow `json:"head,omitempty"`
-	// Bytes is what one blob verb moved, in each direction, exact rather than
-	// estimated: the daemon adds it to the month's cost, and an estimate would
-	// compound across every call.
-	Bytes int64 `json:"bytes,omitempty"`
-	// Skipped says a put_blob found the object already in the store and sent
-	// nothing: the wanted object is there, so the entry may be appended.
-	Skipped bool `json:"skipped,omitempty"`
 	// Results is what put_blobs or get_blobs moved per key, in the order the
 	// request named them. One key's failure rides here rather than refusing
 	// the whole call, so this reply is OK even where some entry carries an

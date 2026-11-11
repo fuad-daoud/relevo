@@ -102,31 +102,11 @@ func marksRequestWireCases() []wireCase {
 	}
 }
 
-// blobRequestWireCases are the two blob verbs' requests, kept apart because the
+// blobRequestWireCases are the blob verbs' requests, kept apart because the
 // staged paths are long enough on their own to push the table over the length
 // the linter allows.
 func blobRequestWireCases() []wireCase {
 	return []wireCase{
-		{
-			name: "request put_blob",
-			value: Request{
-				ID: "7", Verb: VerbPutBlob,
-				Key:     "origin-a/" + strings.Repeat("a", 64),
-				Staging: "/state/sync-blobs/" + strings.Repeat("a", 64),
-			},
-			wire: `{"id":"7","verb":"put_blob","key":"origin-a/` + strings.Repeat("a", 64) +
-				`","staging":"/state/sync-blobs/` + strings.Repeat("a", 64) + `"}`,
-		},
-		{
-			name: "request get_blob",
-			value: Request{
-				ID: "8", Verb: VerbGetBlob,
-				Key:     "origin-b/" + strings.Repeat("b", 64),
-				Staging: "/state/sync-blobs/" + strings.Repeat("b", 64),
-			},
-			wire: `{"id":"8","verb":"get_blob","key":"origin-b/` + strings.Repeat("b", 64) +
-				`","staging":"/state/sync-blobs/` + strings.Repeat("b", 64) + `"}`,
-		},
 		{
 			name: "request put_blobs",
 			value: Request{
@@ -265,27 +245,15 @@ func responseWireCases() []wireCase {
 				`"turso_sent":1024,"turso_received":2048,"r2_put":4096,"r2_get":8192}}`,
 		},
 		{
-			name:  "response carrying a put that moved bytes",
-			value: Response{ID: "7", OK: true, Bytes: 4096},
-			wire:  `{"id":"7","ok":true,"bytes":4096}`,
-		},
-		{
-			// A skip carries no bytes: the object was already there, so the
-			// zero must be absent from the line rather than sent as bytes:0,
-			// which would read as an empty body having been stored.
-			name:  "response carrying a put that skipped",
-			value: Response{ID: "7", OK: true, Skipped: true},
-			wire:  `{"id":"7","ok":true,"skipped":true}`,
-		},
-		{
 			name:  "response carrying a missing body",
 			value: Response{ID: "8", OK: false, Error: "not in the store", Code: CodeBlobMissing},
 			wire:  `{"id":"8","ok":false,"error":"not in the store","code":"blob_missing"}`,
 		},
 		{
 			// A batch reply stays OK where one key failed: the failure rides
-			// in its own result, and a skipped put carries no bytes, as with
-			// the single verb.
+			// in its own result. A skipped put carries no bytes: the zero is
+			// absent rather than bytes:0, which would read as an empty body
+			// having been stored.
 			name: "response carrying a batch of per-key results",
 			value: Response{ID: "9", OK: true, Results: []BlobResult{
 				{Key: "origin-a/" + strings.Repeat("a", 64), Bytes: 5},

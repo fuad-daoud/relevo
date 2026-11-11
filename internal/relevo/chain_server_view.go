@@ -292,23 +292,20 @@ func roundOpenFromWire(err error) error {
 // chainServerDone is `relevo done <chain>` for a chain that runs on a server:
 // the server releases the chain, then each mirror member is released through
 // the ordinary done. A 404 from the server means it already released the
-// chain: this machine settles the mirror locally below.
+// chain, and a server no longer in this machine's config has nothing this
+// machine can release: either way the mirror is settled locally below.
 func chainServerDone(ctx context.Context, rt Runtime, c db.ChainRow) (DoneResult, error) {
 	if rt.Remote == nil {
 		return DoneResult{}, ErrRemoteUnavailable
 	}
-	if _, err := chainResultFromMirror(ctx, rt, c.Name); err != nil && !remote.Is404(err) {
+	var chainView remote.ChainView
+	_, err := chainResultFromMirror(ctx, rt, c.Name)
+	forgotten, err := chainServerForgotten(c, err)
+	if err != nil && !remote.Is404(err) {
 		return DoneResult{}, err
 	}
-	chainView, err := rt.Remote.ChainDone(ctx, c.Server, c.Name)
-	if err != nil {
-		if remoteCode(err, 409, remote.CodeChainRunning) {
-			return DoneResult{}, fmt.Errorf("chain %s is running; relevo stop %s first: %w", c.Name, c.Name, ErrChainRunning)
-		}
-		if remoteCode(err, 409, remote.CodeRoundOpen) {
-			return DoneResult{}, roundOpenFromWire(err)
-		}
-		if !remote.Is404(err) {
+	if !forgotten {
+		if chainView, err = chainServerPostDone(ctx, rt, c); err != nil {
 			return DoneResult{}, err
 		}
 	}
@@ -350,6 +347,37 @@ func chainServerDone(ctx context.Context, rt Runtime, c db.ChainRow) (DoneResult
 		return DoneResult{}, err
 	}
 	return out, nil
+}
+
+// chainServerPostDone asks the server to release the chain. A 404 is no
+// error: the server already released it.
+func chainServerPostDone(ctx context.Context, rt Runtime, c db.ChainRow) (remote.ChainView, error) {
+	chainView, err := rt.Remote.ChainDone(ctx, c.Server, c.Name)
+	if remoteCode(err, 409, remote.CodeChainRunning) {
+		return remote.ChainView{}, fmt.Errorf("chain %s is running; relevo stop %s first: %w", c.Name, c.Name, ErrChainRunning)
+	}
+	if remoteCode(err, 409, remote.CodeRoundOpen) {
+		return remote.ChainView{}, roundOpenFromWire(err)
+	}
+	if _, err = chainServerForgotten(c, err); err != nil && !remote.Is404(err) {
+		return remote.ChainView{}, err
+	}
+	return chainView, nil
+}
+
+// chainServerForgotten reports whether err says c's server is no longer in
+// this machine's config, in which case the chain settles locally: a retired
+// server's chains could otherwise never be closed. The mirror's own status
+// decides, since the server cannot be asked: a chain the mirror last saw
+// running is refused, because its server may still be running it.
+func chainServerForgotten(c db.ChainRow, err error) (bool, error) {
+	if !errors.Is(err, client.ErrUnknownServer) {
+		return false, err
+	}
+	if c.Status == string(chain.StatusRunning) {
+		return false, fmt.Errorf("chain %s is running on %s, which is no longer a configured server; add the server back to stop it there: %w", c.Name, c.Server, ErrChainRunning)
+	}
+	return true, nil
 }
 
 // chainGetView reads a server chain's view, the read every server-chain read

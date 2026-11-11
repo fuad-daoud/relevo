@@ -152,7 +152,7 @@ func TestTransferCountsAcrossAStatsCallThatFails(t *testing.T) {
 // answer after it would be in a vocabulary the daemon reads wrongly.
 //
 // The mutation is accepting version 1, which would let a version 1 daemon start
-// a version 5 worker and discover the difference at the first put_blob, after
+// a version 5 worker and discover the difference at the first put_blobs, after
 // the exporter had written entries pointing at objects nobody uploaded.
 func TestWorkerRefusesWrongProtocolVersion(t *testing.T) {
 	t.Parallel()

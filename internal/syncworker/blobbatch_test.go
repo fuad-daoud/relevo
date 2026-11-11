@@ -200,8 +200,8 @@ func TestPutBlobsKeepsResultsInRequestOrder(t *testing.T) {
 }
 
 // TestPutBlobsKeepsGoingPastADigestMismatch pins that one key's failure is no
-// verdict on the rest: a body that is not its key's digest is refused with the
-// single verb's class, and the other keys still upload.
+// verdict on the rest: a body that is not its key's digest is refused with its
+// own class, and the other keys still upload.
 func TestPutBlobsKeepsGoingPastADigestMismatch(t *testing.T) {
 	store := withStore(t)
 	dir := t.TempDir()
@@ -300,7 +300,7 @@ func TestGetBlobsWritesEveryStagedBody(t *testing.T) {
 }
 
 // TestGetBlobsKeepsGoingPastAMissingObject pins that a body the store does not
-// hold fails only its own result, with the single get's class, while the other
+// hold fails only its own result, with the missing class, while the other
 // keys still land.
 func TestGetBlobsKeepsGoingPastAMissingObject(t *testing.T) {
 	store := withStore(t)
