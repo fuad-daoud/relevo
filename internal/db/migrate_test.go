@@ -308,11 +308,11 @@ func TestMigration031AddsWriterColumn(t *testing.T) {
 	}
 }
 
-// TestMigration032AddsBurstStatsColumns pins the burst columns: a database at
+// TestMigration032AddsRoundStatsColumns pins the round-stat columns: a database at
 // 031 with a round row gains the four columns as NULL, a second apply of 032
 // is a no-op, and a fresh database writes and reads the four columns through
 // the round write path and the row exchange alike.
-func TestMigration032AddsBurstStatsColumns(t *testing.T) {
+func TestMigration032AddsRoundStatsColumns(t *testing.T) {
 	// 1. Upgraded DB from version 31 to 32
 	sqlDB := rawSQLDB(t, filepath.Join(t.TempDir(), "relevo.db"))
 
@@ -341,10 +341,10 @@ func TestMigration032AddsBurstStatsColumns(t *testing.T) {
 	if err := sqlDB.QueryRow(`SELECT queue_wait_ms, start_kind, rusage_cpu_ms, rusage_peak_mem_bytes
 		FROM round WHERE id = 'r1'`).
 		Scan(&queueWaitMS, &startKind, &rusageCPUMS, &rusagePeakMemBytes); err != nil {
-		t.Fatalf("select burst columns: %v", err)
+		t.Fatalf("select round-stat columns: %v", err)
 	}
 	if queueWaitMS.Valid || startKind.Valid || rusageCPUMS.Valid || rusagePeakMemBytes.Valid {
-		t.Errorf("pre-032 row burst columns = %v/%v/%v/%v, want all NULL",
+		t.Errorf("pre-032 row round-stat columns = %v/%v/%v/%v, want all NULL",
 			queueWaitMS, startKind, rusageCPUMS, rusagePeakMemBytes)
 	}
 
@@ -378,7 +378,7 @@ func TestMigration032AddsBurstStatsColumns(t *testing.T) {
 	// and the row exchange surfaces them: the provider reads the round table
 	// with `relevo db query --json` rather than parsing log JSON.
 	bindingID, err := d.UpsertBinding(Binding{
-		Name: "burst", CWD: "/work/burst", BuilderMode: "headless", IngestSource: IngestLive,
+		Name: "roundstats", CWD: "/work/roundstats", BuilderMode: "headless", IngestSource: IngestLive,
 		CreatedAt: time.Date(2026, 10, 17, 10, 0, 0, 0, time.UTC),
 	})
 	if err != nil {

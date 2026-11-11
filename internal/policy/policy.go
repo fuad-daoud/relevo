@@ -98,21 +98,6 @@ type ServePolicy struct {
 	// environment instead of stripping them. It defaults to false and is only
 	// meaningful in user mode; the doctor warns when it is on.
 	IsolationSharedLogins bool `json:"isolation_shared_logins,omitempty"`
-	// Burst configures the head's burst provider; nil means no provider to
-	// run and every burst default.
-	Burst *BurstPolicy `json:"burst,omitempty"`
-}
-
-// BurstPolicy configures how the head reaches the burst provider.
-type BurstPolicy struct {
-	// Command is the provider argv the head runs with the request JSON on
-	// stdin, as ["burst", "report"] on a real box; empty means there is no
-	// provider to run.
-	Command []string `json:"command,omitempty"`
-	// NodeLostAfterMS is how long a forwarded round waits on a burst node
-	// that is gone from the reply or unreachable before the head re-queues
-	// it; nil is DefaultBurstNodeLostAfter.
-	NodeLostAfterMS *int `json:"node_lost_after_ms,omitempty"`
 }
 
 // ScopePolicy configures the per-round systemd scope a served headless
@@ -226,11 +211,6 @@ const DefaultGateTimeout = 10 * time.Minute
 
 // DefaultMaxPlanners is the planner cap when serve.max_planners is unset.
 const DefaultMaxPlanners = 4
-
-// DefaultBurstNodeLostAfter bounds how long a forwarded round waits for a
-// burst node that stopped answering before the head re-queues it: nil
-// (absent block or key) is 10 m.
-const DefaultBurstNodeLostAfter = 10 * time.Minute
 
 // Rotation modes for policy.accounts.rotation.
 const (
@@ -461,26 +441,6 @@ func (p Policy) MaxPlannersOrDefault() int {
 		return DefaultMaxPlanners
 	}
 	return *p.Serve.MaxPlanners
-}
-
-// BurstNodeLostAfter returns the configured serve.burst.node_lost_after_ms,
-// or DefaultBurstNodeLostAfter when the serve block, the burst block or the
-// key is absent.
-func (p Policy) BurstNodeLostAfter() time.Duration {
-	if p.Serve == nil || p.Serve.Burst == nil || p.Serve.Burst.NodeLostAfterMS == nil {
-		return DefaultBurstNodeLostAfter
-	}
-	return time.Duration(*p.Serve.Burst.NodeLostAfterMS) * time.Millisecond
-}
-
-// BurstCommand returns the configured serve.burst.command argv, or nil when
-// the burst block is absent. The result is a copy, so a caller cannot
-// reorder the loaded policy.
-func (p Policy) BurstCommand() []string {
-	if p.Serve == nil || p.Serve.Burst == nil {
-		return nil
-	}
-	return append([]string(nil), p.Serve.Burst.Command...)
 }
 
 // ScopeFor returns the scope for a context: a served round takes
