@@ -15,16 +15,15 @@ files:
 export TMPDIR=$HOME/.cache/relevo-chains/tmp GOTMPDIR=$HOME/.cache/go-tmp
 ```
 
-`/tmp` is a usrquota tmpfs on the laptop and on zen, and parallel builds fill
-it. `relevo-serve` on zen carries a systemd drop-in that sets TMPDIR/GOTMPDIR
-under `~/.cache`; keep it on any rebuild.
+`/tmp` is a usrquota tmpfs on the laptop and on the home boxes, and parallel
+builds fill it.
 
 The state tmp root is now the default and needs no drop-in: every round and
 check process gets its own directory under `<state root>/tmp`, and the daemon
 sweeps the leftovers there on its ticks. Where such a drop-in is no longer
-needed, remove it by hand -- zen's
-`relevo-serve.service.d/tmpdir.conf` is the example -- because an inherited
-`TMPDIR` keeps pointing processes at a directory the sweep never sees.
+needed, remove it by hand (a `relevo-serve.service.d/tmpdir.conf`, for
+example), because an inherited `TMPDIR` keeps pointing processes at a
+directory the sweep never sees.
 The `relevo-serve-tmp` and `relevo-serve-gotmp` directories live outside the
 root and are never swept; clear them on the same schedule you always used.
 This is an ops step, not code.
@@ -41,12 +40,22 @@ This is an ops step, not code.
   a drop of more than one point. It costs one extra test run of those packages,
   and it is the only coverage check off CI: the baseline file is CI's. CI is
   the judge.
+- Run the merge gate on home-01, not the laptop, with the servers repo's
+  `home/gate.sh`:
+  `cd ~/projects/servers && ssh home bash -s -- <sha> [base] < home/gate.sh`.
+  It runs `make check-affected` from a fresh clone at `<sha>`, as a transient
+  unit in `relevo.slice` capped by `GATE_MEM` (default `4G`), with lint
+  required, and it refuses to start beside a `relevo.db-shm`. It runs one gate
+  at a time. Killing the local `ssh` does not stop it; run
+  `ssh home systemctl --user stop relevo-gate`.
+- A gate that falls back to every package (a change to the Makefile, `go.mod`
+  or a root path), or one that reaches `internal/relevo`, does not fit on any
+  gate machine: `internal/relevo`'s tests leave database handles open, and the
+  test binary grows past 10 GB. Leave those to CI until the leak is fixed.
 - The full local run is optional -- the static checks, then `make check-test`,
-  the modernc leg, and `make e2e`. The suite runs on zen, not on contabo:
-  contabo (7G) OOM-kills it, and its `dev run` output vanishes silently. `git
-  archive` the tree to
-  `zen:~/.cache/mm-*`, `git init` a snapshot there, then `make check-test`,
-  the modernc leg, and `make e2e`. The modernc leg is:
+  the modernc leg, and `make e2e`. It needs a machine with room for
+  `internal/relevo`'s tests (above); contabo (7G) and home-01 (15G, most of it
+  the builders' slice) OOM-kill it. The modernc leg is:
   `go vet -tags modernc ./internal/db/...` and
   `go test -race -count=1 -tags modernc ./internal/db/... ./internal/store/...`.
   CI runs that leg without `-race` on pull requests, so the command above is
@@ -78,9 +87,9 @@ This is an ops step, not code.
 
 ## Installing and deploying
 
-- Only a tagged release is ever installed on the laptop, zen or contabo. A
-  merge to main is not a deploy; the next release carries it. A branch, a main
-  head or any other untagged build runs only in a sandbox.
+- Only a tagged release is ever installed on the laptop, zen, contabo or a
+  home box. A merge to main is not a deploy; the next release carries it. A
+  branch, a main head or any other untagged build runs only in a sandbox.
 - Testing a branch or main: `scripts/relevo-sandbox.sh` points the `XDG_*`
   and harness homes at a directory, needs no root, and
   [env-sandbox.md](env-sandbox.md) has the recipe. Separate Unix users are the
@@ -89,9 +98,12 @@ This is an ops step, not code.
 - Laptop: `relevo update --to vX.Y.Z` installs the checksum-verified release
   binary atomically; `--release` is needed once to replace a local build.
   `relevo version` must print the bare tag afterwards.
-- zen: run the same `relevo update` over ssh (its shell is fish), then
-  `systemctl --user restart relevo-serve`. Serve reads config only at start, so
-  a config change alone never lands without the restart.
+- zen: run the same `relevo update` over ssh (its shell is fish). zen runs no
+  `relevo-serve`.
+- A home box: download and verify the tag's linux archive as for contabo, then
+  deploy it with `~/projects/servers/home/setup.fish <machine> deploy <binary>`.
+  Serve reads config only at start, so a config change alone never lands
+  without a `systemctl --user restart relevo-serve`.
 - contabo: download the tag's linux archive from the GitHub release, verify it
   against `checksums.txt`, and deploy that binary with
   `~/projects/servers/contabo/srv.fish deploy relevo-serve <binary>`.
@@ -116,7 +128,7 @@ This is an ops step, not code.
 
 ## Running chains
 
-- Build big slices as `relevo chain --server zen`, on this repository's agents
+- Build big slices as `relevo chain --server home`, on this repository's agents
   (CONTRIBUTING.md, "Developing relevo with relevo").
 - Gate each chain round with `relevo chain --gate 'make check-affected'`, and
   a single binding with the same `--gate` flag. relevo exports
@@ -128,9 +140,10 @@ This is an ops step, not code.
   binding, `<prompt>` is the plan file), then
   `relevo chain --resume --name <chain>` reviews that round instead of
   re-running the halted step.
-- Fetch a served head with `git fetch zen:<served worktree> HEAD:refs/heads/X`.
+- Fetch a served head with `git fetch home:<served worktree> HEAD:refs/heads/X`.
   Served worktrees live at
-  `~/.local/state/relevo-serve/serve/bindings/*/.worktrees/<name>`.
+  `/srv/data/relevo-serve/serve/bindings/*/.worktrees/<name>` on home and
+  contabo.
 - After a slice, bind a reviewer and a security reader locally on a detached
   worktree of the head (`--cwd`, seed under 4096 bytes). They catch what the
   builders did not.
@@ -145,6 +158,5 @@ This is an ops step, not code.
   deletes that package's exclusion or allow-list entry in its first plan, not
   its last. While the entry stands, the chain gate cannot see what is left, so
   the lane can report done with the package still failing.
-- Keep at most two whole-repo gates running on zen at once. Above that its
-  load passes 60 and the slowest suites time out, which reads as a failed
-  change.
+- A gate shares `relevo.slice` with home's builders. `CPUWeight=50` keeps
+  the builders ahead of it, so a gate is slower while rounds run there.
