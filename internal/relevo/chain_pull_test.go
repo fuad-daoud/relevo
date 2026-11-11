@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/config"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
@@ -1012,6 +1014,39 @@ func TestChainPullSkipsAChainWhoseServerIsNotConfigured(t *testing.T) {
 	}
 	if n := countCalls(fr, "GetChain:zen:shop"); n != 1 {
 		t.Errorf("GetChain calls = %d, want 1 once zen is configured: %v", n, fr.calls)
+	}
+}
+
+// TestChainPullFailsWhenConfiguredServersCannotLoad pins the Load-error
+// branch: a servers document no validated write could have produced still
+// fails the pull before any server is contacted. The bad body is planted
+// under the store with a raw write, bypassing the validating Put.
+func TestChainPullFailsWhenConfiguredServersCannotLoad(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	fr := chainPullFake(chainPullView("shop", string(chain.StatusRunning), 0, 0, 0))
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "shop")
+
+	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	rt.Config = config.Open(d)
+	t.Cleanup(func() { _ = d.Close() })
+	if err := d.Tx(func(tx *db.Tx) error {
+		return tx.ConfigPut(string(config.Servers), []byte("{not json"), baseTime)
+	}); err != nil {
+		t.Fatalf("ConfigPut: %v", err)
+	}
+
+	err = chainPullServers(ctx, rt)
+	if err == nil || !strings.Contains(err.Error(), "chain pull configured servers") {
+		t.Fatalf("chainPullServers err = %v, want the configured-servers load failure", err)
+	}
+	if n := countCalls(fr, "GetChain:zen:shop"); n != 0 {
+		t.Errorf("GetChain calls = %d, want none before the config loads: %v", n, fr.calls)
 	}
 }
 

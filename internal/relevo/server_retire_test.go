@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 
@@ -184,6 +185,225 @@ func TestRetireServerBindingsRefusesARunningChain(t *testing.T) {
 	}
 	if _, err := rt.Store.Load("shop"); err != nil {
 		t.Errorf("shop still live: Load: %v", err)
+	}
+}
+
+// TestRetireServerBindingsRefusesALiveLocalProcess pins the fail-closed
+// liveness probe: a binding with a local process refuses instead of archiving
+// when the runner is missing, when the probe errors, and when the process
+// answers alive. A dead process archives, and only the binding naming a
+// process is ever probed.
+func TestRetireServerBindingsRefusesALiveLocalProcess(t *testing.T) {
+	t.Parallel()
+
+	live := func(t *testing.T) Runtime {
+		t.Helper()
+		rt := newRuntime(t)
+		b := retireRemoteBinding("api", "zen")
+		b.Builder.PID = 4242
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatalf("Save api: %v", err)
+		}
+		return rt
+	}
+	liveNames := func(t *testing.T, rt Runtime) []string {
+		t.Helper()
+		live, err := rt.Store.List()
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		names := make([]string, 0, len(live))
+		for _, b := range live {
+			names = append(names, b.Name)
+		}
+		return names
+	}
+	archivedNames := func(t *testing.T, rt Runtime) []string {
+		t.Helper()
+		archived, err := rt.Store.ListArchived()
+		if err != nil {
+			t.Fatalf("ListArchived: %v", err)
+		}
+		names := make([]string, 0, len(archived))
+		for _, a := range archived {
+			names = append(names, a.Binding.Name)
+		}
+		return names
+	}
+
+	cases := []struct {
+		name        string
+		probe       func(rt *Runtime)
+		wantRefusal bool
+	}{
+		{name: "no runner", probe: func(rt *Runtime) { rt.Runner = nil }, wantRefusal: true},
+		{name: "probe error", probe: func(rt *Runtime) {
+			rt.Runner.(*fakeRunner).aliveErr = errors.New("ps refuses")
+		}, wantRefusal: true},
+		{name: "live process", probe: func(rt *Runtime) {
+			rt.Runner.(*fakeRunner).script(4242, true)
+		}, wantRefusal: true},
+		{name: "dead process", probe: func(rt *Runtime) {
+			rt.Runner.(*fakeRunner).script(4242, false)
+		}, wantRefusal: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			rt := live(t)
+			tc.probe(&rt)
+			if !tc.wantRefusal {
+				if err := rt.Store.Save(retireRemoteBinding("web", "zen")); err != nil {
+					t.Fatalf("Save web: %v", err)
+				}
+			}
+			res, err := RetireServerBindings(ctx, rt, "zen", false)
+			if err != nil {
+				t.Fatalf("RetireServerBindings: %v", err)
+			}
+			if tc.wantRefusal {
+				want := []RetireRefusal{{Name: "api", Reason: "live local process"}}
+				if !reflect.DeepEqual(res.Plan.Refusals, want) {
+					t.Errorf("Plan.Refusals = %+v, want %+v", res.Plan.Refusals, want)
+				}
+				if len(res.Archived) != 0 {
+					t.Errorf("Archived = %q, want none", res.Archived)
+				}
+				if got, want := liveNames(t, rt), []string{"api"}; !reflect.DeepEqual(got, want) {
+					t.Errorf("live = %q, want %q", got, want)
+				}
+				for _, name := range archivedNames(t, rt) {
+					if name == "api" {
+						t.Errorf("api archived, want it live")
+					}
+				}
+				return
+			}
+			if len(res.Plan.Refusals) != 0 {
+				t.Errorf("Plan.Refusals = %+v, want none", res.Plan.Refusals)
+			}
+			if want := []string{"api", "web"}; !reflect.DeepEqual(res.Archived, want) {
+				t.Errorf("Archived = %q, want %q", res.Archived, want)
+			}
+			if got := liveNames(t, rt); len(got) != 0 {
+				t.Errorf("live = %q, want none", got)
+			}
+			if got, want := archivedNames(t, rt), []string{"api", "web"}; !reflect.DeepEqual(got, want) {
+				t.Errorf("archived = %q, want %q", got, want)
+			}
+			if got := rt.Runner.(*fakeRunner).aliveCalls; got != 1 {
+				t.Errorf("aliveCalls = %d, want 1: only the PID-bearing candidate is probed", got)
+			}
+		})
+	}
+}
+
+// TestRetireServerBindingsDryRunArchivesNothing pins the dry-run gate: the
+// plan still names the archive, but nothing moves.
+func TestRetireServerBindingsDryRunArchivesNothing(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	rt := newRuntime(t)
+	for _, b := range []store.Binding{
+		retireRemoteBinding("web", "zen"),
+		retireRemoteBinding("api", "zen"),
+	} {
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatalf("Save %s: %v", b.Name, err)
+		}
+	}
+
+	res, err := RetireServerBindings(ctx, rt, "zen", true)
+	if err != nil {
+		t.Fatalf("RetireServerBindings: %v", err)
+	}
+	if len(res.Archived) != 0 {
+		t.Errorf("Archived = %q, want none on a dry run", res.Archived)
+	}
+	if want := []string{"api", "web"}; !reflect.DeepEqual(res.Plan.Archive, want) {
+		t.Errorf("Plan.Archive = %q, want %q", res.Plan.Archive, want)
+	}
+	live, err := rt.Store.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	got := make([]string, 0, len(live))
+	for _, b := range live {
+		got = append(got, b.Name)
+	}
+	if want := []string{"api", "web"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("live = %q, want %q", got, want)
+	}
+	archived, err := rt.Store.ListArchived()
+	if err != nil {
+		t.Fatalf("ListArchived: %v", err)
+	}
+	if len(archived) != 0 {
+		t.Errorf("ListArchived holds %d bindings, want none on a dry run", len(archived))
+	}
+}
+
+// TestRetireServerBindingsStopsAtFirstArchiveError pins the archive loop's
+// fail-stop: the first member the running-chain guard holds returns the
+// guard's error, what landed stays landed, and the rest stays live. The
+// guard row names another server so the plan itself does not refuse: the
+// failure sits below the plan, in the loop.
+func TestRetireServerBindingsStopsAtFirstArchiveError(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	rt := newRuntime(t)
+	for _, name := range []string{"aaa", "mid", "zzz"} {
+		if err := rt.Store.Save(retireRemoteBinding(name, "zen")); err != nil {
+			t.Fatalf("Save %s: %v", name, err)
+		}
+	}
+	row := db.ChainRow{
+		ID: db.NewID(), Name: "elsewhere", Server: "contabo",
+		Status: string(chain.StatusRunning), Phase: "build", Step: "building",
+		Plan: 1, Plans: 1, Builder: "mid",
+		CreatedAt: baseTime, UpdatedAt: baseTime,
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error { return tx.ChainPut(row) }); err != nil {
+		t.Fatalf("ChainPut: %v", err)
+	}
+
+	res, err := RetireServerBindings(ctx, rt, "zen", false)
+	if err == nil {
+		t.Fatalf("RetireServerBindings err = nil, want the running-member refusal")
+	}
+	if !errors.Is(err, chain.ErrRunningMember) {
+		t.Fatalf("RetireServerBindings err = %v, want %v", err, chain.ErrRunningMember)
+	}
+	if len(res.Plan.Refusals) != 0 {
+		t.Errorf("Plan.Refusals = %+v, want none: the failure is below the plan", res.Plan.Refusals)
+	}
+	if want := []string{"aaa"}; !reflect.DeepEqual(res.Archived, want) {
+		t.Errorf("Archived = %q, want %q", res.Archived, want)
+	}
+	live, err := rt.Store.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	got := make([]string, 0, len(live))
+	for _, b := range live {
+		got = append(got, b.Name)
+	}
+	if want := []string{"mid", "zzz"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("live = %q, want %q", got, want)
+	}
+	archived, err := rt.Store.ListArchived()
+	if err != nil {
+		t.Fatalf("ListArchived: %v", err)
+	}
+	agot := make([]string, 0, len(archived))
+	for _, a := range archived {
+		agot = append(agot, a.Binding.Name)
+	}
+	if want := []string{"aaa"}; !reflect.DeepEqual(agot, want) {
+		t.Errorf("archived = %q, want %q", agot, want)
 	}
 }
 
