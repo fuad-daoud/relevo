@@ -104,7 +104,10 @@ func cmdMCP(args []string) error {
 
 	// A client that went away must fail the write, not the process: without
 	// this, an EPIPE on fd 1 kills the server before writeLine can log it.
-	signal.Ignore(syscall.SIGPIPE)
+	// Notify rather than Ignore: an ignored signal stays ignored across exec,
+	// so every builder and shell this process starts would inherit it, while a
+	// caught one is reset to the default in the child.
+	signal.Notify(make(chan os.Signal, 1), syscall.SIGPIPE)
 
 	serveErr := srv.Serve(ctx, os.Stdin, os.Stdout)
 
