@@ -226,6 +226,69 @@ func TestBindingShapeDefaultsToWriter(t *testing.T) {
 	}
 }
 
+// TestLegacyBurstRecordLoadsAndResavesWithoutBurst pins that a format-20
+// record carrying burst forward state loads without error and re-saves at the
+// current format with the dropped keys gone: unknown keys decode to nothing,
+// so the rewrite is what drops them.
+func TestLegacyBurstRecordLoadsAndResavesWithoutBurst(t *testing.T) {
+	s := New(t.TempDir())
+	if err := s.Save(newBinding("webshop", "/home/dev/projects/webshop")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	raw := bindingRecordJSON(t, s, "webshop")
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("Unmarshal saved record: %v", err)
+	}
+	doc["format"] = 20
+	doc["burst"] = map[string]any{
+		"forward": map[string]any{
+			"node":           "b12",
+			"node_binding":   "1f3a9c2d-webshop",
+			"round":          3,
+			"phase":          "sending",
+			"claimed_at":     "2026-11-02T09:00:00Z",
+			"sent_at":        "2026-11-02T09:00:05Z",
+			"queued_since":   "2026-11-02T08:50:00Z",
+			"stop_requested": true,
+		},
+		"shipped":       map[string]any{"b12": "4b825dc642cb6eb9a060e54bf8d69288fbee4904"},
+		"node_bindings": []any{"1f3a9c2d-webshop"},
+		"staged":        "refs/relevo/burst/staged",
+	}
+	runner, ok := doc["runner"].(map[string]any)
+	if !ok {
+		t.Fatalf("saved record runner = %v, want an object", doc["runner"])
+	}
+	runner["remote_node"] = "b12"
+	legacy, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("Marshal legacy record: %v", err)
+	}
+	if !bytes.Contains(legacy, []byte(`"burst"`)) || !bytes.Contains(legacy, []byte(`"remote_node"`)) {
+		t.Fatalf("the fixture must carry burst and remote_node, got:\n%s", legacy)
+	}
+	putRecordJSON(t, s, "webshop", string(legacy))
+
+	got, err := s.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load of a format-20 record with burst state: %v", err)
+	}
+	if err := s.Save(got); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	stored := bindingRecordJSON(t, s, "webshop")
+	if !bytes.Contains(stored, []byte(fmt.Sprintf(`"format":%d`, BindingFormat))) {
+		t.Errorf("re-saved record must carry format %d:\n%s", BindingFormat, stored)
+	}
+	if bytes.Contains(stored, []byte(`"burst"`)) {
+		t.Errorf("re-saved record must not carry burst:\n%s", stored)
+	}
+	if bytes.Contains(stored, []byte(`remote_node`)) {
+		t.Errorf("re-saved record must not carry remote_node:\n%s", stored)
+	}
+}
+
 // TestSaveRefusesANewerFormat pins that a binding written by a newer relevo is
 // refused, both by Save and by the read.
 func TestSaveRefusesANewerFormat(t *testing.T) {
