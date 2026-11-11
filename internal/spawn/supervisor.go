@@ -57,9 +57,16 @@ const PressureTotalFragment = `relevo_pressure_total() {
 // The reap's self pid comes from /proc/self/stat, never $$, which systemd-run's
 // unit syntax rewrites and which would make the supervisor reap itself; a TERM
 // exits 143 before the trailer.
+//
+// The memory samples live in a file unlinked the moment fd 7 holds it open:
+// the daemon sweeps a round's temp directory once the round closes on its
+// marker, often while the builder is still exiting, and a named file there
+// would vanish with every sample in it. An unlinked file also leaves nothing
+// behind when the supervisor is killed. The builder gets fd 7 closed. A host
+// without swap accounting samples anon alone.
 const SupervisorScript = ReapFragment + SampleAggFragment + PressureTotalFragment + `want=$1
 shift
-trap 'kill "$sampjob" 2>/dev/null; [ -n "$samp" ] && rm -f "$samp" 2>/dev/null; exit 143' TERM
+trap 'kill "$sampjob" 2>/dev/null; exit 143' TERM
 { echo 500 >/proc/self/oom_score_adj; } 2>/dev/null || true
 samp=""; sampjob=""
 if [ -n "$want" ]; then
@@ -67,13 +74,15 @@ if [ -n "$want" ]; then
   case "$prematch" in
     */"$want")
       read -r sampself _ </proc/self/stat 2>/dev/null
-      if [ -n "$sampself" ]; then
-        samp="${TMPDIR:-/tmp}/relevo-memsamp-$sampself.log"
+      sampf="${TMPDIR:-/tmp}/relevo-memsamp-$sampself.log"
+      if [ -n "$sampself" ] && { command exec 7<>"$sampf"; } 2>/dev/null; then
+        rm -f "$sampf" 2>/dev/null
+        samp=/proc/self/fd/7
         ( while :; do
           a=$(awk '/^anon /{print $2; exit}' "/sys/fs/cgroup$prematch/memory.stat" 2>/dev/null)
           s=$(cat "/sys/fs/cgroup$prematch/memory.swap.current" 2>/dev/null)
-          if [ -z "$a" ] || [ -z "$s" ]; then exit 0; fi
-          printf '%s %s\n' "$a" "$s" >>"$samp" 2>/dev/null || exit 0
+          if [ -z "$a" ]; then exit 0; fi
+          printf '%s %s\n' "$a" "${s:-0}" >&7 2>/dev/null || exit 0
           sleep 5 2>/dev/null || exit 0
         done ) &
         sampjob=$!
@@ -81,7 +90,7 @@ if [ -n "$want" ]; then
       ;;
   esac
 fi
-"$@" </dev/null; rc=$?
+"$@" </dev/null 7>&-; rc=$?
 if [ -n "$sampjob" ]; then kill "$sampjob" 2>/dev/null || true; wait "$sampjob" 2>/dev/null || true; fi
 if [ -n "$want" ]; then
   cg=$(cut -d: -f3 /proc/self/cgroup 2>/dev/null | head -1)
@@ -110,7 +119,6 @@ if [ -n "$want" ]; then
     ;;
   esac
 fi
-[ -n "$samp" ] && rm -f "$samp" 2>/dev/null || true
 printf '\nrelevo-exit:%s\n' "$rc"`
 
 // ContainerSupervisorScript is SupervisorScript with one added line: it exits

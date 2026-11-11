@@ -140,3 +140,72 @@ func readSleepPID(t *testing.T, path string) int {
 	}
 	return pid
 }
+
+// TestScopeAcceptSamplesSurviveATmpSweep removes the round's temp directory
+// mid-round, as the daemon's sweep does once a round closes on its marker
+// while the builder is still exiting, and asserts the trailer still carries
+// the memory sample. The builder must not see the sampler's descriptor.
+func TestScopeAcceptSamplesSurviveATmpSweep(t *testing.T) {
+	if _, err := exec.LookPath("systemd-run"); err != nil {
+		t.Skip("systemd-run is not installed")
+	}
+	suffix := make([]byte, 4)
+	if _, err := rand.Read(suffix); err != nil {
+		t.Fatal(err)
+	}
+	unit := "relevo-accept-" + hex.EncodeToString(suffix)
+
+	dir := t.TempDir()
+	tmp := filepath.Join(dir, "roundtmp")
+	if err := os.Mkdir(tmp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stream := filepath.Join(dir, "harness.jsonl")
+	const script = "test -e /proc/self/fd/7 && echo FD7-LEAKED\n" +
+		"sleep 6\nrm -rf \"$TMPDIR\"\nsleep 6\n"
+
+	r := New()
+	h, err := r.Start(context.Background(), spawn.ProcSpec{
+		Dir: dir, Argv: []string{"sh", "-c", script}, TmpDir: tmp,
+		LogPath: filepath.Join(dir, "harness.log"), StreamPath: stream,
+		Scope: &spawn.ScopeSpec{Unit: unit, CPUWeight: 100},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, ok := waitExit(r, h, stream, 30*time.Second); !ok {
+		data, _ := os.ReadFile(stream)
+		t.Fatalf("no exit trailer after 30s; stream %q", data)
+	}
+
+	data, err := os.ReadFile(stream)
+	if err != nil {
+		t.Fatalf("read stream: %v", err)
+	}
+	if strings.Contains(string(data), "FD7-LEAKED") {
+		t.Errorf("the builder inherited the sampler's fd 7; stream %q", data)
+	}
+	ru, ok := r.Rusage(context.Background(), h, stream)
+	if !ok {
+		t.Fatalf("no rusage trailer; stream %q", data)
+	}
+	if ru.BaseBytes == nil || ru.BurstBytes == nil || ru.BurstSecs == nil {
+		t.Fatalf("rusage after a mid-round temp sweep = base %v burst %v burst_secs %v; want all three; stream %q",
+			ru.BaseBytes, ru.BurstBytes, ru.BurstSecs, data)
+	}
+	if *ru.BurstBytes <= 0 || *ru.BaseBytes > *ru.BurstBytes {
+		t.Errorf("base %d, burst %d; want 0 < burst and base <= burst", *ru.BaseBytes, *ru.BurstBytes)
+	}
+	t.Logf("trailer after the sweep: base %d burst %d burst_secs %d", *ru.BaseBytes, *ru.BurstBytes, *ru.BurstSecs)
+}
+
+// waitExit polls the stream for the exit trailer.
+func waitExit(r *Runner, h spawn.ProcHandle, stream string, within time.Duration) (int, bool) {
+	for deadline := time.Now().Add(within); time.Now().Before(deadline); {
+		if code, ok := r.ExitCode(context.Background(), h, stream); ok {
+			return code, true
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return -1, false
+}
