@@ -184,6 +184,18 @@ func (d *DB) SyncFreshen(ctx context.Context) error {
 func NewOwner(d *DB) *owner.Server {
 	d.served = true
 	srv := owner.New(d.sqlDB, d.have, d.know, d.origin, errCode)
+	// A truncate under the live pool poisons it, so the owner rebuilds the
+	// pool on the same file instead of failing every later read. Local names
+	// the machine-local file beside the shared one.
+	srv.SetReopen(func(local bool) (*sql.DB, error) {
+		if local {
+			if l := d.local; l != nil {
+				return l.reopenPool()
+			}
+			return nil, fmt.Errorf("db: reopen: no local file: %w", ErrOpen)
+		}
+		return d.reopenPool()
+	})
 	if l := d.local; l != nil {
 		l.served = true
 		srv.ServeLocal(l.sqlDB)

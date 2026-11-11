@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"os"
 	"strings"
@@ -194,9 +195,13 @@ func openDirect(path string, o Options) (_ *DB, err error) {
 
 	// A file an earlier, modernc build wrote is converted once here, under
 	// modernc, before the engine opens it; a file the engine already wrote is
-	// left alone.
-	if err = convertLegacy(path); err != nil {
-		return nil, fmt.Errorf("db: open %s: %w", path, err)
+	// left alone. Only the first opener converts: a later handle in this
+	// process shares the live first pool, and converting under it truncates
+	// the WAL that pool is reading, which poisons every later read of it.
+	if first {
+		if err = convertLegacy(path); err != nil {
+			return nil, fmt.Errorf("db: open %s: %w", path, err)
+		}
 	}
 
 	sqlDB, err := openPool(path, busy, false)
@@ -315,6 +320,7 @@ func (d *DB) Close() error {
 		// here: callers and the template seeder copy the main file alone, and
 		// a non-empty -wal would leave that copy without its schema. A
 		// read-only handle must not write, so it never checkpoints.
+		logSidecars(slog.Default(), "close-checkpoint", path)
 		_ = d.walCheckpoint()
 	}
 	closeErr := d.sqlDB.Close()

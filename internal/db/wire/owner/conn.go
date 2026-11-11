@@ -174,54 +174,6 @@ func (c *conn) readHello() (*wire.Hello, error) {
 	return &h, nil
 }
 
-// transactionOpen reports whether this connection is inside a transaction,
-// which is what Drain waits for before it drops the clients.
-func (c *conn) transactionOpen() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.inTx
-}
-
-// recordTransaction moves this connection's transaction membership from the
-// statement that just succeeded. The caller orders it against that statement's
-// ack: a drain reads this flag to decide whether to wait for the connection, so
-// an opener is recorded before its ack is sent and a closer only after, keeping
-// the flag true for every moment an answer is on the wire. A failed COMMIT
-// leaves the flag set: SQLite keeps that transaction open, so the connection
-// still counts as in one.
-func (c *conn) recordTransaction(query string) {
-	open, closeTx := txEffect(query)
-	if !open && !closeTx {
-		return
-	}
-	c.mu.Lock()
-	c.inTx = open
-	c.mu.Unlock()
-}
-
-// txEffect reads a statement's leading keyword for the transaction state it
-// leaves behind. BEGIN (and BEGIN IMMEDIATE) opens; COMMIT, END and ROLLBACK
-// close.
-func txEffect(query string) (open, closeTx bool) {
-	switch firstKeyword(query) {
-	case "BEGIN":
-		return true, false
-	case "COMMIT", "END", "ROLLBACK":
-		return false, true
-	}
-	return false, false
-}
-
-// firstKeyword returns the statement's first word, upper-cased, so BEGIN
-// IMMEDIATE is seen as BEGIN and the keyword match is case-insensitive.
-func firstKeyword(query string) string {
-	query = strings.TrimLeft(query, " \t\r\n")
-	if i := strings.IndexAny(query, " \t\r\n("); i >= 0 {
-		return strings.ToUpper(query[:i])
-	}
-	return strings.ToUpper(query)
-}
-
 // start launches one request so the read loop can keep receiving cancel and
 // next while the statement runs.
 func (c *conn) start(kind byte, frame []byte) error {
@@ -295,6 +247,14 @@ func (c *conn) claim(id int) (*request, context.Context, error) {
 
 func (c *conn) run(ctx context.Context, r *request, kind byte, query string, raw []byte) {
 	pinned, err := c.pin(ctx)
+	if err != nil && wire.IsShortReadWAL(err) {
+		// A poisoned pool refuses even the pin: its per-connection setup
+		// reads the stale WAL. Swap it here so the next statement -- this
+		// client's retry, or the next client's -- lands on the fresh pool;
+		// this statement still fails with its original error, and a failed
+		// pin holds no connection to discard first.
+		c.s.recoverStale(c.local, err)
+	}
 	if err != nil {
 		// A pin that timed out already names its refusal: answer it rather
 		// than reporting an error, so the client sees the busy code.
@@ -329,66 +289,6 @@ func (c *conn) run(ctx context.Context, r *request, kind byte, query string, raw
 	c.query(ctx, r, pinned, query, args)
 }
 
-// pin returns the database connection this request runs on: the one already
-// held inside a transaction, else a fresh pool connection holding one of the
-// server's slots. The slot is taken on the request's context with a bounded
-// wait, so a client over the cap is refused as busy past the bound instead of
-// hanging -- the handshake never waits on the cap, and a disconnect releases
-// the wait.
-func (c *conn) pin(ctx context.Context) (*sql.Conn, error) {
-	c.mu.Lock()
-	if c.pinned != nil {
-		pinned := c.pinned
-		c.mu.Unlock()
-		return pinned, nil
-	}
-	c.mu.Unlock()
-
-	select {
-	case c.s.sem <- struct{}{}:
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-time.After(slotWait):
-		return nil, &slotBusyError{held: len(c.s.sem), max: maxConns}
-	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	pinned, err := c.s.poolFor(c.local).Conn(ctx)
-	if err != nil {
-		<-c.s.sem
-		return nil, err
-	}
-	c.pinned = pinned
-	return pinned, nil
-}
-
-// release returns the pinned connection to the pool when no transaction is
-// open, freeing the slot pin took. Inside a transaction the connection is
-// kept: the transaction's later statements must run on it. A nil take means
-// cleanup already discarded it, so the slot is freed exactly once between the
-// two.
-func (c *conn) release() {
-	if c.transactionOpen() || c.holdsSession() {
-		return
-	}
-	pinned := c.takePinned()
-	if pinned == nil {
-		return
-	}
-	// Outside a transaction there is nothing to roll back; the pool reuses
-	// the connection, so the discard's bad-conn mark stays cleanup's.
-	_, _ = pinned.ExecContext(context.Background(), "ROLLBACK")
-	_ = pinned.Close()
-	<-c.s.sem
-}
-
-func (c *conn) holdsSession() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.session
-}
-
 // changesSession reports whether query can change state that lives on the
 // engine connection rather than in the database: any PRAGMA (query_only among
 // them), ATTACH, DETACH, or a TEMP object. It errs towards true, since the
@@ -407,6 +307,16 @@ func changesSession(query string) bool {
 
 func (c *conn) exec(ctx context.Context, r *request, pinned *sql.Conn, query string, args []any) {
 	res, err := pinned.ExecContext(ctx, query, args...)
+	if err != nil && wire.IsShortReadWAL(err) {
+		// A stale WAL poisons the whole pool, so swap it even though this
+		// write is never retried: the next statement needs the fresh pool.
+		// The pinned connection is dropped first, so no stale connection
+		// stays out while the hook opens and probes its replacement. Any
+		// other error leaves the connection alone: a failed statement inside
+		// a transaction must roll back on the connection that ran it.
+		c.dropPinned()
+		c.s.recoverStale(c.local, err)
+	}
 	if err != nil {
 		c.sendError(r.id, err)
 		return
@@ -434,12 +344,28 @@ func (c *conn) exec(ctx context.Context, r *request, pinned *sql.Conn, query str
 
 func (c *conn) query(ctx context.Context, r *request, pinned *sql.Conn, query string, args []any) {
 	rows, err := pinned.QueryContext(ctx, query, args...)
+	// retried reports whether the statement already ran on the recovered
+	// pool: one retry ever, never two, so a second stale failure answers with
+	// its own error rather than swapping pools forever.
+	retried := false
 	if err != nil {
-		c.sendError(r.id, err)
-		return
+		if fresh, ok := c.retryStale(ctx, query, err); ok {
+			rows, err = fresh.QueryContext(ctx, query, args...)
+			retried = true
+		}
+		if err != nil {
+			c.sendError(r.id, err)
+			return
+		}
 	}
 	c.recordTransaction(query)
-	defer func() { _ = rows.Close() }()
+	// The first-batch retry below closes and replaces rows; the guard keeps
+	// a failed replacement from closing nothing twice.
+	defer func() {
+		if rows != nil {
+			_ = rows.Close()
+		}
+	}()
 
 	cols, err := rows.Columns()
 	if err != nil {
@@ -451,6 +377,30 @@ func (c *conn) query(ctx context.Context, r *request, pinned *sql.Conn, query st
 	for first := true; ; first = false {
 		body, n, more, err := stream.next(wire.BatchBudget)
 		if err != nil {
+			// A first batch that fails met the stale pool before answering
+			// anything, so the read is still retryable exactly once on the
+			// healed pool. A later batch already sent rows the client keeps.
+			// The rows close before the retry drops the connection: marking
+			// a connection bad while its rows are still open deadlocks the
+			// driver against the rows' own cleanup.
+			if first && !retried {
+				_ = rows.Close()
+				rows = nil
+				if fresh, ok := c.retryStale(ctx, query, err); ok {
+					if newRows, rerr := fresh.QueryContext(ctx, query, args...); rerr == nil {
+						if newCols, rerr := newRows.Columns(); rerr == nil {
+							rows, cols = newRows, newCols
+							stream = &rowStream{rows: rows, cols: cols, ceiling: c.adHocCeiling()}
+							retried = true
+							continue
+						}
+						_ = newRows.Close()
+						err = rerr
+					} else {
+						err = rerr
+					}
+				}
+			}
 			c.sendError(r.id, err)
 			return
 		}
@@ -535,16 +485,6 @@ func discardPinned(pinned *sql.Conn) <-chan struct{} {
 		_ = pinned.Close()
 	}()
 	return done
-}
-
-// takePinned detaches the client's pinned connection, returning nil when there
-// is none. A non-nil result owns the connection slot the pin took.
-func (c *conn) takePinned() *sql.Conn {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	pinned := c.pinned
-	c.pinned = nil
-	return pinned
 }
 
 // shutdown drops the client connection, which makes serve return and cleanup

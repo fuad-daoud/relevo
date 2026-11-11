@@ -50,6 +50,18 @@ type Server struct {
 	// then carry the code, which is what a modernc-backed owner needs.
 	codeOf func(error) (int, int, bool)
 
+	// reopen rebuilds a pool whose WAL went stale under it: a truncate beside
+	// the live pool leaves the pool's index pointing at frames past the log's
+	// end. The hook closes the pool it replaces and answers a fresh one
+	// probed before it is returned; local names the machine-local file rather
+	// than the shared one. Nil when the server was built without one, and a
+	// pool then stays poisoned.
+	reopen func(local bool) (*sql.DB, error)
+
+	// recoverMu serialises recoveries, so two statements failing at once queue
+	// behind one pool swap instead of interleaving closes under each other.
+	recoverMu sync.Mutex
+
 	mu     sync.Mutex
 	closed bool
 	// draining is set for the life of a drain: the accept loop stops, a request
@@ -137,6 +149,16 @@ func (s *Server) ServeLocal(local *sql.DB) *Server {
 	return s
 }
 
+// SetReopen installs the hook recoverStale calls to rebuild a pool whose WAL
+// went stale under it. It takes effect before Serve: a running server never
+// changes pools except through recovery.
+func (s *Server) SetReopen(hook func(local bool) (*sql.DB, error)) *Server {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reopen = hook
+	return s
+}
+
 // hasLocal reports whether a machine-local file is served beside the shared one.
 // The welcome carries it so a dial knows whether attaching a local handle is
 // possible at all, and the handshake refuses a local scope when it is false.
@@ -144,8 +166,15 @@ func (s *Server) hasLocal() bool { return s.localDB != nil }
 
 // poolFor names the file a connection speaks to: the local one for the local
 // scope, the shared one for everything else, including a client that named no
-// scope at all.
+// scope at all. A recovery swaps the pools while statements run, so the read
+// holds the lock.
 func (s *Server) poolFor(local bool) *sql.DB {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.poolForLocked(local)
+}
+
+func (s *Server) poolForLocked(local bool) *sql.DB {
 	if local && s.localDB != nil {
 		return s.localDB
 	}

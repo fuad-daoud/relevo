@@ -1,6 +1,9 @@
 package wire
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 // ErrConnLost marks a connection lost after a request was already sent: the
 // owner may have run the statement, so the error deliberately does not match
@@ -79,6 +82,30 @@ func CodeOf(err error) (int, bool) {
 		return c.Code(), true
 	}
 	return 0, false
+}
+
+// shortReadWAL is the Turso text for a WAL frame read past the log's end: a
+// truncate under a live pool leaves the index pointing at frames that are
+// gone. It is matched as a substring because the engine appends the frame
+// offset and the byte counts to it.
+const shortReadWAL = "short read on WAL frame"
+
+// IsShortReadWAL reports whether err is the stale-WAL read failure: a truncate
+// under a live pool leaves its index pointing at frames past the log's end,
+// and every later read through that pool fails. Either the engine's own text
+// names the WAL frame, or a code-10 I/O error's text names the WAL.
+func IsShortReadWAL(err error) bool {
+	if err == nil {
+		return false
+	}
+	if strings.Contains(err.Error(), shortReadWAL) {
+		return true
+	}
+	code, ok := CodeOf(err)
+	if !ok || code != 10 {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "wal")
 }
 
 type extendedCoder interface{ ExtendedCode() int }

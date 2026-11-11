@@ -559,3 +559,42 @@ func TestSQLiteReadsATursoWAL(t *testing.T) {
 		t.Errorf("modernc read %d rows from Turso's WAL, want all 4", n)
 	}
 }
+
+// TestSecondOpenSkipsConversionUnderALiveHandle pins that only the first
+// opener converts: a later handle in this process shares the live first pool,
+// and converting under it truncates the WAL that pool is still reading.
+func TestSecondOpenSkipsConversionUnderALiveHandle(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	first := directOpen(t, path, Options{})
+	if _, err := first.sqlDB.Exec(`CREATE TABLE t (n INTEGER, s TEXT)`); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	for i := 0; i < 50; i++ {
+		if _, err := first.sqlDB.Exec(`INSERT INTO t (n, s) VALUES (?, ?)`, i, fmt.Sprintf("row-%d", i)); err != nil {
+			t.Fatalf("insert %d: %v", i, err)
+		}
+	}
+	// A -shm beside the file distrusts the marker and triggers conversion on
+	// the next open; the rows above must still be sitting in the -wal for the
+	// test to mean anything.
+	if n, err := walBytes(path); err != nil || n == 0 {
+		t.Fatalf("the rows left no -wal (%d bytes, err %v), so nothing is at stake", n, err)
+	}
+	if err := os.WriteFile(path+"-shm", make([]byte, 32*1024), 0o600); err != nil {
+		t.Fatalf("fabricate -shm: %v", err)
+	}
+	second := directOpen(t, path, Options{})
+	_ = second
+
+	// A cold connection rebuilds its WAL index from the sidecars, the way a
+	// later production request meets the pool; draining the idle ones forces
+	// the read below onto one.
+	first.sqlDB.SetMaxIdleConns(0)
+	var n int
+	if err := first.sqlDB.QueryRow(`SELECT count(*) FROM t`).Scan(&n); err != nil {
+		t.Fatalf("read through the first handle: %v", err)
+	}
+	if n != 50 {
+		t.Errorf("first handle read %d rows, want all 50 still in its WAL", n)
+	}
+}
