@@ -36,21 +36,20 @@ func stageNodeFile(t *testing.T, path, body string) {
 	}
 }
 
-// TestShowNodeCarryingBindingReadsHeadStoreFiles pins the no-fallback rule: a
-// binding whose stored builder carries a burst node still renders every
-// section from the head store's own files, with the remote refusing all
-// fetches. The read paths this covers are showLive's file closures over
-// rt.Store in show.go (searched with rg -n "GetBinding|RoundFile"
-// internal/relevo/show*.go, which names no production fetcher) and the
-// chain-check gate fallback behind a present gate log.
-func TestShowNodeCarryingBindingReadsHeadStoreFiles(t *testing.T) {
+// TestShowRemoteBindingReadsHeadStoreFiles pins the no-fallback rule: a
+// remote binding still renders every section from the head store's own
+// files, with the remote refusing all fetches. The read paths this covers
+// are showLive's file closures over rt.Store in show.go (searched with rg -n
+// "GetBinding|RoundFile" internal/relevo/show*.go, which names no production
+// fetcher) and the chain-check gate fallback behind a present gate log.
+func TestShowRemoteBindingReadsHeadStoreFiles(t *testing.T) {
 	t.Parallel()
 
 	st := store.New(t.TempDir())
 	api := store.Binding{
 		Name: "api", CWD: "/repo", Round: 2, State: store.StateActive,
 		BuilderCandidate: testAgyRef,
-		Builder:          store.Endpoint{Mode: store.ModeRemote, Server: "zen", RemoteStatus: "running", RemoteNode: "b12"},
+		Builder:          store.Endpoint{Mode: store.ModeRemote, Server: "zen", RemoteStatus: "running"},
 	}
 	if err := st.Save(api); err != nil {
 		t.Fatalf("Save api: %v", err)
@@ -58,7 +57,7 @@ func TestShowNodeCarryingBindingReadsHeadStoreFiles(t *testing.T) {
 	rev := store.Binding{
 		Name: "rev", CWD: "/repo", Round: 2, State: store.StateActive, Role: "reviewer", Shape: store.ShapeReader,
 		BuilderCandidate: testAgyRef,
-		Builder:          store.Endpoint{Mode: store.ModeRemote, Server: "zen", RemoteStatus: "running", RemoteNode: "b12"},
+		Builder:          store.Endpoint{Mode: store.ModeRemote, Server: "zen", RemoteStatus: "running"},
 	}
 	if err := st.Save(rev); err != nil {
 		t.Fatalf("Save rev: %v", err)
@@ -168,27 +167,21 @@ func TestShowNodeCarryingBindingReadsHeadStoreFiles(t *testing.T) {
 	}
 
 	if len(fr.calls) != 0 {
-		t.Errorf("remote calls = %v, want none: a node-carrying binding reads the head store", fr.calls)
+		t.Errorf("remote calls = %v, want none: a remote binding reads the head store", fr.calls)
 	}
 }
 
-// TestShowPulledChainMemberWithNodeReadsHeadStoreFiles pins the chain-member
-// half of the no-fallback rule: after the existing chain-pull path installs a
-// member's rounds, Show reads the member's head-store files even once the
-// member carries a node, with the server refusing all fetches.
-func TestShowPulledChainMemberWithNodeReadsHeadStoreFiles(t *testing.T) {
+// TestShowPulledChainMemberReadsHeadStoreFiles pins the chain-member half
+// of the no-fallback rule: after the existing chain-pull path installs a
+// member's rounds, Show reads the member's head-store files, with the
+// server refusing all fetches.
+func TestShowPulledChainMemberReadsHeadStoreFiles(t *testing.T) {
 	t.Parallel()
 
 	fr := chainPullFake(chainPullView("shop", string(chain.StatusRunning), 1, 0, 0))
 	rt := chainPullRuntime(t, fr)
 	seedServerChain(t, rt, "shop")
 	pullRounds(t, rt, "shop")
-
-	b := chainBinding(t, rt, "shop")
-	b.Builder.RemoteNode = "b12"
-	if err := rt.Store.Save(b); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
 
 	refused := failingNodeFake()
 	rt.Remote = refused
@@ -214,19 +207,14 @@ func TestShowPulledChainMemberWithNodeReadsHeadStoreFiles(t *testing.T) {
 	}
 }
 
-// TestShowTraceChainWithNodeReadsHeadStore pins the trace half: a chain whose
-// member carries a node still renders its trace from the head store's chain
-// rows, with the remote refusing all fetches.
-func TestShowTraceChainWithNodeReadsHeadStore(t *testing.T) {
+// TestShowTraceChainReadsHeadStore pins the trace half: a chain still
+// renders its trace from the head store's chain rows, with the remote
+// refusing all fetches.
+func TestShowTraceChainReadsHeadStore(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
 	traceChain(t, rt)
-	b := chainBinding(t, rt, "shop")
-	b.Builder.RemoteNode = "b12"
-	if err := rt.Store.Save(b); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
 
 	fr := failingNodeFake()
 	rt.Remote = fr

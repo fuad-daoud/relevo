@@ -212,10 +212,6 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 	b.Builder.RemoteQueue = nil
 	b.Builder.RemoteLive = nil
 
-	// A round that came home must read as local again, so the stored node
-	// follows the view outright: set while forwarded, cleared otherwise.
-	b.Builder.RemoteNode = view.Node
-
 	var err error
 	if b, err = refreshCandidateSwitch(tx, b, view, server, name, now); err != nil {
 		return b, false, err
