@@ -225,11 +225,11 @@ func TestRoundFactsStopEntryStampsClosedAt(t *testing.T) {
 	}
 }
 
-// The burst tests pin the four burst columns: a queued local round measures
-// its first wait, a never-queued round claims no wait, an accepted round
-// with no admit claims no wait either, the last report's rusage lands
-// verbatim, a round without a report claims nothing, and a remote round
-// claims no start kind while keeping its wait and rusage.
+// The measurement tests pin the four measurement columns: a queued local
+// round measures its first wait, a never-queued round claims no wait, an
+// accepted round with no admit claims no wait either, the last report's
+// rusage lands verbatim, a round without a report claims nothing, and a
+// remote round claims no start kind while keeping its wait and rusage.
 func TestRoundFactsQueuedLocalRoundRecordsWaitAndKind(t *testing.T) {
 	queued := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
 	events := []store.LogEntry{
@@ -285,7 +285,7 @@ func TestRoundFactsReportRusageLandsVerbatim(t *testing.T) {
 	}
 }
 
-func TestRoundFactsRoundWithoutReportClaimsNoBurst(t *testing.T) {
+func TestRoundFactsRoundWithoutReportClaimsNoMeasurements(t *testing.T) {
 	queued := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
 	events := []store.LogEntry{
 		{TS: queued, Round: 1, Kind: store.KindQueue, Note: "queued (3/4 builders busy)"},
@@ -295,7 +295,7 @@ func TestRoundFactsRoundWithoutReportClaimsNoBurst(t *testing.T) {
 
 	r := roundFacts(events, 1, false)
 
-	checkBurstNil(t, r)
+	checkNoMeasurements(t, r)
 }
 
 func TestRoundFactsRemoteRoundClaimsNoStartKind(t *testing.T) {
@@ -338,40 +338,31 @@ func TestRoundFactsAcceptedButNeverAdmittedKeepsWaitNil(t *testing.T) {
 	checkPtr(t, "RusagePeakMemBytes", r.RusagePeakMemBytes, int64(8))
 }
 
-// The forwarded fixtures pin the head's round rows: the last confirmed send
-// claims the start kind and ends the wait, a local admit beats any send note
-// for both, and a suffix that parses to neither word keeps the wait but
-// claims no kind. The wait ends at the entry that started the round, exactly
-// as the admit-only wait did, so a refusal inside the span is measured, not
-// hidden.
+// The legacy-note fixtures pin that a forwarded send note left in an old log
+// is ignored as start evidence: every spelling claims the same local kind
+// and ends no wait, so the warm/cold dialect collapses to one answer.
 
-func TestRoundFactsForwardedColdRoundClaimsColdAndWait(t *testing.T) {
+func TestRoundFactsLegacySendNoteClaimsLocalWithoutWait(t *testing.T) {
 	queued := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
-	events := []store.LogEntry{
-		{TS: queued, Round: 1, Kind: store.KindQueue, Note: "queued (3/4 builders busy)"},
-		{TS: queued.Add(2 * time.Minute), Round: 1, Kind: store.KindQueue, Note: "forwarded to b1 (cold)"},
-		{TS: queued.Add(3 * time.Minute), Round: 1, Kind: store.KindPrompt},
-		{TS: queued.Add(4 * time.Minute), Round: 1, Kind: store.KindReport, Outcome: "done"},
+	for _, note := range []string{
+		"forwarded to b1 (cold)",
+		"forwarded to b1 (warm)",
+		"forwarded to b1 (adopted)",
+	} {
+		events := []store.LogEntry{
+			{TS: queued, Round: 1, Kind: store.KindQueue, Note: "queued (3/4 builders busy)"},
+			{TS: queued.Add(2 * time.Minute), Round: 1, Kind: store.KindQueue, Note: note},
+			{TS: queued.Add(3 * time.Minute), Round: 1, Kind: store.KindPrompt},
+			{TS: queued.Add(4 * time.Minute), Round: 1, Kind: store.KindReport, Outcome: "done"},
+		}
+
+		r := roundFacts(events, 1, false)
+
+		checkPtr(t, "StartKind", r.StartKind, "local")
+		if r.QueueWaitMS != nil {
+			t.Errorf("QueueWaitMS = %v, want nil: a legacy send note ends no wait (%s)", r.QueueWaitMS, note)
+		}
 	}
-
-	r := roundFacts(events, 1, false)
-
-	checkPtr(t, "StartKind", r.StartKind, "cold")
-	checkPtr(t, "QueueWaitMS", r.QueueWaitMS, int64(120000))
-}
-
-func TestRoundFactsForwardedWarmRoundClaimsWarmAndWait(t *testing.T) {
-	queued := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
-	events := []store.LogEntry{
-		{TS: queued, Round: 1, Kind: store.KindQueue, Note: "queued (3/4 builders busy)"},
-		{TS: queued.Add(90 * time.Second), Round: 1, Kind: store.KindQueue, Note: "forwarded to b1 (warm)"},
-		{TS: queued.Add(4 * time.Minute), Round: 1, Kind: store.KindReport, Outcome: "done"},
-	}
-
-	r := roundFacts(events, 1, false)
-
-	checkPtr(t, "StartKind", r.StartKind, "warm")
-	checkPtr(t, "QueueWaitMS", r.QueueWaitMS, int64(90000))
 }
 
 func TestRoundFactsSendNoteThenAdmitClaimsLocalAtAdmit(t *testing.T) {
@@ -391,59 +382,7 @@ func TestRoundFactsSendNoteThenAdmitClaimsLocalAtAdmit(t *testing.T) {
 	checkPtr(t, "QueueWaitMS", r.QueueWaitMS, int64(180000))
 }
 
-func TestRoundFactsTwoSendNotesLastWins(t *testing.T) {
-	queued := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
-	events := []store.LogEntry{
-		{TS: queued, Round: 1, Kind: store.KindQueue, Note: "queued (3/4 builders busy)"},
-		// A round lost on node A and forwarded to node B ran on B: kind and
-		// wait both come from the last send note, not the first.
-		{TS: queued.Add(time.Minute), Round: 1, Kind: store.KindQueue, Note: "forwarded to a1 (cold)"},
-		{TS: queued.Add(5 * time.Minute), Round: 1, Kind: store.KindQueue, Note: "forwarded to b1 (warm)"},
-		{TS: queued.Add(6 * time.Minute), Round: 1, Kind: store.KindReport, Outcome: "done"},
-	}
-
-	r := roundFacts(events, 1, false)
-
-	checkPtr(t, "StartKind", r.StartKind, "warm")
-	checkPtr(t, "QueueWaitMS", r.QueueWaitMS, int64(300000))
-}
-
-func TestRoundFactsRefusedThenForwardedSpansTheRefusal(t *testing.T) {
-	queued := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
-	events := []store.LogEntry{
-		{TS: queued, Round: 1, Kind: store.KindQueue, Note: "queued (3/4 builders busy)"},
-		// A refused send writes no entry: the one wait spans the refusal and
-		// the requeue, ending at the send the node confirmed.
-		{TS: queued.Add(3 * time.Minute), Round: 1, Kind: store.KindQueue, Note: "forwarded to b1 (warm)"},
-		{TS: queued.Add(4 * time.Minute), Round: 1, Kind: store.KindReport, Outcome: "done"},
-	}
-
-	r := roundFacts(events, 1, false)
-
-	checkPtr(t, "StartKind", r.StartKind, "warm")
-	checkPtr(t, "QueueWaitMS", r.QueueWaitMS, int64(180000))
-}
-
-func TestRoundFactsUnparseableSendNoteKeepsWaitAndClaimsNoKind(t *testing.T) {
-	queued := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
-	events := []store.LogEntry{
-		{TS: queued, Round: 1, Kind: store.KindQueue, Note: "queued (3/4 builders busy)"},
-		// The adopted note after a restart: a start the head never sent warm
-		// or cold. The wait is still measured from its timestamp; nobody
-		// measured a kind, so the row claims none.
-		{TS: queued.Add(2 * time.Minute), Round: 1, Kind: store.KindQueue, Note: "forwarded to b1 (adopted)"},
-		{TS: queued.Add(4 * time.Minute), Round: 1, Kind: store.KindReport, Outcome: "done"},
-	}
-
-	r := roundFacts(events, 1, false)
-
-	if r.StartKind != nil {
-		t.Errorf("StartKind = %v, want nil: an unparseable suffix claims no kind", *r.StartKind)
-	}
-	checkPtr(t, "QueueWaitMS", r.QueueWaitMS, int64(120000))
-}
-
-func TestRoundFactsSendNoteWithoutAcceptKeepsWaitNil(t *testing.T) {
+func TestRoundFactsSendNoteWithoutAcceptClaimsLocalWithoutWait(t *testing.T) {
 	queued := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
 	events := []store.LogEntry{
 		{TS: queued, Round: 1, Kind: store.KindQueue, Note: "forwarded to b1 (cold)"},
@@ -452,29 +391,29 @@ func TestRoundFactsSendNoteWithoutAcceptKeepsWaitNil(t *testing.T) {
 
 	r := roundFacts(events, 1, false)
 
-	// A send with no accept has no start of the wait: the kind is still the
+	// A note with no accept has no start of the wait: the kind is still the
 	// round's own fact, but inventing a wait would measure nothing.
 	if r.QueueWaitMS != nil {
 		t.Errorf("QueueWaitMS = %v, want nil without an accept entry", r.QueueWaitMS)
 	}
-	checkPtr(t, "StartKind", r.StartKind, "cold")
+	checkPtr(t, "StartKind", r.StartKind, "local")
 }
 
-func TestRoundFactsSendNoteBeforeAcceptKeepsKindWithoutWait(t *testing.T) {
+func TestRoundFactsSendNoteBeforeAcceptClaimsLocalWithoutWait(t *testing.T) {
 	accept := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
 	events := []store.LogEntry{
 		{TS: accept, Round: 1, Kind: store.KindQueue, Note: "queued (3/4 builders busy)"},
-		// A send stamped before the accept cannot end its wait, but the
-		// kind it claims is still the round's own fact.
+		// A note stamped before the accept cannot end its wait, but the
+		// round still ran here, so the kind stays local.
 		{TS: accept.Add(-time.Minute), Round: 1, Kind: store.KindQueue, Note: "forwarded to b1 (cold)"},
 		{TS: accept.Add(4 * time.Minute), Round: 1, Kind: store.KindReport, Outcome: "done"},
 	}
 
 	r := roundFacts(events, 1, false)
 
-	checkPtr(t, "StartKind", r.StartKind, "cold")
+	checkPtr(t, "StartKind", r.StartKind, "local")
 	if r.QueueWaitMS != nil {
-		t.Errorf("QueueWaitMS = %v, want nil: a send before the accept ends no wait", *r.QueueWaitMS)
+		t.Errorf("QueueWaitMS = %v, want nil: a note before the accept ends no wait", *r.QueueWaitMS)
 	}
 }
 
@@ -499,10 +438,10 @@ func TestRoundFactsRemoteRowIgnoresSendNotes(t *testing.T) {
 	}
 }
 
-func checkBurstNil(t *testing.T, r db.Round) {
+func checkNoMeasurements(t *testing.T, r db.Round) {
 	t.Helper()
 	if r.QueueWaitMS != nil || r.StartKind != nil || r.RusageCPUMS != nil || r.RusagePeakMemBytes != nil {
-		t.Errorf("burst = %v/%v/%v/%v, want all nil",
+		t.Errorf("measurements = %v/%v/%v/%v, want all nil",
 			r.QueueWaitMS, r.StartKind, r.RusageCPUMS, r.RusagePeakMemBytes)
 	}
 }

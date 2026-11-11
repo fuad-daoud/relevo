@@ -76,16 +76,6 @@ const (
 	KindHalt Kind = "halt"
 )
 
-// ForwardedNotePrefix opens the note the head writes on a queue entry when a
-// round went to a burst node: "forwarded to <node> (warm|cold)" for a send the
-// node confirmed, "forwarded to <node> (adopted)" for a round a restart proved
-// the node still holds. The head writes it and ingest and the served stamps
-// read it as that round's start, so both sides match on this one constant; the
-// words in the parentheses stay literals on both sides, pinned by tests on each
-// side, the convention the queue note prefixes already keep. A suffix that
-// parses to no word is a start with no kind, not a missing start.
-const ForwardedNotePrefix = "forwarded to "
-
 // kindPlanLegacy is the kind a round's prompt carried before the rename: it is
 // state already written, matched through IsPromptKind and never written again.
 const kindPlanLegacy Kind = "plan"
