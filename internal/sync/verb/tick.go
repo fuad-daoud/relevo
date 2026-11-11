@@ -33,14 +33,13 @@ func SyncNow(ctx context.Context, eng Engine) {
 	eng.QueueSyncNow(ctx)
 }
 
-// CountOpenRounds counts bindings holding an open round: a prompt out with no
-// report back. A remote binding counts too, since its prompt and report sit in
-// the local log. Each binding read costs one log read; the tick's reconcile
-// hands nothing back, so there is no entry list to reuse. A done binding
-// counts 0 without being read even while its round stays open in the log: the
-// mastermind declared its work verified, so it is not in flight for the idle
-// count and no new prompt goes out for it. A paused binding keeps its round,
-// so it reads like any live one.
+// CountOpenRounds counts bindings holding an open round: a round in flight
+// with no report back. Each binding read costs one log read; the tick's
+// reconcile hands nothing back, so there is no entry list to reuse. A done
+// binding counts 0 without being read even while its round stays open in the
+// log: the mastermind declared its work verified, so it is not in flight for
+// the idle count and no new prompt goes out for it. A paused binding keeps its
+// round, so it reads like any live one.
 func CountOpenRounds(st *store.Store, bindings []store.Binding) int {
 	open := 0
 	for _, b := range bindings {
@@ -52,9 +51,49 @@ func CountOpenRounds(st *store.Store, bindings []store.Binding) int {
 			slog.Warn("rounds: read the log for the idle count", "binding", b.Name, "err", err)
 			continue
 		}
-		if store.RoundOpen(entries, b.Round) {
+		if roundInFlight(b, entries) {
 			open++
 		}
+	}
+	return open
+}
+
+// roundInFlight is store.RoundOpen for a local binding. A remote binding's
+// round can be prompted on its server -- a chain started there sends its own
+// prompts -- so its log here may hold no prompt for a round that is running;
+// for it, a current round with no report yet is in flight.
+func roundInFlight(b store.Binding, entries []store.LogEntry) bool {
+	if b.Builder.Remote() {
+		return b.Round > 0 && !store.HasKind(entries, b.Round, store.DirToMasterMind, store.KindReport)
+	}
+	return store.RoundOpen(entries, b.Round)
+}
+
+// countServedOpenRounds counts the open rounds on the bindings this machine
+// serves to its clients. Each lives under its client's owner, so the daemon's
+// own list never holds one, and on a server they are most of what it exports.
+func countServedOpenRounds(st *store.Store) int {
+	d, err := st.DBIfExists()
+	if err != nil || d == nil {
+		if err != nil {
+			slog.Warn("rounds: open the database for the served idle count", "err", err)
+		}
+		return 0
+	}
+	owners, err := d.RecordOwners()
+	if err != nil {
+		slog.Warn("rounds: list the served owners for the idle count", "err", err)
+		return 0
+	}
+	open := 0
+	for _, owner := range owners {
+		served := store.NewShared(st.Root(), owner, d)
+		bindings, err := served.List()
+		if err != nil {
+			slog.Warn("rounds: list a client's served bindings for the idle count", "owner", owner, "err", err)
+			continue
+		}
+		open += CountOpenRounds(served, bindings)
 	}
 	return open
 }
@@ -65,5 +104,5 @@ func NoteRoundsOpen(runner *relevosync.Runner, st *store.Store, bindings []store
 	if !runner.On() {
 		return
 	}
-	runner.NoteRoundsOpen(CountOpenRounds(st, bindings))
+	runner.NoteRoundsOpen(CountOpenRounds(st, bindings) + countServedOpenRounds(st))
 }
