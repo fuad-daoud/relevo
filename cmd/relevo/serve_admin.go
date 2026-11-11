@@ -133,7 +133,6 @@ func cmdServeStatus(args []string) error {
 	}
 
 	doc := serve.StatusDocument(owners, builders)
-	doc.Burst = srv.BurstStatus()
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(doc)
