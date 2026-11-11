@@ -339,7 +339,6 @@ func serveAdminConfigWithPolicy(root string, d *db.DB) (serve.Config, error) {
 	return serveStatusConfigFrom(root, d, L), nil
 }
 
-// serveStatusConfigFrom is the status verb's config.
 func serveStatusConfigFrom(root string, d *db.DB, L config.Loaded) serve.Config {
 	return withIsolation(serveAdminConfigFrom(root, d, L), L.Policy.ServeIsolation())
 }
@@ -359,7 +358,6 @@ func serveAdminConfigWithCandidates(root string, d *db.DB) (serve.Config, error)
 	return serveGateConfigFrom(root, d, L), nil
 }
 
-// serveGateConfigFrom is the gate verbs' config.
 func serveGateConfigFrom(root string, d *db.DB, L config.Loaded) serve.Config {
 	cfg := serveAdminConfigFrom(root, d, L)
 	cfg.Candidates = L.Candidates

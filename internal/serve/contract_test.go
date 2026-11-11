@@ -187,6 +187,20 @@ func TestContractRoutes(t *testing.T) {
 	}
 	lines = append(lines, fmt.Sprintf("GET /v1/nope %d %s", nopeRec.Code, nopeErr.Code))
 
+	// The align path is not registered, so a signed request to it must reach
+	// the not-found handler rather than a route handler.
+	alignReq := testSignedRequest(t, kp, "POST", "/v1/bindings/x/rounds/1/align", nil)
+	alignRec := httptest.NewRecorder()
+	handler.ServeHTTP(alignRec, alignReq)
+
+	var alignErr remote.ErrorBody
+	if err := json.NewDecoder(alignRec.Body).Decode(&alignErr); err != nil {
+		t.Fatalf("decode ErrorBody for align path: %v", err)
+	}
+	if alignRec.Code != http.StatusNotFound || alignErr.Code != remote.CodeNotFound {
+		t.Fatalf("POST /v1/bindings/x/rounds/1/align got status %d, error %q; want 404 %s", alignRec.Code, alignErr.Code, remote.CodeNotFound)
+	}
+
 	out := strings.Join(lines, "\n") + "\n"
 	assertGolden(t, "routes", []byte(out))
 }
