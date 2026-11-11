@@ -55,13 +55,14 @@ func TestWALHealDueStaysQuietOnAHealthyPool(t *testing.T) {
 	}
 }
 
-// TestWALHealDueResetsTheBudgetAfterAHeal pins the amendment: a probe that
-// succeeds after a heal resets the in-process count to zero and clears the
-// marker, so a later, unrelated poisoning gets the full budget again. It
-// fails if the old count is kept.
+// TestWALHealDueResetsTheBudgetAfterAHeal pins the reset: a probe that
+// succeeds once the healed image has answered for the settle window resets
+// the in-process count to zero and clears the marker, so a later, unrelated
+// poisoning gets the full budget again. It fails if the old count is kept.
 func TestWALHealDueResetsTheBudgetAfterAHeal(t *testing.T) {
 	h := walTestHandles(t, walTestDB(t))
 	h.walAttempt = 2
+	h.walStart = time.Now().Add(-time.Hour)
 	if err := h.rt.Store.WriteWALHealFailure(2, time.Now(), walHealExhaustedReason); err != nil {
 		t.Fatalf("WriteWALHealFailure: %v", err)
 	}
@@ -74,6 +75,22 @@ func TestWALHealDueResetsTheBudgetAfterAHeal(t *testing.T) {
 	}
 	if _, ok, err := h.rt.Store.ReadWALHealFailure(); err != nil || ok {
 		t.Fatalf("marker after a successful probe = (ok=%v, err=%v), want cleared", ok, err)
+	}
+}
+
+// TestWALHealDueKeepsTheBudgetUntilTheHealSettles pins the settle window: a
+// probe that answers right after a heal keeps the count, so a pool that
+// repoisons soon after every heal climbs to the budget instead of re-execing
+// the daemon forever. It fails if the count resets on the first answer.
+func TestWALHealDueKeepsTheBudgetUntilTheHealSettles(t *testing.T) {
+	h := walTestHandles(t, walTestDB(t))
+	h.walAttempt = 2
+
+	if h.walHealDue(context.Background()) {
+		t.Fatal("walHealDue on a just-healed pool = true, want false")
+	}
+	if h.walAttempt != 2 {
+		t.Fatalf("walAttempt = %d right after a heal, want the kept 2", h.walAttempt)
 	}
 }
 

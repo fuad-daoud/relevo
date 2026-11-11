@@ -30,3 +30,15 @@ func WALHealDue(attempt int, sinceStart time.Duration) bool {
 func WALHealExhausted(attempt int) bool {
 	return attempt >= MaxWALHealAttempts
 }
+
+// walHealSettle is how long a healed image must keep answering before its
+// heals are forgotten. It outlasts the last backoff, so a pool that repoisons
+// soon after every heal still climbs to the budget and is recorded, instead of
+// re-execing the daemon each time it comes back.
+const walHealSettle = 5 * time.Minute
+
+// WALHealSettled reports whether the heals already tried may be forgotten:
+// the image has answered every probe for healthyFor since it started.
+func WALHealSettled(attempt int, healthyFor time.Duration) bool {
+	return attempt == 0 || healthyFor >= walHealSettle
+}

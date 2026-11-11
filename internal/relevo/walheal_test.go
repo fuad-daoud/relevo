@@ -95,3 +95,25 @@ func TestWALHealDue(t *testing.T) {
 		})
 	}
 }
+
+// TestWALHealSettled pins the settle window: a heal is forgotten only after
+// the image answered for the whole window, so a pool that repoisons right
+// after each heal still spends the budget.
+func TestWALHealSettled(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		attempt    int
+		healthyFor time.Duration
+		want       bool
+	}{
+		{0, 0, true},
+		{1, 0, false},
+		{2, walHealSettle - time.Second, false},
+		{2, walHealSettle, true},
+	} {
+		if got := WALHealSettled(tc.attempt, tc.healthyFor); got != tc.want {
+			t.Errorf("WALHealSettled(%d, %v) = %v, want %v", tc.attempt, tc.healthyFor, got, tc.want)
+		}
+	}
+}

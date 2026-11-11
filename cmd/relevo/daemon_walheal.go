@@ -93,18 +93,21 @@ func (h *daemonHandles) walHealDue(context.Context) bool {
 		}
 		_, err := h.d.Version()
 		if err == nil {
-			// A probe that answers hands the next, unrelated poisoning
-			// the full budget again. Clearing comes first and on every
-			// answer: a restarted daemon inherits no count (only the
-			// exec child gets one), so attempt 0 with a stale marker
-			// is the normal post-restart state, not one to skip. A
-			// clear that fails keeps the count so the next tick
-			// retries it.
+			// A probe that answers clears the marker: a restarted daemon
+			// inherits no count (only the exec child gets one), so
+			// attempt 0 with a stale marker is the normal post-restart
+			// state. The count itself is forgotten only once the image
+			// has answered for the settle window, which hands a later,
+			// unrelated poisoning the full budget without letting a pool
+			// that repoisons after every heal re-exec forever. A clear
+			// that fails keeps the count so the next tick retries it.
 			if cerr := h.rt.Store.ClearWALHealFailure(); cerr != nil {
 				slog.Warn("relevo daemon: wal heal marker not cleared", "err", cerr)
 				return false
 			}
-			h.walAttempt = 0
+			if relevo.WALHealSettled(h.walAttempt, time.Since(h.walStart)) {
+				h.walAttempt = 0
+			}
 			return false
 		}
 		if !wire.IsShortReadWAL(err) {
