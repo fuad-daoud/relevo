@@ -289,6 +289,13 @@ func retireServerRun(rt relevo.Runtime, name string, dryRun, asJSON bool) error 
 		}
 		return failWrap(codeInternal, err, "archived %s; server %q is kept, rerun relevo config server rm %s --retire to archive the rest", landed, name, name)
 	}
+	// Reloaded: archiving a large server takes long enough for another
+	// machine's server change to sync in, and writing the earlier copy back
+	// would drop it.
+	L, err = rt.Config.Load()
+	if err != nil {
+		return err
+	}
 	servers := L.Servers
 	delete(servers, name)
 	body, err := client.EncodeServers(servers)
