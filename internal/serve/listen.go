@@ -77,9 +77,9 @@ func (s *Server) ListenAndServe(ctx context.Context, lc ListenConfig) error {
 	}()
 
 	// The drain: on cancel, stop accepting and let in-flight requests finish
-	// within Shutdown's budget, then wait for Run's in-flight tick and the
-	// best-effort node stops beside it. Shutdown's own error (the budget ran
-	// out) is a Warn; the waits happen either way.
+	// within Shutdown's budget, then wait for Run's in-flight tick.
+	// Shutdown's own error (the budget ran out) is a Warn; the wait happens
+	// either way.
 	drained := make(chan struct{})
 	go func() {
 		defer close(drained)
@@ -98,10 +98,7 @@ func (s *Server) ListenAndServe(ctx context.Context, lc ListenConfig) error {
 }
 
 // drainServer stops accepting and lets in-flight requests finish within the
-// shutdown budget, then waits for Run's in-flight tick and the best-effort
-// node stops beside it. A node stop never holds a lock and each carries its
-// own timeout, but the wait still stays inside the same budget instead of
-// outliving the server.
+// shutdown budget, then waits for Run's in-flight tick.
 func (s *Server) drainServer(srv *http.Server, runDone chan struct{}) {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -109,13 +106,4 @@ func (s *Server) drainServer(srv *http.Server, runDone chan struct{}) {
 		slog.Warn("graceful shutdown did not finish", "err", err)
 	}
 	<-runDone
-	fanoutDone := make(chan struct{})
-	go func() {
-		defer close(fanoutDone)
-		s.fanout.Wait()
-	}()
-	select {
-	case <-fanoutDone:
-	case <-shutdownCtx.Done():
-	}
 }

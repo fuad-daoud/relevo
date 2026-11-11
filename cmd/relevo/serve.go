@@ -339,20 +339,8 @@ func serveAdminConfigWithPolicy(root string, d *db.DB) (serve.Config, error) {
 	return serveStatusConfigFrom(root, d, L), nil
 }
 
-// serveStatusConfigFrom is the status verb's config. It carries the burst
-// block and the client key because New loads the persisted node table only
-// when bursting would be on, and the status document's burst block is read
-// from that table: without them the block never reaches the provider.
 func serveStatusConfigFrom(root string, d *db.DB, L config.Loaded) serve.Config {
-	return withServeBurst(withIsolation(serveAdminConfigFrom(root, d, L), L.Policy.ServeIsolation()), L)
-}
-
-func withServeBurst(cfg serve.Config, L config.Loaded) serve.Config {
-	if L.Policy.Serve != nil {
-		cfg.Burst = L.Policy.Serve.Burst
-	}
-	cfg.ClientKey = L.ClientKey
-	return cfg
+	return withIsolation(serveAdminConfigFrom(root, d, L), L.Policy.ServeIsolation())
 }
 
 // serveAdminConfigWithCandidates is serveAdminConfigFrom plus the configured
@@ -370,12 +358,10 @@ func serveAdminConfigWithCandidates(root string, d *db.DB) (serve.Config, error)
 	return serveGateConfigFrom(root, d, L), nil
 }
 
-// serveGateConfigFrom is the gate verbs' config. A gate recorded here reaches
-// the head's nodes too, and that needs the node table and the key to dial them.
 func serveGateConfigFrom(root string, d *db.DB, L config.Loaded) serve.Config {
 	cfg := serveAdminConfigFrom(root, d, L)
 	cfg.Candidates = L.Candidates
-	return withServeBurst(cfg, L)
+	return cfg
 }
 
 func cmdServeRun(args []string) error {

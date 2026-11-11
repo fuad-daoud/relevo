@@ -55,10 +55,9 @@ func (s *Server) Tick(ctx context.Context) error {
 	// Every owner is reconciled, so admit can start queued rounds into the slots
 	// that freed up. collectSettled runs first, so a settled binding's slot and
 	// worktree are released before reuse, and pruneUnusedRepos sees the
-	// post-collect live set. The four run in that order under one admitMu hold,
+	// post-collect live set. The three run in that order under one admitMu hold,
 	// which also keeps a concurrent round start's admit from interleaving with
-	// this count-and-start. The burst hook runs last, so local seats fill
-	// before any round is claimed for a node.
+	// this count-and-start.
 	s.admitMu.Lock()
 	defer s.admitMu.Unlock()
 	if _, err := s.collectSettled(ctx); err != nil {
@@ -68,7 +67,6 @@ func (s *Server) Tick(ctx context.Context) error {
 	if err := s.admitLocked(ctx); err != nil {
 		slog.Warn("admit failed", "err", err)
 	}
-	s.burstTick(ctx)
 	return nil
 }
 
@@ -123,11 +121,6 @@ func (s *Server) Run(ctx context.Context) error {
 	if err := s.settleAllServed(); err != nil {
 		slog.Warn("settle served reports failed", "err", err)
 	}
-
-	// A restart re-resolves the forwards the last process left in sending
-	// before the first tick can place anything new: a confirmed forward
-	// stays out, anything else waits locally again.
-	s.adoptSending(ctx)
 
 	var mirror sync.WaitGroup
 	mirror.Add(1)

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
-	"github.com/fuad-daoud/relevo/internal/burst"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -916,13 +915,12 @@ func TestAdminStatusLoadFailureStillFails(t *testing.T) {
 	}
 }
 
-// TestServeStatusJSONKeysBurstReads pins the literal JSON keys in the
-// `relevo serve status --json` document that an external program parses: the
-// burst provider in fuad-daoud/servers reads them over ssh to confirm a node
-// is idle before tearing it down. The keys are named literally here rather
-// than left to the golden file, because `-update` regenerates that golden
-// silently, so a rename would pass CI unnoticed.
-func TestServeStatusJSONKeysBurstReads(t *testing.T) {
+// TestServeStatusJSONKeys pins the literal JSON keys in the
+// `relevo serve status --json` document that an external program parses.
+// The keys are named literally here rather than left to the golden file,
+// because `-update` regenerates that golden silently, so a rename would
+// pass CI unnoticed.
+func TestServeStatusJSONKeys(t *testing.T) {
 	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 	s := newAdminServer(t, now)
 	id := enrol(t, s, "alice")
@@ -979,67 +977,8 @@ func TestServeStatusJSONKeysBurstReads(t *testing.T) {
 		t.Errorf("bindings[0] round = %v, want 2 (float64 after Unmarshal)", b0["round"])
 	}
 
-	// The burst block below is the additive half the keys above do not
-	// read: the block is byte-identical, present only when bursting was
-	// configured, and nodes never null, so the idle-node reader the
-	// comment above names keeps parsing. A rename or a dropped key fails
-	// the byte compare; emitting the block while off, or a null nodes,
-	// fails the additive checks.
 	if _, ok := m["burst"]; ok {
-		t.Error("burst key present with bursting off, want it absent: the block is additive")
-	}
-	if got := s.BurstStatus(); got != nil {
-		t.Errorf("BurstStatus with bursting off = %+v, want nil so the key drops", got)
-	}
-	empty := newAdminServer(t, now)
-	empty.burstTable = &burst.NodeTable{}
-	if got := empty.BurstStatus(); got == nil {
-		t.Error("BurstStatus with an empty table = nil, want the block with an empty nodes list")
-	} else if raw, err := json.Marshal(got); err != nil {
-		t.Fatalf("Marshal empty burst: %v", err)
-	} else if !strings.Contains(string(raw), `"nodes":[]`) {
-		t.Errorf("empty burst block = %s, want nodes to read as a list, never null", raw)
-	}
-
-	reported := time.Date(2026, 9, 21, 12, 30, 0, 0, time.UTC)
-	doc.Burst = &BurstStatus{
-		LastReportAt: &reported,
-		LastErr:      "report failed: refused",
-		Preparing:    &burst.Preparing{Slots: 2, Since: reported},
-		Denied:       &burst.Denied{Reason: "no_capacity", RetryAfter: "30s"},
-		Nodes: []BurstNodeStatus{{
-			ID: "b1", Name: "b1 cx43@hel1", State: "ready",
-			Verified: true, Running: 1, Cap: 2,
-		}},
-	}
-	blob, err = json.Marshal(doc.Burst)
-	if err != nil {
-		t.Fatalf("Marshal burst: %v", err)
-	}
-	const wantBurst = `{"last_report_at":"2026-09-21T12:30:00Z","last_err":"report failed: refused",` +
-		`"preparing":{"slots":2,"since":"2026-09-21T12:30:00Z"},` +
-		`"denied":{"reason":"no_capacity","retry_after":"30s"},` +
-		`"nodes":[{"id":"b1","name":"b1 cx43@hel1","state":"ready","verified":true,` +
-		`"problem":"","running":1,"cap":2}]}`
-	if string(blob) != wantBurst {
-		t.Errorf("burst block = %s, want exactly:\n%s", blob, wantBurst)
-	}
-
-	blob, err = json.Marshal(doc)
-	if err != nil {
-		t.Fatalf("Marshal with burst: %v", err)
-	}
-	var with map[string]any
-	if err := json.Unmarshal(blob, &with); err != nil {
-		t.Fatalf("Unmarshal with burst: %v", err)
-	}
-	burstBlock, ok := with["burst"].(map[string]any)
-	if !ok {
-		t.Fatalf("burst is %T, want the block present once configured: %s", with["burst"], blob)
-	}
-	nodes, ok := burstBlock["nodes"].([]any)
-	if !ok || len(nodes) != 1 {
-		t.Errorf("burst nodes = %v, want the one configured node, never null", burstBlock["nodes"])
+		t.Error("burst key present, want it absent: the head serves local rounds only")
 	}
 }
 
@@ -1061,8 +1000,7 @@ func TestStatusDocumentCarriesIsolation(t *testing.T) {
 	}
 }
 
-// requireKeys fails unless obj is a JSON object holding every key. Each
-// missing key names the external reader that depends on it.
+// requireKeys fails unless obj is a JSON object holding every key.
 func requireKeys(t *testing.T, obj any, keys ...string) {
 	t.Helper()
 	m, ok := obj.(map[string]any)
@@ -1071,7 +1009,7 @@ func requireKeys(t *testing.T, obj any, keys ...string) {
 	}
 	for _, k := range keys {
 		if _, ok := m[k]; !ok {
-			t.Errorf("missing JSON key %q: the burst provider in fuad-daoud/servers reads %q; renaming it needs a burst release that accepts the new name first", k, k)
+			t.Errorf("missing JSON key %q: external readers parse it literally, so a rename needs those readers to accept the new name first", k)
 		}
 	}
 }
@@ -1092,106 +1030,4 @@ func TestRenderGatesSanitizesNote(t *testing.T) {
 	if !strings.Contains(out, "\uFFFD") {
 		t.Errorf("RenderGates = %q, want a replacement rune", out)
 	}
-}
-
-// TestServeStatusJSONBurstBlock pins the additive burst block in `serve
-// status --json`: the block appears with its keys when the head holds a
-// node table, naming the report mark, the last failure, the provider's
-// preparing and denied blocks and every live node with its check marks and
-// load; a gone node the table still keeps is left out.
-// Without a table the key is absent, so a reader that never configured
-// bursting sees today's document -- while a command refused for want of a
-// client key still surfaces that refusal as last_err.
-func TestServeStatusJSONBurstBlock(t *testing.T) {
-	now := time.Date(2026, 11, 2, 9, 30, 0, 0, time.UTC)
-	headKP, err := remote.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	env := burstVerifyEnv(t, headKP, nil, nil)
-	since := now.Add(-time.Hour)
-	row := burstRowFor("b1", "https://b1.example", burstTestFingerprint)
-	row.Verified = true
-	row.Problem = burst.ReportProblemUnreachable
-	row.ProblemSince = since
-	gone := burstRowFor("b0", "https://b0.example", burstTestFingerprint)
-	gone.Verified = true
-	gone.Gone = true
-	env.srv.burstTable = &burst.NodeTable{
-		Nodes: []burst.NodeRow{gone, row}, LastReport: now, LastErr: "boom",
-		Preparing: &burst.Preparing{Slots: 2, Since: since},
-		Denied:    &burst.Denied{Reason: "cap", RetryAfter: "30s"},
-	}
-	saveHeadForward(t, env, "a", "b1", burstNodeBinding(env.id, "a"), 1, since)
-
-	doc := StatusDocument(nil, remote.BuildersView{Running: 1, Cap: 2})
-	doc.Burst = env.srv.BurstStatus()
-	blob, err := json.Marshal(doc)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	var m map[string]any
-	if err := json.Unmarshal(blob, &m); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
-	}
-	requireKeys(t, m, "runners", "owners", "burst")
-	bm, ok := m["burst"].(map[string]any)
-	if !ok {
-		t.Fatalf("burst is not a JSON object: %T", m["burst"])
-	}
-	requireKeys(t, bm, "last_report_at", "last_err", "preparing", "denied", "nodes")
-	if bm["last_err"] != "boom" {
-		t.Errorf("last_err = %v, want the table's failure", bm["last_err"])
-	}
-	if bm["preparing"].(map[string]any)["slots"] != float64(2) {
-		t.Errorf("preparing = %v, want the provider's slots", bm["preparing"])
-	}
-	if bm["denied"].(map[string]any)["reason"] != "cap" {
-		t.Errorf("denied = %v, want the provider's refusal", bm["denied"])
-	}
-	nodes, ok := bm["nodes"].([]any)
-	if !ok || len(nodes) != 1 {
-		t.Fatalf("nodes = %T %v, want one entry: the gone b0 left out, live b1 kept", bm["nodes"], bm["nodes"])
-	}
-	n0, ok := nodes[0].(map[string]any)
-	if !ok {
-		t.Fatalf("nodes[0] is not a JSON object: %T", nodes[0])
-	}
-	requireKeys(t, n0, "id", "name", "state", "verified", "problem", "running", "cap")
-	if n0["id"] != "b1" || n0["verified"] != true || n0["problem"] != "unreachable" {
-		t.Errorf("node = %v, want b1 verified with problem unreachable", n0)
-	}
-	if n0["running"] != float64(1) || n0["cap"] != float64(2) {
-		t.Errorf("node load = running %v cap %v, want 1 and 2", n0["running"], n0["cap"])
-	}
-
-	t.Run("absent without a table", func(t *testing.T) {
-		s := newAdminServer(t, now)
-		plain := StatusDocument(nil, remote.BuildersView{})
-		plain.Burst = s.BurstStatus()
-		blob, err := json.Marshal(plain)
-		if err != nil {
-			t.Fatalf("Marshal: %v", err)
-		}
-		if strings.Contains(string(blob), `"burst"`) {
-			t.Errorf("document without a table names burst:\n%s", blob)
-		}
-	})
-
-	t.Run("refusal without a key is last_err", func(t *testing.T) {
-		off, err := New(Config{
-			DB: testServeDB(t), Root: t.TempDir(), Now: time.Now,
-			Burst: burstTestPolicy(),
-		})
-		if err != nil {
-			t.Fatalf("New: %v", err)
-		}
-		st := off.BurstStatus()
-		if st == nil || !strings.Contains(st.LastErr, "relevo config server key") {
-			t.Errorf("BurstStatus = %+v, want the refusal naming the enrollment command", st)
-		}
-		if st != nil && st.Nodes == nil {
-			t.Error("Nodes is nil, want an empty list")
-		}
-	})
 }

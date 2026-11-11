@@ -9,6 +9,16 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
+// headOwnerPath returns the head owner's store root for mirror keys.
+func headOwnerPath(t *testing.T, env *testEnv) string {
+	t.Helper()
+	root, err := env.srv.ownerRoot(env.id)
+	if err != nil {
+		t.Fatalf("ownerRoot: %v", err)
+	}
+	return root
+}
+
 func saveMirrorBinding(t *testing.T, env *testEnv, name string) {
 	t.Helper()
 	rt, err := env.srv.runtime(env.id)
@@ -21,11 +31,6 @@ func saveMirrorBinding(t *testing.T, env *testEnv, name string) {
 	if err := rt.Store.AppendLog(name, store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt}); err != nil {
 		t.Fatalf("AppendLog: %v", err)
 	}
-}
-
-// mirrorOnce runs the pass mirrorLoop runs, on a mirror set of its own.
-func mirrorOnce(env *testEnv) {
-	env.srv.mirrorPass(context.Background(), map[string]*relevo.OwnerMirror{}, time.Now())
 }
 
 // TestMirrorPassKeepsEachOwnersMirror: what makes a later pass cheap lives in

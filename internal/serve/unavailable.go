@@ -113,12 +113,7 @@ func (s *Server) handleUnavailable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The ledger is server-wide, so the gate reaches every verified live
-	// node the way the head holds it; the node resolves it against its
-	// own candidates. The fan-out is detached: the answer never waits for
-	// a node and a node failure only logs.
-	s.fanoutGateUnavailableAsync(req.Token, req.Reason, until)
-
+	// The ledger is server-wide, so this one write gates every owner.
 	writeJSON(w, http.StatusOK, map[string]any{})
 }
 

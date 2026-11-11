@@ -538,7 +538,7 @@ func TestCreateChainCheckoutTimeoutUnwindsWorktreeAndBranch(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 	bare := bareWithOutRef(t, env, "shop")
-	worktree := filepath.Join(t.TempDir(), "wt-shop")
+	worktree := filepath.Join(canonicalPath(t, t.TempDir()), "wt-shop")
 
 	rec := httptest.NewRecorder()
 	shim := &deadlineCheckoutGit{Git: env.gitClient, t: t}

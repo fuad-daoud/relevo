@@ -90,7 +90,6 @@ var registeredRoutes = []routeEntry{
 	{"GET /v1/bindings/{name}/rounds/{n}/artifacts/{rel...}", "GET", "/v1/bindings/test-binding/rounds/1/artifacts/findings.md"},
 	{"GET /v1/bindings/{name}/rounds/{n}/bundle", "GET", "/v1/bindings/test-binding/rounds/1/bundle"},
 	{"POST /v1/bindings/{name}/rounds/{n}/ack", "POST", "/v1/bindings/test-binding/rounds/1/ack"},
-	{"POST /v1/bindings/{name}/rounds/{n}/align", "POST", "/v1/bindings/test-binding/rounds/1/align"},
 	{"POST /v1/bindings/{name}/unavailable", "POST", "/v1/bindings/test-binding/unavailable"},
 	{"POST /v1/chains", "POST", "/v1/chains"},
 	{"GET /v1/chains/{name}", "GET", "/v1/chains/test-chain"},
@@ -187,6 +186,20 @@ func TestContractRoutes(t *testing.T) {
 		t.Fatalf("/v1/nope got status %d, error %q; want 404 %s", nopeRec.Code, nopeErr.Code, remote.CodeNotFound)
 	}
 	lines = append(lines, fmt.Sprintf("GET /v1/nope %d %s", nopeRec.Code, nopeErr.Code))
+
+	// The align path is not registered, so a signed request to it must reach
+	// the not-found handler rather than a route handler.
+	alignReq := testSignedRequest(t, kp, "POST", "/v1/bindings/x/rounds/1/align", nil)
+	alignRec := httptest.NewRecorder()
+	handler.ServeHTTP(alignRec, alignReq)
+
+	var alignErr remote.ErrorBody
+	if err := json.NewDecoder(alignRec.Body).Decode(&alignErr); err != nil {
+		t.Fatalf("decode ErrorBody for align path: %v", err)
+	}
+	if alignRec.Code != http.StatusNotFound || alignErr.Code != remote.CodeNotFound {
+		t.Fatalf("POST /v1/bindings/x/rounds/1/align got status %d, error %q; want 404 %s", alignRec.Code, alignErr.Code, remote.CodeNotFound)
+	}
 
 	out := strings.Join(lines, "\n") + "\n"
 	assertGolden(t, "routes", []byte(out))

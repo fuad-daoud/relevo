@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
-	"github.com/fuad-daoud/relevo/internal/burst"
 	"github.com/fuad-daoud/relevo/internal/isolate"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -203,77 +202,11 @@ func FlatStatus(ctx context.Context, s *Server, opts ...relevo.StatusOption) (vi
 }
 
 // StatusJSON is the document `relevo serve status --json` prints; the field
-// names are a contract, and Owners is never null. Burst is nil unless the
-// head holds a node table or a reason bursting is off; nil drops the key,
-// so a reader that never configured bursting sees today's document.
+// names are a contract, and Owners is never null.
 type StatusJSON struct {
 	Builders    remote.BuildersView `json:"runners"`
 	LastContact *time.Time          `json:"last_contact"`
 	Owners      []OwnerJSON         `json:"owners"`
-	Burst       *BurstStatus        `json:"burst,omitempty"`
-}
-
-// BurstNodeStatus is one node as the status shows it: the table's offer and
-// check marks beside the rounds the head still counts on it.
-type BurstNodeStatus struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	State    string `json:"state"`
-	Verified bool   `json:"verified"`
-	Problem  string `json:"problem"`
-	Running  int    `json:"running"`
-	Cap      int    `json:"cap"`
-}
-
-// BurstStatus is the head's burst block: when it last reported, why the
-// last call failed, what the provider is bringing up or refusing, and every
-// node. Nodes is never null, so an empty table still reads as a list.
-type BurstStatus struct {
-	LastReportAt *time.Time        `json:"last_report_at,omitempty"`
-	LastErr      string            `json:"last_err,omitempty"`
-	Preparing    *burst.Preparing  `json:"preparing,omitempty"`
-	Denied       *burst.Denied     `json:"denied,omitempty"`
-	Nodes        []BurstNodeStatus `json:"nodes"`
-}
-
-// BurstStatus snapshots the head's burst block for the status document: nil
-// when bursting was never configured, the startup refusal when a command
-// without a client key keeps it off, and the table marks otherwise.
-func (s *Server) BurstStatus() *BurstStatus {
-	if s.burstTable == nil {
-		if s.burstOffErr == "" {
-			return nil
-		}
-		return &BurstStatus{LastErr: s.burstOffErr, Nodes: []BurstNodeStatus{}}
-	}
-	t := s.copyBurstTable()
-	running := map[string]int{}
-	for _, f := range s.burstForwards() {
-		if f.State == burst.ForwardRunning {
-			running[f.NodeID]++
-		}
-	}
-	st := &BurstStatus{Nodes: []BurstNodeStatus{}}
-	if !t.LastReport.IsZero() {
-		at := t.LastReport.UTC()
-		st.LastReportAt = &at
-	}
-	st.LastErr = t.LastErr
-	st.Preparing = t.Preparing
-	st.Denied = t.Denied
-	for _, r := range t.Nodes {
-		// The table keeps a gone row behind the live ones until the next
-		// merge drops it; listed here it would read as a node that can
-		// still take a round.
-		if r.Gone {
-			continue
-		}
-		st.Nodes = append(st.Nodes, BurstNodeStatus{
-			ID: r.ID, Name: r.Name, State: r.State, Verified: r.Verified,
-			Problem: r.Problem, Running: running[r.ID], Cap: r.Cap,
-		})
-	}
-	return st
 }
 
 type OwnerJSON struct {
@@ -549,8 +482,7 @@ func AdminAvailable(s *Server, subject string) (provider string, removed int, er
 		return "", 0, err
 	}
 	// A server-side clear enters through here as well as through the
-	// handler, so it fans out the same way: detached, failures only logged.
-	s.fanoutGateAvailableAsync(subject)
+	// handler; both write the same server-wide ledger.
 	return provider, removed, nil
 }
 
@@ -560,16 +492,8 @@ func AdminUnavailable(s *Server, token string, until time.Time, reason string) (
 		return "", err
 	}
 	// A server-side gate enters through here as well as through the
-	// handler, so it fans out the same way: detached, failures only logged.
-	s.fanoutGateUnavailableAsync(token, reason, until)
+	// handler; both write the same server-wide ledger.
 	return provider, nil
-}
-
-// AdminWaitFanout holds an admin verb until the node sends it started have
-// landed: its process exits right after, which would end them. Every attempt
-// carries its own timeout, so a dead node bounds this at fanoutTimeout.
-func AdminWaitFanout(s *Server) {
-	s.fanout.Wait()
 }
 
 // RenderGates formats `relevo serve gates`.
