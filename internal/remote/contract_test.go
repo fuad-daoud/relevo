@@ -143,11 +143,13 @@ func filledTagRef() TagRef {
 
 func filledQueueView() QueueView {
 	return QueueView{
-		Position: 2,
-		Ahead:    1,
-		Running:  3,
-		Cap:      5,
-		Since:    fixedTime,
+		Position:  2,
+		Ahead:     1,
+		Running:   3,
+		Cap:       5,
+		Since:     fixedTime,
+		Wait:      "memory",
+		WaitBytes: 2 << 30,
 	}
 }
 
@@ -600,6 +602,21 @@ func TestGateFieldsAreAdditive(t *testing.T) {
 	}
 	if bytes.Contains(view, []byte(`"gate_result"`)) {
 		t.Fatalf("zero BindingView carries a gate_result key: %s", view)
+	}
+}
+
+// TestQueueWaitFieldsAreAdditive pins that a zero QueueView marshals without
+// a wait key, so an old client sees no new key on an old server's view.
+func TestQueueWaitFieldsAreAdditive(t *testing.T) {
+	zero, err := json.Marshal(QueueView{})
+	if err != nil {
+		t.Fatalf("marshal zero QueueView: %v", err)
+	}
+	if bytes.Contains(zero, []byte(`"wait"`)) {
+		t.Fatalf("zero QueueView carries a wait key: %s", zero)
+	}
+	if bytes.Contains(zero, []byte(`"wait_bytes"`)) {
+		t.Fatalf("zero QueueView carries a wait_bytes key: %s", zero)
 	}
 }
 

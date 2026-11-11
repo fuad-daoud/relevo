@@ -285,6 +285,9 @@ func validateThresholds(path string, p Policy) error {
 	if p.Serve != nil && p.Serve.MaxPlanners != nil && *p.Serve.MaxPlanners < 1 {
 		return fmt.Errorf("%s: serve.max_planners: must be at least 1, got %d: %w", path, *p.Serve.MaxPlanners, ErrBadPolicy)
 	}
+	if p.Serve != nil && p.Serve.MemoryBudget != "" && !memoryMaxPattern.MatchString(p.Serve.MemoryBudget) {
+		return fmt.Errorf("%s: serve.memory_budget: must match ^[0-9]+[KMGT]?$, got %q: %w", path, p.Serve.MemoryBudget, ErrBadPolicy)
+	}
 	if p.Serve != nil {
 		switch p.Serve.Isolation {
 		case "", "none", "user", "container":

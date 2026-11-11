@@ -269,6 +269,11 @@ type QueueView struct {
 	Running  int       `json:"running"`
 	Cap      int       `json:"cap"`
 	Since    time.Time `json:"since"`
+	// Wait names what holds a queued round — memory, ceiling or pressure —
+	// so a client need not guess from counts. "" means unstated.
+	Wait string `json:"wait,omitempty"`
+	// WaitBytes is the bytes the wait is for; 0 when the wait carries no size.
+	WaitBytes int64 `json:"wait_bytes,omitempty"`
 }
 
 type DiffStat struct {
