@@ -20,7 +20,7 @@ func configServerFlagSet(*flag.FlagSet) {}
 // configServer is the server half of `relevo config`.
 func configServer(args []string) error {
 	const usage = `usage: relevo config server add <name> <url> (--fingerprint sha256:<hex> | --ca system | --insecure)
-       relevo config server rm <name>
+       relevo config server rm <name> [--retire] [--dry-run]
        relevo config server list
        relevo config server key [--enroll-line]`
 

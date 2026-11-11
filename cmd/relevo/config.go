@@ -23,7 +23,7 @@ const configUsage = `usage: relevo config [--probe [token...]]
        relevo config init [--force] [--no-agents]
        relevo config agents [--kind <agy|claude|opencode>] [--agent <name>] [--force] [--dry-run]
        relevo config server add <name> <url> [--fingerprint F] [--ca system] [--insecure]
-       relevo config server rm <name>
+       relevo config server rm <name> [--retire] [--dry-run]
        relevo config server list
        relevo config server key
        relevo config secret set <client.key>

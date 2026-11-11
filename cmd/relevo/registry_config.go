@@ -159,8 +159,8 @@ var registryConfigVerbs = []verbEntry{
 	{
 		Name:    "config server rm",
 		Summary: "forget a configured server",
-		Args:    "<name> [--json]",
-		Flags:   []string{"--json"},
+		Args:    "<name> [--retire] [--dry-run] [--json]",
+		Flags:   []string{"--dry-run", "--json", "--retire"},
 		Output:  "json:ConfigServerRmDoc",
 		Exit:    []int{0, 1, 2},
 		Errors:  []string{"conflict", "internal", "server_not_found", "usage"},

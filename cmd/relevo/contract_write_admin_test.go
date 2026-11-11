@@ -10,13 +10,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/config"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/serve"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // TestContractWriteAdminShape pins every admin write result document from
@@ -233,6 +236,18 @@ func TestContractWriteAdminJSON(t *testing.T) {
 		if doc.Name != "zen" || !doc.Removed {
 			t.Errorf("doc = %+v, want zen removed", doc)
 		}
+		if doc.Archived == nil {
+			t.Error("archived is nil, want an empty list")
+		}
+		if len(doc.Archived) != 0 {
+			t.Errorf("archived = %q, want empty", doc.Archived)
+		}
+		if doc.ArchivedCount != 0 {
+			t.Errorf("archived_count = %d, want 0", doc.ArchivedCount)
+		}
+		if doc.DryRun {
+			t.Errorf("doc = %+v, want dry_run false on a real removal", doc)
+		}
 	})
 
 	t.Run("config secret set", func(t *testing.T) {
@@ -398,6 +413,279 @@ func TestContractWriteAdminJSON(t *testing.T) {
 		if doc.Running == "" || doc.Exe == "" || doc.Action == "" || doc.Message == "" {
 			t.Errorf("doc = %+v, want the check block as a document", doc)
 		}
+	})
+}
+
+// seedRetireBinding records one remote binding naming server in the test
+// store, the same store the CLI's newRuntime reads. pid 0 means no local
+// process, so the retire archives it; a hold comes from a chain row instead.
+func seedRetireBinding(t *testing.T, name, server string, pid int) {
+	t.Helper()
+	root, err := tmpdir.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	s := store.New(root)
+	if err := s.Save(store.Binding{
+		Name:  name,
+		CWD:   filepath.Join(root, "work", name),
+		Round: 1,
+		State: store.StateActive,
+		Builder: store.Endpoint{
+			Mode:   store.ModeRemote,
+			Server: server,
+			PID:    pid,
+		},
+	}); err != nil {
+		t.Fatalf("Save %s: %v", name, err)
+	}
+}
+
+// seedRetireChainRow records one chain row naming server in the test store,
+// the same store the CLI's newRuntime reads. A running row holds the retire
+// the way a live local process does, without depending on process state.
+func seedRetireChainRow(t *testing.T, name, server, status, builder string) {
+	t.Helper()
+	root, err := tmpdir.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	row := db.ChainRow{
+		ID: db.NewID(), Name: name, Server: server, Status: status,
+		Phase: "build", Step: "building", Plan: 1, Plans: 1, Builder: builder,
+	}
+	if err := store.New(root).WithLock(func(tx *store.Tx) error {
+		return tx.ChainPut(row)
+	}); err != nil {
+		t.Fatalf("ChainPut %s: %v", name, err)
+	}
+}
+
+// retireLiveNames lists the test store's live bindings by name, sorted.
+func retireLiveNames(t *testing.T) []string {
+	t.Helper()
+	root, err := tmpdir.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	live, err := store.New(root).List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var names []string
+	for _, b := range live {
+		names = append(names, b.Name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// TestContractServerRmRetire pins `config server rm --retire` end to end
+// through the real verb: the zen bindings archive locally with no server
+// call (a retire that dialled the unreachable fixture URL would fail), the
+// contabo binding stays live, the entry leaves the config, and the document
+// carries what archived. A held binding refuses instead, keeping the entry
+// and the records. Store-only: no harness is launched, and the fixture URLs
+// are unreachable, so a retire that dialled the server would fail.
+func TestContractServerRmRetire(t *testing.T) {
+	t.Run("retire archives and forgets", func(t *testing.T) {
+		docsEnv(t)
+		seedAdminServer(t, "zen", "https://zen.example.test:7777")
+		seedAdminServer(t, "contabo", "https://contabo.example.test:7777")
+		seedAdminServer(t, "keep", "https://keep.example.test:7777")
+		seedRetireBinding(t, "web", "zen", 0)
+		seedRetireBinding(t, "api", "zen", 0)
+		seedRetireBinding(t, "desk", "contabo", 0)
+		seedRetireBinding(t, "other", "keep", 0)
+
+		stdout, stderr, err := captureOutput(t, func() error {
+			return run([]string{"config", "server", "rm", "contabo", "--retire"})
+		})
+		if err != nil {
+			t.Fatalf("retire contabo: %v (stderr: %s)", err, stderr)
+		}
+		if !strings.Contains(string(stdout), "removed server contabo (1 bindings archived)") {
+			t.Errorf("stdout = %q, want the contabo removal line", stdout)
+		}
+
+		doc := decodeAdminDoc[ConfigServerRmDoc](t,
+			assertWriteJSON(t, "config", "server", "rm", "zen", "--retire", "--json"), "retire zen")
+		if doc.Name != "zen" || !doc.Removed {
+			t.Errorf("doc = %+v, want zen removed", doc)
+		}
+		if doc.DryRun {
+			t.Errorf("doc = %+v, want dry_run false on a real retire", doc)
+		}
+		if !slices.Equal(doc.Archived, []string{"api", "web"}) || doc.ArchivedCount != 2 {
+			t.Errorf("doc = %+v, want api and web archived", doc)
+		}
+		if got := retireLiveNames(t); !slices.Equal(got, []string{"other"}) {
+			t.Errorf("live = %q, want only the other server's binding", got)
+		}
+
+		out, _, err := captureOutput(t, func() error { return run([]string{"config", "server", "list"}) })
+		if err != nil {
+			t.Fatalf("config server list: %v", err)
+		}
+		if strings.Contains(string(out), "zen") || strings.Contains(string(out), "contabo") {
+			t.Errorf("server list = %q, want neither retired server", out)
+		}
+	})
+
+	t.Run("running chain refuses and keeps everything", func(t *testing.T) {
+		docsEnv(t)
+		seedAdminServer(t, "zen", "https://zen.example.test:7777")
+		seedRetireBinding(t, "api", "zen", 0)
+		seedRetireChainRow(t, "shop", "zen", string(chain.StatusRunning), "")
+
+		_, _, runErr := captureOutput(t, func() error {
+			return run([]string{"config", "server", "rm", "zen", "--retire"})
+		})
+		ce := requireCLIError(t, runErr, codeConflict, "")
+		if !strings.Contains(ce.message, "shop") || !strings.Contains(ce.message, "chain is running") {
+			t.Errorf("message = %q, want the shop refusal and its reason", ce.message)
+		}
+		if got := retireLiveNames(t); !slices.Equal(got, []string{"api"}) {
+			t.Errorf("live = %q, want api still live", got)
+		}
+		out, _, err := captureOutput(t, func() error { return run([]string{"config", "server", "list"}) })
+		if err != nil {
+			t.Fatalf("config server list: %v", err)
+		}
+		if !strings.Contains(string(out), "zen") {
+			t.Errorf("server list = %q, want zen still configured", out)
+		}
+	})
+
+	t.Run("partial archive failure keeps the server", func(t *testing.T) {
+		docsEnv(t)
+		seedAdminServer(t, "zen", "https://zen.example.test:7777")
+		seedRetireBinding(t, "aaa", "zen", 0)
+		seedRetireBinding(t, "mid", "zen", 0)
+		seedRetireBinding(t, "zzz", "zen", 0)
+		seedRetireChainRow(t, "elsewhere", "contabo", string(chain.StatusRunning), "mid")
+
+		_, _, runErr := captureOutput(t, func() error {
+			return run([]string{"config", "server", "rm", "zen", "--retire"})
+		})
+		ce := requireCLIError(t, runErr, codeInternal, "")
+		if !strings.Contains(ce.message, "aaa") || !strings.Contains(ce.message, `server "zen" is kept`) {
+			t.Errorf("message = %q, want what landed and that the entry is kept", ce.message)
+		}
+		out, _, err := captureOutput(t, func() error { return run([]string{"config", "server", "list"}) })
+		if err != nil {
+			t.Fatalf("config server list: %v", err)
+		}
+		if !strings.Contains(string(out), "zen") {
+			t.Errorf("server list = %q, want zen still configured", out)
+		}
+		if got := retireLiveNames(t); !slices.Equal(got, []string{"mid", "zzz"}) {
+			t.Errorf("live = %q, want mid and zzz still live", got)
+		}
+	})
+
+	t.Run("dry run lists and changes nothing", func(t *testing.T) {
+		docsEnv(t)
+		seedAdminServer(t, "zen", "https://zen.example.test:7777")
+		seedRetireBinding(t, "web", "zen", 0)
+		seedRetireBinding(t, "api", "zen", 0)
+
+		stdout, _, err := captureOutput(t, func() error {
+			return run([]string{"config", "server", "rm", "zen", "--retire", "--dry-run"})
+		})
+		if err != nil {
+			t.Fatalf("dry run: %v", err)
+		}
+		for _, want := range []string{"would archive api", "would archive web"} {
+			if !strings.Contains(string(stdout), want) {
+				t.Errorf("stdout = %q, want %q", stdout, want)
+			}
+		}
+		if got := retireLiveNames(t); !slices.Equal(got, []string{"api", "web"}) {
+			t.Errorf("live = %q, want both bindings still live", got)
+		}
+		out, _, err := captureOutput(t, func() error { return run([]string{"config", "server", "list"}) })
+		if err != nil {
+			t.Fatalf("config server list: %v", err)
+		}
+		if !strings.Contains(string(out), "zen") {
+			t.Errorf("server list = %q, want zen still configured", out)
+		}
+		// The bindings are untouched too: a plain rm still refuses on them.
+		_, _, runErr := captureOutput(t, func() error {
+			return run([]string{"config", "server", "rm", "zen"})
+		})
+		_ = requireCLIError(t, runErr, codeConflict, "relevo config server rm zen --retire")
+	})
+
+	t.Run("dry run json keeps the document on stdout", func(t *testing.T) {
+		docsEnv(t)
+		seedAdminServer(t, "zen", "https://zen.example.test:7777")
+		seedRetireBinding(t, "api", "zen", 0)
+
+		stdout, stderr := assertWriteJSONNotices(t,
+			"config", "server", "rm", "zen", "--retire", "--dry-run", "--json")
+		doc := decodeAdminDoc[ConfigServerRmDoc](t, stdout, "dry run --json")
+		if !slices.Equal(doc.Archived, []string{"api"}) || doc.ArchivedCount != 1 {
+			t.Errorf("doc = %+v, want the api plan", doc)
+		}
+		if doc.Removed {
+			t.Errorf("doc = %+v, want removed false on a dry run", doc)
+		}
+		if !doc.DryRun {
+			t.Errorf("doc = %+v, want dry_run true on a dry run", doc)
+		}
+		if !strings.Contains(string(stderr), "would archive api") {
+			t.Errorf("stderr = %q, want the would-archive notice", stderr)
+		}
+		out, _, err := captureOutput(t, func() error { return run([]string{"config", "server", "list"}) })
+		if err != nil {
+			t.Fatalf("config server list: %v", err)
+		}
+		if !strings.Contains(string(out), "zen") {
+			t.Errorf("server list = %q, want zen still configured", out)
+		}
+	})
+
+	t.Run("dry run refusal errors like the real run", func(t *testing.T) {
+		docsEnv(t)
+		seedAdminServer(t, "zen", "https://zen.example.test:7777")
+		seedRetireBinding(t, "api", "zen", 0)
+		seedRetireChainRow(t, "shop", "zen", string(chain.StatusRunning), "")
+
+		stdout, _, runErr := captureOutput(t, func() error {
+			return run([]string{"config", "server", "rm", "zen", "--retire", "--dry-run"})
+		})
+		ce := requireCLIError(t, runErr, codeConflict, "")
+		if !strings.Contains(ce.message, "shop") || !strings.Contains(ce.message, "chain is running") {
+			t.Errorf("message = %q, want the shop refusal and its reason", ce.message)
+		}
+		if !strings.Contains(string(stdout), "refused shop") {
+			t.Errorf("stdout = %q, want the refusal line", stdout)
+		}
+		if got := retireLiveNames(t); !slices.Equal(got, []string{"api"}) {
+			t.Errorf("live = %q, want api still live", got)
+		}
+	})
+
+	t.Run("dry run without retire is usage", func(t *testing.T) {
+		docsEnv(t)
+		seedAdminServer(t, "zen", "https://zen.example.test:7777")
+		_, _, runErr := captureOutput(t, func() error {
+			return run([]string{"config", "server", "rm", "zen", "--dry-run"})
+		})
+		ce := requireCLIError(t, runErr, codeUsage, "relevo help")
+		if !strings.Contains(ce.message, "--dry-run needs --retire") {
+			t.Errorf("message = %q, want the pairing rule", ce.message)
+		}
+	})
+
+	t.Run("retire unknown server is not found", func(t *testing.T) {
+		docsEnv(t)
+		_, _, runErr := captureOutput(t, func() error {
+			return run([]string{"config", "server", "rm", "nosuch", "--retire"})
+		})
+		_ = requireCLIError(t, runErr, codeServerNotFound, "relevo config server list")
 	})
 }
 

@@ -232,7 +232,7 @@
   record a remote server; with `--fingerprint`, checks enrollment once.
   Generates and prints this machine's key when it has none yet.
 - `relevo config server rm NAME` — forget a configured server; refused while
-  any binding still names it.
+  any binding still names it, unless `--retire` archives them first.
 - `relevo config server list` — one row per configured server: name, url, and this
   client's enrollment on it.
 - `relevo help` — the command list. `relevo <command> -h` prints that command's

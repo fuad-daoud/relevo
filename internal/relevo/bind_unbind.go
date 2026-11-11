@@ -73,11 +73,15 @@ func worktreeTeardown(ctx context.Context, rt Runtime, b store.Binding, dryRun b
 // WorktreeKept, WorktreeGone is set, or none when the binding never had a
 // worktree. A kept worktree still holds uncommitted work; the human decides.
 type UnbindResult struct {
-	Archived        bool   // true when the binding was archived rather than deleted
-	WorktreeRemoved string // worktree relevo removed, or ""
-	WorktreeKept    string // worktree relevo refused to remove, or ""
-	KeptReason      string // why it was kept; "" when nothing was kept
-	WorktreeGone    string // recorded worktree whose directory no longer exists, or ""
+	Archived bool // true when the binding was archived rather than deleted
+	// ServerNotReleased is true when the binding was archived or deleted
+	// without asking its server. The server may still hold its copy, so a
+	// later reader must not read the archive as a server-side release.
+	ServerNotReleased bool
+	WorktreeRemoved   string // worktree relevo removed, or ""
+	WorktreeKept      string // worktree relevo refused to remove, or ""
+	KeptReason        string // why it was kept; "" when nothing was kept
+	WorktreeGone      string // recorded worktree whose directory no longer exists, or ""
 	// KeptOn is the server holding the kept worktree, or "" when the kept
 	// tree is local. A remote binding's worktree lives on its server alone.
 	KeptOn string
@@ -182,6 +186,13 @@ func adoptServerOutcome(res *UnbindResult, outcome worktreeOutcome, serverResp r
 // branch; a kept worktree keeps the binding resumable with ErrWorktreeKept,
 // and force archives or deletes it anyway.
 func UnbindWith(ctx context.Context, rt Runtime, name string, archive, force bool) (UnbindResult, error) {
+	return unbindWithLocal(ctx, rt, name, archive, force, false)
+}
+
+// unbindWithLocal is UnbindWith with a local-only mode for bindings whose
+// server is gone: it skips the server release and runs the identical local
+// steps, marking the result so the archive is never mistaken for a release.
+func unbindWithLocal(ctx context.Context, rt Runtime, name string, archive, force, localOnly bool) (UnbindResult, error) {
 	b, err := rt.Store.Load(name)
 	if err != nil {
 		return UnbindResult{}, err
@@ -195,7 +206,7 @@ func UnbindWith(ctx context.Context, rt Runtime, name string, archive, force boo
 	}
 
 	var serverResp remote.UnbindResponse
-	if b.Builder.Remote() {
+	if b.Builder.Remote() && !localOnly {
 		var err error
 		serverResp, err = askServerUnbind(ctx, rt, b, force)
 		if err != nil {
@@ -242,6 +253,9 @@ func UnbindWith(ctx context.Context, rt Runtime, name string, archive, force boo
 		if err := rt.Store.Delete(name); err != nil {
 			return res, err
 		}
+	}
+	if localOnly && b.Builder.Remote() {
+		res.ServerNotReleased = true
 	}
 
 	return res, nil

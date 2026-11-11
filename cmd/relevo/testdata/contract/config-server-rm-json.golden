@@ -1,4 +1,10 @@
 {
   "name": "zen",
-  "removed": true
+  "removed": true,
+  "dry_run": false,
+  "archived": [
+    "api",
+    "web"
+  ],
+  "archived_count": 2
 }
