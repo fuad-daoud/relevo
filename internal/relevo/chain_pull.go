@@ -34,9 +34,13 @@ func chainPullServers(ctx context.Context, rt Runtime) error {
 	if err != nil {
 		return err
 	}
+	configured, err := chainPullConfiguredServers(rt)
+	if err != nil {
+		return fmt.Errorf("chain pull configured servers: %w", err)
+	}
 	var errs []error
 	for _, c := range chains {
-		if !chain.OnServer(c) || c.Status == string(chain.StatusDone) || chain.GoneMirror(c) {
+		if !chain.OnServer(c) || c.Status == string(chain.StatusDone) || chain.GoneMirror(c) || chainPullSkipUnconfigured(configured, c.Server) {
 			continue
 		}
 		if err := chainPullOne(ctx, rt, c); err != nil {

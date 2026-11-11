@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
+	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
@@ -965,6 +966,52 @@ func TestChainPullSetsStateFromView(t *testing.T) {
 	}
 	if st.At != "review" || st.Iter["plans"].Index != 1 {
 		t.Errorf("state = at %q plan index %d, want review and 1", st.At, st.Iter["plans"].Index)
+	}
+}
+
+// TestChainPullSkipsAChainWhoseServerIsNotConfigured pins the pull filter: a
+// chain on a server the config no longer names is not pulled, while a chain
+// on a configured server still is.
+func TestChainPullSkipsAChainWhoseServerIsNotConfigured(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	fr := chainPullFake(chainPullView("shop", string(chain.StatusRunning), 0, 0, 0))
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "shop")
+	rt.Config = auditStore(t)
+	seedServers := func(t *testing.T, servers remote.Servers) {
+		t.Helper()
+		body, err := client.EncodeServers(servers)
+		if err != nil {
+			t.Fatalf("EncodeServers: %v", err)
+		}
+		if _, err := rt.Config.As("test", "seed servers").Put(config.Servers, body); err != nil {
+			t.Fatalf("Put servers: %v", err)
+		}
+	}
+
+	seedServers(t, remote.Servers{"contabo": {URL: "https://contabo:7777", Fingerprint: "sha256:00"}})
+	if err := chainPullServers(ctx, rt); err != nil {
+		t.Fatalf("chainPullServers: %v", err)
+	}
+	if n := countCalls(fr, "GetChain:zen:shop"); n != 0 {
+		t.Errorf("GetChain calls = %d, want none while zen is unconfigured: %v", n, fr.calls)
+	}
+	if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusRunning) {
+		t.Errorf("row status = %q, want running", row.Status)
+	}
+
+	fr.calls = nil
+	seedServers(t, remote.Servers{
+		"contabo": {URL: "https://contabo:7777", Fingerprint: "sha256:00"},
+		"zen":     {URL: "https://zen:7777", Fingerprint: "sha256:00"},
+	})
+	if err := chainPullServers(ctx, rt); err != nil {
+		t.Fatalf("chainPullServers: %v", err)
+	}
+	if n := countCalls(fr, "GetChain:zen:shop"); n != 1 {
+		t.Errorf("GetChain calls = %d, want 1 once zen is configured: %v", n, fr.calls)
 	}
 }
 
