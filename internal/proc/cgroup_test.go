@@ -20,6 +20,7 @@ func TestParseCgroupV2(t *testing.T) {
 		{"empty", "", "", false},
 		{"malformed lines skipped", "not-a-cgroup-line\n0::/real/path\n", "/real/path", true},
 		{"hierarchy 1 with empty controllers is not v2", "1::/user.slice\n", "", false},
+		{"hierarchy 0 with controllers is not v2", "0:cpu:/user.slice\n", "", false},
 		{"empty path is no path", "0::\n", "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -183,6 +184,7 @@ func TestParseMemTotal(t *testing.T) {
 		{"missing unit", "MemTotal: 4024548\n", 0, false},
 		{"wrong unit", "MemTotal: 4024548 MB\n", 0, false},
 		{"overflows bytes", "MemTotal: 9007199254740992 kB\n", 0, false},
+		{"exact overflow boundary", "MemTotal: 9007199254740991 kB\n", 9007199254740991 * 1024, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := parseMemTotal([]byte(tc.data))

@@ -883,6 +883,7 @@ func TestServeMemoryBudget(t *testing.T) {
 		{`{"serve":{"memory_budget":"2G"}}`, 2 << 30},
 		{`{"serve":{"memory_budget":"1024"}}`, 1024},
 		{`{"serve":{"memory_budget":"1T"}}`, 1 << 40},
+		{`{"serve":{"memory_budget":"8388607T"}}`, 8388607 << 40},
 		{`{"serve":{"memory_budget":"1K"}}`, 1 << 10},
 		{`{"serve":{"memory_budget":"0"}}`, 0},
 		{`{}`, 0},
