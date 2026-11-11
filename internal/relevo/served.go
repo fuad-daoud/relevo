@@ -48,17 +48,9 @@ func ServedView(b store.Binding, entries []store.LogEntry, recordID, installatio
 		ackedRound = b.Serve.AckedRound
 		closedRound = b.Serve.ClosedRound
 	}
-	// Node names the burst node carrying the round while the node is the one
-	// running it: a sending forward has no node state yet, and a closed one
-	// is past running, so both read as local.
-	var node string
-	if b.Burst != nil && b.Burst.Forward != nil && b.Burst.Forward.Phase == "running" {
-		node = b.Burst.Forward.Node
-	}
 	return remote.BindingView{
 		ID:             recordID,
 		Installation:   installation,
-		Node:           node,
 		Name:           b.Name,
 		State:          string(b.State),
 		Round:          b.Round,
@@ -315,15 +307,6 @@ func liveViewOf(row view.BindingStatus, b store.Binding, at time.Time) *remote.L
 // It is the one single-row surface a client reads, and every figure it carries
 // (usage, tail, diff) is a detail figure, so the row is built with them on.
 func ServedLive(ctx context.Context, rt Runtime, b store.Binding) (*remote.LiveView, error) {
-	// A round running on a burst node is live there, not here: the serve
-	// side's cached node view is the live one. A hook with nothing cached
-	// reads as unwired, so the binding falls through to its own row rather
-	// than answering empty.
-	if b.Burst != nil && b.Burst.Forward != nil && b.Burst.Forward.Phase == "running" && rt.NodeLive != nil {
-		if v := rt.NodeLive(b); v != nil {
-			return v, nil
-		}
-	}
 	row, err := statusRow(ctx, rt, b, statusConfig{detail: true})
 	if err != nil {
 		return nil, err

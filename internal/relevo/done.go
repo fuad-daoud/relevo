@@ -49,24 +49,10 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 	// after the lock, because PushText reads the report file off disk and no
 	// file I/O belongs under the state lock.
 	var claimed []store.PendingEntry
-	// released is the record as the settle found it, captured before any
-	// write below changes it: the fan-out needs the ship facts that the
-	// settle clears, and it must run outside the lock only once the settle
-	// landed.
-	var released store.Binding
-	haveReleased := false
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
 		b, err := tx.Load(name)
 		if err != nil {
 			return err
-		}
-		released, haveReleased = b, true
-		// The settle clears the burst fields below through the same
-		// pointer the record holds, so the fan-out copy owns its own
-		// facts: the release must see what shipped.
-		if released.Burst != nil {
-			cp := *released.Burst
-			released.Burst = &cp
 		}
 
 		// A running chain owns its member's rounds, so done is refused the
@@ -97,12 +83,6 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 		// Outside the lock, and logged only: a delete never changes Done's
 		// result.
 		reapAbandoned(ctx, rt, name)
-		// The nodes this binding shipped to hold bindings a released head
-		// can no longer read back; the fan-out forgets them best-effort,
-		// the same way the stop fan-out forgets a running round.
-		if haveReleased && released.Burst != nil && rt.UnbindNodes != nil {
-			rt.UnbindNodes(released)
-		}
 	}
 	if len(claimed) > 0 {
 		// wait's own rendering, in wait's own order: report entries last, so a
@@ -200,25 +180,6 @@ func doneClaimMasterMind(tx *store.Tx, name string) []store.PendingEntry {
 	return claimed
 }
 
-// forgetShipFacts drops the node ship bases from the record a release is
-// settling: a DONE binding can be resumed and forwarded again, and the
-// node bindings these bases name are released by the same settle -- a
-// standing base would send an incremental bundle to a node binding that no
-// longer exists, while a cleared one ships the full bundle again, which is
-// also what a node that kept its binding through a failed best-effort
-// unbind takes. A closed forward stays: its round came home and only its
-// node's ack is owed.
-func forgetShipFacts(b *store.Binding) {
-	if b.Burst == nil {
-		return
-	}
-	b.Burst.Shipped = nil
-	b.Burst.NodeBindings = nil
-	if b.Burst.Forward == nil {
-		b.Burst = nil
-	}
-}
-
 func doneSettleWorktree(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, remoteKept, remoteReason string) (DoneResult, error) {
 	var out DoneResult
 	oldState := b.State
@@ -227,7 +188,6 @@ func doneSettleWorktree(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 		return DoneResult{}, err
 	}
 	b.State = store.StateDone
-	forgetShipFacts(&b)
 
 	// A headless round's process is stopped here: the
 	// mastermind has declared the work finished, so a builder still

@@ -24,12 +24,6 @@ const serveQueueNotePrefix = "queued ("
 // only the log keeps what each round of this member waited and when it began. A
 // round the server never queued -- handed straight to a builder -- has no accept
 // entry, so it reports no wait and its handoff is its start.
-//
-// A forwarded round started where its send was confirmed, not where its prompt
-// left the head: the send note is the start the same way an admit is, and the
-// newest admit or send note wins, so a round lost on one node and forwarded to
-// the next reports the start it really ran. An adopted note carries the claim
-// time and answers as a start with no kind behind it.
 func servedRoundStamps(entries []store.LogEntry, n int) (start, queued time.Time) {
 	if n <= 0 {
 		return time.Time{}, time.Time{}
@@ -56,7 +50,7 @@ func servedRoundStamps(entries []store.LogEntry, n int) (start, queued time.Time
 		if e.Round != n || e.Kind != store.KindQueue {
 			continue
 		}
-		if strings.HasPrefix(e.Note, admitNotePrefix) || strings.HasPrefix(e.Note, store.ForwardedNotePrefix) {
+		if strings.HasPrefix(e.Note, admitNotePrefix) {
 			return e.TS, queued
 		}
 	}
