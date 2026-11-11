@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -194,7 +195,7 @@ func TestFleetRowDropOrder(t *testing.T) {
 }
 
 func TestHeaderShowsVersionNotGates(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st}}, Options{
 		Interval: time.Second,
 		Version:  "v0.13.0-28-gb66c6fc",
@@ -247,7 +248,7 @@ func TestGatedLineOneProviderLatestUntil(t *testing.T) {
 }
 
 func TestHelpListsHelpKeys(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st}}, Options{
 		Interval: time.Second,
 		Actions:  &fakeActions{},

@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // readerRemoteBinding is remoteBinding with a reader actor, so a closed round
@@ -65,7 +66,7 @@ func readerClosedRemote() *fakeRemote {
 // and install: the output and the nested rel land under NNN-reviewer/,
 // and no download temp survives.
 func TestRemoteReaderCatchUpInstallsArtifacts(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(readerRemoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +104,7 @@ func TestRemoteReaderCatchUpInstallsArtifacts(t *testing.T) {
 // points at the output path, carries the view's ReportOutcome because the
 // server stripped the block, and no diff entry is written.
 func TestRemoteReaderCatchUpRecordsTheOutputReport(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(readerRemoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +151,7 @@ func TestRemoteReaderCatchUpRecordsTheOutputReport(t *testing.T) {
 func TestRemoteReaderCatchUpRefusesBadRels(t *testing.T) {
 	for _, rel := range []string{"../escape.txt", "/etc/passwd", `a\b.txt`, ""} {
 		t.Run(rel, func(t *testing.T) {
-			st := store.New(t.TempDir())
+			st := storetest.New(t)
 			if err := st.Save(readerRemoteBinding("zen")); err != nil {
 				t.Fatal(err)
 			}
@@ -190,7 +191,7 @@ func TestRemoteReaderCatchUpRefusesBadRels(t *testing.T) {
 // a listing without the output on a round the server did not stop halts with
 // the writer's own message.
 func TestRemoteReaderCatchUpMissingOutputHalts(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(readerRemoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +218,7 @@ func TestRemoteReaderCatchUpMissingOutputHalts(t *testing.T) {
 // TestRemoteReaderCatchUpStoppedRoundCloses pins the stopped reader round: an
 // absent output is not a halt, and the stop is recorded on the report entry.
 func TestRemoteReaderCatchUpStoppedRoundCloses(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(readerRemoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +256,7 @@ func TestRemoteReaderCatchUpStoppedRoundCloses(t *testing.T) {
 // TestRemoteReaderCatchUpOverTheCapHalts pins the artifact cap through the wire: a listing
 // over policy.artifact_max_mb writes nothing and asks for a human.
 func TestRemoteReaderCatchUpOverTheCapHalts(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(readerRemoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +293,7 @@ func TestRemoteReaderCatchUpOverTheCapHalts(t *testing.T) {
 // still lists the sealed names.
 func TestRemoteReaderRoundSealsOnTheNextTick(t *testing.T) {
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(readerRemoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +354,7 @@ func TestDownloadTempRefusesALinkedDestDir(t *testing.T) {
 // planted as a link: the first listed file's own directory is refused, so
 // nothing is installed, nothing is acked and no report is filed.
 func TestRemoteCatchUpRefusesALinkedArtifactDir(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(readerRemoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +400,7 @@ func TestRemoteCatchUpRefusesALinkedArtifactDir(t *testing.T) {
 // artifact directory: the destination's last component is a link, so it is
 // refused and nothing lands in its target.
 func TestRemoteCatchUpRefusesALinkedArtifactSubdir(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(readerRemoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -446,7 +447,7 @@ func TestRemoteCatchUpRefusesALinkedArtifactSubdir(t *testing.T) {
 // absent file directory: the destination's own directory does not exist, so
 // only the component walk sees the planted link and refuses it.
 func TestRemoteCatchUpRefusesALinkedArtifactAncestor(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(readerRemoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}

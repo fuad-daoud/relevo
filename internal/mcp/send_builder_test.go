@@ -9,6 +9,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 func TestSendToolSchemaHasCandidateProperty(t *testing.T) {
@@ -34,7 +35,7 @@ func TestSendToolSchemaHasCandidateProperty(t *testing.T) {
 
 // TestRelevoVerbsSendPassesCandidate: a dry run reports the new candidate; the same call without it reports the binding's own.
 func TestRelevoVerbsSendPassesCandidate(t *testing.T) {
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	set := writeCandidates(t, `[
 		{"harness":"agy","provider":"test","model":"m","roles":["builder"],"extra_args":["--dangerously-skip-permissions"]},
 		{"harness":"claude","provider":"test","model":"m","roles":["builder"]}

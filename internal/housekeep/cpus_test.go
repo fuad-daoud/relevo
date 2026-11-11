@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // TestPickCPU pins the allocator: the lowest core in the pool that no other
@@ -66,7 +67,7 @@ func TestHeldIn(t *testing.T) {
 func TestLocalHeldCPUs(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	zero, one := 0, 1
 	err := st.WithLock(func(tx *store.Tx) error {
 		if err := tx.Save(store.Binding{Name: "self", CWD: "/repo-self", RoundCPU: &one, Builder: store.Endpoint{PID: 11}}); err != nil {
@@ -177,7 +178,7 @@ func saveCPUBinding(t *testing.T, st *store.Store, name string) {
 func TestAssignRoundCPUGivesDistinctCores(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	saveCPUBinding(t, st, "webshop")
 	saveCPUBinding(t, st, "second")
 	deps := cpuTestDeps(st, "0-1")
@@ -217,7 +218,7 @@ func TestAssignRoundCPUGivesDistinctCores(t *testing.T) {
 func TestAssignRoundCPUExhaustedPoolRunsWholePool(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	saveCPUBinding(t, st, "webshop")
 	saveCPUBinding(t, st, "second")
 	deps := cpuTestDeps(st, "0")
@@ -254,7 +255,7 @@ func TestAssignRoundCPUExhaustedPoolRunsWholePool(t *testing.T) {
 func TestAssignRoundCPUKeepsCoreOnRelaunch(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	saveCPUBinding(t, st, "webshop")
 	deps := cpuTestDeps(st, "0-3")
 
@@ -282,7 +283,7 @@ func TestAssignRoundCPUKeepsCoreOnRelaunch(t *testing.T) {
 func TestAssignRoundCPUReusesReleasedCore(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	saveCPUBinding(t, st, "webshop")
 	saveCPUBinding(t, st, "second")
 	saveCPUBinding(t, st, "third")
@@ -337,7 +338,7 @@ func TestAssignRoundCPUReusesReleasedCore(t *testing.T) {
 func TestAssignRoundCPUNoPoolWritesNoField(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	saveCPUBinding(t, st, "webshop")
 	deps := cpuTestDeps(st, "")
 

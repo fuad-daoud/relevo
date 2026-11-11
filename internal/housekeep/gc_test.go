@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // fakeRefs is the slice of the git CLI ref cleanup drives: the head
@@ -103,7 +104,7 @@ func (f *fakeRefs) DeleteRef(_ context.Context, dir, ref string) error {
 func gcTestDeps(t *testing.T) Deps {
 	t.Helper()
 	return Deps{
-		Store: store.New(t.TempDir()),
+		Store: storetest.New(t),
 		Teardown: func(context.Context, store.Binding, bool) TeardownOutcome {
 			return TeardownOutcome{}
 		},

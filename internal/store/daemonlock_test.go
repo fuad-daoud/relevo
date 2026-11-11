@@ -8,7 +8,7 @@ import (
 )
 
 func TestAcquireDaemonLockExcludesSecondHolder(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 
 	first, err := s.AcquireDaemonLock()
 	if err != nil {
@@ -22,7 +22,7 @@ func TestAcquireDaemonLockExcludesSecondHolder(t *testing.T) {
 }
 
 func TestDaemonRunningReflectsTheLock(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 
 	running, err := s.DaemonRunning()
 	if err != nil {
@@ -62,7 +62,7 @@ func TestDaemonRunningReflectsTheLock(t *testing.T) {
 // AcquireDaemonLock must not take the mutex WithLock uses: the daemon holds
 // its lock for its whole life, so it would deadlock every state operation.
 func TestDaemonLockDoesNotBlockStateOperations(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 
 	held, err := s.AcquireDaemonLock()
 	if err != nil {
@@ -77,7 +77,7 @@ func TestDaemonLockDoesNotBlockStateOperations(t *testing.T) {
 
 func TestDaemonLockDisplacedOnceTheRootIsReCreated(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
-	s := New(root)
+	s := storeAt(t, root)
 	held, err := s.AcquireDaemonLock()
 	if err != nil {
 		t.Fatalf("acquire: %v", err)

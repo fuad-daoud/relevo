@@ -19,8 +19,10 @@ func TestTwoHandlesInOneProcessShareTheLock(t *testing.T) {
 	if err := d1.Close(); err != nil {
 		t.Fatalf("close d1: %v", err)
 	}
-	if _, err := openDirect(path, Options{}); err != nil {
+	d3, err := openDirect(path, Options{})
+	if err != nil {
 		t.Fatalf("a third in-process handle did not share the lock: %v", err)
 	}
+	t.Cleanup(func() { _ = d3.Close() })
 	_ = d2
 }

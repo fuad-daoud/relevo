@@ -10,11 +10,12 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 func gcRemoteRuntime(t *testing.T, fr *fakeRemote) (Runtime, *store.Store) {
 	t.Helper()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.State = store.StateDone
 	b.MasterMindID = "mm"

@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -110,7 +111,7 @@ func assertHasDetailFigures(t *testing.T, where string, row view.BindingStatus) 
 // usage peek and no log tail. The same runtime with the figures on really does
 // carry all three, so the fleet's nils are the gate's doing, not the fixture's.
 func TestFleetReportCarriesNoDetailFigures(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(figureBinding(t, st, "fleet-figures")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -151,7 +152,7 @@ func TestFleetReportCarriesNoDetailFigures(t *testing.T) {
 // builds that one binding's row; an unresolvable key is the same prose an
 // unknown owner's tab reads.
 func TestDetailFetchReturnsTheRowsOwnRow(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -188,7 +189,7 @@ func TestDetailFetchReturnsTheRowsOwnRow(t *testing.T) {
 // diff and the tail -- while the fleet row itself still carries none of the
 // three.
 func TestDetailPaneRestoresAllThreeFigures(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(figureBinding(t, st, "pane-figures")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -250,7 +251,7 @@ func TestDetailPaneRestoresAllThreeFigures(t *testing.T) {
 // nil figures. There is no placeholder figure, and no stale full row from an
 // earlier fetch either.
 func TestDetailFetchFailureKeepsTheFleetRow(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -300,7 +301,7 @@ func ptrRow(b view.BindingStatus) *view.BindingStatus { return &b }
 // TestDetailFetchDoesNotOutliveTheTick: the detail fetch is issued once, on the
 // open, so a refresh tick never pays for a second one.
 func TestDetailFetchDoesNotOutliveTheTick(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}

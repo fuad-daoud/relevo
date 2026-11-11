@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -19,7 +20,7 @@ import (
 func TestDoneKeepsRemoteWorktreeWhileRoundOpen(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	fg := &fakeGit{}
 	b := remoteBinding("contabo")
 	b.Worktree = t.TempDir()
@@ -1199,7 +1200,7 @@ func TestStatusLastPayloadSkipsBookkeepingKinds(t *testing.T) {
 	}
 }
 func TestStatusRemoteRow(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.Builder.RemoteStatus = "running"
 	if err := st.Save(b); err != nil {
@@ -1229,7 +1230,7 @@ func TestStatusRemoteRow(t *testing.T) {
 	}
 }
 func TestStatusRemoteRowUnknownStatus(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -1429,7 +1430,7 @@ func TestStatusReportsLastSeq(t *testing.T) {
 	}
 }
 func TestStatusRowQueuedText(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("contabo")
 	b.Builder.RemoteStatus = "queued"
 	b.Builder.RemoteQueue = &store.QueueFacts{
@@ -1450,7 +1451,7 @@ func TestStatusRowQueuedText(t *testing.T) {
 	}
 
 	// Nil facts (accepted but not yet reported) fall back to the bare word.
-	st2 := store.New(t.TempDir())
+	st2 := storetest.New(t)
 	b2 := remoteBinding("contabo")
 	b2.Builder.RemoteStatus = "queued"
 	if err := st2.Save(b2); err != nil {
@@ -1577,7 +1578,7 @@ func TestStatusPlanRound(t *testing.T) {
 	}
 }
 func TestStatusRowRemoteUsesLiveNotLocalReaders(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{
 		Name:             "remote-b",
 		CWD:              "/repo",
@@ -1634,7 +1635,7 @@ func TestStatusRowRemoteUsesLiveNotLocalReaders(t *testing.T) {
 	}
 }
 func TestSpendIncludesSwitchSegments(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{Name: "webshop", CWD: "/repo", State: store.StateActive, Round: 1}
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)

@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // haltEntriesFor returns every to_planner halt entry a binding's log holds.
@@ -702,7 +703,7 @@ func TestFreshAttemptDropsTheOwedHaltMarker(t *testing.T) {
 		t.Parallel()
 
 		const head = "1111111111111111111111111111111111111111"
-		st := store.New(t.TempDir())
+		st := storetest.New(t)
 		b := remoteBinding("zen")
 		if err := st.Save(b); err != nil {
 			t.Fatalf("Save: %v", err)

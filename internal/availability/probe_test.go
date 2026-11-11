@@ -13,7 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // probeBase is the instant every probe test starts its fake clock at.
@@ -82,7 +82,7 @@ func probeRuntime(t *testing.T, setBody string) (Deps, *time.Time) {
 		t.Fatalf("roles.Build: %v", err)
 	}
 	d := Deps{
-		Store:        store.New(t.TempDir()),
+		Store:        storetest.New(t),
 		Candidates:   set,
 		History:      testShared(t),
 		Now:          func() time.Time { return now },

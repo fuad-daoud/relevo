@@ -11,7 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -21,7 +21,7 @@ import (
 // (R2.10: the split is gone (X1); this is now just "a loaded shell").
 func splitModel(t *testing.T, width, height int, rows ...view.BindingStatus) Model {
 	t.Helper()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
@@ -264,7 +264,7 @@ func TestHeaderGatesAndClock(t *testing.T) {
 // TestTerminalFollowsTailUntilScrolledUp is the surviving tail rule,
 // ported to the round view (R2.10).
 func TestTerminalFollowsTailUntilScrolledUp(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(newTestBinding("api")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}

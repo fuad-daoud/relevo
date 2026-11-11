@@ -12,6 +12,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // fakeGit is the slice of the git CLI the scratch tests drive: the HEAD and
@@ -114,7 +115,7 @@ func TestCreateScratchOrder(t *testing.T) {
 	ctx := context.Background()
 	fg := &fakeGit{headCommitID: "head1", snapshotTreeID: "tree1"}
 	og := &orderedGit{fakeGit: fg}
-	deps := Deps{Store: store.New(t.TempDir()), Git: og}
+	deps := Deps{Store: storetest.New(t), Git: og}
 	b := store.Binding{Name: "api", CWD: "/repo"}
 
 	s, err := CreateScratch(ctx, deps, b, 7)
@@ -150,7 +151,7 @@ func TestCreateScratchMaterializeFailureRemoves(t *testing.T) {
 
 	ctx := context.Background()
 	fg := &fakeGit{headCommitID: "head1", snapshotTreeID: "tree1", materializeErr: errors.New("boom")}
-	deps := Deps{Store: store.New(t.TempDir()), Git: fg}
+	deps := Deps{Store: storetest.New(t), Git: fg}
 	b := store.Binding{Name: "api", CWD: "/repo"}
 
 	if _, err := CreateScratch(ctx, deps, b, 1); err == nil {
@@ -182,7 +183,7 @@ func TestCreateScratchRemovesLeftover(t *testing.T) {
 	ctx := context.Background()
 	fg := &fakeGit{headCommitID: "head1", snapshotTreeID: "tree1"}
 	og := &orderedGit{fakeGit: fg}
-	deps := Deps{Store: store.New(t.TempDir()), Git: og}
+	deps := Deps{Store: storetest.New(t), Git: og}
 	b := store.Binding{Name: "api", CWD: "/repo"}
 
 	path := deps.Store.ScratchWorktreePath("api", 1)
@@ -212,7 +213,7 @@ func TestCreateScratchRemovesLeftover(t *testing.T) {
 func TestScratchPathShape(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	got := st.ScratchWorktreePath("api", 7)
 	want := filepath.Join(".worktrees", ".scratch", "api-007")
 	if !strings.HasSuffix(got, want) {
@@ -272,7 +273,7 @@ func TestScratchRealGit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	deps := Deps{Store: st, Git: git.NewClient("git", 0, 0)}
 	b := store.Binding{Name: "api", CWD: repo}
 
@@ -357,7 +358,7 @@ func TestCreateScratchFromUsesTheGivenTree(t *testing.T) {
 
 	repo := scratchSeedRepo(t, "one\n")
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	deps := Deps{Store: st, Git: git.NewClient("git", 0, 0)}
 	b := store.Binding{Name: "api", CWD: repo}
 
@@ -407,7 +408,7 @@ func TestSweepScratchDoesNotFollowSymlinkedScratchDir(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	deps := Deps{Store: st, Git: &fakeGit{}}
 
 	if err := os.MkdirAll(st.WorktreeDir(), 0o755); err != nil {
@@ -462,7 +463,7 @@ func TestSweepScratchRemovesScratchWithNoGitFile(t *testing.T) {
 
 	ctx := context.Background()
 	repo := scratchSeedRepo(t, "one\n")
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	deps := Deps{Store: st, Git: git.NewClient("git", 0, 0)}
 
 	path := st.ScratchWorktreePath("web", 4)
@@ -502,7 +503,7 @@ func TestSweepScratchRemovesScratchPointingAtDeletedWorktree(t *testing.T) {
 	wt := filepath.Join(t.TempDir(), "wt")
 	scratchRunGit(t, repo, "worktree", "add", "--detach", wt)
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	deps := Deps{Store: st, Git: git.NewClient("git", 0, 0)}
 	path := st.ScratchWorktreePath("web", 5)
 	if err := os.MkdirAll(path, 0o755); err != nil {
@@ -540,7 +541,7 @@ func TestSweepScratchRemovesScratchPointingAtDeletedRepo(t *testing.T) {
 
 	ctx := context.Background()
 	repo := scratchSeedRepo(t, "one\n")
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	deps := Deps{Store: st, Git: git.NewClient("git", 0, 0)}
 
 	path := st.ScratchWorktreePath("web", 6)
@@ -572,7 +573,7 @@ func TestSweepScratchFailsScratchWithMalformedGitFile(t *testing.T) {
 
 	ctx := context.Background()
 	repo := scratchSeedRepo(t, "one\n")
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	deps := Deps{Store: st, Git: git.NewClient("git", 0, 0)}
 
 	path := st.ScratchWorktreePath("web", 7)
@@ -606,7 +607,7 @@ func TestSweepScratchFailsScratchWithUnstatableRepo(t *testing.T) {
 
 	ctx := context.Background()
 	repo := scratchSeedRepo(t, "one\n")
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	deps := Deps{Store: st, Git: git.NewClient("git", 0, 0)}
 
 	path := st.ScratchWorktreePath("web", 8)
@@ -641,7 +642,7 @@ func TestSweepScratchFailsScratchWithUnstatableRepo(t *testing.T) {
 // cut from that tree then cleans a scratch whose source no longer exists. Both
 // gone means the scratch is already removed -- no git call, no cleanup warning.
 func TestRemoveScratchSkipsWhenTheSourceAndTheScratchAreGone(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	fg := &fakeGit{}
 	deps := Deps{Store: st, Git: fg}
 	b := store.Binding{
@@ -660,7 +661,7 @@ func TestRemoveScratchSkipsWhenTheSourceAndTheScratchAreGone(t *testing.T) {
 // narrow: a scratch path that still exists is removed even when its source
 // tree is gone.
 func TestRemoveScratchRemovesARealScratchEvenWhenTheSourceIsGone(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	fg := &fakeGit{}
 	deps := Deps{Store: st, Git: fg}
 	scratch := st.ScratchWorktreePath("reader-bind", 1)
@@ -685,7 +686,7 @@ func TestRemoveScratchRemovesARealScratchEvenWhenTheSourceIsGone(t *testing.T) {
 func TestRoundTreeKeepsTheRootUntouched(t *testing.T) {
 	t.Parallel()
 
-	deps := Deps{Store: store.New(t.TempDir())}
+	deps := Deps{Store: storetest.New(t)}
 	b := store.Binding{Name: "a", CWD: "/tree"}
 	if got := RoundTree(deps, b); got != "/tree" {
 		t.Errorf("RoundTree = %q, want the tree itself", got)
@@ -699,7 +700,7 @@ func TestRoundTreeKeepsTheRootUntouched(t *testing.T) {
 func TestReaderRoundRunsInTheScratchSubdirectory(t *testing.T) {
 	t.Parallel()
 
-	deps := Deps{Store: store.New(t.TempDir())}
+	deps := Deps{Store: storetest.New(t)}
 	b := store.Binding{Name: "rdr", CWD: "/tree", Shape: store.ShapeReader, Round: 3, Subdir: "src/api"}
 	want := filepath.Join(deps.Store.ScratchWorktreePath("rdr", 3), "src", "api")
 	if got := RoundTree(deps, b); got != want {

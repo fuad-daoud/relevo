@@ -16,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // stopEntries returns the binding's KindStop entries, oldest first.
@@ -420,7 +421,7 @@ func ownedStopFixture(t *testing.T, fr *fakeRunner, queued bool) (Runtime, store
 	wt := t.TempDir()
 	runGit(t, bare, "worktree", "add", wt, "refs/heads/relevo/api")
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{
 		Name:     "api",
 		Owner:    "client1",
@@ -617,7 +618,7 @@ func TestStopNothingToStop(t *testing.T) {
 // is a closed round the server stopped by killing the builder.
 func remoteStopFixture(t *testing.T, fr *fakeRemote) (Runtime, remote.BindingView) {
 	t.Helper()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.RoundStartedAt = baseTime
 	if err := st.Save(b); err != nil {

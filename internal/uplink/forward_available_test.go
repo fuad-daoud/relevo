@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // TestForwardAvailableRefusesAccountKeyOnOldServer: a group@account clear is a
@@ -19,7 +20,7 @@ func TestForwardAvailableRefusesAccountKeyOnOldServer(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	saveOpenGate(t, st, "open-remote", "zen")
 
 	fr := &fakeRemote{}
@@ -43,7 +44,7 @@ func TestForwardAvailableSendsAccountKeyToFeatureServer(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	saveOpenGate(t, st, "open-remote", "zen")
 
 	fr := &fakeRemote{
@@ -75,7 +76,7 @@ func TestForwardAvailableSkipsStaleServer(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	saveOpenGate(t, st, "open-remote", "zen")
 
 	fr := &fakeRemote{
@@ -105,7 +106,7 @@ func TestForwardAvailablePostsToEveryServerOnce(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 
 	// Two remote bindings on alpha: one with an open round, one idle.
 	openA := remoteBinding("alpha")
@@ -180,7 +181,7 @@ func TestForwardAvailableResolvesNameToToken(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 
 	b := remoteBinding("alpha")
 	b.Name = "open-alpha"
@@ -214,7 +215,7 @@ func TestForwardAvailableSendsTheServerTokenForTheSameName(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 
 	b := remoteBinding("zen")
 	b.Name = "open-remote"

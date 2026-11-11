@@ -12,7 +12,7 @@ import (
 // callback, and that it does not chown again when the directory already exists.
 // The callback is the seam a user-mode server uses; a none-mode store has none.
 func TestEnsureScratchDirChownsThroughCallback(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	var got []string
 	s.SetTenantChown(func(path string) error {
 		got = append(got, path)
@@ -40,7 +40,7 @@ func TestEnsureScratchDirChownsThroughCallback(t *testing.T) {
 // TestEnsureOutDirChownsThroughCallback pins the same rule for out/: the
 // created directory is handed to the callback, and a pre-existing one is not.
 func TestEnsureOutDirChownsThroughCallback(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	var got []string
 	s.SetTenantChown(func(path string) error {
 		got = append(got, path)
@@ -63,7 +63,7 @@ func TestEnsureOutDirChownsThroughCallback(t *testing.T) {
 
 func TestGitShimDirIsUnderTheRootAndStable(t *testing.T) {
 	root := t.TempDir()
-	s := New(root)
+	s := storeAt(t, root)
 	got := s.GitShimDir()
 	if rel, err := filepath.Rel(root, got); err != nil || strings.HasPrefix(rel, "..") || rel == "." {
 		t.Errorf("GitShimDir = %q, want a path under %q", got, root)
@@ -76,7 +76,7 @@ func TestGitShimDirIsUnderTheRootAndStable(t *testing.T) {
 // TestGitShimDirIsOutsideBindingNamespace pins that the shim directory's name
 // is not a valid binding name, so no binding can share its directory.
 func TestGitShimDirIsOutsideBindingNamespace(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := ValidName(filepath.Base(s.GitShimDir())); err == nil {
 		t.Fatalf("GitShimDir base %q is a valid binding name", filepath.Base(s.GitShimDir()))
 	}

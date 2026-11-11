@@ -37,9 +37,10 @@ The packages fall into five bands, bottom to top:
 | Engine | `view`, `relevo`, `bugreport` | `relevo` runs the handoff. `view` holds the plain types a status or listing is drawn from, and renders them; `relevo` computes and fills them. |
 | Surfaces | `doctor`, `setup`, `pick`, `uplink`, `serve`, `mcp`, `ui`, `ui/dash`, `ui/stats`, `ui/widget`, `cmd/relevo` | What a human, a harness or another machine talks to: the health checks, the setup wizard, the remote server, the MCP server, the cockpit and the CLI. |
 
-All package paths except `cmd/relevo` are under `internal/`. Two packages
-serve tests only: `db/dbtest` (a migrated template database per test binary)
-and `e2e` (end-to-end rounds against a fake harness).
+All package paths except `cmd/relevo` are under `internal/`. Three packages
+serve tests only: `db/dbtest` (a migrated template database per test binary),
+`store/storetest` (stores the test closes when it ends) and `e2e` (end-to-end
+rounds against a fake harness).
 
 ## The import rule
 

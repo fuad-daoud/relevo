@@ -14,7 +14,7 @@ import (
 // become round_file rows named NNN-<actor>/<rel>, the files and both
 // directories leave disk, and ReadFile answers on each original path.
 func TestSealRoundSealsAnArtifactDirAndRemovesIt(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("webshop", "/home/dev/webshop")
 	b.Round = 5
 	if err := s.Save(b); err != nil {
@@ -88,7 +88,7 @@ func TestSealRoundSealsAnArtifactDirAndRemovesIt(t *testing.T) {
 // a dot-file in the artifact directory are neither sealed nor followed, so
 // they stay on disk and the directory is not removed.
 func TestSealRoundSkipsSymlinksAndDotfiles(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("webshop", "/home/dev/webshop")
 	b.Round = 5
 	if err := s.Save(b); err != nil {
@@ -153,7 +153,7 @@ func TestSealRoundSkipsSymlinksAndDotfiles(t *testing.T) {
 // as they did before artifact directories: sealed under their own basenames,
 // with no directory prefix, and readable back on their original paths.
 func TestFlatRoundFilesUnchanged(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("webshop", "/home/dev/webshop")
 	b.Round = 4
 	if err := s.Save(b); err != nil {
@@ -205,7 +205,7 @@ func TestFlatRoundFilesUnchanged(t *testing.T) {
 // TestRoundsOnDiskCountsAnArtifactDir pins that a NNN-* directory holding at
 // least one file counts as round NNN on disk, and an empty one does not.
 func TestRoundsOnDiskCountsAnArtifactDir(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("webshop", "/home/dev/webshop")
 	b.Round = 6
 	if err := s.Save(b); err != nil {
@@ -236,7 +236,7 @@ func TestRoundsOnDiskCountsAnArtifactDir(t *testing.T) {
 // NNN-<actor>/ directory is accepted under its nested name, and a mismatched
 // NNN or a path with ".." is refused with nothing written.
 func TestPutRoundFileNestedPath(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("webshop", "/home/dev/webshop")
 	b.Round = 5
 	if err := s.Save(b); err != nil {
@@ -295,7 +295,7 @@ func TestPutRoundFileNestedPath(t *testing.T) {
 // rounds at or below the cut, under their same nested names, and writes no file
 // in dst's directory.
 func TestForkCopiesNestedFiles(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	srcName, dstName := "webshop", "webshop-fork"
 	b := newBinding(srcName, "/repo")
 	b.Round = 4

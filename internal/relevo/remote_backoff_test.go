@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // silentRemote is a server that never answers a binding read: GetBinding
@@ -182,7 +183,7 @@ func TestBackoffSuccessEndsAnArmedEpisode(t *testing.T) {
 
 func TestPrefetchOfSilentServerFailsWithinDeadline(t *testing.T) {
 	shortenPrefetchDeadline(t, 100*time.Millisecond)
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	sr := &silentRemote{fakeRemote: &fakeRemote{}}
 	d := NewDaemon(Runtime{Store: st, Remote: sr, Now: func() time.Time { return baseTime }}, time.Second)
 
@@ -197,7 +198,7 @@ func TestPrefetchOfSilentServerFailsWithinDeadline(t *testing.T) {
 }
 
 func TestTickDialsFailedServerOncePerTick(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	saveRemoteBindings(t, st, "zen", 4)
 	fr := unreachableRemote()
 	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
@@ -259,7 +260,7 @@ func TestTickDialsFailedServerOncePerTick(t *testing.T) {
 }
 
 func TestTickBacksOffFailedServerAcrossTicks(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	saveRemoteBindings(t, st, "zen", 2)
 	fr := unreachableRemote()
 	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
@@ -299,7 +300,7 @@ func TestTickBacksOffFailedServerAcrossTicks(t *testing.T) {
 }
 
 func TestTickDoesNotPrefetchDoneBindings(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.State = store.StateDone
 	if err := st.Save(b); err != nil {
@@ -362,7 +363,7 @@ func (n *notFoundOneRemote) GetBinding(ctx context.Context, server, name string)
 }
 
 func TestTickPerBindingAnswerDoesNotBackOffServer(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	saveRemoteBindings(t, st, "zen", 2)
 	fr := &notFoundOneRemote{fakeRemote: &fakeRemote{}, bad: "api0"}
 	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
@@ -403,7 +404,7 @@ func TestServerUnreachableCountsOnlyServerFailures(t *testing.T) {
 }
 
 func TestTickSilentServerStampsAndHaltsEveryOpenRound(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	const n = 3
 	for i := 0; i < n; i++ {
 		b := remoteBinding("zen")
@@ -490,7 +491,7 @@ func TestTickSilentServerStampsAndHaltsEveryOpenRound(t *testing.T) {
 
 func TestTickSingleFailureLeavesServerReachable(t *testing.T) {
 	shortenPrefetchDeadline(t, 100*time.Millisecond)
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	saveRemoteBindings(t, st, "zen", 1)
 	sr := &silentRemote{fakeRemote: &fakeRemote{}}
 	clock := baseTime
@@ -540,7 +541,7 @@ func TestTickSingleFailureLeavesServerReachable(t *testing.T) {
 }
 
 func TestTickFlappingServerNeverBacksOff(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	saveRemoteBindings(t, st, "zen", 1)
 	flap := fmt.Errorf("%w: connection refused", client.ErrUnreachable)
 	fr := &fakeRemote{getBindingErr: flap}
@@ -586,7 +587,7 @@ func TestTickFlappingServerNeverBacksOff(t *testing.T) {
 }
 
 func TestTickEpisodeLogsOneWarnAndOneInfoOnRecovery(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	saveRemoteBindings(t, st, "zen", 3)
 	fr := unreachableRemote()
 	clock := baseTime
@@ -656,7 +657,7 @@ func roundBudgetFor(ms int) time.Duration {
 // The backoff's clock reads local time, and every other stamp on a binding is
 // UTC, so the outage's start is normalized as it lands.
 func TestTickStampsTheOutageStartInUTC(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}

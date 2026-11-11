@@ -9,6 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -343,7 +344,7 @@ steps:
 func TestForkConflictReportIsAKeyedRowFile(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	key := st.ForkConflictPath("shop", 4)
 	if got, want := filepath.Base(key), "004-fork-conflict.txt"; got != want {
 		t.Errorf("ForkConflictPath base = %q, want %q", got, want)

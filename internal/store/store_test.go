@@ -144,7 +144,7 @@ func TestBindingFieldsRoundTrip(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := New(t.TempDir())
+			s := newStore(t)
 			want := newBinding("webshop", "/home/dev/projects/webshop")
 			tc.mutate(&want)
 			if err := s.Save(want); err != nil {
@@ -160,7 +160,7 @@ func TestBindingFieldsRoundTrip(t *testing.T) {
 }
 
 func TestSaveRefusesDuplicateCWD(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.Save(newBinding("webshop", "/repo")); err != nil {
 		t.Fatalf("first Save: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestSaveRefusesDuplicateCWD(t *testing.T) {
 }
 
 func TestSaveAllowsRewritingSameBinding(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("webshop", "/repo")
 	if err := s.Save(b); err != nil {
 		t.Fatalf("first Save: %v", err)
@@ -185,7 +185,7 @@ func TestSaveAllowsRewritingSameBinding(t *testing.T) {
 }
 
 func TestLoadMissingIsErrNotFound(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if _, err := s.Load("nope"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("got %v, want ErrNotFound", err)
 	}
@@ -247,7 +247,7 @@ func TestPathShapes(t *testing.T) {
 // TestViewedRoundTrip pins the viewed stamp: no stamp reads ok false,
 // MarkViewed creates it, and ViewedAt then reads it back within a second.
 func TestViewedRoundTrip(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("webshop", "/repo")
 	if err := s.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -275,7 +275,7 @@ func TestViewedRoundTrip(t *testing.T) {
 // List while the shared row's column stays empty: the stamp never leaves the
 // machine.
 func TestViewedStampLivesInOverlay(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.Save(newBinding("webshop", "/repo")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -314,7 +314,7 @@ func TestViewedStampLivesInOverlay(t *testing.T) {
 // queue no binding_record outbox row, while ViewedAt keeps reading each stamp
 // back.
 func TestMarkViewedQueuesNoOutboxRow(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.Save(newBinding("api", "/repo/a")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -344,7 +344,7 @@ func TestMarkViewedQueuesNoOutboxRow(t *testing.T) {
 // a binding that already holds an overlay keeps the cursor and the connection
 // fields, and Load returns both the stamp and the siblings.
 func TestMarkViewedPreservesOverlaySiblings(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.Save(liveBinding()); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -372,7 +372,7 @@ func TestMarkViewedPreservesOverlaySiblings(t *testing.T) {
 // nothing and reads false, while a row whose column already carries a stamp
 // and which holds no overlay still reads viewed.
 func TestViewedMissingAndSeedBranches(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.MarkViewed("missing", time.Now().UTC()); err != nil {
 		t.Errorf("MarkViewed(missing) = %v, want nil", err)
 	}
@@ -436,7 +436,7 @@ func TestValidName(t *testing.T) {
 // boundary answers with ValidName's own error for a name that cannot be a
 // binding, rather than treating it as an unknown one.
 func TestReadRefusesAnInvalidName(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 
 	for _, name := range []string{"../escape", "UPPER"} {
 		want := ValidName(name)
@@ -473,7 +473,7 @@ func TestReadRefusesAnInvalidName(t *testing.T) {
 // reaches the log without going through read, refuses a malformed name with
 // ValidName's own error.
 func TestConfirmIndexRefusesAnInvalidName(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	want := ValidName("../escape")
 	if want == nil {
 		t.Fatal(`ValidName("../escape") = nil, want the rule to refuse it`)
@@ -489,7 +489,7 @@ func TestConfirmIndexRefusesAnInvalidName(t *testing.T) {
 // binding's directory is inert: reads and lists answer from the record, the
 // record's own fields win, and the file is neither read, consumed nor deleted.
 func TestLoadIgnoresABindFileOnDisk(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.Save(newBinding("webshop", "/repo")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -558,7 +558,7 @@ func TestLoadIgnoresABindFileOnDisk(t *testing.T) {
 }
 
 func TestConcurrentSaveRaceRefusesDuplicateCWD(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	cwd := "/repo"
 
 	var successCount int32
@@ -586,7 +586,7 @@ func TestConcurrentSaveRaceRefusesDuplicateCWD(t *testing.T) {
 }
 
 func TestWithLockSerializesLoadModifySave(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("counter", "/repo")
 	if err := s.Save(b); err != nil {
 		t.Fatalf("initial Save: %v", err)
@@ -628,7 +628,7 @@ func TestWithLockSerializesLoadModifySave(t *testing.T) {
 // TestReadsDoNotWaitForTheStateLock pins that a read does not wait on the
 // state lock another goroutine holds.
 func TestReadsDoNotWaitForTheStateLock(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("frozen", "/repo")
 	if err := s.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -699,7 +699,7 @@ func TestReadsDoNotWaitForTheStateLock(t *testing.T) {
 }
 
 func TestNestedAccessDoesNotDeadlock(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("nested", "/repo")
 	if err := s.Save(b); err != nil {
 		t.Fatalf("initial Save: %v", err)
@@ -738,7 +738,7 @@ func TestNestedAccessDoesNotDeadlock(t *testing.T) {
 // TestFindByCWDSkipsDoneBindings pins that resolving `relevo send` onto a done
 // binding would point it at a finished session.
 func TestFindByCWDSkipsDoneBindings(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	done := newBinding("webshop", "/repo")
 	done.State = StateDone
 	if err := s.Save(done); err != nil {
@@ -764,7 +764,7 @@ func TestFindByCWDSkipsDoneBindings(t *testing.T) {
 // TestSaveStillRefusesASecondActiveBindingBesideADoneOne pins that skipping
 // done bindings must not relax the two-builders-in-one-tree refusal.
 func TestSaveStillRefusesASecondActiveBindingBesideADoneOne(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	done := newBinding("webshop", "/repo")
 	done.State = StateDone
 	if err := s.Save(done); err != nil {
@@ -783,7 +783,7 @@ func TestSaveStillRefusesASecondActiveBindingBesideADoneOne(t *testing.T) {
 // binding's CWD is never a working tree a builder writes in, while two local
 // builders in one tree are still refused.
 func TestAssertCWDFreeIgnoresRemote(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 
 	if err := s.Save(newBinding("a", "/repo")); err != nil {
 		t.Fatalf("Save local a: %v", err)
@@ -811,7 +811,7 @@ func TestAssertCWDFreeIgnoresRemote(t *testing.T) {
 // TestFindByCWDSkipsRemote pins that the cwd-addressed verbs never resolve
 // onto a remote binding.
 func TestFindByCWDSkipsRemote(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 
 	remoteOnly := newBinding("remoteonly", "/repo")
 	remoteOnly.Builder.Mode = ModeRemote
@@ -846,7 +846,7 @@ func TestFindByCWDSkipsRemote(t *testing.T) {
 // in. The reader names sort first, so a first-match implementation would
 // return one of them.
 func TestFindByCWDPrefersTheWriter(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 
 	reader := newBinding("a-reader", "/repo")
 	reader.Shape = ShapeReader
@@ -876,7 +876,7 @@ func TestFindByCWDPrefersTheWriter(t *testing.T) {
 // TestFindByCWDAmbiguousReaders pins that with no writer one reader resolves;
 // several readers are an error naming the flag that fixes it.
 func TestFindByCWDAmbiguousReaders(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 
 	only := newBinding("only-reader", "/repo")
 	only.Shape = ShapeReader
@@ -903,7 +903,7 @@ func TestFindByCWDAmbiguousReaders(t *testing.T) {
 }
 
 func TestListSkipsArchivedBindings(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if err := s.Save(newBinding("webshop", "/repo")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -921,7 +921,7 @@ func TestListSkipsArchivedBindings(t *testing.T) {
 }
 
 func TestArchiveRefusesAnUnknownBinding(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	if _, err := s.Archive("nope"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("got %v, want ErrNotFound", err)
 	}
@@ -974,7 +974,7 @@ func TestLoadIgnoresRemovedLegacyKeys(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := New(t.TempDir())
+			s := newStore(t)
 			putRecordJSON(t, s, "old", tc.body)
 			tc.check(t, s)
 		})
@@ -984,7 +984,7 @@ func TestLoadIgnoresRemovedLegacyKeys(t *testing.T) {
 // TestLoadKeepsALegacyEdgesRecord pins that a record carrying an "edges"
 // key still loads: Binding.Edges is a read-only shim now.
 func TestLoadKeepsALegacyEdgesRecord(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	body := `{"name":"old","cwd":"/repo","planner":{"pane_id":"w2:p3","kind":"claude"},"builder":{"pane_id":"w2:p4","kind":"agy"},"edges":[{"id":"a1b2c3","round":1,"when":"report","then":"send","target":"client","prompt":"/plans/client.md","mode":"queue","added_at":"2026-09-01T10:00:00Z","fired":true,"result":"queued"}],"round":1,"state":"active","round_cap":20,"round_timeout_ms":1800000}`
 	putRecordJSON(t, s, "old", body)
 
@@ -1002,7 +1002,7 @@ func TestLoadKeepsALegacyEdgesRecord(t *testing.T) {
 
 // TestLegacyPaneBindingReSavesByteIdentical pins the pre-pane-removal record shape.
 func TestLegacyPaneBindingReSavesByteIdentical(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("webshop", "/home/dev/projects/webshop")
 	if err := s.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -1039,7 +1039,7 @@ func TestPruneWorktreeDirs(t *testing.T) {
 	}
 
 	t.Run("both empty are removed", func(t *testing.T) {
-		s := New(t.TempDir())
+		s := newStore(t)
 		verify := filepath.Join(s.WorktreeDir(), ".verify")
 		mkdir(t, verify)
 
@@ -1054,7 +1054,7 @@ func TestPruneWorktreeDirs(t *testing.T) {
 	})
 
 	t.Run("a sibling worktree keeps .worktrees but not .verify", func(t *testing.T) {
-		s := New(t.TempDir())
+		s := newStore(t)
 		verify := filepath.Join(s.WorktreeDir(), ".verify")
 		mkdir(t, verify)
 		other := filepath.Join(s.WorktreeDir(), "other")
@@ -1074,7 +1074,7 @@ func TestPruneWorktreeDirs(t *testing.T) {
 	})
 
 	t.Run("a worktree under .verify keeps everything", func(t *testing.T) {
-		s := New(t.TempDir())
+		s := newStore(t)
 		verify := filepath.Join(s.WorktreeDir(), ".verify")
 		mkdir(t, filepath.Join(verify, "x-001"))
 
@@ -1089,7 +1089,7 @@ func TestPruneWorktreeDirs(t *testing.T) {
 	})
 
 	t.Run("neither exists is a no-op", func(t *testing.T) {
-		s := New(t.TempDir())
+		s := newStore(t)
 
 		s.PruneWorktreeDirs() // must not panic
 
@@ -1103,7 +1103,7 @@ func TestPruneWorktreeDirs(t *testing.T) {
 // into a binding directory reached through a symlink: the save fails and the
 // link's target stays empty, so no record is written through the plant.
 func TestSaveRefusesASymlinkedBindingDir(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	target := t.TempDir()
 	if err := os.Symlink(target, s.Dir("webshop")); err != nil {
 		t.Fatal(err)
@@ -1151,7 +1151,7 @@ func TestStateRootIsOwnerOnly(t *testing.T) {
 		t.Skipf("umask masks the owner bits (control %o), so 0755 and 0700 are indistinguishable", controlInfo.Mode().Perm())
 	}
 
-	if err := New(root).WithLock(func(*Tx) error { return nil }); err != nil {
+	if err := storeAt(t, root).WithLock(func(*Tx) error { return nil }); err != nil {
 		t.Fatalf("WithLock: %v", err)
 	}
 

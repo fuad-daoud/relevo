@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // needsYouWithClosingRound is the double-halt wire shape: the server says
@@ -64,7 +65,7 @@ func remoteNeedsYouCatchUpCountsHaltEntries(t *testing.T, st *store.Store, name 
 // view.Halt. So the deciding path's reason was clobbered, a second entry was
 // filed for a round already notified, and the failure counters were dropped.
 func TestRemoteNeedsYouCatchUpHaltSingleEntry(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	// The tenth bundle failure is the one that halts (catchUpFailureBudget).
 	b.RemoteBundleFailures = 9
@@ -106,7 +107,7 @@ func TestRemoteNeedsYouCatchUpHaltSingleEntry(t *testing.T) {
 // failing accumulates one failure per tick and reaches the budget, rather than
 // halting on the first tick on view.Halt with the count discarded.
 func TestRemoteBundleFailuresAccumulateThroughNeedsYou(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)

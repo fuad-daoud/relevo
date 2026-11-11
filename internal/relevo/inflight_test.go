@@ -8,6 +8,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -45,7 +46,7 @@ func TestInFlightSpansThePool(t *testing.T) {
 	  {"name":"a","harness":"opencode","provider":"p","model":"a","roles":["builder"],"max_concurrency":2},
 	  {"name":"b","harness":"opencode","provider":"p","model":"b","roles":["builder"],"max_concurrency":2}
 	]`)
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	for _, b := range []store.Binding{
 		inflightBinding("one", "opencode/p/a", nil),
 		inflightBinding("two", "opencode/p/b", nil),
@@ -67,7 +68,7 @@ func TestInFlightSpansThePool(t *testing.T) {
 }
 
 func TestInFlightExceptSkipsTheResolvingBinding(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	for _, b := range []store.Binding{
 		inflightBinding("mine", "opencode/p/a", nil),
 		inflightBinding("other", "opencode/p/a", nil),
@@ -92,7 +93,7 @@ func TestInFlightCapsACandidateWhoseModelNamesAnEffort(t *testing.T) {
 	set := candidateSet(t, `[
 	  {"name":"qwen","harness":"opencode","provider":"alibaba-token-plan","model":"qwen3.8-flash#xhigh","roles":["builder"],"max_concurrency":1}
 	]`)
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(inflightBinding("one", "opencode/alibaba-token-plan/qwen3.8-flash#xhigh", nil)); err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +205,7 @@ func TestSwitchGatesLeaveTheSwitchingBindingsOwnSlotOut(t *testing.T) {
 	  {"name":"a","harness":"opencode","provider":"p","model":"a#xhigh","roles":["builder"],"max_concurrency":1},
 	  {"name":"b","harness":"opencode","provider":"p","model":"b#xhigh","roles":["builder"],"max_concurrency":1}
 	]`)
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	mine := inflightBinding("mine", "opencode/p/a#xhigh", nil)
 	if err := st.Save(mine); err != nil {
 		t.Fatal(err)

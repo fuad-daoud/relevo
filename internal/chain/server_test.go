@@ -5,6 +5,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 func TestGoneMirrorReadsOnlyTheGoneWording(t *testing.T) {
@@ -43,7 +44,7 @@ func TestServerMemberNeedsAServerChain(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			s := store.New(t.TempDir())
+			s := storetest.New(t)
 			member := newMemberChainRow(t, s, tc.name, tc.status, tc.server)
 			if got := ServerMemberStore(s, member.Name); got != tc.member {
 				t.Errorf("ServerMemberStore = %v, want %v", got, tc.member)

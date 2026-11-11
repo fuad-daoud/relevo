@@ -10,7 +10,7 @@ import (
 )
 
 func TestPromptCopyPath(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	got := s.PromptCopyPath("webshop", 1)
 	want := filepath.Join(s.OutDir("webshop"), ".001-prompt.md")
 	if got != want {
@@ -79,7 +79,7 @@ func assertPromptCopySealedState(t *testing.T, s *Store, binding string, copyPat
 }
 
 func TestPromptCopyNotIngestedAsRunnerOutput(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("webshop", "/home/dev/webshop")
 	b.Round = 1
 	if err := s.Save(b); err != nil {
@@ -149,7 +149,7 @@ func TestStagePromptCopyCreatesOutDir(t *testing.T) {
 	// startProcess calls EnsureOutDir. Staging must create out/ itself: a real
 	// round on a binding whose out/ does not exist yet failed with
 	// "open out dir ...: no such file or directory" when it did not.
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("webshop", "/home/dev/webshop")
 	b.Round = 1
 	if err := s.Save(b); err != nil {
@@ -179,7 +179,7 @@ func TestStagePromptCopyCreatesOutDir(t *testing.T) {
 func TestStagePromptCopyRefusesNonDirectoryOut(t *testing.T) {
 	// out/ must stay a real directory: a file planted at that path is refused,
 	// so the round fails instead of staging outside its confined root.
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("webshop", "/home/dev/webshop")
 	b.Round = 1
 	if err := s.Save(b); err != nil {
@@ -198,7 +198,7 @@ func TestStagePromptCopyRefusesNonDirectoryOut(t *testing.T) {
 }
 
 func TestStagePromptCopyRefusesSymlink(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("webshop", "/home/dev/webshop")
 	b.Round = 1
 	if err := s.Save(b); err != nil {

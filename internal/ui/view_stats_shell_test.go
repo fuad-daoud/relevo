@@ -16,7 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	datastats "github.com/fuad-daoud/relevo/internal/stats"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/ui/stats"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -124,7 +124,7 @@ func statsShellOn(t *testing.T, width, height int, window string, rt relevo.Runt
 		t.Fatalf("db.Open: %v", err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
-	rt.Store = store.New(t.TempDir())
+	rt.Store = storetest.New(t)
 	rt.DB = d
 	m := newModel(context.Background(), mastermindSource{rt},
 		Options{Interval: time.Second})
@@ -384,7 +384,7 @@ func TestStatsRefreshThrottle(t *testing.T) {
 	t.Cleanup(func() { _ = d.Close() })
 	env := widget.Env{
 		Ctx:    context.Background(),
-		Src:    mastermindSource{relevo.Runtime{Store: store.New(t.TempDir()), DB: d}},
+		Src:    mastermindSource{relevo.Runtime{Store: storetest.New(t), DB: d}},
 		Report: view.Report{}, Loaded: true,
 		StatusAt: railNow, Now: railNow, Width: 160, Height: 40,
 	}

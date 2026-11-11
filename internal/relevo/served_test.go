@@ -16,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -615,7 +616,7 @@ func TestDeliverAndSettleOwnedLeavesQueued(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{
 		Name:       "api",
 		Owner:      "client1",
@@ -669,7 +670,7 @@ func TestReconcileHeadlessOwnedCloseRecordsFacts(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	fr := newFakeRunner()
 	expectedSHA := "commit-1234567890"
 	fGit := &fakeGit{
@@ -758,7 +759,7 @@ func TestReconcileHeadlessOwnedCloseRecordsFacts(t *testing.T) {
 // its builder process gone, for the close paths that do not see a marker.
 func ownedExitFixture(t *testing.T) (Runtime, store.Binding, *fakeRunner, string) {
 	t.Helper()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	fr := newFakeRunner()
 	sha := "commit-abcdef"
 	wtDir := t.TempDir()

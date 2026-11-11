@@ -9,6 +9,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // TestRetryPlanReadsSealed is the retry contract: RetryPlan returns the
@@ -19,7 +20,7 @@ import (
 func TestRetryPlanReadsSealed(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := Runtime{Store: st, Now: func() time.Time { return baseTime }}
 
 	// Round 3 and DONE: rounds 1 and 2 are behind the binding and it is

@@ -8,6 +8,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // stubProber is the journal probe OOMKilled drives: the scripted scope result
@@ -59,7 +60,7 @@ func TestOOMKilledFalseWithScopesOff(t *testing.T) {
 		"relevo-round-local-webshop-1": {Result: scopeResultOOM},
 	}}
 	b := oomBinding("webshop", baseTime.Unix())
-	deps := oomDeps(store.New(t.TempDir()), prober, baseTime)
+	deps := oomDeps(storetest.New(t), prober, baseTime)
 	deps.Scope = nil // scopes off
 
 	if peak, ok := OOMKilled(context.Background(), deps, b); ok || peak != 0 {
@@ -80,7 +81,7 @@ func TestOOMKilledFalseForSuccess(t *testing.T) {
 	}}
 	b := oomBinding("webshop", baseTime.Unix())
 
-	if _, ok := OOMKilled(context.Background(), oomDeps(store.New(t.TempDir()), prober, baseTime), b); ok {
+	if _, ok := OOMKilled(context.Background(), oomDeps(storetest.New(t), prober, baseTime), b); ok {
 		t.Error("OOMKilled with result=success = true, want false")
 	}
 }
@@ -95,7 +96,7 @@ func TestOOMKilledTrueForOOMKill(t *testing.T) {
 	}}
 	b := oomBinding("webshop", baseTime.Unix())
 
-	peak, ok := OOMKilled(context.Background(), oomDeps(store.New(t.TempDir()), prober, baseTime), b)
+	peak, ok := OOMKilled(context.Background(), oomDeps(storetest.New(t), prober, baseTime), b)
 	if !ok {
 		t.Error("OOMKilled with result=oom-kill = false, want true")
 	}
@@ -210,7 +211,7 @@ func oomQueueBinding(t *testing.T, st *store.Store, name string, queuedAt time.T
 func TestAdmitOOMQueuedAdmitsOldest(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	older := baseTime.Add(-2 * time.Minute)
 	newer := baseTime.Add(-time.Minute)
 	oomQueueBinding(t, st, "alpha", older)
@@ -259,7 +260,7 @@ func TestAdmitOOMQueuedAdmitsOldest(t *testing.T) {
 func TestAdmitOOMQueuedWaitsForLowerRunning(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	oomQueueBinding(t, st, "shop", baseTime.Add(-2*time.Minute))
 
 	stub := &admitStub{t: t, store: st}
@@ -347,7 +348,7 @@ func TestOOMKilledProbesSinceTheProcessStart(t *testing.T) {
 		"relevo-round-local-webshop-1": {Result: scopeResultOOM, PeakBytes: 8178532352},
 	}}
 	b := oomBinding("webshop", baseTime.Unix())
-	deps := oomDeps(store.New(t.TempDir()), prober, baseTime)
+	deps := oomDeps(storetest.New(t), prober, baseTime)
 
 	if _, ok := OOMKilled(context.Background(), deps, b); !ok {
 		t.Fatal("OOMKilled = false, want the scripted oom kill")
@@ -368,7 +369,7 @@ func TestOOMKilledSkipsAnAnchorlessProcess(t *testing.T) {
 
 	prober := &stubProber{}
 	b := oomBinding("webshop", 0)
-	deps := oomDeps(store.New(t.TempDir()), prober, baseTime)
+	deps := oomDeps(storetest.New(t), prober, baseTime)
 
 	if peak, ok := OOMKilled(context.Background(), deps, b); ok || peak != 0 {
 		t.Error("OOMKilled with no process start = true, want false")

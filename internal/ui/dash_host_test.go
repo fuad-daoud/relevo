@@ -11,7 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -26,7 +26,7 @@ func dashHostModel(t *testing.T, width, height int, opts Options, rows ...view.B
 		t.Fatalf("db.Open: %v", err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st, DB: d}
 	opts.Interval = time.Second
 	m := newModel(context.Background(), mastermindSource{rt}, opts)
@@ -145,7 +145,7 @@ func TestOptionsStartRounds(t *testing.T) {
 		t.Fatalf("db.Open: %v", err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st, DB: d}}, Options{Interval: time.Second, Start: "rounds"})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
@@ -166,7 +166,7 @@ func TestOptionsStartRounds(t *testing.T) {
 // TestOptionsStartRoundsWithoutDBNotices: the start command with no
 // database leaves the fleet and notices.
 func TestOptionsStartRoundsWithoutDBNotices(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Start: "rounds"})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})

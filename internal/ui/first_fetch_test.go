@@ -9,7 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -114,7 +114,7 @@ type slowShell struct {
 // chooses, or never.
 func newSlowShell(t *testing.T) slowShell {
 	t.Helper()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	for _, name := range []string{"api", "webshop"} {
 		b := newTestBinding(name)
 		b.CWD = "/tmp/" + name
@@ -130,8 +130,17 @@ func newSlowShell(t *testing.T) slowShell {
 
 	pend := pending{src: src, done: make(chan tea.Msg, 1)}
 	fetch := fetchStatus(m.ctx, src)
-	go func() { pend.done <- fetch() }()
-	t.Cleanup(src.unblock)
+	finished := make(chan struct{})
+	go func() {
+		pend.done <- fetch()
+		close(finished)
+	}()
+	// Release a fetch the test left parked and wait for it: the store's own
+	// cleanup closes the database next, under a fetch still reading it.
+	t.Cleanup(func() {
+		src.unblock()
+		<-finished
+	})
 
 	res, cmd := m.Update(watchdogMsg(time.Now()))
 	m = res.(Model)
@@ -170,7 +179,7 @@ func statusFetches(cmd tea.Cmd) bool {
 // box, with no watchdog outstanding.
 func fastShell(t *testing.T) Model {
 	t.Helper()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st}},
 		Options{Interval: time.Second})
 	m.now = func() time.Time { return railNow }
@@ -287,7 +296,7 @@ func TestSlowSourceStatusNeverYieldsAPartialStatusMsg(t *testing.T) {
 // TestInitArmsTheWatchdogBesideTheFirstFetch: Init goes out with the first
 // fetch, the tick and the watchdog, so the box is armed exactly once.
 func TestInitArmsTheWatchdogBesideTheFirstFetch(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st}},
 		Options{Interval: time.Millisecond})
 

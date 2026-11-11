@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/ingest"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // TestClosedRoundSealsOnceTheNextRoundCloses pins the seal contract: the
@@ -278,7 +279,7 @@ func TestSealPassEmptiesADoneDirOnly(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
-			st := store.New(root)
+			st := storetest.At(t, root)
 			b := store.Binding{Name: "webshop", CWD: "/repo", Round: 3, State: tc.state}
 			switch tc.worktreeType {
 			case "exists":

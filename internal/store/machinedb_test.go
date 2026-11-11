@@ -16,7 +16,7 @@ func routedStore(t *testing.T, open MachineOpener) *Store {
 	t.Helper()
 	t.Cleanup(func() { SetMachineOpener(nil) })
 	SetMachineOpener(open)
-	return New(t.TempDir())
+	return newStore(t)
 }
 
 // TestMachineOpenerRoutsTheMachineDatabase pins that an installed opener's

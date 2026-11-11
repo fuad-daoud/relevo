@@ -131,7 +131,7 @@ func TestDecodeLeavesABrokenHaltTheServerNamedAlone(t *testing.T) {
 // record, so it survives a save and a load rather than living only in the value
 // a tick happens to be holding.
 func TestSaveKeepsTheHaltKind(t *testing.T) {
-	s := New(t.TempDir())
+	s := newStore(t)
 	b := newBinding("api", "/repo/api")
 	b.State = StateNeedsYou
 	b.Halt = "zen " + UnreachableHaltMarker + " 31m0s; round 1 may still be running there"

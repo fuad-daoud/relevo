@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // serverHaltQuotingTheMarker is a halt reason a server can send verbatim: the
@@ -95,7 +96,7 @@ func haltAndSave(rt Runtime, b *store.Binding, reason string) error {
 func TestRemoteResumeClearsTheHaltItResumed(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.State = store.StateNeedsYou
 	b.Halt = "the plan needs a human: the scope widened"
@@ -138,7 +139,7 @@ func TestRemoteResumeClearsTheHaltItResumed(t *testing.T) {
 func TestOlderBrokenHaltClearsOnARunningView(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.State = store.StateNeedsYou
 	b.Halt = store.BrokenHaltText
@@ -226,7 +227,7 @@ func observedMemberBinding(t *testing.T, st *store.Store, b store.Binding) store
 func TestObservedMemberClearsItsUnreachableHalt(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.RoundTimeoutMS = 1000
 	if err := st.Save(b); err != nil {
@@ -274,7 +275,7 @@ func TestObservedMemberClearsItsUnreachableHalt(t *testing.T) {
 func TestNeedsYouReasonReplacesABrokenHalt(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -321,7 +322,7 @@ func TestNeedsYouReasonReplacesABrokenHalt(t *testing.T) {
 func TestSameReasonHaltsOnceAcrossViews(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -353,7 +354,7 @@ func TestSameReasonHaltsOnceAcrossViews(t *testing.T) {
 func TestSwitchableBreakFlapQueuesNoHalt(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -419,7 +420,7 @@ func TestSwitchableBreakFlapQueuesNoHalt(t *testing.T) {
 func TestServerHaltQuotingTheMarkerStaysPut(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -464,7 +465,7 @@ func TestServerHaltQuotingTheMarkerStaysPut(t *testing.T) {
 func TestUnreachableHaltStillCarriesItsKind(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.RoundTimeoutMS = 1000
 	if err := st.Save(b); err != nil {
@@ -500,7 +501,7 @@ func TestUnreachableHaltStillCarriesItsKind(t *testing.T) {
 func TestUnreachableKindNotStampedOnADedupedHalt(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.RoundTimeoutMS = 1000
 	if err := st.Save(b); err != nil {
@@ -562,7 +563,7 @@ func TestUnreachableKindNotStampedOnADedupedHalt(t *testing.T) {
 func TestStaleUnreachableKindDoesNotWipeALaterServerHalt(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.RoundTimeoutMS = 1000
 	if err := st.Save(b); err != nil {
@@ -645,7 +646,7 @@ func TestStaleUnreachableKindDoesNotWipeALaterServerHalt(t *testing.T) {
 func TestClearedUnreachableHaltDropsItsKind(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.RoundTimeoutMS = 1000
 	if err := st.Save(b); err != nil {

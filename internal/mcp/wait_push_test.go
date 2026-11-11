@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // liveClaimStore is a ClaimStore holding one live claim for id.
@@ -37,7 +38,7 @@ func TestWaitUnderPushClaimDoesNotClaimOrConfirm(t *testing.T) {
 	// (a builder running this suite) must not leak its entrypoint in.
 	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
 
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	saveVerbBinding(t, s, store.Binding{Name: "webshop", CWD: "/repo-ws", MasterMindID: mcpTestMasterMindA, Round: 1, State: store.StateActive})
 
 	reportBody := "# Report\nRound 1 completed successfully."
@@ -90,7 +91,7 @@ func TestWaitUnderPushClaimWhileHolderDrains(t *testing.T) {
 	t.Cleanup(func() { _ = d.Close() })
 	claims := &delivery.KVClaims{KV: db.TxKV{DB: d}, Alive: func(int) bool { return true }}
 
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	saveVerbBinding(t, s, store.Binding{Name: "webshop", CWD: "/repo-ws", MasterMindID: mcpTestMasterMindA, Round: 1, State: store.StateActive})
 	if err := s.AppendLog("webshop", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt}); err != nil {
 		t.Fatalf("AppendLog prompt: %v", err)
@@ -151,7 +152,7 @@ func TestWaitUnderPushClaimWhileHolderDrains(t *testing.T) {
 func TestWaitUnderPushClaimDeliversInlineInHeadless(t *testing.T) {
 	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "sdk-cli")
 
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	saveVerbBinding(t, s, store.Binding{Name: "webshop", CWD: "/repo-ws", MasterMindID: mcpTestMasterMindA, Round: 1, State: store.StateActive})
 
 	reportBody := "# Report\nRound 1 completed successfully."

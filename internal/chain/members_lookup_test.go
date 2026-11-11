@@ -8,6 +8,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // newMemberChainRow is one chain row named name in the status given, holding
@@ -68,7 +69,7 @@ func TestMemberChainPicksTheOwningChain(t *testing.T) {
 		t.Run(tc.chain, func(t *testing.T) {
 			t.Parallel()
 
-			s := store.New(t.TempDir())
+			s := storetest.New(t)
 			member := newMemberChainRow(t, s, tc.chain, tc.status, tc.server)
 
 			c, ok := MemberChain(s.ChainByMember, member.Name)

@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
@@ -153,7 +154,7 @@ type idleWorld struct {
 
 func newIdleWorld(t *testing.T) *idleWorld {
 	t.Helper()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	mdb, err := st.DB()
 	if err != nil {
 		t.Fatalf("store db: %v", err)

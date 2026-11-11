@@ -5,6 +5,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
@@ -51,7 +52,7 @@ func seedTickBinding(t *testing.T, st *store.Store, cwd, name string, round int,
 func TestNoteRoundsOpenSkipsDoneBindingsAndKeepsPaused(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	seedTickBinding(t, st, t.TempDir(), "done-closed", 1, store.StateDone, true)
 	seedTickBinding(t, st, t.TempDir(), "done-open", 1, store.StateDone, false)
 	seedTickBinding(t, st, t.TempDir(), "paused-open", 1, store.StatePaused, false)

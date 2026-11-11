@@ -10,13 +10,14 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // liveArtifacts is a store holding a live builder binding whose round-1
 // artifact directory has the given files, each written with its body.
 func liveArtifacts(t *testing.T, files map[string]string) (*store.Store, store.Binding) {
 	t.Helper()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{Name: "api"}
 	b.CWD = st.Dir(b.Name)
 	if err := st.Save(b); err != nil {
@@ -67,7 +68,7 @@ func TestRoundArtifactsListsTheActorsRoundSortedOutputFirst(t *testing.T) {
 func TestArtifactRelsOfAnUnknownBindingIsNotFound(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	_, err := ArtifactRels(st, "nobody", 1, "builder")
 	if !errors.Is(err, store.ErrNotFound) || !strings.Contains(err.Error(), `binding "nobody" not found (live or archived)`) {
 		t.Errorf("err = %v, want the live-or-archived not-found refusal", err)

@@ -5,6 +5,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // TestStepNoteNamesTheMembersPart pins the prompt note a member round runs
@@ -14,7 +15,7 @@ import (
 func TestStepNoteNamesTheMembersPart(t *testing.T) {
 	t.Parallel()
 
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	newMemberChainRow(t, s, "c", string(StatusRunning), "")
 	if err := s.WithLock(func(tx *store.Tx) error {
 		return tx.ChainMembersPut("c", []db.ChainMemberRow{

@@ -7,6 +7,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // TestRemoteBrokenViewHaltsWithServerReason pins the broken arm of an answered
@@ -20,7 +21,7 @@ import (
 // the break is never read.
 func TestRemoteBrokenViewHaltsWithServerReason(t *testing.T) {
 	t.Parallel()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -65,7 +66,7 @@ func TestRemoteBrokenViewHaltsWithServerReason(t *testing.T) {
 // the MasterMind an entry.
 func TestRemoteBrokenHaltsOnceAcrossPolls(t *testing.T) {
 	t.Parallel()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -98,7 +99,7 @@ func TestRemoteBrokenHaltsOnceAcrossPolls(t *testing.T) {
 // a human reads is the whole notification, so an empty one is silence.
 func TestRemoteBrokenWithoutServerReasonStillHalts(t *testing.T) {
 	t.Parallel()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)

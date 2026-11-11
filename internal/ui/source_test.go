@@ -11,7 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/serve"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // serverTestDB opens a temp machine database for a serve.Server under test:
@@ -30,7 +30,7 @@ func serverTestDB(t *testing.T) *db.DB {
 // with the one runtime and the key itself -- there is no branch on a
 // mastermind.
 func TestMasterMindSourceResolvesEveryKey(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	src := mastermindSource{rt: rt}
 
@@ -111,7 +111,7 @@ func TestServerSourceRuntimeRefusesBadKeys(t *testing.T) {
 // TestMasterMindSourceBaseIsRuntime pins the contract: on a mastermind Base is
 // the runtime itself, so scope all reads the mastermind's own database.
 func TestMasterMindSourceBaseIsRuntime(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 
 	if base := (mastermindSource{rt: rt}).Base(); base.Store != rt.Store {

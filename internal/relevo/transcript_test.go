@@ -14,6 +14,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // jsonlLine is line idx (0-based) of a transcript testdata file, newline
@@ -35,7 +36,7 @@ func jsonlLine(t *testing.T, name string, idx int) string {
 // row can be written against it.
 func transcriptStore(t *testing.T) *store.Store {
 	t.Helper()
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	if err := s.Save(store.Binding{
 		Name:    "webshop",
 		CWD:     "/work/webshop",

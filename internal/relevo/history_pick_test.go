@@ -9,7 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/resolve"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // Round 3 made every display read combine every origin's history rows, because
@@ -34,7 +34,7 @@ func historyPickRuntime(t *testing.T, origin string) (Runtime, *db.DB) {
 	t.Cleanup(func() { _ = shared.Close() })
 
 	rt := Runtime{
-		Store:      store.New(t.TempDir()),
+		Store:      storetest.New(t),
 		Candidates: candidateSet(t, testCandidatesJSON),
 		Gates:      testGates(t),
 		History:    shared,

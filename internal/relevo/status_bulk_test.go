@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -65,7 +66,7 @@ func bulkRuntime(t *testing.T, names ...string) (Runtime, *countingKV) {
 	kv := &countingKV{inner: d, reads: map[string]int{}}
 	tx := db.TxKV{DB: d}
 	rt := Runtime{
-		Store:      store.New(t.TempDir()),
+		Store:      storetest.New(t),
 		Candidates: candidateSet(t, testCandidatesJSON),
 		Gates:      kv,
 		History:    d,

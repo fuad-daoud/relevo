@@ -10,6 +10,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -139,7 +140,7 @@ func diskChainRow(t *testing.T, st *store.Store, note string) (db.ChainRow, int)
 func TestChainHaltOnEnvironmentHalts(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	c, run := diskChainRow(t, st, wantDiskNote)
 
 	var gotRow db.ChainCheckRow
@@ -174,7 +175,7 @@ func TestChainHaltOnEnvironmentHalts(t *testing.T) {
 func TestChainHaltOnEnvironmentKeepsRedCheck(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	c, run := diskChainRow(t, st, "--- FAIL: TestX")
 
 	called := false
@@ -227,7 +228,7 @@ func diskHaltDeps(st *store.Store, halt *haltStub) Deps {
 func TestHaltOnEnvironmentGateHalts(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, State: store.StateActive}
 	rec := &store.GateRecord{Command: "make check", Result: "fail", Note: wantDiskNote}
 
@@ -259,7 +260,7 @@ func TestHaltOnEnvironmentGateHalts(t *testing.T) {
 func TestHaltOnEnvironmentGateKeepsRedGate(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, State: store.StateActive}
 
 	cases := []struct {
@@ -300,7 +301,7 @@ var errRefusedDisk = errors.New("disk full: /repo has 1.0 GB free (< 2 GB)")
 func TestHaltOnDiskFullExitHalts(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, State: store.StateActive}
 
 	var probed string
@@ -338,7 +339,7 @@ func TestHaltOnDiskFullExitHalts(t *testing.T) {
 func TestHaltOnDiskFullExitProbesWorktree(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{Name: "webshop", CWD: "/repo", Worktree: "/wt/shop", Round: 1, State: store.StateActive}
 
 	var probed string
@@ -372,7 +373,7 @@ func TestHaltOnDiskFullExitProbesWorktree(t *testing.T) {
 func TestHaltOnDiskFullExitKeepsOrdinaryExit(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, State: store.StateActive}
 
 	cases := []struct {

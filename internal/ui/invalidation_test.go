@@ -8,13 +8,13 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 func TestStatusMsgUnchangedTSNoFetch(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -43,7 +43,7 @@ func TestStatusMsgUnchangedTSNoFetch(t *testing.T) {
 }
 
 func TestStatusMsgNewerTSClearsFileCachesPreservesTerminal(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 	if err := st.Save(newTestBinding(name)); err != nil {
@@ -107,7 +107,7 @@ func TestStatusMsgNewerTSClearsFileCachesPreservesTerminal(t *testing.T) {
 }
 
 func TestScrollPreservedAcrossStatusMsgWithoutInvalidation(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -134,7 +134,7 @@ func TestScrollPreservedAcrossStatusMsgWithoutInvalidation(t *testing.T) {
 }
 
 func TestTerminalTabPollsOnEveryTickWhenVisible(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 	if err := st.Save(newTestBinding(name)); err != nil {

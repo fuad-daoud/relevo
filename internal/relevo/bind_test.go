@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // baseTime is the instant newRuntime's fixed clock reports.
@@ -50,7 +51,7 @@ func newRuntime(t *testing.T) Runtime {
 	})
 	gates := testGates(t)
 	return Runtime{
-		Store:      store.New(t.TempDir()),
+		Store:      storetest.New(t),
 		Candidates: candidateSet(t, testCandidatesJSON),
 		Gates:      gates,
 		History:    testHistoryDB(t),

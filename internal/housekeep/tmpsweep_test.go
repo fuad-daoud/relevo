@@ -16,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -79,7 +80,7 @@ func testSweepDeps(st *store.Store, root string) Deps {
 // leaves for it.
 func tmpSweepSetup(t *testing.T) Deps {
 	t.Helper()
-	return testSweepDeps(store.New(t.TempDir()), t.TempDir())
+	return testSweepDeps(storetest.New(t), t.TempDir())
 }
 
 // tmpMkDir plants one directory with its own mtime, the way a leftover looks

@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
@@ -71,7 +71,7 @@ func TestSyncMeterNoticeLines(t *testing.T) {
 // prints nothing.
 func TestSyncMeterSilentOnUnreadableRows(t *testing.T) {
 	t.Parallel()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	d, err := st.DB()
 	if err != nil {
 		t.Fatalf("Store.DB: %v", err)
@@ -102,7 +102,7 @@ func TestSyncMeterSilentOnUnreadableRows(t *testing.T) {
 // runs on.
 func TestSyncMeterReportsTheSeededMonth(t *testing.T) {
 	t.Parallel()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	d, err := st.DB()
 	if err != nil {
 		t.Fatalf("Store.DB: %v", err)

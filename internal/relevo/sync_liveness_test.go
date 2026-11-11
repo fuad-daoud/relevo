@@ -11,7 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 	"github.com/fuad-daoud/relevo/internal/sync/verb"
 	"github.com/fuad-daoud/relevo/internal/synclog"
@@ -75,7 +75,7 @@ type liveFixture struct {
 // and a clock the test moves.
 func newLiveFixture(t *testing.T) *liveFixture {
 	t.Helper()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	mdb, err := st.DB()
 	if err != nil {
 		t.Fatalf("store db: %v", err)

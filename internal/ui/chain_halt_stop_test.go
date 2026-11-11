@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // haltStore plants a chain the cockpit will show as a row of its own: a halted
@@ -21,7 +22,7 @@ var nowUTC = time.Date(2026, 10, 11, 9, 0, 0, 0, time.UTC)
 
 func haltStore(t *testing.T) *store.Store {
 	t.Helper()
-	st := store.New(filepath.Join(t.TempDir(), "state"))
+	st := storetest.At(t, filepath.Join(t.TempDir(), "state"))
 	now := nowUTC
 	b := store.Binding{
 		Name: "shop", CWD: "/w/shop", MasterMindID: "mm",

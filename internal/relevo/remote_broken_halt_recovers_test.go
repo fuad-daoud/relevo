@@ -8,6 +8,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // brokenHaltedBinding halts b on the server's broken-round view and returns it
@@ -40,7 +41,7 @@ func brokenHaltedBinding(t *testing.T, rt Runtime, b store.Binding) store.Bindin
 func TestBrokenFallbackHaltClearsOnRunningView(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -95,7 +96,7 @@ func TestBrokenFallbackHaltClearsOnRunningView(t *testing.T) {
 func TestServerReasonBrokenHaltClearsOnRunningView(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -146,7 +147,7 @@ func TestServerReasonBrokenHaltClearsOnRunningView(t *testing.T) {
 func TestBrokenHaltClearsOnAQueuedView(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -189,7 +190,7 @@ func TestUnrelatedRemoteHaltSurvivesARunningView(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			st := store.New(t.TempDir())
+			st := storetest.New(t)
 			b := remoteBinding("zen")
 			b.State = store.StateNeedsYou
 			b.Halt = strings.TrimPrefix(tc.halt, "api: ")

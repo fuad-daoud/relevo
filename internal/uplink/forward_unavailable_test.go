@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // TestForwardUnavailablePostsBareProviderPerOpenBinding: a provider this
@@ -21,7 +22,7 @@ import (
 func TestForwardUnavailablePostsBareProviderPerOpenBinding(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	saveOpenGate(t, st, "one", "zen")
 	saveOpenGate(t, st, "two", "zen")
 	fr := &fakeRemote{}
@@ -44,7 +45,7 @@ func TestForwardUnavailablePostsBareProviderPerOpenBinding(t *testing.T) {
 func TestForwardUnavailableProviderForwardsAccountKeys(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	saveOpenGate(t, st, "open-remote", "zen")
 	fr := &fakeRemote{whoAmIResp: remote.WhoAmI{Features: []string{remote.FeatureAccounts}}}
 	rt := relevo.Runtime{Store: st, Remote: fr, Gates: testGateKV(t), Candidates: candidateSet(t, testTwoProviderJSON), Now: func() time.Time { return baseTime }}
@@ -65,7 +66,7 @@ func TestForwardUnavailableProviderForwardsAccountKeys(t *testing.T) {
 func TestForwardsSkipUnconfiguredServerSilently(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	saveOpenGate(t, st, "old", "contabo")
 	rt := relevo.Runtime{Store: st, Remote: unknownEverywhere(), Candidates: candidateSet(t, testTwoProviderJSON), Now: func() time.Time { return baseTime }}
 	ctx := context.Background()
@@ -103,7 +104,7 @@ func TestForwardUnavailableFailuresEndWithNextCommand(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			st := store.New(t.TempDir())
+			st := storetest.New(t)
 			saveOpenGate(t, st, "a", "zen")
 			saveOpenGate(t, st, "b", "zen")
 			rt := relevo.Runtime{Store: st, Remote: tc.fr, Candidates: candidateSet(t, testTwoProviderJSON), Now: func() time.Time { return baseTime }}
@@ -127,7 +128,7 @@ func TestForwardUnavailableFailuresEndWithNextCommand(t *testing.T) {
 func TestForwardUnavailableStaleOnlyHasNoNextCommand(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	saveOpenGate(t, st, "a", "zen")
 	fr := &fakeRemote{unavailableErr: staleAnswer()}
 	rt := relevo.Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
@@ -147,7 +148,7 @@ func TestForwardUnavailableSkipsStaleBindings(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	for _, n := range []string{"live-one", "stale-one", "stale-two"} {
 		saveOpenGate(t, st, n, "zen")
 	}
@@ -197,7 +198,7 @@ func TestForwardUnavailableReportsRealFailures(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	saveOpenGate(t, st, "broken", "zen")
 
 	fr := &fakeRemote{
@@ -230,7 +231,7 @@ func TestForwardNoSummaryWhenNothingIsStale(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	saveOpenGate(t, st, "live-one", "zen")
 
 	fr := &fakeRemote{
@@ -257,7 +258,7 @@ func TestForwardUnavailableForwardsAccountGates(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	saveOpenGate(t, st, "open-remote", "zen")
 
 	fr := &fakeRemote{
@@ -296,7 +297,7 @@ func TestForwardUnavailableRefusesAccountGateOnOldServer(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	saveOpenGate(t, st, "open-remote", "zen")
 
 	fr := &fakeRemote{
@@ -330,7 +331,7 @@ func TestForwardUnavailableAccountGateStaysBareWithoutAccounts(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	saveOpenGate(t, st, "open-remote", "zen")
 
 	fr := &fakeRemote{
@@ -368,7 +369,7 @@ func TestForwardUnavailable(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 
 	openB := remoteBinding("zen")
 	openB.Name = "open-remote"
@@ -422,7 +423,7 @@ func TestForwardUnavailableSendsTheServerTokenForTheSameName(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 
 	openB := remoteBinding("zen")
 	openB.Name = "open-remote"
@@ -471,7 +472,7 @@ func TestForwardUnavailableSendsTheServerTokenForARenamedProvider(t *testing.T) 
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 
 	openB := remoteBinding("zen")
 	openB.Name = "open-remote"
@@ -521,7 +522,7 @@ func TestForwardUnavailableReportsOneLinePerServerWhenNothingMatches(t *testing.
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 
 	for _, name := range []string{"open-one", "open-two"} {
 		b := remoteBinding("zen")
@@ -570,7 +571,7 @@ func TestForwardUnavailableReportsOneLinePerServerWhenNothingMatches(t *testing.
 func TestForwardUnavailableCarriesLocalUntil(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	saveOpenGate(t, st, "one", "zen")
 	saveOpenGate(t, st, "two", "zen")
 	fr := &fakeRemote{}

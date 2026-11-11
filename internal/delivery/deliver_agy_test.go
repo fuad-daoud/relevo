@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // agyTestConv is a valid agy conversation id, and agyTestToken is the captured
@@ -860,7 +861,7 @@ func TestDeliverPendingAgyDeliversViaDeliverer(t *testing.T) {
 	playAgyOnSend(t, fake, home, true)
 
 	rt := Deps{
-		Store:      store.New(t.TempDir()),
+		Store:      storetest.New(t),
 		Now:        time.Now,
 		Deliverers: map[string]MasterMindDeliverer{"agy": d},
 	}
@@ -972,7 +973,7 @@ func TestDeliverPendingAgyExpiredAdmitGoesToPullNotReAdmitted(t *testing.T) {
 	writeAgyMessage(t, home, "m-expired", agyTestConv, agyTestPayload, now(), false)
 
 	rt := Deps{
-		Store:      store.New(t.TempDir()),
+		Store:      storetest.New(t),
 		Now:        now,
 		Deliverers: map[string]MasterMindDeliverer{"agy": d},
 	}

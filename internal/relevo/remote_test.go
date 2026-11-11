@@ -29,6 +29,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -680,7 +681,7 @@ func TestRenderServersBuilders(t *testing.T) {
 
 func TestAddRemoteCreatesBranchAfterServerAgrees(t *testing.T) {
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	fg := &fakeGit{
 		headCommitID:  "1111111111111111111111111111111111111111",
 		rootCommitSHA: "2222222222222222222222222222222222222222",
@@ -891,7 +892,7 @@ func TestStatusShowsRemoteBindingForItsMasterMind(t *testing.T) {
 // created there.
 func TestAddRemoteTierPreTierServerRefused(t *testing.T) {
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	fg := &fakeGit{
 		headCommitID:  "1111111111111111111111111111111111111111",
 		rootCommitSHA: "2222222222222222222222222222222222222222",
@@ -925,7 +926,7 @@ func TestAddRemoteTierPreTierServerRefused(t *testing.T) {
 // binding records the tier the server echoed back, not the request's own.
 func TestAddRemoteTierWiresRequestAndEchoesBinding(t *testing.T) {
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	fg := &fakeGit{
 		headCommitID:  "1111111111111111111111111111111111111111",
 		rootCommitSHA: "2222222222222222222222222222222222222222",
@@ -972,7 +973,7 @@ func TestAddRemoteTierWiresRequestAndEchoesBinding(t *testing.T) {
 // old-server case: no Client* fields travel and the stored row has no link.
 func TestAddRemoteNoTierProbesOnceAndSkipsTier(t *testing.T) {
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	fg := &fakeGit{
 		headCommitID:  "1111111111111111111111111111111111111111",
 		rootCommitSHA: "2222222222222222222222222222222222222222",
@@ -1024,7 +1025,7 @@ func TestAddRemoteNoTierProbesOnceAndSkipsTier(t *testing.T) {
 // or worktree.
 func TestAddRemoteRolePreRolesServerRefused(t *testing.T) {
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	fg := &fakeGit{
 		headCommitID:  "1111111111111111111111111111111111111111",
 		rootCommitSHA: "2222222222222222222222222222222222222222",
@@ -1062,7 +1063,7 @@ func TestAddRemoteRolePreRolesServerRefused(t *testing.T) {
 // succeeds: the client never checks its own roles for a server add.
 func TestAddRemoteRoleWiresRequest(t *testing.T) {
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	fg := &fakeGit{
 		headCommitID:  "1111111111111111111111111111111111111111",
 		rootCommitSHA: "2222222222222222222222222222222222222222",
@@ -1120,7 +1121,7 @@ func TestCreateBindingRequestCarriesTheActor(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			st := store.New(t.TempDir())
+			st := storetest.New(t)
 			fg := &fakeGit{
 				headCommitID:  "1111111111111111111111111111111111111111",
 				rootCommitSHA: "2222222222222222222222222222222222222222",
@@ -1150,7 +1151,7 @@ func TestCreateBindingRequestCarriesTheActor(t *testing.T) {
 // keeps "" as the default.
 func TestAddRemoteBuilderUnchanged(t *testing.T) {
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	fg := &fakeGit{
 		headCommitID:  "1111111111111111111111111111111111111111",
 		rootCommitSHA: "2222222222222222222222222222222222222222",
@@ -1180,7 +1181,7 @@ func TestAddRemoteBuilderUnchanged(t *testing.T) {
 // registry that knows reviewer as a reader, and the mastermind an add needs.
 func readerAddRuntime(t *testing.T, fr *fakeRemote) (Runtime, *store.Store) {
 	t.Helper()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	fg := &fakeGit{
 		headCommitID:  "1111111111111111111111111111111111111111",
 		rootCommitSHA: "2222222222222222222222222222222222222222",
@@ -1257,7 +1258,7 @@ func TestAddRemoteReaderRecordsShape(t *testing.T) {
 // run this binding's builders as the client.
 func TestAddRemoteSendsGitAuthor(t *testing.T) {
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	fg := &fakeGit{
 		headCommitID:  "1111111111111111111111111111111111111111",
 		rootCommitSHA: "2222222222222222222222222222222222222222",
@@ -1290,7 +1291,7 @@ func TestAddRemoteSendsGitAuthor(t *testing.T) {
 // local binding, no branch.
 func TestAddRemoteRefusesWithoutGitIdentity(t *testing.T) {
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	fg := &fakeGit{
 		headCommitID:  "1111111111111111111111111111111111111111",
 		rootCommitSHA: "2222222222222222222222222222222222222222",
@@ -1331,7 +1332,7 @@ func TestAddRemoteRefusesWithoutGitIdentity(t *testing.T) {
 // addRemote call.)
 func TestAddRemoteTwicePerRepo(t *testing.T) {
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	fg := &fakeGit{
 		headCommitID:  "1111111111111111111111111111111111111111",
 		rootCommitSHA: "2222222222222222222222222222222222222222",
@@ -1359,7 +1360,7 @@ func TestAddRemoteTwicePerRepo(t *testing.T) {
 
 func TestAddRemoteRefusesCWD(t *testing.T) {
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rt := Runtime{
 		Store:       st,
 		MasterMinds: addRemoteMasterMind(t),
@@ -1388,7 +1389,7 @@ func TestAddRemoteRefusesCWD(t *testing.T) {
 
 func TestAddRemoteServerConflict(t *testing.T) {
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	fg := &fakeGit{
 		headCommitID:  "1111111111111111111111111111111111111111",
 		rootCommitSHA: "2222222222222222222222222222222222222222",
@@ -1436,7 +1437,7 @@ func TestAddRemoteCreateFailurePerformsNoCleanup(t *testing.T) {
 
 	newRuntime := func(t *testing.T, createErr error) (Runtime, *fakeGit, *fakeRemote) {
 		t.Helper()
-		st := store.New(t.TempDir())
+		st := storetest.New(t)
 		fg := &fakeGit{
 			headCommitID:  "1111111111111111111111111111111111111111",
 			rootCommitSHA: "2222222222222222222222222222222222222222",
@@ -1509,7 +1510,7 @@ func TestAddRemoteCreateFailurePerformsNoCleanup(t *testing.T) {
 // called for this generic error.
 func TestAddRemoteCleansUpServerOnSaveFailure(t *testing.T) {
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	fg := &fakeGit{
 		headCommitID:    "1111111111111111111111111111111111111111",
 		rootCommitSHA:   "2222222222222222222222222222222222222222",
@@ -1546,7 +1547,7 @@ func TestAddRemoteCleansUpServerOnSaveFailure(t *testing.T) {
 
 func TestAddRemoteBranchExistsUnbindsServer(t *testing.T) {
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	fg := &fakeGit{
 		headCommitID:    "1111111111111111111111111111111111111111",
 		rootCommitSHA:   "2222222222222222222222222222222222222222",
@@ -1599,7 +1600,7 @@ func TestAddRemoteTakenBranchNeverReachesTheServer(t *testing.T) {
 	}
 	fr := &fakeRemote{createBindingResp: remote.BindingView{Name: "api"}}
 	rt := Runtime{
-		Store:       store.New(t.TempDir()),
+		Store:       storetest.New(t),
 		MasterMinds: addRemoteMasterMind(t),
 		Git:         fg,
 		Remote:      fr,
@@ -1618,7 +1619,7 @@ func TestAddRemoteTakenBranchNeverReachesTheServer(t *testing.T) {
 // A name this machine already binds is the caller's input, refused with the ways
 // out before the server hears of it.
 func TestAddRemoteRefusesANameBoundHere(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(store.Binding{Name: "api", CWD: t.TempDir(), State: store.StateActive}); err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -1647,7 +1648,7 @@ func TestAddRemoteExistingBranch(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("adopts the branch and sends its tip as base", func(t *testing.T) {
-		st := store.New(t.TempDir())
+		st := storetest.New(t)
 		fg := &fakeGit{
 			branchExists:  true,
 			refSHA:        map[string]string{"refs/heads/feature/x": "tip"},
@@ -1681,7 +1682,7 @@ func TestAddRemoteExistingBranch(t *testing.T) {
 
 	t.Run("a failure after CreateBinding unbinds the server and deletes no branch", func(t *testing.T) {
 		root := t.TempDir()
-		st := store.New(root)
+		st := storetest.At(t, root)
 		fg := &fakeGit{
 			branchExists:  true,
 			refSHA:        map[string]string{"refs/heads/feature/x": "tip"},
@@ -1732,7 +1733,7 @@ func TestAddRemoteExistingBranch(t *testing.T) {
 func TestAddRemoteCleansUpLocalBranchOnSaveFailure(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
-	st := store.New(root)
+	st := storetest.At(t, root)
 
 	fg := &fakeGit{
 		headCommitID:  "1111111111111111111111111111111111111111",
@@ -1807,7 +1808,7 @@ func TestSendDryRunRemoteContactsNoServer(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{
 		Name:   "api",
 		CWD:    "/fake/repo",
@@ -2016,7 +2017,7 @@ func TestDoneRemoteForwardsFirst(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -2046,7 +2047,7 @@ func TestUnbindRemote404Proceeds(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -2083,7 +2084,7 @@ func TestDoneRemote404Proceeds(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -2117,7 +2118,7 @@ func TestUnbindRemoteRunningRoundForwardsAndDeletes(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.RoundStartedAt = baseTime
 	if err := st.Save(b); err != nil {
@@ -2150,7 +2151,7 @@ func TestGCRemoteOnlyWhenDone(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 
 	doneB := remoteBinding("zen")
 	doneB.Name = "done-remote"
@@ -2271,7 +2272,7 @@ func TestServerCandidateMatchesInOrder(t *testing.T) {
 func TestReconcileRemoteRunningMirrorsLog(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -2318,7 +2319,7 @@ func TestReconcileRemoteRunningMirrorsLog(t *testing.T) {
 func TestMirrorLogAppends(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -2358,7 +2359,7 @@ func TestMirrorLogAppends(t *testing.T) {
 func TestMirrorLogOldServerReplaces(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -2395,7 +2396,7 @@ func TestMirrorLogOldServerReplaces(t *testing.T) {
 func TestMirrorLogShrankRefetches(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -2443,7 +2444,7 @@ func TestMirrorLogShrankRefetches(t *testing.T) {
 func TestMirrorLogUnchangedLogWritesNothing(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -2489,7 +2490,7 @@ func TestMirrorLogUnchangedLogWritesNothing(t *testing.T) {
 func TestMirrorLogWritesNoRowWhileRunning(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -2538,7 +2539,7 @@ func TestMirrorLogWritesNoRowWhileRunning(t *testing.T) {
 func TestMirrorLogStartsAFileOverAnOldRow(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -2580,7 +2581,7 @@ func TestMirrorDriftOnce(t *testing.T) {
 	mirrorDriftAttempts = sync.Map{}
 
 	t.Run("fetches and caches drift", func(t *testing.T) {
-		st := store.New(t.TempDir())
+		st := storetest.New(t)
 		b := remoteBinding("zen")
 		if err := st.Save(b); err != nil {
 			t.Fatal(err)
@@ -2627,7 +2628,7 @@ func TestMirrorDriftOnce(t *testing.T) {
 
 	t.Run("404 asked once across two polls", func(t *testing.T) {
 		mirrorDriftAttempts = sync.Map{}
-		st := store.New(t.TempDir())
+		st := storetest.New(t)
 		b := remoteBinding("zen")
 		b.Name = "api-404"
 		b.Branch = "relevo/api-404"
@@ -2672,7 +2673,7 @@ func TestMirrorDriftOnce(t *testing.T) {
 // round's stall stamp rides from the server view onto the client binding,
 // status shows it, and a later view without one clears it.
 func TestObserveRemoteCopiesStalledSince(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -2727,7 +2728,7 @@ func TestObserveRemoteCopiesStalledSince(t *testing.T) {
 func TestObserveRemoteQueuedKeepsFacts(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("contabo")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -2766,7 +2767,7 @@ func TestObserveRemoteQueuedKeepsFacts(t *testing.T) {
 func TestObserveRemoteRunningClearsQueue(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("contabo")
 	b.Builder.RemoteStatus = string(remote.RoundQueued)
 	b.Builder.RemoteQueue = &store.QueueFacts{Position: 1, Ahead: 0, Running: 2, Cap: 3, Since: baseTime.Add(-time.Minute)}
@@ -2792,7 +2793,7 @@ func TestObserveRemoteRunningClearsQueue(t *testing.T) {
 func TestObserveRemoteRunningStoresLive(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("contabo")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -2866,7 +2867,7 @@ func TestObserveRemoteRunningStoresLive(t *testing.T) {
 func TestObserveRemoteClosedClearsLive(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("contabo")
 	b.Builder.RemoteStatus = string(remote.RoundRunning)
 	b.Builder.RemoteLive = &store.LiveFacts{PID: 4242, At: baseTime}
@@ -2896,7 +2897,7 @@ func TestObserveRemoteClosedClearsLive(t *testing.T) {
 func TestReconcileRemoteRefreshesCandidate(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.BuilderCandidate = "claude/anthropic/haiku"
 	b.Builder.Kind = "claude"
@@ -2968,7 +2969,7 @@ func TestReconcileRemoteRefreshesCandidate(t *testing.T) {
 func TestReconcileRemoteNeedsYouHalts(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -2994,7 +2995,7 @@ func TestReconcileRemoteNeedsYouHalts(t *testing.T) {
 func TestReconcileRemoteUnreachableIsNotHalt(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.RoundTimeoutMS = 1000 // 1s budget; unreachableGrace (30m) is what keeps this from halting below
 	if err := st.Save(b); err != nil {
@@ -3034,7 +3035,7 @@ func TestReconcileRemoteUnreachableIsNotHalt(t *testing.T) {
 func TestReconcileRemoteUnreachablePastBudgetHalts(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.RoundTimeoutMS = 1000 // 1s budget
 	if err := st.Save(b); err != nil {
@@ -3105,7 +3106,7 @@ func unreachableHaltedBinding(t *testing.T, rt Runtime, b store.Binding) store.B
 func TestUnreachableHaltsClearOnRunningView(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.RoundTimeoutMS = 1000
 	if err := st.Save(b); err != nil {
@@ -3158,7 +3159,7 @@ func TestUnreachableHaltsClearOnRunningView(t *testing.T) {
 func TestUnreachableHaltsClearOnQueuedView(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.RoundTimeoutMS = 1000
 	if err := st.Save(b); err != nil {
@@ -3202,7 +3203,7 @@ func TestUnreachableHaltsClearOnQueuedView(t *testing.T) {
 func TestUnreachableHaltClearsBeforeNeedsYouHalt(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.RoundTimeoutMS = 1000
 	if err := st.Save(b); err != nil {
@@ -3253,7 +3254,7 @@ func TestUnreachableHaltClearsBeforeNeedsYouHalt(t *testing.T) {
 func TestUnreachableHaltClearsBeforeBrokenHalt(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.RoundTimeoutMS = 1000
 	if err := st.Save(b); err != nil {
@@ -3342,7 +3343,7 @@ func daemonTick(t *testing.T, rt Runtime, name string) error {
 func TestOwedHaltRetryAfterAFailedTickWritesOneEntry(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := owedHaltBinding(t, st)
 
 	fr := &fakeRemote{getBindingResp: remote.BindingView{RoundState: remote.RoundIdle, Candidate: "test/other"}}
@@ -3388,7 +3389,7 @@ func TestOwedHaltRetryAfterAFailedTickWritesOneEntry(t *testing.T) {
 func TestUnreachableClearLeavesOtherHalts(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -3428,7 +3429,7 @@ func TestUnreachableClearLeavesOtherHalts(t *testing.T) {
 func TestSyncRemoteClearsUnreachableHalt(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.RoundTimeoutMS = 1000
 	if err := st.Save(b); err != nil {
@@ -3480,7 +3481,7 @@ func TestSyncRemoteClearsUnreachableHalt(t *testing.T) {
 func TestReconcileRemote401Halts(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -3507,7 +3508,7 @@ func TestReconcileRemote401Halts(t *testing.T) {
 func TestReconcileRemote401StaleIsTransientWithoutGrace(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -3537,7 +3538,7 @@ func TestReconcileRemote401StaleIsTransientWithoutGrace(t *testing.T) {
 func TestReconcileRemote401StaleHaltsAfterGrace(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -3582,7 +3583,7 @@ func TestReconcileRemote401StaleHaltsAfterGrace(t *testing.T) {
 func TestReconcileRemote401GraceResetsOnSuccess(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -3624,7 +3625,7 @@ func TestReconcileRemote401GraceResetsOnSuccess(t *testing.T) {
 func TestReconcileRemote404Halts(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -3652,7 +3653,7 @@ func TestReconcileRemote404Halts(t *testing.T) {
 func TestSyncRemoteCollectsClosedRoundWithoutDelivery(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -3712,7 +3713,7 @@ func TestSyncRemoteCollectsClosedRoundWithoutDelivery(t *testing.T) {
 func TestSyncRemoteSkipsDoneAndLocal(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 
 	doneRemote := remoteBinding("zen")
 	doneRemote.Name = "done-remote"
@@ -3750,7 +3751,7 @@ func TestSyncRemoteSkipsDoneAndLocal(t *testing.T) {
 func TestSyncRemoteSkipsPausedBinding(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.State = store.StatePaused
 	if err := st.Save(b); err != nil {
@@ -3780,7 +3781,7 @@ func TestSyncRemoteSkipsPausedBinding(t *testing.T) {
 func TestSyncRemoteUnlessDaemonSkipsWhileDaemonRuns(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -3815,7 +3816,7 @@ func TestSyncRemoteUnlessDaemonSkipsWhileDaemonRuns(t *testing.T) {
 func TestSyncRemoteUnlessDaemonSyncsWithoutDaemon(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -3867,7 +3868,7 @@ func stoppedRoundRemote(stopped, dirtyCommit string) *fakeRemote {
 func TestCatchUpStoppedNoReport(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -3921,7 +3922,7 @@ func TestCatchUpStoppedNoReport(t *testing.T) {
 func TestCatchUpStoppedWithReport(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -3959,7 +3960,7 @@ func TestCatchUpStoppedWithReport(t *testing.T) {
 func TestCatchUpNotStoppedNoReportHalts(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -3986,7 +3987,7 @@ func TestCatchUpNotStoppedNoReportHalts(t *testing.T) {
 func TestCatchUpStoppedDirtyNote(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -4020,7 +4021,7 @@ func TestCatchUpOrderAndIdempotence(t *testing.T) {
 	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
 	clientRepo, c1 := newRemoteClientRepo(t, "api")
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.Repo = clientRepo
 	if err := st.Save(b); err != nil {
@@ -4186,7 +4187,7 @@ func TestCatchUpClosesRoundAfterHistoryRewrite(t *testing.T) {
 	r2 := strings.TrimSpace(runGit(t, serverRepo, "rev-parse", "HEAD"))
 	bundle2 := readBundle(t, ctx, transport, serverRepo, "", "whole branch")
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.Repo = clientRepo
 	if err := st.Save(b); err != nil {
@@ -4316,7 +4317,7 @@ func readBundle(t *testing.T, ctx context.Context, transport remote.TreeTranspor
 func TestObserveRemoteIdleCatchUpRecoversLostReport(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -4362,7 +4363,7 @@ func TestObserveRemoteIdleCatchUpRecoversLostReport(t *testing.T) {
 func TestObserveRemoteIdleWithReportDoesNotCatchUp(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -4436,7 +4437,7 @@ func TestCatchUpDirtyNote(t *testing.T) {
 		t.Fatal("expected a non-empty bundle")
 	}
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.Repo = clientRepo
 	if err := st.Save(b); err != nil {
@@ -4505,7 +4506,7 @@ func TestCatchUpDirtyNote(t *testing.T) {
 func TestCatchUpWritesDiffEntryFromView(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -4618,7 +4619,7 @@ func TestCatchUpAppendsPathsLineFromView(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			st := store.New(t.TempDir())
+			st := storetest.New(t)
 			b := remoteBinding("zen")
 			if err := st.Save(b); err != nil {
 				t.Fatal(err)
@@ -4706,7 +4707,7 @@ func TestCatchUpAdoptedBranchAbsorbsServerRef(t *testing.T) {
 
 	bundle, c2 := newRoundResultBundle(t, ctx, g, clientRepo, "refs/heads/relevo/api", c1)
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.Branch = "feature/x"
 	b.ExistingBranch = true
@@ -4791,7 +4792,7 @@ func TestCatchUpAdoptedBranchAbsorbsServerRef(t *testing.T) {
 func TestCatchUpFetchesStream(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -4839,7 +4840,7 @@ func TestCatchUpFetchesStream(t *testing.T) {
 func TestCatchUpStreamMissingIsFine(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -4886,7 +4887,7 @@ func TestCatchUpStreamMissingIsFine(t *testing.T) {
 func TestCatchUpWritesTheLogAsARow(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -4935,7 +4936,7 @@ func TestCatchUpWritesTheLogAsARow(t *testing.T) {
 func TestCatchUpReplacesTheMirrorFileWithARow(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -4992,7 +4993,7 @@ func TestCatchUpReplacesTheMirrorFileWithARow(t *testing.T) {
 func TestCatchUpKeepsServerUsage(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -5063,7 +5064,7 @@ func TestCatchUpKeepsServerUsage(t *testing.T) {
 func TestCatchUpRecordsPriorTokens(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -5137,7 +5138,7 @@ func TestCatchUpRecordsPriorTokens(t *testing.T) {
 func TestCatchUpRecordsRusage(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -5200,7 +5201,7 @@ func TestCatchUpRecordsRusage(t *testing.T) {
 func TestCatchUpPreUsageServerNotes(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -5269,7 +5270,7 @@ func TestCatchUpBranchCheckedOutRetries(t *testing.T) {
 
 	bundle, _ := newRoundResultBundle(t, ctx, g, clientRepo, "refs/heads/relevo/api", c1)
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.Repo = clientRepo
 	if err := st.Save(b); err != nil {
@@ -5337,7 +5338,7 @@ func TestCatchUpRewriteOnCheckedOutBaseRetries(t *testing.T) {
 	runGit(t, clientRepo, "commit", "-m", "round 1")
 	r1 := strings.TrimSpace(runGit(t, clientRepo, "rev-parse", "HEAD"))
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.Repo = clientRepo
 	b.Round = 2
@@ -5408,7 +5409,7 @@ func TestCatchUpBranchCheckedOutLogsOnce(t *testing.T) {
 	}
 	_ = bundle.Close()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.Repo = clientRepo
 	if err := st.Save(b); err != nil {
@@ -5464,7 +5465,7 @@ func TestCatchUpBranchCheckedOutLogsOnce(t *testing.T) {
 func TestCatchUpAbsorbFailuresHaltAtTen(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -5516,7 +5517,7 @@ func TestCatchUpAbsorbFailuresHaltAtTen(t *testing.T) {
 // fetch: the count climbs once per tick, the first failure warns and the rest
 // stay quiet, and the tenth asks for a human instead of warning forever.
 func TestCatchUpBundleFailuresHaltAtTen(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -5586,7 +5587,7 @@ func TestCatchUpBundleFailuresHaltAtTen(t *testing.T) {
 func TestCatchUpAbsorbIgnoresAFailureWhenTheBranchHoldsTheRound(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -5659,7 +5660,7 @@ func TestCatchUpAbsorbRecoveryClearsTheHaltWithoutAdvancingTheRound(t *testing.T
 	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
 	clientRepo, c1 := newRemoteClientRepo(t, "api")
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.Repo = clientRepo
 	b.State = store.StateNeedsYou
@@ -5722,7 +5723,7 @@ func TestCatchUpBundleFailureRecoveryClearsTheHalt(t *testing.T) {
 	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
 	clientRepo, c1 := newRemoteClientRepo(t, "api")
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.Repo = clientRepo
 	b.State = store.StateNeedsYou
@@ -5778,7 +5779,7 @@ func TestCatchUpBundleFailureRecoveryClearsTheHalt(t *testing.T) {
 func TestCatchUpAdoptedRewriteHaltsNamingTheRewrite(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.Branch = "feature/x"
 	b.Builder.LastKnown = "r1"
@@ -5832,7 +5833,7 @@ func TestResumeRemoteRefusesRebind(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -5856,7 +5857,7 @@ func TestResumeRemoteRefusesRebind(t *testing.T) {
 // refused, naming the server's candidates as `name (token)`.
 func TestAddRemoteMatchesCandidateByName(t *testing.T) {
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	fg := &fakeGit{
 		headCommitID:  "1111111111111111111111111111111111111111",
 		rootCommitSHA: "2222222222222222222222222222222222222222",
@@ -5899,7 +5900,7 @@ func TestAddRemoteMatchesCandidateByName(t *testing.T) {
 func TestReconcileRemoteUnknownServerIsNotRunning(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.Builder.RemoteStatus = string(remote.RoundRunning)
 	if err := st.Save(b); err != nil {
@@ -5928,7 +5929,7 @@ func TestCatchUpAckFailureLeavesTheReportUnqueued(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -6000,7 +6001,7 @@ func TestCatchUpSettleSkipsAChangedBinding(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -6051,7 +6052,7 @@ func TestResumeRemoteRefusesLabelFlags(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatalf("save remote binding: %v", err)
 	}
@@ -6080,7 +6081,7 @@ func TestResumeRemoteRefusesLabelFlags(t *testing.T) {
 // CreateBindingRequest, and the local mirror records them.
 func TestAddRemoteLabelsWiresRequestAndMirror(t *testing.T) {
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	fg := &fakeGit{
 		headCommitID:       "1111111111111111111111111111111111111111",
 		rootCommitSHA:      "2222222222222222222222222222222222222222",
@@ -6129,7 +6130,7 @@ func TestAddRemoteLabelsWiresRequestAndMirror(t *testing.T) {
 // is created there, so the label is never silently dropped.
 func TestAddRemoteLabelsPreLabelsServerRefused(t *testing.T) {
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	fg := &fakeGit{
 		headCommitID:  "1111111111111111111111111111111111111111",
 		rootCommitSHA: "2222222222222222222222222222222222222222",
@@ -6181,7 +6182,7 @@ func TestWriteTempAndRenameRefusesALinkedDestDir(t *testing.T) {
 func TestMirrorLogLeavesAPlantedBuilderLogAlone(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
@@ -6236,7 +6237,7 @@ func TestCatchUpRecordsThePulledClosedTree(t *testing.T) {
 	t.Run("recorded and kept across the report", func(t *testing.T) {
 		t.Parallel()
 
-		st := store.New(t.TempDir())
+		st := storetest.New(t)
 		b := remoteBinding("zen")
 		b.Repo = t.TempDir()
 		if err := st.Save(b); err != nil {
@@ -6272,7 +6273,7 @@ func TestCatchUpRecordsThePulledClosedTree(t *testing.T) {
 		runGit(t, clientRepo, "checkout", "relevo/api")
 		bundle, _ := newRoundResultBundle(t, ctx, g, clientRepo, "refs/heads/relevo/api", c1)
 
-		st := store.New(t.TempDir())
+		st := storetest.New(t)
 		b := remoteBinding("zen")
 		b.Repo = clientRepo
 		b.RoundClosedTree = "kept-tree"
@@ -6428,7 +6429,7 @@ func TestAddRemoteCarriesTheGate(t *testing.T) {
 	}
 	add := func(t *testing.T, opts AddOptions) (*fakeRemote, store.Binding) {
 		t.Helper()
-		st := store.New(t.TempDir())
+		st := storetest.New(t)
 		fg := &fakeGit{
 			headCommitID:  "1111111111111111111111111111111111111111",
 			rootCommitSHA: "2222222222222222222222222222222222222222",
@@ -6512,7 +6513,7 @@ func TestAddRemoteCarriesTheRegate(t *testing.T) {
 	}
 	add := func(t *testing.T, opts AddOptions) (*fakeRemote, store.Binding) {
 		t.Helper()
-		st := store.New(t.TempDir())
+		st := storetest.New(t)
 		fg := &fakeGit{
 			headCommitID:  "1111111111111111111111111111111111111111",
 			rootCommitSHA: "2222222222222222222222222222222222222222",
@@ -6581,7 +6582,7 @@ func TestObserveRemoteSkipsSwitchWhenCandidateAlreadyRecorded(t *testing.T) {
 		getBindingResp:    view,
 		roundFileFromResp: io.NopCloser(strings.NewReader("")),
 	}
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := store.Binding{
 		Name:             "api",
 		CWD:              "/fake/repo",
@@ -6640,7 +6641,7 @@ func TestObserveRemoteSkipsSwitchWhenCandidateAlreadyRecorded(t *testing.T) {
 // The server may hold no log bytes past the local mirror yet, and that answer
 // comes on every sync, so it must not reach the log.
 func TestMirrorLogMissingOnTheServerIsQuiet(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)

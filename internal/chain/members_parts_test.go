@@ -5,6 +5,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -45,7 +46,7 @@ func TestSnapshotRefAndDir(t *testing.T) {
 	if got := SnapshotRef(store.Binding{Name: "c"}, 3); got != "refs/relevo/c/round-3" {
 		t.Errorf("SnapshotRef = %q", got)
 	}
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	member := newMemberChainRow(t, s, "c", string(StatusRunning), "")
 	want := s.ChainDir("c")
 	if got := Dir(s, nil, member.Name); got != want {

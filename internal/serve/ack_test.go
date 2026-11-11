@@ -11,13 +11,14 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // TestSettleServedConfirmsUpToRound pins the bound settleServed uses: every
 // unconfirmed to_planner entry with Round <= upTo is confirmed with route
 // "ack"; everything else is left alone.
 func TestSettleServedConfirmsUpToRound(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	name := "api"
 	// AppendLog refuses a name with no record.
 	if err := st.Save(store.Binding{Name: name, CWD: t.TempDir()}); err != nil {

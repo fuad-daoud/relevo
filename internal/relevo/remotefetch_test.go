@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // lockFreeWithin reports whether the store's state lock can be taken within d,
@@ -56,7 +57,7 @@ func countCalls(fr *fakeRemote, prefix string) int {
 }
 
 func TestTickFetchesRemoteWithoutTheStateLock(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +92,7 @@ func TestTickFetchesRemoteWithoutTheStateLock(t *testing.T) {
 }
 
 func TestTickDiscardsFetchWhenBindingIsDoneMidFetch(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +137,7 @@ func TestTickDiscardsFetchWhenBindingIsDoneMidFetch(t *testing.T) {
 }
 
 func TestTickDiscardsFetchWhenRoundAdvancedMidFetch(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +185,7 @@ func TestTickDiscardsFetchWhenRoundAdvancedMidFetch(t *testing.T) {
 }
 
 func TestSyncRemoteFetchesWithoutTheStateLock(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +220,7 @@ func TestSyncRemoteFetchesWithoutTheStateLock(t *testing.T) {
 }
 
 func TestApplyLogMirrorSkipsWhenTheFileMoved(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +339,7 @@ func assertNoFetchTemps(t *testing.T, st *store.Store, name string, round int) {
 // free, and the apply installs the report and queues it under the lock.
 func TestTickCatchesUpWithoutTheStateLock(t *testing.T) {
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +396,7 @@ func TestTickCatchesUpWithoutTheStateLock(t *testing.T) {
 // file, no ack goes out, and nothing is queued.
 func TestCatchUpDiscardedWhenDoneMidFetch(t *testing.T) {
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -445,7 +446,7 @@ func TestCatchUpDiscardedWhenDoneMidFetch(t *testing.T) {
 // aborts the fetch before the bundle and leaves no report and no temp file.
 func TestCatchUpFetchAbortLeavesNothing(t *testing.T) {
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -496,7 +497,7 @@ func TestCatchUpFetchAbortLeavesNothing(t *testing.T) {
 // path: a report 404 on a round the server did not stop halts with today's
 // message.
 func TestTickCatchUpMissingReportHalts(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -529,7 +530,7 @@ func TestTickCatchUpMissingReportHalts(t *testing.T) {
 // report is queued afterwards, and no download temp survives.
 func TestTickAcksWithoutTheStateLock(t *testing.T) {
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -582,7 +583,7 @@ func TestTickAcksWithoutTheStateLock(t *testing.T) {
 // report is queued afterwards.
 func TestSyncRemoteAcksWithoutTheStateLock(t *testing.T) {
 	ctx := context.Background()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
 	}
@@ -638,7 +639,7 @@ func TestSyncRemoteAcksWithoutTheStateLock(t *testing.T) {
 // count the absorb and the reset, and a binding already holding a base.
 func bundleFetchFixture(t *testing.T) (Runtime, store.Binding, *fakeRemote, *fakeTransport, *fakeGit) {
 	t.Helper()
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	b := remoteBinding("zen")
 	b.Builder.LastKnown = "r1"
 	if err := st.Save(b); err != nil {

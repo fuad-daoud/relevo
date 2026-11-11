@@ -7,7 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -158,7 +158,7 @@ func TestCmdLineExecuteCommands(t *testing.T) {
 	})
 
 	t.Run("rounds without a DB", func(t *testing.T) {
-		st := store.New(t.TempDir())
+		st := storetest.New(t)
 		noDB := testEnv(mastermindSource{relevo.Runtime{Store: st}}, view.Report{}, 140, 40)
 		msg, ok := execLine("rounds", noDB, p)().(widget.NoticeMsg)
 		if !ok {
@@ -186,7 +186,7 @@ func TestCmdLineExecuteCommands(t *testing.T) {
 // TestOpenRoundNotFound: a jump whose name is in neither the fleet nor the
 // database is a notice.
 func TestOpenRoundNotFound(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	env := testEnv(mastermindSource{relevo.Runtime{Store: st}}, view.Report{}, 140, 40)
 	msg, ok := openRound(env, dashJump("ghost", "h1", 1))().(widget.NoticeMsg)
 	if !ok {
@@ -199,7 +199,7 @@ func TestOpenRoundNotFound(t *testing.T) {
 
 // TestOpenRoundLive: a live row resolves to a roundOpenMsg with its key.
 func TestOpenRoundLive(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	rep := view.Report{Bindings: []view.BindingStatus{{Name: "persist", Round: 3, Display: "ACTIVE"}}}
 	env := testEnv(mastermindSource{relevo.Runtime{Store: st}}, rep, 140, 40)
 	msg, ok := openRound(env, dashJump("persist", "b1", 2))().(roundOpenMsg)

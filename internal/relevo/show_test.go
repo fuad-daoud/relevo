@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/ingest"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/transcript"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -102,7 +103,7 @@ func seedArchivedLog(t *testing.T, d *db.DB, recID string) {
 // every NNN-* file of the fixture sealed into it.
 func archiveShowFixture(t *testing.T, extra map[string]string) *store.Store {
 	t.Helper()
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	if err := os.MkdirAll(s.Dir("fixture"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -200,7 +201,7 @@ func seedShowArchiveDB(t *testing.T) *db.DB {
 // highest round with a report entry -- not the open one.
 func newShowLiveStore(t *testing.T) *store.Store {
 	t.Helper()
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	b := store.Binding{
 		Name:  "fixture",
 		CWD:   "/work/show-fixture",
@@ -343,7 +344,7 @@ func TestShowLiveTranscriptReadsBuilderLog(t *testing.T) {
 func TestShowLiveRoundsIsHighestPlanned(t *testing.T) {
 	t.Parallel()
 
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	b := store.Binding{
 		Name:  "idle",
 		CWD:   "/work/idle",
@@ -387,7 +388,7 @@ func TestShowLiveRoundsIsHighestPlanned(t *testing.T) {
 func TestShowLiveNoCompletedRound(t *testing.T) {
 	t.Parallel()
 
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	b := store.Binding{
 		Name:  "openonly",
 		CWD:   "/work/openonly",
@@ -416,7 +417,7 @@ func TestShowDBFallsBackWhenNotLive(t *testing.T) {
 	t.Parallel()
 
 	d := seedShowDB(t)
-	rt := Runtime{Store: store.New(t.TempDir()), DB: d}
+	rt := Runtime{Store: storetest.New(t), DB: d}
 
 	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Section: ShowPrompt})
 	if err != nil {
@@ -441,7 +442,7 @@ func TestShowDBTranscriptFromRows(t *testing.T) {
 	t.Parallel()
 
 	d := seedShowDB(t)
-	rt := Runtime{Store: store.New(t.TempDir()), DB: d}
+	rt := Runtime{Store: storetest.New(t), DB: d}
 
 	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Round: 2, Section: ShowTranscript})
 	if err != nil {
@@ -500,7 +501,7 @@ func TestShowDBSkipsOpenRoundForNewestCompleted(t *testing.T) {
 	}
 	seedRoundMirror(t, d, dir)
 
-	rt := Runtime{Store: store.New(t.TempDir()), DB: d}
+	rt := Runtime{Store: storetest.New(t), DB: d}
 	res, err := Show(context.Background(), rt, ShowOptions{Name: "openhead", Section: ShowPrompt})
 	if err != nil {
 		t.Fatalf("Show: %v", err)
@@ -517,7 +518,7 @@ func TestShowDBLogFromEvents(t *testing.T) {
 	t.Parallel()
 
 	d := seedShowDB(t)
-	rt := Runtime{Store: store.New(t.TempDir()), DB: d}
+	rt := Runtime{Store: storetest.New(t), DB: d}
 
 	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Round: 1, Section: ShowLog})
 	if err != nil {
@@ -540,7 +541,7 @@ func TestShowDBArchivedHeaderFacts(t *testing.T) {
 	t.Parallel()
 
 	d := seedShowArchiveDB(t)
-	rt := Runtime{Store: store.New(t.TempDir()), DB: d}
+	rt := Runtime{Store: storetest.New(t), DB: d}
 
 	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Section: ShowPrompt})
 	if err != nil {
@@ -558,7 +559,7 @@ func TestShowRoundOutOfRange(t *testing.T) {
 	t.Parallel()
 
 	d := seedShowDB(t)
-	rt := Runtime{Store: store.New(t.TempDir()), DB: d}
+	rt := Runtime{Store: storetest.New(t), DB: d}
 
 	_, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Round: 99, Section: ShowPrompt})
 	if err == nil {
@@ -573,7 +574,7 @@ func TestShowRoundOutOfRange(t *testing.T) {
 func TestShowUnknownBinding(t *testing.T) {
 	t.Parallel()
 
-	rt := Runtime{Store: store.New(t.TempDir())}
+	rt := Runtime{Store: storetest.New(t)}
 
 	_, err := Show(context.Background(), rt, ShowOptions{Name: "nope", Section: ShowPrompt})
 	if err == nil {
@@ -949,7 +950,7 @@ func TestShowTranscriptRendersTheStreamWithoutALog(t *testing.T) {
 	stream := "live stream line one\nlive stream line two\n"
 
 	t.Run("live", func(t *testing.T) {
-		s := store.New(t.TempDir())
+		s := storetest.New(t)
 		b := store.Binding{Name: "fixture", CWD: "/work/fixture", Round: 1, State: store.StateActive}
 		if err := s.Save(b); err != nil {
 			t.Fatalf("Save: %v", err)
@@ -992,7 +993,7 @@ func TestShowTranscriptRendersTheStreamWithoutALog(t *testing.T) {
 func TestShowLiveFindingsOnBindingWithNoRounds(t *testing.T) {
 	t.Parallel()
 
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	b := store.Binding{
 		Name:  "consultonly",
 		CWD:   "/work/consultonly",
@@ -1037,7 +1038,7 @@ func TestShowLiveFindingsOnBindingWithNoRounds(t *testing.T) {
 func TestShowLiveFindingsUnknownConsult(t *testing.T) {
 	t.Parallel()
 
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	b := store.Binding{
 		Name:  "consultonly",
 		CWD:   "/work/consultonly",
@@ -1069,7 +1070,7 @@ func TestShowLiveFindingsUnknownConsult(t *testing.T) {
 func TestShowArchivedFindingsOnBindingWithNoRounds(t *testing.T) {
 	t.Parallel()
 
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	b := store.Binding{
 		Name:  "archivedconsult",
 		CWD:   "/work/archivedconsult",

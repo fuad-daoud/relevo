@@ -6,12 +6,13 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // logStore is a store whose member logs hold the given entries, in order.
 func logStore(t *testing.T, logs map[string][]store.LogEntry) *store.Store {
 	t.Helper()
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	for name, entries := range logs {
 		if err := s.WithLock(func(tx *store.Tx) error {
 			return tx.Save(store.Binding{Name: name, CWD: s.Dir(name)})
@@ -97,7 +98,7 @@ func TestRoundGateReadsTheRoundsReportGate(t *testing.T) {
 func TestNewestReportAtIsTheLatestReportTime(t *testing.T) {
 	t.Parallel()
 
-	s := store.New(t.TempDir())
+	s := storetest.New(t)
 	if err := s.WithLock(func(tx *store.Tx) error {
 		return tx.Save(store.Binding{Name: "c", CWD: s.Dir("c")})
 	}); err != nil {

@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store/storetest"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -75,7 +76,7 @@ func readerRoundRow(name, actor string) view.BindingStatus {
 // TestReaderRoundTabs: a reader round shows plan, artifacts, log and
 // transcript; a writer round keeps today's five tabs.
 func TestReaderRoundTabs(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	seedReaderArtifacts(t, st, "review-568", "reviewer", 1, map[string]string{"summary.md": "# hi\n"}, railNow)
 	rv := newTestRound(t, relevo.Runtime{Store: st},
 		view.Report{Bindings: []view.BindingStatus{readerRoundRow("review-568", "reviewer")}}, "review-568", 0)
@@ -95,7 +96,7 @@ func TestReaderRoundTabs(t *testing.T) {
 		}
 	}
 
-	wst := store.New(t.TempDir())
+	wst := storetest.New(t)
 	if err := wst.Save(newTestBinding("writer-1")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -138,7 +139,7 @@ func loadArtifactsAt(t *testing.T, rv roundView, rel string) roundView {
 // the fake open action with pager, browser, browser and editor, each on that
 // row's file.
 func TestArtifactsEnterOpensByKind(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	seedReaderArtifacts(t, st, "review-568", "reviewer", 1, map[string]string{
 		"summary.md": "# hi\n",
 		"page.html":  "<h1>hi</h1>\n",
@@ -183,7 +184,7 @@ func TestArtifactsEnterOpensByKind(t *testing.T) {
 // .excalidraw artifact opens in $EDITOR and shows no edit hint, even with a
 // companion .svg beside it; the .svg itself still opens in the browser.
 func TestArtifactsExcalidrawOpensInEditor(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	seedReaderArtifacts(t, st, "review-568", "reviewer", 1, map[string]string{
 		"board.excalidraw": `{"type":"excalidraw","elements":[]}`,
 		"board.svg":        "<svg></svg>\n",
@@ -242,7 +243,7 @@ func TestArtifactsExcalidrawOpensInEditor(t *testing.T) {
 // TestArtifactsTabReadsSealedFiles: after SealRound the artifacts tab still
 // lists the round's files and renders the selected one from its sealed rows.
 func TestArtifactsTabReadsSealedFiles(t *testing.T) {
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	seedReaderArtifacts(t, st, "review-568", "reviewer", 1, map[string]string{
 		"summary.md": "# the summary\n\nNothing wrong.\n",
 		"notes.txt":  "hello\n",
@@ -295,7 +296,7 @@ func writerIdleRow(name string) view.BindingStatus {
 func writerIdleRoundModel(t *testing.T, width, height int) Model {
 	t.Helper()
 	const name = "writer-idle"
-	st := store.New(t.TempDir())
+	st := storetest.New(t)
 	if err := st.Save(newTestBinding(name)); err != nil {
 		t.Fatalf("Save: %v", err)
 	}

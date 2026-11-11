@@ -16,7 +16,7 @@ doc=docs/architecture.md
 
 # The packages that serve tests only, named under the table; production code
 # must not import them.
-test_only="db/dbtest e2e"
+test_only="db/dbtest store/storetest e2e"
 
 work=$(mktemp -d)
 # The cleanup must not decide the verdict: in dash a failing EXIT trap's status
