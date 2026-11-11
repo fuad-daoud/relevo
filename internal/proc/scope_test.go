@@ -75,6 +75,7 @@ func TestScopeArgv(t *testing.T) {
 }
 
 func TestParseRusageTrailer(t *testing.T) {
+	ptr := func(n int64) *int64 { return &n }
 	cases := map[string]struct {
 		line string
 		want spawn.ProcRusage
@@ -86,11 +87,33 @@ func TestParseRusageTrailer(t *testing.T) {
 		"unknown key":      {"relevo-rusage:cpu_usec=1000 foo=bar", spawn.ProcRusage{CPUMS: 1}, true},
 		"malformed number": {"relevo-rusage:cpu_usec=notanumber", spawn.ProcRusage{}, true},
 		"wrong prefix":     {"something-else:cpu_usec=1000", spawn.ProcRusage{}, false},
+		"full line": {"relevo-rusage:cpu_usec=123456 mem_peak=891289600 base=100 burst=200 burst_secs=15 " +
+			"cpu_some_usec=11 cpu_full_usec=12 mem_some_usec=13 mem_full_usec=14 io_some_usec=15 io_full_usec=16 ev_high=17 ev_max=18 ev_oom_kill=19",
+			spawn.ProcRusage{CPUMS: 123, PeakMemBytes: 891289600,
+				BaseBytes: ptr(100), BurstBytes: ptr(200), BurstSecs: ptr(15),
+				CPUSomeUsec: ptr(11), CPUFullUsec: ptr(12), MemSomeUsec: ptr(13), MemFullUsec: ptr(14),
+				IOSomeUsec: ptr(15), IOFullUsec: ptr(16), EvHigh: ptr(17), EvMax: ptr(18), EvOOMKill: ptr(19)}, true},
+		"base alone":       {"relevo-rusage:base=100", spawn.ProcRusage{BaseBytes: ptr(100)}, true},
+		"burst alone":      {"relevo-rusage:burst=200", spawn.ProcRusage{BurstBytes: ptr(200)}, true},
+		"burst_secs alone": {"relevo-rusage:burst_secs=15", spawn.ProcRusage{BurstSecs: ptr(15)}, true},
+		"cpu_some alone":   {"relevo-rusage:cpu_some_usec=11", spawn.ProcRusage{CPUSomeUsec: ptr(11)}, true},
+		"cpu_full alone":   {"relevo-rusage:cpu_full_usec=12", spawn.ProcRusage{CPUFullUsec: ptr(12)}, true},
+		"mem_some alone":   {"relevo-rusage:mem_some_usec=13", spawn.ProcRusage{MemSomeUsec: ptr(13)}, true},
+		"mem_full alone":   {"relevo-rusage:mem_full_usec=14", spawn.ProcRusage{MemFullUsec: ptr(14)}, true},
+		"io_some alone":    {"relevo-rusage:io_some_usec=15", spawn.ProcRusage{IOSomeUsec: ptr(15)}, true},
+		"io_full alone":    {"relevo-rusage:io_full_usec=16", spawn.ProcRusage{IOFullUsec: ptr(16)}, true},
+		"ev_high alone":    {"relevo-rusage:ev_high=17", spawn.ProcRusage{EvHigh: ptr(17)}, true},
+		"ev_max alone":     {"relevo-rusage:ev_max=18", spawn.ProcRusage{EvMax: ptr(18)}, true},
+		// A measured zero is present, not missing.
+		"ev_oom_kill zero": {"relevo-rusage:ev_oom_kill=0", spawn.ProcRusage{EvOOMKill: ptr(0)}, true},
+		// A malformed value drops only its own key.
+		"malformed burst keeps siblings": {"relevo-rusage:burst=abc base=7", spawn.ProcRusage{BaseBytes: ptr(7)}, true},
+		"empty ev_high keeps siblings":   {"relevo-rusage:ev_high= cpu_some_usec=9", spawn.ProcRusage{CPUSomeUsec: ptr(9)}, true},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			got, ok := ParseRusageTrailer(c.line)
-			if ok != c.ok || got != c.want {
+			if ok != c.ok || !reflect.DeepEqual(got, c.want) {
 				t.Errorf("ParseRusageTrailer(%q) = %+v, %v; want %+v, %v", c.line, got, ok, c.want, c.ok)
 			}
 		})

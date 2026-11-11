@@ -40,20 +40,58 @@ const ReapFragment = `relevo_reap_scope() {
 // exits 143 before the trailer.
 const SupervisorScript = ReapFragment + `want=$1
 shift
-trap 'exit 143' TERM
+trap 'kill "$sampjob" 2>/dev/null; [ -n "$samp" ] && rm -f "$samp" 2>/dev/null; exit 143' TERM
 { echo 500 >/proc/self/oom_score_adj; } 2>/dev/null || true
+samp=""; sampjob=""
+if [ -n "$want" ]; then
+  prematch=$(cut -d: -f3 /proc/self/cgroup 2>/dev/null | head -1)
+  case "$prematch" in
+    */"$want")
+      read -r sampself _ </proc/self/stat 2>/dev/null
+      if [ -n "$sampself" ]; then
+        samp="${TMPDIR:-/tmp}/relevo-memsamp-$sampself.log"
+        ( while :; do
+          a=$(awk '/^anon /{print $2; exit}' "/sys/fs/cgroup$prematch/memory.stat" 2>/dev/null)
+          s=$(cat "/sys/fs/cgroup$prematch/memory.swap.current" 2>/dev/null)
+          if [ -z "$a" ] || [ -z "$s" ]; then exit 0; fi
+          printf '%s %s\n' "$a" "$s" >>"$samp" 2>/dev/null || exit 0
+          sleep 5 2>/dev/null || exit 0
+        done ) &
+        sampjob=$!
+      fi
+      ;;
+  esac
+fi
 "$@" </dev/null; rc=$?
+if [ -n "$sampjob" ]; then kill "$sampjob" 2>/dev/null || true; wait "$sampjob" 2>/dev/null || true; fi
 if [ -n "$want" ]; then
   cg=$(cut -d: -f3 /proc/self/cgroup 2>/dev/null | head -1)
   case "$cg" in */"$want")
     u=$(awk '/^usage_usec/{print $2}' "/sys/fs/cgroup$cg/cpu.stat" 2>/dev/null)
     m=$(cat "/sys/fs/cgroup$cg/memory.peak" 2>/dev/null)
-    printf '\nrelevo-rusage:%s%s\n' "${u:+cpu_usec=$u}" "${m:+ mem_peak=$m}"
+    base=""; burst=""; bsecs=""
+    if [ -f "$samp" ]; then
+      agg=$(awk '{print $1+$2}' "$samp" 2>/dev/null | sort -n 2>/dev/null | awk '{a[NR]=$1; if($1>m)m=$1} END{if(NR==0)exit 1; b=a[int((NR+1)/2)]; c=0; for(i=1;i<=NR;i++) if(a[i]>m/2)c++; printf "%d %d %d", b, m, c*5}' 2>/dev/null)
+      if [ -n "$agg" ]; then
+        base=${agg%% *}; tmp=${agg#* }; burst=${tmp%% *}; bsecs=${tmp#* }
+      fi
+    fi
+    cs=$(awk '/^some /{for(i=1;i<=NF;i++) if($i~/^total=/){sub(/^total=/,"",$i); print $i; exit}}' "/sys/fs/cgroup$cg/cpu.pressure" 2>/dev/null)
+    cf=$(awk '/^full /{for(i=1;i<=NF;i++) if($i~/^total=/){sub(/^total=/,"",$i); print $i; exit}}' "/sys/fs/cgroup$cg/cpu.pressure" 2>/dev/null)
+    ms=$(awk '/^some /{for(i=1;i<=NF;i++) if($i~/^total=/){sub(/^total=/,"",$i); print $i; exit}}' "/sys/fs/cgroup$cg/memory.pressure" 2>/dev/null)
+    mf=$(awk '/^full /{for(i=1;i<=NF;i++) if($i~/^total=/){sub(/^total=/,"",$i); print $i; exit}}' "/sys/fs/cgroup$cg/memory.pressure" 2>/dev/null)
+    ios=$(awk '/^some /{for(i=1;i<=NF;i++) if($i~/^total=/){sub(/^total=/,"",$i); print $i; exit}}' "/sys/fs/cgroup$cg/io.pressure" 2>/dev/null)
+    iof=$(awk '/^full /{for(i=1;i<=NF;i++) if($i~/^total=/){sub(/^total=/,"",$i); print $i; exit}}' "/sys/fs/cgroup$cg/io.pressure" 2>/dev/null)
+    eh=$(awk '/^high /{print $2; exit}' "/sys/fs/cgroup$cg/memory.events" 2>/dev/null)
+    em=$(awk '/^max /{print $2; exit}' "/sys/fs/cgroup$cg/memory.events" 2>/dev/null)
+    ek=$(awk '/^oom_kill /{print $2; exit}' "/sys/fs/cgroup$cg/memory.events" 2>/dev/null)
+    printf '\nrelevo-rusage:%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' "${u:+cpu_usec=$u}" "${m:+ mem_peak=$m}" "${base:+ base=$base}" "${burst:+ burst=$burst}" "${bsecs:+ burst_secs=$bsecs}" "${cs:+ cpu_some_usec=$cs}" "${cf:+ cpu_full_usec=$cf}" "${ms:+ mem_some_usec=$ms}" "${mf:+ mem_full_usec=$mf}" "${ios:+ io_some_usec=$ios}" "${iof:+ io_full_usec=$iof}" "${eh:+ ev_high=$eh}" "${em:+ ev_max=$em}" "${ek:+ ev_oom_kill=$ek}"
     read -r self _ </proc/self/stat
     [ -n "$self" ] && relevo_reap_scope "/sys/fs/cgroup$cg/cgroup.procs" "$self"
     ;;
   esac
 fi
+[ -n "$samp" ] && rm -f "$samp" 2>/dev/null || true
 printf '\nrelevo-exit:%s\n' "$rc"`
 
 // ContainerSupervisorScript is SupervisorScript with one added line: it exits

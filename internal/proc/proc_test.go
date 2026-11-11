@@ -1223,12 +1223,53 @@ func TestSupervisorScriptReapsInsideTheWantBranch(t *testing.T) {
 	rusageAt := strings.Index(supervisorScript, `printf '\n`+trail.RusageTrailerPrefix)
 	readAt := strings.Index(supervisorScript, "read -r self _ </proc/self/stat")
 	reapAt := strings.Index(supervisorScript, reapCall)
-	esacAt := strings.Index(supervisorScript, "esac")
+	// The sampler's pre-launch match has its own case, so the branch's close
+	// is the first esac at or after the reap.
+	esacAt := -1
+	if reapAt >= 0 {
+		if rel := strings.Index(supervisorScript[reapAt:], "esac"); rel >= 0 {
+			esacAt = reapAt + rel
+		}
+	}
 	if caseAt < 0 || rusageAt < 0 || readAt < 0 || reapAt < 0 || esacAt < 0 {
 		t.Fatalf("supervisorScript lacks one of the branch, the rusage line, the self-pid read, the reap call or its esac: %q", supervisorScript)
 	}
 	if caseAt >= rusageAt || rusageAt >= readAt || readAt >= reapAt || reapAt >= esacAt {
 		t.Errorf("the read at %d and the reap at %d must sit inside the branch [%d,%d), after the rusage line at %d", readAt, reapAt, caseAt, esacAt, rusageAt)
+	}
+}
+
+// The sampler starts before the builder when the cgroup already matches, and
+// it is dead before the rusage line prints: the reap TERMs every other pid
+// in the cgroup, and a lingering sampler would delay the exit trailer.
+func TestSupervisorScriptSamplerDiesBeforeTheRusageLine(t *testing.T) {
+	for _, sub := range []string{
+		"memory.stat",
+		"memory.swap.current",
+		"sleep 5",
+		"read -r sampself _ </proc/self/stat",
+		"relevo-memsamp-",
+		"cpu.pressure",
+		"memory.pressure",
+		"io.pressure",
+		"memory.events",
+	} {
+		if !strings.Contains(supervisorScript, sub) {
+			t.Errorf("supervisorScript lacks %q", sub)
+		}
+	}
+	launchAt := strings.Index(supervisorScript, "sampjob=$!")
+	builderAt := strings.Index(supervisorScript, `"$@" </dev/null`)
+	killAt := strings.Index(supervisorScript, `then kill "$sampjob"`)
+	rusageAt := strings.Index(supervisorScript, `printf '\n`+trail.RusageTrailerPrefix)
+	reapAt := strings.Index(supervisorScript, reapCall)
+	trailerAt := strings.LastIndex(supervisorScript, trail.ExitTrailer)
+	if launchAt < 0 || builderAt < 0 || killAt < 0 || rusageAt < 0 || reapAt < 0 || trailerAt < 0 {
+		t.Fatalf("supervisorScript lacks one of the sampler launch, the builder, its kill, the rusage line, the reap or the exit trailer")
+	}
+	if launchAt >= builderAt || builderAt >= killAt || killAt >= rusageAt || rusageAt >= reapAt || reapAt >= trailerAt {
+		t.Errorf("order = launch %d, builder %d, kill %d, rusage %d, reap %d, trailer %d; want launch < builder < kill < rusage < reap < trailer",
+			launchAt, builderAt, killAt, rusageAt, reapAt, trailerAt)
 	}
 }
 
