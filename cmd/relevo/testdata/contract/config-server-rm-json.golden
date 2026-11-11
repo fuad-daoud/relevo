@@ -1,6 +1,7 @@
 {
   "name": "zen",
   "removed": true,
+  "dry_run": false,
   "archived": [
     "api",
     "web"

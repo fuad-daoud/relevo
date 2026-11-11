@@ -236,6 +236,18 @@ func TestContractWriteAdminJSON(t *testing.T) {
 		if doc.Name != "zen" || !doc.Removed {
 			t.Errorf("doc = %+v, want zen removed", doc)
 		}
+		if doc.Archived == nil {
+			t.Error("archived is nil, want an empty list")
+		}
+		if len(doc.Archived) != 0 {
+			t.Errorf("archived = %q, want empty", doc.Archived)
+		}
+		if doc.ArchivedCount != 0 {
+			t.Errorf("archived_count = %d, want 0", doc.ArchivedCount)
+		}
+		if doc.DryRun {
+			t.Errorf("doc = %+v, want dry_run false on a real removal", doc)
+		}
 	})
 
 	t.Run("config secret set", func(t *testing.T) {
@@ -432,7 +444,7 @@ func seedRetireBinding(t *testing.T, name, server string, pid int) {
 // seedRetireChainRow records one chain row naming server in the test store,
 // the same store the CLI's newRuntime reads. A running row holds the retire
 // the way a live local process does, without depending on process state.
-func seedRetireChainRow(t *testing.T, name, server, status string) {
+func seedRetireChainRow(t *testing.T, name, server, status, builder string) {
 	t.Helper()
 	root, err := tmpdir.DefaultRoot()
 	if err != nil {
@@ -440,7 +452,7 @@ func seedRetireChainRow(t *testing.T, name, server, status string) {
 	}
 	row := db.ChainRow{
 		ID: db.NewID(), Name: name, Server: server, Status: status,
-		Phase: "build", Step: "building", Plan: 1, Plans: 1,
+		Phase: "build", Step: "building", Plan: 1, Plans: 1, Builder: builder,
 	}
 	if err := store.New(root).WithLock(func(tx *store.Tx) error {
 		return tx.ChainPut(row)
@@ -501,6 +513,9 @@ func TestContractServerRmRetire(t *testing.T) {
 		if doc.Name != "zen" || !doc.Removed {
 			t.Errorf("doc = %+v, want zen removed", doc)
 		}
+		if doc.DryRun {
+			t.Errorf("doc = %+v, want dry_run false on a real retire", doc)
+		}
 		if !slices.Equal(doc.Archived, []string{"api", "web"}) || doc.ArchivedCount != 2 {
 			t.Errorf("doc = %+v, want api and web archived", doc)
 		}
@@ -521,7 +536,7 @@ func TestContractServerRmRetire(t *testing.T) {
 		docsEnv(t)
 		seedAdminServer(t, "zen", "https://zen.example.test:7777")
 		seedRetireBinding(t, "api", "zen", 0)
-		seedRetireChainRow(t, "shop", "zen", string(chain.StatusRunning))
+		seedRetireChainRow(t, "shop", "zen", string(chain.StatusRunning), "")
 
 		_, _, runErr := captureOutput(t, func() error {
 			return run([]string{"config", "server", "rm", "zen", "--retire"})
@@ -539,6 +554,33 @@ func TestContractServerRmRetire(t *testing.T) {
 		}
 		if !strings.Contains(string(out), "zen") {
 			t.Errorf("server list = %q, want zen still configured", out)
+		}
+	})
+
+	t.Run("partial archive failure keeps the server", func(t *testing.T) {
+		docsEnv(t)
+		seedAdminServer(t, "zen", "https://zen.example.test:7777")
+		seedRetireBinding(t, "aaa", "zen", 0)
+		seedRetireBinding(t, "mid", "zen", 0)
+		seedRetireBinding(t, "zzz", "zen", 0)
+		seedRetireChainRow(t, "elsewhere", "contabo", string(chain.StatusRunning), "mid")
+
+		_, _, runErr := captureOutput(t, func() error {
+			return run([]string{"config", "server", "rm", "zen", "--retire"})
+		})
+		ce := requireCLIError(t, runErr, codeInternal, "")
+		if !strings.Contains(ce.message, "aaa") || !strings.Contains(ce.message, `server "zen" is kept`) {
+			t.Errorf("message = %q, want what landed and that the entry is kept", ce.message)
+		}
+		out, _, err := captureOutput(t, func() error { return run([]string{"config", "server", "list"}) })
+		if err != nil {
+			t.Fatalf("config server list: %v", err)
+		}
+		if !strings.Contains(string(out), "zen") {
+			t.Errorf("server list = %q, want zen still configured", out)
+		}
+		if got := retireLiveNames(t); !slices.Equal(got, []string{"mid", "zzz"}) {
+			t.Errorf("live = %q, want mid and zzz still live", got)
 		}
 	})
 
@@ -587,8 +629,21 @@ func TestContractServerRmRetire(t *testing.T) {
 		if !slices.Equal(doc.Archived, []string{"api"}) || doc.ArchivedCount != 1 {
 			t.Errorf("doc = %+v, want the api plan", doc)
 		}
+		if doc.Removed {
+			t.Errorf("doc = %+v, want removed false on a dry run", doc)
+		}
+		if !doc.DryRun {
+			t.Errorf("doc = %+v, want dry_run true on a dry run", doc)
+		}
 		if !strings.Contains(string(stderr), "would archive api") {
 			t.Errorf("stderr = %q, want the would-archive notice", stderr)
+		}
+		out, _, err := captureOutput(t, func() error { return run([]string{"config", "server", "list"}) })
+		if err != nil {
+			t.Fatalf("config server list: %v", err)
+		}
+		if !strings.Contains(string(out), "zen") {
+			t.Errorf("server list = %q, want zen still configured", out)
 		}
 	})
 
@@ -596,7 +651,7 @@ func TestContractServerRmRetire(t *testing.T) {
 		docsEnv(t)
 		seedAdminServer(t, "zen", "https://zen.example.test:7777")
 		seedRetireBinding(t, "api", "zen", 0)
-		seedRetireChainRow(t, "shop", "zen", string(chain.StatusRunning))
+		seedRetireChainRow(t, "shop", "zen", string(chain.StatusRunning), "")
 
 		stdout, _, runErr := captureOutput(t, func() error {
 			return run([]string{"config", "server", "rm", "zen", "--retire", "--dry-run"})

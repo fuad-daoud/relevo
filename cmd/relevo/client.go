@@ -246,7 +246,7 @@ func plainServerRmRun(rt relevo.Runtime, name string, asJSON bool) error {
 		return err
 	}
 	if asJSON {
-		return printDoc(configServerRmDocOf(name, nil))
+		return printDoc(configServerRmDocOf(name, nil, false))
 	}
 	fmt.Printf("removed server %s\n", name)
 	return nil
@@ -275,7 +275,7 @@ func retireServerRun(rt relevo.Runtime, name string, dryRun, asJSON bool) error 
 			return retireRefusalsError(name, res.Plan)
 		}
 		if asJSON {
-			return printDoc(configServerRmDocOf(name, res.Plan.Archive))
+			return printDoc(configServerRmDocOf(name, res.Plan.Archive, true))
 		}
 		return nil
 	}
@@ -299,7 +299,7 @@ func retireServerRun(rt relevo.Runtime, name string, dryRun, asJSON bool) error 
 		return err
 	}
 	if asJSON {
-		return printDoc(configServerRmDocOf(name, res.Archived))
+		return printDoc(configServerRmDocOf(name, res.Archived, false))
 	}
 	fmt.Printf("removed server %s (%d bindings archived)\n", name, len(res.Archived))
 	return nil
