@@ -83,3 +83,66 @@ func TestNoteRoundsOpenSkipsDoneBindingsAndKeepsPaused(t *testing.T) {
 	}
 	t.Logf("log reads during NoteRoundsOpen: %v", reads)
 }
+
+// TestARemoteRoundPromptedOnItsServerIsInFlight pins the client side of the
+// idle count: a chain started on a server sends its prompts there, so the
+// member's log here holds no prompt for a round that is running. A remote
+// binding's unreported current round counts; a reported one and a binding
+// with no round yet do not.
+func TestARemoteRoundPromptedOnItsServerIsInFlight(t *testing.T) {
+	t.Parallel()
+
+	st := storetest.New(t)
+	remote := store.Endpoint{Mode: store.ModeRemote}
+	for _, b := range []store.Binding{
+		{Name: "served-running", CWD: t.TempDir(), Round: 1, State: store.StateActive, Builder: remote},
+		{Name: "served-reported", CWD: t.TempDir(), Round: 1, State: store.StateActive, Builder: remote},
+		{Name: "served-unsent", CWD: t.TempDir(), Round: 0, State: store.StateActive, Builder: remote},
+	} {
+		if err := st.Save(b); err != nil {
+			t.Fatalf("Save(%s): %v", b.Name, err)
+		}
+	}
+	switched := store.LogEntry{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindSwitch, Confirmed: true}
+	if err := st.AppendLog("served-running", switched); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+	report := store.LogEntry{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true}
+	if err := st.AppendLog("served-reported", report); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+	bindings, err := st.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+
+	if got := CountOpenRounds(st, bindings); got != 1 {
+		t.Errorf("open rounds = %d, want 1 (only served-running)", got)
+	}
+}
+
+// TestServedRoundsCountOnTheServer pins the server side: the daemon's own
+// store lists no client's binding, so an open round served to a client must
+// still count, including on a daemon with no binding of its own.
+func TestServedRoundsCountOnTheServer(t *testing.T) {
+	t.Parallel()
+
+	st := storetest.New(t)
+	d, err := st.DB()
+	if err != nil {
+		t.Fatalf("DB: %v", err)
+	}
+	clientA := store.NewShared(st.Root(), "client-a", d)
+	clientB := store.NewShared(st.Root(), "client-b", d)
+	seedTickBinding(t, clientA, t.TempDir(), "a-open", 1, store.StateActive, false)
+	seedTickBinding(t, clientA, t.TempDir(), "a-closed", 1, store.StateActive, true)
+	seedTickBinding(t, clientB, t.TempDir(), "b-open", 2, store.StateActive, false)
+
+	runner := &relevosync.Runner{Local: tickTestKV{enabled: true}}
+	NoteRoundsOpen(runner, st, nil)
+
+	got, known := runner.RoundsOpen()
+	if !known || got != 2 {
+		t.Errorf("open rounds = %d, known = %v, want 2 (a-open and b-open)", got, known)
+	}
+}

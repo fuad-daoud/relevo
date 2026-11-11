@@ -137,3 +137,23 @@ func (d *DB) RecordListUnlinked() ([]Record, error) {
 	}
 	return out, nil
 }
+
+// RecordOwners lists, sorted, every client owner holding a live record: the
+// clients a server is serving. The local owner "" is not in it.
+func (d *DB) RecordOwners() ([]string, error) {
+	rows, err := d.sqlDB.QueryContext(context.Background(),
+		`SELECT DISTINCT owner FROM binding_record WHERE `+writerScope+` AND owner <> '' AND archived_at IS NULL ORDER BY owner ASC`,
+		d.origin)
+	if err != nil {
+		return nil, fmt.Errorf("db: record owners: %w", mapBusy(err))
+	}
+	out, err := collectRows(rows, func(r rowScanner) (string, error) {
+		var owner string
+		err := r.Scan(&owner)
+		return owner, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("db: record owners: %w", mapBusy(err))
+	}
+	return out, nil
+}
