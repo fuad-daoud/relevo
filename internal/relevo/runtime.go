@@ -360,6 +360,10 @@ type Runtime struct {
 	// unchanged.
 	CloseServedRound func(ctx context.Context, rt Runtime, b store.Binding) store.Binding
 
+	// CostRoot is the serve root the cost history lives under; empty
+	// disables recording.
+	CostRoot string
+
 	// RemoteSend ships rounds to a remote server through internal/uplink.
 	// It has no nil guard: a send without the hook fails on the nil call
 	// rather than silently skipping the server.

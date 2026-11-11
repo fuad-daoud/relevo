@@ -290,6 +290,143 @@ func TestCloseServedRoundRecordsABranchlessReader(t *testing.T) {
 	}
 }
 
+// TestCloseServedRoundRecordsCost pins the cost hook: closing a round with a
+// measured burst writes one sample to the cost file, and closing the same
+// round again leaves exactly one sample behind.
+func TestCloseServedRoundRecordsCost(t *testing.T) {
+	t.Parallel()
+
+	env := setupTestEnv(t)
+	ctx := context.Background()
+	repoID := strings.Repeat("a", 64)
+	at := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	burst, base := int64(2<<30), int64(1<<30)
+
+	rt := env.runtime(t)
+	b := store.Binding{
+		Name:     "api",
+		Owner:    string(env.id),
+		CWD:      t.TempDir(),
+		Branch:   "relevo/api",
+		Worktree: "/fake/wt",
+		Round:    2,
+		Serve:    &store.ServeFacts{BareRepo: "/fake/bare", RepoID: repoID},
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if err := rt.Store.AppendLog("api", store.LogEntry{
+		Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
+		TS: at, Rusage: &store.Rusage{BaseBytes: &base, BurstBytes: &burst},
+	}); err != nil {
+		t.Fatalf("append log: %v", err)
+	}
+
+	costRoot := t.TempDir()
+	costRT := relevo.Runtime{Git: &stubGit{}, Store: rt.Store, CostRoot: costRoot}
+
+	res := CloseServedRound(ctx, costRT, b)
+	if res.Serve.ClosedRound != 1 || res.Serve.ResultCommit != "fakerefsha" {
+		t.Fatalf("close = closed %d result %q, want 1/fakerefsha",
+			res.Serve.ClosedRound, res.Serve.ResultCommit)
+	}
+	readSample := func() costFile {
+		t.Helper()
+		cf, err := loadCostFile(costFilePath(costRoot, repoID, "builder"))
+		if err != nil {
+			t.Fatalf("load cost file: %v", err)
+		}
+		return cf
+	}
+	cf := readSample()
+	if cf.LastRound != 1 || len(cf.Samples) != 1 {
+		t.Fatalf("cost file = last %d samples %d, want 1 and 1", cf.LastRound, len(cf.Samples))
+	}
+	if cf.Samples[0] != (costSample{Base: base, Burst: burst, At: at}) {
+		t.Fatalf("sample = %+v, want base %d burst %d at %v", cf.Samples[0], base, burst, at)
+	}
+
+	again := CloseServedRound(ctx, costRT, res)
+	if again.Serve.ClosedRound != 1 {
+		t.Fatalf("second close = closed %d, want 1", again.Serve.ClosedRound)
+	}
+	if cf := readSample(); cf.LastRound != 1 || len(cf.Samples) != 1 {
+		t.Fatalf("after retry: last %d samples %d, want 1 and 1", cf.LastRound, len(cf.Samples))
+	}
+}
+
+// TestCloseServedRoundCostFailureKeepsFacts pins the hook's warn-only rule: a
+// corrupt cost file never stops the close from stamping its facts.
+func TestCloseServedRoundCostFailureKeepsFacts(t *testing.T) {
+	t.Parallel()
+
+	env := setupTestEnv(t)
+	ctx := context.Background()
+	repoID := strings.Repeat("a", 64)
+
+	bare := t.TempDir()
+	runGit(t, bare, "init", "--bare")
+
+	seedDir := t.TempDir()
+	runGit(t, seedDir, "clone", bare, ".")
+	if err := os.WriteFile(filepath.Join(seedDir, "file.txt"), []byte("seed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, seedDir, "add", "file.txt")
+	runGit(t, seedDir, "commit", "-m", "init")
+	runGit(t, seedDir, "push", "origin", "HEAD:refs/heads/relevo/api")
+
+	branchHead := strings.TrimSpace(runGit(t, bare, "rev-parse", "refs/heads/relevo/api"))
+
+	wt := t.TempDir()
+	runGit(t, bare, "worktree", "add", wt, "refs/heads/relevo/api")
+
+	burst := int64(2 << 30)
+	rt := env.runtime(t)
+	b := store.Binding{
+		Name:     "api",
+		Owner:    string(env.id),
+		CWD:      wt,
+		Branch:   "relevo/api",
+		Worktree: wt,
+		Round:    2,
+		Serve: &store.ServeFacts{
+			BareRepo: bare,
+			RepoID:   repoID,
+		},
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if err := rt.Store.AppendLog("api", store.LogEntry{
+		Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
+		TS: time.Now(), Rusage: &store.Rusage{BurstBytes: &burst},
+	}); err != nil {
+		t.Fatalf("append log: %v", err)
+	}
+
+	costRoot := t.TempDir()
+	badPath := costFilePath(costRoot, repoID, "builder")
+	if err := os.MkdirAll(filepath.Dir(badPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(badPath, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rt.CostRoot = costRoot
+
+	res := CloseServedRound(ctx, rt, b)
+	if res.Serve.ClosedRound != 1 {
+		t.Fatalf("ClosedRound: got %d, want 1", res.Serve.ClosedRound)
+	}
+	if res.Serve.ResultCommit != branchHead {
+		t.Fatalf("ResultCommit: got %q, want %q", res.Serve.ResultCommit, branchHead)
+	}
+	if res.Serve.DirtyCommit != "" {
+		t.Fatalf("DirtyCommit on clean worktree: got %q, want empty", res.Serve.DirtyCommit)
+	}
+}
+
 // TestRuntimeAtWiresCloseServedRound pins the served-close hook: every owner
 // runtime carries the serve implementation, so a hook nobody fills can never
 // reach production silently.

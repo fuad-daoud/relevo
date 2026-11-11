@@ -85,6 +85,9 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 		s.applyContainer(root, &rt)
 	}
 	rt.CloseServedRound = CloseServedRound
+	// The cost history lives under the serve root; a runtime without one
+	// records nothing.
+	rt.CostRoot = s.cfg.Root
 	// The remote send runs above the engine: the served runtime ships through
 	// the same uplink functions as the CLI runtime.
 	rt.RemoteSend = relevo.RemoteSendDeps{

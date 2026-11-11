@@ -26,6 +26,7 @@ func CloseServedRound(ctx context.Context, rt relevo.Runtime, b store.Binding) s
 		b.Serve.ClosedRound = closed
 		b.Serve.ResultCommit = ""
 		b.Serve.DirtyCommit = ""
+		recordClosedCost(rt, b, closed)
 		return b
 	}
 	head, ok, err := rt.Git.RefSHA(ctx, b.Serve.BareRepo, "refs/heads/"+b.Branch)
@@ -60,5 +61,6 @@ func CloseServedRound(ctx context.Context, rt relevo.Runtime, b store.Binding) s
 	b.Serve.ClosedRound = closed
 	b.Serve.ResultCommit = head
 	b.Serve.DirtyCommit = dirtyCommit
+	recordClosedCost(rt, b, closed)
 	return b
 }
