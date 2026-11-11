@@ -21,9 +21,9 @@ import (
 // because the split and the origin backfill must finish before any row may
 // leave this machine; a database whose split failed keeps refusing it instead
 // of exporting the secrets the split exists to move.
-func daemonStartup(rt *relevo.Runtime, d *db.DB, ln net.Listener, onAbandoned func()) *owner.Server {
+func daemonStartup(rt *relevo.Runtime, d *db.DB, ln net.Listener, onAbandoned, onShortReadWAL func()) *owner.Server {
 	reclaimBeforeServing(d)
-	srv := daemonServeOwner(d, ln, onAbandoned)
+	srv := daemonServeOwner(d, ln, onAbandoned, onShortReadWAL)
 
 	if daemonStartupPasses(rt) {
 		installSyncVerbHook(srv, d)
@@ -52,8 +52,8 @@ var reclaimFreePages = db.ReclaimFreePages
 // daemonServeOwner starts the owner over d on ln; a listener or handle that
 // cannot be served is one warning and no server, and the daemon still runs
 // its passes over the handle it holds.
-func daemonServeOwner(d *db.DB, ln net.Listener, onAbandoned func()) *owner.Server {
-	srv, err := serveOwner(d, ln, onAbandoned)
+func daemonServeOwner(d *db.DB, ln net.Listener, onAbandoned, onShortReadWAL func()) *owner.Server {
+	srv, err := serveOwner(d, ln, onAbandoned, onShortReadWAL)
 	if err != nil {
 		slog.Warn("relevo daemon: owner socket not served", "err", err)
 	}

@@ -11,8 +11,8 @@ import (
 
 // serveOwner starts the owner over d on ln. A nil handle (the open failed)
 // means no socket and no server, which is every off-unix start: there is no
-// socket transport there.
-func serveOwner(d *db.DB, ln net.Listener, _ func()) (*owner.Server, error) {
+// socket transport there. The WAL hook is unset off unix with it.
+func serveOwner(d *db.DB, ln net.Listener, _, _ func()) (*owner.Server, error) {
 	if d == nil || ln == nil {
 		return nil, nil
 	}

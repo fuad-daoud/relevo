@@ -148,6 +148,18 @@ type daemonHandles struct {
 	reexecOK      bool
 	reapRequested *atomic.Bool
 	onAbandoned   func()
+	// walRequested is set by the owner's short-read hook and by the
+	// per-tick probe, whichever sees the poisoned pool first.
+	walRequested *atomic.Bool
+	// walAttempt counts the heals already tried, parsed from the environment
+	// so the count survives the exec; walStart is when this image began, so
+	// the attempt budget can debounce a pool that repoisons instantly.
+	walAttempt int
+	walStart   time.Time
+	// walHealFired marks a heal this image already asked for; walMarked marks
+	// an exhaustion already recorded, so the marker is written once.
+	walHealFired bool
+	walMarked    bool
 }
 
 // runDaemon starts the daemon over its open handles: the runtime, its hooks
@@ -348,10 +360,15 @@ func initDaemonRuntime(h *daemonHandles) error {
 	}
 	h.onAbandoned = onAbandoned
 
+	// A poisoned WAL pool is healed by re-execing onto fresh pools: the hook
+	// asks the per-tick heal decision below to return true, and the probe
+	// there catches any daemon read the hook never saw.
+	onShortReadWAL := initWALHeal(h)
+
 	// The owner is served before the one-time passes, which run under the
 	// owner's write path; the sync verb executor is installed after them, once
 	// they recorded themselves (see daemonStartup for why).
-	h.srv = daemonStartup(&h.rt, h.d, h.ln, onAbandoned)
+	h.srv = daemonStartup(&h.rt, h.d, h.ln, onAbandoned, onShortReadWAL)
 
 	// daemon.json: what this image runs. Written under the lock, so its
 	// presence with the lock held means a daemon of this build; removed on a
@@ -484,7 +501,7 @@ func serveDaemon(h *daemonHandles, interval, autoExitAfter time.Duration) error 
 	}
 
 	slog.Info("relevo daemon starting", "interval", interval)
-	daemon := relevo.NewDaemon(h.rt, interval).WithRefresh(h.watcher.Refresh).WithUpgrade(hook)
+	daemon := relevo.NewDaemon(h.rt, interval).WithRefresh(h.watcher.Refresh).WithUpgrade(hook).WithWALHeal(h.walHealDue)
 	// A gate this daemon records has to reach the other machines now, so the
 	// runtime carries the daemon's own trigger and the daemon is bound
 	// afterwards: the trigger is the daemon asking itself for an attempt.
@@ -509,6 +526,7 @@ func serveDaemon(h *daemonHandles, interval, autoExitAfter time.Duration) error 
 		_ = h.lock.Close()
 
 		env := withEnv(os.Environ(), "RELEVO_REEXEC_FROM", buildVersion())
+		env = walHealReexecEnv(env, h)
 		if fd >= 0 {
 			env = withEnv(env, listenFDEnv, strconv.Itoa(fd))
 		}

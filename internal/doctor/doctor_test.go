@@ -31,6 +31,9 @@ type fakeEnv struct {
 	daemonInfo    store.DaemonInfo
 	daemonInfoOK  bool
 	daemonInfoErr error
+	walHeal       store.WALHealFailure
+	walHealOK     bool
+	walHealErr    error
 	unit          ServiceUnit
 	unitErr       error
 	lookPaths     map[string]string // binary -> path
@@ -69,6 +72,13 @@ func (f *fakeEnv) DaemonInfo() (store.DaemonInfo, bool, error) {
 		return store.DaemonInfo{}, false, f.daemonInfoErr
 	}
 	return f.daemonInfo, f.daemonInfoOK, nil
+}
+
+func (f *fakeEnv) WALHealFailure() (store.WALHealFailure, bool, error) {
+	if f.walHealErr != nil {
+		return store.WALHealFailure{}, false, f.walHealErr
+	}
+	return f.walHeal, f.walHealOK, nil
 }
 
 func (f *fakeEnv) ServiceUnit() (ServiceUnit, error) { return f.unit, f.unitErr }
@@ -978,6 +988,9 @@ func TestDoctorDaemonVersionStates(t *testing.T) {
 		name         string
 		info         store.DaemonInfo
 		ok           bool
+		heal         store.WALHealFailure
+		healOK       bool
+		healErr      bool
 		wantSeverity Severity
 		wantDetail   string
 		wantFix      string
@@ -1015,11 +1028,32 @@ func TestDoctorDaemonVersionStates(t *testing.T) {
 			wantSeverity: SevOK,
 			wantDetail:   "running v2",
 		},
+		{
+			name:         "failed heal",
+			info:         store.DaemonInfo{Version: "v2"},
+			ok:           true,
+			heal:         store.WALHealFailure{Attempts: 3, Reason: "attempts exhausted"},
+			healOK:       true,
+			wantSeverity: SevWarn,
+			wantDetail:   "the WAL heal failed after 3 attempts",
+			wantFix:      "inspect the database WAL (relevo doctor), then restart the daemon",
+		},
+		{
+			name:         "unreadable marker reads absent",
+			info:         store.DaemonInfo{Version: "v2"},
+			ok:           true,
+			healErr:      true,
+			wantSeverity: SevOK,
+			wantDetail:   "running v2",
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			env := &fakeEnv{daemonRunning: true, daemonInfo: tc.info, daemonInfoOK: tc.ok, releaseRunning: "v2"}
+			env := &fakeEnv{daemonRunning: true, daemonInfo: tc.info, daemonInfoOK: tc.ok, walHeal: tc.heal, walHealOK: tc.healOK, releaseRunning: "v2"}
+			if tc.healErr {
+				env.walHealErr = errors.New("marker unreadable")
+			}
 			c := findCheck(Run(context.Background(), env, nil), "", "daemon")
 			if c == nil {
 				t.Fatal("no daemon row in the report")

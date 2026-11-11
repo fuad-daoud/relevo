@@ -41,6 +41,13 @@ type Daemon struct {
 	// re-execs.
 	upgrade func(ctx context.Context) bool
 
+	// walHeal, when set, runs after every completed tick and only while ctx
+	// is live. True means the daemon's database pool is poisoned past use,
+	// and Run returns ErrReexec so the caller execs into an image whose
+	// pools are rebuilt. Nil means the daemon never re-execs for a poisoned
+	// pool.
+	walHeal func(ctx context.Context) bool
+
 	// releaseRetryAt is when a release fetch that failed may be tried again.
 	// The zero time means "no failure to back off from".
 	releaseRetryAt time.Time
@@ -199,6 +206,14 @@ func (d *Daemon) WithUpgrade(f func(ctx context.Context) bool) *Daemon {
 	return d
 }
 
+// WithWALHeal installs a post-tick hook that decides whether to re-exec onto
+// a fresh image to heal a poisoned WAL pool. nil means no heal. Returns d
+// for chaining.
+func (d *Daemon) WithWALHeal(f func(ctx context.Context) bool) *Daemon {
+	d.walHeal = f
+	return d
+}
+
 // TmpSweptAt and SetTmpSweptAt carry the sweep's pace across Daemons: serve
 // builds a fresh Daemon per owner on every tick, so it keeps each owner's last
 // sweep itself and hands it back to the next tick's Daemon.
@@ -277,6 +292,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 				return nil
 			}
 			if d.upgrade != nil && d.upgrade(ctx) {
+				return ErrReexec
+			}
+			if d.walHeal != nil && d.walHeal(ctx) {
 				return ErrReexec
 			}
 		}

@@ -554,6 +554,12 @@ func (s *stubDoctorEnv) DaemonRunning(ctx context.Context) (bool, error) {
 func (s *stubDoctorEnv) DaemonInfo() (store.DaemonInfo, bool, error) {
 	return s.daemonInfo, s.daemonInfoOK, nil
 }
+
+// WALHealFailure satisfies Env: no test in this file sets the marker, so it
+// always reads absent.
+func (s *stubDoctorEnv) WALHealFailure() (store.WALHealFailure, bool, error) {
+	return store.WALHealFailure{}, false, nil
+}
 func (s *stubDoctorEnv) ServiceUnit() (ServiceUnit, error) { return ServiceUnit{}, nil }
 func (s *stubDoctorEnv) LookPath(binary string) (string, error) {
 	if p, ok := s.lookPaths[binary]; ok {

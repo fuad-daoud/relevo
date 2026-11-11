@@ -560,7 +560,7 @@ func TestDBSyncStatusDaemonChild(t *testing.T) {
 		t.Fatalf("child listen: %v", err)
 	}
 	defer func() { _ = ln.Close() }()
-	srv, err := serveOwner(d, ln, nil)
+	srv, err := serveOwner(d, ln, nil, nil)
 	if err != nil || srv == nil {
 		t.Fatalf("child serve: %v, %v", srv, err)
 	}

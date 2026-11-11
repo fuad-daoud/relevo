@@ -123,7 +123,7 @@ func TestStalledStartupPassStillAnswersAClient(t *testing.T) {
 	inside, finish := standInPasses(t, b.db, true)
 
 	done := make(chan *owner.Server, 1)
-	go func() { done <- daemonStartup(&rt, b.db, b.ln, nil) }()
+	go func() { done <- daemonStartup(&rt, b.db, b.ln, nil, nil) }()
 	began := time.Now()
 	inside()
 
@@ -197,7 +197,7 @@ func TestSyncVerbIsRefusedUntilTheStartupPassesFinish(t *testing.T) {
 	}
 	t.Cleanup(func() { daemonStartupPasses = prev })
 
-	srv := daemonStartup(&rt, b.db, b.ln, nil)
+	srv := daemonStartup(&rt, b.db, b.ln, nil, nil)
 	if srv == nil {
 		t.Fatal("daemonStartup served no owner")
 	}
@@ -234,7 +234,7 @@ func TestSyncVerbStaysOffWhenTheEnablePathDidNotFinish(t *testing.T) {
 	daemonStartupPasses = func(*relevo.Runtime) bool { return false }
 	t.Cleanup(func() { daemonStartupPasses = prev })
 
-	srv := daemonStartup(&rt, b.db, b.ln, nil)
+	srv := daemonStartup(&rt, b.db, b.ln, nil, nil)
 	if srv == nil {
 		t.Fatal("daemonStartup served no owner")
 	}
@@ -307,7 +307,7 @@ func TestStartupReclaimsBeforeItServes(t *testing.T) {
 		return nil, vacuumErr
 	}
 
-	srv := daemonStartup(&rt, b.db, b.ln, nil)
+	srv := daemonStartup(&rt, b.db, b.ln, nil, nil)
 	if srv != nil {
 		t.Cleanup(func() { _ = srv.Close() })
 	}
