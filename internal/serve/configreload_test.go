@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -12,12 +13,17 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/config"
+	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
 )
 
-const (
-	reloadCandidateJSON = `[{"harness":"claude","provider":"anthropic","model":"haiku","roles":["builder"]}]`
-	reloadPolicyCapJSON = `{"serve":{"max_builders":7}}`
+const reloadCandidateJSON = `[{"harness":"claude","provider":"anthropic","model":"haiku","roles":["builder"]}]`
+
+// reloadCap is one above the unconfigured default (NumCPU-1), so a reload is
+// visible on every host: a literal collides with the default on some CPU count.
+var (
+	reloadCap           = policy.Policy{}.MaxBuildersOrDefault() + 1
+	reloadPolicyCapJSON = fmt.Sprintf(`{"serve":{"max_builders":%d}}`, reloadCap)
 )
 
 // putConfig stores body as one config section of the machine database, the same
@@ -48,7 +54,7 @@ func TestTickReloadsConfigWithoutRestart(t *testing.T) {
 	s, root := reloadingServer(t)
 	trackTmpRoot(t, s, filepath.Join(root, "bindings", "owner"))
 
-	if got := s.cap(); got == 7 {
+	if got := s.cap(); got == reloadCap {
 		t.Fatalf("cap before any config = %d; the test cannot distinguish a reload", got)
 	}
 	if rt := s.runtimeAt(filepath.Join(root, "bindings", "owner")); rt.Candidates != nil {
@@ -62,8 +68,8 @@ func TestTickReloadsConfigWithoutRestart(t *testing.T) {
 		t.Fatalf("tick: %v", err)
 	}
 
-	if got := s.cap(); got != 7 {
-		t.Errorf("cap after tick = %d, want 7: serve.max_builders did not take effect without a restart", got)
+	if got := s.cap(); got != reloadCap {
+		t.Errorf("cap after tick = %d, want %d: serve.max_builders did not take effect without a restart", got, reloadCap)
 	}
 	rt := s.runtimeAt(filepath.Join(root, "bindings", "owner"))
 	if rt.Candidates == nil {
@@ -232,8 +238,8 @@ func TestReloadFailedTickKeepsServingCap(t *testing.T) {
 	if err := s.Tick(context.Background()); err != nil {
 		t.Fatalf("tick: %v", err)
 	}
-	if got := s.cap(); got != 7 {
-		t.Fatalf("cap after the first tick = %d, want 7", got)
+	if got := s.cap(); got != reloadCap {
+		t.Fatalf("cap after the first tick = %d, want %d", got, reloadCap)
 	}
 
 	// A new version with an unloadable body behind it: the tick must keep
@@ -245,8 +251,8 @@ func TestReloadFailedTickKeepsServingCap(t *testing.T) {
 			t.Fatalf("tick under a broken config must not fail: %v", err)
 		}
 	}
-	if got := s.cap(); got != 7 {
-		t.Errorf("cap after three failed ticks = %d, want the last good 7", got)
+	if got := s.cap(); got != reloadCap {
+		t.Errorf("cap after three failed ticks = %d, want the last good %d", got, reloadCap)
 	}
 }
 
@@ -433,8 +439,8 @@ func TestReloadIsWireAdditive(t *testing.T) {
 	if err := json.Unmarshal(body, &reloaded); err != nil {
 		t.Fatalf("decode whoami after reload: %v", err)
 	}
-	if reloaded.Builders == nil || reloaded.Builders.Cap != 7 {
-		t.Errorf("whoami cap after a reload = %+v, want 7 without any wire change", reloaded.Builders)
+	if reloaded.Builders == nil || reloaded.Builders.Cap != reloadCap {
+		t.Errorf("whoami cap after a reload = %+v, want %d without any wire change", reloaded.Builders, reloadCap)
 	}
 	if strings.Join(reloaded.Features, ",") != strings.Join(who.Features, ",") {
 		t.Errorf("features after a reload = %v, want the same %v", reloaded.Features, who.Features)
