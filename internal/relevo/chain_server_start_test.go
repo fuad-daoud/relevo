@@ -568,7 +568,7 @@ func TestServerChainMemberObservesTheLiveRound(t *testing.T) {
 
 	// The daemon's tick observes it too: prefetch unlocked, apply and save
 	// under the lock.
-	pre := NewDaemon(rt, time.Minute).prefetchRemote(context.Background(), b)
+	pre := NewDaemon(rt, time.Minute).prefetchRemote(context.Background(), b, 0)
 	if pre == nil {
 		t.Fatal("prefetchRemote = nil, want a live fetch for a member")
 	}

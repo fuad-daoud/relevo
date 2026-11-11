@@ -597,8 +597,9 @@ func TestRemoteServerUnreachableIsNotAHalt(t *testing.T) {
 	})
 
 	// client ticks: one failed read is noise, so the first tick leaves the
-	// binding alone and the second consecutive failure starts the outage.
-	// Restart a server? Not needed: the assertion is the non-halt.
+	// binding alone and a second refused failure one prefetch bound later
+	// starts the outage. Restart a server? Not needed: the assertion is the
+	// non-halt.
 	clientDaemon := relevo.NewDaemon(rt, time.Second)
 	if err := clientDaemon.Tick(ctx); err != nil {
 		t.Fatalf("step 3: clientDaemon.Tick 1: %v", err)
@@ -614,6 +615,7 @@ func TestRemoteServerUnreachableIsNotAHalt(t *testing.T) {
 		t.Fatalf("step 3: RemoteUnreachableSince set after one failure, want zero")
 	}
 
+	time.Sleep(6 * time.Second)
 	if err := clientDaemon.Tick(ctx); err != nil {
 		t.Fatalf("step 3: clientDaemon.Tick 2: %v", err)
 	}

@@ -97,7 +97,7 @@ func (d *Daemon) refreshRelease(ctx context.Context) {
 // concurrent pause or unbind of a remote binding costs one wasted fetch, which
 // the apply half discards against the binding it reads under the lock, and
 // the saved load was most of the tick's per-binding cost.
-func (d *Daemon) prefetchRemote(ctx context.Context, b store.Binding) *remoteFetch {
+func (d *Daemon) prefetchRemote(ctx context.Context, b store.Binding, gen uint64) *remoteFetch {
 	if d.rt.Remote == nil {
 		return nil
 	}
@@ -115,6 +115,13 @@ func (d *Daemon) prefetchRemote(ctx context.Context, b store.Binding) *remoteFet
 		f.EpisodeStart = d.backoff.episodeStart(server)
 		return f
 	}
+	if d.backoff.countedIn(server, gen) {
+		// This generation already counted this server's failure: later
+		// bindings reuse it without dialling, so one slow tick counts once.
+		f := skippedFetch(b)
+		f.Unconfirmed = true
+		return f
+	}
 	started := time.Now()
 	f := fetchRemoteWithin(ctx, d.rt, b, prefetchDeadline)
 	elapsed := time.Since(started)
@@ -127,12 +134,11 @@ func (d *Daemon) prefetchRemote(ctx context.Context, b store.Binding) *remoteFet
 		}
 		return &f
 	}
-	rep := d.backoff.recordFailure(server, f.Err)
+	rep := d.backoff.recordFailure(server, f.Err, gen)
 	switch {
 	case rep.confirmed:
-		// The second consecutive failure starts the episode: one WARN per
-		// server, while every binding's own line drops to the apply half's
-		// DEBUG.
+		// Count and span confirmed the episode: one WARN per server, while
+		// every binding's own line drops to the apply half's DEBUG.
 		f.EpisodeStart = rep.start
 		slog.Warn(fmt.Sprintf("%s unreachable", server), "server", server, "err", rep.opening)
 	case rep.inEpisode:

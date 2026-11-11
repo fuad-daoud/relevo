@@ -61,6 +61,11 @@ type Daemon struct {
 	// one bounded dial per backoff window instead of one per binding per tick.
 	backoff remoteBackoff
 
+	// tickGen is the tick's generation: incremented once per Tick and threaded
+	// through the per-binding prefetches, so one slow tick counts one failure
+	// per server no matter how many bindings share it.
+	tickGen uint64
+
 	// archived is the archived mirror's progress: the first tick's pass is
 	// full, and every later tick lists only records archived since the pass
 	// before. It is daemon state on purpose: a restart heals through a full
@@ -346,8 +351,10 @@ func (d *Daemon) Tick(ctx context.Context) error {
 		return nil
 	}
 
+	d.tickGen++
+	gen := d.tickGen
 	for _, b := range bindings {
-		if err := d.tickOne(ctx, b); err != nil {
+		if err := d.tickOne(ctx, b, gen); err != nil {
 			slog.Error("reconcile failed", "binding", b.Name, "err", err)
 		}
 	}
@@ -404,7 +411,7 @@ func (d *Daemon) Tick(ctx context.Context) error {
 // writes it back. Reconcile and everything it calls take the *store.Tx rather
 // than locking themselves, so a CLI command running concurrently cannot land a
 // write between the read and the save.
-func (d *Daemon) tickOne(ctx context.Context, b store.Binding) (err error) {
+func (d *Daemon) tickOne(ctx context.Context, b store.Binding, gen uint64) (err error) {
 	name := b.Name
 	// A panic anywhere under this binding is contained here, so Tick logs
 	// "reconcile failed" and goes on to the next binding. WithLock releases
@@ -418,7 +425,7 @@ func (d *Daemon) tickOne(ctx context.Context, b store.Binding) (err error) {
 
 	// The fetch runs unlocked, before the critical section: a slow or dead
 	// server must not hold the state lock against every writer.
-	pre := d.prefetchRemote(ctx, b)
+	pre := d.prefetchRemote(ctx, b, gen)
 	defer pre.release()
 
 	// A done binding whose digest has not moved since the pass that last

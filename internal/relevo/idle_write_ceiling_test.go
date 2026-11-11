@@ -101,10 +101,11 @@ func TestIdleRemoteBindingsQueueNoSyncedWritePerTick(t *testing.T) {
 			t.Errorf("one blip queued %d outbox rows, want 0: %v", len(rows), rows)
 		}
 
-		// Consecutive failures confirm the outage: the binding flips and
-		// stamps the episode start.
+		// Consecutive refused failures spanning one prefetch bound confirm
+		// the outage: the binding flips and stamps the episode start.
 		w.fr.beforeCall = nil
 		w.fr.getBindingErr = client.ErrUnreachable
+		w.now = w.now.Add(4 * time.Second)
 		w.tick(t)
 		w.tick(t)
 		got, err = w.d.rt.Store.Load("api")

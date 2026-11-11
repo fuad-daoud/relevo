@@ -45,7 +45,7 @@ func (r *recordDispatcher) getEvents() []hooks.Event {
 // must never be told about a transition the store has not taken.
 func tickCommit(t *testing.T, rt Runtime, b store.Binding) store.Binding {
 	t.Helper()
-	if err := NewDaemon(rt, time.Second).tickOne(context.Background(), b); err != nil {
+	if err := NewDaemon(rt, time.Second).tickOne(context.Background(), b, 0); err != nil {
 		t.Fatalf("tickOne: %v", err)
 	}
 	got, err := rt.Store.Load(b.Name)
@@ -153,7 +153,7 @@ func TestReconcile_SaveFailureEmitsNothingAndTheRetryEmitsOnce(t *testing.T) {
 	}
 
 	d := NewDaemon(rt, time.Second)
-	if err := d.tickOne(context.Background(), b); err == nil {
+	if err := d.tickOne(context.Background(), b, 0); err == nil {
 		t.Fatal("tickOne = nil, want the save refused")
 	} else if !strings.Contains(err.Error(), "is not a directory") {
 		t.Fatalf("tickOne error = %v, want the refusal to come from the save", err)
