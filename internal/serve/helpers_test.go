@@ -529,6 +529,18 @@ func trackTmpRoot(t *testing.T, s *Server, ownerRoot string) {
 	t.Cleanup(func() { _ = os.RemoveAll(s.ownerTmpDir(ownerRoot)) })
 }
 
+// canonicalPath resolves the symlinks in a test path before it is compared
+// against git output: git's worktree list spells canonical paths, while a
+// temp dir under a symlinked TMPDIR does not.
+func canonicalPath(t *testing.T, path string) string {
+	t.Helper()
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(%s): %v", path, err)
+	}
+	return real
+}
+
 func newTestServer(t *testing.T, maxBundleBytes int64) (*Server, string) {
 	t.Helper()
 	root := t.TempDir()

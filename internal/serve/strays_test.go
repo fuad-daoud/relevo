@@ -654,7 +654,7 @@ func TestRemoveStrayClearsGitRegistration(t *testing.T) {
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 	ctx := context.Background()
 	s, rt, bare := removeStrayFixture(t, now)
-	cleanWT := filepath.Join(rt.Store.WorktreeDir(), "clean")
+	cleanWT := canonicalPath(t, filepath.Join(rt.Store.WorktreeDir(), "clean"))
 
 	if _, err := RemoveStray(ctx, s, "alice", "clean"); err != nil {
 		t.Fatalf("RemoveStray(clean): %v", err)
@@ -672,7 +672,7 @@ func TestRemoveStrayLockedTreeReportsWithoutDeleting(t *testing.T) {
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 	ctx := context.Background()
 	s, rt, bare := removeStrayFixture(t, now)
-	cleanWT := filepath.Join(rt.Store.WorktreeDir(), "clean")
+	cleanWT := canonicalPath(t, filepath.Join(rt.Store.WorktreeDir(), "clean"))
 
 	runGit(t, bare, "worktree", "lock", cleanWT)
 	if _, err := RemoveStray(ctx, s, "alice", "clean"); err == nil {
