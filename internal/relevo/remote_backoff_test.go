@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -66,7 +67,7 @@ func TestBackoffFirstFailureOnlySuspects(t *testing.T) {
 
 	clock := baseTime
 	rb := testBackoffAt(&clock)
-	rep := rb.recordFailure("zen", errors.New("connection refused"))
+	rep := rb.recordFailure("zen", errors.New("connection refused"), 1)
 	if rep.confirmed || rep.inEpisode || rep.ended {
 		t.Fatalf("first failure report = %+v, want no episode transition", rep)
 	}
@@ -81,10 +82,21 @@ func TestBackoffSecondConsecutiveFailureArmsTheEpisode(t *testing.T) {
 	clock := baseTime
 	rb := testBackoffAt(&clock)
 	opening := errors.New("connection refused")
-	rb.recordFailure("zen", opening)
-	rep := rb.recordFailure("zen", errors.New("connection refused"))
+	rb.recordFailure("zen", opening, 1)
+	clock = clock.Add(4 * time.Second)
+	if rep := rb.recordFailure("zen", errors.New("connection refused"), 2); rep.confirmed {
+		t.Fatalf("hard failures spanning 4s confirmed, want suspicion until one prefetch bound")
+	}
+	if rb.skip("zen") {
+		t.Fatal("skip = true after hard failures spanning 4s, want suspicion")
+	}
+	clock = baseTime
+	rb2 := testBackoffAt(&clock)
+	rb2.recordFailure("zen", opening, 1)
+	clock = clock.Add(5 * time.Second)
+	rep := rb2.recordFailure("zen", errors.New("connection refused"), 2)
 	if !rep.confirmed {
-		t.Fatalf("second failure report = %+v, want confirmed", rep)
+		t.Fatalf("second failure report = %+v, want confirmed spanning one prefetch bound", rep)
 	}
 	if !rep.start.Equal(baseTime) {
 		t.Errorf("episode start = %v, want the first failure's time %v", rep.start, baseTime)
@@ -92,8 +104,11 @@ func TestBackoffSecondConsecutiveFailureArmsTheEpisode(t *testing.T) {
 	if rep.opening == nil || rep.opening.Error() != opening.Error() {
 		t.Errorf("episode opening = %v, want the first failure %v", rep.opening, opening)
 	}
-	if !rb.skip("zen") {
-		t.Fatal("skip = false after two consecutive failures, want the backoff armed")
+	if !rb2.skip("zen") {
+		t.Fatal("skip = false after confirming failures, want the backoff armed")
+	}
+	if got, want := rb2.outages["zen"].until.Sub(clock), blipBackoff; got != want {
+		t.Errorf("first armed window = %v, want %v", got, want)
 	}
 }
 
@@ -105,11 +120,11 @@ func TestBackoffSuccessBetweenFailuresNeverArms(t *testing.T) {
 	if rep := rb.recordSuccess("zen"); rep.ended {
 		t.Fatalf("success with no memory ended an episode: %+v", rep)
 	}
-	rb.recordFailure("zen", errors.New("connection refused"))
+	rb.recordFailure("zen", errors.New("connection refused"), 1)
 	if rep := rb.recordSuccess("zen"); rep.ended {
 		t.Fatalf("clearing a lone suspicion ended an episode: %+v", rep)
 	}
-	rep := rb.recordFailure("zen", errors.New("connection refused"))
+	rep := rb.recordFailure("zen", errors.New("connection refused"), 2)
 	if rep.confirmed || rep.inEpisode {
 		t.Fatalf("failure after a clearing success reports %+v, want a fresh suspicion", rep)
 	}
@@ -123,9 +138,9 @@ func TestBackoffStaleFailureRestartsAtSuspicion(t *testing.T) {
 
 	clock := baseTime
 	rb := testBackoffAt(&clock)
-	rb.recordFailure("zen", errors.New("connection refused"))
+	rb.recordFailure("zen", errors.New("connection refused"), 1)
 	clock = clock.Add(2*serverBackoff + time.Second)
-	rep := rb.recordFailure("zen", errors.New("connection refused"))
+	rep := rb.recordFailure("zen", errors.New("connection refused"), 2)
 	if rep.confirmed || rep.inEpisode {
 		t.Fatalf("failure after a long quiet reports %+v, want a fresh suspicion", rep)
 	}
@@ -139,10 +154,14 @@ func TestBackoffProbeOnRecentEpisodeRearmsSilently(t *testing.T) {
 
 	clock := baseTime
 	rb := testBackoffAt(&clock)
-	rb.recordFailure("zen", errors.New("connection refused"))
-	rb.recordFailure("zen", errors.New("connection refused"))
-	clock = clock.Add(serverBackoff + time.Second)
-	rep := rb.recordFailure("zen", errors.New("connection refused"))
+	rb.recordFailure("zen", errors.New("connection refused"), 1)
+	clock = clock.Add(hardConfirmSpan)
+	rep := rb.recordFailure("zen", errors.New("connection refused"), 2)
+	if !rep.confirmed {
+		t.Fatalf("confirming failure reports %+v, want confirmed", rep)
+	}
+	clock = clock.Add(blipBackoff + time.Second)
+	rep = rb.recordFailure("zen", errors.New("connection refused"), 3)
 	if rep.confirmed || !rep.inEpisode || rep.ended {
 		t.Fatalf("probe on a recent episode reports %+v, want a silent re-arm", rep)
 	}
@@ -152,6 +171,9 @@ func TestBackoffProbeOnRecentEpisodeRearmsSilently(t *testing.T) {
 	if !rb.skip("zen") {
 		t.Fatal("skip = false after the probe, want the backoff re-armed")
 	}
+	if got, want := rb.outages["zen"].until.Sub(clock), serverBackoff; got != want {
+		t.Errorf("re-armed window = %v, want %v", got, want)
+	}
 }
 
 func TestBackoffSuccessEndsAnArmedEpisode(t *testing.T) {
@@ -160,8 +182,9 @@ func TestBackoffSuccessEndsAnArmedEpisode(t *testing.T) {
 	clock := baseTime
 	rb := testBackoffAt(&clock)
 	opening := errors.New("connection refused")
-	rb.recordFailure("zen", opening)
-	rb.recordFailure("zen", errors.New("connection refused"))
+	rb.recordFailure("zen", opening, 1)
+	clock = clock.Add(hardConfirmSpan)
+	rb.recordFailure("zen", errors.New("connection refused"), 2)
 	clock = clock.Add(30 * time.Second)
 	rep := rb.recordSuccess("zen")
 	if !rep.ended {
@@ -173,11 +196,103 @@ func TestBackoffSuccessEndsAnArmedEpisode(t *testing.T) {
 	if rep.opening == nil || rep.opening.Error() != opening.Error() {
 		t.Errorf("episode opening = %v, want the first failure %v", rep.opening, opening)
 	}
-	if got, want := rep.end.Sub(rep.start), 30*time.Second; got != want {
+	if got, want := rep.end.Sub(rep.start), hardConfirmSpan+30*time.Second; got != want {
 		t.Errorf("episode duration = %v, want %v", got, want)
 	}
 	if rb.skip("zen") {
 		t.Fatal("skip = true after the clearing success, want the backoff gone")
+	}
+}
+
+func TestBackoffSoftNeedsThreeFailuresOverThirtySeconds(t *testing.T) {
+	t.Parallel()
+
+	soft := func() error {
+		return fmt.Errorf("%w: %w", client.ErrUnreachable, context.DeadlineExceeded)
+	}
+	clock := baseTime
+	rb := testBackoffAt(&clock)
+	rb.recordFailure("zen", soft(), 1)
+	clock = clock.Add(29 * time.Second)
+	if rep := rb.recordFailure("zen", soft(), 2); rep.confirmed || rep.inEpisode {
+		t.Fatalf("two slow failures spanning 29s report %+v, want suspicion", rep)
+	}
+	if rb.skip("zen") {
+		t.Fatal("skip = true after two slow failures, want suspicion")
+	}
+	clock = clock.Add(time.Second)
+	rep := rb.recordFailure("zen", soft(), 3)
+	if !rep.confirmed {
+		t.Fatalf("third slow failure report = %+v, want confirmed spanning 30s", rep)
+	}
+	if !rep.start.Equal(baseTime) {
+		t.Errorf("episode start = %v, want the first failure's time %v", rep.start, baseTime)
+	}
+	if got, want := rb.outages["zen"].until.Sub(clock), blipBackoff; got != want {
+		t.Errorf("first armed window = %v, want %v", got, want)
+	}
+	clock = clock.Add(blipBackoff + time.Second)
+	rep = rb.recordFailure("zen", soft(), 4)
+	if rep.confirmed || !rep.inEpisode {
+		t.Fatalf("probe after the short window reports %+v, want a silent re-arm", rep)
+	}
+	if got, want := rb.outages["zen"].until.Sub(clock), serverBackoff; got != want {
+		t.Errorf("re-armed window = %v, want %v", got, want)
+	}
+}
+
+func TestBackoffThreeSlowFailuresInsideThirtySecondsStaySuspect(t *testing.T) {
+	t.Parallel()
+
+	soft := func() error {
+		return fmt.Errorf("%w: %w", client.ErrUnreachable, context.DeadlineExceeded)
+	}
+	clock := baseTime
+	rb := testBackoffAt(&clock)
+	rb.recordFailure("zen", soft(), 1)
+	clock = clock.Add(15 * time.Second)
+	rb.recordFailure("zen", soft(), 2)
+	clock = clock.Add(14 * time.Second)
+	if rep := rb.recordFailure("zen", soft(), 3); rep.confirmed || rep.inEpisode {
+		t.Fatalf("three slow failures spanning 29s report %+v, want suspicion", rep)
+	}
+	if rb.skip("zen") {
+		t.Fatal("skip = true after three slow failures inside 30s, want suspicion")
+	}
+}
+
+func TestBackoffSameGenerationCountsOnce(t *testing.T) {
+	t.Parallel()
+
+	clock := baseTime
+	rb := testBackoffAt(&clock)
+	rb.recordFailure("zen", errors.New("connection refused"), 7)
+	if rep := rb.recordFailure("zen", errors.New("connection refused"), 7); rep.confirmed || rep.inEpisode {
+		t.Fatalf("second failure in the same generation reports %+v, want deduped suspicion", rep)
+	}
+	if !rb.countedIn("zen", 7) {
+		t.Fatal("countedIn = false for the generation that counted, want true")
+	}
+	if rb.countedIn("zen", 8) {
+		t.Fatal("countedIn = true for a fresh generation, want false")
+	}
+}
+
+func TestBackoffMixedFailuresConfirmOnTheSlowRule(t *testing.T) {
+	t.Parallel()
+
+	hard := errors.New("connection refused")
+	soft := fmt.Errorf("%w: %w", client.ErrUnreachable, context.DeadlineExceeded)
+	clock := baseTime
+	rb := testBackoffAt(&clock)
+	rb.recordFailure("zen", hard, 1)
+	clock = clock.Add(hardConfirmSpan)
+	if rep := rb.recordFailure("zen", soft, 2); rep.confirmed {
+		t.Fatalf("one hard plus one slow failure reports %+v, want suspicion on the slow rule", rep)
+	}
+	clock = clock.Add(softConfirmSpan - hardConfirmSpan)
+	if rep := rb.recordFailure("zen", hard, 3); !rep.confirmed {
+		t.Fatalf("mixed failures spanning 30s report %+v, want confirmed on the slow rule", rep)
 	}
 }
 
@@ -188,7 +303,7 @@ func TestPrefetchOfSilentServerFailsWithinDeadline(t *testing.T) {
 	d := NewDaemon(Runtime{Store: st, Remote: sr, Now: func() time.Time { return baseTime }}, time.Second)
 
 	start := time.Now()
-	pre := d.prefetchRemote(context.Background(), remoteBinding("zen"))
+	pre := d.prefetchRemote(context.Background(), remoteBinding("zen"), 0)
 	if took := time.Since(start); took > 3*time.Second {
 		t.Fatalf("prefetch took %v against a server that never answers", took)
 	}
@@ -201,7 +316,8 @@ func TestTickDialsFailedServerOncePerTick(t *testing.T) {
 	st := storetest.New(t)
 	saveRemoteBindings(t, st, "zen", 4)
 	fr := unreachableRemote()
-	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+	clock := baseTime
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return clock }}
 
 	var logged bytes.Buffer
 	previous := slog.Default()
@@ -209,40 +325,39 @@ func TestTickDialsFailedServerOncePerTick(t *testing.T) {
 	defer slog.SetDefault(previous)
 
 	d := NewDaemon(rt, time.Second)
-	d.backoff.now = func() time.Time { return baseTime }
+	d.backoff.now = func() time.Time { return clock }
 	if err := d.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
 
-	// The first read's failure is unconfirmed, so it dials again only through
-	// the second read, which confirms the outage and arms the backoff.
-	if n := countCalls(fr, "GetBinding:"); n != 2 {
-		t.Fatalf("GetBinding calls = %d, want 2: suspicion then confirmation", n)
+	// One slow tick counts one failure: a single dial, every binding left
+	// alone.
+	if n := countCalls(fr, "GetBinding:"); n != 1 {
+		t.Fatalf("GetBinding calls = %d, want 1: one dial per tick", n)
 	}
-	first := strings.TrimPrefix(fr.calls[0], "GetBinding:zen:")
 	for i := 0; i < 4; i++ {
 		name := fmt.Sprintf("api%d", i)
 		b, err := st.Load(name)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if name == first {
-			if !b.RemoteUnreachableSince.IsZero() {
-				t.Errorf("%s stamped after one failure, want the first binding left alone", name)
-			}
-		} else if !b.RemoteUnreachableSince.Equal(baseTime) {
-			t.Errorf("%s stamp = %v, want the first failure's time %v", name, b.RemoteUnreachableSince, baseTime)
+		if !b.RemoteUnreachableSince.IsZero() {
+			t.Errorf("%s stamped after one failure, want no binding flipped that tick", name)
 		}
 		if b.State != store.StateActive {
 			t.Errorf("%s state = %s, an outage inside the grace must not halt", name, b.State)
 		}
 	}
+	if n := strings.Count(logged.String(), "level=WARN"); n != 0 {
+		t.Errorf("WARN lines = %d, want none before confirmation, got:\n%s", n, logged.String())
+	}
 
+	clock = clock.Add(hardConfirmSpan)
 	if err := d.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
 	if n := countCalls(fr, "GetBinding:"); n != 2 {
-		t.Fatalf("GetBinding calls = %d, want still 2: the armed episode skips every dial", n)
+		t.Fatalf("GetBinding calls = %d, want 2: suspicion then hard confirmation", n)
 	}
 	for i := 0; i < 4; i++ {
 		name := fmt.Sprintf("api%d", i)
@@ -253,6 +368,12 @@ func TestTickDialsFailedServerOncePerTick(t *testing.T) {
 		if !b.RemoteUnreachableSince.Equal(baseTime) {
 			t.Errorf("%s stamp = %v, want the first failure's time %v", name, b.RemoteUnreachableSince, baseTime)
 		}
+	}
+	if err := d.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if n := countCalls(fr, "GetBinding:"); n != 2 {
+		t.Fatalf("GetBinding calls = %d, want still 2: the armed episode skips every dial", n)
 	}
 	if n := strings.Count(logged.String(), "level=WARN"); n != 1 {
 		t.Errorf("WARN lines = %d, want exactly one per episode, got:\n%s", n, logged.String())
@@ -275,15 +396,16 @@ func TestTickBacksOffFailedServerAcrossTicks(t *testing.T) {
 		}
 	}
 	tick()
+	clock = clock.Add(hardConfirmSpan)
 	tick()
 	if n := countCalls(fr, "GetBinding:"); n != 2 {
-		t.Fatalf("GetBinding calls after two ticks inside the backoff = %d, want 2: suspicion then confirmation", n)
+		t.Fatalf("GetBinding calls after two ticks = %d, want 2: suspicion then hard confirmation", n)
 	}
 
-	clock = clock.Add(serverBackoff + time.Second)
+	clock = clock.Add(blipBackoff + time.Second)
 	tick()
 	if n := countCalls(fr, "GetBinding:"); n != 3 {
-		t.Fatalf("GetBinding calls after the backoff expired = %d, want one probe more", n)
+		t.Fatalf("GetBinding calls after the short window expired = %d, want one probe more", n)
 	}
 	tick()
 	if n := countCalls(fr, "GetBinding:"); n != 3 {
@@ -335,8 +457,8 @@ func TestTickWithSilentServerStillReconcilesLocalBindings(t *testing.T) {
 	if took := time.Since(start); took > 3*time.Second {
 		t.Fatalf("Tick took %v with one server that never answers", took)
 	}
-	if n := sr.gets.Load(); n != 2 {
-		t.Fatalf("GetBinding calls = %d, want two bounded dials for five bindings: suspicion then confirmation", n)
+	if n := sr.gets.Load(); n != 1 {
+		t.Fatalf("GetBinding calls = %d, want one bounded dial for five bindings in one generation", n)
 	}
 	b, err := rt.Store.Load("webshop")
 	if err != nil {
@@ -385,20 +507,28 @@ func TestTickPerBindingAnswerDoesNotBackOffServer(t *testing.T) {
 
 func TestServerUnreachableCountsOnlyServerFailures(t *testing.T) {
 	cases := []struct {
-		name string
-		err  error
-		want bool
+		name        string
+		err         error
+		wantUnreach bool
+		wantSoft    bool
 	}{
-		{"wrapped unreachable", fmt.Errorf("%w: refused", client.ErrUnreachable), true},
-		{"bare deadline", context.DeadlineExceeded, true},
-		{"404", &client.HTTPError{Status: 404}, false},
-		{"401", &client.HTTPError{Status: 401}, false},
-		{"unknown server", client.ErrUnknownServer, false},
-		{"other", errors.New("boom"), false},
+		{"wrapped deadline", fmt.Errorf("%w: %w", client.ErrUnreachable, context.DeadlineExceeded), true, true},
+		{"bare deadline", context.DeadlineExceeded, true, true},
+		{"refused", fmt.Errorf("%w: dial tcp: connection refused", client.ErrUnreachable), true, false},
+		{"dns", fmt.Errorf("%w: %w", client.ErrUnreachable, &net.DNSError{Err: "no such host", Name: "zen"}), true, false},
+		{"gateway 503", fmt.Errorf("%w: %w", client.ErrUnreachable, &client.GatewayError{Status: 503, Text: "Service Unavailable"}), true, true},
+		{"wrapped unreachable", fmt.Errorf("%w: refused", client.ErrUnreachable), true, false},
+		{"404", &client.HTTPError{Status: 404}, false, false},
+		{"401", &client.HTTPError{Status: 401}, false, false},
+		{"unknown server", client.ErrUnknownServer, false, false},
+		{"other", errors.New("boom"), false, false},
 	}
 	for _, c := range cases {
-		if got := serverUnreachable(c.err); got != c.want {
-			t.Errorf("%s: serverUnreachable = %v, want %v", c.name, got, c.want)
+		if got := serverUnreachable(c.err); got != c.wantUnreach {
+			t.Errorf("%s: serverUnreachable = %v, want %v", c.name, got, c.wantUnreach)
+		}
+		if got := failureSoft(c.err); got != c.wantSoft {
+			t.Errorf("%s: failureSoft = %v, want %v", c.name, got, c.wantSoft)
 		}
 	}
 }
@@ -437,10 +567,10 @@ func TestTickSilentServerStampsAndHaltsEveryOpenRound(t *testing.T) {
 			t.Fatalf("Tick: %v", err)
 		}
 	}
-	// The first tick suspects through its first read and confirms through its
-	// second; the next tick at the same time skips every dial and stamps the
-	// first binding too.
+	// The first tick suspects with one dial; the next tick past one prefetch
+	// bound confirms, and the same tick's skips stamp every binding.
 	tick()
+	clock = clock.Add(hardConfirmSpan)
 	tick()
 	if got := countCalls(fr, "GetBinding:"); got != 2 {
 		t.Fatalf("GetBinding calls = %d, want the suspicion and the confirmation only", got)
@@ -522,9 +652,25 @@ func TestTickSingleFailureLeavesServerReachable(t *testing.T) {
 		t.Errorf("first-failure line misses http_response=false for a deadline, got:\n%s", out)
 	}
 
-	// The next read confirms: the stamp is the first failure's time, not the
-	// second tick's.
+	// Two slow reads inside 30s stay suspect: the stamp stays zero and no
+	// backoff arms.
 	clock = clock.Add(time.Second)
+	if err := d.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	got, err = st.Load("api0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.RemoteUnreachableSince.IsZero() {
+		t.Errorf("stamp = %v after two slow failures inside 30s, want zero", got.RemoteUnreachableSince)
+	}
+	if d.backoff.skip("zen") {
+		t.Error("skip = true after two slow failures, want suspicion")
+	}
+	// The third slow read spanning 30s confirms: the stamp is the first
+	// failure's time, not the third tick's.
+	clock = baseTime.Add(softConfirmSpan)
 	if err := d.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
@@ -536,7 +682,7 @@ func TestTickSingleFailureLeavesServerReachable(t *testing.T) {
 		t.Errorf("stamp = %v, want the first failure's time %v", got.RemoteUnreachableSince, baseTime)
 	}
 	if !d.backoff.skip("zen") {
-		t.Error("skip = false after two failures, want the backoff armed")
+		t.Error("skip = false after three slow failures spanning 30s, want the backoff armed")
 	}
 }
 
@@ -607,6 +753,7 @@ func TestTickEpisodeLogsOneWarnAndOneInfoOnRecovery(t *testing.T) {
 		}
 	}
 	tick()
+	clock = clock.Add(hardConfirmSpan)
 	tick()
 	for i := 0; i < 3; i++ {
 		name := fmt.Sprintf("api%d", i)
@@ -628,7 +775,7 @@ func TestTickEpisodeLogsOneWarnAndOneInfoOnRecovery(t *testing.T) {
 	}
 
 	logged.Reset()
-	clock = clock.Add(serverBackoff + time.Second)
+	clock = clock.Add(blipBackoff + time.Second)
 	fr.getBindingErr = nil
 	fr.getBindingResp = remote.BindingView{RoundState: remote.RoundRunning}
 	tick()
@@ -666,10 +813,12 @@ func TestTickStampsTheOutageStartInUTC(t *testing.T) {
 	east := baseTime.In(time.FixedZone("east", 3*60*60))
 	d.backoff.now = func() time.Time { return east }
 
-	for range 2 {
-		if err := d.Tick(context.Background()); err != nil {
-			t.Fatalf("Tick: %v", err)
-		}
+	if err := d.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	east = east.Add(hardConfirmSpan)
+	if err := d.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
 	}
 
 	got, err := st.Load(remoteBinding("zen").Name)
@@ -681,5 +830,184 @@ func TestTickStampsTheOutageStartInUTC(t *testing.T) {
 	}
 	if _, offset := got.RemoteUnreachableSince.Zone(); offset != 0 {
 		t.Errorf("RemoteUnreachableSince = %v, want UTC", got.RemoteUnreachableSince)
+	}
+}
+
+func TestTickDeadlineOnceThenAnswersNeverFlips(t *testing.T) {
+	st := storetest.New(t)
+	saveRemoteBindings(t, st, "zen", 3)
+	fr := &fakeRemote{
+		deadlineFails:  1,
+		getBindingResp: remote.BindingView{RoundState: remote.RoundRunning},
+	}
+	clock := baseTime
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return clock }}
+	d := NewDaemon(rt, time.Second)
+	d.backoff.now = func() time.Time { return clock }
+
+	var logged bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(previous)
+
+	tick := func() {
+		t.Helper()
+		if err := d.Tick(context.Background()); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+	}
+	tick()
+	if n := countCalls(fr, "GetBinding:"); n != 1 {
+		t.Fatalf("GetBinding calls after the blip tick = %d, want 1: one dial per generation", n)
+	}
+	for i := 0; i < 3; i++ {
+		b, err := st.Load(fmt.Sprintf("api%d", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !b.RemoteUnreachableSince.IsZero() || b.Builder.RemoteStatus == "unreachable" {
+			t.Fatalf("%s flipped after one slow read, want no outage", b.Name)
+		}
+	}
+	tick()
+	tick()
+	for i := 0; i < 3; i++ {
+		b, err := st.Load(fmt.Sprintf("api%d", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !b.RemoteUnreachableSince.IsZero() || b.Builder.RemoteStatus == "unreachable" {
+			t.Fatalf("%s flipped after the server answered, want no outage", b.Name)
+		}
+	}
+	if n := strings.Count(logged.String(), "level=WARN"); n != 0 {
+		t.Errorf("WARN lines = %d, want none for one slow blip, got:\n%s", n, logged.String())
+	}
+}
+
+func TestTickAlwaysDeadlineDeclaresAtSoftBound(t *testing.T) {
+	st := storetest.New(t)
+	const n = 3
+	for i := 0; i < n; i++ {
+		b := remoteBinding("zen")
+		b.Name = fmt.Sprintf("api%d", i)
+		b.RoundTimeoutMS = 1000
+		if err := st.Save(b); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.WithLock(func(tx *store.Tx) error {
+			return tx.AppendLog(b.Name, store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt})
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deadline := fmt.Errorf("%w: %w", client.ErrUnreachable, context.DeadlineExceeded)
+	fr := &fakeRemote{getBindingErr: deadline}
+	clock := baseTime
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return clock }}
+	d := NewDaemon(rt, time.Second)
+	d.backoff.now = func() time.Time { return clock }
+
+	tick := func() {
+		t.Helper()
+		if err := d.Tick(context.Background()); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+	}
+	tick()
+	for i := 0; i < n; i++ {
+		b, err := st.Load(fmt.Sprintf("api%d", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !b.RemoteUnreachableSince.IsZero() {
+			t.Fatalf("%s stamped after one slow failure, want suspicion", b.Name)
+		}
+	}
+	clock = clock.Add(15 * time.Second)
+	tick()
+	for i := 0; i < n; i++ {
+		b, err := st.Load(fmt.Sprintf("api%d", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !b.RemoteUnreachableSince.IsZero() {
+			t.Fatalf("%s stamped after two slow failures, want suspicion until 30s", b.Name)
+		}
+	}
+	clock = clock.Add(15 * time.Second)
+	tick()
+	if got := countCalls(fr, "GetBinding:"); got != 3 {
+		t.Fatalf("GetBinding calls = %d, want 3: one dial per generation", got)
+	}
+	for i := 0; i < n; i++ {
+		b, err := st.Load(fmt.Sprintf("api%d", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !b.RemoteUnreachableSince.Equal(baseTime) {
+			t.Fatalf("%s stamp = %v, want the first failure's time %v", b.Name, b.RemoteUnreachableSince, baseTime)
+		}
+		if b.State != store.StateActive {
+			t.Fatalf("%s state = %s, want active inside the grace", b.Name, b.State)
+		}
+	}
+	steps := int(roundBudgetFor(1000)+unreachableGrace)/int(time.Minute) + 1
+	for i := 0; i < steps; i++ {
+		clock = clock.Add(time.Minute)
+		tick()
+	}
+	for i := 0; i < n; i++ {
+		b, err := st.Load(fmt.Sprintf("api%d", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b.State != store.StateNeedsYou || b.RemoteHaltKind != store.HaltKindUnreachable {
+			t.Fatalf("%s state=%s kind=%q, want needs_you with the unreachable kind", b.Name, b.State, b.RemoteHaltKind)
+		}
+		if !b.RemoteUnreachableSince.Equal(baseTime) {
+			t.Errorf("%s stamp = %v, want the episode start %v", b.Name, b.RemoteUnreachableSince, baseTime)
+		}
+	}
+}
+
+func TestTickAlwaysRefusedDeclaresAtHardBound(t *testing.T) {
+	st := storetest.New(t)
+	saveRemoteBindings(t, st, "zen", 3)
+	fr := unreachableRemote()
+	clock := baseTime
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return clock }}
+	d := NewDaemon(rt, time.Second)
+	d.backoff.now = func() time.Time { return clock }
+
+	tick := func() {
+		t.Helper()
+		if err := d.Tick(context.Background()); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+	}
+	tick()
+	for i := 0; i < 3; i++ {
+		b, err := st.Load(fmt.Sprintf("api%d", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !b.RemoteUnreachableSince.IsZero() {
+			t.Fatalf("%s stamped after one refused dial, want suspicion", b.Name)
+		}
+	}
+	clock = clock.Add(hardConfirmSpan)
+	tick()
+	if got := countCalls(fr, "GetBinding:"); got != 2 {
+		t.Fatalf("GetBinding calls = %d, want 2: suspicion then hard confirmation", got)
+	}
+	for i := 0; i < 3; i++ {
+		b, err := st.Load(fmt.Sprintf("api%d", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !b.RemoteUnreachableSince.Equal(baseTime) {
+			t.Fatalf("%s stamp = %v, want the first failure's time %v", b.Name, b.RemoteUnreachableSince, baseTime)
+		}
 	}
 }

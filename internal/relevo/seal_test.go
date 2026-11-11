@@ -229,7 +229,7 @@ func TestTickMigratesAnOldLayoutBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := NewDaemon(rt, time.Second).tickOne(context.Background(), b); err != nil {
+	if err := NewDaemon(rt, time.Second).tickOne(context.Background(), b, 0); err != nil {
 		t.Fatalf("tickOne: %v", err)
 	}
 

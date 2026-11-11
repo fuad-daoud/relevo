@@ -893,7 +893,7 @@ func TestServerChainMemberIsNotCollectedByThePerBindingPath(t *testing.T) {
 	rt := chainPullRuntime(t, fr)
 	b := seedServerChain(t, rt, "shop")
 
-	pre := NewDaemon(rt, time.Minute).prefetchRemote(context.Background(), b)
+	pre := NewDaemon(rt, time.Minute).prefetchRemote(context.Background(), b, 0)
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
 		next, rerr := reconcileRemote(context.Background(), rt, tx, b, pre)
 		if rerr != nil {

@@ -136,6 +136,10 @@ type fakeRemote struct {
 	getCheckIDs map[string]remote.CheckView
 	setGateReq  remote.SetGateRequest
 	setGateErr  error
+	// deadlineFails makes GetBinding fail this many times with a deadline
+	// before answering getBindingResp: one slow blip, then the server is back.
+	deadlineFails int
+	deadlineCount int
 
 	beforeCall func(call string)
 
@@ -183,6 +187,10 @@ func (f *fakeRemote) GetBinding(ctx context.Context, server, name string) (remot
 		f.beforeCall(call)
 	}
 	f.calls = append(f.calls, call)
+	if f.deadlineCount < f.deadlineFails {
+		f.deadlineCount++
+		return remote.BindingView{}, fmt.Errorf("%w: %w", client.ErrUnreachable, context.DeadlineExceeded)
+	}
 	return f.getBindingResp, f.getBindingErr
 }
 
