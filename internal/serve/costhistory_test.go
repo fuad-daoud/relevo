@@ -1,9 +1,11 @@
 package serve
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,7 +23,7 @@ func TestAppendCostSampleDedupesSameRound(t *testing.T) {
 	at := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
 	s := costSample{Base: 1 << 30, Burst: 2 << 30, At: at}
 
-	ok, err := appendCostSample(root, repo, "builder", 3, s)
+	ok, err := appendCostSample(root, repo, "builder", "b1", 3, s)
 	if err != nil {
 		t.Fatalf("first append: %v", err)
 	}
@@ -29,7 +31,7 @@ func TestAppendCostSampleDedupesSameRound(t *testing.T) {
 		t.Fatal("first append = false, want true")
 	}
 
-	ok, err = appendCostSample(root, repo, "builder", 3, s)
+	ok, err = appendCostSample(root, repo, "builder", "b1", 3, s)
 	if err != nil {
 		t.Fatalf("second append: %v", err)
 	}
@@ -52,6 +54,54 @@ func TestAppendCostSampleDedupesSameRound(t *testing.T) {
 	}
 }
 
+func TestAppendCostSampleKeepsOtherBindingsSameRound(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	repo := strings.Repeat("c", 64)
+	at := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	for _, name := range []string{"x", "y", "z"} {
+		ok, err := appendCostSample(root, repo, "builder", name, 1, costSample{Base: 1, Burst: 2, At: at})
+		if err != nil {
+			t.Fatalf("append %s: %v", name, err)
+		}
+		if !ok {
+			t.Fatalf("append %s round 1 = false, want true: another binding's round 1 is a new round", name)
+		}
+	}
+	cf, err := loadCostFile(costFilePath(root, repo, "builder"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(cf.Samples) != 3 || cf.LastBinding != "z" {
+		t.Fatalf("cost file = %d samples, last %q; want 3 and z", len(cf.Samples), cf.LastBinding)
+	}
+}
+
+func TestAppendCostSampleConcurrentKeepsEverySample(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	repo := strings.Repeat("d", 64)
+	const n = 12
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Go(func() {
+			if _, err := appendCostSample(root, repo, "builder", fmt.Sprintf("b%d", i), 1, costSample{Base: 1, Burst: 2}); err != nil {
+				t.Errorf("append b%d: %v", i, err)
+			}
+		})
+	}
+	wg.Wait()
+	cf, err := loadCostFile(costFilePath(root, repo, "builder"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(cf.Samples) != n {
+		t.Fatalf("samples = %d, want %d: a concurrent append lost a sample", len(cf.Samples), n)
+	}
+}
+
 func TestAppendCostSampleTrimsTo20(t *testing.T) {
 	t.Parallel()
 
@@ -59,7 +109,7 @@ func TestAppendCostSampleTrimsTo20(t *testing.T) {
 	repo := strings.Repeat("b", 64)
 	for round := 1; round <= 21; round++ {
 		s := costSample{Base: int64(round), Burst: int64(round * 100)}
-		ok, err := appendCostSample(root, repo, "builder", round, s)
+		ok, err := appendCostSample(root, repo, "builder", "b1", round, s)
 		if err != nil {
 			t.Fatalf("append round %d: %v", round, err)
 		}

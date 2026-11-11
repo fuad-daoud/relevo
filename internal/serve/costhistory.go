@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -15,12 +16,20 @@ import (
 const costHistoryMaxSamples = 20
 
 // costFile is one repo-role's cost history. Samples are newest-last, and
-// LastRound records the round the file already holds: CloseServedRound can
-// retry after a git failure, so the retry must not record the round twice.
+// LastBinding with LastRound name the round the file already holds:
+// CloseServedRound can retry after a git failure, so the retry must not record
+// the round twice. The binding is part of the key because every binding of the
+// same repo and role counts its rounds from 1.
 type costFile struct {
-	LastRound int          `json:"last_round"`
-	Samples   []costSample `json:"samples"`
+	LastBinding string       `json:"last_binding"`
+	LastRound   int          `json:"last_round"`
+	Samples     []costSample `json:"samples"`
 }
+
+// costFileMu serialises the read-modify-write of cost files: two bindings of
+// one repo and role can close in the same moment, and the later rename would
+// drop the earlier sample.
+var costFileMu sync.Mutex
 
 // sanitiseRole folds a writer role into a filename segment: the role is
 // actor input, so only lowercase alphanumerics and dashes survive and every
@@ -63,24 +72,27 @@ func loadCostFile(path string) (costFile, error) {
 }
 
 // appendCostSample records one closed round's sample, newest-last and trimmed
-// to the newest 20. A repeated call for the same round is a no-op without a
-// write, so a retried close records the round once. The write is atomic — a
+// to the newest 20. A repeated call for the same binding's round is a no-op
+// without a write, so a retried close records the round once. The write is atomic — a
 // temp file in the same directory renamed over the target — so a crash leaves
 // the previous file intact. IO errors propagate; the hook decides they are
 // warn-only.
-func appendCostSample(root, repoID, role string, round int, s costSample) (bool, error) {
+func appendCostSample(root, repoID, role, binding string, round int, s costSample) (bool, error) {
+	costFileMu.Lock()
+	defer costFileMu.Unlock()
 	path := costFilePath(root, repoID, role)
 	cf, err := loadCostFile(path)
 	if err != nil {
 		return false, err
 	}
-	if cf.LastRound == round {
+	if cf.LastBinding == binding && cf.LastRound == round {
 		return false, nil
 	}
 	cf.Samples = append(cf.Samples, s)
 	if len(cf.Samples) > costHistoryMaxSamples {
 		cf.Samples = cf.Samples[len(cf.Samples)-costHistoryMaxSamples:]
 	}
+	cf.LastBinding = binding
 	cf.LastRound = round
 	raw, err := json.MarshalIndent(cf, "", "  ")
 	if err != nil {
@@ -171,7 +183,7 @@ func recordClosedCost(rt relevo.Runtime, b store.Binding, closed int) {
 	if !ok {
 		return
 	}
-	if _, err := appendCostSample(rt.CostRoot, b.Serve.RepoID, b.WriterRole(), closed, sample); err != nil {
+	if _, err := appendCostSample(rt.CostRoot, b.Serve.RepoID, b.WriterRole(), b.Name, closed, sample); err != nil {
 		slog.Warn("cost history append failed", "binding", b.Name, "round", closed, "err", err)
 	}
 }
