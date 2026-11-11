@@ -33,11 +33,6 @@ func saveMirrorBinding(t *testing.T, env *testEnv, name string) {
 	}
 }
 
-// mirrorOnce runs the pass mirrorLoop runs, on a mirror set of its own.
-func mirrorOnce(env *testEnv) {
-	env.srv.mirrorPass(context.Background(), map[string]*relevo.OwnerMirror{}, time.Now())
-}
-
 // TestMirrorPassKeepsEachOwnersMirror: what makes a later pass cheap lives in
 // the mirror, so a pass that built a new one would ingest everything again.
 func TestMirrorPassKeepsEachOwnersMirror(t *testing.T) {
