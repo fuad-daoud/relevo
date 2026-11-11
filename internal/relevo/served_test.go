@@ -958,17 +958,13 @@ func TestLiveViewOf(t *testing.T) {
 }
 
 // TestServedLiveReadsLocalRow pins that ServedLive answers from the binding's
-// own row: a stored forward the engine no longer acts on never diverts the
-// live view elsewhere.
+// own local row.
 func TestServedLiveReadsLocalRow(t *testing.T) {
 	t.Parallel()
 
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	rt = withClock(rt, &fakeClock{now: baseTime})
-	b.Burst = &store.BurstFacts{Forward: &store.Forward{
-		Node: "node-1", NodeBinding: "deadbeef-webshop", Round: b.Round, Phase: "running",
-	}}
 
 	got, err := ServedLive(context.Background(), rt, b)
 	if err != nil {
