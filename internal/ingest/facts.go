@@ -91,6 +91,18 @@ func applyRoundMeasurements(r *db.Round, events []store.LogEntry, n int, remote 
 		cpu, peak := rusage.CPUMS, rusage.PeakMemBytes
 		r.RusageCPUMS = &cpu
 		r.RusagePeakMemBytes = &peak
+		r.RusageBaseBytes = rusage.BaseBytes
+		r.RusageBurstBytes = rusage.BurstBytes
+		r.RusageBurstSecs = rusage.BurstSecs
+		r.RusageCPUSomeUsec = rusage.CPUSomeUsec
+		r.RusageCPUFullUsec = rusage.CPUFullUsec
+		r.RusageMemSomeUsec = rusage.MemSomeUsec
+		r.RusageMemFullUsec = rusage.MemFullUsec
+		r.RusageIOSomeUsec = rusage.IOSomeUsec
+		r.RusageIOFullUsec = rusage.IOFullUsec
+		r.RusageEvHigh = rusage.EvHigh
+		r.RusageEvMax = rusage.EvMax
+		r.RusageEvOOMKill = rusage.EvOOMKill
 	}
 }
 

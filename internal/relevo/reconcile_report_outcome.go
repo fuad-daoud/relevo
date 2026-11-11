@@ -247,6 +247,30 @@ func appendDiffAndSwitchLines(ctx context.Context, rt Runtime, tx *store.Tx, b s
 	return nil
 }
 
+// reportRusage is the closed round's cgroup measurement: the rusage the
+// caller already has, or a local read when the caller sent none -- headless
+// only, since a pane round has no supervisor. A failed local read leaves nil,
+// never a partial measurement.
+func reportRusage(ctx context.Context, rt Runtime, b store.Binding, rusage *store.Rusage) *store.Rusage {
+	if rusage != nil {
+		return rusage
+	}
+	if rt.Runner == nil || !b.Builder.Headless() {
+		return nil
+	}
+	// The pointers are shared, not copied: the trailer parse owns them and
+	// nothing mutates them after the entry is queued.
+	if r, ok := rt.Runner.Rusage(ctx, handleOf(b.Builder), rt.Store.StreamPath(b.Name, b.Round)); ok {
+		return &store.Rusage{CPUMS: r.CPUMS, PeakMemBytes: r.PeakMemBytes,
+			BaseBytes: r.BaseBytes, BurstBytes: r.BurstBytes, BurstSecs: r.BurstSecs,
+			CPUSomeUsec: r.CPUSomeUsec, CPUFullUsec: r.CPUFullUsec,
+			MemSomeUsec: r.MemSomeUsec, MemFullUsec: r.MemFullUsec,
+			IOSomeUsec: r.IOSomeUsec, IOFullUsec: r.IOFullUsec,
+			EvHigh: r.EvHigh, EvMax: r.EvMax, EvOOMKill: r.EvOOMKill}
+	}
+	return nil
+}
+
 // queueReportEntry queues the report entry itself: the closed round's usage
 // and cgroup measurement, then the delivery, then the reader output strip.
 func queueReportEntry(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, gate *store.GateRecord, usage *usage.Usage, rusage *store.Rusage, prior *usage.Tokens, st *queueReportState) error {
@@ -270,14 +294,8 @@ func queueReportEntry(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 
 	// The closed round's cgroup measurement: what the caller already has
 	// (a remote binding's server measured its own round and shipped it as
-	// view.Rusage), or a local read when the caller sent none -- headless
-	// only, since a pane round has no supervisor.
-	entryRusage := rusage
-	if entryRusage == nil && rt.Runner != nil && b.Builder.Headless() {
-		if r, ok := rt.Runner.Rusage(ctx, handleOf(b.Builder), rt.Store.StreamPath(b.Name, b.Round)); ok {
-			entryRusage = &store.Rusage{CPUMS: r.CPUMS, PeakMemBytes: r.PeakMemBytes}
-		}
-	}
+	// view.Rusage), or a local read when the caller sent none.
+	entryRusage := reportRusage(ctx, rt, b, rusage)
 
 	var reportPrior = prior
 	if reportPrior != nil {

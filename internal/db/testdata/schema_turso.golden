@@ -248,7 +248,7 @@ table repo repo
 CREATE TABLE repo (id TEXT PRIMARY KEY, origin_url TEXT, common_dir TEXT, first_seen TEXT NOT NULL, mastermind_consent TEXT, consent_at TEXT, origin TEXT NOT NULL DEFAULT '')
 
 table round round
-CREATE TABLE round (id TEXT PRIMARY KEY, binding_id TEXT NOT NULL, number INTEGER NOT NULL, started_at TEXT NOT NULL, closed_at TEXT, outcome TEXT NOT NULL, candidate TEXT, harness TEXT, provider TEXT, model TEXT, mode TEXT, tier TEXT, commits INTEGER, tree TEXT, gate_result TEXT, gate_exit INTEGER, gate_duration_ms INTEGER, in_tokens INTEGER, cache_tokens INTEGER, write_tokens INTEGER, out_tokens INTEGER, cost_usd REAL, cost_basis TEXT, report_outcome TEXT, switches INTEGER NOT NULL, actor TEXT NOT NULL DEFAULT 'builder', account TEXT, queue_wait_ms INTEGER, start_kind TEXT, rusage_cpu_ms INTEGER, rusage_peak_mem_bytes INTEGER, FOREIGN KEY (binding_id) REFERENCES binding(id))
+CREATE TABLE round (id TEXT PRIMARY KEY, binding_id TEXT NOT NULL, number INTEGER NOT NULL, started_at TEXT NOT NULL, closed_at TEXT, outcome TEXT NOT NULL, candidate TEXT, harness TEXT, provider TEXT, model TEXT, mode TEXT, tier TEXT, commits INTEGER, tree TEXT, gate_result TEXT, gate_exit INTEGER, gate_duration_ms INTEGER, in_tokens INTEGER, cache_tokens INTEGER, write_tokens INTEGER, out_tokens INTEGER, cost_usd REAL, cost_basis TEXT, report_outcome TEXT, switches INTEGER NOT NULL, actor TEXT NOT NULL DEFAULT 'builder', account TEXT, queue_wait_ms INTEGER, start_kind TEXT, rusage_cpu_ms INTEGER, rusage_peak_mem_bytes INTEGER, rusage_base_bytes INTEGER, rusage_burst_bytes INTEGER, rusage_burst_secs INTEGER, rusage_cpu_some_usec INTEGER, rusage_cpu_full_usec INTEGER, rusage_mem_some_usec INTEGER, rusage_mem_full_usec INTEGER, rusage_io_some_usec INTEGER, rusage_io_full_usec INTEGER, rusage_ev_high INTEGER, rusage_ev_max INTEGER, rusage_ev_oom_kill INTEGER, FOREIGN KEY (binding_id) REFERENCES binding(id))
 
 table round_file round_file
 CREATE TABLE round_file (record_id TEXT NOT NULL, name TEXT NOT NULL, round INTEGER NOT NULL, body BLOB NOT NULL, bytes INTEGER NOT NULL, sha256 TEXT NOT NULL, mtime TEXT NOT NULL, sealed_at TEXT NOT NULL, body_codec INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (record_id, name), FOREIGN KEY (record_id) REFERENCES binding_record(id) ON DELETE CASCADE)
@@ -454,4 +454,4 @@ CREATE TRIGGER IF NOT EXISTS sync_outbox_transcript_ins AFTER INSERT ON transcri
 trigger sync_outbox_transcript_upd transcript
 CREATE TRIGGER IF NOT EXISTS sync_outbox_transcript_upd AFTER UPDATE ON transcript BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('transcript', json_array (NEW.id), 'update', CASE NEW.owner_kind WHEN 'round' THEN (SELECT writer FROM binding WHERE id = (SELECT binding_id FROM round WHERE id = NEW.owner_id)) WHEN 'mastermind' THEN (SELECT origin FROM mastermind WHERE id = NEW.owner_id) ELSE NULL END); END
 
-schema_versions have=32 know=32
+schema_versions have=33 know=33
