@@ -57,28 +57,43 @@ func serve(t *testing.T, b Backend, requests ...Request) []Response {
 	return out
 }
 
+// hello is the handshake every blob call follows: a bucket is configured, so
+// the store withStore installed is the one the verbs reach.
+func hello() Request {
+	return Request{ID: "1", Verb: VerbHello, Version: ProtocolVersion, Origin: "origin-a", URL: "libsql://x", Token: "t", R2: &R2Config{}}
+}
+
+// oneBlob sends verb a batch of the one item after a hello and returns that
+// item's result. A refusal of the whole call fails the test: past the hello,
+// a key's own failure rides in its result.
+func oneBlob(t *testing.T, verb Verb, item BlobItem) BlobResult {
+	t.Helper()
+	rep := serve(t, &fakeBackend{}, hello(), Request{ID: "2", Verb: verb, Blobs: []BlobItem{item}})[1]
+	if !rep.OK {
+		t.Fatalf("%s refused the whole call: %s", verb, rep.Error)
+	}
+	if len(rep.Results) != 1 {
+		t.Fatalf("%s results = %+v, want one", verb, rep.Results)
+	}
+	return rep.Results[0]
+}
+
 // TestPutBlobUploadsTheStagedBody pins the ordinary put: the object lands under
-// its key, the reply carries the exact byte count, and Skipped is false because
-// nothing was there before.
+// its key, the result carries the exact byte count, and Skipped is false
+// because nothing was there before.
 func TestPutBlobUploadsTheStagedBody(t *testing.T) {
 	store := withStore(t)
-	dir := t.TempDir()
 	body := []byte("the bytes of one stored value")
-	path, key := staged(t, dir, "one", body)
+	path, key := staged(t, t.TempDir(), "one", body)
 
-	backend := &fakeBackend{}
-	replies := serve(t, backend,
-		Request{ID: "1", Verb: VerbHello, Version: ProtocolVersion, Origin: "origin-a", URL: "libsql://x", Token: "t", R2: &R2Config{}},
-		Request{ID: "2", Verb: VerbPutBlob, Key: key, Staging: path},
-	)
-	rep := replies[1]
-	if !rep.OK {
-		t.Fatalf("put_blob refused: %s", rep.Error)
+	res := oneBlob(t, VerbPutBlobs, BlobItem{Key: key, Staging: path})
+	if res.Error != "" {
+		t.Fatalf("put refused: %s", res.Error)
 	}
-	if rep.Bytes != int64(len(body)) {
-		t.Errorf("bytes = %d, want %d", rep.Bytes, len(body))
+	if res.Bytes != int64(len(body)) {
+		t.Errorf("bytes = %d, want %d", res.Bytes, len(body))
 	}
-	if rep.Skipped {
+	if res.Skipped {
 		t.Error("a first put skipped, want an upload")
 	}
 	got, err := store.Get(t.Context(), key, discard{})
@@ -101,21 +116,15 @@ func (discard) Write(p []byte) (int, error) { return len(p), nil }
 // do not match the entry pointing at them.
 func TestPutBlobRefusesDigestMismatch(t *testing.T) {
 	store := withStore(t)
-	dir := t.TempDir()
-	path, _ := staged(t, dir, "one", []byte("the bytes one machine meant to publish"))
+	path, _ := staged(t, t.TempDir(), "one", []byte("the bytes one machine meant to publish"))
 	wrongKey := blobstore.Key("origin-a", hexSHA("a different body entirely"))
 
-	backend := &fakeBackend{}
-	replies := serve(t, backend,
-		Request{ID: "1", Verb: VerbHello, Version: ProtocolVersion, Origin: "origin-a", URL: "libsql://x", Token: "t", R2: &R2Config{}},
-		Request{ID: "2", Verb: VerbPutBlob, Key: wrongKey, Staging: path},
-	)
-	rep := replies[1]
-	if rep.OK {
+	res := oneBlob(t, VerbPutBlobs, BlobItem{Key: wrongKey, Staging: path})
+	if res.Error == "" {
 		t.Fatal("a body that is not its key's digest was published anyway")
 	}
-	if rep.Code != CodeBlobRefused {
-		t.Errorf("code = %q, want %q", rep.Code, CodeBlobRefused)
+	if res.Code != CodeBlobRefused {
+		t.Errorf("code = %q, want %q", res.Code, CodeBlobRefused)
 	}
 	if has, _ := store.Has(t.Context(), wrongKey); has {
 		t.Error("the wrong body reached the store")
@@ -123,33 +132,28 @@ func TestPutBlobRefusesDigestMismatch(t *testing.T) {
 }
 
 // TestPutBlobSkipsExisting pins that a second put of the same body sends
-// nothing: the object is already there, so the reply says skipped and the store
-// records no further upload. The mutation is removing the Has check, which would
-// re-upload and answer with a byte count a caller would add to the month's total.
+// nothing: the object is already there, so the result says skipped and the
+// store records no further upload. The mutation is removing the Has check,
+// which would re-upload and answer with a byte count a caller would add to the
+// month's total.
 func TestPutBlobSkipsExisting(t *testing.T) {
 	store := withStore(t)
-	dir := t.TempDir()
 	body := []byte("a body two machines both hold")
-	path, key := staged(t, dir, "one", body)
+	path, key := staged(t, t.TempDir(), "one", body)
 	if err := store.Put(t.Context(), key, bytesReader(body), int64(len(body))); err != nil {
 		t.Fatalf("seed the store: %v", err)
 	}
 	putsBefore := store.Puts
 
-	backend := &fakeBackend{}
-	replies := serve(t, backend,
-		Request{ID: "1", Verb: VerbHello, Version: ProtocolVersion, Origin: "origin-a", URL: "libsql://x", Token: "t", R2: &R2Config{}},
-		Request{ID: "2", Verb: VerbPutBlob, Key: key, Staging: path},
-	)
-	rep := replies[1]
-	if !rep.OK {
-		t.Fatalf("put_blob refused: %s", rep.Error)
+	res := oneBlob(t, VerbPutBlobs, BlobItem{Key: key, Staging: path})
+	if res.Error != "" {
+		t.Fatalf("put refused: %s", res.Error)
 	}
-	if !rep.Skipped {
+	if !res.Skipped {
 		t.Error("Skipped = false for an object the store already held")
 	}
-	if rep.Bytes != 0 {
-		t.Errorf("bytes = %d, want 0: a skip moved nothing", rep.Bytes)
+	if res.Bytes != 0 {
+		t.Errorf("bytes = %d, want 0: a skip moved nothing", res.Bytes)
 	}
 	if store.Puts != putsBefore {
 		t.Errorf("the store took %d uploads, want none", store.Puts-putsBefore)
@@ -157,7 +161,7 @@ func TestPutBlobSkipsExisting(t *testing.T) {
 }
 
 // TestGetBlobWritesTheWholeFile pins the fetch: the bytes land at the staging
-// path named, no .part is left behind, and the reply carries the length.
+// path named, no .part is left behind, and the result carries the length.
 func TestGetBlobWritesTheWholeFile(t *testing.T) {
 	store := withStore(t)
 	body := []byte("a body this machine is about to apply")
@@ -168,17 +172,12 @@ func TestGetBlobWritesTheWholeFile(t *testing.T) {
 	}
 	staging := filepath.Join(t.TempDir(), hex.EncodeToString(sum[:]))
 
-	backend := &fakeBackend{}
-	replies := serve(t, backend,
-		Request{ID: "1", Verb: VerbHello, Version: ProtocolVersion, Origin: "origin-a", URL: "libsql://x", Token: "t", R2: &R2Config{}},
-		Request{ID: "2", Verb: VerbGetBlob, Key: key, Staging: staging, Max: 64 << 20},
-	)
-	rep := replies[1]
-	if !rep.OK {
-		t.Fatalf("get_blob refused: %s", rep.Error)
+	res := oneBlob(t, VerbGetBlobs, BlobItem{Key: key, Staging: staging, Max: 64 << 20})
+	if res.Error != "" {
+		t.Fatalf("get refused: %s", res.Error)
 	}
-	if rep.Bytes != int64(len(body)) {
-		t.Errorf("bytes = %d, want %d", rep.Bytes, len(body))
+	if res.Bytes != int64(len(body)) {
+		t.Errorf("bytes = %d, want %d", res.Bytes, len(body))
 	}
 	got, err := os.ReadFile(staging)
 	if err != nil {
@@ -202,44 +201,15 @@ func TestGetBlobMissingIsBlobMissing(t *testing.T) {
 	staging := filepath.Join(t.TempDir(), "absent")
 	missing := blobstore.Key("origin-b", hexSHA("nothing stored under this"))
 
-	backend := &fakeBackend{}
-	replies := serve(t, backend,
-		Request{ID: "1", Verb: VerbHello, Version: ProtocolVersion, Origin: "origin-a", URL: "libsql://x", Token: "t", R2: &R2Config{}},
-		Request{ID: "2", Verb: VerbGetBlob, Key: missing, Staging: staging, Max: 64 << 20},
-	)
-	rep := replies[1]
-	if rep.OK {
+	res := oneBlob(t, VerbGetBlobs, BlobItem{Key: missing, Staging: staging, Max: 64 << 20})
+	if res.Error == "" {
 		t.Fatal("a fetch of an absent object succeeded")
 	}
-	if rep.Code != CodeBlobMissing {
-		t.Errorf("code = %q, want %q", rep.Code, CodeBlobMissing)
+	if res.Code != CodeBlobMissing {
+		t.Errorf("code = %q, want %q", res.Code, CodeBlobMissing)
 	}
 	if _, err := os.Stat(staging); !os.IsNotExist(err) {
 		t.Error("a failed fetch left a file where the importer would read one")
-	}
-}
-
-// TestBlobVerbsRefuseWithoutR2Settings pins that a hello with no bucket answers
-// the blob verbs with a message that says so, rather than panicking on a nil
-// store or silently succeeding without moving anything.
-func TestBlobVerbsRefuseWithoutR2Settings(t *testing.T) {
-	withStore(t)
-	staging := filepath.Join(t.TempDir(), "nothing")
-
-	for _, verb := range []Verb{VerbPutBlob, VerbGetBlob} {
-		backend := &fakeBackend{}
-		replies := serve(t, backend,
-			Request{ID: "1", Verb: VerbHello, Version: ProtocolVersion, Origin: "origin-a", URL: "libsql://x", Token: "t"},
-			Request{ID: "2", Verb: verb, Key: blobstore.Key("origin-a", hexSHA("x")), Staging: staging, Max: 64 << 20},
-		)
-		rep := replies[1]
-		if rep.OK {
-			t.Errorf("%s answered without an R2 configuration", verb)
-			continue
-		}
-		if rep.Error == "" {
-			t.Errorf("%s refused with no reason", verb)
-		}
 	}
 }
 
@@ -272,9 +242,9 @@ func TestBatchVerbsRefuseWithoutR2Settings(t *testing.T) {
 }
 
 // TestBlobBytesAreCountedInStats pins that what the verbs move reaches the
-// stats reply, single and batched alike, and that a skip adds nothing: the
-// month is billed for bytes that were sent, and an upload of a body another
-// machine already had sent none.
+// stats reply, and that a skip adds nothing: the month is billed for bytes
+// that were sent, and an upload of a body another machine already had sent
+// none.
 func TestBlobBytesAreCountedInStats(t *testing.T) {
 	store := withStore(t)
 	dir := t.TempDir()
@@ -291,29 +261,28 @@ func TestBlobBytesAreCountedInStats(t *testing.T) {
 
 	backend := &fakeBackend{stats: Stats{Entries: 3, Origins: 1, Seq: 2}}
 	replies := serve(t, backend,
-		Request{ID: "1", Verb: VerbHello, Version: ProtocolVersion, Origin: "origin-a", URL: "libsql://x", Token: "t", R2: &R2Config{}},
-		Request{ID: "2", Verb: VerbPutBlob, Key: key, Staging: path},
-		Request{ID: "3", Verb: VerbPutBlob, Key: key, Staging: path},
-		Request{ID: "4", Verb: VerbPutBlobs, Blobs: []BlobItem{{Key: key, Staging: path}, {Key: otherKey, Staging: otherPath}}},
-		Request{ID: "5", Verb: VerbGetBlobs, Blobs: []BlobItem{{Key: keyForFetch, Staging: filepath.Join(dir, "fetched"), Max: 64 << 20}}},
-		Request{ID: "6", Verb: VerbGetBlobs, Blobs: []BlobItem{{Key: fetchKey, Staging: filepath.Join(dir, "fetched-ok"), Max: 64 << 20}}},
-		Request{ID: "7", Verb: VerbStats},
+		hello(),
+		Request{ID: "2", Verb: VerbPutBlobs, Blobs: []BlobItem{{Key: key, Staging: path}}},
+		Request{ID: "3", Verb: VerbPutBlobs, Blobs: []BlobItem{{Key: key, Staging: path}, {Key: otherKey, Staging: otherPath}}},
+		Request{ID: "4", Verb: VerbGetBlobs, Blobs: []BlobItem{{Key: keyForFetch, Staging: filepath.Join(dir, "fetched"), Max: 64 << 20}}},
+		Request{ID: "5", Verb: VerbGetBlobs, Blobs: []BlobItem{{Key: fetchKey, Staging: filepath.Join(dir, "fetched-ok"), Max: 64 << 20}}},
+		Request{ID: "6", Verb: VerbStats},
 	)
-	batch := replies[3]
+	batch := replies[2]
 	if !batch.OK {
 		t.Fatalf("put_blobs refused: %s", batch.Error)
 	}
 	if len(batch.Results) != 2 || !batch.Results[0].Skipped || batch.Results[1].Skipped {
 		t.Errorf("put_blobs results = %+v, want a skip then an upload", batch.Results)
 	}
-	fetch := replies[4]
+	fetch := replies[3]
 	if !fetch.OK {
 		t.Fatalf("get_blobs refused the whole call: %s", fetch.Error)
 	}
 	if len(fetch.Results) != 1 || fetch.Results[0].Code != CodeBlobMissing {
 		t.Errorf("get_blobs results = %+v, want one missing body", fetch.Results)
 	}
-	hit := replies[5]
+	hit := replies[4]
 	if !hit.OK {
 		t.Fatalf("get_blobs refused a fetch the store holds: %s", hit.Error)
 	}
@@ -326,12 +295,12 @@ func TestBlobBytesAreCountedInStats(t *testing.T) {
 	if got, err := os.ReadFile(filepath.Join(dir, "fetched-ok")); err != nil || string(got) != string(fetchBody) {
 		t.Errorf("staged %q (err %v), want %q", got, err, fetchBody)
 	}
-	stats := replies[6].Stats
+	stats := replies[5].Stats
 	if stats == nil {
 		t.Fatal("the stats reply carried no stats")
 	}
 	if stats.R2Put != int64(len(body)+len(other)) {
-		t.Errorf("r2_put = %d, want %d: the skips must add nothing", stats.R2Put, len(body)+len(other))
+		t.Errorf("r2_put = %d, want %d: the skip must add nothing", stats.R2Put, len(body)+len(other))
 	}
 	if stats.R2Get != int64(len(fetchBody)) {
 		t.Errorf("r2_get = %d, want %d for the fetched body", stats.R2Get, len(fetchBody))
@@ -348,32 +317,33 @@ func TestBlobBytesAreCountedInStats(t *testing.T) {
 
 // TestBlobVerbsRefuseATransferTheStoreCannotMake pins the two failure paths a
 // bucket produces: a store that cannot be asked, and a store that cannot be
-// written to. Both are refusals rather than successes with a zero byte count --
-// a caller that read zero bytes as success would append an entry pointing at an
-// object that was never stored.
+// written to. Both are failed results rather than successes with a zero byte
+// count -- a caller that read zero bytes as success would append an entry
+// pointing at an object that was never stored.
 func TestBlobVerbsRefuseATransferTheStoreCannotMake(t *testing.T) {
 	broken := &failingStore{err: errors.New("the bucket is unreachable")}
 	s := &server{backend: &fakeBackend{}, blobs: broken}
 	s.spec = &Spec{Origin: "origin-a"}
 	key := blobstore.Key("origin-a", hexSHA("a body"))
 	staging := filepath.Join(t.TempDir(), "staged")
+	item := BlobItem{Key: key, Staging: staging, Max: 64 << 20}
 
-	for _, verb := range []Verb{VerbPutBlob, VerbGetBlob} {
-		resp := s.dispatch(Request{ID: "1", Verb: verb, Key: key, Staging: staging, Max: 64 << 20})
-		if resp.OK {
-			t.Errorf("%s answered OK against a store that failed", verb)
+	for _, verb := range []Verb{VerbPutBlobs, VerbGetBlobs} {
+		resp := s.dispatch(Request{ID: "1", Verb: verb, Blobs: []BlobItem{item}})
+		if len(resp.Results) != 1 || resp.Results[0].Error == "" {
+			t.Errorf("%s results = %+v, want one failure against a store that failed", verb, resp.Results)
+			continue
 		}
-		if resp.Code != "" {
-			t.Errorf("%s refused with class %q, want none: a fault a retry can get past", verb, resp.Code)
+		if code := resp.Results[0].Code; code != "" {
+			t.Errorf("%s failed with class %q, want none: a fault a retry can get past", verb, code)
 		}
 	}
 	// An object the store never held is a different fact from a store that could
 	// not answer, and it is the one the daemon latches on.
-	absent := &failingStore{notFound: true}
-	s.blobs = absent
-	resp := s.dispatch(Request{ID: "1", Verb: VerbGetBlob, Key: key, Staging: staging, Max: 64 << 20})
-	if resp.Code != CodeBlobMissing {
-		t.Errorf("a 404 came back as %q, want %q", resp.Code, CodeBlobMissing)
+	s.blobs = &failingStore{notFound: true}
+	resp := s.dispatch(Request{ID: "1", Verb: VerbGetBlobs, Blobs: []BlobItem{item}})
+	if len(resp.Results) != 1 || resp.Results[0].Code != CodeBlobMissing {
+		t.Errorf("a 404 came back as %+v, want %q", resp.Results, CodeBlobMissing)
 	}
 }
 
@@ -383,42 +353,29 @@ func TestBlobVerbsRefuseATransferTheStoreCannotMake(t *testing.T) {
 // against.
 func TestPutBlobRefusesAKeyWithNoDigest(t *testing.T) {
 	withStore(t)
-	body := []byte("a body this machine staged")
-	path, _ := staged(t, t.TempDir(), "one", body)
-	backend := &fakeBackend{}
-	replies := serve(t, backend,
-		Request{ID: "1", Verb: VerbHello, Version: ProtocolVersion, Origin: "origin-a",
-			URL: "libsql://x", Token: "t", R2: &R2Config{}},
-		Request{ID: "2", Verb: VerbPutBlob, Key: "origin-a/", Staging: path},
-	)
-	rep := replies[1]
-	if rep.OK {
+	path, _ := staged(t, t.TempDir(), "one", []byte("a body this machine staged"))
+
+	res := oneBlob(t, VerbPutBlobs, BlobItem{Key: "origin-a/", Staging: path})
+	if res.Error == "" {
 		t.Fatal("a key naming no digest was published anyway")
 	}
-	if rep.Code != CodeBlobRefused {
-		t.Errorf("code = %q, want %q", rep.Code, CodeBlobRefused)
+	if res.Code != CodeBlobRefused {
+		t.Errorf("code = %q, want %q", res.Code, CodeBlobRefused)
 	}
 }
 
 // TestPutBlobRefusesAStagingFileThatIsNotThere pins that a call naming a file
-// this machine does not have is a refusal naming why, rather than a panic on the
-// open or an empty success the caller would read as stored.
+// this machine does not have is a failure naming why, rather than a panic on
+// the open or an empty success the caller would read as stored.
 func TestPutBlobRefusesAStagingFileThatIsNotThere(t *testing.T) {
 	withStore(t)
-	backend := &fakeBackend{}
-	replies := serve(t, backend,
-		Request{ID: "1", Verb: VerbHello, Version: ProtocolVersion, Origin: "origin-a",
-			URL: "libsql://x", Token: "t", R2: &R2Config{}},
-		Request{ID: "2", Verb: VerbPutBlob,
-			Key:     blobstore.Key("origin-a", hexSHA("never staged")),
-			Staging: filepath.Join(t.TempDir(), "absent")},
-	)
-	rep := replies[1]
-	if rep.OK {
+
+	res := oneBlob(t, VerbPutBlobs, BlobItem{
+		Key:     blobstore.Key("origin-a", hexSHA("never staged")),
+		Staging: filepath.Join(t.TempDir(), "absent"),
+	})
+	if res.Error == "" {
 		t.Fatal("a put of a file that does not exist succeeded")
-	}
-	if rep.Error == "" {
-		t.Error("the refusal carried no reason")
 	}
 }
 

@@ -1,8 +1,8 @@
 package syncworker
 
-// The batched blob verbs. A body never crosses the pipe, so a batch names its
-// bodies the same way the single verbs do: one item per key, each carrying the
-// staging path the daemon wrote or wants written. One key's failure rides
+// The blob verbs. A body never crosses the pipe, so a batch names its bodies
+// one item per key, each carrying the staging path the daemon wrote or wants
+// written. One key's failure rides
 // inside the reply rather than refusing the whole call, because it is no
 // verdict on the rest of its batch.
 
@@ -26,8 +26,8 @@ type BlobItem struct {
 }
 
 // BlobResult is what one key of a batch came to: the bytes it moved, or the
-// reason it did not. A refusal keeps the class the single verbs answer with,
-// so the daemon maps it the same way without reading the text.
+// reason it did not. A refusal carries its class, so the daemon maps it without
+// reading the text.
 type BlobResult struct {
 	// Key is the item's, echoed so a reply read out of order still names which
 	// key each result belongs to.

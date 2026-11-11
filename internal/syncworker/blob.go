@@ -187,37 +187,6 @@ func checkDigest(key, sum string) error {
 	return nil
 }
 
-// putBlobVerb answers put_blob: the daemon wrote the file and named it, so
-// this call decides only whether the object belongs in the store and how many
-// bytes that was. The counters live on the server because they count work the
-// verbs do, not bytes the replica moved.
-func (s *server) putBlobVerb(req Request) Response {
-	store, err := s.blobStore(req)
-	if err != nil {
-		return refuse(req, err)
-	}
-	sent, skipped, err := putBlob(context.Background(), store, req.Key, req.Staging)
-	if err != nil {
-		return refuse(req, err)
-	}
-	s.r2.R2Put += sent
-	return Response{ID: req.ID, OK: true, Bytes: sent, Skipped: skipped}
-}
-
-// getBlobVerb answers get_blob, writing the body to the staging file it names.
-func (s *server) getBlobVerb(req Request) Response {
-	store, err := s.blobStore(req)
-	if err != nil {
-		return refuse(req, err)
-	}
-	got, err := getBlob(context.Background(), store, req.Key, req.Staging, req.Max)
-	if err != nil {
-		return refuse(req, err)
-	}
-	s.r2.R2Get += got
-	return Response{ID: req.ID, OK: true, Bytes: got}
-}
-
 // putBlobsVerb answers put_blobs: every item is uploaded through putBlob,
 // with at most blobBatchWorkers transfers in flight. One key's failure is
 // recorded in its own result rather than stopping the rest, and the moved
@@ -250,8 +219,7 @@ func (s *server) putBlobsVerb(req Request) Response {
 
 // getBlobsVerb answers get_blobs, writing each body to the staging file its
 // item names. The transfers overlap as the puts do, and one key's failure
-// leaves the other keys' results successful with the same class the single
-// get answers with.
+// leaves the other keys' results successful.
 func (s *server) getBlobsVerb(req Request) Response {
 	if len(req.Blobs) == 0 {
 		return Response{ID: req.ID, OK: true}
@@ -296,9 +264,8 @@ func fanOut(n int, work func(slot int)) {
 }
 
 // batchStore returns the store hello configured, building it once and keeping
-// it for the rest of the pipe. A batch carries its keys beside the request
-// rather than on it, so unlike the single verbs it cannot lean on req.Key or
-// req.Staging; a hello that named no bucket stays a whole-call refusal.
+// it for the rest of the pipe, because a client is built per pipe. A hello
+// that named no bucket is a whole-call refusal.
 func (s *server) batchStore() (blobstore.BlobStore, error) {
 	if s.blobs == nil {
 		if s.spec == nil || s.spec.R2 == nil {
@@ -306,24 +273,6 @@ func (s *server) batchStore() (blobstore.BlobStore, error) {
 		}
 		s.blobs = newBlobStore(*s.spec.R2)
 	}
-	return s.blobs, nil
-}
-
-// blobStore returns the store hello configured, or a refusal when there is
-// none. The store is built once and kept, because a client is built per pipe.
-// A blob verb before the handshake is refused by the dispatch table, so the
-// only case reaching here is a hello that named no bucket.
-func (s *server) blobStore(req Request) (blobstore.BlobStore, error) {
-	if s.blobs != nil {
-		return s.blobs, nil
-	}
-	if s.spec == nil || s.spec.R2 == nil {
-		return nil, ErrNoR2
-	}
-	if req.Key == "" || req.Staging == "" {
-		return nil, fmt.Errorf("%w: a blob verb needs a key and a staging path", ErrProtocol)
-	}
-	s.blobs = newBlobStore(*s.spec.R2)
 	return s.blobs, nil
 }
 
