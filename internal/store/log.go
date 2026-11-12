@@ -252,6 +252,9 @@ type GateRecord struct {
 	DurationMS int64  `json:"duration_ms"`
 	LogPath    string `json:"log_path"`
 	Note       string `json:"note,omitempty"`
+	// Rusage is the gate's cgroup measurement from the run's trailer; nil
+	// when the run timed out or left no trailer.
+	Rusage *Rusage `json:"rusage,omitempty"`
 }
 
 func (s *Store) AppendLog(name string, e LogEntry) error {

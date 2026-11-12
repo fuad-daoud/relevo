@@ -393,10 +393,15 @@ func (s *Server) heldCPUs(root string, tx *store.Tx, self string) ([]int, error)
 				}
 				continue
 			}
-			held = append(held, housekeep.HeldIn(bindings, self)...)
+			open, oerr := relevo.OpenCheckMembers(tx)
+			if oerr != nil {
+				slog.Warn("cpu census: open chain checks unreadable; counting none", "owner", id, "err", oerr)
+			}
+			held = append(held, housekeep.HeldInChecks(bindings, self, open)...)
 			continue
 		}
-		bindings, err := s.ownerStore(ownerPath).List()
+		owner := s.ownerStore(ownerPath)
+		bindings, err := owner.List()
 		if err != nil {
 			slog.Warn("cpu census: list owner bindings failed", "owner", id, "err", err)
 			if firstErr == nil {
@@ -404,7 +409,11 @@ func (s *Server) heldCPUs(root string, tx *store.Tx, self string) ([]int, error)
 			}
 			continue
 		}
-		held = append(held, housekeep.HeldIn(bindings, "")...)
+		open, oerr := relevo.OpenCheckMembers(owner)
+		if oerr != nil {
+			slog.Warn("cpu census: open chain checks unreadable; counting none", "owner", id, "err", oerr)
+		}
+		held = append(held, housekeep.HeldInChecks(bindings, "", open)...)
 	}
 
 	return held, firstErr

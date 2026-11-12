@@ -82,6 +82,11 @@ func ServedCheckStart(ctx context.Context, rt Runtime, name string, req remote.C
 				return ErrCheckRunning
 			}
 		}
+		// A binding with no set gets one before the check starts, so the
+		// check runs pinned and the census keeps counting it after.
+		if len(b.RoundCPUs) == 0 {
+			b = housekeep.AssignRoundCPU(HousekeepDeps(rt), tx, b)
+		}
 		run, err := startServedCheck(ctx, rt, b, req)
 		if err != nil {
 			return err
@@ -263,6 +268,7 @@ func servedCheckStep(ctx context.Context, rt Runtime, b store.Binding) (store.Bi
 	}
 	if rec != nil {
 		applyServedCheckRecord(&run, rec)
+		foldServedCheckCost(rt, b, rec.Rusage)
 	}
 	b.CheckRun = &run
 	return b, true
@@ -280,16 +286,17 @@ func applyServedCheckRecord(run *store.CheckRun, rec *store.GateRecord) {
 
 // servedCheckSpec is the gate-runner spec for one served check run: the
 // binding's round directory -- the same directory a round's processes run in
-// -- a gate scope named after the binding and the round, and the policy's
-// gate timeout. The timeout comes from policy and not from the binding
-// because a check is the client's own acceptance command, not the round's
-// stored gate.
+// -- a gate scope named after the binding and the round, the binding's whole
+// CPU set as its pin, and the policy's gate timeout. The timeout comes from
+// policy and not from the binding because a check is the client's own
+// acceptance command, not the round's stored gate.
 func servedCheckSpec(rt Runtime, b store.Binding, run store.CheckRun) gateProcSpec {
 	return gateProcSpec{
 		Dir:      housekeep.RoundTree(HousekeepDeps(rt), b),
 		Command:  run.Command,
 		LogPath:  run.LogPath,
 		UnitName: scopeUnitNameFor(scopeGate, b.Owner, b.Name+"-check", run.Round, ""),
+		CPUPin:   housekeep.RoundPinText(b),
 		Timeout:  rt.Policy.GateTimeout(),
 		Env:      baseEnvEntry(b),
 	}

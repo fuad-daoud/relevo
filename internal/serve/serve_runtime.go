@@ -87,6 +87,9 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 		s.applyContainer(root, &rt)
 	}
 	rt.CloseServedRound = CloseServedRound
+	rt.FoldCheckCost = func(b store.Binding, closedRound int, r *store.Rusage) {
+		foldCheckCost(rt.CostRoot, b, closedRound, r)
+	}
 	s.wireSeatCost(&rt, s.cfg.Root, cfg.Registry)
 	// The remote send runs above the engine: the served runtime ships through
 	// the same uplink functions as the CLI runtime.

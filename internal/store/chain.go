@@ -226,6 +226,30 @@ func (t *Tx) ChainCheck(name string, run int) (db.ChainCheckRow, error) {
 	return row, nil
 }
 
+// ChainCheckOpen returns every open check row in the store: a row with no
+// result and a recorded process. A database that predates the check table
+// reports none.
+func (s *Store) ChainCheckOpen() ([]db.ChainCheckRow, error) {
+	var rows []db.ChainCheckRow
+	err := s.readAll(func(tx *Tx) error {
+		var err error
+		rows, err = tx.ChainCheckOpen()
+		return err
+	})
+	return rows, err
+}
+
+func (t *Tx) ChainCheckOpen() ([]db.ChainCheckRow, error) {
+	d, err := t.s.dbForRead()
+	if err != nil {
+		return nil, err
+	}
+	if d == nil {
+		return nil, nil
+	}
+	return d.ChainCheckOpen(t.s.owner)
+}
+
 func (t *Tx) ChainCheckPut(name string, row db.ChainCheckRow) error {
 	c, err := t.s.chain(name)
 	if err != nil {

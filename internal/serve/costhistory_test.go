@@ -49,6 +49,7 @@ func TestAppendCostSampleDedupesSameRound(t *testing.T) {
 	if len(cf.Samples) != 1 {
 		t.Fatalf("samples = %d, want 1", len(cf.Samples))
 	}
+	s.Binding, s.Round = "b1", 3
 	if cf.Samples[0] != s {
 		t.Fatalf("sample = %+v, want %+v", cf.Samples[0], s)
 	}
@@ -227,6 +228,67 @@ func TestSampleForEntry(t *testing.T) {
 			}},
 			wantKnown: false,
 		},
+		{
+			name: "gate burst adds onto the round base",
+			entry: store.LogEntry{Round: 1, TS: at,
+				Rusage: &store.Rusage{BaseBytes: costInt64(1 << 30), BurstBytes: costInt64(2 << 30)},
+				Gate:   &store.GateRecord{Result: "pass", Rusage: &store.Rusage{BurstBytes: costInt64((3 << 30) / 2)}},
+			},
+			want:      costSample{Base: 1 << 30, Burst: (5 << 30) / 2, At: at},
+			wantKnown: true,
+		},
+		{
+			name: "a larger gate base never moves the sample base",
+			entry: store.LogEntry{Round: 1, TS: at,
+				Rusage: &store.Rusage{BaseBytes: costInt64(1 << 30), BurstBytes: costInt64(2 << 30)},
+				Gate:   &store.GateRecord{Result: "pass", Rusage: &store.Rusage{BaseBytes: costInt64(3 << 30), BurstBytes: costInt64(1 << 29)}},
+			},
+			want:      costSample{Base: 1 << 30, Burst: 2 << 30, At: at},
+			wantKnown: true,
+		},
+		{
+			name: "a gate lower than the round leaves the round",
+			entry: store.LogEntry{Round: 1, TS: at,
+				Rusage: &store.Rusage{BaseBytes: costInt64(1 << 30), BurstBytes: costInt64(2 << 30)},
+				Gate:   &store.GateRecord{Result: "pass", Rusage: &store.Rusage{BurstBytes: costInt64(1 << 29)}},
+			},
+			want:      costSample{Base: 1 << 30, Burst: 2 << 30, At: at},
+			wantKnown: true,
+		},
+		{
+			name: "a gate with burst but a round with none records base plus gate",
+			entry: store.LogEntry{Round: 1, TS: at,
+				Rusage: &store.Rusage{BaseBytes: costInt64(1 << 30)},
+				Gate:   &store.GateRecord{Result: "pass", Rusage: &store.Rusage{BurstBytes: costInt64((3 << 30) / 2)}},
+			},
+			want:      costSample{Base: 1 << 30, Burst: (5 << 30) / 2, At: at},
+			wantKnown: true,
+		},
+		{
+			name: "no round at all records the gate's own terms",
+			entry: store.LogEntry{Round: 1, TS: at,
+				Gate: &store.GateRecord{Result: "pass", Rusage: &store.Rusage{BaseBytes: costInt64(1 << 29), BurstBytes: costInt64((3 << 30) / 2)}},
+			},
+			want:      costSample{Base: 1 << 29, Burst: (3 << 30) / 2, At: at},
+			wantKnown: true,
+		},
+		{
+			name: "the gate's oom peak stands in for a missing gate burst",
+			entry: store.LogEntry{Round: 1, TS: at,
+				Rusage: &store.Rusage{BaseBytes: costInt64(1 << 30), BurstBytes: costInt64(2 << 30)},
+				Gate:   &store.GateRecord{Result: "fail", Rusage: &store.Rusage{PeakMemBytes: 3 << 30, EvOOMKill: costInt64(1)}},
+			},
+			want:      costSample{Base: 1 << 30, Burst: 4 << 30, At: at},
+			wantKnown: true,
+		},
+		{
+			name: "neither side with a burst records nothing",
+			entry: store.LogEntry{Round: 1, TS: at,
+				Rusage: &store.Rusage{BaseBytes: costInt64(1 << 30)},
+				Gate:   &store.GateRecord{Result: "pass", Rusage: &store.Rusage{BaseBytes: costInt64(1 << 29)}},
+			},
+			wantKnown: false,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -320,6 +382,57 @@ func TestRecordClosedCostGuards(t *testing.T) {
 			t.Fatalf("cost file exists with no matching entry: err=%v", err)
 		}
 	})
+}
+
+// TestSampleForEntryRaisesOnTheGatesBurst pins the gate's share of a closed
+// round's sample end to end: a gate trailer raises the one recorded sample's
+// burst to the round's base plus the gate's burst, and a retried close still
+// records the round once.
+func TestSampleForEntryRaisesOnTheGatesBurst(t *testing.T) {
+	t.Parallel()
+
+	env := setupTestEnv(t)
+	repoID := strings.Repeat("d", 64)
+	at := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	b := store.Binding{
+		Name:  "api",
+		Owner: string(env.id),
+		CWD:   "/build/shop",
+		Round: 2,
+		Serve: &store.ServeFacts{BareRepo: "/fake/bare", RepoID: repoID},
+	}
+	if err := env.runtime(t).Store.Save(b); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if err := env.runtime(t).Store.AppendLog("api", store.LogEntry{
+		Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, TS: at,
+		Rusage: &store.Rusage{BaseBytes: costInt64(1 << 30), BurstBytes: costInt64(2 << 30)},
+		Gate:   &store.GateRecord{Result: "pass", Rusage: &store.Rusage{BurstBytes: costInt64((3 << 30) / 2)}},
+	}); err != nil {
+		t.Fatalf("append log: %v", err)
+	}
+	rt := relevo.Runtime{Store: env.runtime(t).Store, CostRoot: t.TempDir()}
+
+	recordClosedCost(rt, b, 1)
+	cf, err := loadCostFile(costFilePath(rt.CostRoot, repoID, "builder"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(cf.Samples) != 1 {
+		t.Fatalf("samples = %d, want exactly 1", len(cf.Samples))
+	}
+	if got := cf.Samples[0]; got.Base != 1<<30 || got.Burst != (5<<30)/2 {
+		t.Fatalf("sample = %+v, want {base 1GiB burst 2.5GiB}", got)
+	}
+
+	recordClosedCost(rt, b, 1)
+	cf, err = loadCostFile(costFilePath(rt.CostRoot, repoID, "builder"))
+	if err != nil {
+		t.Fatalf("load after retry: %v", err)
+	}
+	if len(cf.Samples) != 1 {
+		t.Fatalf("samples after retry = %d, want still 1", len(cf.Samples))
+	}
 }
 
 func TestReportEntryForLastMatchWins(t *testing.T) {

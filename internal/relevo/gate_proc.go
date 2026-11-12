@@ -14,6 +14,19 @@ import (
 // trailer: the process never reported, so nothing about its end is known.
 const gateNoTrailerNote = "no exit trailer"
 
+// storeRusageOf is the trailer's measurement as the store's own record: the
+// pointers are shared, not copied, and nothing mutates them after the entry
+// is queued. The round close and the gate advance both read through it, so
+// the two records carry the same shape.
+func storeRusageOf(r spawn.ProcRusage) *store.Rusage {
+	return &store.Rusage{CPUMS: r.CPUMS, PeakMemBytes: r.PeakMemBytes,
+		BaseBytes: r.BaseBytes, BurstBytes: r.BurstBytes, BurstSecs: r.BurstSecs,
+		CPUSomeUsec: r.CPUSomeUsec, CPUFullUsec: r.CPUFullUsec,
+		MemSomeUsec: r.MemSomeUsec, MemFullUsec: r.MemFullUsec,
+		IOSomeUsec: r.IOSomeUsec, IOFullUsec: r.IOFullUsec,
+		EvHigh: r.EvHigh, EvMax: r.EvMax, EvOOMKill: r.EvOOMKill}
+}
+
 // gateProcSpec is one process started through the gate runner's mechanics,
 // freed of any binding: the tree it runs in, the shell command, the log it
 // streams to, its scope unit and CPU pin, and the timeout that bounds it. A
@@ -104,6 +117,12 @@ func advanceGateProc(ctx context.Context, rt Runtime, run store.GateRun, spec ga
 
 	code, ok := rt.Runner.ExitCode(ctx, h, spec.LogPath)
 	rec = &store.GateRecord{Command: run.Command, LogPath: spec.LogPath, DurationMS: elapsed.Milliseconds()}
+	// The rusage trailer rides the same stream as the exit trailer, whatever
+	// the exit was: a present trailer joins the record, a missing one leaves
+	// it nil. A timed-out run never reaches here.
+	if r, rok := rt.Runner.Rusage(ctx, h, spec.LogPath); rok {
+		rec.Rusage = storeRusageOf(r)
+	}
 	switch {
 	case !ok:
 		// A process this daemon never saw alive, whose recorded start predates

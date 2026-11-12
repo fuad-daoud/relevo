@@ -258,15 +258,8 @@ func reportRusage(ctx context.Context, rt Runtime, b store.Binding, rusage *stor
 	if rt.Runner == nil || !b.Builder.Headless() {
 		return nil
 	}
-	// The pointers are shared, not copied: the trailer parse owns them and
-	// nothing mutates them after the entry is queued.
 	if r, ok := rt.Runner.Rusage(ctx, handleOf(b.Builder), rt.Store.StreamPath(b.Name, b.Round)); ok {
-		return &store.Rusage{CPUMS: r.CPUMS, PeakMemBytes: r.PeakMemBytes,
-			BaseBytes: r.BaseBytes, BurstBytes: r.BurstBytes, BurstSecs: r.BurstSecs,
-			CPUSomeUsec: r.CPUSomeUsec, CPUFullUsec: r.CPUFullUsec,
-			MemSomeUsec: r.MemSomeUsec, MemFullUsec: r.MemFullUsec,
-			IOSomeUsec: r.IOSomeUsec, IOFullUsec: r.IOFullUsec,
-			EvHigh: r.EvHigh, EvMax: r.EvMax, EvOOMKill: r.EvOOMKill}
+		return storeRusageOf(r)
 	}
 	return nil
 }
@@ -392,8 +385,8 @@ func advanceToNextRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 	// consult, when there is one, is already running.
 	b.RoundVerify = false
 	b.RoundTier = ""
-	b.RoundCPU = nil
-	b.RoundCPUs = nil
+	// A check after the close runs on the round's set, so it survives the
+	// advance; liveness, not the field, decides what the census counts.
 	b.RoundBaselineTree = ""
 	b.RoundClosedBaselineHead = b.RoundBaselineHead
 	b.RoundBaselineHead = ""

@@ -8,11 +8,16 @@ import (
 // costSample is one closed round's memory footprint for the seat model. These
 // are appended to the cost history file, so the JSON shape is the file's
 // contract. A Base of 0 means the round produced no base reading, and lookups
-// ignore it.
+// ignore it. Binding and Round name the sample's own round -- owner/name and
+// round -- so a check settled after the close folds its peak into this sample
+// even after other bindings moved LastBinding on. Empty on samples written
+// before the fields existed, which a fold leaves alone.
 type costSample struct {
-	Base  int64     `json:"base"`
-	Burst int64     `json:"burst"`
-	At    time.Time `json:"at"`
+	Base    int64     `json:"base"`
+	Burst   int64     `json:"burst"`
+	Binding string    `json:"binding,omitempty"`
+	Round   int       `json:"round,omitempty"`
+	At      time.Time `json:"at"`
 }
 
 const (

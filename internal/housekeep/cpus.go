@@ -113,23 +113,39 @@ func keptSet(pool, held, set []int) bool {
 // HeldIn collects the cores held by live rounds other than self: every core
 // of a round's set, or its single RoundCPU when the list is empty. Liveness,
 // not "the field is set", decides: a halted, done, re-queued or crashed round
-// never blocks a core, even on a path that forgets to clear the field.
-// Duplicates across rounds are the per-core counts. Pure.
+// never blocks a core, even on a path that forgets to clear the field. A
+// binding with an unsettled served check holds its set the same way a
+// running round does. Duplicates across rounds are the per-core counts. Pure.
 func HeldIn(bindings []store.Binding, self string) []int {
+	return HeldInChecks(bindings, self, nil)
+}
+
+// HeldInChecks counts what HeldIn counts, plus every binding named in
+// checkPIDs: a member whose round closed for a running chain check keeps its
+// set while the check runs, though no round of its own is live. Pure.
+func HeldInChecks(bindings []store.Binding, self string, checkPIDs map[string]int) []int {
 	var held []int
 	for _, b := range bindings {
 		if b.Name == self {
 			continue
 		}
-		if b.Builder.PID != 0 || b.GateRun != nil {
-			if len(b.RoundCPUs) > 0 {
-				held = append(held, b.RoundCPUs...)
-			} else if b.RoundCPU != nil {
-				held = append(held, *b.RoundCPU)
-			}
+		if _, ok := checkPIDs[b.Name]; !ok && !holdsCores(b) {
+			continue
+		}
+		if len(b.RoundCPUs) > 0 {
+			held = append(held, b.RoundCPUs...)
+		} else if b.RoundCPU != nil {
+			held = append(held, *b.RoundCPU)
 		}
 	}
 	return held
+}
+
+// holdsCores reports whether a binding's round is live enough to hold cores:
+// a running builder or gate, or an unsettled served check.
+func holdsCores(b store.Binding) bool {
+	return b.Builder.PID != 0 || b.GateRun != nil ||
+		(b.CheckRun != nil && !b.CheckRun.Settled())
 }
 
 // localHeldCPUs is the local census: HeldIn over the caller's own transaction,

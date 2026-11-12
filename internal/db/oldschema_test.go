@@ -95,4 +95,7 @@ func TestChainReadsAreAbsentOnAnOlderSchema(t *testing.T) {
 	if rows, err := d.ChainEvents("x"); err != nil || len(rows) != 0 {
 		t.Fatalf("ChainEvents on schema 15 = (%v, %v), want (empty, nil)", rows, err)
 	}
+	if rows, err := d.ChainCheckOpen(""); err != nil || len(rows) != 0 {
+		t.Fatalf("ChainCheckOpen on schema 15 = (%v, %v), want (empty, nil)", rows, err)
+	}
 }

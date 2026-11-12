@@ -17,7 +17,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
-	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -74,7 +73,11 @@ func chainStartCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRo
 	if err != nil {
 		return 0, err
 	}
+	if err := chainCheckEnsureSet(rt, tx, c); err != nil {
+		return 0, err
+	}
 	spec := chainCheckSpec(rt, c, run, command, rt.Store.CheckLogPath(member, round, run))
+	spec.CPUPin = chainCheckPin(tx, c)
 	// Refused before the row is written, and returned typed: the chain halts
 	// on the environment's reason instead of recording a red check.
 	if err := preflightDisk(rt, spec.Dir); err != nil {
@@ -254,6 +257,7 @@ func chainAdvanceCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 	}
 
 	spec := chainCheckSpec(rt, c, run, row.Command, row.Log)
+	spec.CPUPin = chainCheckPin(tx, c)
 	state := store.GateRun{PID: row.PID, StartedAt: row.StartedAt, Attempt: row.Attempt, Command: row.Command}
 	next, done, rec, err := advanceGateProc(ctx, rt, state, spec)
 	if environmentRefusal(err) {
@@ -296,6 +300,7 @@ func chainAdvanceCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 	if err := tx.ChainCheckPut(c.Name, row); err != nil {
 		return "", row.Log, err
 	}
+	foldChainCheckCost(rt, tx, c, rec.Rusage)
 	return chainCheckResult(row.Result), row.Log, nil
 }
 
@@ -492,8 +497,10 @@ func chainCheckRunLost(ctx context.Context, rt Runtime, b store.Binding, st work
 	return view.Result != "" && view.Step == st.Awaiting.Step
 }
 
-// chainCheckSpec is the gate-runner spec for one chain check. A check has no
-// binding, so it takes the policy timeout and no CPU pin.
+// chainCheckSpec is the gate-runner spec for one chain check: the chain's
+// tree, the policy timeout, and no CPU pin of its own. chainStartCheck and
+// chainAdvanceCheck stamp the builder member's pin onto it; the cleanup path
+// and the unit-name callers run it unpinned.
 func chainCheckSpec(rt Runtime, c db.ChainRow, run int, command, logPath string) gateProcSpec {
 	return gateProcSpec{
 		Dir:      c.Worktree,
@@ -524,12 +531,7 @@ func chainCheckVisit(tx *store.Tx, name, step string) (int, error) {
 // chainCheckLogTarget names the member and round a check log is keyed to. A
 // chain with no writer uses its first member.
 func chainCheckLogTarget(tx *store.Tx, c db.ChainRow) (string, int, error) {
-	member := c.Builder
-	if member == "" {
-		if members := view.MembersOf(c); len(members) > 0 {
-			member = members[0]
-		}
-	}
+	member := chainCheckMember(c)
 	if member == "" {
 		return "", 0, fmt.Errorf("chain %s has no member to hold a check log", c.Name)
 	}

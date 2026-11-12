@@ -75,11 +75,11 @@ func loadCostFile(path string) (costFile, error) {
 }
 
 // appendCostSample records one closed round's sample, newest-last and trimmed
-// to the newest 20. A repeated call for the same binding's round is a no-op
-// without a write, so a retried close records the round once. The write is atomic — a
-// temp file in the same directory renamed over the target — so a crash leaves
-// the previous file intact. IO errors propagate; the hook decides they are
-// warn-only.
+// to the newest 20. The sample carries its own binding and round, so a check
+// settled after the close folds into it. A repeated call for the same
+// binding's round is a no-op without a write, so a retried close records the
+// round once. The write is atomic, through the shared writer. IO errors
+// propagate; the hook decides they are warn-only.
 func appendCostSample(root, repoID, role, binding string, round int, s costSample) (bool, error) {
 	costFileMu.Lock()
 	defer costFileMu.Unlock()
@@ -91,38 +91,15 @@ func appendCostSample(root, repoID, role, binding string, round int, s costSampl
 	if cf.LastBinding == binding && cf.LastRound == round {
 		return false, nil
 	}
+	s.Binding = binding
+	s.Round = round
 	cf.Samples = append(cf.Samples, s)
 	if len(cf.Samples) > costHistoryMaxSamples {
 		cf.Samples = cf.Samples[len(cf.Samples)-costHistoryMaxSamples:]
 	}
 	cf.LastBinding = binding
 	cf.LastRound = round
-	raw, err := json.MarshalIndent(cf, "", "  ")
-	if err != nil {
-		return false, err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return false, err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), "tmp-*.json")
-	if err != nil {
-		return false, err
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(raw); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-		return false, err
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return false, err
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		_ = os.Remove(tmpName)
-		return false, err
-	}
-	return true, nil
+	return true, writeCostFile(path, cf)
 }
 
 // reportEntryFor answers the report entry that closed round: the last
@@ -139,28 +116,53 @@ func reportEntryFor(entries []store.LogEntry, round int) (store.LogEntry, bool) 
 	return out, found
 }
 
-// sampleForEntry answers a closed round's footprint from its report entry. A
-// round with no known burst records nothing: an OOM-killed round's reached
-// peak stands in for its burst, but only when the kill count says it was
-// killed — every scoped round carries the counter, including a zero one. A
-// missing base reads as unknown and the seat lookup ignores it.
-func sampleForEntry(e store.LogEntry) (costSample, bool) {
-	r := e.Rusage
+// burstBaseOf answers one rusage's seat terms through the burst rule: the
+// burst is the measured one, or the OOM peak when the kill count says the
+// scope was killed -- every scoped round carries the counter, including a
+// zero one. A measurement with neither records nothing. A missing base reads
+// as zero and the seat lookup ignores it.
+func burstBaseOf(r *store.Rusage) (base, burst int64, ok bool) {
 	if r == nil {
-		return costSample{}, false
+		return 0, 0, false
 	}
-	var burst int64
-	switch {
-	case r.BurstBytes != nil:
-		burst = *r.BurstBytes
-	case r.EvOOMKill != nil && *r.EvOOMKill > 0 && r.PeakMemBytes > 0:
-		burst = r.PeakMemBytes
-	default:
-		return costSample{}, false
-	}
-	var base int64
 	if r.BaseBytes != nil {
 		base = *r.BaseBytes
+	}
+	switch {
+	case r.BurstBytes != nil:
+		return base, *r.BurstBytes, true
+	case r.EvOOMKill != nil && *r.EvOOMKill > 0 && r.PeakMemBytes > 0:
+		return base, r.PeakMemBytes, true
+	default:
+		return base, 0, false
+	}
+}
+
+// sampleForEntry answers a closed round's footprint from its report entry,
+// folding the round gate's trailer in. The gate starts on the done marker
+// without waiting for the runner to exit, so its peak can land while the
+// runner still holds its resting memory: the burst is the higher of the
+// round's own peak and the round's base plus the gate's peak. The gate's
+// base is its busy level, never the round's resting one, so the sample's
+// base stays the round's -- a round with no base of its own takes the
+// gate's. A round with no known burst on either side records nothing.
+func sampleForEntry(e store.LogEntry) (costSample, bool) {
+	roundBase, roundBurst, roundOK := burstBaseOf(e.Rusage)
+	var gate *store.Rusage
+	if e.Gate != nil {
+		gate = e.Gate.Rusage
+	}
+	gateBase, gateBurst, gateOK := burstBaseOf(gate)
+	if !roundOK && !gateOK {
+		return costSample{}, false
+	}
+	base := gateBase
+	if e.Rusage != nil && e.Rusage.BaseBytes != nil {
+		base = roundBase
+	}
+	burst := roundBurst
+	if gateOK && roundBase+gateBurst > burst {
+		burst = roundBase + gateBurst
 	}
 	return costSample{Base: base, Burst: burst, At: e.TS}, true
 }
