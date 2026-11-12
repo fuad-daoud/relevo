@@ -2,8 +2,12 @@ package doctor
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // TestSwapCheck pins the swap row's table: swap present, zram only, both,
@@ -91,4 +95,45 @@ func TestSwapCheckSkipsShortLines(t *testing.T) {
 	if got.Severity != SevWarn {
 		t.Errorf("row = %+v, want a warn: a one-field line is not a swap entry", got)
 	}
+}
+
+// TestSwapCheckWiring pins that the serve-scope build carries the swap row.
+// SwapCheck's own table passes even when the append is dropped, so this
+// drives appendServeScopeRows, the seam RunReport reaches on the doctor path.
+func TestSwapCheckWiring(t *testing.T) {
+	const header = "Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n"
+	swapRow := func(t *testing.T, env Env) *Check {
+		t.Helper()
+		rt := relevo.Runtime{Store: store.New(filepath.Join(t.TempDir(), "store"))}
+		var rep Report
+		appendServeScopeRows(&rep, rt, env)
+		return findCheck(rep, "", "swap")
+	}
+
+	t.Run("unreadable", func(t *testing.T) {
+		env := errReadEnv{Env: &fakeEnv{}, err: errors.New("permission denied")}
+		got := swapRow(t, env)
+		if got == nil {
+			t.Fatal("no swap row: an unreadable /proc/swaps must still report")
+		}
+		if !got.ProbeFailed {
+			t.Errorf("row = %+v, want a failed probe", *got)
+		}
+	})
+
+	t.Run("present", func(t *testing.T) {
+		env := &fakeEnv{fileContents: map[string]string{
+			"/proc/swaps": header + "/dev/sda2                               partition\t8388604\t\t0\t\t-2\n",
+		}}
+		got := swapRow(t, env)
+		if got == nil {
+			t.Fatal("no swap row: readable swap content must report")
+		}
+		if got.ProbeFailed {
+			t.Errorf("row = %+v, want a successful probe", *got)
+		}
+		if !strings.Contains(got.Detail, "swap active on /dev/sda2") {
+			t.Errorf("Detail = %q, want it to name the swap device", got.Detail)
+		}
+	})
 }
