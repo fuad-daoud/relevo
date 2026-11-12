@@ -754,6 +754,11 @@ func closeWebshopRoundOne(t *testing.T, rt Runtime, b store.Binding) store.Bindi
 		t.Fatal(err)
 	}
 	touch(t, rt.Store.DonePath("webshop", 1))
+	// The close is the setup, not the wait: the runner is already gone, so
+	// the tick closes on the marker instead of holding for the exit.
+	if fr, ok := rt.Runner.(*fakeRunner); ok && b.Builder.PID != 0 {
+		fr.script(b.Builder.PID, false)
+	}
 	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)

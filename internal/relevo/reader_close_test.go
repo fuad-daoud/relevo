@@ -875,7 +875,8 @@ func TestReaderRoundGraceClosesALingeringRunner(t *testing.T) {
 }
 
 // TestWriterRoundStillClosesOnMarker: a writer is unchanged. Its report is a
-// file written before the marker, so a live process does not delay the close.
+// file written before the marker, so a live process delays the close only
+// inside the rusage grace; a marker past it still closes the round at once.
 func TestWriterRoundStillClosesOnMarker(t *testing.T) {
 	t.Parallel()
 
@@ -883,7 +884,12 @@ func TestWriterRoundStillClosesOnMarker(t *testing.T) {
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	touch(t, rt.Store.DonePath("webshop", 1))
+	marker := rt.Store.DonePath("webshop", 1)
+	touch(t, marker)
+	aged := baseTime.Add(-markerRusageGrace - time.Second)
+	if err := os.Chtimes(marker, aged, aged); err != nil {
+		t.Fatalf("age the marker: %v", err)
+	}
 
 	got, err := reconcile(t, rt, b)
 	if err != nil {

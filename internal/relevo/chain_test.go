@@ -130,8 +130,9 @@ func chainReconcile(t *testing.T, rt Runtime, name string) store.Binding {
 }
 
 // chainBuilderClose closes a writer member's open round: its report and its
-// completion marker on disk, then one tick. A writer closes on the marker
-// whatever its process is doing.
+// completion marker on disk, its process observed dead, then one tick. The
+// exit is scripted so the tick tests the close, not the grace a live runner
+// earns while its rusage trailer is still coming.
 func chainBuilderClose(t *testing.T, rt Runtime, name string, body string) store.Binding {
 	t.Helper()
 	b := chainBinding(t, rt, name)
@@ -139,6 +140,9 @@ func chainBuilderClose(t *testing.T, rt Runtime, name string, body string) store
 		t.Fatalf("write %s report: %v", name, err)
 	}
 	touch(t, rt.Store.DonePath(name, b.Round))
+	if fr, ok := rt.Runner.(*fakeRunner); ok && b.Builder.PID != 0 {
+		fr.script(b.Builder.PID, false)
+	}
 	return chainReconcile(t, rt, name)
 }
 
@@ -1209,6 +1213,10 @@ func TestChainBuilderHaltReasonSources(t *testing.T) {
 		// parses to nothing, so the note is the only source left.
 		b := chainBinding(t, rt, "shop")
 		touch(t, rt.Store.DonePath("shop", b.Round))
+		// The note is the subject, not the wait: the runner is already gone.
+		if fr, ok := rt.Runner.(*fakeRunner); ok && b.Builder.PID != 0 {
+			fr.script(b.Builder.PID, false)
+		}
 		chainReconcile(t, rt, "shop")
 
 		if got := chainStoredRow(t, rt, "shop").Reason; got != "builder halted on plan 1: note: noreport" {

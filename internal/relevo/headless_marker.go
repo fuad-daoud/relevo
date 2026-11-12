@@ -52,6 +52,36 @@ const readerFinalMessageGrace = 2 * time.Minute
 // not a completed final message.
 const readerSummaryEarlyNote = "runner still running after its marker; summary taken early"
 
+// markerRusageGrace is how long a marked writer round waits for its runner
+// to exit before closing: the supervisor prints the rusage trailer only
+// after the builder exits, so a close on the marker alone records no
+// measurement; a runner that never exits delays its report by at most this.
+const markerRusageGrace = 30 * time.Second
+
+// holdWriterOnMarker reports whether a marked writer round must wait for
+// its runner instead of closing. The rusage trailer lands only after the
+// exit, so closing inside the grace would file a report with no measurement.
+// A gate already running is left to finish, and readers keep their own hold.
+func holdWriterOnMarker(ctx context.Context, rt Runtime, b store.Binding) bool {
+	if b.Shape == store.ShapeReader {
+		return false
+	}
+	if b.GateRun != nil {
+		return false
+	}
+	if b.Builder.PID == 0 || rt.Runner == nil {
+		return false
+	}
+	_, mtime, ok, _ := rt.Store.StatFile(rt.Store.DonePath(b.Name, b.Round))
+	if !ok {
+		return false
+	}
+	if rt.Now().Sub(mtime) >= markerRusageGrace {
+		return false
+	}
+	return roundRunnerAlive(ctx, rt, b)
+}
+
 // holdReaderOnMarker reads a reader round's marker once and reports what the
 // close must do with it. A reader's marker is not the end of its stream: the
 // runner writes its final message just after the marker and then exits, and
@@ -122,6 +152,12 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	}
 	if done {
 		return out, closed, gating, nil
+	}
+	// A writer that beat its runner to the marker waits for the exit, so
+	// the close reads the rusage trailer. Like the reader hold, the tick
+	// ends here and the live-builder path below runs instead.
+	if holdWriterOnMarker(ctx, rt, out) {
+		return out, false, false, nil
 	}
 	next, closed, gating, rec, err := markerCloseVerify(ctx, rt, tx, out, entries, note, wantVerify)
 	if err != nil {

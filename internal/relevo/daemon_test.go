@@ -26,11 +26,12 @@ import (
 func TestTickReconcilesAndPersists(t *testing.T) {
 	t.Parallel()
 
-	rt, _ := sentBinding(t)
+	rt, b := sentBinding(t)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
 	touch(t, rt.Store.DonePath("webshop", 1))
+	scriptRunnerExited(t, rt, b)
 
 	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
 		t.Fatalf("Tick: %v", err)
@@ -303,11 +304,12 @@ func TestTickRefreshesRuntimeBeforeReconcile(t *testing.T) {
 func TestTickWithoutRefreshIsUnchanged(t *testing.T) {
 	t.Parallel()
 
-	rt, _ := sentBinding(t)
+	rt, b := sentBinding(t)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
 	touch(t, rt.Store.DonePath("webshop", 1))
+	scriptRunnerExited(t, rt, b)
 
 	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
 		t.Fatalf("Tick: %v", err)

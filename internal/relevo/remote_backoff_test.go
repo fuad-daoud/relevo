@@ -495,11 +495,12 @@ func TestTickDoesNotPrefetchDoneBindings(t *testing.T) {
 
 func TestTickWithSilentServerStillReconcilesLocalBindings(t *testing.T) {
 	shortenPrefetchDeadline(t, 100*time.Millisecond)
-	rt, _ := sentBinding(t)
+	rt, b := sentBinding(t)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
 	touch(t, rt.Store.DonePath("webshop", 1))
+	scriptRunnerExited(t, rt, b)
 	saveRemoteBindings(t, rt.Store, "zen", 5)
 	sr := &silentRemote{fakeRemote: &fakeRemote{}}
 	rt.Remote = sr

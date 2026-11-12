@@ -58,6 +58,18 @@ func touch(t *testing.T, path string) {
 	}
 }
 
+// scriptRunnerExited marks the round's runner as already exited, so a tick
+// with a marker tests the close rather than the grace a live runner earns
+// while its rusage trailer is still coming.
+func scriptRunnerExited(t *testing.T, rt Runtime, b store.Binding) {
+	t.Helper()
+	fr, ok := rt.Runner.(*fakeRunner)
+	if !ok {
+		t.Fatalf("Runner = %T, want *fakeRunner", rt.Runner)
+	}
+	fr.script(b.Builder.PID, false)
+}
+
 // TestReconcileDrainsPaneSessionRecord pins Reconcile's pane path:
 // once refreshEndpoint has run, drainSession renders whatever the builder's
 // own session record holds since the last tick into the round's log, the
@@ -78,6 +90,7 @@ func TestReconcileQueuesReportWhenBuilderIdleAndMarkerExists(t *testing.T) {
 		t.Fatalf("write report: %v", err)
 	}
 	touch(t, rt.Store.DonePath("webshop", 1))
+	scriptRunnerExited(t, rt, b)
 	b.RoundSwitches = 1
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -125,6 +138,9 @@ func TestReconcileQueuesReportInsideStartGrace(t *testing.T) {
 		t.Fatalf("write report: %v", err)
 	}
 	touch(t, rt.Store.DonePath("webshop", 1))
+	// The runner is already gone: the test's subject is the start grace,
+	// not the wait for the exit.
+	scriptRunnerExited(t, rt, b)
 
 	got, err := reconcile(t, rt, b)
 	if err != nil {
@@ -366,6 +382,7 @@ func TestReconcileDiffCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	touch(t, rt.Store.DonePath("webshop", 1))
+	scriptRunnerExited(t, rt, b)
 
 	// First tick
 	bAfter, err := reconcile(t, rt, b)
@@ -464,6 +481,7 @@ func TestQueueReportRecordsCommitFacts(t *testing.T) {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath("webshop", 1))
+		scriptRunnerExited(t, rt, b)
 		got, err := reconcile(t, rt, b)
 		if err != nil {
 			t.Fatalf("Reconcile: %v", err)
@@ -674,6 +692,7 @@ func TestQueueReport_RoundClosedTree(t *testing.T) {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath(b.Name, b.Round))
+		scriptRunnerExited(t, rt, b)
 
 		got, err := reconcile(t, rt, b)
 		if err != nil {
@@ -718,6 +737,7 @@ func TestQueueReport_RoundClosedTree(t *testing.T) {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath(b.Name, b.Round))
+		scriptRunnerExited(t, rt, b)
 
 		got, err := reconcile(t, rt, b)
 		if err != nil {
@@ -745,6 +765,7 @@ func TestQueueReport_RoundClosedTree(t *testing.T) {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath(b.Name, b.Round))
+		scriptRunnerExited(t, rt, b)
 
 		got, err := reconcile(t, rt, b)
 		if err != nil {
@@ -851,29 +872,37 @@ func TestCloseOnMarkerAbsentDoesNothing(t *testing.T) {
 	}
 }
 
-// TestReconcileClosesOnMarkerWhileBuilderStillWorking pins that the marker
-// is checked every tick, before the builder is consulted at all. Mutation:
-// move the closeOnMarker call behind a live-process check -> this fails
-// because the process below is alive (an unscripted pid is alive forever).
-func TestReconcileClosesOnMarkerWhileBuilderStillWorking(t *testing.T) {
+// TestReconcileHoldsMarkerCloseWhileBuilderStillWorking pins that a fresh
+// marker with a live builder holds the round open: the close waits for the
+// runner's exit so the report carries the rusage trailer. Mutation: never
+// hold -> the round closes at once and this fails.
+func TestReconcileHoldsMarkerCloseWhileBuilderStillWorking(t *testing.T) {
 	t.Parallel()
 
 	rt, b := sentBinding(t)
+	fr, ok := rt.Runner.(*fakeRunner)
+	if !ok {
+		t.Fatalf("Runner = %T, want *fakeRunner", rt.Runner)
+	}
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	touch(t, rt.Store.DonePath("webshop", 1))
+	marker := rt.Store.DonePath("webshop", 1)
+	if err := os.Chtimes(marker, baseTime, baseTime); err != nil {
+		t.Fatalf("chtimes marker: %v", err)
+	}
+	fr.script(b.Builder.PID, true)
 
 	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if got.Round != 2 {
-		t.Errorf("round = %d, want 2: the marker closes the round regardless of the process", got.Round)
+	if got.Round != 1 {
+		t.Errorf("round = %d, want 1: a live runner holds the marked close", got.Round)
 	}
-	pending, found, err := rt.Store.PendingForMasterMind("webshop")
-	if err != nil || !found || pending.Note != "" {
-		t.Errorf("want a normal report queued: found=%v note=%q err=%v", found, pending.Note, err)
+	if _, found, _ := rt.Store.PendingForMasterMind("webshop"); found {
+		t.Error("nothing may be queued while the close is held")
 	}
 }
 
@@ -917,6 +946,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath("webshop", 1))
+		scriptRunnerExited(t, rt, b)
 		if _, err := reconcile(t, rt, b); err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
@@ -948,6 +978,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath("webshop", 1))
+		scriptRunnerExited(t, rt, b)
 		if _, err := reconcile(t, rt, b); err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
@@ -1030,6 +1061,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath("webshop", 1))
+		scriptRunnerExited(t, rt, b)
 		if _, err := reconcile(t, rt, b); err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
@@ -1058,6 +1090,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath("webshop", 1))
+		scriptRunnerExited(t, rt, b)
 		if _, err := reconcile(t, rt, b); err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
@@ -1093,6 +1126,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath("webshop", 1))
+		scriptRunnerExited(t, rt, b)
 		if _, err := reconcile(t, rt, b); err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
@@ -1124,6 +1158,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath("webshop", 1))
+		scriptRunnerExited(t, rt, b)
 		if _, err := reconcile(t, rt, b); err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
@@ -1163,6 +1198,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath("webshop", 1))
+		scriptRunnerExited(t, rt, b)
 		if _, err := reconcile(t, rt, b); err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
@@ -1208,6 +1244,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath("webshop", 1))
+		scriptRunnerExited(t, rt, b)
 		if _, err := reconcile(t, rt, b); err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
@@ -1253,6 +1290,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath("webshop", 1))
+		scriptRunnerExited(t, rt, b)
 		if _, err := reconcile(t, rt, b); err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
@@ -1298,6 +1336,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath("webshop", 1))
+		scriptRunnerExited(t, rt, b)
 		if _, err := reconcile(t, rt, b); err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
@@ -1333,6 +1372,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath("webshop", 1))
+		scriptRunnerExited(t, rt, b)
 		if _, err := reconcile(t, rt, b); err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
@@ -1368,6 +1408,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath("webshop", 1))
+		scriptRunnerExited(t, rt, b)
 		if _, err := reconcile(t, rt, b); err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
@@ -1406,6 +1447,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath("webshop", 1))
+		scriptRunnerExited(t, rt, b)
 		if _, err := reconcile(t, rt, b); err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
@@ -1441,6 +1483,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath("webshop", 1))
+		scriptRunnerExited(t, rt, b)
 		if _, err := reconcile(t, rt, b); err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
@@ -1886,6 +1929,9 @@ func failRoundWithGate(t *testing.T, rt Runtime, b store.Binding, fr *fakeRunner
 		t.Fatal(err)
 	}
 	touch(t, rt.Store.DonePath(b.Name, round))
+	// The gate is the setup's subject, not the runner's exit: the builder is
+	// already gone, so the tick starts the gate instead of holding for it.
+	fr.script(b.Builder.PID, false)
 
 	got, err := reconcile(t, rt, b)
 	if err != nil {
@@ -2134,6 +2180,7 @@ func TestRegatePassResetsCount(t *testing.T) {
 		t.Fatal(err)
 	}
 	touch(t, rt.Store.DonePath("webshop", 2))
+	scriptRunnerExited(t, rt, got)
 
 	got, err := reconcile(t, rt, got)
 	if err != nil {
@@ -2358,6 +2405,7 @@ func TestVerifyRoundStartsAReviewerInAThrowawayWorktree(t *testing.T) {
 		t.Fatal(err)
 	}
 	touch(t, rt.Store.DonePath("webshop", 1))
+	scriptRunnerExited(t, rt, b)
 
 	got, err := reconcile(t, rt, b)
 	if err != nil {
