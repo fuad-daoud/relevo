@@ -79,6 +79,7 @@ func TestReconcile_EmitsRoundStartedOnReport(t *testing.T) {
 		t.Fatalf("write report: %v", err)
 	}
 	touch(t, rt.Store.DonePath("webshop", 1))
+	scriptRunnerExited(t, rt, b)
 
 	out := tickCommit(t, rt, b)
 	if out.Round != 2 {

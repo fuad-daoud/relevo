@@ -284,6 +284,9 @@ func TestRegateStaleBuilderPicksAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	touch(t, rt.Store.DonePath("webshop", 1))
+	// The gate is the subject, not the wait: the runner is already gone, so
+	// the tick starts the gate instead of holding for the exit.
+	fr.script(b.Builder.PID, false)
 
 	got, err := reconcile(t, rt, b)
 	if err != nil {

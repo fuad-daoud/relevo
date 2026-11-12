@@ -31,7 +31,8 @@ import (
 func TestClosedRoundSealsOnceTheNextRoundCloses(t *testing.T) {
 	t.Parallel()
 
-	rt, _ := sentBinding(t)
+	rt, b := sentBinding(t)
+	scriptRunnerExited(t, rt, b)
 
 	report := []byte("round 1's report\n")
 	diff := []byte("diff --git a/x b/x\n--- a/x\n+++ b/x\n")
@@ -66,7 +67,7 @@ func TestClosedRoundSealsOnceTheNextRoundCloses(t *testing.T) {
 	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
 		t.Fatalf("first Tick: %v", err)
 	}
-	b, err := rt.Store.Load("webshop")
+	b, err = rt.Store.Load("webshop")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}

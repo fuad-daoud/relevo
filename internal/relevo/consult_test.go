@@ -496,6 +496,9 @@ func TestVerifyVerdictParsedOntoFindingsAndBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	touch(t, rt.Store.DonePath("webshop", 2))
+	// The stale-verdict read is the subject, not the wait: the round-2
+	// runner is already gone.
+	scriptRunnerExited(t, rt, b)
 	closed, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile round 2: %v", err)

@@ -154,6 +154,7 @@ func TestRoundCloseRemovesTmp(t *testing.T) {
 	if err := os.WriteFile(rt.Store.DonePath("webshop", 1), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	scriptRunnerExited(t, rt, b)
 
 	got, err := reconcile(t, rt, b)
 	if err != nil {
@@ -320,6 +321,7 @@ func TestRemoveRoundTmpFailureDoesNotFailClose(t *testing.T) {
 	if err := os.WriteFile(rt.Store.DonePath("webshop", 1), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	scriptRunnerExited(t, rt, b)
 
 	got, err := reconcile(t, rt, b)
 	if err != nil {

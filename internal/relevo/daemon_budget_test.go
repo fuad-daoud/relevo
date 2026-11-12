@@ -175,6 +175,12 @@ func TestIdleTickRunsNoGitAndNoMirror(t *testing.T) {
 	// completion marker closes the round, and the close pays git for the
 	// escape answer.
 	name := live[0]
+	alpha, err := rt.Store.Load(name)
+	if err != nil {
+		t.Fatalf("Load(%s): %v", name, err)
+	}
+	// The close is the control, not the wait: the runner is already gone.
+	scriptRunnerExited(t, rt, alpha)
 	touch(t, rt.Store.DonePath(name, 1))
 	if err := d.Tick(ctx); err != nil {
 		t.Fatalf("marker tick: %v", err)

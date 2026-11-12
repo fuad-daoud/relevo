@@ -21,6 +21,9 @@ func closeRound(t *testing.T, rt Runtime, b store.Binding) store.LogEntry {
 		t.Fatal(err)
 	}
 	touch(t, rt.Store.DonePath(b.Name, b.Round))
+	// The usage read is the subject, not the wait: the idle builder is
+	// already gone, so the tick closes instead of holding for the exit.
+	scriptRunnerExited(t, rt, b)
 	next, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
