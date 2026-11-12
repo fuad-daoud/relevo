@@ -81,6 +81,10 @@ type Deps struct {
 	// HeldCPUs returns the cores held by live rounds other than self. Nil
 	// means the local census, which reads only the caller's tx.
 	HeldCPUs func(tx *store.Tx, self string) ([]int, error)
+	// Topology reads the host CPU topology for the pool. Nil reads the
+	// host each call; a field rather than a package variable keeps the
+	// parallel AssignRoundCPU tests race-free.
+	Topology func(pool []int) spawn.CPUTopology
 	// Scope is the runtime's scope template. Nil means scopes are off, so no
 	// oom probe runs.
 	Scope *spawn.ScopeSpec

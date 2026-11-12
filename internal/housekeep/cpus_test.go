@@ -8,14 +8,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/store/storetest"
 )
 
 // TestPickCPUSet pins the allocator: the least-used size-sized set of pool
-// cores, ties to the lowest cores; not ok when the pool is empty, size is
-// out of range, or every core is held. held is a multiset: duplicates raise
-// a core's count, and cores outside the pool are ignored.
+// cores, ties to the lowest cores, with no topology; not ok when the pool
+// is empty or size is out of range, while a full pool shares the least-held
+// set. held is a multiset: duplicates raise a core's count, and cores
+// outside the pool are ignored.
 func TestPickCPUSet(t *testing.T) {
 	t.Parallel()
 
@@ -33,8 +35,8 @@ func TestPickCPUSet(t *testing.T) {
 		{"nothing held", []int{0, 1, 2}, nil, 1, []int{0}, true},
 		{"first held", []int{0, 1, 2}, []int{0}, 1, []int{1}, true},
 		{"first and last held", []int{0, 1, 2}, []int{0, 2}, 1, []int{1}, true},
-		{"all held", []int{0, 1, 2}, []int{0, 1, 2}, 1, nil, false},
-		{"all held with duplicates", []int{0, 1}, []int{0, 1, 1, 0}, 2, nil, false},
+		{"all held shares the lowest core", []int{0, 1, 2}, []int{0, 1, 2}, 1, []int{0}, true},
+		{"all held with duplicates shares the set", []int{0, 1}, []int{0, 1, 1, 0}, 2, []int{0, 1}, true},
 		{"held outside the pool", []int{0, 1, 2}, []int{5, 0}, 1, []int{1}, true},
 		{"ties go to the lowest cores", []int{0, 1, 2, 3}, nil, 2, []int{0, 1}, true},
 		{"counts break ties", []int{0, 1, 2, 3}, []int{0, 0, 1}, 2, []int{2, 3}, true},
@@ -44,9 +46,77 @@ func TestPickCPUSet(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, ok := pickCPUSet(c.pool, c.held, c.size)
+			got, ok := pickCPUSet(c.pool, c.held, c.size, spawn.CPUTopology{})
 			if ok != c.ok || !reflect.DeepEqual(got, c.want) {
 				t.Errorf("pickCPUSet(%v, %v, %d) = %v, %v; want %v, %v", c.pool, c.held, c.size, got, ok, c.want, c.ok)
+			}
+		})
+	}
+}
+
+// homeTopology is the paired-thread host: siblings 0-1 and 2-3 on the fast
+// cluster, every other core alone on the slow one.
+func homeTopology() spawn.CPUTopology {
+	topo := spawn.CPUTopology{
+		Siblings:   map[int][]int{0: {0, 1}, 1: {0, 1}, 2: {2, 3}, 3: {2, 3}},
+		MaxFreqKHz: make(map[int]int, 12),
+	}
+	for c := 0; c < 12; c++ {
+		topo.MaxFreqKHz[c] = 3300000
+	}
+	for _, c := range []int{0, 1, 2, 3} {
+		topo.MaxFreqKHz[c] = 4400000
+	}
+	return topo
+}
+
+// crossTopology pairs each low core with a high one, all at one speed.
+func crossTopology() spawn.CPUTopology {
+	topo := spawn.CPUTopology{Siblings: map[int][]int{}, MaxFreqKHz: map[int]int{}}
+	for c := 0; c < 8; c++ {
+		topo.MaxFreqKHz[c] = 4200000
+	}
+	for _, p := range [][2]int{{0, 4}, {1, 5}, {2, 6}, {3, 7}} {
+		topo.Siblings[p[0]] = []int{p[0], p[1]}
+		topo.Siblings[p[1]] = []int{p[0], p[1]}
+	}
+	return topo
+}
+
+// TestPickCPUSetTopologySequences pins the round order: sets spread across
+// physical cores fastest-first, and a full pool shares the least-held set
+// pinned. Rounds run one after another with every picked set staying held.
+func TestPickCPUSetTopologySequences(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		pool []int
+		size int
+		topo spawn.CPUTopology
+		want [][]int
+	}{
+		{"home spreads across cores then shares", []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}, 2, homeTopology(),
+			[][]int{{0, 2}, {4, 5}, {6, 7}, {8, 9}, {10, 11}, {1, 3}, {4, 5}}},
+		{"cross pairs spread then share", []int{0, 1, 2, 3, 4, 5, 6, 7}, 2, crossTopology(),
+			[][]int{{0, 1}, {2, 3}, {4, 5}, {6, 7}, {0, 1}}},
+		{"alone cores share the lowest pair", []int{0, 1, 2, 3}, 2, spawn.CPUTopology{},
+			[][]int{{0, 1}, {2, 3}, {0, 1}}},
+		{"no topology matches the old order", []int{0, 1, 2, 3}, 2, spawn.CPUTopology{},
+			[][]int{{0, 1}, {2, 3}}},
+		{"the faster core wins a free tie", []int{0, 1}, 1,
+			spawn.CPUTopology{MaxFreqKHz: map[int]int{0: 1000000, 1: 2000000}}, [][]int{{1}}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			var held []int
+			for i, want := range c.want {
+				got, ok := pickCPUSet(c.pool, held, c.size, c.topo)
+				if !ok || !reflect.DeepEqual(got, want) {
+					t.Fatalf("round %d: pickCPUSet(%v, %v, %d) = %v, %v; want %v, true", i+1, c.pool, held, c.size, got, ok, want)
+				}
+				held = append(held, got...)
 			}
 		})
 	}
@@ -244,7 +314,7 @@ func cpuPtrText(p *int) string {
 // cpuTestDeps is a Deps with the pool pinned to the list and the census left
 // to the caller's transaction.
 func cpuTestDeps(st *store.Store, pool string) Deps {
-	return Deps{Store: st, AllowedCPUs: pool}
+	return Deps{Topology: noTopology, Store: st, AllowedCPUs: pool}
 }
 
 // saveCPUBinding saves a plain binding the allocator can pin.
@@ -296,9 +366,10 @@ func TestAssignRoundCPUGivesDistinctCores(t *testing.T) {
 	}
 }
 
-// TestAssignRoundCPUExhaustedPoolRunsWholePool pins the exhaustion rule: when
-// every pool core is held, the round runs on the whole pool with no RoundCPU.
-func TestAssignRoundCPUExhaustedPoolRunsWholePool(t *testing.T) {
+// TestAssignRoundCPUFullPoolSharesPinned pins the sharing rule: when
+// the only pool core is already held, the round shares it pinned instead of
+// running on the whole pool.
+func TestAssignRoundCPUFullPoolSharesPinned(t *testing.T) {
 	t.Parallel()
 
 	st := storetest.New(t)
@@ -328,8 +399,11 @@ func TestAssignRoundCPUExhaustedPoolRunsWholePool(t *testing.T) {
 		t.Fatalf("WithLock: %v", err)
 	}
 
-	if second.RoundCPU != nil {
-		t.Errorf("an exhausted pool left RoundCPU = %s, want none", cpuPtrText(second.RoundCPU))
+	if !reflect.DeepEqual(second.RoundCPUs, []int{0}) {
+		t.Errorf("a full pool left RoundCPUs = %v, want the shared set [0]", second.RoundCPUs)
+	}
+	if second.RoundCPU == nil || *second.RoundCPU != 0 {
+		t.Errorf("a full pool left RoundCPU = %s, want the shared core 0", cpuPtrText(second.RoundCPU))
 	}
 }
 
@@ -444,7 +518,7 @@ func TestAssignRoundCPUNoPoolWritesNoField(t *testing.T) {
 
 // cpuTestSetDeps is a Deps with the pool and the set size pinned.
 func cpuTestSetDeps(st *store.Store, pool string, size int) Deps {
-	return Deps{Store: st, AllowedCPUs: pool, RoundCPUs: size}
+	return Deps{Topology: noTopology, Store: st, AllowedCPUs: pool, RoundCPUs: size}
 }
 
 // fakeOnlineCPUs pins the machine to n CPUs for one test. Tests that fake it
@@ -503,9 +577,10 @@ func TestAssignRoundCPUGivesDistinctSets(t *testing.T) {
 	}
 }
 
-// TestAssignRoundCPUExhaustedSetClearsBoth pins the set exhaustion rule: when
-// no unheld core is left, both pin fields come back nil.
-func TestAssignRoundCPUExhaustedSetClearsBoth(t *testing.T) {
+// TestAssignRoundCPUFullSetSharesAndReplaces pins the set sharing rule: when
+// no unheld core is left, the round shares the least-held set pinned, and a
+// stale set on the binding is replaced.
+func TestAssignRoundCPUFullSetSharesAndReplaces(t *testing.T) {
 	t.Parallel()
 
 	st := storetest.New(t)
@@ -529,7 +604,7 @@ func TestAssignRoundCPUExhaustedSetClearsBoth(t *testing.T) {
 			return err
 		}
 		// The second round arrives with a stale set on the cores the first
-		// live round already holds, so the exhausted pool must clear it.
+		// live round already holds, so the full pool shares them again.
 		stale := 0
 		b2.RoundCPUs = []int{0, 1}
 		b2.RoundCPU = &stale
@@ -540,11 +615,59 @@ func TestAssignRoundCPUExhaustedSetClearsBoth(t *testing.T) {
 		t.Fatalf("WithLock: %v", err)
 	}
 
-	if second.RoundCPUs != nil {
-		t.Errorf("an exhausted pool left RoundCPUs = %v, want none", second.RoundCPUs)
+	if !reflect.DeepEqual(second.RoundCPUs, []int{0, 1}) {
+		t.Errorf("a full pool left RoundCPUs = %v, want the shared set [0 1]", second.RoundCPUs)
 	}
-	if second.RoundCPU != nil {
-		t.Errorf("an exhausted pool left RoundCPU = %s, want none", cpuPtrText(second.RoundCPU))
+	if second.RoundCPU == nil || *second.RoundCPU != 0 {
+		t.Errorf("a full pool left RoundCPU = %s, want the shared set's first core 0", cpuPtrText(second.RoundCPU))
+	}
+}
+
+// TestAssignRoundCPUTopologySpreadsAcrossCores pins the entry path: with the
+// home topology faked in, a pool of "0-11" at size 2 gives the first live
+// round {0,2} and the next {4,5}.
+func TestAssignRoundCPUTopologySpreadsAcrossCores(t *testing.T) {
+	t.Parallel()
+
+	st := storetest.New(t)
+	saveCPUBinding(t, st, "webshop")
+	saveCPUBinding(t, st, "second")
+	deps := cpuTestSetDeps(st, "0-11", 2)
+	deps.Topology = func([]int) spawn.CPUTopology { return homeTopology() }
+
+	var first, second store.Binding
+	err := st.WithLock(func(tx *store.Tx) error {
+		b, err := tx.Load("webshop")
+		if err != nil {
+			return err
+		}
+		first = AssignRoundCPU(deps, tx, b)
+		first.Builder.PID = 4001
+		if err := tx.Save(first); err != nil {
+			return err
+		}
+		b2, err := tx.Load("second")
+		if err != nil {
+			return err
+		}
+		second = AssignRoundCPU(deps, tx, b2)
+		return tx.Save(second)
+	})
+	if err != nil {
+		t.Fatalf("WithLock: %v", err)
+	}
+
+	if !reflect.DeepEqual(first.RoundCPUs, []int{0, 2}) {
+		t.Errorf("first RoundCPUs = %v, want [0 2]", first.RoundCPUs)
+	}
+	if first.RoundCPU == nil || *first.RoundCPU != 0 {
+		t.Errorf("first RoundCPU = %s, want the set's first core 0", cpuPtrText(first.RoundCPU))
+	}
+	if !reflect.DeepEqual(second.RoundCPUs, []int{4, 5}) {
+		t.Errorf("second RoundCPUs = %v, want [4 5]", second.RoundCPUs)
+	}
+	if second.RoundCPU == nil || *second.RoundCPU != 4 {
+		t.Errorf("second RoundCPU = %s, want the set's first core 4", cpuPtrText(second.RoundCPU))
 	}
 }
 
@@ -556,7 +679,7 @@ func TestAssignRoundCPUCensusErrorClearsStaleSet(t *testing.T) {
 
 	st := storetest.New(t)
 	saveCPUBinding(t, st, "webshop")
-	deps := Deps{Store: st, AllowedCPUs: "0-3", RoundCPUs: 2,
+	deps := Deps{Topology: noTopology, Store: st, AllowedCPUs: "0-3", RoundCPUs: 2,
 		HeldCPUs: func(*store.Tx, string) ([]int, error) { return nil, errors.New("census down") }}
 
 	stale := 0
@@ -590,7 +713,7 @@ func TestAssignRoundCPUNilTxClearsStaleSet(t *testing.T) {
 
 	stale := 0
 	b := store.Binding{Name: "webshop", RoundCPUs: []int{0, 1}, RoundCPU: &stale}
-	got := AssignRoundCPU(Deps{AllowedCPUs: "0-3", RoundCPUs: 2}, nil, b)
+	got := AssignRoundCPU(Deps{Topology: noTopology, AllowedCPUs: "0-3", RoundCPUs: 2}, nil, b)
 
 	if got.RoundCPUs != nil {
 		t.Errorf("a nil tx left RoundCPUs = %v, want none", got.RoundCPUs)
@@ -746,7 +869,7 @@ func TestAssignRoundCPUNoPoolGivesDistinctPairs(t *testing.T) {
 	st := storetest.New(t)
 	saveCPUBinding(t, st, "webshop")
 	saveCPUBinding(t, st, "second")
-	deps := Deps{Store: st, RoundCPUs: 2}
+	deps := Deps{Topology: noTopology, Store: st, RoundCPUs: 2}
 
 	var first, second store.Binding
 	err := st.WithLock(func(tx *store.Tx) error {
@@ -791,7 +914,7 @@ func TestAssignRoundCPUNoPoolKeepsSetOnRelaunch(t *testing.T) {
 
 	st := storetest.New(t)
 	saveCPUBinding(t, st, "webshop")
-	deps := Deps{Store: st, RoundCPUs: 2}
+	deps := Deps{Topology: noTopology, Store: st, RoundCPUs: 2}
 
 	var got store.Binding
 	err := st.WithLock(func(tx *store.Tx) error {
@@ -811,5 +934,36 @@ func TestAssignRoundCPUNoPoolKeepsSetOnRelaunch(t *testing.T) {
 	}
 	if got.RoundCPU != nil {
 		t.Errorf("RoundCPU = %s, want none without a pool", cpuPtrText(got.RoundCPU))
+	}
+}
+
+// noTopology stands in for the host's sysfs: every CPU alone at unknown
+// speed, so a test's expected sets never depend on the machine running it.
+func noTopology([]int) spawn.CPUTopology { return spawn.CPUTopology{} }
+
+// TestAssignRoundCPUNilTopologyReadsHost pins the production default: with no
+// Topology seam the host is read, and whatever it reports the round still
+// gets a full set from the pool.
+func TestAssignRoundCPUNilTopologyReadsHost(t *testing.T) {
+	t.Parallel()
+
+	st := storetest.New(t)
+	saveCPUBinding(t, st, "webshop")
+	deps := Deps{Store: st, AllowedCPUs: "0-1", RoundCPUs: 2}
+
+	var got store.Binding
+	err := st.WithLock(func(tx *store.Tx) error {
+		b, err := tx.Load("webshop")
+		if err != nil {
+			return err
+		}
+		got = AssignRoundCPU(deps, tx, b)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WithLock: %v", err)
+	}
+	if !reflect.DeepEqual(got.RoundCPUs, []int{0, 1}) {
+		t.Errorf("RoundCPUs = %v, want [0 1]", got.RoundCPUs)
 	}
 }

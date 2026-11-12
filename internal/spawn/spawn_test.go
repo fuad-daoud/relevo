@@ -25,6 +25,11 @@ func TestGoMaxProcsFor(t *testing.T) {
 		{"quota below one core", ScopeSpec{CPUQuota: "50%"}, 1, true},
 		{"quota wider than the pin", ScopeSpec{CPUQuota: "300%", AllowedCPUs: "1"}, 1, true},
 		{"pin wider than the quota", ScopeSpec{CPUQuota: "100%", AllowedCPUs: "0-3"}, 1, true},
+		{"affinity pin", ScopeSpec{AffinityCPUs: "0,2"}, 2, true},
+		{"quota wider than the affinity pin", ScopeSpec{CPUQuota: "400%", AffinityCPUs: "4,5"}, 2, true},
+		{"affinity narrower than the cpuset pin", ScopeSpec{AllowedCPUs: "0-3", AffinityCPUs: "1"}, 1, true},
+		{"cpuset narrower than the affinity pin", ScopeSpec{AllowedCPUs: "2", AffinityCPUs: "0-3"}, 1, true},
+		{"malformed affinity list", ScopeSpec{AffinityCPUs: "x", CPUQuota: "300%"}, 3, true},
 		{"malformed quota", ScopeSpec{CPUQuota: "abc"}, 0, false},
 		{"malformed cpu list", ScopeSpec{AllowedCPUs: "x"}, 0, false},
 	}
