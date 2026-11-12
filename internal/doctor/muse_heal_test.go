@@ -80,6 +80,17 @@ func (*healFakeRegistry) Touch(string, time.Time) error { return nil }
 
 func (*healFakeRegistry) Forget(string, func(string) bool) error { return nil }
 
+// clearHostSessionEnv blanks the variables a host harness session exports, so
+// the resolve under test sees only the muse session these tests set: a run
+// inside Claude Code (CLAUDECODE) or a MasterMind shell (RELEVO_MASTERMIND)
+// would otherwise resolve to the host's own record first.
+func clearHostSessionEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{"CLAUDECODE", "RELEVO_MASTERMIND", "RELEVO_PLANNER"} {
+		t.Setenv(name, "")
+	}
+}
+
 // healMuseSession is the muse session the doctor heal tests run as.
 const healMuseSession = "1a2b3c4d-5e6f-4a8b-9c0d-1e2f3a4b5c6d"
 
@@ -113,6 +124,7 @@ func healGoneRecord() *healFakeRegistry {
 // SetHost: the follow-up MCPChild read then checks the live host.
 func TestDoctorMuseFactsHealsGoneRecord(t *testing.T) {
 	t.Setenv("MUSE_SESSION_ID", healMuseSession)
+	clearHostSessionEnv(t)
 	reg := healGoneRecord()
 	rt := healDoctorRuntime(reg, func(int) (int, bool) { return 80, true })
 
@@ -133,6 +145,7 @@ func TestDoctorMuseFactsHealsGoneRecord(t *testing.T) {
 // caller in a different session resolves nothing and writes nothing.
 func TestDoctorMuseFactsRefusesHealForAnotherSession(t *testing.T) {
 	t.Setenv("MUSE_SESSION_ID", "2b3c4d5e-6f70-4b8c-9d0e-1f2a3b4c5d6e")
+	clearHostSessionEnv(t)
 	reg := healGoneRecord()
 	rt := healDoctorRuntime(reg, func(int) (int, bool) { return 80, true })
 
@@ -148,6 +161,7 @@ func TestDoctorMuseFactsRefusesHealForAnotherSession(t *testing.T) {
 // SetHost calls.
 func TestDoctorMuseFactsRefusesHealAtUnverifiedWalk(t *testing.T) {
 	t.Setenv("MUSE_SESSION_ID", healMuseSession)
+	clearHostSessionEnv(t)
 	reg := healGoneRecord()
 	rt := healDoctorRuntime(reg, func(int) (int, bool) { return 0, false })
 
