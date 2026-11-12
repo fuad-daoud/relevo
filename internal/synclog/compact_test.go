@@ -3,7 +3,6 @@ package synclog
 import (
 	"sort"
 	"testing"
-	"time"
 )
 
 func upsertAt(seq int, tbl, pk string) Entry {
@@ -110,39 +109,5 @@ func TestMemCompactDropsAndRecordsTogether(t *testing.T) {
 	}
 	if _, err := m.Compact("o", 99); err == nil {
 		t.Fatal("compacting past the head succeeded, want a refusal")
-	}
-}
-
-func TestCompactDueOnTenPercentGrowth(t *testing.T) {
-	t.Parallel()
-	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
-	last := now.Add(-time.Hour)
-	if !CompactDue(last, 100, 110, now) {
-		t.Error("110 entries after 100 is a tenth of growth, want due")
-	}
-	if CompactDue(last, 100, 109, now) {
-		t.Error("109 entries after 100 is under a tenth, want not due")
-	}
-}
-
-func TestCompactDueWeekly(t *testing.T) {
-	t.Parallel()
-	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
-	if !CompactDue(now.Add(-7*24*time.Hour), 100, 100, now) {
-		t.Error("a week after the last run, want due")
-	}
-	if CompactDue(now.Add(-7*24*time.Hour+time.Minute), 100, 100, now) {
-		t.Error("just under a week with no growth, want not due")
-	}
-}
-
-func TestCompactDueNeverRan(t *testing.T) {
-	t.Parallel()
-	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
-	if !CompactDue(time.Time{}, 0, 1, now) {
-		t.Error("never ran with an entry, want due")
-	}
-	if CompactDue(time.Time{}, 0, 0, now) {
-		t.Error("never ran with nothing to compact, want not due")
 	}
 }

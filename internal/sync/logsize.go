@@ -50,20 +50,20 @@ func (r *Runner) bucket() blobstore.BlobStore {
 	return r.Blobs()
 }
 
-// publishSize writes this machine's log size to the bucket after a compaction,
-// and otherwise at most once a day after an export that appended something.
+// publishSize writes this machine's log size to the bucket at most once a day,
+// after an export that appended something.
 // Another machine's join guard reads it before opening a worker. A failure is
 // logged: the size is advice and the next tick tries again.
-func (r *Runner) publishSize(origin string, t *StopTransport, compacted, appended bool, now time.Time) {
+func (r *Runner) publishSize(origin string, t *StopTransport, appended bool, now time.Time) {
 	store := r.bucket()
-	if store == nil || (!compacted && !appended) {
+	if store == nil || !appended {
 		return
 	}
 	var last time.Time
 	if err := marker(r.Local, KeySizePublished, &last); err != nil {
 		slog.Warn("sync: read the size marker", "err", err)
 	}
-	if !compacted && now.Sub(last) < sizeEvery {
+	if now.Sub(last) < sizeEvery {
 		return
 	}
 	state, err := t.ReadMarks()
