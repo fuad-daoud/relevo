@@ -96,6 +96,8 @@ func adminOwners(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([
 	}
 
 	now := s.cfg.Now()
+	budget, k, pressureOK := s.admissionInputs(c.RunningRounds)
+	waits := queueWaits(c, budget, k, pressureOK, now)
 	position := make(map[string]int, len(c.Queued))
 	for i, q := range c.Queued {
 		position[string(q.Owner)+"/"+q.Name] = i
@@ -108,7 +110,7 @@ func adminOwners(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([
 			continue
 		}
 		label := s.clients.LabelOf(id)
-		o, err := adminOwnerStatus(ctx, s, filepath.Join(bindingsDir, entry.Name()), id, label, position, c, builders, now, opts...)
+		o, err := adminOwnerStatus(ctx, s, filepath.Join(bindingsDir, entry.Name()), id, label, position, c, builders, waits, now, opts...)
 		if err != nil {
 			return nil, remote.BuildersView{}, err
 		}
@@ -123,7 +125,7 @@ func adminOwners(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([
 }
 
 // adminOwnerStatus reads one owner's rows.
-func adminOwnerStatus(ctx context.Context, s *Server, ownerPath string, id remote.ClientID, label string, position map[string]int, c census, builders remote.BuildersView, now time.Time, opts ...relevo.StatusOption) (OwnerStatus, error) {
+func adminOwnerStatus(ctx context.Context, s *Server, ownerPath string, id remote.ClientID, label string, position map[string]int, c census, builders remote.BuildersView, waits []queueWait, now time.Time, opts ...relevo.StatusOption) (OwnerStatus, error) {
 	rt := s.runtimeAt(ownerPath)
 	rep, err := relevo.Status(ctx, rt, opts...)
 	if err != nil {
@@ -158,7 +160,7 @@ func adminOwnerStatus(ctx context.Context, s *Server, ownerPath string, id remot
 			continue
 		}
 		q := c.Queued[i]
-		row.Queued = queueViewFor(q, i, c, builders)
+		row.Queued = queueViewFor(q, i, c, builders, waits)
 		row.BuilderStatus = fmt.Sprintf("queued %s (%d ahead)", view.AgeText(now.Sub(q.QueuedAt)), i)
 	}
 	return OwnerStatus{

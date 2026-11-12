@@ -3,7 +3,9 @@
 package policy
 
 import (
+	"math"
 	"runtime"
+	"strconv"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -83,6 +85,9 @@ type ServePolicy struct {
 	// MaxPlanners caps planner rounds running at once; nil is
 	// DefaultMaxPlanners.
 	MaxPlanners *int `json:"max_planners,omitempty"`
+	// MemoryBudget caps the memory rounds may take together; "" derives it
+	// from the slice or the machine, else ^[0-9]+[KMGT]?$ binary units.
+	MemoryBudget string `json:"memory_budget,omitempty"`
 	// Scope is the per-round systemd scope; nil is defaults.
 	Scope *ScopePolicy `json:"scope,omitempty"`
 	// Isolation is the tenant-isolation mode: "none" (the default), "user"
@@ -451,6 +456,37 @@ func (p Policy) MaxPlannersOrDefault() int {
 		return DefaultMaxPlanners
 	}
 	return *p.Serve.MaxPlanners
+}
+
+// ServeMemoryBudgetBytes answers serve.memory_budget in bytes: a trailing
+// K/M/G/T scales binary, a bare number is bytes. It is 0 when the key is
+// unset or unparsable, so a hand-built policy without validation still reads
+// as no override rather than a budget.
+func (p Policy) ServeMemoryBudgetBytes() int64 {
+	if p.Serve == nil || !memoryMaxPattern.MatchString(p.Serve.MemoryBudget) {
+		return 0
+	}
+	s := p.Serve.MemoryBudget
+	mult := int64(1)
+	num := s
+	if c := s[len(s)-1]; c < '0' || c > '9' {
+		switch c {
+		case 'K':
+			mult = 1 << 10
+		case 'M':
+			mult = 1 << 20
+		case 'G':
+			mult = 1 << 30
+		case 'T':
+			mult = 1 << 40
+		}
+		num = s[:len(s)-1]
+	}
+	n, err := strconv.ParseInt(num, 10, 64)
+	if err != nil || n > math.MaxInt64/mult {
+		return 0
+	}
+	return n * mult
 }
 
 // ScopeFor returns the scope for a context: a served round takes

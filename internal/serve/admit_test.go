@@ -521,6 +521,9 @@ func TestRestartRequeuesDeadBuilder(t *testing.T) {
 		MaxBuilders: 1,
 		StartedAt:   time.Unix(oldStartedAt+60, 0), // after A's own builder start
 		Audiences:   []string{testAudience},
+		// A budget no round can fill: the re-admit is not gated on the
+		// host's live memory.
+		Policy: policy.Policy{Serve: &policy.ServePolicy{MemoryBudget: "1T"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1289,4 +1292,837 @@ func TestAdmitReviewerStillCountsAsBuilder(t *testing.T) {
 		t.Fatalf("tick 2: %v", err)
 	}
 	requireRoundState(t, rtB, "api", remote.RoundRunning)
+}
+
+// fakeLiveInputs swaps the budget, round-dir and memory readers for one test,
+// restoring them when it ends. The swap is process-wide, but the faking tests
+// never run parallel and the parallel tests in this package never touch
+// admission, so it cannot race another test's pass.
+func fakeLiveInputs(t *testing.T, budget func() (string, error), round func(int) (string, error), total func() (int64, error)) {
+	t.Helper()
+	oldBudget, oldRound, oldTotal := liveBudgetDir, liveRoundCgroupDir, liveMemTotal
+	if budget != nil {
+		liveBudgetDir = budget
+	}
+	if round != nil {
+		liveRoundCgroupDir = round
+	}
+	if total != nil {
+		liveMemTotal = total
+	}
+	t.Cleanup(func() { liveBudgetDir, liveRoundCgroupDir, liveMemTotal = oldBudget, oldRound, oldTotal })
+}
+
+// admitZeroBudget restores the zero memory budget setupTestEnv overrides by
+// default, so the plumbing tests below read their faked inputs alone.
+func admitZeroBudget(t *testing.T, env *testEnv) {
+	t.Helper()
+	env.srv.mu.Lock()
+	defer env.srv.mu.Unlock()
+	if env.srv.reloaded.Policy.Serve != nil {
+		env.srv.reloaded.Policy.Serve.MemoryBudget = ""
+	}
+}
+
+// writeCgroupTree builds a fake cgroup dir holding the named files.
+func writeCgroupTree(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	return dir
+}
+
+// pressureBody renders a memory.pressure file with the given some avg10.
+func pressureBody(avg10 string) string {
+	return "some avg10=" + avg10 + " avg60=1.00 avg300=0.50 total=12345\n" +
+		"full avg10=0.00 avg60=0.00 avg300=0.00 total=0\n"
+}
+
+// seedCostHistory writes n identical samples so the p90 lookup has depth.
+func seedCostHistory(t *testing.T, root, repoID, role string, base, burst int64, n int) {
+	t.Helper()
+	for i := range n {
+		if _, err := appendCostSample(root, repoID, role, "seed", i+1, costSample{Base: base, Burst: burst, At: time.Now()}); err != nil {
+			t.Fatalf("seed cost sample %d: %v", i+1, err)
+		}
+	}
+}
+
+// backdateQueuedAt moves a binding's queue stamp back, so the pass sees an
+// older wait than the send just created.
+func backdateQueuedAt(t *testing.T, rt relevo.Runtime, name string, ago time.Duration) {
+	t.Helper()
+	b, err := rt.Store.Load(name)
+	if err != nil {
+		t.Fatalf("load %s: %v", name, err)
+	}
+	b.QueuedAt = time.Now().Add(-ago)
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("save %s: %v", name, err)
+	}
+}
+
+// getBindingView fetches one owner's binding view over the wire.
+func getBindingView(t *testing.T, env *testEnv, kp remote.Keypair, name string) remote.BindingView {
+	t.Helper()
+	resp, body := doSigned(t, env.ts, kp, "GET", "/v1/bindings/"+name, nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get binding %s status = %d, want 200; body: %s", name, resp.StatusCode, string(body))
+	}
+	return decodeView(t, body)
+}
+
+// TestCensusCarriesSeatCosts pins the census's cost lookup: a running round
+// carries its repo-role history's p90 seat, a queued round without history
+// carries the builder defaults, and the running round's pid rides along for
+// the budget's non-round reading.
+func TestCensusCarriesSeatCosts(t *testing.T) {
+	env := setupTestEnv(t, func(cfg *Config) { cfg.MaxBuilders = 1 })
+	ownerB := addOwner(t, env, "bob")
+
+	const gb = int64(1 << 30)
+	for i := range 6 {
+		s := costSample{Base: int64(i+2) * gb, Burst: int64(i+6) * gb, At: time.Now()}
+		if _, err := appendCostSample(env.srv.cfg.Root, env.repoID, "builder", "api", i+1, s); err != nil {
+			t.Fatalf("seed cost sample %d: %v", i+1, err)
+		}
+	}
+
+	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, respA, bodyA, "A")
+	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
+	requireCreated(t, respB, bodyB, "B")
+
+	c, err := env.srv.census()
+	if err != nil {
+		t.Fatalf("census: %v", err)
+	}
+	if c.Running != 1 || len(c.RunningRounds) != 1 {
+		t.Fatalf("census running = %d rounds %v, want 1 round", c.Running, c.RunningRounds)
+	}
+	got := c.RunningRounds[0]
+	if got.Base != 7*gb || got.Burst != 11*gb {
+		t.Errorf("running cost = {%d %d}, want {7GiB 11GiB}", got.Base, got.Burst)
+	}
+	rtA := testRuntime(t, env.srv, env.id)
+	bA, err := rtA.Store.Load("api")
+	if err != nil {
+		t.Fatalf("load A: %v", err)
+	}
+	if bA.Builder.PID == 0 {
+		t.Fatal("A PID = 0, want the started round's pid")
+	}
+	if got.PID != bA.Builder.PID {
+		t.Errorf("running PID = %d, want %d", got.PID, bA.Builder.PID)
+	}
+	if got.Planner {
+		t.Error("running Planner = true, want false for a builder round")
+	}
+	if len(c.Queued) != 1 {
+		t.Fatalf("census queued = %d, want 1", len(c.Queued))
+	}
+	if q := c.Queued[0]; q.Base != gb || q.Burst != 5*gb {
+		t.Errorf("queued cost = {%d %d}, want builder defaults {1GiB 5GiB}", q.Base, q.Burst)
+	}
+}
+
+// TestAdmissionInputs pins the pass inputs with faked IO: the override wins,
+// a numeric slice reads minus its anon, an unlimited slice falls back to
+// machine memory, only anon counts on either side, the brake trips at 10.0,
+// and unreadable or out-of-slice round dirs subtract nothing.
+func TestAdmissionInputs(t *testing.T) {
+	const gb = int64(1 << 30)
+	mem16 := func() (int64, error) { return 16 * gb, nil }
+
+	t.Run("override wins", func(t *testing.T) {
+		set, err := builderCandidateSet(t)
+		if err != nil {
+			t.Fatal(err)
+		}
+		env := setupTestEnv(t, func(cfg *Config) {
+			cfg.Candidates = set
+			cfg.Policy = policy.Policy{Serve: &policy.ServePolicy{MemoryBudget: "5G"}}
+		})
+		dir := writeCgroupTree(t, map[string]string{
+			"memory.max":      "10737418240\n",
+			"memory.stat":     "anon 1073741824\n",
+			"memory.pressure": pressureBody("1.0"),
+		})
+		fakeLiveInputs(t, func() (string, error) { return dir, nil }, nil, mem16)
+		budget, k, pressureOK := env.srv.admissionInputs(nil)
+		if budget != 5*gb {
+			t.Errorf("budget = %d, want 5GiB override", budget)
+		}
+		if k != 2 {
+			t.Errorf("k = %d, want 2 with no history", k)
+		}
+		if !pressureOK {
+			t.Error("pressureOK = false, want true at avg10 1.0")
+		}
+	})
+
+	t.Run("slice minus anon", func(t *testing.T) {
+		env := setupTestEnv(t)
+		admitZeroBudget(t, env)
+		dir := writeCgroupTree(t, map[string]string{
+			"memory.max":      "10737418240\n",
+			"memory.stat":     "anon 1073741824\n",
+			"memory.pressure": pressureBody("1.0"),
+		})
+		fakeLiveInputs(t, func() (string, error) { return dir, nil }, nil, mem16)
+		budget, k, pressureOK := env.srv.admissionInputs(nil)
+		if budget != 9*gb {
+			t.Errorf("budget = %d, want 10GiB slice minus 1GiB anon", budget)
+		}
+		if k != 2 {
+			t.Errorf("k = %d, want 2 with no history", k)
+		}
+		if !pressureOK {
+			t.Error("pressureOK = false, want true at avg10 1.0")
+		}
+	})
+
+	t.Run("unlimited slice falls back to machine memory", func(t *testing.T) {
+		env := setupTestEnv(t)
+		admitZeroBudget(t, env)
+		dir := writeCgroupTree(t, map[string]string{
+			"memory.max":      "max\n",
+			"memory.pressure": pressureBody("1.0"),
+		})
+		fakeLiveInputs(t, func() (string, error) { return dir, nil }, nil, mem16)
+		budget, _, _ := env.srv.admissionInputs(nil)
+		if budget != 14*gb {
+			t.Errorf("budget = %d, want 16GiB machine minus 2GiB reserve", budget)
+		}
+	})
+
+	t.Run("anon ignores page cache", func(t *testing.T) {
+		env := setupTestEnv(t)
+		admitZeroBudget(t, env)
+		// memory.current sits near the slice limit while anon stays small:
+		// page cache is reclaimable, so the budget is the slice minus the
+		// small anon, not a shrunken one.
+		dir := writeCgroupTree(t, map[string]string{
+			"memory.max":      "10737418240\n",
+			"memory.current":  "10695475200\n",
+			"memory.stat":     "anon 1073741824\nfile 9619759104\n",
+			"memory.pressure": pressureBody("1.0"),
+		})
+		fakeLiveInputs(t, func() (string, error) { return dir, nil }, nil, mem16)
+		budget, _, _ := env.srv.admissionInputs(nil)
+		if budget != 9*gb {
+			t.Errorf("budget = %d, want 10GiB slice minus 1GiB anon", budget)
+		}
+	})
+
+	t.Run("pressure brake", func(t *testing.T) {
+		for _, tc := range []struct {
+			name     string
+			avg10    string
+			pressure bool
+			want     bool
+		}{
+			{name: "9.9 admits", avg10: "9.9", pressure: true, want: true},
+			{name: "10.0 holds", avg10: "10.0", pressure: true, want: false},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				env := setupTestEnv(t)
+				files := map[string]string{"memory.max": "max\n"}
+				if tc.pressure {
+					files["memory.pressure"] = pressureBody(tc.avg10)
+				}
+				dir := writeCgroupTree(t, files)
+				fakeLiveInputs(t, func() (string, error) { return dir, nil }, nil, mem16)
+				_, _, pressureOK := env.srv.admissionInputs(nil)
+				if pressureOK != tc.want {
+					t.Errorf("pressureOK = %v at avg10 %s, want %v", pressureOK, tc.avg10, tc.want)
+				}
+			})
+		}
+		t.Run("missing pressure file admits", func(t *testing.T) {
+			env := setupTestEnv(t)
+			dir := writeCgroupTree(t, map[string]string{"memory.max": "max\n"})
+			fakeLiveInputs(t, func() (string, error) { return dir, nil }, nil, mem16)
+			_, _, pressureOK := env.srv.admissionInputs(nil)
+			if !pressureOK {
+				t.Error("pressureOK = false, want true with no pressure file")
+			}
+		})
+	})
+
+	t.Run("round dirs", func(t *testing.T) {
+		env := setupTestEnv(t)
+		admitZeroBudget(t, env)
+		dir := writeCgroupTree(t, map[string]string{
+			"memory.max":      "10737418240\n",
+			"memory.stat":     "anon 4294967296\n",
+			"memory.pressure": pressureBody("1.0"),
+		})
+		inside := filepath.Join(dir, "round-33")
+		if err := os.MkdirAll(inside, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(inside, "memory.stat"), []byte("anon 1073741824\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		outside := writeCgroupTree(t, map[string]string{"memory.stat": "anon 3221225472\n"})
+		roundDir := func(pid int) (string, error) {
+			switch pid {
+			case 33:
+				return inside, nil
+			case 44:
+				return dir, nil
+			case 22:
+				return outside, nil
+			default:
+				return "", errors.New("no cgroup")
+			}
+		}
+		fakeLiveInputs(t, func() (string, error) { return dir, nil }, roundDir, mem16)
+		// Unreadable and out-of-slice dirs subtract nothing; the round
+		// inside subtracts its anon.
+		budget, _, _ := env.srv.admissionInputs([]runningRound{{PID: 11}, {PID: 22}, {PID: 33}})
+		if budget != 7*gb {
+			t.Errorf("budget = %d, want 10GiB slice minus 3GiB non-round anon", budget)
+		}
+		// A round scoped at the budget dir itself and an inside round
+		// larger than the dir's own anon clamp at zero, never negative.
+		budget, _, _ = env.srv.admissionInputs([]runningRound{{PID: 33}, {PID: 44}})
+		if budget != 10*gb {
+			t.Errorf("budget = %d, want the whole 10GiB slice when anon clamps at zero", budget)
+		}
+	})
+
+	t.Run("unreadable machine memory reads as no budget", func(t *testing.T) {
+		env := setupTestEnv(t)
+		admitZeroBudget(t, env)
+		dir := writeCgroupTree(t, map[string]string{"memory.max": "max\n"})
+		fakeLiveInputs(t,
+			func() (string, error) { return dir, nil },
+			nil,
+			func() (int64, error) { return 0, errors.New("no meminfo") })
+		budget, _, _ := env.srv.admissionInputs(nil)
+		if budget != 0 {
+			t.Errorf("budget = %d, want 0 with no slice, no override and no meminfo", budget)
+		}
+	})
+
+	t.Run("budget dir error is brake-off", func(t *testing.T) {
+		env := setupTestEnv(t)
+		admitZeroBudget(t, env)
+		fakeLiveInputs(t, func() (string, error) { return "", errors.New("no cgroup") }, nil, mem16)
+		budget, _, pressureOK := env.srv.admissionInputs(nil)
+		if budget != 14*gb {
+			t.Errorf("budget = %d, want 16GiB machine minus 2GiB reserve", budget)
+		}
+		if !pressureOK {
+			t.Error("pressureOK = false, want true with no budget dir to read a brake from")
+		}
+	})
+
+	t.Run("numeric slice without memory.stat reads as full slice", func(t *testing.T) {
+		env := setupTestEnv(t)
+		admitZeroBudget(t, env)
+		dir := writeCgroupTree(t, map[string]string{
+			"memory.max":      "10737418240\n",
+			"memory.pressure": pressureBody("1.0"),
+		})
+		fakeLiveInputs(t, func() (string, error) { return dir, nil }, nil, mem16)
+		budget, _, _ := env.srv.admissionInputs(nil)
+		if budget != 10*gb {
+			t.Errorf("budget = %d, want the full 10GiB slice with no anon to subtract", budget)
+		}
+	})
+}
+
+// TestFindBudgetDir pins the budget walk: a service dir under a numeric slice
+// reads the slice, a numeric dir reads itself, and a tree with no numeric
+// limit reads the start dir, whose own pressure the caller then uses.
+func TestFindBudgetDir(t *testing.T) {
+	root := t.TempDir()
+	slice := filepath.Join(root, "slice")
+	service := filepath.Join(slice, "service")
+	if err := os.MkdirAll(service, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeMax := func(dir, max string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, "memory.max"), []byte(max), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeMax(service, "max\n")
+	writeMax(slice, "10737418240\n")
+	if got := findBudgetDir(service); got != slice {
+		t.Errorf("findBudgetDir(service) = %q, want slice %q", got, slice)
+	}
+	if got := findBudgetDir(slice); got != slice {
+		t.Errorf("findBudgetDir(slice) = %q, want itself", got)
+	}
+	bare := filepath.Join(root, "bare")
+	if err := os.MkdirAll(bare, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeMax(bare, "max\n")
+	if got := findBudgetDir(bare); got != bare {
+		t.Errorf("findBudgetDir(bare) = %q, want start itself with no numeric limit", got)
+	}
+}
+
+// TestAdmitMemoryHoldsBuilderAdmitsPlanner pins the memory hold through the
+// stack: with a budget between a planner's and a builder's need, a queued
+// builder stays queued while a queued planner that fits starts. The planner's
+// need lands exactly on the budget, pinning the exact-fit boundary too.
+func TestAdmitMemoryHoldsBuilderAdmitsPlanner(t *testing.T) {
+	set, err := builderCandidateSet(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := setupTestEnv(t, func(cfg *Config) {
+		cfg.Candidates = set
+		cfg.Registry = plannerAdmitRegistry(t, set)
+		cfg.Policy = policy.Policy{Serve: &policy.ServePolicy{MemoryBudget: "11800M"}}
+	})
+	ownerB := addOwner(t, env, "bob")
+	ownerC := addOwner(t, env, "carol")
+
+	const gb = int64(1 << 30)
+	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, respA, bodyA, "A")
+	if viewA := decodeView(t, bodyA); viewA.RoundState != remote.RoundRunning {
+		t.Fatalf("A round_state = %q, want running", viewA.RoundState)
+	}
+	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
+	requireCreated(t, respB, bodyB, "B")
+	if viewB := decodeView(t, bodyB); viewB.RoundState != remote.RoundQueued {
+		t.Fatalf("B round_state = %q, want queued", viewB.RoundState)
+	} else if viewB.Queue == nil {
+		t.Fatal("B Queue = nil, want the memory hold")
+	} else if viewB.Queue.Wait != waitMemory || viewB.Queue.WaitBytes != 12*gb-11800*(1<<20) {
+		t.Errorf("B wait = (%q, %d), want (memory, %d)", viewB.Queue.Wait, viewB.Queue.WaitBytes, 12*gb-11800*(1<<20))
+	}
+	respC, bodyC := sendRound(t, env, ownerC.kp, ownerC.clientDir, ownerC.repoID, ownerC.headSHA, "api", "# Plan C")
+	requireCreated(t, respC, bodyC, "C")
+
+	stampRole(t, testRuntime(t, env.srv, ownerC.id), "api", "lite-planner")
+
+	if err := env.srv.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	requireRoundState(t, testRuntime(t, env.srv, ownerB.id), "api", remote.RoundQueued)
+	requireRoundState(t, testRuntime(t, env.srv, ownerC.id), "api", remote.RoundRunning)
+
+	// After the tick the planner's seat joins the running set, so B's
+	// shortfall grows: both classes count toward one memory need.
+	viewB := getBindingView(t, env, ownerB.kp, "api")
+	if viewB.Queue == nil {
+		t.Fatal("B Queue = nil, want the memory hold after the tick")
+	}
+	if viewB.Queue.Wait != waitMemory || viewB.Queue.WaitBytes != 25*gb/2-11800*(1<<20) {
+		t.Errorf("B wait = (%q, %d), want (memory, %d)", viewB.Queue.Wait, viewB.Queue.WaitBytes, 25*gb/2-11800*(1<<20))
+	}
+}
+
+// fairnessEnv builds the seat a fairness test needs: a 12GiB budget, a
+// running builder at defaults, and a queued builder whose seeded history
+// makes it unfittable, beside a later builder at defaults that fits.
+func fairnessEnv(t *testing.T) (*testEnv, ownerEnv, ownerEnv) {
+	t.Helper()
+	set, err := builderCandidateSet(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := setupTestEnv(t, func(cfg *Config) {
+		cfg.Candidates = set
+		cfg.Registry = plannerAdmitRegistry(t, set)
+		cfg.Policy = policy.Policy{Serve: &policy.ServePolicy{MemoryBudget: "12G"}}
+	})
+	ownerB := addOwner(t, env, "bob")
+	ownerC := addOwner(t, env, "carol")
+	seedCostHistory(t, env.srv.cfg.Root, ownerB.repoID, "builder", 8<<30, 8<<30, 6)
+
+	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, respA, bodyA, "A")
+	if viewA := decodeView(t, bodyA); viewA.RoundState != remote.RoundRunning {
+		t.Fatalf("A round_state = %q, want running", viewA.RoundState)
+	}
+	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
+	requireCreated(t, respB, bodyB, "B")
+	if viewB := decodeView(t, bodyB); viewB.RoundState != remote.RoundQueued {
+		t.Fatalf("B round_state = %q, want queued", viewB.RoundState)
+	}
+	return env, ownerB, ownerC
+}
+
+// TestAdmitFairnessNineMinutesAdmits pins the young side of the fairness
+// horizon: a builder held nine minutes does not block its class, so the
+// later builder that fits starts.
+func TestAdmitFairnessNineMinutesAdmits(t *testing.T) {
+	env, ownerB, ownerC := fairnessEnv(t)
+
+	backdateQueuedAt(t, testRuntime(t, env.srv, ownerB.id), "api", 9*time.Minute)
+
+	respC, bodyC := sendRound(t, env, ownerC.kp, ownerC.clientDir, ownerC.repoID, ownerC.headSHA, "api", "# Plan C")
+	requireCreated(t, respC, bodyC, "C")
+	if viewC := decodeView(t, bodyC); viewC.RoundState != remote.RoundRunning {
+		t.Fatalf("C round_state = %q, want running: a nine-minute hold must not block its class", viewC.RoundState)
+	}
+
+	if err := env.srv.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	requireRoundState(t, testRuntime(t, env.srv, ownerB.id), "api", remote.RoundQueued)
+	requireRoundState(t, testRuntime(t, env.srv, ownerC.id), "api", remote.RoundRunning)
+}
+
+// TestAdmitFairnessElevenMinutesBlocks pins the old side of the fairness
+// horizon: a builder held eleven minutes blocks later builders of its class,
+// even one that would fit. The skipped round stamps a memory wait with no
+// bytes, since the decision never ran to measure one.
+func TestAdmitFairnessElevenMinutesBlocks(t *testing.T) {
+	env, ownerB, ownerC := fairnessEnv(t)
+
+	backdateQueuedAt(t, testRuntime(t, env.srv, ownerB.id), "api", 11*time.Minute)
+
+	respC, bodyC := sendRound(t, env, ownerC.kp, ownerC.clientDir, ownerC.repoID, ownerC.headSHA, "api", "# Plan C")
+	requireCreated(t, respC, bodyC, "C")
+	if viewC := decodeView(t, bodyC); viewC.RoundState != remote.RoundQueued {
+		t.Fatalf("C round_state = %q, want queued: an eleven-minute hold blocks its class", viewC.RoundState)
+	}
+
+	if err := env.srv.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	rtC := testRuntime(t, env.srv, ownerC.id)
+	requireRoundState(t, rtC, "api", remote.RoundQueued)
+	if b, err := rtC.Store.Load("api"); err != nil {
+		t.Fatal(err)
+	} else if b.Builder.PID != 0 {
+		t.Errorf("C PID = %d, want 0: the blocked round takes no seat", b.Builder.PID)
+	}
+	viewC := getBindingView(t, env, ownerC.kp, "api")
+	if viewC.Queue == nil {
+		t.Fatal("C Queue = nil, want the fairness wait")
+	}
+	if viewC.Queue.Wait != waitMemory || viewC.Queue.WaitBytes != 0 {
+		t.Errorf("C wait = (%q, %d), want (memory, 0)", viewC.Queue.Wait, viewC.Queue.WaitBytes)
+	}
+
+	const gb = int64(1 << 30)
+	viewB := getBindingView(t, env, ownerB.kp, "api")
+	if viewB.Queue == nil {
+		t.Fatal("B Queue = nil, want the memory hold")
+	}
+	if viewB.Queue.Wait != waitMemory || viewB.Queue.WaitBytes != 25*gb-12*gb {
+		t.Errorf("B wait = (%q, %d), want (memory, %d)", viewB.Queue.Wait, viewB.Queue.WaitBytes, 25*gb-12*gb)
+	}
+}
+
+// TestAdmitFairnessPlannerElevenMinutesBlocks pins the planner side of the
+// fairness horizon: an eleven-minute planner hold blocks later planners, not
+// builders. The skipped planner stamps a memory wait with no bytes, since the
+// decision never ran to measure one.
+func TestAdmitFairnessPlannerElevenMinutesBlocks(t *testing.T) {
+	set, err := builderCandidateSet(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := setupTestEnv(t, func(cfg *Config) {
+		cfg.Candidates = set
+		cfg.Registry = plannerAdmitRegistry(t, set)
+		cfg.Policy = policy.Policy{Serve: &policy.ServePolicy{MemoryBudget: "12G"}}
+	})
+	ownerB := addOwner(t, env, "bob")
+	ownerC := addOwner(t, env, "carol")
+	ownerD := addOwner(t, env, "dave")
+
+	const gb = int64(1 << 30)
+	// B's builder seat holds it at its own send; its planner seat holds it
+	// after the stamp without tripping the oversize rule. C's builder seat
+	// holds it at its own send the same way; C takes planner defaults after
+	// the stamp, since nothing is seeded under its planner role.
+	seedCostHistory(t, env.srv.cfg.Root, ownerB.repoID, "builder", 8*gb, 8*gb, 6)
+	seedCostHistory(t, env.srv.cfg.Root, ownerB.repoID, "lite-planner", 2*gb, 3*gb, 6)
+	seedCostHistory(t, env.srv.cfg.Root, ownerC.repoID, "builder", 8*gb, 8*gb, 6)
+
+	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, respA, bodyA, "A")
+	if viewA := decodeView(t, bodyA); viewA.RoundState != remote.RoundRunning {
+		t.Fatalf("A round_state = %q, want running", viewA.RoundState)
+	}
+
+	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
+	requireCreated(t, respB, bodyB, "B")
+	if viewB := decodeView(t, bodyB); viewB.RoundState != remote.RoundQueued {
+		t.Fatalf("B round_state = %q, want queued", viewB.RoundState)
+	}
+	stampRole(t, testRuntime(t, env.srv, ownerB.id), "api", "lite-planner")
+	backdateQueuedAt(t, testRuntime(t, env.srv, ownerB.id), "api", 11*time.Minute)
+
+	respC, bodyC := sendRound(t, env, ownerC.kp, ownerC.clientDir, ownerC.repoID, ownerC.headSHA, "api", "# Plan C")
+	requireCreated(t, respC, bodyC, "C")
+	if viewC := decodeView(t, bodyC); viewC.RoundState != remote.RoundQueued {
+		t.Fatalf("C round_state = %q, want queued", viewC.RoundState)
+	}
+	stampRole(t, testRuntime(t, env.srv, ownerC.id), "api", "lite-planner")
+
+	respD, bodyD := sendRound(t, env, ownerD.kp, ownerD.clientDir, ownerD.repoID, ownerD.headSHA, "api", "# Plan D")
+	requireCreated(t, respD, bodyD, "D")
+
+	if err := env.srv.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	requireRoundState(t, testRuntime(t, env.srv, ownerB.id), "api", remote.RoundQueued)
+	requireRoundState(t, testRuntime(t, env.srv, ownerC.id), "api", remote.RoundQueued)
+	requireRoundState(t, testRuntime(t, env.srv, ownerD.id), "api", remote.RoundRunning)
+
+	rtB := testRuntime(t, env.srv, ownerB.id)
+	if b, err := rtB.Store.Load("api"); err != nil {
+		t.Fatal(err)
+	} else if b.Builder.PID != 0 {
+		t.Errorf("B PID = %d, want 0: the held round takes no seat", b.Builder.PID)
+	}
+	viewB := getBindingView(t, env, ownerB.kp, "api")
+	if viewB.Queue == nil {
+		t.Fatal("B Queue = nil, want the memory hold")
+	}
+	if viewB.Queue.Wait != waitMemory || viewB.Queue.WaitBytes != 2*gb {
+		t.Errorf("B wait = (%q, %d), want (memory, %d)", viewB.Queue.Wait, viewB.Queue.WaitBytes, 2*gb)
+	}
+
+	rtC := testRuntime(t, env.srv, ownerC.id)
+	if b, err := rtC.Store.Load("api"); err != nil {
+		t.Fatal(err)
+	} else if b.Builder.PID != 0 {
+		t.Errorf("C PID = %d, want 0: the blocked round takes no seat", b.Builder.PID)
+	}
+	viewC := getBindingView(t, env, ownerC.kp, "api")
+	if viewC.Queue == nil {
+		t.Fatal("C Queue = nil, want the fairness wait")
+	}
+	if viewC.Queue.Wait != waitMemory || viewC.Queue.WaitBytes != 0 {
+		t.Errorf("C wait = (%q, %d), want (memory, 0)", viewC.Queue.Wait, viewC.Queue.WaitBytes)
+	}
+}
+
+// TestAdmitOversizeAloneStarts pins the oversize rule through the stack: a
+// candidate whose default cost exceeds the budget starts when no builder
+// runs, and is memory-held once one does.
+func TestAdmitOversizeAloneStarts(t *testing.T) {
+	env := setupTestEnv(t, func(cfg *Config) {
+		cfg.Policy = policy.Policy{Serve: &policy.ServePolicy{MemoryBudget: "10G"}}
+	})
+	ownerB := addOwner(t, env, "bob")
+
+	const gb = int64(1 << 30)
+	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, respA, bodyA, "A")
+	if viewA := decodeView(t, bodyA); viewA.RoundState != remote.RoundRunning {
+		t.Fatalf("A round_state = %q, want running: an oversize candidate alone in its class starts", viewA.RoundState)
+	}
+	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
+	requireCreated(t, respB, bodyB, "B")
+	if viewB := decodeView(t, bodyB); viewB.RoundState != remote.RoundQueued {
+		t.Fatalf("B round_state = %q, want queued", viewB.RoundState)
+	}
+
+	if err := env.srv.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	requireRoundState(t, testRuntime(t, env.srv, ownerB.id), "api", remote.RoundQueued)
+	viewB := getBindingView(t, env, ownerB.kp, "api")
+	if viewB.Queue == nil {
+		t.Fatal("B Queue = nil, want the memory hold")
+	}
+	if viewB.Queue.Wait != waitMemory || viewB.Queue.WaitBytes != 2*gb {
+		t.Errorf("B wait = (%q, %d), want (memory, %d)", viewB.Queue.Wait, viewB.Queue.WaitBytes, 2*gb)
+	}
+}
+
+// TestAdmitHeldRoundsReportWaits pins the user-visible waits: a memory-held
+// round reports its shortfall, while ceiling and pressure holds report no
+// bytes.
+func TestAdmitHeldRoundsReportWaits(t *testing.T) {
+	const gb = int64(1 << 30)
+
+	t.Run("memory", func(t *testing.T) {
+		env := setupTestEnv(t, func(cfg *Config) {
+			cfg.Policy = policy.Policy{Serve: &policy.ServePolicy{MemoryBudget: "10G"}}
+		})
+		ownerB := addOwner(t, env, "bob")
+
+		respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+		requireCreated(t, respA, bodyA, "A")
+		respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
+		requireCreated(t, respB, bodyB, "B")
+
+		if err := env.srv.Tick(context.Background()); err != nil {
+			t.Fatalf("tick: %v", err)
+		}
+		viewB := getBindingView(t, env, ownerB.kp, "api")
+		if viewB.Queue == nil {
+			t.Fatal("B Queue = nil, want the memory hold")
+		}
+		if viewB.Queue.Wait != waitMemory || viewB.Queue.WaitBytes != 2*gb {
+			t.Errorf("B wait = (%q, %d), want (memory, %d)", viewB.Queue.Wait, viewB.Queue.WaitBytes, 2*gb)
+		}
+	})
+
+	t.Run("ceiling", func(t *testing.T) {
+		env := setupTestEnv(t, func(cfg *Config) { cfg.MaxBuilders = 1 })
+		ownerB := addOwner(t, env, "bob")
+
+		respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+		requireCreated(t, respA, bodyA, "A")
+		if viewA := decodeView(t, bodyA); viewA.RoundState != remote.RoundRunning {
+			t.Fatalf("A round_state = %q, want running", viewA.RoundState)
+		}
+		respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
+		requireCreated(t, respB, bodyB, "B")
+
+		if err := env.srv.Tick(context.Background()); err != nil {
+			t.Fatalf("tick: %v", err)
+		}
+		viewB := getBindingView(t, env, ownerB.kp, "api")
+		if viewB.Queue == nil {
+			t.Fatal("B Queue = nil, want the ceiling hold")
+		}
+		if viewB.Queue.Wait != waitCeiling || viewB.Queue.WaitBytes != 0 {
+			t.Errorf("B wait = (%q, %d), want (ceiling, 0)", viewB.Queue.Wait, viewB.Queue.WaitBytes)
+		}
+	})
+
+	t.Run("pressure", func(t *testing.T) {
+		env := setupTestEnv(t)
+		dir := writeCgroupTree(t, map[string]string{
+			"memory.max":      "max\n",
+			"memory.stat":     "anon 0\n",
+			"memory.pressure": pressureBody("10.0"),
+		})
+		fakeLiveInputs(t, func() (string, error) { return dir, nil }, nil, nil)
+
+		respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+		requireCreated(t, respA, bodyA, "A")
+		if viewA := decodeView(t, bodyA); viewA.RoundState != remote.RoundQueued {
+			t.Fatalf("A round_state = %q, want queued behind the pressure brake", viewA.RoundState)
+		}
+
+		if err := env.srv.Tick(context.Background()); err != nil {
+			t.Fatalf("tick: %v", err)
+		}
+		viewA := getBindingView(t, env, env.kp, "api")
+		if viewA.Queue == nil {
+			t.Fatal("A Queue = nil, want the pressure hold")
+		}
+		if viewA.Queue.Wait != waitPressure || viewA.Queue.WaitBytes != 0 {
+			t.Errorf("A wait = (%q, %d), want (pressure, 0)", viewA.Queue.Wait, viewA.Queue.WaitBytes)
+		}
+	})
+}
+
+// TestAdminHeldRoundReportsWait pins the admin threading: a memory-held
+// round's shortfall reaches the admin and fleet surfaces with the same wait
+// and bytes the caller's own queue view carries, since adminOwnerStatus
+// threads the pass's waits into every queued row.
+func TestAdminHeldRoundReportsWait(t *testing.T) {
+	const gb = int64(1 << 30)
+	env := setupTestEnv(t, func(cfg *Config) {
+		cfg.Policy = policy.Policy{Serve: &policy.ServePolicy{MemoryBudget: "10G"}}
+	})
+	ownerB := addOwner(t, env, "bob")
+
+	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, respA, bodyA, "A")
+	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
+	requireCreated(t, respB, bodyB, "B")
+
+	if err := env.srv.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	owners, _, err := AdminStatus(context.Background(), env.srv)
+	if err != nil {
+		t.Fatalf("AdminStatus: %v", err)
+	}
+	var adminRow *view.BindingStatus
+	for i := range owners {
+		if owners[i].Label != "bob" {
+			continue
+		}
+		for j := range owners[i].Report.Bindings {
+			if owners[i].Report.Bindings[j].Name == "api" {
+				adminRow = &owners[i].Report.Bindings[j]
+			}
+		}
+	}
+	if adminRow == nil {
+		t.Fatal("bob's api row missing from AdminStatus")
+	}
+	if adminRow.Queued == nil {
+		t.Fatal("bob's admin row has no QueueView, want the memory hold")
+	}
+	if adminRow.Queued.Wait != waitMemory || adminRow.Queued.WaitBytes != 2*gb {
+		t.Errorf("admin wait = (%q, %d), want (memory, %d)", adminRow.Queued.Wait, adminRow.Queued.WaitBytes, 2*gb)
+	}
+
+	flat, err := FlatStatus(context.Background(), env.srv)
+	if err != nil {
+		t.Fatalf("FlatStatus: %v", err)
+	}
+	var fleetRow *view.BindingStatus
+	for i := range flat.Bindings {
+		if flat.Bindings[i].OwnerLabel == "bob" && flat.Bindings[i].Name == "api" {
+			fleetRow = &flat.Bindings[i]
+		}
+	}
+	if fleetRow == nil {
+		t.Fatal("bob's api row missing from FlatStatus")
+	}
+	if fleetRow.Queued == nil {
+		t.Fatal("bob's fleet row has no QueueView, want the memory hold")
+	}
+	if fleetRow.Queued.Wait != waitMemory || fleetRow.Queued.WaitBytes != 2*gb {
+		t.Errorf("fleet wait = (%q, %d), want (memory, %d)", fleetRow.Queued.Wait, fleetRow.Queued.WaitBytes, 2*gb)
+	}
+}
+
+// TestAdmitPassCountsRoundsItStarted pins that one pass charges each round it
+// starts against the budget before it weighs the next: two queued builders
+// whose seats fit the budget only one at a time must not both start in the
+// same pass, though each alone would fit.
+func TestAdmitPassCountsRoundsItStarted(t *testing.T) {
+	env := setupTestEnv(t, func(cfg *Config) {
+		cfg.Policy = policy.Policy{Serve: &policy.ServePolicy{MemoryBudget: "11G"}}
+	})
+	ownerB := addOwner(t, env, "bob")
+	dir := writeCgroupTree(t, map[string]string{
+		"memory.max":      "max\n",
+		"memory.stat":     "anon 0\n",
+		"memory.pressure": pressureBody("50.0"),
+	})
+	fakeLiveInputs(t, func() (string, error) { return dir, nil }, nil, nil)
+
+	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, respA, bodyA, "A")
+	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
+	requireCreated(t, respB, bodyB, "B")
+	requireRoundState(t, testRuntime(t, env.srv, env.id), "api", remote.RoundQueued)
+	requireRoundState(t, testRuntime(t, env.srv, ownerB.id), "api", remote.RoundQueued)
+
+	if err := os.WriteFile(filepath.Join(dir, "memory.pressure"), []byte(pressureBody("1.0")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.srv.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	requireRoundState(t, testRuntime(t, env.srv, env.id), "api", remote.RoundRunning)
+	requireRoundState(t, testRuntime(t, env.srv, ownerB.id), "api", remote.RoundQueued)
+	viewB := getBindingView(t, env, ownerB.kp, "api")
+	if viewB.Queue == nil || viewB.Queue.Wait != waitMemory {
+		t.Fatalf("B Queue = %+v, want a memory hold behind the round the pass started", viewB.Queue)
+	}
 }

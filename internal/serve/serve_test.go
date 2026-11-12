@@ -2987,6 +2987,10 @@ func TestTickWalksEveryOwner(t *testing.T) {
 		Git:        gitClient,
 		Now:        time.Now,
 		Audiences:  []string{testAudience},
+		// A budget no round can fill: admission is not this test's subject,
+		// so the host's live memory must not decide whether the seeded
+		// rounds start.
+		Policy: policy.Policy{Serve: &policy.ServePolicy{MemoryBudget: "1T"}},
 	})
 	if err != nil {
 		t.Fatal(err)
