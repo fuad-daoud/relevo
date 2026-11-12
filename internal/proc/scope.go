@@ -25,7 +25,8 @@ func ScopeUnitFileName(unit string) string {
 
 // ScopeArgv wraps inner (the argv Start would otherwise exec) so it runs as a
 // transient systemd --scope unit; systemd-run execs inner in place, so the pid
-// Start records is inner's own. The quota precedes the pin, the pin memory.
+// Start records is inner's own. The quota precedes the pin, the pin the
+// ceiling, the ceiling the burst, so both memory caps read in one place.
 func ScopeArgv(s spawn.ScopeSpec, inner []string) []string {
 	argv := []string{"systemd-run", "--user", "--scope", "--quiet", "--collect", "--unit=" + ScopeUnitFileName(s.Unit)}
 	if s.NoExpand {
@@ -43,6 +44,9 @@ func ScopeArgv(s spawn.ScopeSpec, inner []string) []string {
 	}
 	if s.MemoryMax != "" {
 		argv = append(argv, "-p", "MemoryMax="+s.MemoryMax)
+	}
+	if s.MemoryHigh != "" {
+		argv = append(argv, "-p", "MemoryHigh="+s.MemoryHigh)
 	}
 	if s.TasksMax != 0 {
 		argv = append(argv, "-p", "TasksMax="+strconv.Itoa(s.TasksMax))

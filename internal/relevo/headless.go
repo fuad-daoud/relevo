@@ -100,9 +100,12 @@ func scopeUnitName(b store.Binding) string {
 // also carries cpus as AffinityCPUs with or without a pool, so the runner can
 // pin it with taskset where the cpuset is undelegated. When
 // kind is scopeGate and the template sets GateCPUQuota, the gate's spec uses
-// it as CPUQuota; every other kind keeps the template's CPUQuota. It never
-// mutates rt.Scope.
-func scopeFor(rt Runtime, kind scopeKind, unit, cpus string) *spawn.ScopeSpec {
+// it as CPUQuota; every other kind keeps the template's CPUQuota. Only a
+// round consults RoundBurst for b, stamping its positive burst as MemoryHigh
+// in plain bytes; gates, consults and verifies never carry one, and a nil
+// seam, a refused burst or a non-positive one leaves MemoryHigh empty. It
+// never mutates rt.Scope.
+func scopeFor(rt Runtime, b store.Binding, kind scopeKind, unit, cpus string) *spawn.ScopeSpec {
 	if rt.Scope == nil {
 		return nil
 	}
@@ -118,6 +121,11 @@ func scopeFor(rt Runtime, kind scopeKind, unit, cpus string) *spawn.ScopeSpec {
 	}
 	if kind == scopeGate && rt.Scope.GateCPUQuota != "" {
 		s.CPUQuota = rt.Scope.GateCPUQuota
+	}
+	if kind == scopeRound && rt.RoundBurst != nil {
+		if burst, ok := rt.RoundBurst(b); ok && burst > 0 {
+			s.MemoryHigh = strconv.FormatInt(burst, 10)
+		}
 	}
 	return &s
 }

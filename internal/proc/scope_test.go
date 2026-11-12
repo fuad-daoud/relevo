@@ -63,6 +63,20 @@ func TestScopeArgv(t *testing.T) {
 			want: scopeWant("--slice=relevo.slice", "-p", "CPUWeight=200", "-p", "CPUQuota=200%", "-p", "AllowedCPUs=2", "-p", "MemoryMax=2G", "-p", "TasksMax=50",
 				"--", "/bin/sh", "-c", "script", "relevo-supervisor", "bin"),
 		},
+		// The burst sits between the ceiling and the task cap, never ahead
+		// of the ceiling it softens.
+		"with memory high": {
+			spec: spawn.ScopeSpec{Unit: "relevo-round-abc12345-foo-1", Slice: "relevo.slice", CPUWeight: 200, CPUQuota: "200%", AllowedCPUs: "2", MemoryMax: "2G", MemoryHigh: "5368709120", TasksMax: 50},
+			want: scopeWant("--slice=relevo.slice", "-p", "CPUWeight=200", "-p", "CPUQuota=200%", "-p", "AllowedCPUs=2", "-p", "MemoryMax=2G", "-p", "MemoryHigh=5368709120", "-p", "TasksMax=50",
+				"--", "/bin/sh", "-c", "script", "relevo-supervisor", "bin"),
+		},
+		// The burst needs no ceiling: it is emitted on its own, still ahead
+		// of the task cap.
+		"memory high without max": {
+			spec: spawn.ScopeSpec{Unit: "relevo-round-abc12345-foo-1", Slice: "relevo.slice", CPUWeight: 200, MemoryHigh: "5368709120", TasksMax: 50},
+			want: scopeWant("--slice=relevo.slice", "-p", "CPUWeight=200", "-p", "MemoryHigh=5368709120", "-p", "TasksMax=50",
+				"--", "/bin/sh", "-c", "script", "relevo-supervisor", "bin"),
+		},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

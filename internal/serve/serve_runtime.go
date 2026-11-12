@@ -7,6 +7,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/isolate"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/uplink"
 )
@@ -85,9 +86,7 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 		s.applyContainer(root, &rt)
 	}
 	rt.CloseServedRound = CloseServedRound
-	// The cost history lives under the serve root; a runtime without one
-	// records nothing.
-	rt.CostRoot = s.cfg.Root
+	s.wireSeatCost(&rt, s.cfg.Root, cfg.Registry)
 	// The remote send runs above the engine: the served runtime ships through
 	// the same uplink functions as the CLI runtime.
 	rt.RemoteSend = relevo.RemoteSendDeps{
@@ -96,6 +95,17 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 		Record: uplink.Record,
 	}
 	return rt
+}
+
+// wireSeatCost points one owner runtime at the serve cost history: the root
+// recording writes under, and the burst seam each round's MemoryHigh comes
+// from. The registry is the live snapshot the caller already holds, never a
+// second live read, so the burst classifies exactly what this runtime admits.
+func (s *Server) wireSeatCost(rt *relevo.Runtime, root string, reg *roles.Registry) {
+	// The cost history lives under the serve root; a runtime without one
+	// records nothing.
+	rt.CostRoot = s.cfg.Root
+	rt.RoundBurst = roundBurstFor(root, reg)
 }
 
 // applyContainer rewires rt for one container-mode owner: its runner starts

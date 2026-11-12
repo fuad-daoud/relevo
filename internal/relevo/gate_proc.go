@@ -51,7 +51,7 @@ func startGateProc(ctx context.Context, rt Runtime, spec gateProcSpec, attempt i
 		StreamPath: spec.LogPath,
 		Env:        append(append([]string(nil), spec.Env...), prepEnv...),
 		TmpDir:     tmpDir,
-		Scope:      scopeFor(rt, scopeGate, spec.UnitName, spec.CPUPin),
+		Scope:      scopeFor(rt, store.Binding{}, scopeGate, spec.UnitName, spec.CPUPin),
 	})
 	if err != nil {
 		// Nothing started, so the directory the preparation made goes back:

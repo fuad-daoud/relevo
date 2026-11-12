@@ -44,8 +44,11 @@ type ScopeSpec struct {
 	Slice     string // "" = omit --slice
 	CPUWeight int    // >= 1; always emitted
 	MemoryMax string // "" = omit
-	CPUQuota  string // "" = omit; systemd units, e.g. "200%" = two cores' worth
-	TasksMax  int    // 0 = omit
+	// MemoryHigh is the round's learned burst in plain bytes, set per round
+	// from the binding's cost history; "" omits it and MemoryMax is untouched.
+	MemoryHigh string // "" = omit
+	CPUQuota   string // "" = omit; systemd units, e.g. "200%" = two cores' worth
+	TasksMax   int    // 0 = omit
 
 	// AllowedCPUs is a real launch field: "" omits it, and otherwise it is a
 	// systemd cpu-list ("2" or "0-2") pinning the process to those cores.
