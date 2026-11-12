@@ -57,13 +57,14 @@ func newScopeFields(doc relevo.ConfigDoc, form string) ([]settingField, string, 
 		return strconv.Itoa(n)
 	}
 
-	var slice, memoryMax, cpuQuota, gateCPUQuota, allowedCPUs, cpuWeight, tasksMax string
+	var slice, memoryMax, cpuQuota, gateCPUQuota, allowedCPUs, roundCPUs, cpuWeight, tasksMax string
 	if sc != nil {
 		slice = sc.Slice
 		memoryMax = sc.MemoryMax
 		cpuQuota = sc.CPUQuota
 		gateCPUQuota = sc.GateCPUQuota
 		allowedCPUs = sc.AllowedCPUs
+		roundCPUs = intOrEmpty(sc.RoundCPUs)
 		cpuWeight = intOrEmpty(sc.CPUWeight)
 		tasksMax = intOrEmpty(sc.TasksMax)
 	}
@@ -77,6 +78,7 @@ func newScopeFields(doc relevo.ConfigDoc, form string) ([]settingField, string, 
 		scopeText("cpu_quota", "cpu_quota", "default none · e.g. 200%", cpuQuota, parseCPUQuota),
 		scopeText("gate_cpu_quota", "gate_cpu_quota", "default: cpu_quota", gateCPUQuota, parseCPUQuota),
 		scopeText("allowed_cpus", "allowed_cpus", "default: no pinning · e.g. 0-3", allowedCPUs, parseOptionalText),
+		scopeText("round_cpus", "round_cpus", "default 2", roundCPUs, parseIntMin(1, "a whole number, 1 or more")),
 		scopeText("tasks_max", "tasks_max", "default none", tasksMax, parseIntMin(1, "a whole number, 1 or more")),
 	}
 

@@ -8,11 +8,13 @@ import (
 // ScopeBlock is one policy scope block whose allowed_cpus asks relevo to
 // pin a round per core. Key is the block-qualified field name the row's
 // messages use; MaxCPU is the highest core AllowedCPUs names, computed by
-// the caller so this package never imports policy.
+// the caller so this package never imports policy. RoundCPUs is the block's
+// effective per-round core count; 0 leaves the row's detail unchanged.
 type ScopeBlock struct {
 	Key         string
 	AllowedCPUs string
 	MaxCPU      int
+	RoundCPUs   int
 }
 
 // UserManagerControllersPath is the user manager's cgroup.controllers file:
@@ -56,6 +58,11 @@ func ScopeChecks(env Env, blocks []ScopeBlock, controllersPath string, ncpu int)
 		default:
 			c.Severity = SevOK
 			c.Detail = fmt.Sprintf("cpuset delegated; rounds pinned one per core from %s", b.AllowedCPUs)
+		}
+		// The pin runs through taskset, not the cgroup, so it holds even
+		// where cpuset is not delegated.
+		if b.RoundCPUs > 0 {
+			c.Detail += "; affinity pinning via round_cpus does not need cpuset delegation"
 		}
 		checks = append(checks, c)
 	}

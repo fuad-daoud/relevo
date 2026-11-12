@@ -1816,7 +1816,7 @@ func TestGoldenViews(t *testing.T) {
 			name: "settings-webhooks-empty-132", width: 132, height: 34,
 			build: func(t *testing.T) Model {
 				m := goldenSettingsModel(t, 132, 34, &fakeActions{doc: settingsFixtureDoc(t)})
-				m = candDown(t, m, 19) // notify.webhooks
+				m = candDown(t, m, 21) // notify.webhooks
 				return candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 			},
 		},
@@ -1824,7 +1824,7 @@ func TestGoldenViews(t *testing.T) {
 			name: "settings-webhooks-132", width: 132, height: 34,
 			build: func(t *testing.T) Model {
 				m := goldenSettingsModel(t, 132, 34, &fakeActions{doc: webhooksDocFrom(t, webhooksFixtureJSON)})
-				m = candDown(t, m, 19) // notify.webhooks
+				m = candDown(t, m, 21) // notify.webhooks
 				m = candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 				return candDown(t, m, 1) // the cursor on the second hook
 			},
@@ -1833,7 +1833,7 @@ func TestGoldenViews(t *testing.T) {
 			name: "settings-webhook-add-132", width: 132, height: 34,
 			build: func(t *testing.T) Model {
 				m := goldenSettingsModel(t, 132, 34, &fakeActions{doc: settingsFixtureDoc(t)})
-				m = candDown(t, m, 19) // notify.webhooks
+				m = candDown(t, m, 21) // notify.webhooks
 				m = candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 				return candKeys(t, m, key('a'))
 			},

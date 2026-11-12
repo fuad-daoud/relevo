@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/fuad-daoud/relevo/internal/policy"
 )
 
 // errReadEnv is fakeEnv with ReadFile failing: the controllers file exists on
@@ -91,6 +93,45 @@ func TestScopeChecksRow(t *testing.T) {
 				t.Errorf("Fix = %q, want it to contain %q", row.Fix, tc.wantFixHas)
 			}
 		})
+	}
+}
+
+// TestScopeChecksRoundCPUsClause pins that a block with an effective
+// round_cpus says the taskset pin needs no cpuset delegation, on top of the
+// row's own verdict.
+func TestScopeChecksRoundCPUsClause(t *testing.T) {
+	const clause = "affinity pinning via round_cpus does not need cpuset delegation"
+	tests := []struct {
+		name string
+		env  Env
+		cpus string
+		max  int
+	}{
+		{name: "delegated", env: scopeEnvWith("cpuset cpu io memory pids\n"), cpus: "0-2", max: 2},
+		{name: "not delegated", env: scopeEnvWith("cpu io memory pids"), cpus: "0-2", max: 2},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			blocks := []ScopeBlock{{Key: "scope.allowed_cpus", AllowedCPUs: tc.cpus, MaxCPU: tc.max, RoundCPUs: 2}}
+			got := ScopeChecks(tc.env, blocks, scopeControllersPath, 4)
+			if len(got) != 1 {
+				t.Fatalf("checks = %+v, want one", got)
+			}
+			if !strings.Contains(got[0].Detail, clause) {
+				t.Errorf("Detail = %q, want it to contain %q", got[0].Detail, clause)
+			}
+		})
+	}
+}
+
+// TestScopeBlockRoundCPUsEffective pins that scopeBlock carries the stored
+// count and resolves an unset one to the default: every enabled block pins.
+func TestScopeBlockRoundCPUsEffective(t *testing.T) {
+	if got := scopeBlock("scope.allowed_cpus", &policy.ScopePolicy{AllowedCPUs: "0-3"}); got.RoundCPUs != policy.DefaultRoundCPUs {
+		t.Errorf("RoundCPUs = %d, want the default %d", got.RoundCPUs, policy.DefaultRoundCPUs)
+	}
+	if got := scopeBlock("scope.allowed_cpus", &policy.ScopePolicy{AllowedCPUs: "0-3", RoundCPUs: 4}); got.RoundCPUs != 4 {
+		t.Errorf("RoundCPUs = %d, want 4", got.RoundCPUs)
 	}
 }
 

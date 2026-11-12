@@ -560,9 +560,14 @@ func enabledScope(sc *policy.ScopePolicy) *policy.ScopePolicy {
 
 // scopeBlock is one ScopeBlock for a policy scope that sets allowed_cpus.
 // MaxCPU is the highest core the pool names, computed with
-// policy.ParseCPUList so internal/doctor never imports policy.
+// policy.ParseCPUList so internal/doctor never imports policy. RoundCPUs is
+// the block's effective per-round count: callers pass only enabled blocks,
+// and an enabled block always pins, so 0 resolves to the default.
 func scopeBlock(key string, sc *policy.ScopePolicy) ScopeBlock {
-	b := ScopeBlock{Key: key, AllowedCPUs: sc.AllowedCPUs}
+	b := ScopeBlock{Key: key, AllowedCPUs: sc.AllowedCPUs, RoundCPUs: sc.RoundCPUs}
+	if b.RoundCPUs == 0 {
+		b.RoundCPUs = policy.DefaultRoundCPUs
+	}
 	if cpus, err := spawn.ParseCPUList(sc.AllowedCPUs); err == nil && len(cpus) > 0 {
 		b.MaxCPU = cpus[len(cpus)-1]
 	}

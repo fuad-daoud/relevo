@@ -30,7 +30,7 @@ type settingsView struct {
 	doc     relevo.ConfigDoc
 	err     error // the last ConfigDoc error; shown centred like candidates' error state
 	loaded  bool
-	cur     int // cursor over the 18 settings, never a group rule
+	cur     int // cursor over the 27 settings, never a group rule
 	top     int
 	actions bool
 }
@@ -66,13 +66,15 @@ var settingHelp = map[string]string{
 	"progress_interval":  "How often relevo samples a running round's tree and stream.",
 	"explore_after": "A builder whose output moves while its tree does not, for this long, is shown as " +
 		"exploring.",
-	"stale_after":        "A binding left in needs-you or held this long is shown as stale.",
-	"scope":              "The systemd scope relevo starts each round's builder in on this machine: CPU, memory and task limits.",
-	"serve.max_builders": "How many builders relevo serve runs at once; more rounds wait in its queue.",
-	"serve.max_planners": "How many planner rounds relevo serve runs at once; planners never take a builder seat.",
-	"serve.scope":        "The scope for rounds relevo serve runs; when set it replaces scope for them.",
-	"scan_patterns":      "Extra patterns that mark a builder's line as instruction-shaped, beside the built-in list.",
-	"notify.webhooks":    "Where relevo posts round and binding events over HTTP.",
+	"stale_after":            "A binding left in needs-you or held this long is shown as stale.",
+	"scope":                  "The systemd scope relevo starts each round's builder in on this machine: CPU, memory and task limits.",
+	"serve.max_builders":     "How many builders relevo serve runs at once; more rounds wait in its queue.",
+	"serve.max_planners":     "How many planner rounds relevo serve runs at once; planners never take a builder seat.",
+	"serve.scope":            "The scope for rounds relevo serve runs; when set it replaces scope for them.",
+	"serve.scope.round_cpus": "How many pool cores one serve round gets; empty means the 2-core default.",
+	"serve.memory_budget":    "How much memory serve rounds may take together; empty derives it from the slice or the machine.",
+	"scan_patterns":          "Extra patterns that mark a builder's line as instruction-shaped, beside the built-in list.",
+	"notify.webhooks":        "Where relevo posts round and binding events over HTTP.",
 
 	"chain.max_corrections": "How many correction rounds one plan may take before the chain asks you; 0 halts on the first changes verdict.",
 	"chain.reviewer_actor":  "The actor that reviews each builder round's diff.",

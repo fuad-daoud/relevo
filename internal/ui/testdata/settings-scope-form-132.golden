@@ -1,22 +1,22 @@
   ◆ relevo    settings                                                                                         v0.13.0-28    14:02  
                                                                                                                                     
-   25 settings   3 set                                                                                                              
-   check ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 3 settings   
-   gate.default                                                                    none                    none                     
+   27 settings   3 set                                                                                                              
    gate.timeout                                                                    10m                     10m                      
    gate.regate                                                                     0                       0                        
    timing ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 6 settings   
    limit_gate_default                                                              1h                      1h                       
    stall_after                                                                     15m                     15m                      
-   silent_after    ╭─ serve.max_builders ───────────────────────────────────────────────────────────────────────╮                   
-   progress_interva│                                                                                            │                   
-   explore_after   │ max_builders                                default 21                                     │                   
-   stale_after     │                                                                                            │                   
-   processes ┈┈┈┈┈┈│ max_planners                                default 4                                      │settings · 1 set   
-   scope           │                                                                                            │o limits           
-   serve.max_builde│  enter  save       tab  next field       esc  cancel                                       │                   
-   serve.max_planne╰────────────────────────────────────────────────────────────────────────────────────────────╯                   
-   serve.scope                                                                     slice relevo.slice      as scope                 
+   silent_after                                                                    8m                      8m                       
+   progress_interva╭─ serve.max_builders ───────────────────────────────────────────────────────────────────────╮                   
+   explore_after   │                                                                                            │                   
+   stale_after     │ max_builders                                default 21                                     │                   
+   processes ┈┈┈┈┈┈│                                                                                            │settings · 1 set   
+   scope           │ max_planners                                default 4                                      │o limits           
+   serve.max_builde│                                                                                            │                   
+   serve.max_planne│ memory_budget                               default derived                                │                   
+   serve.scope     │                                                                                            │pe                 
+   serve.scope.roun│  enter  save       tab  next field       esc  cancel                                       │                   
+   serve.memory_bud╰────────────────────────────────────────────────────────────────────────────────────────────╯d                  
    scan ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 1 setting   
    scan_patterns                                                                   none                    none                     
    notify ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 1 setting   
