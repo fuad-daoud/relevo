@@ -336,6 +336,31 @@ func TestStartRoundStampsTheRoundsBurstOnTheScope(t *testing.T) {
 	}
 }
 
+// TestBuildSpawnProcSpecPinsTheRoundsWholeSet pins the round path's pin text:
+// without a template pool a round carries only its set, never a single core,
+// so the spec must read the set or the taskset wrap never reaches the round.
+func TestBuildSpawnProcSpecPinsTheRoundsWholeSet(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := seedHeadless(t, fr)
+	rt.Scope = &spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 100}
+	b.RoundCPUs = []int{2, 3}
+	_, spec, cleanup, err := buildSpawnProcSpec(context.Background(), rt, b, []string{"claude", "-p"}, candidate.Candidate{}, nil, false)
+	if err != nil {
+		t.Fatalf("buildSpawnProcSpec: %v", err)
+	}
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if spec.Scope == nil || spec.Scope.AffinityCPUs != "2,3" {
+		t.Fatalf("spec.Scope = %+v, want AffinityCPUs 2,3 from the round's set", spec.Scope)
+	}
+	if spec.Scope.AllowedCPUs != "" {
+		t.Errorf("AllowedCPUs = %q, want empty without a template pool", spec.Scope.AllowedCPUs)
+	}
+}
+
 func TestStartRoundOnTheSameRoundKeepsTheCursor(t *testing.T) {
 	t.Parallel()
 
