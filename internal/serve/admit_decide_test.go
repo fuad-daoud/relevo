@@ -181,3 +181,70 @@ func TestQueueWaitsChargesRoundsThePassWouldStart(t *testing.T) {
 		t.Errorf("b wait = %+v, want %+v behind a's seat", got[1], want)
 	}
 }
+
+// TestReservedBytesSumsBasesAndLargestBurst pins the builders view's seat
+// reservation: no rounds reserve nothing, one round holds its base plus K
+// times its burst, several rounds hold every base plus K times the largest
+// burst wherever it sits, and a K below one reads as one the way decide
+// clamps it. Planners count: the census carries them in RunningRounds.
+//
+// Mutation: drop the int64(k)*peak term and the multi-round rows read only
+// their bases.
+func TestReservedBytesSumsBasesAndLargestBurst(t *testing.T) {
+	t.Parallel()
+	const gb = int64(1 << 30)
+	for _, tc := range []struct {
+		name   string
+		rounds []runningRound
+		k      int
+		want   int64
+	}{
+		{"no rounds reserve nothing", nil, 2, 0},
+		{"one round", []runningRound{{Base: gb, Burst: 5 * gb}}, 2, 11 * gb},
+		{
+			"largest burst in the middle",
+			[]runningRound{{Base: gb, Burst: gb}, {Base: 2 * gb, Burst: 5 * gb}, {Base: gb, Burst: 2 * gb}},
+			2, 14 * gb,
+		},
+		{
+			"planners hold seats too",
+			[]runningRound{{Base: gb, Burst: gb}, {Planner: true, Base: gb / 2, Burst: 3 * gb}},
+			1, 9 * gb / 2,
+		},
+		{"k below one reads as one", []runningRound{{Base: gb, Burst: 3 * gb}}, 0, 4 * gb},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := reservedBytes(tc.rounds, tc.k); got != tc.want {
+				t.Errorf("reservedBytes(%+v, %d) = %d, want %d", tc.rounds, tc.k, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestBuildersViewForStampsItsSeatArguments pins that the builders view
+// carries the caller's own budget and K alongside the census counts, so the
+// view and the decision read one pair of numbers.
+func TestBuildersViewForStampsItsSeatArguments(t *testing.T) {
+	t.Parallel()
+	const gb = int64(1 << 30)
+	env := setupTestEnv(t)
+	c := census{
+		Running: 2, PlannersRunning: 1, BuilderCap: 4, PlannerCap: 2,
+		RunningRounds: []runningRound{{Base: gb, Burst: 2 * gb}, {Planner: true, Base: gb / 2, Burst: gb}},
+	}
+	const budget = 12 * gb
+	got := env.srv.buildersViewFor(c, budget, 2)
+	if got.ReservedBytes != 11*gb/2 {
+		t.Errorf("ReservedBytes = %d, want %d", got.ReservedBytes, 11*gb/2)
+	}
+	if got.BudgetBytes != budget {
+		t.Errorf("BudgetBytes = %d, want %d", got.BudgetBytes, budget)
+	}
+	if got.K != 2 {
+		t.Errorf("K = %d, want 2", got.K)
+	}
+	if got.Running != 2 || got.PlannersRunning != 1 {
+		t.Errorf("counts = running %d planners %d, want 2 and 1", got.Running, got.PlannersRunning)
+	}
+}

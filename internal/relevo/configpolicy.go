@@ -68,6 +68,9 @@ func formatScope(sc *policy.ScopePolicy, defaultText string) string {
 	if sc.AllowedCPUs != "" {
 		parts = append(parts, "allowed_cpus "+sc.AllowedCPUs)
 	}
+	if sc.RoundCPUs != 0 {
+		parts = append(parts, fmt.Sprintf("round_cpus %d", sc.RoundCPUs))
+	}
 	if sc.TasksMax != 0 {
 		parts = append(parts, fmt.Sprintf("tasks_max %d", sc.TasksMax))
 	}
@@ -77,12 +80,12 @@ func formatScope(sc *policy.ScopePolicy, defaultText string) string {
 	return strings.Join(parts, " · ")
 }
 
-// Settings returns the 25 policy rows in display order, filled from d.Policy.
+// Settings returns the 27 policy rows in display order, filled from d.Policy.
 func Settings(d ConfigDoc, cpus int) []Setting {
 	p := d.Policy
 	defMaxBuilders := max(1, cpus-1)
 
-	var rows [25]Setting
+	var rows [27]Setting
 
 	roundsSettingsRows(p, rows[:])
 	// 9-14: timing rows
@@ -153,10 +156,26 @@ func processesSettingsRows(p policy.Policy, rows []Setting, defMaxBuilders int) 
 	}
 	rows[17] = Setting{Group: "processes", Key: "serve.scope", Value: ssVal,
 		Default: "as scope", Set: p.Serve != nil && p.Serve.Scope != nil, Form: "serve.scope"}
+	// 19: processes / serve.scope.round_cpus
+	rcVal := strconv.Itoa(policy.DefaultRoundCPUs)
+	rcSet := p.Serve != nil && p.Serve.Scope != nil && p.Serve.Scope.RoundCPUs != 0
+	if rcSet {
+		rcVal = strconv.Itoa(p.Serve.Scope.RoundCPUs)
+	}
+	rows[18] = Setting{Group: "processes", Key: "serve.scope.round_cpus", Value: rcVal,
+		Default: strconv.Itoa(policy.DefaultRoundCPUs), Set: rcSet, Form: "serve.scope"}
+	// 20: processes / serve.memory_budget
+	mbVal := "derived"
+	mbSet := p.Serve != nil && p.Serve.MemoryBudget != ""
+	if mbSet {
+		mbVal = p.Serve.MemoryBudget
+	}
+	rows[19] = Setting{Group: "processes", Key: "serve.memory_budget", Value: mbVal,
+		Default: "derived", Set: mbSet, Form: "max_builders"}
 }
 
 func scanNotifyChainSettingsRows(p policy.Policy, rows []Setting) {
-	// 19: scan / scan_patterns
+	// 21: scan / scan_patterns
 	var spVal string
 	switch len(p.ScanPatterns) {
 	case 0:
@@ -166,9 +185,9 @@ func scanNotifyChainSettingsRows(p policy.Policy, rows []Setting) {
 	default:
 		spVal = fmt.Sprintf("%d patterns", len(p.ScanPatterns))
 	}
-	rows[18] = Setting{Group: "scan", Key: "scan_patterns", Value: spVal,
+	rows[20] = Setting{Group: "scan", Key: "scan_patterns", Value: spVal,
 		Default: "none", Set: len(p.ScanPatterns) > 0, Form: "scan_patterns"}
-	// 20: notify / notify.webhooks
+	// 22: notify / notify.webhooks
 	var nwVal string
 	var nwCount int
 	if p.Notify != nil {
@@ -182,26 +201,26 @@ func scanNotifyChainSettingsRows(p policy.Policy, rows []Setting) {
 	default:
 		nwVal = fmt.Sprintf("%d webhooks", nwCount)
 	}
-	rows[19] = Setting{Group: "notify", Key: "notify.webhooks", Value: nwVal,
+	rows[21] = Setting{Group: "notify", Key: "notify.webhooks", Value: nwVal,
 		Default: "none", Set: p.Notify != nil && len(p.Notify.Webhooks) > 0, Form: "webhooks"}
-	// 21: chain / chain.max_corrections
-	rows[20] = Setting{Group: "chain", Key: "chain.max_corrections", Value: strconv.Itoa(p.ChainMaxCorrections()),
+	// 23: chain / chain.max_corrections
+	rows[22] = Setting{Group: "chain", Key: "chain.max_corrections", Value: strconv.Itoa(p.ChainMaxCorrections()),
 		Default: strconv.Itoa(policy.DefaultChainMaxCorrections), Set: p.Chain != nil && p.Chain.MaxCorrections != nil, Form: "chain"}
-	// 22: chain / chain.reviewer_actor
-	rows[21] = Setting{Group: "chain", Key: "chain.reviewer_actor", Value: p.ChainReviewerActor(),
+	// 24: chain / chain.reviewer_actor
+	rows[23] = Setting{Group: "chain", Key: "chain.reviewer_actor", Value: p.ChainReviewerActor(),
 		Default: policy.DefaultChainReviewerActor, Set: p.Chain != nil && p.Chain.ReviewerActor != "", Form: "chain"}
-	// 23: chain / chain.planner_actor
-	rows[22] = Setting{Group: "chain", Key: "chain.planner_actor", Value: p.ChainPlannerActor(),
+	// 25: chain / chain.planner_actor
+	rows[24] = Setting{Group: "chain", Key: "chain.planner_actor", Value: p.ChainPlannerActor(),
 		Default: policy.DefaultChainPlannerActor, Set: p.Chain != nil && p.Chain.PlannerActor != "", Form: "chain"}
-	// 24: chain / chain.security_actor
-	rows[23] = Setting{Group: "chain", Key: "chain.security_actor", Value: p.ChainSecurityActor(),
+	// 26: chain / chain.security_actor
+	rows[25] = Setting{Group: "chain", Key: "chain.security_actor", Value: p.ChainSecurityActor(),
 		Default: policy.DefaultChainSecurityActor, Set: p.Chain != nil && p.Chain.SecurityActor != "", Form: "chain"}
-	// 25: chain / chain.security
+	// 27: chain / chain.security
 	csVal := "off"
 	if p.ChainSecurityOn() {
 		csVal = "on"
 	}
-	rows[24] = Setting{Group: "chain", Key: "chain.security", Value: csVal,
+	rows[26] = Setting{Group: "chain", Key: "chain.security", Value: csVal,
 		Default: "off", Set: p.Chain != nil && p.Chain.Security != nil, Form: "chain"}
 }
 
@@ -232,6 +251,10 @@ func SettingPaths(key string) []string {
 		return []string{"serve.max_planners"}
 	case "serve.scope":
 		return []string{"serve.scope"}
+	case "serve.scope.round_cpus":
+		return []string{"serve.scope.round_cpus"}
+	case "serve.memory_budget":
+		return []string{"serve.memory_budget"}
 	case "scan_patterns":
 		return []string{"scan_patterns"}
 	case "notify.webhooks":

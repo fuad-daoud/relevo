@@ -66,13 +66,20 @@ type Endpoint struct {
 }
 
 // QueueFacts is what the server's last GET said about a queued round's place
-// in its builder queue.
+// in its builder queue; a server that predates the wait keys leaves both
+// zero, which keeps the wait word off rather than naming a stale hold.
 type QueueFacts struct {
 	Position int       `json:"position"` // 1-based
 	Ahead    int       `json:"ahead"`
 	Running  int       `json:"running"`
 	Cap      int       `json:"cap"`
 	Since    time.Time `json:"since"`
+	// Wait names the hold — memory, ceiling or pressure — and WaitBytes the
+	// shortfall behind a memory hold. "" keeps the wait word off.
+	Wait string `json:"wait,omitempty"`
+	// WaitBytes is the shortfall behind a memory hold; 0 when the hold
+	// carries no size.
+	WaitBytes int64 `json:"wait_bytes,omitempty"`
 }
 
 type DiffFacts struct {

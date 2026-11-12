@@ -27,8 +27,8 @@ func TestSettings(t *testing.T) {
 			PolicyRaw: json.RawMessage(raw),
 		}
 		settings := Settings(doc, 22)
-		if len(settings) != 25 {
-			t.Fatalf("len(settings) = %d, want 25", len(settings))
+		if len(settings) != 27 {
+			t.Fatalf("len(settings) = %d, want 27", len(settings))
 		}
 
 		// Rows 1, 2 and 18 are Set (1-based: indices 0, 1, 17)
@@ -63,8 +63,8 @@ func TestSettings(t *testing.T) {
 	t.Run("empty policy", func(t *testing.T) {
 		doc := ConfigDoc{}
 		settings := Settings(doc, 4)
-		if len(settings) != 25 {
-			t.Fatalf("len(settings) = %d, want 25", len(settings))
+		if len(settings) != 27 {
+			t.Fatalf("len(settings) = %d, want 27", len(settings))
 		}
 		for i, s := range settings {
 			if s.Set {
@@ -286,15 +286,15 @@ func TestLoadConfigDocPolicyRaw(t *testing.T) {
 	}
 }
 
-// TestSettingsCountAndGroupOrder pins the table's shape: 25 rows, the six
+// TestSettingsCountAndGroupOrder pins the table's shape: 27 rows, the six
 // groups in display order, and chain appended last so every earlier row keeps
 // the index the cockpit tests use.
 func TestSettingsCountAndGroupOrder(t *testing.T) {
 	t.Parallel()
 
 	settings := Settings(ConfigDoc{}, 4)
-	if len(settings) != 25 {
-		t.Fatalf("len(settings) = %d, want 25", len(settings))
+	if len(settings) != 27 {
+		t.Fatalf("len(settings) = %d, want 27", len(settings))
 	}
 
 	var groups []string
@@ -323,8 +323,8 @@ func TestSettingsChainRowsRenderValues(t *testing.T) {
 		t.Fatalf("policy.Parse: %v", err)
 	}
 	settings := Settings(ConfigDoc{Policy: p}, 4)
-	if len(settings) != 25 {
-		t.Fatalf("len(settings) = %d, want 25", len(settings))
+	if len(settings) != 27 {
+		t.Fatalf("len(settings) = %d, want 27", len(settings))
 	}
 
 	set := []struct {
@@ -337,9 +337,9 @@ func TestSettingsChainRowsRenderValues(t *testing.T) {
 		{"chain.security", "on", "off"},
 	}
 	for i, w := range set {
-		row := settings[20+i]
+		row := settings[22+i]
 		if row.Key != w.key || row.Group != "chain" || row.Form != "chain" {
-			t.Errorf("row %d = %s / %s / %s, want %s / chain / chain", 21+i, row.Key, row.Group, row.Form, w.key)
+			t.Errorf("row %d = %s / %s / %s, want %s / chain / chain", 23+i, row.Key, row.Group, row.Form, w.key)
 		}
 		if row.Value != w.value || row.Default != w.def || !row.Set {
 			t.Errorf("%s = %q / %q / set %v, want %q / %q / set", w.key, row.Value, row.Default, row.Set, w.value, w.def)
@@ -355,7 +355,49 @@ func TestSettingsChainRowsRenderValues(t *testing.T) {
 	}
 	settings = Settings(ConfigDoc{}, 4)
 	for i, w := range unset {
-		row := settings[20+i]
+		row := settings[22+i]
+		if row.Key != w.key || row.Value != w.value || row.Set {
+			t.Errorf("%s = %q / set %v, want %q / unset", w.key, row.Value, row.Set, w.value)
+		}
+	}
+}
+
+// TestSettingsServeScopeRowsRenderValues pins the two new processes rows: a
+// stored round_cpus and memory_budget read their values, unset rows the
+// effective count and derived defaults.
+func TestSettingsServeScopeRowsRenderValues(t *testing.T) {
+	t.Parallel()
+
+	raw := `{"serve":{"scope":{"round_cpus":4},"memory_budget":"16G"}}`
+	p, _, err := policy.Parse(config.FileName(config.Policy), []byte(raw))
+	if err != nil {
+		t.Fatalf("policy.Parse: %v", err)
+	}
+	settings := Settings(ConfigDoc{Policy: p}, 4)
+
+	set := []struct {
+		key, value, def, form string
+	}{
+		{"serve.scope.round_cpus", "4", "2", "serve.scope"},
+		{"serve.memory_budget", "16G", "derived", "max_builders"},
+	}
+	for i, w := range set {
+		row := settings[18+i]
+		if row.Key != w.key || row.Group != "processes" || row.Form != w.form {
+			t.Errorf("row %d = %s / %s / %s, want %s / processes / %s", 19+i, row.Key, row.Group, row.Form, w.key, w.form)
+		}
+		if row.Value != w.value || row.Default != w.def || !row.Set {
+			t.Errorf("%s = %q / %q / set %v, want %q / %q / set", w.key, row.Value, row.Default, row.Set, w.value, w.def)
+		}
+	}
+
+	unset := []struct{ key, value string }{
+		{"serve.scope.round_cpus", "2"},
+		{"serve.memory_budget", "derived"},
+	}
+	settings = Settings(ConfigDoc{}, 4)
+	for i, w := range unset {
+		row := settings[18+i]
 		if row.Key != w.key || row.Value != w.value || row.Set {
 			t.Errorf("%s = %q / set %v, want %q / unset", w.key, row.Value, row.Set, w.value)
 		}
@@ -494,6 +536,22 @@ func TestSettingPathsChain(t *testing.T) {
 		"chain.planner_actor",
 		"chain.security_actor",
 		"chain.security",
+	} {
+		got := SettingPaths(key)
+		if len(got) != 1 || got[0] != key {
+			t.Errorf("SettingPaths(%q) = %v, want [%s]", key, got, key)
+		}
+	}
+}
+
+// TestSettingPathsServeScope pins the JSON path each new serve row's reset
+// clears: the round_cpus leaf and the memory_budget leaf.
+func TestSettingPathsServeScope(t *testing.T) {
+	t.Parallel()
+
+	for _, key := range []string{
+		"serve.scope.round_cpus",
+		"serve.memory_budget",
 	} {
 		got := SettingPaths(key)
 		if len(got) != 1 || got[0] != key {

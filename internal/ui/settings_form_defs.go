@@ -57,13 +57,14 @@ func newScopeFields(doc relevo.ConfigDoc, form string) ([]settingField, string, 
 		return strconv.Itoa(n)
 	}
 
-	var slice, memoryMax, cpuQuota, gateCPUQuota, allowedCPUs, cpuWeight, tasksMax string
+	var slice, memoryMax, cpuQuota, gateCPUQuota, allowedCPUs, roundCPUs, cpuWeight, tasksMax string
 	if sc != nil {
 		slice = sc.Slice
 		memoryMax = sc.MemoryMax
 		cpuQuota = sc.CPUQuota
 		gateCPUQuota = sc.GateCPUQuota
 		allowedCPUs = sc.AllowedCPUs
+		roundCPUs = intOrEmpty(sc.RoundCPUs)
 		cpuWeight = intOrEmpty(sc.CPUWeight)
 		tasksMax = intOrEmpty(sc.TasksMax)
 	}
@@ -77,6 +78,7 @@ func newScopeFields(doc relevo.ConfigDoc, form string) ([]settingField, string, 
 		scopeText("cpu_quota", "cpu_quota", "default none · e.g. 200%", cpuQuota, parseCPUQuota),
 		scopeText("gate_cpu_quota", "gate_cpu_quota", "default: cpu_quota", gateCPUQuota, parseCPUQuota),
 		scopeText("allowed_cpus", "allowed_cpus", "default: no pinning · e.g. 0-3", allowedCPUs, parseOptionalText),
+		scopeText("round_cpus", "round_cpus", "default 2", roundCPUs, parseIntMin(1, "a whole number, 1 or more")),
 		scopeText("tasks_max", "tasks_max", "default none", tasksMax, parseIntMin(1, "a whole number, 1 or more")),
 	}
 
@@ -195,6 +197,35 @@ func parseMemoryMax(s string) (any, error) {
 // scopeCPUQuotaPattern is cpu_quota's and gate_cpu_quota's grammar: a whole
 // number followed by "%".
 var scopeCPUQuotaPattern = regexp.MustCompile(`^[0-9]+%$`)
+
+func settingsMaxBuildersFields(byKey func(string) relevo.Setting, focusKey string) ([]settingField, int) {
+	focus := 0
+	if focusKey == "serve.max_planners" {
+		focus = 1
+	}
+	if focusKey == "serve.memory_budget" {
+		focus = 2
+	}
+	return []settingField{settingsMaxBuildersField(byKey), settingsMaxPlannersField(byKey), settingsMemoryBudgetField(byKey)}, focus
+}
+
+func settingsMaxBuildersField(byKey func(string) relevo.Setting) settingField {
+	f := textSettingField("max_builders", byKey("serve.max_builders"), parseIntMin(1, "a whole number, 1 or more"))
+	f.path = "serve.max_builders"
+	return f
+}
+
+func settingsMaxPlannersField(byKey func(string) relevo.Setting) settingField {
+	f := textSettingField("max_planners", byKey("serve.max_planners"), parseIntMin(1, "a whole number, 1 or more"))
+	f.path = "serve.max_planners"
+	return f
+}
+
+func settingsMemoryBudgetField(byKey func(string) relevo.Setting) settingField {
+	f := textSettingField("memory_budget", byKey("serve.memory_budget"), parseMemoryMax)
+	f.path = "serve.memory_budget"
+	return f
+}
 
 // parseCPUQuota is cpu_quota's and gate_cpu_quota's parser: "" deletes, else
 // the value must match scopeCPUQuotaPattern and be at least 1%.

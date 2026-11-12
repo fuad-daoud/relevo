@@ -360,6 +360,36 @@ func TestServerChecksScopesWarning(t *testing.T) {
 	}
 }
 
+// TestBuildersTextSeatsReservation pins the seat halves of the builders
+// census: a server reporting a budget names the reservation and K, while a
+// pre-seat server keeps today's runners clause byte-identical. Pure over
+// hand-built probes -- no harness, no network.
+//
+// Mutation: drop the BudgetBytes guard and the pre-seat row gains the seat
+// clause.
+func TestBuildersTextSeatsReservation(t *testing.T) {
+	t.Parallel()
+
+	seat := relevo.ServerProbe{
+		QueueAware: true, Builders: &remote.BuildersView{
+			Running: 2, Queued: 1, Cap: 3, Scopes: false,
+			ReservedBytes: 4831838208, BudgetBytes: 12992276029, K: 2,
+		},
+	}
+	if got, want := buildersText(seat), "runners 2 (ceiling 3), 1 queued, scopes off, 4.5 GiB/12.1 GiB reserved, K=2"; got != want {
+		t.Errorf("buildersText(seat) = %q, want %q", got, want)
+	}
+
+	plain := relevo.ServerProbe{
+		QueueAware: true, Builders: &remote.BuildersView{
+			Running: 1, Queued: 0, Cap: 3, Scopes: true,
+		},
+	}
+	if got, want := buildersText(plain), "runners 1/3, 0 queued, scopes on"; got != want {
+		t.Errorf("buildersText(pre-seat) = %q, want %q", got, want)
+	}
+}
+
 func TestRefusalChecks(t *testing.T) {
 	refusals := []resolve.RoleRefusal{
 		{Role: "builder", Text: "3 candidates serve builder and no order is set", NoOrder: true,

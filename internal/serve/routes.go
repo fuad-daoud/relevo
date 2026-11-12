@@ -133,7 +133,8 @@ func (s *Server) handleWhoAmI(w http.ResponseWriter, r *http.Request) {
 		who.BuilderTier = string(relevo.ServedBuilderTier(rt))
 		who.MaxTier = string(rt.Policy.MaxTierOrDefault())
 		c, _ := s.census()
-		view := s.buildersViewFor(c)
+		budget, k, _ := s.admissionInputs(c.RunningRounds)
+		view := s.buildersViewFor(c, budget, k)
 		who.Builders = &view
 		who.Builders.Scopes = s.cfg.Scope != nil
 		if s.cfg.Scope != nil {

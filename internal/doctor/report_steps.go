@@ -129,6 +129,9 @@ func appendServeScopeRows(rep *Report, rt relevo.Runtime, env Env) {
 		}
 	}
 	rep.Checks = append(rep.Checks, ScopeChecks(env, scopeBlocks, UserManagerControllersPath(os.Getuid()), runtime.NumCPU())...)
+	// The swap row sits with the scope rows: a burst that exceeds memory
+	// needs somewhere to spill. It reads through Env like every other row.
+	rep.Checks = append(rep.Checks, SwapCheck(env.ReadFile("/proc/swaps")))
 }
 
 // appendPolicyRows adds the ledger, policy, role-source, skill,

@@ -6,6 +6,8 @@
     "planners_running": 0,
     "planners_queued": 0,
     "planners_cap": 4,
+    "budget_bytes": 1,
+    "k": 2,
     "scopes": false,
     "isolation": "none"
   },

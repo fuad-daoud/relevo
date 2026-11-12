@@ -82,6 +82,27 @@ func runningCostsOf(rounds []runningRound) []seatCost {
 	return costs
 }
 
+// reservedBytes is the seat reservation one builders view reports: the bases
+// every running round holds plus K times the largest single running burst.
+// No rounds reserve nothing; K below one reads as one, the way decide clamps
+// it, so the view and the decision never disagree on a thin history.
+func reservedBytes(rounds []runningRound, k int) int64 {
+	if len(rounds) == 0 {
+		return 0
+	}
+	if k < 1 {
+		k = 1
+	}
+	var bases, peak int64
+	for _, r := range rounds {
+		bases += r.Base
+		if r.Burst > peak {
+			peak = r.Burst
+		}
+	}
+	return bases + int64(k)*peak
+}
+
 // queueWaits simulates the pass over a census in FIFO order, aligned with
 // c.Queued: the same blocked rules as the admission pass, assuming a
 // decide-start would start. A fairness-skipped round stamps a memory wait

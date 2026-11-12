@@ -425,6 +425,78 @@ func TestSettingsMaxBuildersFormFocusesPlannersField(t *testing.T) {
 	}
 }
 
+// i. The max_builders form opened from the serve.memory_budget row focuses the
+// third field, and typing there writes serve.memory_budget.
+func TestSettingsMaxBuildersFormSetsMemoryBudget(t *testing.T) {
+	fa := &fakeActions{doc: settingsFixtureDoc(t)}
+	env := candActionEnv(fa, view.Report{})
+	v := settingsFixtureView(t, fa)
+	v.cur = 19 // serve.memory_budget
+
+	if settings := relevo.Settings(v.doc, numCPU()); settings[v.cur].Key != "serve.memory_budget" {
+		t.Fatalf("cursor key = %q, want serve.memory_budget", settings[v.cur].Key)
+	}
+
+	f := settingsFormFrom(t, v, env)
+	if f.title != "serve.max_builders" {
+		t.Fatalf("title = %q, want serve.max_builders", f.title)
+	}
+	if f.focus != 2 {
+		t.Fatalf("focus = %d, want 2 (memory_budget)", f.focus)
+	}
+	if f.fields[2].label != "memory_budget" {
+		t.Fatalf("field 2 = %+v, want memory_budget", f.fields[2])
+	}
+	f = settingsFormType(f, "16G")
+
+	_, cmd, closed := f.update(tea.KeyMsg{Type: tea.KeyEnter})
+	if !closed {
+		t.Fatal("a valid submit must close the form")
+	}
+	runCmd(t, cmd)
+
+	if len(fa.configEdits) != 1 {
+		t.Fatalf("configEdits = %d, want one", len(fa.configEdits))
+	}
+	body := string(fa.configEdits[0].Sections[config.Policy])
+	if !strings.Contains(body, `"memory_budget": "16G"`) {
+		t.Errorf("body = %s, want serve.memory_budget 16G", body)
+	}
+}
+
+// j. serve.scope form: the round_cpus field is prefilled from the stored
+// block, and typing there writes serve.scope.round_cpus.
+func TestSettingsServeScopeFormSetsRoundCPUs(t *testing.T) {
+	fa := &fakeActions{doc: settingsFixtureDoc(t)}
+	env := candActionEnv(fa, view.Report{})
+	v := settingsFixtureView(t, fa)
+	v.cur = 17 // serve.scope
+
+	f := settingsFormFrom(t, v, env)
+	if f.title != "serve.scope" {
+		t.Fatalf("title = %q, want serve.scope", f.title)
+	}
+	if f.fields[7].label != "round_cpus" || f.fields[7].orig != "" {
+		t.Fatalf("field 7 = %+v, want round_cpus prefilled empty", f.fields[7])
+	}
+	f = f.setFocus(7) // round_cpus
+	f = settingsFormType(f, "4")
+
+	_, cmd, closed := f.update(tea.KeyMsg{Type: tea.KeyEnter})
+	if !closed {
+		t.Fatal("a valid submit must close the form")
+	}
+	runCmd(t, cmd)
+
+	if len(fa.configEdits) != 1 {
+		t.Fatalf("configEdits = %d, want one", len(fa.configEdits))
+	}
+	body := string(fa.configEdits[0].Sections[config.Policy])
+	if !strings.Contains(body, `"round_cpus": 4`) {
+		t.Errorf("body = %s, want serve.scope.round_cpus 4", body)
+	}
+}
+
 // f. down from the last rounds row lands on gate.default, never on a rule line.
 func TestSettingsDownSkipsRule(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
@@ -450,7 +522,7 @@ func TestSettingsChainFormTurnsSecurityOn(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 24 // chain.security
+	v.cur = 26 // chain.security
 
 	f := settingsFormFrom(t, v, env)
 	if f.title != "chain" {
@@ -491,7 +563,7 @@ func TestSettingsChainFormSetsMaxCorrections(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 20 // chain.max_corrections
+	v.cur = 22 // chain.max_corrections
 
 	f := settingsFormFrom(t, v, env)
 	if f.title != "chain" {
@@ -524,7 +596,7 @@ func TestSettingsChainFormRejectsANegativeCount(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 20 // chain.max_corrections
+	v.cur = 22 // chain.max_corrections
 
 	f := settingsFormFrom(t, v, env)
 	f = f.setFocus(1) // max_corrections
@@ -553,7 +625,7 @@ func TestSettingsChainFormBadActorText(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 21 // chain.reviewer_actor
+	v.cur = 23 // chain.reviewer_actor
 
 	f := settingsFormFrom(t, v, env)
 	f = f.setFocus(2) // reviewer_actor

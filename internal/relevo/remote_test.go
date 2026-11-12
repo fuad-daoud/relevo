@@ -657,12 +657,20 @@ func TestRenderServersBuilders(t *testing.T) {
 			QueueAware: true, Builders: &remote.BuildersView{Running: 1, Queued: 0, Cap: 3, Scopes: true},
 		},
 		{
+			Name: "seat", URL: "https://seat:7777", State: "enrolled", Label: "vps",
+			QueueAware: true, Builders: &remote.BuildersView{
+				Running: 2, Queued: 1, Cap: 3, Scopes: false,
+				ReservedBytes: 4831838208, BudgetBytes: 12992276029, K: 2,
+			},
+		},
+		{
 			Name: "old", URL: "https://old:7777", State: "enrolled", Label: "laptop",
 		},
 	}
 	out := RenderServers(probes)
 	for _, want := range []string{
 		"runners 2/3, 1 queued, scopes off",
+		"runners 2 (ceiling 3), 1 queued, scopes off, 4.5 GiB/12.1 GiB reserved, K=2",
 		"runners 2/3, 1 queued, scopes on (relevo.slice, 200%)",
 		"runners 1/3, 0 queued, scopes on (150%)",
 		"runners 1/3, 0 queued, scopes on (relevo.slice)",
@@ -2746,7 +2754,7 @@ func TestObserveRemoteQueuedKeepsFacts(t *testing.T) {
 	fr := &fakeRemote{
 		getBindingResp: remote.BindingView{
 			RoundState: remote.RoundQueued,
-			Queue:      &remote.QueueView{Position: 3, Ahead: 2, Running: 3, Cap: 3, Since: since},
+			Queue:      &remote.QueueView{Position: 3, Ahead: 2, Running: 3, Cap: 3, Since: since, Wait: "memory", WaitBytes: 2 << 30},
 		},
 	}
 	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
@@ -2761,7 +2769,7 @@ func TestObserveRemoteQueuedKeepsFacts(t *testing.T) {
 	if got.Builder.RemoteQueue == nil {
 		t.Fatal("RemoteQueue = nil, want the view's facts")
 	}
-	want := store.QueueFacts{Position: 3, Ahead: 2, Running: 3, Cap: 3, Since: since}
+	want := store.QueueFacts{Position: 3, Ahead: 2, Running: 3, Cap: 3, Since: since, Wait: "memory", WaitBytes: 2 << 30}
 	if *got.Builder.RemoteQueue != want {
 		t.Errorf("RemoteQueue = %+v, want %+v", *got.Builder.RemoteQueue, want)
 	}

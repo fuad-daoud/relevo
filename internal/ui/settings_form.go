@@ -274,26 +274,6 @@ func settingsTimingFields(byKey func(string) relevo.Setting, focusKey string) ([
 	return fields, focus
 }
 
-func settingsMaxBuildersFields(byKey func(string) relevo.Setting, focusKey string) ([]settingField, int) {
-	focus := 0
-	if focusKey == "serve.max_planners" {
-		focus = 1
-	}
-	return []settingField{settingsMaxBuildersField(byKey), settingsMaxPlannersField(byKey)}, focus
-}
-
-func settingsMaxBuildersField(byKey func(string) relevo.Setting) settingField {
-	f := textSettingField("max_builders", byKey("serve.max_builders"), parseIntMin(1, "a whole number, 1 or more"))
-	f.path = "serve.max_builders"
-	return f
-}
-
-func settingsMaxPlannersField(byKey func(string) relevo.Setting) settingField {
-	f := textSettingField("max_planners", byKey("serve.max_planners"), parseIntMin(1, "a whole number, 1 or more"))
-	f.path = "serve.max_planners"
-	return f
-}
-
 // setFocus moves focus to field i, wrapping, focusing that field's input
 // (chip rows have none to focus).
 func (f settingsForm) setFocus(i int) settingsForm {

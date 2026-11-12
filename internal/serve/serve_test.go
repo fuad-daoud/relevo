@@ -370,6 +370,41 @@ func TestWhoAmI(t *testing.T) {
 	}
 }
 
+// TestWhoAmICarriesSeatBudget pins the whoami path's seat facts: the server
+// list renders reserved/budget/K from this view, so a whoami that dropped the
+// admission inputs would show a seat server as a pre-seat one.
+func TestWhoAmICarriesSeatBudget(t *testing.T) {
+	s, _ := newTestServer(t, 0)
+	s.mu.Lock()
+	if s.reloaded.Policy.Serve == nil {
+		s.reloaded.Policy.Serve = &policy.ServePolicy{}
+	}
+	s.reloaded.Policy.Serve.MemoryBudget = "64G"
+	s.mu.Unlock()
+
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	trackOwnerTmp(t, s, remote.IDOf(kp.Public))
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, signedRequest(t, kp, "GET", "/v1/whoami", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	var who remote.WhoAmI
+	if err := json.NewDecoder(rec.Body).Decode(&who); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if who.Builders == nil || who.Builders.BudgetBytes != 64<<30 || who.Builders.K != 2 {
+		t.Fatalf("Builders = %+v, want budget 64GiB and the cold-start K 2", who.Builders)
+	}
+}
+
 // TestWhoAmIIsolation pins slice A's wire fact: a server always reports its
 // isolation mode, "none" for a server that configured nothing, and advertises
 // the matching feature token.

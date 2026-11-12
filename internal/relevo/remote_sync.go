@@ -279,11 +279,13 @@ func mirrorQueuedRunning(rt Runtime, tx *store.Tx, b store.Binding, view remote.
 		b.StalledSince = time.Time{}
 		if view.Queue != nil {
 			b.Builder.RemoteQueue = &store.QueueFacts{
-				Position: view.Queue.Position,
-				Ahead:    view.Queue.Ahead,
-				Running:  view.Queue.Running,
-				Cap:      view.Queue.Cap,
-				Since:    view.Queue.Since,
+				Position:  view.Queue.Position,
+				Ahead:     view.Queue.Ahead,
+				Running:   view.Queue.Running,
+				Cap:       view.Queue.Cap,
+				Since:     view.Queue.Since,
+				Wait:      view.Queue.Wait,
+				WaitBytes: view.Queue.WaitBytes,
 			}
 		}
 		return b, false, nil
