@@ -394,13 +394,7 @@ func chainPullInstallRounds(ctx context.Context, rt Runtime, mv remote.ChainMemb
 			}
 		}
 		cur.Builder.RemoteStatus = string(mv.View.RoundState)
-		// A queued or running round's facts are the poll's: the chain view
-		// carries neither the queue nor the live numbers, so clearing them here
-		// would undo the poll's write on every tick and resync the shared row.
-		if mv.View.RoundState != remote.RoundQueued && mv.View.RoundState != remote.RoundRunning {
-			cur.Builder.RemoteQueue = nil
-			cur.Builder.RemoteLive = nil
-		}
+		clearSettledPollFacts(&cur, mv.View.RoundState)
 		return chainPullSaveIfChanged(tx, snap, cur)
 	})
 }
@@ -491,6 +485,18 @@ func chainAllCaughtUp(tx *store.Tx, view remote.ChainView) bool {
 		}
 	}
 	return len(view.Members) > 0
+}
+
+// clearSettledPollFacts drops the poll's queue and live facts once the round
+// has left the queue and stopped running. A queued or running round's facts are
+// the poll's: the chain view carries neither, so clearing them here would undo
+// the poll's write on every tick and resync the shared row.
+func clearSettledPollFacts(b *store.Binding, state remote.RoundState) {
+	if state == remote.RoundQueued || state == remote.RoundRunning {
+		return
+	}
+	b.Builder.RemoteQueue = nil
+	b.Builder.RemoteLive = nil
 }
 
 // chainPullSaveIfChanged saves a pull's member only when the pass moved it:
