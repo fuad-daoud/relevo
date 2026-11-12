@@ -84,7 +84,8 @@ func AdminStatus(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([
 // keeps `relevo serve admin` and every other caller on today's rows.
 func adminOwners(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([]OwnerStatus, remote.BuildersView, error) {
 	c, _ := s.census()
-	builders := s.buildersViewFor(c)
+	budget, k, pressureOK := s.admissionInputs(c.RunningRounds)
+	builders := s.buildersViewFor(c, budget, k)
 
 	bindingsDir := filepath.Join(s.cfg.Root, "bindings")
 	entries, err := os.ReadDir(bindingsDir)
@@ -96,7 +97,6 @@ func adminOwners(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([
 	}
 
 	now := s.cfg.Now()
-	budget, k, pressureOK := s.admissionInputs(c.RunningRounds)
 	waits := queueWaits(c, budget, k, pressureOK, now)
 	position := make(map[string]int, len(c.Queued))
 	for i, q := range c.Queued {
@@ -162,6 +162,9 @@ func adminOwnerStatus(ctx context.Context, s *Server, ownerPath string, id remot
 		q := c.Queued[i]
 		row.Queued = queueViewFor(q, i, c, builders, waits)
 		row.BuilderStatus = fmt.Sprintf("queued %s (%d ahead)", view.AgeText(now.Sub(q.QueuedAt)), i)
+		if text := view.QueueWaitText(waits[i].Wait, waits[i].WaitBytes); text != "" {
+			row.BuilderStatus += ", " + text
+		}
 	}
 	return OwnerStatus{
 		Owner:    id,

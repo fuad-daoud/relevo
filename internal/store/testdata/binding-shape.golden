@@ -69,6 +69,8 @@ consults[].endpoint.remote_queue.cap
 consults[].endpoint.remote_queue.position
 consults[].endpoint.remote_queue.running
 consults[].endpoint.remote_queue.since
+consults[].endpoint.remote_queue.wait
+consults[].endpoint.remote_queue.wait_bytes
 consults[].endpoint.remote_status
 consults[].endpoint.server
 consults[].endpoint.session_id
@@ -178,6 +180,8 @@ planner.remote_queue.cap
 planner.remote_queue.position
 planner.remote_queue.running
 planner.remote_queue.since
+planner.remote_queue.wait
+planner.remote_queue.wait_bytes
 planner.remote_status
 planner.server
 planner.session_id
@@ -270,6 +274,8 @@ runner.remote_queue.cap
 runner.remote_queue.position
 runner.remote_queue.running
 runner.remote_queue.since
+runner.remote_queue.wait
+runner.remote_queue.wait_bytes
 runner.remote_status
 runner.server
 runner.session_id

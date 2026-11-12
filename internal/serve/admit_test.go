@@ -2068,6 +2068,9 @@ func TestAdminHeldRoundReportsWait(t *testing.T) {
 	if adminRow.Queued.Wait != waitMemory || adminRow.Queued.WaitBytes != 2*gb {
 		t.Errorf("admin wait = (%q, %d), want (memory, %d)", adminRow.Queued.Wait, adminRow.Queued.WaitBytes, 2*gb)
 	}
+	if !strings.Contains(adminRow.BuilderStatus, "(0 ahead), waiting on memory (needs 2.0 GiB more)") {
+		t.Errorf("admin BuilderStatus = %q, want the queued wait after the ahead count", adminRow.BuilderStatus)
+	}
 
 	flat, err := FlatStatus(context.Background(), env.srv)
 	if err != nil {

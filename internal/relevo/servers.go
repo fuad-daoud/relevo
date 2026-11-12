@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // ServerProbe is one configured server's reachability and enrollment, as
@@ -147,8 +148,14 @@ func RenderServers(probes []ServerProbe) string {
 				case p.Builders.Scopes:
 					scopes = "on"
 				}
-				row += fmt.Sprintf("  runners %d/%d, %d queued, scopes %s",
-					p.Builders.Running, p.Builders.Cap, p.Builders.Queued, scopes)
+				if p.Builders.BudgetBytes > 0 {
+					row += fmt.Sprintf("  runners %d (ceiling %d), %d queued, scopes %s, %s/%s reserved, K=%d",
+						p.Builders.Running, p.Builders.Cap, p.Builders.Queued, scopes,
+						view.HumanBytes(p.Builders.ReservedBytes), view.HumanBytes(p.Builders.BudgetBytes), p.Builders.K)
+				} else {
+					row += fmt.Sprintf("  runners %d/%d, %d queued, scopes %s",
+						p.Builders.Running, p.Builders.Cap, p.Builders.Queued, scopes)
+				}
 			}
 		}
 		sb.WriteString(row)

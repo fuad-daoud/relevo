@@ -370,6 +370,26 @@ func ApplyRemoteLive(row *BindingStatus, lf *store.LiveFacts, stalled bool, logP
 	}
 }
 
+// QueueWaitText renders one queued round's held reason for a human: the
+// memory hold names its shortfall, a fairness skip with no measured bytes
+// names only the hold, and an unstated or unknown reason reads as nothing
+// so no stale wait survives a start.
+func QueueWaitText(wait string, waitBytes int64) string {
+	switch wait {
+	case "memory":
+		if waitBytes <= 0 {
+			return "waiting on memory"
+		}
+		return fmt.Sprintf("waiting on memory (needs %s more)", HumanBytes(waitBytes))
+	case "ceiling":
+		return "waiting on ceiling"
+	case "pressure":
+		return "waiting on pressure"
+	default:
+		return ""
+	}
+}
+
 // QueueText renders a served, queued round's status word: the bare
 // "queued" when the server has not yet reported facts, else the full
 // picture.
@@ -377,8 +397,12 @@ func QueueText(q *store.QueueFacts, server string, now time.Time) string {
 	if q == nil {
 		return "queued"
 	}
-	return fmt.Sprintf("queued (%d/%d busy on %s, %d ahead, %s)",
+	out := fmt.Sprintf("queued (%d/%d busy on %s, %d ahead, %s)",
 		q.Running, q.Cap, server, q.Ahead, AgeText(now.Sub(q.Since)))
+	if text := QueueWaitText(q.Wait, q.WaitBytes); text != "" {
+		out += ", " + text
+	}
+	return out
 }
 
 // IsPayloadKind reports whether k is one of the four kinds LastPayload

@@ -280,6 +280,11 @@ func buildersText(p relevo.ServerProbe) string {
 	case p.Builders.Scopes:
 		scopes = "on"
 	}
+	if p.Builders.BudgetBytes > 0 {
+		return fmt.Sprintf("runners %d (ceiling %d), %d queued, scopes %s, %s/%s reserved, K=%d",
+			p.Builders.Running, p.Builders.Cap, p.Builders.Queued, scopes,
+			view.HumanBytes(p.Builders.ReservedBytes), view.HumanBytes(p.Builders.BudgetBytes), p.Builders.K)
+	}
 	return fmt.Sprintf("runners %d/%d, %d queued, scopes %s",
 		p.Builders.Running, p.Builders.Cap, p.Builders.Queued, scopes)
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"os"
 	"path/filepath"
@@ -20,6 +21,10 @@ var updateWire = flag.Bool("update-wire", false, "update wire golden files")
 func wireNormalize(b []byte) []byte {
 	cwdRE := regexp.MustCompile(`"cwd":\s*"[^"]*"`)
 	b = cwdRE.ReplaceAll(b, []byte(`"cwd": "/tmp/test-state/api"`))
+	// The seat budget reads the machine's memory, so it differs per host;
+	// the golden pins the key while the test below pins a live value.
+	budgetRE := regexp.MustCompile(`"budget_bytes":\s*[0-9]+`)
+	b = budgetRE.ReplaceAll(b, []byte(`"budget_bytes": 1`))
 	return b
 }
 
@@ -123,6 +128,24 @@ func TestServeContractStatusJSON(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("run serve status --json: %v (stderr: %s)", err, string(stderr))
+	}
+
+	// The runners view carries the pass's own seat budget and K, which the
+	// golden pins only as keys: the budget reads the machine's memory.
+	var doc struct {
+		Runners struct {
+			BudgetBytes int64 `json:"budget_bytes"`
+			K           int   `json:"k"`
+		} `json:"runners"`
+	}
+	if err := json.Unmarshal(stdout, &doc); err != nil {
+		t.Fatalf("unmarshal serve status: %v", err)
+	}
+	if doc.Runners.BudgetBytes <= 0 {
+		t.Errorf("runners budget_bytes = %d, want the pass's live budget", doc.Runners.BudgetBytes)
+	}
+	if doc.Runners.K < 1 {
+		t.Errorf("runners k = %d, want at least one", doc.Runners.K)
 	}
 
 	// Normalize dynamic values (temp cwd paths and generated owner ClientIDs)

@@ -304,12 +304,19 @@ type BuildersView struct {
 	// PlannersRunning, PlannersQueued and PlannersCap are the planner
 	// rounds' own counts under serve.max_planners: planners never hold a
 	// builder seat, so the builder counts above exclude them.
-	PlannersRunning int    `json:"planners_running"`
-	PlannersQueued  int    `json:"planners_queued"`
-	PlannersCap     int    `json:"planners_cap"`
-	Scopes          bool   `json:"scopes"`          // the server sets it; false here
-	Slice           string `json:"slice,omitempty"` // the server sets it; "" here
-	Quota           string `json:"quota,omitempty"` // "" = no CPU quota; else e.g. "200%"
+	PlannersRunning int `json:"planners_running"`
+	PlannersQueued  int `json:"planners_queued"`
+	PlannersCap     int `json:"planners_cap"`
+	// ReservedBytes is the running rounds' committed seats plus K times the
+	// largest burst, so a client can weigh a queued round's shortfall.
+	ReservedBytes int64 `json:"reserved_bytes,omitempty"`
+	// BudgetBytes is the seat budget the reservation is drawn against.
+	BudgetBytes int64 `json:"budget_bytes,omitempty"`
+	// K is the burst parallelism the reservation assumes.
+	K      int    `json:"k,omitempty"`
+	Scopes bool   `json:"scopes"`          // the server sets it; false here
+	Slice  string `json:"slice,omitempty"` // the server sets it; "" here
+	Quota  string `json:"quota,omitempty"` // "" = no CPU quota; else e.g. "200%"
 	// Isolation is the tenant-isolation mode in force: "none", "user" or
 	// "container". "" from a server that predates isolation.
 	Isolation string `json:"isolation,omitempty"`

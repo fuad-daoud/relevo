@@ -70,8 +70,10 @@ func (c census) plannersQueued() int {
 
 // buildersViewFor stamps the census counts onto a fresh builders view: the
 // builder queue is the FIFO length minus queued planners, and planners read
-// their own class counts, so each surface reports its own cap.
-func (s *Server) buildersViewFor(c census) remote.BuildersView {
+// their own class counts, so each surface reports its own cap. The seat
+// reservation rides along from the caller's own admission inputs, so the view
+// and the decision read one budget and K.
+func (s *Server) buildersViewFor(c census, budget int64, k int) remote.BuildersView {
 	v := s.isolationView(remote.BuildersView{Cap: s.cap()})
 	pq := c.plannersQueued()
 	v.Running = c.Running
@@ -79,6 +81,9 @@ func (s *Server) buildersViewFor(c census) remote.BuildersView {
 	v.PlannersRunning = c.PlannersRunning
 	v.PlannersQueued = pq
 	v.PlannersCap = s.plannerCap()
+	v.ReservedBytes = reservedBytes(c.RunningRounds, k)
+	v.BudgetBytes = budget
+	v.K = k
 	return v
 }
 
@@ -454,7 +459,7 @@ func (s *Server) queuePositionView(b store.Binding, view remote.BindingView, cal
 			// pass over the shared queue preserves.
 			budget, k, pressureOK := s.admissionInputs(c.RunningRounds)
 			waits := queueWaits(c, budget, k, pressureOK, s.cfg.Now())
-			return queueViewFor(q, i, c, s.buildersViewFor(c), waits)
+			return queueViewFor(q, i, c, s.buildersViewFor(c, budget, k), waits)
 		}
 	}
 	return nil

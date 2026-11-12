@@ -213,6 +213,9 @@ func filledBuildersView() BuildersView {
 		PlannersRunning: 1,
 		PlannersQueued:  1,
 		PlannersCap:     4,
+		ReservedBytes:   3 << 30,
+		BudgetBytes:     12 << 30,
+		K:               2,
 		Scopes:          true,
 		Slice:           "relevo.slice",
 		Quota:           "200%",
@@ -617,6 +620,24 @@ func TestQueueWaitFieldsAreAdditive(t *testing.T) {
 	}
 	if bytes.Contains(zero, []byte(`"wait_bytes"`)) {
 		t.Fatalf("zero QueueView carries a wait_bytes key: %s", zero)
+	}
+}
+
+// TestBuildersSeatFieldsAreAdditive pins that a zero BuildersView marshals
+// without the seat keys, so an old client sees no new key on an old server's
+// view.
+//
+// Mutation: drop an omitempty on one of the three and the zero view carries
+// its key.
+func TestBuildersSeatFieldsAreAdditive(t *testing.T) {
+	zero, err := json.Marshal(BuildersView{})
+	if err != nil {
+		t.Fatalf("marshal zero BuildersView: %v", err)
+	}
+	for _, key := range []string{`"reserved_bytes"`, `"budget_bytes"`, `"k"`} {
+		if bytes.Contains(zero, []byte(key)) {
+			t.Fatalf("zero BuildersView carries a %s key: %s", key, zero)
+		}
 	}
 }
 
