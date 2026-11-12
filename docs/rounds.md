@@ -90,15 +90,21 @@ top-level `scope` block configures the scope (`enabled`, `slice`, `cpu_weight`,
 `cpu_quota`, `gate_cpu_quota`, `memory_max`, `tasks_max`); `gate_cpu_quota` is
 the gate's own CPU ceiling, and defaults to `cpu_quota`. `serve.scope` replaces
 that block entirely for served rounds, and `scope: {"enabled": false}` opts
-out. `allowed_cpus` is a pool of cores (`"0-2"`), and each round is pinned to
-one core from it: the gate runs on its round's core, while a consult and the
-verify reviewer run on the whole pool. When every core is taken, a round runs
-on the whole pool instead. Pinning needs `cpuset` delegated to your user
-manager through a root drop-in on `user@.service`, and `relevo doctor` checks
-this; if systemd refuses it, relevo logs one warning and runs unpinned.
+out. Each round is pinned with `taskset` to `round_cpus` CPUs (default 2),
+picked from the `allowed_cpus` pool (`"0-2"`) or, without one, from every
+online CPU. The pick spreads rounds across physical cores before it uses a
+core's second thread, and takes faster cores first on a host whose cores
+differ in speed; when every CPU is held, a round shares the least-held ones
+and stays pinned. A round runs unpinned only when the pool has fewer CPUs
+than `round_cpus`. With an `allowed_cpus` pool the gate runs on its round's
+CPUs, while a consult and the verify reviewer run on the whole pool; without
+one they run unpinned. An `allowed_cpus` pool is also set as
+the scope's cpuset, which needs `cpuset` delegated to your user manager
+through a root drop-in on `user@.service`; `relevo doctor` checks this, and
+if systemd refuses it, relevo logs one warning and keeps the `taskset` pin.
 Every scoped builder, gate, consult and verify reviewer
-also gets `GOMAXPROCS` set to the CPUs its scope allows -- 1 for a pinned round,
-`ceil(quota)` otherwise -- replacing any `GOMAXPROCS` the daemon inherited, such
+also gets `GOMAXPROCS` set to the CPUs its scope allows -- the size of its
+pinned set, capped by `ceil(quota)` -- replacing any `GOMAXPROCS` the daemon inherited, such
 as a shell-wide export; this affects Go processes only, and Go's `-p` and
 `-parallel` follow it. On a host without a
 usable systemd user manager relevo logs one warning and runs builders unscoped,

@@ -80,18 +80,23 @@ type ScopeSpec struct {
 
 // GoMaxProcsFor reports the GOMAXPROCS a process launched under s should get:
 // the number of CPUs that scope may run on. ok false means the scope limits
-// nothing, and the caller sets nothing. It is the smaller of the AllowedCPUs
-// count and ceil(quota/100) with a minimum of 1; a malformed value contributes
-// nothing instead of panicking, and GateCPUQuota is never read. It is set even
-// though Go derives its default from the affinity mask: that misses quota-only
-// rounds and binaries whose main module is below Go 1.25.
+// nothing, and the caller sets nothing. It is the smallest of the AllowedCPUs
+// count, the AffinityCPUs count and ceil(quota/100) with a minimum of 1; a
+// malformed value contributes nothing instead of panicking, and GateCPUQuota
+// is never read. It is set even though Go derives its default from the
+// affinity mask: that misses quota-only rounds and binaries whose main module
+// is below Go 1.25, and a quota wider than a taskset pin would otherwise win
+// and run more test binaries than the pin has CPUs.
 func GoMaxProcsFor(s ScopeSpec) (int, bool) {
 	var (
 		n    int
 		have bool
 	)
-	if s.AllowedCPUs != "" {
-		if cpus, err := ParseCPUList(s.AllowedCPUs); err == nil && len(cpus) > 0 {
+	for _, list := range []string{s.AllowedCPUs, s.AffinityCPUs} {
+		if list == "" {
+			continue
+		}
+		if cpus, err := ParseCPUList(list); err == nil && len(cpus) > 0 && (!have || len(cpus) < n) {
 			n, have = len(cpus), true
 		}
 	}

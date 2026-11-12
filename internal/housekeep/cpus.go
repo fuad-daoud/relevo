@@ -1,7 +1,6 @@
 package housekeep
 
 import (
-	"cmp"
 	"log/slog"
 	"runtime"
 	"slices"
@@ -35,12 +34,15 @@ func roundPool(allowed string) []int {
 	return nil
 }
 
-// pickCPUSet returns the least-used size-sized set of pool cores: the lowest
-// (max, then sum) load, with ties to the lowest cores, returned sorted
-// ascending. held is a multiset: duplicates are the per-core counts, and
-// cores outside the pool are ignored. ok is false when the pool is empty,
-// size < 1, size exceeds the pool, or every pool core is held. Pure.
-func pickCPUSet(pool, held []int, size int) ([]int, bool) {
+// pickCPUSet builds the size-sized set of pool cores one core at a time,
+// each pick taking the lowest (held count, core busyness, speed, core).
+// Busyness is the held counts summed over the sibling threads plus the
+// siblings already picked, so sets spread across physical cores and a full
+// pool shares its least-held cores pinned. held is a multiset: duplicates
+// are the per-core counts, and cores outside the pool are ignored. ok is
+// false only when the pool is empty, size < 1 or size exceeds the pool.
+// Topology rides in as an input, so the picker stays pure. Sorted ascending.
+func pickCPUSet(pool, held []int, size int, topo spawn.CPUTopology) ([]int, bool) {
 	if len(pool) == 0 || size < 1 || size > len(pool) {
 		return nil, false
 	}
@@ -48,24 +50,48 @@ func pickCPUSet(pool, held []int, size int) ([]int, bool) {
 	for _, c := range held {
 		count[c]++
 	}
-	free := false
-	for _, c := range pool {
-		if count[c] == 0 {
-			free = true
-			break
+	chosen := make(map[int]bool, size)
+	set := make([]int, 0, size)
+	// busyness counts the load on the whole core: what other live rounds
+	// hold on any sibling thread, plus the siblings this set took already.
+	siblingsOf := func(c int) []int {
+		if s := topo.Siblings[c]; len(s) > 0 {
+			return s
 		}
+		return []int{c}
 	}
-	if !free {
-		return nil, false
-	}
-	ordered := append([]int(nil), pool...)
-	slices.SortFunc(ordered, func(a, b int) int {
-		if d := cmp.Compare(count[a], count[b]); d != 0 {
-			return d
+	busyness := func(c int) int {
+		n := 0
+		for _, s := range siblingsOf(c) {
+			n += count[s]
+			if chosen[s] {
+				n++
+			}
 		}
-		return cmp.Compare(a, b)
-	})
-	set := append([]int(nil), ordered[:size]...)
+		return n
+	}
+	less := func(a, b int) bool {
+		if count[a] != count[b] {
+			return count[a] < count[b]
+		}
+		if ba, bb := busyness(a), busyness(b); ba != bb {
+			return ba < bb
+		}
+		if sa, sb := topo.MaxFreqKHz[a], topo.MaxFreqKHz[b]; sa != sb {
+			return sa > sb
+		}
+		return a < b
+	}
+	for len(set) < size {
+		best := -1
+		for _, c := range pool {
+			if !chosen[c] && (best < 0 || less(c, best)) {
+				best = c
+			}
+		}
+		chosen[best] = true
+		set = append(set, best)
+	}
 	slices.Sort(set)
 	return set, true
 }
@@ -142,13 +168,14 @@ func RoundPinText(b store.Binding) string {
 // AssignRoundCPU gives b the set of cores its round runs on, called by
 // startRound right before it builds the spec. It never fails: an empty pool
 // or a nil tx (a caller with no round to pin) clears both pin fields, and a
-// census error or an exhausted pool clears them so the round runs unpinned
-// rather than failing. A relaunch or a mid-round switch keeps its set when
-// every core is still in the pool and still free; a legacy single pin keeps
-// as a size-1 set. Without a template pool the set comes from every online
-// CPU and the single pin stays nil, so gates and consults read unpinned.
-// The returned binding carries RoundCPUs and RoundCPU, so the caller's
-// tx.Save persists them.
+// census error clears them so the round runs unpinned rather than failing.
+// A full pool shares its least-held cores pinned instead of running
+// unpinned. A relaunch or a mid-round switch keeps its set when every core
+// is still in the pool and still free; a legacy single pin keeps as a
+// size-1 set. Without a template pool the set comes from every online CPU
+// and the single pin stays nil, so gates and consults read unpinned. The
+// returned binding carries RoundCPUs and RoundCPU, so the caller's tx.Save
+// persists them.
 func AssignRoundCPU(deps Deps, tx *store.Tx, b store.Binding) store.Binding {
 	size := deps.RoundCPUs
 	if size < 1 {
@@ -191,9 +218,15 @@ func AssignRoundCPU(deps Deps, tx *store.Tx, b store.Binding) store.Binding {
 		return b
 	}
 
-	set, ok := pickCPUSet(pool, held, size)
+	topo := spawn.CPUTopology{}
+	if deps.Topology == nil {
+		topo = spawn.ReadCPUTopology("/sys/devices/system/cpu", pool)
+	} else {
+		topo = deps.Topology(pool)
+	}
+	set, ok := pickCPUSet(pool, held, size, topo)
 	if !ok {
-		slog.Warn("cpu pool exhausted; round runs on the whole pool", "binding", b.Name, "round", b.Round, "pool", deps.AllowedCPUs, "held", len(held))
+		slog.Warn("cpu pool too small; round runs on the whole pool", "binding", b.Name, "round", b.Round, "pool", deps.AllowedCPUs, "held", len(held))
 		b.RoundCPU = nil
 		b.RoundCPUs = nil
 		return b
