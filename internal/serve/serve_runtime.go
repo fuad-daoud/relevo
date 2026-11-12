@@ -31,27 +31,28 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 	cfg := s.live()
 	st := s.ownerStore(root)
 	rt := relevo.Runtime{
-		Git:        cfg.Git,
-		Runner:     cfg.Runner,
-		Store:      st,
-		Transport:  s.transport,
-		Candidates: cfg.Candidates,
-		Accounts:   cfg.Accounts,
-		Policy:     cfg.Policy,
-		Gates:      s.gates,      // server-wide, not the owner's own
-		GatesLocal: s.gatesLocal, // plus this host's own ledger row: served picks and switches honour `relevo gate` here
-		InFlight:   s.inFlightFor(root),
-		History:    s.cfg.DB,
-		Usage:      cfg.Usage,
-		Prices:     cfg.Prices,
-		Now:        cfg.Now,
-		StartedAt:  cfg.StartedAt,
-		Roles:      cfg.Roles,
-		Registry:   cfg.Registry,
-		Hooks:      cfg.Hooks,
-		DiskFree:   cfg.DiskFree,
-		Scope:      cfg.Scope,
-		HeldCPUs:   func(tx *store.Tx, self string) ([]int, error) { return s.heldCPUs(root, tx, self) },
+		Git:         cfg.Git,
+		Runner:      cfg.Runner,
+		Store:       st,
+		Transport:   s.transport,
+		Candidates:  cfg.Candidates,
+		Accounts:    cfg.Accounts,
+		Policy:      cfg.Policy,
+		Gates:       s.gates,      // server-wide, not the owner's own
+		GatesLocal:  s.gatesLocal, // plus this host's own ledger row: served picks and switches honour `relevo gate` here
+		InFlight:    s.inFlightFor(root),
+		History:     s.cfg.DB,
+		Usage:       cfg.Usage,
+		Prices:      cfg.Prices,
+		Now:         cfg.Now,
+		StartedAt:   cfg.StartedAt,
+		Roles:       cfg.Roles,
+		Registry:    cfg.Registry,
+		Hooks:       cfg.Hooks,
+		DiskFree:    cfg.DiskFree,
+		Scope:       cfg.Scope,
+		HeldCPUs:    func(tx *store.Tx, self string) ([]int, error) { return s.heldCPUs(root, tx, self) },
+		CPUTopology: cfg.CPUTopology,
 		// The reaper is server-wide: deleting an owner's abandoned session
 		// runs the harness binary, which is the same for every owner.
 		SessionReaper: cfg.SessionReaper,
@@ -105,7 +106,7 @@ func (s *Server) wireSeatCost(rt *relevo.Runtime, root string, reg *roles.Regist
 	// The cost history lives under the serve root; a runtime without one
 	// records nothing.
 	rt.CostRoot = root
-	rt.RoundBurst = roundBurstFor(root, reg)
+	rt.RoundBurst = roundBurstFor(root)
 }
 
 // applyContainer rewires rt for one container-mode owner: its runner starts

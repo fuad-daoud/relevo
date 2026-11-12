@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -552,12 +553,12 @@ func TestRuntimeAtWiresCloseServedRound(t *testing.T) {
 	}
 }
 
-// TestRuntimeAtWiresRoundBurst pins the served burst seam: the owner
-// runtime's RoundBurst answers the same burst seatCostFor computes for the
-// binding — learned history when the role has it, class defaults on short
-// history — so a served round's MemoryHigh comes from its own cost file. A
-// runtime with no seam carries a nil one, which scopeFor reads as no
-// MemoryHigh (pinned on the relevo side).
+// TestRuntimeAtWiresRoundBurst pins the served MemoryHigh seam: a role with
+// learned history runs under half again its p90 burst, so only a runaway
+// round is throttled; a role with too little history runs under none, since a
+// guessed ceiling below the real peak only stalls the round. A runtime with
+// no seam carries a nil one, which scopeFor reads as no MemoryHigh (pinned on
+// the relevo side).
 func TestRuntimeAtWiresRoundBurst(t *testing.T) {
 	t.Parallel()
 
@@ -567,11 +568,17 @@ func TestRuntimeAtWiresRoundBurst(t *testing.T) {
 	}
 	reg := plannerAdmitRegistry(t, set)
 	repo := strings.Repeat("f", 64)
+	thin := strings.Repeat("1", 64)
 	root := t.TempDir()
 	for round := 1; round <= 10; round++ {
 		s := costSample{Base: int64(round) << 20, Burst: int64(round) << 30}
 		if _, err := appendCostSample(root, repo, "builder", "o/b", round, s); err != nil {
 			t.Fatalf("append: %v", err)
+		}
+	}
+	for round := 1; round < seatMinSamples; round++ {
+		if _, err := appendCostSample(root, thin, "builder", "o/t", round, costSample{Base: 1 << 20, Burst: 8 << 30}); err != nil {
+			t.Fatalf("append thin: %v", err)
 		}
 	}
 	s, err := New(Config{DB: testServeDB(t), Root: root, Now: time.Now, Registry: reg})
@@ -586,27 +593,46 @@ func TestRuntimeAtWiresRoundBurst(t *testing.T) {
 	bind := func(role, repoID string) store.Binding {
 		return store.Binding{Name: "x", Role: role, Serve: &store.ServeFacts{RepoID: repoID}}
 	}
-	cases := []struct {
+	if got, ok := rt.RoundBurst(bind("", repo)); !ok || got != 9<<30+9<<29 {
+		t.Errorf("learned: RoundBurst = %d, %v; want 1.5 x the p90 9GiB = %d, true", got, ok, int64(9<<30+9<<29))
+	}
+	for _, tc := range []struct {
 		name string
 		b    store.Binding
 	}{
-		{"history p90", bind("", repo)},
-		{"no history: builder defaults", bind("", strings.Repeat("0", 64))},
-		{"planner defaults", bind("lite-planner", repo)},
-		{"reviewer defaults", bind("reviewer", repo)},
-	}
-	for _, tc := range cases {
-		_, want := seatCostFor(root, reg, tc.b)
-		got, ok := rt.RoundBurst(tc.b)
-		if !ok || got != want {
-			t.Errorf("%s: RoundBurst = %d, %v; want %d, true", tc.name, got, ok, want)
+		{"no history", bind("", strings.Repeat("0", 64))},
+		{"thin history", bind("", thin)},
+		{"no serve facts", store.Binding{Name: "x"}},
+	} {
+		if got, ok := rt.RoundBurst(tc.b); ok || got != 0 {
+			t.Errorf("%s: RoundBurst = %d, %v; want 0, false (no MemoryHigh until learned)", tc.name, got, ok)
 		}
-	}
-	if _, burst := seatCostFor(root, reg, bind("", repo)); burst != 9<<30 {
-		t.Fatalf("fixture burst = %d, want p90 9<<30: the history rows drifted", burst)
 	}
 	if (relevo.Runtime{}).RoundBurst != nil {
 		t.Error("zero Runtime RoundBurst != nil: local rounds must carry no burst seam")
+	}
+}
+
+// TestRuntimeAtCarriesCPUTopology pins that the server's topology reader
+// reaches every owner runtime, where the round CPU picker reads it.
+func TestRuntimeAtCarriesCPUTopology(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	calls := 0
+	s, err := New(Config{DB: testServeDB(t), Root: root, Now: time.Now,
+		CPUTopology: func([]int) spawn.CPUTopology { calls++; return spawn.CPUTopology{} }})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	trackTmpRoot(t, s, filepath.Join(root, "bindings", "aaa"))
+	rt := s.runtimeAt(filepath.Join(root, "bindings", "aaa"))
+	if rt.CPUTopology == nil {
+		t.Fatal("CPUTopology = nil, want the server's reader")
+	}
+	rt.CPUTopology(nil)
+	if calls != 1 {
+		t.Errorf("server reader called %d times, want 1", calls)
 	}
 }
 

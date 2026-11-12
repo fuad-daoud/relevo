@@ -2129,3 +2129,71 @@ func TestAdmitPassCountsRoundsItStarted(t *testing.T) {
 		t.Fatalf("B Queue = %+v, want a memory hold behind the round the pass started", viewB.Queue)
 	}
 }
+
+// TestHostPressureIgnoresARoundsOwnThrottle pins the brake against a round
+// squeezed by its own MemoryHigh: that round's stall carries the slice's, so
+// it must not hold the queue, while a stall the throttled round does not
+// explain still does.
+func TestHostPressureIgnoresARoundsOwnThrottle(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		slice    string
+		round    string
+		events   string
+		outside  bool
+		wantHeld bool
+	}{
+		{name: "own throttle carries the stall", slice: "63.0", round: "55.0", events: "high 567212\n", wantHeld: false},
+		{name: "never over its own high", slice: "63.0", round: "60.0", events: "high 0\n", wantHeld: true},
+		{name: "throttled but a minor share", slice: "63.0", round: "20.0", events: "high 12\n", wantHeld: true},
+		{name: "throttled round outside the slice", slice: "63.0", round: "63.0", events: "high 12\n", outside: true, wantHeld: true},
+		{name: "no memory.events reads as not throttled", slice: "63.0", round: "63.0", events: "", wantHeld: true},
+		{name: "calm slice", slice: "4.0", round: "4.0", events: "high 12\n", wantHeld: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := writeCgroupTree(t, map[string]string{"memory.max": "13958643712\n", "memory.pressure": pressureBody(tc.slice)})
+			rdir := filepath.Join(dir, "round.scope")
+			if tc.outside {
+				rdir = t.TempDir()
+			}
+			if err := os.MkdirAll(rdir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(rdir, "memory.pressure"), []byte(pressureBody(tc.round)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if tc.events != "" {
+				if err := os.WriteFile(filepath.Join(rdir, "memory.events"), []byte("low 0\n"+tc.events+"max 0\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			fakeLiveInputs(t, nil, func(pid int) (string, error) {
+				if pid == 7 {
+					return rdir, nil
+				}
+				return "", errors.New("no cgroup")
+			}, nil)
+			if got := hostPressure(dir, []runningRound{{PID: 9}, {PID: 7}}); got != tc.wantHeld {
+				t.Errorf("hostPressure = %v, want %v", got, tc.wantHeld)
+			}
+		})
+	}
+
+	t.Run("admissionInputs uses it", func(t *testing.T) {
+		env := setupTestEnv(t)
+		dir := writeCgroupTree(t, map[string]string{"memory.max": "max\n", "memory.pressure": pressureBody("63.0")})
+		rdir := filepath.Join(dir, "round.scope")
+		if err := os.MkdirAll(rdir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for name, body := range map[string]string{"memory.pressure": pressureBody("60.0"), "memory.events": "high 3\n", "memory.stat": "anon 0\n"} {
+			if err := os.WriteFile(filepath.Join(rdir, name), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		fakeLiveInputs(t, func() (string, error) { return dir, nil }, func(int) (string, error) { return rdir, nil }, func() (int64, error) { return 16 << 30, nil })
+		if _, _, ok := env.srv.admissionInputs([]runningRound{{PID: 7}}); !ok {
+			t.Error("pressureOK = false, want true when the stall is the running round's own throttle")
+		}
+	})
+}
