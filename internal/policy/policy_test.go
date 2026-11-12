@@ -872,6 +872,61 @@ func TestServeScopeValidation(t *testing.T) {
 	}
 }
 
+// TestServeMemoryBudget pins serve.memory_budget: the systemd size grammar
+// loads, byte counts use binary units, and anything else is refused.
+func TestServeMemoryBudget(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		want int64
+	}{
+		{`{"serve":{"memory_budget":"512M"}}`, 512 << 20},
+		{`{"serve":{"memory_budget":"2G"}}`, 2 << 30},
+		{`{"serve":{"memory_budget":"1024"}}`, 1024},
+		{`{"serve":{"memory_budget":"1T"}}`, 1 << 40},
+		{`{"serve":{"memory_budget":"8388607T"}}`, 8388607 << 40},
+		{`{"serve":{"memory_budget":"1K"}}`, 1 << 10},
+		{`{"serve":{"memory_budget":"0"}}`, 0},
+		{`{}`, 0},
+	} {
+		t.Run(tc.body, func(t *testing.T) {
+			p, err := load(t, tc.body)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if got := p.ServeMemoryBudgetBytes(); got != tc.want {
+				t.Errorf("ServeMemoryBudgetBytes() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+
+	for _, budget := range []string{"512x", "1.5G", "-1G", "G"} {
+		t.Run("bad/"+budget, func(t *testing.T) {
+			_, err := load(t, fmt.Sprintf(`{"serve":{"memory_budget":%q}}`, budget))
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !errors.Is(err, ErrBadPolicy) {
+				t.Fatalf("error %v does not wrap ErrBadPolicy", err)
+			}
+			if !strings.Contains(err.Error(), "serve.memory_budget") {
+				t.Errorf("error %q does not mention serve.memory_budget", err.Error())
+			}
+		})
+	}
+
+	// A budget that fits the grammar but not an int64 reads as no override,
+	// never a wrapped product.
+	for _, budget := range []string{"99999999999999999999", "9999999999T"} {
+		if got := (Policy{Serve: &ServePolicy{MemoryBudget: budget}}).ServeMemoryBudgetBytes(); got != 0 {
+			t.Errorf("ServeMemoryBudgetBytes(%q) = %d, want 0", budget, got)
+		}
+	}
+
+	if got := (Policy{}).ServeMemoryBudgetBytes(); got != 0 {
+		t.Errorf("Policy{}.ServeMemoryBudgetBytes() = %d, want 0", got)
+	}
+}
+
 // TestScopeQuotaValidation pins cpu_quota in both scope blocks.
 func TestScopeQuotaValidation(t *testing.T) {
 	blocks := []struct {

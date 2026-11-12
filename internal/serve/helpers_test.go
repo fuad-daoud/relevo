@@ -22,6 +22,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/isolate"
+	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/spawn"
@@ -439,6 +440,27 @@ func setupTestEnv(t *testing.T, cfgOpts ...func(*Config)) *testEnv {
 	}
 	for _, opt := range cfgOpts {
 		opt(&srvCfg)
+	}
+	if srvCfg.Policy.ServeMemoryBudgetBytes() == 0 {
+		// A budget no real round can fill: the memory gate reads live host
+		// state, so a zero budget would let a loaded sandbox hold rounds
+		// these tests expect to start. Tests that pin the gate set their
+		// own budget, which this leaves alone.
+		if srvCfg.Policy.Serve == nil {
+			srvCfg.Policy.Serve = &policy.ServePolicy{}
+		}
+		srvCfg.Policy.Serve.MemoryBudget = "1T"
+	}
+	if srvCfg.MaxBuilders == 0 && (srvCfg.Policy.Serve == nil || srvCfg.Policy.Serve.MaxBuilders == nil) {
+		// A ceiling no test reaches by accident: the default is NumCPU-1, so
+		// a test that starts three rounds would hit it on a three-core CI
+		// runner and pass only on larger hosts. Tests that pin the ceiling
+		// set their own, which this leaves alone.
+		if srvCfg.Policy.Serve == nil {
+			srvCfg.Policy.Serve = &policy.ServePolicy{}
+		}
+		ceiling := 8
+		srvCfg.Policy.Serve.MaxBuilders = &ceiling
 	}
 	srv, err := New(srvCfg)
 	if err != nil {
