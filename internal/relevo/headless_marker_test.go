@@ -218,3 +218,34 @@ func TestReconcileHoldsMarkerCloseOnLivenessError(t *testing.T) {
 		t.Errorf("queued %d report entries, want none while held", n)
 	}
 }
+
+// TestReconcileClosesMarkedRoundWhenGateFinishesDespiteLiveRunner pins the
+// running-gate bypass: a gate already running owns the close, so the rusage
+// wait must not sit in front of it even with the builder still alive.
+func TestReconcileClosesMarkedRoundWhenGateFinishesDespiteLiveRunner(t *testing.T) {
+	t.Parallel()
+
+	rt, b, fr := markedWriterRound(t, baseTime)
+	fr.script(b.Builder.PID, true)
+	b.Gate = "make check"
+	b.GateRun = &store.GateRun{PID: 9001, StartedAt: baseTime.Unix(), Round: b.Round, Command: "make check"}
+	fr.script(9001, false)
+	fr.exit(9001, 0)
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Fatalf("round = %d, want 2: the finished gate closes the round", got.Round)
+	}
+	if got.GateRun != nil {
+		t.Errorf("GateRun = %+v, want nil after the round closes", got.GateRun)
+	}
+	if n := reportCount(t, rt, 1); n != 1 {
+		t.Fatalf("round 1 report entries = %d, want 1", n)
+	}
+	if entry := roundReport(t, rt, 1); entry.Gate == nil || entry.Gate.Result != "pass" {
+		t.Errorf("report entry Gate = %+v, want Result pass", entry.Gate)
+	}
+}
