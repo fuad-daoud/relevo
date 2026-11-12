@@ -555,6 +555,9 @@ func TestResolveScopeDropsAffinityOnly(t *testing.T) {
 		probes++
 		return errors.New("taskset -c 0,1: taskset not found")
 	}
+	stubDir := t.TempDir()
+	writeStub(t, stubDir, acceptingStub)
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	scope := &spawn.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "0,1", AffinityCPUs: "0,1"}
 	before := *scope
 	got := r.resolveScope(context.Background(), spawn.ProcSpec{Scope: scope})
@@ -611,6 +614,9 @@ func TestResolveScopeSkipsAffinityProbeWithoutAffinity(t *testing.T) {
 		t.Error("affinity probe ran without AffinityCPUs; want no probe")
 		return errors.New("must not run")
 	}
+	stubDir := t.TempDir()
+	writeStub(t, stubDir, acceptingStub)
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	scope := &spawn.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "0,1"}
 	got := r.resolveScope(context.Background(), spawn.ProcSpec{Scope: scope})
 	if got.Scope == nil || got.Scope.AllowedCPUs != "0,1" {
