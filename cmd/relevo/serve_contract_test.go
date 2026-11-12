@@ -112,14 +112,15 @@ func TestServeContractStatusJSON(t *testing.T) {
 	}
 
 	// `serve status` reads the machine's policy from XDG_CONFIG_HOME; give it
-	// one whose builder cap is not the machine's NumCPU default.
+	// one whose builder cap is not the machine's NumCPU default and whose
+	// memory budget does not read the host, which macOS has no cgroup for.
 	configHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", configHome)
 	policyDir := filepath.Join(configHome, "relevo")
 	if err := os.MkdirAll(policyDir, 0o755); err != nil {
 		t.Fatalf("mkdir policy dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(policyDir, "policy.json"), []byte(`{"serve":{"max_builders":7}}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(policyDir, "policy.json"), []byte(`{"serve":{"max_builders":7,"memory_budget":"64G"}}`), 0o644); err != nil {
 		t.Fatalf("write policy.json: %v", err)
 	}
 
@@ -130,8 +131,8 @@ func TestServeContractStatusJSON(t *testing.T) {
 		t.Fatalf("run serve status --json: %v (stderr: %s)", err, string(stderr))
 	}
 
-	// The runners view carries the pass's own seat budget and K, which the
-	// golden pins only as keys: the budget reads the machine's memory.
+	// The runners view carries the pass's own seat budget and K: the budget
+	// is the policy's, and K is the cold start with no history.
 	var doc struct {
 		Runners struct {
 			BudgetBytes int64 `json:"budget_bytes"`
@@ -141,11 +142,11 @@ func TestServeContractStatusJSON(t *testing.T) {
 	if err := json.Unmarshal(stdout, &doc); err != nil {
 		t.Fatalf("unmarshal serve status: %v", err)
 	}
-	if doc.Runners.BudgetBytes <= 0 {
-		t.Errorf("runners budget_bytes = %d, want the pass's live budget", doc.Runners.BudgetBytes)
+	if doc.Runners.BudgetBytes != 64<<30 {
+		t.Errorf("runners budget_bytes = %d, want the policy's 64GiB", doc.Runners.BudgetBytes)
 	}
-	if doc.Runners.K < 1 {
-		t.Errorf("runners k = %d, want at least one", doc.Runners.K)
+	if doc.Runners.K != 2 {
+		t.Errorf("runners k = %d, want the cold-start 2", doc.Runners.K)
 	}
 
 	// Normalize dynamic values (temp cwd paths and generated owner ClientIDs)
