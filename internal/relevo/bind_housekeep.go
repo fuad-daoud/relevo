@@ -3,6 +3,7 @@ package relevo
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
@@ -50,7 +51,7 @@ func HousekeepDeps(rt Runtime) housekeep.Deps {
 		NotQueued:       ErrNotQueued,
 		AllowedCPUs:     housekeepAllowedCPUs(rt),
 		RoundCPUs:       housekeepRoundCPUs(rt),
-		HeldCPUs:        rt.HeldCPUs,
+		HeldCPUs:        housekeepHeldCPUs(rt),
 		Topology:        rt.CPUTopology,
 		Scope:           rt.Scope,
 		UnitName:        scopeUnitName,
@@ -89,6 +90,29 @@ func housekeepRoundCPUs(rt Runtime) int {
 		return 0
 	}
 	return rt.Scope.RoundCPUs
+}
+
+// housekeepHeldCPUs is the core census AssignRoundCPU counts against: the
+// runtime's own when one is set, else the local census plus the members with
+// a running chain check, read through the caller's transaction. An unreadable
+// open-check list counts as none, the way a failed census leaves a round
+// unpinned rather than failing it.
+func housekeepHeldCPUs(rt Runtime) func(*store.Tx, string) ([]int, error) {
+	if rt.HeldCPUs != nil {
+		return rt.HeldCPUs
+	}
+	return func(tx *store.Tx, self string) ([]int, error) {
+		bindings, err := tx.List()
+		if err != nil {
+			return nil, err
+		}
+		open, err := OpenCheckMembers(tx)
+		if err != nil {
+			slog.Warn("cpu census: open chain checks unreadable; counting none", "err", err)
+			open = nil
+		}
+		return housekeep.HeldInChecks(bindings, self, open), nil
+	}
 }
 
 // housekeepScopeProber is the runner's journal probe when it has one: a runner

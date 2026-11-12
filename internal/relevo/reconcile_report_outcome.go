@@ -392,8 +392,8 @@ func advanceToNextRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 	// consult, when there is one, is already running.
 	b.RoundVerify = false
 	b.RoundTier = ""
-	b.RoundCPU = nil
-	b.RoundCPUs = nil
+	// A check after the close runs on the round's set, so it survives the
+	// advance; liveness, not the field, decides what the census counts.
 	b.RoundBaselineTree = ""
 	b.RoundClosedBaselineHead = b.RoundBaselineHead
 	b.RoundBaselineHead = ""

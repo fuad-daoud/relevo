@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -116,8 +117,17 @@ func TestChainCheckGreenOnExitZero(t *testing.T) {
 	if spec.Scope.GateCPUQuota != "" {
 		t.Errorf("Scope.GateCPUQuota = %q, want it zeroed", spec.Scope.GateCPUQuota)
 	}
-	if spec.Scope.AllowedCPUs != "0-3" {
-		t.Errorf("Scope.AllowedCPUs = %q, want the template's pool, not a pinned core", spec.Scope.AllowedCPUs)
+	// The member kept no set, so the start assigns a fresh one through the
+	// census and the check runs pinned to it rather than the whole pool.
+	member, err := rt.Store.Load(c.Builder)
+	if err != nil {
+		t.Fatalf("Load member: %v", err)
+	}
+	if want := housekeep.RoundPinText(member); want == "" || spec.Scope.AllowedCPUs != want {
+		t.Errorf("Scope.AllowedCPUs = %q, want the member's fresh set %q", spec.Scope.AllowedCPUs, want)
+	}
+	if spec.Scope.AffinityCPUs != spec.Scope.AllowedCPUs {
+		t.Errorf("Scope.AffinityCPUs = %q, want the same pin %q", spec.Scope.AffinityCPUs, spec.Scope.AllowedCPUs)
 	}
 
 	pid := fr.handles[0].PID

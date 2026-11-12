@@ -666,8 +666,9 @@ func TestScopeUnitNameFor(t *testing.T) {
 // carries the template's other fields, a gate uses GateCPUQuota when set and
 // falls back to CPUQuota when not, the returned spec always zeroes
 // GateCPUQuota and RoundCPUs, a pin overrides AllowedCPUs only when the
-// template names a pool, only a round carries AffinityCPUs, only a round with
-// a positive burst carries MemoryHigh, and the template is never mutated.
+// template names a pool, only a round or gate carries AffinityCPUs, only a
+// round with a positive burst carries MemoryHigh, and the template is never
+// mutated.
 func TestScopeFor(t *testing.T) {
 	t.Parallel()
 
@@ -779,8 +780,8 @@ func TestScopeFor(t *testing.T) {
 		}
 	})
 
-	t.Run("only a round carries affinity", func(t *testing.T) {
-		for _, kind := range []scopeKind{scopeGate, scopeConsult, scopeVerify} {
+	t.Run("only rounds and gates carry affinity", func(t *testing.T) {
+		for _, kind := range []scopeKind{scopeConsult, scopeVerify} {
 			tmpl := base
 			tmpl.AllowedCPUs = "0-3"
 			rt := Runtime{Scope: &tmpl}
@@ -788,10 +789,21 @@ func TestScopeFor(t *testing.T) {
 				t.Errorf("%s AffinityCPUs = %+v, want empty", kind, got)
 			}
 		}
+		for _, kind := range []scopeKind{scopeRound, scopeGate} {
+			tmpl := base
+			tmpl.AllowedCPUs = "0-3"
+			rt := Runtime{Scope: &tmpl}
+			if got := scopeFor(rt, store.Binding{}, kind, "unit", "0,1"); got == nil || got.AffinityCPUs != "0,1" {
+				t.Errorf("%s AffinityCPUs = %+v, want the pin 0,1", kind, got)
+			}
+		}
 		tmpl := base
 		tmpl.AllowedCPUs = "0-3"
 		if got := scopeFor(Runtime{Scope: &tmpl}, store.Binding{}, scopeRound, "unit", ""); got == nil || got.AffinityCPUs != "" {
 			t.Errorf("round with cpus=\"\" AffinityCPUs = %+v, want empty", got)
+		}
+		if got := scopeFor(Runtime{Scope: &tmpl}, store.Binding{}, scopeGate, "unit", ""); got == nil || got.AffinityCPUs != "" {
+			t.Errorf("gate with cpus=\"\" AffinityCPUs = %+v, want empty", got)
 		}
 	})
 

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/spawn"
@@ -641,5 +642,38 @@ func TestTickServedChecksLoadsOnlyCheckBindings(t *testing.T) {
 	}
 	if got.CheckRun == nil || got.CheckRun.Result != "pass" {
 		t.Fatalf("CheckRun after the sweep = %+v, want the run settled as pass", got.CheckRun)
+	}
+}
+
+// TestServedCheckRunsOnTheBindingsWholeSet pins that a served check runs on
+// the binding's whole CPU set, not a single core: without a pool the set
+// travels as affinity only, and the fresh set is saved on the binding.
+//
+// Mutation check: pin the spec from CPUPinText and the affinity reads empty.
+func TestServedCheckRunsOnTheBindingsWholeSet(t *testing.T) {
+	t.Parallel()
+
+	rt, _, fr := servedCheckEnv(t)
+	startCheck(t, rt, remote.CreateCheckRequest{ID: "c1", Command: "make check"})
+
+	if len(fr.specs) != 1 {
+		t.Fatalf("Start calls = %d, want 1", len(fr.specs))
+	}
+	scope := fr.specs[0].Scope
+	if scope == nil {
+		t.Fatal("check spec.Scope = nil, want a scope from the template")
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(b.RoundCPUs) == 0 {
+		t.Fatal("member RoundCPUs empty, want the fresh set saved on the binding")
+	}
+	if want := housekeep.RoundPinText(b); scope.AffinityCPUs != want {
+		t.Errorf("check Scope.AffinityCPUs = %q, want the binding's whole set %q", scope.AffinityCPUs, want)
+	}
+	if scope.AllowedCPUs != "" {
+		t.Errorf("check Scope.AllowedCPUs = %q, want empty without a pool", scope.AllowedCPUs)
 	}
 }

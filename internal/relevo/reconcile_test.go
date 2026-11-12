@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/hooks"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/spawn"
@@ -2643,5 +2644,36 @@ func TestReconcileLeavesAnUnknownStateAlone(t *testing.T) {
 	if len(fr.specs) != started || len(fr.kills) != killed {
 		t.Errorf("Reconcile called the runner for an unknown-state binding: specs %d->%d, kills %d->%d",
 			started, len(fr.specs), killed, len(fr.kills))
+	}
+}
+
+// TestCloseKeepsTheRoundsSet pins that advancing past a closed round keeps
+// its CPU set for the check after the close, while the census no longer
+// counts it: a closed round has no live process and no gate run, so only
+// liveness decides what is held.
+//
+// Mutation check: restore the RoundCPU/RoundCPUs clears in advanceToNextRound
+// and the kept-set assertion goes red.
+func TestCloseKeepsTheRoundsSet(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	closed := store.Binding{Name: "webshop", Round: 1, RoundCPUs: []int{0, 1}}
+	live := store.Binding{Name: "other", Round: 1, RoundCPUs: []int{2}, Builder: store.Endpoint{PID: 4242}}
+
+	var advanced store.Binding
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		var err error
+		advanced, err = advanceToNextRound(context.Background(), rt, tx, closed, nil, pathscope.Verdict{}, &queueReportState{})
+		return err
+	})
+	if err != nil {
+		t.Fatalf("advanceToNextRound: %v", err)
+	}
+	if len(advanced.RoundCPUs) != 2 || advanced.RoundCPUs[0] != 0 || advanced.RoundCPUs[1] != 1 {
+		t.Errorf("RoundCPUs after the close = %v, want the round's set [0 1]", advanced.RoundCPUs)
+	}
+	if got := housekeep.HeldIn([]store.Binding{advanced, live}, "probe"); len(got) != 1 || got[0] != 2 {
+		t.Errorf("HeldIn = %v, want only the live round's [2]", got)
 	}
 }

@@ -65,6 +65,34 @@ func (d *DB) ChainCheckGet(id string, run int) (ChainCheckRow, bool, error) {
 	return c, true, nil
 }
 
+// ChainCheckOpen returns every check row still running for owner's chains: a
+// row with no result and a recorded process. Settled rows and rows whose
+// process was never recorded are not running. A database that predates the
+// check table reads as none.
+func (d *DB) ChainCheckOpen(owner string) ([]ChainCheckRow, error) {
+	if !d.hasChainCustom() {
+		return nil, nil
+	}
+	rows, err := d.sqlDB.QueryContext(context.Background(),
+		`SELECT cc.chain_id, cc.run, cc.step, cc.visit, cc.command, cc.pid,
+			cc.started_at, cc.attempt, cc.result, cc.exit_code, cc.duration_ms,
+			cc.log, cc.note, cc.created_at
+		FROM chain_check cc JOIN chains ch ON ch.id = cc.chain_id
+		WHERE ch.origin IN (?, '') AND ch.owner = ? AND cc.result = '' AND cc.pid != 0`,
+		d.origin, owner)
+	if isMissingTable(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("db: chain check open %s: %w", owner, mapBusy(err))
+	}
+	out, err := collectRows(rows, scanChainCheck)
+	if err != nil {
+		return nil, fmt.Errorf("db: chain check open %s: %w", owner, mapBusy(err))
+	}
+	return out, nil
+}
+
 // ChainCheckNextRun returns the next run number for chain id. The count rises
 // with every recorded run, so a re-run never reuses a number.
 func (t *Tx) ChainCheckNextRun(id string) (int, error) {

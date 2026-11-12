@@ -96,9 +96,11 @@ online CPU. The pick spreads rounds across physical cores before it uses a
 core's second thread, and takes faster cores first on a host whose cores
 differ in speed; when every CPU is held, a round shares the least-held ones
 and stays pinned. A round runs unpinned only when the pool has fewer CPUs
-than `round_cpus`. With an `allowed_cpus` pool the gate runs on its round's
-CPUs, while a consult and the verify reviewer run on the whole pool; without
-one they run unpinned. An `allowed_cpus` pool is also set as
+than `round_cpus`. The gate runs on its round's CPUs, with or without a
+pool. A chain check runs on its builder member's last set -- or a fresh one
+when the member kept none -- and holds it while the check runs. A consult
+and the verify reviewer stay on the whole pool; without one they run
+unpinned. An `allowed_cpus` pool is also set as
 the scope's cpuset, which needs `cpuset` delegated to your user manager
 through a root drop-in on `user@.service`; `relevo doctor` checks this, and
 if systemd refuses it, relevo logs one warning and keeps the `taskset` pin.

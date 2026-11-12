@@ -185,6 +185,7 @@ func TestGateStepScopesTheGate(t *testing.T) {
 		rt.Runner = fr
 		rt.Scope = &spawn.ScopeSpec{CPUWeight: 100, CPUQuota: "150%", AllowedCPUs: "0-3"}
 		two := 2
+		b.RoundCPUs = nil
 		b.RoundCPU = &two
 		b.Gate = "make check"
 		if err := rt.Store.Save(b); err != nil {
@@ -198,6 +199,71 @@ func TestGateStepScopesTheGate(t *testing.T) {
 		}
 		if got := fr.specs[0].Scope.AllowedCPUs; got != "2" {
 			t.Errorf("gate Scope.AllowedCPUs = %q, want the round's core 2", got)
+		}
+	})
+
+	// The gate runs on its round's whole set: without a pool the set
+	// travels as affinity only, with a pool as both the cpuset and the
+	// affinity, and GOMAXPROCS derives from the set's size.
+	t.Run("no pool carries the set as affinity only", func(t *testing.T) {
+		fr := newFakeRunner()
+		rt, b := sentBinding(t)
+		rt.Runner = fr
+		rt.Scope = &spawn.ScopeSpec{CPUWeight: 100, CPUQuota: "150%"}
+		b.RoundCPUs = []int{0, 1}
+		b.Gate = "make check"
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+
+		runGate(t, rt, b)
+
+		if len(fr.specs) != 1 {
+			t.Fatalf("specs = %+v, want one Start", fr.specs)
+		}
+		scope := fr.specs[0].Scope
+		if scope == nil {
+			t.Fatal("gate spec.Scope = nil, want a scope from the template")
+		}
+		if scope.AffinityCPUs != "0,1" {
+			t.Errorf("gate Scope.AffinityCPUs = %q, want the round's set 0,1", scope.AffinityCPUs)
+		}
+		if scope.AllowedCPUs != "" {
+			t.Errorf("gate Scope.AllowedCPUs = %q, want empty without a pool", scope.AllowedCPUs)
+		}
+		if n, ok := spawn.GoMaxProcsFor(*scope); !ok || n != 2 {
+			t.Errorf("GoMaxProcsFor = %d, %v; want 2, true from the set", n, ok)
+		}
+	})
+
+	t.Run("a pool carries the set as cpuset and affinity", func(t *testing.T) {
+		fr := newFakeRunner()
+		rt, b := sentBinding(t)
+		rt.Runner = fr
+		rt.Scope = &spawn.ScopeSpec{CPUWeight: 100, CPUQuota: "150%", AllowedCPUs: "0-3"}
+		b.RoundCPUs = []int{0, 1}
+		b.Gate = "make check"
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+
+		runGate(t, rt, b)
+
+		if len(fr.specs) != 1 {
+			t.Fatalf("specs = %+v, want one Start", fr.specs)
+		}
+		scope := fr.specs[0].Scope
+		if scope == nil {
+			t.Fatal("gate spec.Scope = nil, want a scope from the template")
+		}
+		if scope.AffinityCPUs != "0,1" {
+			t.Errorf("gate Scope.AffinityCPUs = %q, want the round's set 0,1", scope.AffinityCPUs)
+		}
+		if scope.AllowedCPUs != "0,1" {
+			t.Errorf("gate Scope.AllowedCPUs = %q, want the round's set 0,1", scope.AllowedCPUs)
+		}
+		if n, ok := spawn.GoMaxProcsFor(*scope); !ok || n != 2 {
+			t.Errorf("GoMaxProcsFor = %d, %v; want 2, true from the set", n, ok)
 		}
 	})
 }

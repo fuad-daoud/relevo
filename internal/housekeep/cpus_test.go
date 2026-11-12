@@ -130,14 +130,16 @@ func TestHeldIn(t *testing.T) {
 
 	zero, one := 0, 1
 	bindings := []store.Binding{
-		{Name: "self", RoundCPU: &one, Builder: store.Endpoint{PID: 42}},  // excluded: self
-		{Name: "live", RoundCPU: &zero, Builder: store.Endpoint{PID: 42}}, // included
-		{Name: "gated", RoundCPU: &one, GateRun: &store.GateRun{PID: 7}},  // included: gate running
-		{Name: "dead", RoundCPU: &one},                                    // excluded: PID 0, no gate
-		{Name: "unpinned", Builder: store.Endpoint{PID: 42}},              // excluded: nil RoundCPU
-		{Name: "gated-unpinned", GateRun: &store.GateRun{PID: 7}},         // excluded: nil RoundCPU
+		{Name: "self", RoundCPU: &one, Builder: store.Endpoint{PID: 42}},                            // excluded: self
+		{Name: "live", RoundCPU: &zero, Builder: store.Endpoint{PID: 42}},                           // included
+		{Name: "gated", RoundCPU: &one, GateRun: &store.GateRun{PID: 7}},                            // included: gate running
+		{Name: "checked", RoundCPU: &zero, CheckRun: &store.CheckRun{ID: "c1"}},                     // included: served check running
+		{Name: "checked-done", RoundCPU: &one, CheckRun: &store.CheckRun{ID: "c2", Result: "pass"}}, // excluded: check settled
+		{Name: "dead", RoundCPU: &one},                                                              // excluded: PID 0, no gate
+		{Name: "unpinned", Builder: store.Endpoint{PID: 42}},                                        // excluded: nil RoundCPU
+		{Name: "gated-unpinned", GateRun: &store.GateRun{PID: 7}},                                   // excluded: nil RoundCPU
 	}
-	want := []int{0, 1}
+	want := []int{0, 1, 0}
 	if got := HeldIn(bindings, "self"); !reflect.DeepEqual(got, want) {
 		t.Errorf("HeldIn = %v, want %v", got, want)
 	}
@@ -161,6 +163,27 @@ func TestHeldInWithLists(t *testing.T) {
 	want := []int{0, 1, 1, 2, 2}
 	if got := HeldIn(bindings, "self"); !reflect.DeepEqual(got, want) {
 		t.Errorf("HeldIn = %v, want %v", got, want)
+	}
+}
+
+// TestHeldInChecks pins the chain-check census: a binding named in the map
+// holds its set even with no live round of its own, while self stays
+// excluded and an empty map reads exactly as HeldIn.
+func TestHeldInChecks(t *testing.T) {
+	t.Parallel()
+
+	bindings := []store.Binding{
+		{Name: "self", RoundCPUs: []int{0}, Builder: store.Endpoint{PID: 42}}, // excluded: self, even checked
+		{Name: "member", RoundCPUs: []int{0, 1}},                              // included: named, though idle
+		{Name: "live", RoundCPUs: []int{2}, Builder: store.Endpoint{PID: 42}}, // included: live
+		{Name: "dead", RoundCPUs: []int{3}},                                   // excluded: idle and unnamed
+	}
+	checks := map[string]int{"member": 4321, "self": 4322}
+	if got, want := HeldInChecks(bindings, "self", checks), []int{0, 1, 2}; !reflect.DeepEqual(got, want) {
+		t.Errorf("HeldInChecks = %v, want %v", got, want)
+	}
+	if got, want := HeldInChecks(bindings, "self", nil), HeldIn(bindings, "self"); !reflect.DeepEqual(got, want) {
+		t.Errorf("HeldInChecks(nil) = %v, want HeldIn %v", got, want)
 	}
 }
 
