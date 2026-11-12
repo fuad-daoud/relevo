@@ -394,8 +394,13 @@ func chainPullInstallRounds(ctx context.Context, rt Runtime, mv remote.ChainMemb
 			}
 		}
 		cur.Builder.RemoteStatus = string(mv.View.RoundState)
-		cur.Builder.RemoteQueue = nil
-		cur.Builder.RemoteLive = nil
+		// A queued or running round's facts are the poll's: the chain view
+		// carries neither the queue nor the live numbers, so clearing them here
+		// would undo the poll's write on every tick and resync the shared row.
+		if mv.View.RoundState != remote.RoundQueued && mv.View.RoundState != remote.RoundRunning {
+			cur.Builder.RemoteQueue = nil
+			cur.Builder.RemoteLive = nil
+		}
 		return chainPullSaveIfChanged(tx, snap, cur)
 	})
 }
