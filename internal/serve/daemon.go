@@ -64,6 +64,16 @@ func (s *Server) Tick(ctx context.Context) error {
 		slog.Warn("collect settled failed", "err", err)
 	}
 	s.pruneUnusedRepos(ctx)
+	// The bursting sample rides one fresh census under the same hold, so the
+	// count matches the running set admission decides against. A history
+	// write failure only warns: admission must not fail because history did.
+	c, cerr := s.census()
+	if cerr != nil {
+		slog.Warn("bursting census failed", "err", cerr)
+	}
+	if err := appendKSample(s.cfg.Root, s.sampleBursting(c), s.cfg.Now()); err != nil {
+		slog.Warn("k-history append failed", "err", err)
+	}
 	if err := s.admitLocked(ctx); err != nil {
 		slog.Warn("admit failed", "err", err)
 	}

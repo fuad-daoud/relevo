@@ -224,7 +224,23 @@ func (s *Server) admissionInputs(running []runningRound) (budget int64, k int, p
 			pressureOK = avg < pressureMaxAvg10
 		}
 	}
-	k = estimateK(nil, s.cap()+s.plannerCap())
+	// K rides the bursting-count history, so the burst term tracks live
+	// parallelism instead of the cold-start 2. An unreadable file reads as no
+	// history: the pass keeps its old K rather than failing.
+	var counts []int
+	if samples, err := loadKHistory(s.cfg.Root); err != nil {
+		slog.Warn("k-history unreadable, using no counts", "err", err)
+	} else {
+		counts = kCounts(samples)
+	}
+	// A thin history reads as no history: one quiet tick is not evidence of
+	// low parallelism, the same way lookupSeat sits on its defaults below
+	// seatMinSamples. Without this the first tick's zero would collapse the
+	// cold-start K before any round ever burst.
+	if len(counts) < seatMinSamples {
+		counts = nil
+	}
+	k = estimateK(counts, s.cap()+s.plannerCap())
 	return budget, k, pressureOK
 }
 
