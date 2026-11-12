@@ -301,6 +301,41 @@ func TestStartRoundRecordsTheHandleAndTheLogPath(t *testing.T) {
 	}
 }
 
+// TestStartRoundStampsTheRoundsBurstOnTheScope pins the round path's own
+// forwarding: the burst seam prices the round from its binding, so
+// buildSpawnProcSpec must hand scopeFor the round's binding -- an empty one
+// would price nothing and silently leave the default ceiling. The TestScopeFor
+// table only pins what scopeFor does with the binding it is given.
+func TestStartRoundStampsTheRoundsBurstOnTheScope(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := seedHeadless(t, fr)
+	tmpl := spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 150, MemoryMax: "2G", CPUQuota: "150%", TasksMax: 64}
+	rt.Scope = &tmpl
+	var seen store.Binding
+	rt.RoundBurst = func(got store.Binding) (int64, bool) {
+		seen = got
+		return 5 << 30, true
+	}
+	if _, err := startRound(context.Background(), rt, nil, b, "the prompt", false); err != nil {
+		t.Fatalf("startRound: %v", err)
+	}
+	if len(fr.specs) != 1 {
+		t.Fatalf("specs = %+v, want one Start", fr.specs)
+	}
+	spec := fr.specs[0]
+	if spec.Scope == nil {
+		t.Fatal("spec.Scope = nil, want the round scope stamped with the burst")
+	}
+	if spec.Scope.MemoryHigh != "5368709120" {
+		t.Errorf("spec.Scope.MemoryHigh = %q, want the burst 5<<30 in plain bytes", spec.Scope.MemoryHigh)
+	}
+	if seen.Name != "webshop" || seen.Round != b.Round || seen.BuilderCandidate != b.BuilderCandidate {
+		t.Errorf("burst seam saw %+v, want the round's own binding", seen)
+	}
+}
+
 func TestStartRoundOnTheSameRoundKeepsTheCursor(t *testing.T) {
 	t.Parallel()
 
