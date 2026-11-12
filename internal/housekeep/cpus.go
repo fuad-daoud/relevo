@@ -218,12 +218,11 @@ func AssignRoundCPU(deps Deps, tx *store.Tx, b store.Binding) store.Binding {
 		return b
 	}
 
-	topo := spawn.CPUTopology{}
-	if deps.Topology == nil {
-		topo = spawn.ReadCPUTopology("/sys/devices/system/cpu", pool)
-	} else {
-		topo = deps.Topology(pool)
+	readTopology := deps.Topology
+	if readTopology == nil {
+		readTopology = func(p []int) spawn.CPUTopology { return spawn.ReadCPUTopology("/sys/devices/system/cpu", p) }
 	}
+	topo := readTopology(pool)
 	set, ok := pickCPUSet(pool, held, size, topo)
 	if !ok {
 		slog.Warn("cpu pool too small; round runs on the whole pool", "binding", b.Name, "round", b.Round, "pool", deps.AllowedCPUs, "held", len(held))
