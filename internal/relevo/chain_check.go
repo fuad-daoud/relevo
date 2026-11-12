@@ -300,6 +300,7 @@ func chainAdvanceCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 	if err := tx.ChainCheckPut(c.Name, row); err != nil {
 		return "", row.Log, err
 	}
+	foldChainCheckCost(rt, tx, c, rec.Rusage)
 	return chainCheckResult(row.Result), row.Log, nil
 }
 

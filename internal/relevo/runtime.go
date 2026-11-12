@@ -365,6 +365,11 @@ type Runtime struct {
 	// unchanged.
 	CloseServedRound func(ctx context.Context, rt Runtime, b store.Binding) store.Binding
 
+	// FoldCheckCost folds a settled check's measurement into its round's cost
+	// sample, raising the sample's burst to the max. Nil on runtimes without
+	// a cost root, so the local daemon records nothing.
+	FoldCheckCost func(b store.Binding, closedRound int, r *store.Rusage)
+
 	// CostRoot is the serve root the cost history lives under; empty
 	// disables recording.
 	CostRoot string

@@ -343,7 +343,8 @@ func TestCloseServedRoundRecordsCost(t *testing.T) {
 	if cf.LastRound != 1 || len(cf.Samples) != 1 {
 		t.Fatalf("cost file = last %d samples %d, want 1 and 1", cf.LastRound, len(cf.Samples))
 	}
-	if cf.Samples[0] != (costSample{Base: base, Burst: burst, At: at}) {
+	want := costSample{Base: base, Burst: burst, Binding: string(env.id) + "/api", Round: 1, At: at}
+	if cf.Samples[0] != want {
 		t.Fatalf("sample = %+v, want base %d burst %d at %v", cf.Samples[0], base, burst, at)
 	}
 
@@ -401,7 +402,8 @@ func TestCloseServedRoundBranchlessReaderRecordsCost(t *testing.T) {
 	if cf.LastRound != 1 || len(cf.Samples) != 1 {
 		t.Fatalf("cost file = last %d samples %d, want 1 and 1", cf.LastRound, len(cf.Samples))
 	}
-	if cf.Samples[0] != (costSample{Base: base, Burst: burst, At: at}) {
+	want := costSample{Base: base, Burst: burst, Binding: string(env.id) + "/api", Round: 1, At: at}
+	if cf.Samples[0] != want {
 		t.Fatalf("sample = %+v, want base %d burst %d at %v", cf.Samples[0], base, burst, at)
 	}
 }

@@ -341,17 +341,29 @@ func (s *Server) census() (census, error) {
 	c.PlannerCap = s.plannerCap()
 	reg := s.live().Registry
 	firstErr := s.walkOwners(func(id remote.ClientID, ownerPath string, bindings []store.Binding) {
+		// counted names the bindings already holding a running seat, so an
+		// open check against one of them does not count a second seat.
+		counted := make(map[string]bool, len(bindings))
 		for _, b := range bindings {
 			planner := relevo.IsPlannerRound(reg, b)
-			switch {
-			case relevo.LiveBuilder(b):
+			switch pid, ok := relevo.RunningPID(b); {
+			case ok:
 				base, burst := seatCostFor(s.cfg.Root, reg, b)
-				c.RunningRounds = append(c.RunningRounds, runningRound{PID: b.Builder.PID, Planner: planner, Base: base, Burst: burst})
+				c.RunningRounds = append(c.RunningRounds, runningRound{PID: pid, Planner: planner, Base: base, Burst: burst})
 				if planner {
 					c.PlannersRunning++
 				} else {
 					c.Running++
 				}
+				counted[b.Name] = true
+			case b.CheckRun != nil && !b.CheckRun.Settled():
+				// A served check runs after its round closed, on the
+				// binding's own CPUs: it holds a builder seat, never a
+				// planner one, the way a chain check does.
+				base, burst := seatCostFor(s.cfg.Root, reg, b)
+				c.RunningRounds = append(c.RunningRounds, runningRound{PID: b.CheckRun.PID, Base: base, Burst: burst})
+				c.Running++
+				counted[b.Name] = true
 			case !b.QueuedAt.IsZero() && b.State == store.StateActive:
 				base, burst := seatCostFor(s.cfg.Root, reg, b)
 				c.Queued = append(c.Queued, queuedRound{
@@ -360,6 +372,9 @@ func (s *Server) census() (census, error) {
 				})
 			}
 		}
+		// An open chain check holds its member's seat after the member's
+		// round closed, which the binding walk above cannot see.
+		countOpenChecks(&c, s.cfg.Root, reg, s.ownerStore(ownerPath), bindings, counted)
 	})
 
 	sort.Slice(c.Queued, func(i, j int) bool {

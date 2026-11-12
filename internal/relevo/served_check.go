@@ -268,6 +268,7 @@ func servedCheckStep(ctx context.Context, rt Runtime, b store.Binding) (store.Bi
 	}
 	if rec != nil {
 		applyServedCheckRecord(&run, rec)
+		foldServedCheckCost(rt, b, rec.Rusage)
 	}
 	b.CheckRun = &run
 	return b, true

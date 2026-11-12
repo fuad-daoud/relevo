@@ -459,6 +459,12 @@ Gate: make check -- FAIL (exit 2, 1m40s). Output: /path/to/003-gate.log
 while the gate is running, and `relevo show --log` appends ` gate=<result>` to the
 round's report entry.
 
+The record also carries the gate's cgroup measurement (`rusage`) for the
+round's cost sample: a round's seat spans its gate, and a running chain
+check holds one in the builder's class, so the sample covers the round, its
+gate and its check as the max of each -- sequential phases, one seat.
+`relevo show` does not print the measurement; it stays in the JSON.
+
 A round's report entry also carries its **builder session**, `builder_session`
 in the JSON that `relevo show --log --json` and `relevo show --json` print: the harness
 session that built the closed round, so a report read two rounds later can
