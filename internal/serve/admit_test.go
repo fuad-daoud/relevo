@@ -1822,6 +1822,93 @@ func TestAdmitFairnessElevenMinutesBlocks(t *testing.T) {
 	}
 }
 
+// TestAdmitFairnessPlannerElevenMinutesBlocks pins the planner side of the
+// fairness horizon: an eleven-minute planner hold blocks later planners, not
+// builders. The skipped planner stamps a memory wait with no bytes, since the
+// decision never ran to measure one.
+func TestAdmitFairnessPlannerElevenMinutesBlocks(t *testing.T) {
+	set, err := builderCandidateSet(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := setupTestEnv(t, func(cfg *Config) {
+		cfg.Candidates = set
+		cfg.Registry = plannerAdmitRegistry(t, set)
+		cfg.Policy = policy.Policy{Serve: &policy.ServePolicy{MemoryBudget: "12G"}}
+	})
+	ownerB := addOwner(t, env, "bob")
+	ownerC := addOwner(t, env, "carol")
+	ownerD := addOwner(t, env, "dave")
+
+	const gb = int64(1 << 30)
+	// B's builder seat holds it at its own send; its planner seat holds it
+	// after the stamp without tripping the oversize rule. C's builder seat
+	// holds it at its own send the same way; C takes planner defaults after
+	// the stamp, since nothing is seeded under its planner role.
+	seedCostHistory(t, env.srv.cfg.Root, ownerB.repoID, "builder", 8*gb, 8*gb, 6)
+	seedCostHistory(t, env.srv.cfg.Root, ownerB.repoID, "lite-planner", 2*gb, 3*gb, 6)
+	seedCostHistory(t, env.srv.cfg.Root, ownerC.repoID, "builder", 8*gb, 8*gb, 6)
+
+	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, respA, bodyA, "A")
+	if viewA := decodeView(t, bodyA); viewA.RoundState != remote.RoundRunning {
+		t.Fatalf("A round_state = %q, want running", viewA.RoundState)
+	}
+
+	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
+	requireCreated(t, respB, bodyB, "B")
+	if viewB := decodeView(t, bodyB); viewB.RoundState != remote.RoundQueued {
+		t.Fatalf("B round_state = %q, want queued", viewB.RoundState)
+	}
+	stampRole(t, testRuntime(t, env.srv, ownerB.id), "api", "lite-planner")
+	backdateQueuedAt(t, testRuntime(t, env.srv, ownerB.id), "api", 11*time.Minute)
+
+	respC, bodyC := sendRound(t, env, ownerC.kp, ownerC.clientDir, ownerC.repoID, ownerC.headSHA, "api", "# Plan C")
+	requireCreated(t, respC, bodyC, "C")
+	if viewC := decodeView(t, bodyC); viewC.RoundState != remote.RoundQueued {
+		t.Fatalf("C round_state = %q, want queued", viewC.RoundState)
+	}
+	stampRole(t, testRuntime(t, env.srv, ownerC.id), "api", "lite-planner")
+
+	respD, bodyD := sendRound(t, env, ownerD.kp, ownerD.clientDir, ownerD.repoID, ownerD.headSHA, "api", "# Plan D")
+	requireCreated(t, respD, bodyD, "D")
+
+	if err := env.srv.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	requireRoundState(t, testRuntime(t, env.srv, ownerB.id), "api", remote.RoundQueued)
+	requireRoundState(t, testRuntime(t, env.srv, ownerC.id), "api", remote.RoundQueued)
+	requireRoundState(t, testRuntime(t, env.srv, ownerD.id), "api", remote.RoundRunning)
+
+	rtB := testRuntime(t, env.srv, ownerB.id)
+	if b, err := rtB.Store.Load("api"); err != nil {
+		t.Fatal(err)
+	} else if b.Builder.PID != 0 {
+		t.Errorf("B PID = %d, want 0: the held round takes no seat", b.Builder.PID)
+	}
+	viewB := getBindingView(t, env, ownerB.kp, "api")
+	if viewB.Queue == nil {
+		t.Fatal("B Queue = nil, want the memory hold")
+	}
+	if viewB.Queue.Wait != waitMemory || viewB.Queue.WaitBytes != 2*gb {
+		t.Errorf("B wait = (%q, %d), want (memory, %d)", viewB.Queue.Wait, viewB.Queue.WaitBytes, 2*gb)
+	}
+
+	rtC := testRuntime(t, env.srv, ownerC.id)
+	if b, err := rtC.Store.Load("api"); err != nil {
+		t.Fatal(err)
+	} else if b.Builder.PID != 0 {
+		t.Errorf("C PID = %d, want 0: the blocked round takes no seat", b.Builder.PID)
+	}
+	viewC := getBindingView(t, env, ownerC.kp, "api")
+	if viewC.Queue == nil {
+		t.Fatal("C Queue = nil, want the fairness wait")
+	}
+	if viewC.Queue.Wait != waitMemory || viewC.Queue.WaitBytes != 0 {
+		t.Errorf("C wait = (%q, %d), want (memory, 0)", viewC.Queue.Wait, viewC.Queue.WaitBytes)
+	}
+}
+
 // TestAdmitOversizeAloneStarts pins the oversize rule through the stack: a
 // candidate whose default cost exceeds the budget starts when no builder
 // runs, and is memory-held once one does.
