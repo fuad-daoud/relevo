@@ -45,8 +45,9 @@ func TestKHistoryAppendReloadRoundTrip(t *testing.T) {
 }
 
 // TestKHistoryPrunesByAge pins the 24-hour window with an injected now: a
-// sample 23 hours old survives the next append while one 25 hours old drops,
-// so pruning keys on timestamps and never on the count.
+// sample exactly 24 hours old survives the next append at the boundary while
+// one 25 hours old drops, so pruning keys on timestamps and never on the
+// count.
 func TestKHistoryPrunesByAge(t *testing.T) {
 	t.Parallel()
 
@@ -55,7 +56,7 @@ func TestKHistoryPrunesByAge(t *testing.T) {
 	for _, tc := range []struct {
 		count int
 		at    time.Time
-	}{{7, now.Add(-25 * time.Hour)}, {5, now.Add(-23 * time.Hour)}, {1, now}} {
+	}{{7, now.Add(-25 * time.Hour)}, {3, now.Add(-24 * time.Hour)}, {5, now.Add(-23 * time.Hour)}, {1, now}} {
 		if err := appendKSample(root, tc.count, tc.at); err != nil {
 			t.Fatalf("append %+v: %v", tc, err)
 		}
@@ -64,8 +65,8 @@ func TestKHistoryPrunesByAge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if len(got) != 2 || got[0].Count != 5 || got[1].Count != 1 {
-		t.Fatalf("reload counts = %v, want [{5} {1}]: 25h drops, 23h stays", got)
+	if len(got) != 3 || got[0].Count != 3 || got[1].Count != 5 || got[2].Count != 1 {
+		t.Fatalf("reload counts = %v, want [{3} {5} {1}]: 25h drops, 24h stays at the boundary, 23h stays", got)
 	}
 }
 
@@ -87,6 +88,32 @@ func TestKHistoryMalformedReadsEmptyPlusError(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("load malformed = %v, want empty", got)
+	}
+}
+
+// TestKHistoryAppendMalformedKeepsBytes pins the append load-error arm: a
+// corrupt file fails the append and the bytes survive untouched, so a bad
+// tick never resets the history the way a successful write would.
+func TestKHistoryAppendMalformedKeepsBytes(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "costs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	before := []byte("{nope")
+	if err := os.WriteFile(kHistoryPath(root), before, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := appendKSample(root, 1, time.Now()); err == nil {
+		t.Error("append malformed = nil error, want an error")
+	}
+	after, err := os.ReadFile(kHistoryPath(root))
+	if err != nil {
+		t.Fatalf("reread malformed file: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Errorf("malformed file = %q, want unchanged %q", after, before)
 	}
 }
 
@@ -172,6 +199,42 @@ func TestTickSamplesBursting(t *testing.T) {
 	}
 	if len(got) != 2 || got[1].Count != 0 {
 		t.Fatalf("k-history = %v, want a second sample with count 0", got)
+	}
+}
+
+// TestSampleBurstingHalfBoundaries pins the bursting threshold against a 4GiB
+// burst, so half is exactly 2GiB: swap joins anon past half, the exact half
+// does not count, and a missing swap reading drops the round instead of
+// counting anon alone.
+func TestSampleBurstingHalfBoundaries(t *testing.T) {
+	const gib = int64(1 << 30)
+	for _, tc := range []struct {
+		name string
+		anon string
+		swap string
+		want int
+	}{
+		// 1.5GiB anon plus 1GiB swap clears half.
+		{"swap pushes over half", "1610612736", "1073741824", 1},
+		// 1.5GiB anon plus 0.5GiB swap lands exactly on half.
+		{"exact half does not count", "1610612736", "536870912", 0},
+		// No swap file: 3GiB anon alone would clear half, but the
+		// unreadable swap drops the round.
+		{"missing swap drops the round", "3221225472", "", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var dir string
+			if tc.swap == "" {
+				dir = writeCgroupTree(t, map[string]string{"memory.stat": "anon " + tc.anon + "\n"})
+			} else {
+				dir = liveRoundDir(t, tc.anon, tc.swap)
+			}
+			fakeLiveInputs(t, nil, func(int) (string, error) { return dir, nil }, nil)
+			got := (&Server{}).sampleBursting(census{RunningRounds: []runningRound{{PID: 4242, Burst: 4 * gib}}})
+			if got != tc.want {
+				t.Errorf("sampleBursting = %d, want %d", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -288,5 +351,29 @@ func TestAdmissionInputsThinKHistoryKeepsColdStart(t *testing.T) {
 	_, k, _ := env.srv.admissionInputs(nil)
 	if k != 2 {
 		t.Errorf("k = %d, want the cold-start 2 with a thin history", k)
+	}
+}
+
+// TestAdmissionInputsFullKHistoryYieldsOne pins the depth rule at equality:
+// seatMinSamples quiet samples are enough history to leave the cold-start
+// K=2 for the estimate's floor of 1.
+func TestAdmissionInputsFullKHistoryYieldsOne(t *testing.T) {
+	const gb = int64(1 << 30)
+	env := setupTestEnv(t)
+	admitZeroBudget(t, env)
+	now := time.Now()
+	for i := range seatMinSamples {
+		if err := appendKSample(env.srv.cfg.Root, 0, now.Add(time.Duration(i)*time.Second)); err != nil {
+			t.Fatalf("seed k sample %d: %v", i, err)
+		}
+	}
+	dir := writeCgroupTree(t, map[string]string{
+		"memory.max":      "max\n",
+		"memory.pressure": pressureBody("1.0"),
+	})
+	fakeLiveInputs(t, func() (string, error) { return dir, nil }, nil, func() (int64, error) { return 16 * gb, nil })
+	_, k, _ := env.srv.admissionInputs(nil)
+	if k != 1 {
+		t.Errorf("k = %d, want 1 with a full quiet history", k)
 	}
 }
