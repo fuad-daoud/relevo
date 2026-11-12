@@ -198,6 +198,35 @@ func parseMemoryMax(s string) (any, error) {
 // number followed by "%".
 var scopeCPUQuotaPattern = regexp.MustCompile(`^[0-9]+%$`)
 
+func settingsMaxBuildersFields(byKey func(string) relevo.Setting, focusKey string) ([]settingField, int) {
+	focus := 0
+	if focusKey == "serve.max_planners" {
+		focus = 1
+	}
+	if focusKey == "serve.memory_budget" {
+		focus = 2
+	}
+	return []settingField{settingsMaxBuildersField(byKey), settingsMaxPlannersField(byKey), settingsMemoryBudgetField(byKey)}, focus
+}
+
+func settingsMaxBuildersField(byKey func(string) relevo.Setting) settingField {
+	f := textSettingField("max_builders", byKey("serve.max_builders"), parseIntMin(1, "a whole number, 1 or more"))
+	f.path = "serve.max_builders"
+	return f
+}
+
+func settingsMaxPlannersField(byKey func(string) relevo.Setting) settingField {
+	f := textSettingField("max_planners", byKey("serve.max_planners"), parseIntMin(1, "a whole number, 1 or more"))
+	f.path = "serve.max_planners"
+	return f
+}
+
+func settingsMemoryBudgetField(byKey func(string) relevo.Setting) settingField {
+	f := textSettingField("memory_budget", byKey("serve.memory_budget"), parseMemoryMax)
+	f.path = "serve.memory_budget"
+	return f
+}
+
 // parseCPUQuota is cpu_quota's and gate_cpu_quota's parser: "" deletes, else
 // the value must match scopeCPUQuotaPattern and be at least 1%.
 func parseCPUQuota(s string) (any, error) {
