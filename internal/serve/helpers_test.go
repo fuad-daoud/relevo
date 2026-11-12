@@ -451,6 +451,17 @@ func setupTestEnv(t *testing.T, cfgOpts ...func(*Config)) *testEnv {
 		}
 		srvCfg.Policy.Serve.MemoryBudget = "1T"
 	}
+	if srvCfg.MaxBuilders == 0 && (srvCfg.Policy.Serve == nil || srvCfg.Policy.Serve.MaxBuilders == nil) {
+		// A ceiling no test reaches by accident: the default is NumCPU-1, so
+		// a test that starts three rounds would hit it on a three-core CI
+		// runner and pass only on larger hosts. Tests that pin the ceiling
+		// set their own, which this leaves alone.
+		if srvCfg.Policy.Serve == nil {
+			srvCfg.Policy.Serve = &policy.ServePolicy{}
+		}
+		ceiling := 8
+		srvCfg.Policy.Serve.MaxBuilders = &ceiling
+	}
 	srv, err := New(srvCfg)
 	if err != nil {
 		t.Fatal(err)
