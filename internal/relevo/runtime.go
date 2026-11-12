@@ -307,6 +307,11 @@ type Runtime struct {
 	// means the local census, which reads only the caller's tx.
 	HeldCPUs func(tx *store.Tx, self string) ([]int, error)
 
+	// CPUTopology answers the sibling groups and speeds the round CPU picker
+	// spreads by. Nil reads the host's sysfs; tests pin it so the picked sets
+	// never depend on the machine running them.
+	CPUTopology func(pool []int) spawn.CPUTopology
+
 	// Channels arbitrates a mastermind's mailbox between the daemon and a live
 	// `relevo push` holder. Nil means no claims exist, so DeliverPending leaves
 	// the entry pending for `relevo wait`.

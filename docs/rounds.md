@@ -110,6 +110,20 @@ as a shell-wide export; this affects Go processes only, and Go's `-p` and
 usable systemd user manager relevo logs one warning and runs builders unscoped,
 in `relevo.service`'s cgroup, exactly as before.
 
+A server starts a queued round only when its memory fits. Each running round
+reserves its resting memory, and the server keeps room for K of the rounds'
+peaks at once. Each repo and role learns its resting and peak memory from the
+rounds that close there; until a class has five samples, it reserves a
+default. The budget is `serve.memory_budget`, or the slice's `memory.max`
+minus what runs in the slice outside rounds. A brake also holds the queue
+while the slice's memory stalls for a tenth of the time. A stall that comes
+mostly from one round over its own `MemoryHigh` holds nobody else, because
+that throttle is the round's own; the budget still guards the slice. A round
+runs under `MemoryHigh` only once its class has learned a peak, set at half
+again that peak, so the limit stops a runaway round and leaves an ordinary
+one alone. `relevo config server list` shows the reservation, and a queued
+round says what it is waiting on.
+
 ## Progress labels
 
 relevo keeps a progress clock on every local binding with an open round and

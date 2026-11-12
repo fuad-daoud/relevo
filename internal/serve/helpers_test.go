@@ -441,6 +441,11 @@ func setupTestEnv(t *testing.T, cfgOpts ...func(*Config)) *testEnv {
 	for _, opt := range cfgOpts {
 		opt(&srvCfg)
 	}
+	if srvCfg.CPUTopology == nil {
+		// Every CPU alone at one speed: the picked sets follow CPU number,
+		// so a test never depends on the host's sibling pairs or core speeds.
+		srvCfg.CPUTopology = func([]int) spawn.CPUTopology { return spawn.CPUTopology{} }
+	}
 	if srvCfg.Policy.ServeMemoryBudgetBytes() == 0 {
 		// A budget no real round can fill: the memory gate reads live host
 		// state, so a zero budget would let a loaded sandbox hold rounds

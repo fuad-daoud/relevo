@@ -84,6 +84,21 @@ func TestMemoryStatAnon(t *testing.T) {
 	}
 }
 
+func TestMemoryEventsHigh(t *testing.T) {
+	dir := writeCgroupFile(t, "memory.events", "low 0\nhigh 567212\nmax 0\noom 0\noom_kill 0\n")
+	if got, err := MemoryEventsHigh(dir); err != nil || got != 567212 {
+		t.Errorf("MemoryEventsHigh = %d, %v; want 567212, nil", got, err)
+	}
+	if _, err := MemoryEventsHigh(t.TempDir()); err == nil {
+		t.Error("MemoryEventsHigh on a missing memory.events = nil error; want an error, never a zero")
+	}
+	// "high" must match the whole key, not the prefix of another one.
+	bare := writeCgroupFile(t, "memory.events", "low 0\nhighest 9\nmax 0\n")
+	if _, err := MemoryEventsHigh(bare); err == nil {
+		t.Error("MemoryEventsHigh without a high line = nil error; want an error, never a zero")
+	}
+}
+
 func TestMemorySwapCurrent(t *testing.T) {
 	dir := writeCgroupFile(t, "memory.swap.current", "33554432\n")
 	if got, err := MemorySwapCurrent(dir); err != nil || got != 33554432 {

@@ -69,6 +69,9 @@ type Config struct {
 	DiskFree func(string) (uint64, error)
 	// Scope is the systemd scope template served rounds launch under; nil means none.
 	Scope *spawn.ScopeSpec
+	// CPUTopology is handed to every owner runtime for the round CPU picker;
+	// nil reads the host's sysfs.
+	CPUTopology func(pool []int) spawn.CPUTopology
 	// Isolation is the tenant-isolation mode this server runs under. The zero
 	// value is normalized to isolate.ModeNone by New, so every server emits
 	// "isolation":"none". A configured user or container never reaches New:

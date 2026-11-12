@@ -51,6 +51,7 @@ func HousekeepDeps(rt Runtime) housekeep.Deps {
 		AllowedCPUs:     housekeepAllowedCPUs(rt),
 		RoundCPUs:       housekeepRoundCPUs(rt),
 		HeldCPUs:        rt.HeldCPUs,
+		Topology:        rt.CPUTopology,
 		Scope:           rt.Scope,
 		UnitName:        scopeUnitName,
 		ScopeProber:     housekeepScopeProber(rt),

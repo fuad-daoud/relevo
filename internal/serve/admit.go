@@ -129,6 +129,38 @@ func (s *Server) plannerCap() int {
 // would only add pressure.
 const pressureMaxAvg10 = 10.0
 
+// selfStallShare is how much of the budget dir's stall one round must carry
+// for the stall to read as that round's own: PSI's some-line counts time when
+// any task stalls, so a dir stalled only through one child reads about the
+// same as that child.
+const selfStallShare = 0.8
+
+// hostPressure reports whether the budget dir's memory stall should hold
+// admission. A round over its own memory.high is throttled inside the dir,
+// and its stall shows in the dir's pressure too; that stall is the round's,
+// not the host's, so it holds nobody else -- the memory budget still guards
+// the slice. Any read failure is brake-off, as before: a missing pressure
+// file must not hold every round.
+func hostPressure(dir string, running []runningRound) bool {
+	avg, err := proc.MemoryPressureSomeAvg10(dir)
+	if err != nil || avg < pressureMaxAvg10 {
+		return false
+	}
+	for _, r := range running {
+		rdir, rerr := liveRoundCgroupDir(r.PID)
+		if rerr != nil || filepath.Clean(rdir) == filepath.Clean(dir) || !underDir(rdir, dir) {
+			continue
+		}
+		if n, herr := proc.MemoryEventsHigh(rdir); herr != nil || n == 0 {
+			continue
+		}
+		if ravg, perr := proc.MemoryPressureSomeAvg10(rdir); perr == nil && ravg >= avg*selfStallShare {
+			return false
+		}
+	}
+	return true
+}
+
 // liveBudgetDir answers the cgroup dir the memory budget reads: the serve
 // runs in its own service cgroup while the limit sits on the parent slice,
 // so the walk starts at the serve's own cgroup and takes the nearest ancestor
@@ -203,9 +235,8 @@ func anonMinusRounds(dir string, running []runningRound) int64 {
 
 // admissionInputs reads one pass's memory budget, parallelism and pressure
 // brake. The override wins; otherwise the budget slice minus the non-round
-// anon inside it, else machine memory minus the reserve. The brake reads the
-// budget dir's some-stall average, and any read failure there is brake-off:
-// a missing pressure file must not hold every round. Container rounds have
+// anon inside it, else machine memory minus the reserve. The brake is
+// hostPressure over the budget dir; no budget dir is brake-off. Container rounds have
 // no scope and their pid's cgroup may be unreadable; that path subtracts
 // nothing and never fails the pass.
 func (s *Server) admissionInputs(running []runningRound) (budget int64, k int, pressureOK bool) {
@@ -223,12 +254,7 @@ func (s *Server) admissionInputs(running []runningRound) (budget int64, k int, p
 		memTotal = 0
 	}
 	budget = seatBudget(sliceMax, nonRound, memTotal, override)
-	pressureOK = true
-	if derr == nil {
-		if avg, perr := proc.MemoryPressureSomeAvg10(dir); perr == nil {
-			pressureOK = avg < pressureMaxAvg10
-		}
-	}
+	pressureOK = derr != nil || !hostPressure(dir, running)
 	// K rides the bursting-count history, so the burst term tracks live
 	// parallelism instead of the cold-start 2. An unreadable file reads as no
 	// history: the pass keeps its old K rather than failing.

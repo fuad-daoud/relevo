@@ -43,22 +43,35 @@ func parseCgroupV2(data []byte) (string, bool) {
 // MemoryStatAnon returns the anon bytes from <dir>/memory.stat, the same line
 // the supervisor sampler reads.
 func MemoryStatAnon(dir string) (int64, error) {
-	data, err := os.ReadFile(filepath.Join(dir, "memory.stat"))
+	return keyedCgroupInt(dir, "memory.stat", "anon")
+}
+
+// MemoryEventsHigh returns how many times <dir> has run over its own
+// memory.high, from the high line of memory.events.
+func MemoryEventsHigh(dir string) (int64, error) {
+	return keyedCgroupInt(dir, "memory.events", "high")
+}
+
+// keyedCgroupInt returns the integer on the key line of a flat keyed cgroup
+// file such as memory.stat or memory.events. A missing key is an error, never
+// a zero reading.
+func keyedCgroupInt(dir, file, key string) (int64, error) {
+	data, err := os.ReadFile(filepath.Join(dir, file))
 	if err != nil {
 		return 0, err
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) != 2 || fields[0] != "anon" {
+		if len(fields) != 2 || fields[0] != key {
 			continue
 		}
 		n, err := strconv.ParseInt(fields[1], 10, 64)
 		if err != nil {
-			return 0, fmt.Errorf("parse memory.stat anon %q: %w", fields[1], err)
+			return 0, fmt.Errorf("parse %s %s %q: %w", file, key, fields[1], err)
 		}
 		return n, nil
 	}
-	return 0, fmt.Errorf("no anon line in %s", filepath.Join(dir, "memory.stat"))
+	return 0, fmt.Errorf("no %s line in %s", key, filepath.Join(dir, file))
 }
 
 // MemorySwapCurrent returns the bytes in <dir>/memory.swap.current, the same
