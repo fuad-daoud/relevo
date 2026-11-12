@@ -166,8 +166,10 @@ func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport, 
 	r.publishMarks(shared, t, imported.Moved())
 	now := time.Now().UTC()
 	r.publishTraffic(t, now)
-	compacted := r.compact(shared, t, now)
-	r.publishSize(shared.Origin(), t, compacted, out.Exported > 0, now)
+	// The log is never compacted from here: every dropped entry rewrites pages
+	// each other machine then pulls, about 4.5 KB apiece however many go at
+	// once, and traffic is the scarce quota while storage is not.
+	r.publishSize(shared.Origin(), t, out.Exported > 0, now)
 	r.measureStorage(t, now)
 	return out
 }
