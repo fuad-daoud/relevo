@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 	turso "turso.tech/database/tursogo"
@@ -103,8 +104,13 @@ func TestShortReadWALFiresTheHealHookOnce(t *testing.T) {
 		var n int
 		return cli.QueryRow(`SELECT count(*) FROM t`).Scan(&n)
 	}
+	// The server answers before it fires the hook, so the client reading the
+	// error says nothing yet about the hook: the first fire is waited for.
 	if err := query(); !wire.IsShortReadWAL(err) {
 		t.Fatalf("first query err = %v, want the short WAL read", err)
+	}
+	for deadline := time.Now().Add(readAllowance); fired.Load() == 0 && time.Now().Before(deadline); {
+		time.Sleep(5 * time.Millisecond)
 	}
 	if got := fired.Load(); got != 1 {
 		t.Fatalf("hook fired %d times after one failing statement, want 1", got)
@@ -112,8 +118,14 @@ func TestShortReadWALFiresTheHealHookOnce(t *testing.T) {
 	if err := query(); !wire.IsShortReadWAL(err) {
 		t.Fatalf("second query err = %v, want the short WAL read", err)
 	}
+	// A connection runs one request at a time and the next waits for the last
+	// to return, so a third statement answering means the second's hook call,
+	// if any, is over.
+	if err := query(); !wire.IsShortReadWAL(err) {
+		t.Fatalf("third query err = %v, want the short WAL read", err)
+	}
 	if got := fired.Load(); got != 1 {
-		t.Fatalf("hook fired %d times after two failing statements, want 1", got)
+		t.Fatalf("hook fired %d times after three failing statements, want 1", got)
 	}
 }
 
