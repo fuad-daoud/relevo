@@ -159,3 +159,25 @@ func TestQueueViewForWaits(t *testing.T) {
 		t.Errorf("planner counts = running %d cap %d, want 1 and 1", plan.Running, plan.Cap)
 	}
 }
+
+// TestQueueWaitsChargesRoundsThePassWouldStart pins that the simulated pass
+// charges a round it would start before weighing the next, as the real pass
+// does: the second of two rounds that fit only one at a time reads a memory
+// hold for the first one's base, not a clean start.
+func TestQueueWaitsChargesRoundsThePassWouldStart(t *testing.T) {
+	const gb = int64(1 << 30)
+	c := census{
+		BuilderCap: 5, PlannerCap: 4,
+		Queued: []queuedRound{
+			{Name: "a", Base: gb, Burst: 5 * gb},
+			{Name: "b", Base: gb, Burst: 5 * gb},
+		},
+	}
+	got := queueWaits(c, 11*gb, 2, true, time.Now())
+	if got[0] != (queueWait{}) {
+		t.Errorf("a wait = %+v, want none: it fits alone", got[0])
+	}
+	if want := (queueWait{Wait: waitMemory, WaitBytes: gb}); got[1] != want {
+		t.Errorf("b wait = %+v, want %+v behind a's seat", got[1], want)
+	}
+}

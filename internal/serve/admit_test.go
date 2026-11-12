@@ -2089,3 +2089,40 @@ func TestAdminHeldRoundReportsWait(t *testing.T) {
 		t.Errorf("fleet wait = (%q, %d), want (memory, %d)", fleetRow.Queued.Wait, fleetRow.Queued.WaitBytes, 2*gb)
 	}
 }
+
+// TestAdmitPassCountsRoundsItStarted pins that one pass charges each round it
+// starts against the budget before it weighs the next: two queued builders
+// whose seats fit the budget only one at a time must not both start in the
+// same pass, though each alone would fit.
+func TestAdmitPassCountsRoundsItStarted(t *testing.T) {
+	env := setupTestEnv(t, func(cfg *Config) {
+		cfg.Policy = policy.Policy{Serve: &policy.ServePolicy{MemoryBudget: "11G"}}
+	})
+	ownerB := addOwner(t, env, "bob")
+	dir := writeCgroupTree(t, map[string]string{
+		"memory.max":      "max\n",
+		"memory.stat":     "anon 0\n",
+		"memory.pressure": pressureBody("50.0"),
+	})
+	fakeLiveInputs(t, func() (string, error) { return dir, nil }, nil, nil)
+
+	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, respA, bodyA, "A")
+	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
+	requireCreated(t, respB, bodyB, "B")
+	requireRoundState(t, testRuntime(t, env.srv, env.id), "api", remote.RoundQueued)
+	requireRoundState(t, testRuntime(t, env.srv, ownerB.id), "api", remote.RoundQueued)
+
+	if err := os.WriteFile(filepath.Join(dir, "memory.pressure"), []byte(pressureBody("1.0")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.srv.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	requireRoundState(t, testRuntime(t, env.srv, env.id), "api", remote.RoundRunning)
+	requireRoundState(t, testRuntime(t, env.srv, ownerB.id), "api", remote.RoundQueued)
+	viewB := getBindingView(t, env, ownerB.kp, "api")
+	if viewB.Queue == nil || viewB.Queue.Wait != waitMemory {
+		t.Fatalf("B Queue = %+v, want a memory hold behind the round the pass started", viewB.Queue)
+	}
+}
