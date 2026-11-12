@@ -104,7 +104,7 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 func (s *Server) wireSeatCost(rt *relevo.Runtime, root string, reg *roles.Registry) {
 	// The cost history lives under the serve root; a runtime without one
 	// records nothing.
-	rt.CostRoot = s.cfg.Root
+	rt.CostRoot = root
 	rt.RoundBurst = roundBurstFor(root, reg)
 }
 
