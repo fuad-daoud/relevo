@@ -44,12 +44,20 @@ type ScopeSpec struct {
 	Slice     string // "" = omit --slice
 	CPUWeight int    // >= 1; always emitted
 	MemoryMax string // "" = omit
-	CPUQuota  string // "" = omit; systemd units, e.g. "200%" = two cores' worth
-	TasksMax  int    // 0 = omit
+	// MemoryHigh is the round's learned burst in plain bytes, set per round
+	// from the binding's cost history; "" omits it and MemoryMax is untouched.
+	MemoryHigh string // "" = omit
+	CPUQuota   string // "" = omit; systemd units, e.g. "200%" = two cores' worth
+	TasksMax   int    // 0 = omit
 
 	// AllowedCPUs is a real launch field: "" omits it, and otherwise it is a
 	// systemd cpu-list ("2" or "0-2") pinning the process to those cores.
 	AllowedCPUs string
+
+	// AffinityCPUs is a real launch field: "" runs the process directly,
+	// otherwise the runner prefixes it with taskset -c <list> so the process
+	// and every child inherit the pin even without a delegated cpuset.
+	AffinityCPUs string
 
 	// NoExpand passes --expand-environment=no. From systemd 258 a scope's
 	// systemd-run expands $VAR, ${VAR} and $$ in the command line itself, which
@@ -62,6 +70,12 @@ type ScopeSpec struct {
 	// with GateCPUQuota zeroed. The local Runner never reads it, so a spec
 	// handed to Start must have it empty.
 	GateCPUQuota string
+
+	// RoundCPUs is how many pool cores one round gets, template only:
+	// scopeFor copies the template and always returns a spec with RoundCPUs
+	// zeroed. The local Runner never reads it, so a spec handed to Start
+	// must have it empty.
+	RoundCPUs int
 }
 
 // GoMaxProcsFor reports the GOMAXPROCS a process launched under s should get:

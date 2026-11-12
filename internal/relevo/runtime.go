@@ -364,6 +364,12 @@ type Runtime struct {
 	// disables recording.
 	CostRoot string
 
+	// RoundBurst answers the memory burst in bytes a binding's round may
+	// reach, from that binding's cost history. Nil on local runtimes, and nil
+	// means the round's scope carries no MemoryHigh. ok false, or a
+	// non-positive burst, means the same: no MemoryHigh.
+	RoundBurst func(b store.Binding) (burst int64, ok bool)
+
 	// RemoteSend ships rounds to a remote server through internal/uplink.
 	// It has no nil guard: a send without the hook fails on the nil call
 	// rather than silently skipping the server.
@@ -466,7 +472,7 @@ func consultDeps(rt Runtime) consult.Deps {
 		},
 		Scope: func(kind, owner, name string, round int, id string) *spawn.ScopeSpec {
 			k := scopeKind(kind)
-			return scopeFor(rt, k, scopeUnitNameFor(k, owner, name, round, id), "")
+			return scopeFor(rt, store.Binding{}, k, scopeUnitNameFor(k, owner, name, round, id), "")
 		},
 		Usage: func(ctx context.Context, b store.Binding, c store.Consult, end time.Time) *usage.Usage {
 			return recordUsage(ctx, rt, consultSource(rt, b, c, end))

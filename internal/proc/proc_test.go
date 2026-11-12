@@ -507,6 +507,123 @@ func TestStartWrapsArgvWithScope(t *testing.T) {
 	}
 }
 
+// An affinity scope wraps the binary with taskset inside the supervisor, so
+// the pin survives without a delegated cpuset; the scope wrapping stays.
+func TestBuildArgvWrapsAffinityWithTaskset(t *testing.T) {
+	scope := spawn.ScopeSpec{Unit: "relevo-round-abc12345-foo-3", Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "0,1", AffinityCPUs: "0,1"}
+	spec := spawn.ProcSpec{
+		Argv:  []string{"echo", "hi"},
+		Scope: &scope,
+	}
+	got := buildArgv(spec, "/usr/bin/echo")
+	inner := []string{"/bin/sh", "-c", supervisorScript, "relevo-supervisor", ScopeUnitFileName(scope.Unit), "taskset", "-c", "0,1", "/usr/bin/echo", "hi"}
+	want := ScopeArgv(scope, inner)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("buildArgv = %v, want %v", got, want)
+	}
+}
+
+// Without affinity the argv is byte-identical to the scope-only form: no
+// taskset element appears anywhere.
+func TestBuildArgvWithoutAffinityHasNoTaskset(t *testing.T) {
+	scope := spawn.ScopeSpec{Unit: "relevo-round-abc12345-foo-3", Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "0,1"}
+	spec := spawn.ProcSpec{
+		Argv:  []string{"echo", "hi"},
+		Scope: &scope,
+	}
+	got := buildArgv(spec, "/usr/bin/echo")
+	inner := []string{"/bin/sh", "-c", supervisorScript, "relevo-supervisor", ScopeUnitFileName(scope.Unit), "/usr/bin/echo", "hi"}
+	want := ScopeArgv(scope, inner)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("buildArgv = %v, want %v", got, want)
+	}
+	for _, a := range got {
+		if a == "taskset" {
+			t.Errorf("buildArgv = %v; without AffinityCPUs it must contain no taskset", got)
+		}
+	}
+}
+
+// A refused affinity probe drops only the taskset wrap: the scope, its pin
+// and its quota stay, and the caller's spec is untouched.
+func TestResolveScopeDropsAffinityOnly(t *testing.T) {
+	probes := 0
+	r := New()
+	r.probe = func(context.Context, string) error { return nil }
+	r.systemdRunVersion = func(context.Context) (int, error) { return 253, nil }
+	r.affinityProbe = func(context.Context, string) error {
+		probes++
+		return errors.New("taskset -c 0,1: taskset not found")
+	}
+	stubDir := t.TempDir()
+	writeStub(t, stubDir, acceptingStub)
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	scope := &spawn.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "0,1", AffinityCPUs: "0,1"}
+	before := *scope
+	got := r.resolveScope(context.Background(), spawn.ProcSpec{Scope: scope})
+	if got.Scope == nil {
+		t.Fatal("resolveScope dropped the scope; want it kept without AffinityCPUs")
+	}
+	if got.Scope.AllowedCPUs != "0,1" {
+		t.Errorf("AllowedCPUs = %q, want it intact at 0,1", got.Scope.AllowedCPUs)
+	}
+	if got.Scope.AffinityCPUs != "" {
+		t.Errorf("AffinityCPUs = %q, want it cleared", got.Scope.AffinityCPUs)
+	}
+	if got.Scope.Unit != scope.Unit || got.Scope.Slice != scope.Slice {
+		t.Errorf("scope = %+v, want unit and slice kept", got.Scope)
+	}
+	if *scope != before {
+		t.Errorf("caller's ScopeSpec mutated: %+v, want %+v", *scope, before)
+	}
+	again := r.resolveScope(context.Background(), spawn.ProcSpec{Scope: scope})
+	if again.Scope == nil || again.Scope.AffinityCPUs != "" {
+		t.Errorf("second resolveScope = %+v, want the dropped wrap to stay dropped", again.Scope)
+	}
+	if probes != 1 {
+		t.Errorf("affinity probes = %d, want 1 (one warning, not one per Start)", probes)
+	}
+}
+
+// A successful affinity probe keeps the wrap.
+func TestResolveScopeKeepsAffinityWhenProbeSucceeds(t *testing.T) {
+	probes := 0
+	r := New()
+	r.probe = func(context.Context, string) error { return nil }
+	r.systemdRunVersion = func(context.Context) (int, error) { return 253, nil }
+	r.affinityProbe = func(context.Context, string) error {
+		probes++
+		return nil
+	}
+	scope := &spawn.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, AffinityCPUs: "0,1"}
+	got := r.resolveScope(context.Background(), spawn.ProcSpec{Scope: scope})
+	if got.Scope == nil || got.Scope.AffinityCPUs != "0,1" {
+		t.Errorf("AffinityCPUs = %+v, want the wrap kept at 0,1", got.Scope)
+	}
+	if probes != 1 {
+		t.Errorf("affinity probes = %d, want 1", probes)
+	}
+}
+
+// Without affinity the probe never runs.
+func TestResolveScopeSkipsAffinityProbeWithoutAffinity(t *testing.T) {
+	r := New()
+	r.probe = func(context.Context, string) error { return nil }
+	r.systemdRunVersion = func(context.Context) (int, error) { return 253, nil }
+	r.affinityProbe = func(context.Context, string) error {
+		t.Error("affinity probe ran without AffinityCPUs; want no probe")
+		return errors.New("must not run")
+	}
+	stubDir := t.TempDir()
+	writeStub(t, stubDir, acceptingStub)
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	scope := &spawn.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "0,1"}
+	got := r.resolveScope(context.Background(), spawn.ProcSpec{Scope: scope})
+	if got.Scope == nil || got.Scope.AllowedCPUs != "0,1" {
+		t.Errorf("scope = %+v, want it kept with its pin", got.Scope)
+	}
+}
+
 // The supervisor's first argument names the scope unit it must be running in.
 func TestBuildArgvPassesTheWantedUnit(t *testing.T) {
 	t.Run("scoped", func(t *testing.T) {

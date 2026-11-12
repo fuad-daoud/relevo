@@ -191,6 +191,18 @@ func recordClosedCost(rt relevo.Runtime, b store.Binding, closed int) {
 	}
 }
 
+// roundBurstFor answers the RoundBurst seam for one live snapshot: the
+// binding's seat burst, where ok doubles as the positive check MemoryHigh
+// needs, since a scope property takes only a positive byte count. seatCostFor
+// never returns zero — short history reads as the class defaults — so ok is
+// true in practice and false only for a corrupt or negative reading.
+func roundBurstFor(root string, reg *roles.Registry) func(store.Binding) (int64, bool) {
+	return func(b store.Binding) (int64, bool) {
+		_, burst := seatCostFor(root, reg, b)
+		return burst, burst > 0
+	}
+}
+
 // seatCostFor answers a binding's seat from its repo-role history, classified
 // the way admission classifies it: a planner round takes planner defaults, any
 // other consult-shaped role reviewer defaults. A missing or unreadable history

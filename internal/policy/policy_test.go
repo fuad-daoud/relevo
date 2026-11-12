@@ -1040,6 +1040,47 @@ func TestScopeAllowedCPUsValidation(t *testing.T) {
 	}
 }
 
+// TestScopeRoundCPUsValidation pins round_cpus in both blocks: a set size
+// loads, and a negative one is refused.
+func TestScopeRoundCPUsValidation(t *testing.T) {
+	blocks := []struct {
+		name   string
+		served bool
+		body   string // %d is round_cpus
+		prefix string // the exact path in the error, block-qualified
+	}{
+		{"scope", false, `{"scope":{"round_cpus":%d}}`, ": scope.round_cpus:"},
+		{"serve.scope", true, `{"serve":{"scope":{"round_cpus":%d}}}`, ": serve.scope.round_cpus:"},
+	}
+
+	for _, bc := range blocks {
+		t.Run(bc.name+"/good", func(t *testing.T) {
+			p, err := load(t, fmt.Sprintf(bc.body, 3))
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			sc := p.ScopeFor(bc.served)
+			if sc == nil || sc.RoundCPUs != 3 {
+				t.Fatalf("RoundCPUs = %+v, want the loaded size 3", sc)
+			}
+		})
+		t.Run(bc.name+"/bad", func(t *testing.T) {
+			_, err := load(t, fmt.Sprintf(bc.body, -1))
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !errors.Is(err, ErrBadPolicy) {
+				t.Fatalf("error %v does not wrap ErrBadPolicy", err)
+			}
+			for _, want := range []string{bc.prefix, "must be at least 1, got -1"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not contain %q", err.Error(), want)
+				}
+			}
+		})
+	}
+}
+
 // TestServeUnknownKeyWarns pins that an unknown key inside serve or scope
 // warns rather than rejecting the file.
 func TestServeUnknownKeyWarns(t *testing.T) {

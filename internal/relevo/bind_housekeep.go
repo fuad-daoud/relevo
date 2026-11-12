@@ -49,6 +49,7 @@ func HousekeepDeps(rt Runtime) housekeep.Deps {
 		Admit:           housekeepAdmit(rt),
 		NotQueued:       ErrNotQueued,
 		AllowedCPUs:     housekeepAllowedCPUs(rt),
+		RoundCPUs:       housekeepRoundCPUs(rt),
 		HeldCPUs:        rt.HeldCPUs,
 		Scope:           rt.Scope,
 		UnitName:        scopeUnitName,
@@ -72,12 +73,21 @@ func housekeepAdmit(rt Runtime) func(context.Context, string) error {
 }
 
 // housekeepAllowedCPUs reads the runtime scope's allowed_cpus: empty with
-// scopes off, so the round runs unpinned.
+// scopes off, so the round pool falls back to every online CPU.
 func housekeepAllowedCPUs(rt Runtime) string {
 	if rt.Scope == nil {
 		return ""
 	}
 	return rt.Scope.AllowedCPUs
+}
+
+// housekeepRoundCPUs reads the runtime scope's round_cpus: 0 with scopes off
+// or an unset key, so the round keeps single-core behaviour.
+func housekeepRoundCPUs(rt Runtime) int {
+	if rt.Scope == nil {
+		return 0
+	}
+	return rt.Scope.RoundCPUs
 }
 
 // housekeepScopeProber is the runner's journal probe when it has one: a runner

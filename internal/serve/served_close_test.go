@@ -552,6 +552,64 @@ func TestRuntimeAtWiresCloseServedRound(t *testing.T) {
 	}
 }
 
+// TestRuntimeAtWiresRoundBurst pins the served burst seam: the owner
+// runtime's RoundBurst answers the same burst seatCostFor computes for the
+// binding — learned history when the role has it, class defaults on short
+// history — so a served round's MemoryHigh comes from its own cost file. A
+// runtime with no seam carries a nil one, which scopeFor reads as no
+// MemoryHigh (pinned on the relevo side).
+func TestRuntimeAtWiresRoundBurst(t *testing.T) {
+	t.Parallel()
+
+	set, err := builderCandidateSet(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := plannerAdmitRegistry(t, set)
+	repo := strings.Repeat("f", 64)
+	root := t.TempDir()
+	for round := 1; round <= 10; round++ {
+		s := costSample{Base: int64(round) << 20, Burst: int64(round) << 30}
+		if _, err := appendCostSample(root, repo, "builder", "o/b", round, s); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+	s, err := New(Config{DB: testServeDB(t), Root: root, Now: time.Now, Registry: reg})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	trackTmpRoot(t, s, filepath.Join(root, "bindings", "aaa"))
+	rt := s.runtimeAt(filepath.Join(root, "bindings", "aaa"))
+	if rt.RoundBurst == nil {
+		t.Fatal("RoundBurst is nil: owner runtimes must serve the burst")
+	}
+	bind := func(role, repoID string) store.Binding {
+		return store.Binding{Name: "x", Role: role, Serve: &store.ServeFacts{RepoID: repoID}}
+	}
+	cases := []struct {
+		name string
+		b    store.Binding
+	}{
+		{"history p90", bind("", repo)},
+		{"no history: builder defaults", bind("", strings.Repeat("0", 64))},
+		{"planner defaults", bind("lite-planner", repo)},
+		{"reviewer defaults", bind("reviewer", repo)},
+	}
+	for _, tc := range cases {
+		_, want := seatCostFor(root, reg, tc.b)
+		got, ok := rt.RoundBurst(tc.b)
+		if !ok || got != want {
+			t.Errorf("%s: RoundBurst = %d, %v; want %d, true", tc.name, got, ok, want)
+		}
+	}
+	if _, burst := seatCostFor(root, reg, bind("", repo)); burst != 9<<30 {
+		t.Fatalf("fixture burst = %d, want p90 9<<30: the history rows drifted", burst)
+	}
+	if (relevo.Runtime{}).RoundBurst != nil {
+		t.Error("zero Runtime RoundBurst != nil: local rounds must carry no burst seam")
+	}
+}
+
 func TestCloseServedRoundRecordsSameNameFromTwoOwners(t *testing.T) {
 	t.Parallel()
 

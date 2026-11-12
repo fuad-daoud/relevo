@@ -199,7 +199,7 @@ func buildSpawnProcSpec(ctx context.Context, rt Runtime, b store.Binding, argv [
 		LogPath:    logPath,
 		StreamPath: rt.Store.StreamPath(b.Name, b.Round),
 	}
-	spec.Scope = scopeFor(rt, scopeRound, scopeUnitName(b), housekeep.CPUPinText(b))
+	spec.Scope = scopeFor(rt, b, scopeRound, scopeUnitName(b), housekeep.RoundPinText(b))
 	// With no scope template there is no scope to require, and a fresh send
 	// never requires one, so a failed probe still runs it unscoped.
 	spec.RequireScope = resume && rt.Scope != nil

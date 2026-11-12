@@ -301,6 +301,66 @@ func TestStartRoundRecordsTheHandleAndTheLogPath(t *testing.T) {
 	}
 }
 
+// TestStartRoundStampsTheRoundsBurstOnTheScope pins the round path's own
+// forwarding: the burst seam prices the round from its binding, so
+// buildSpawnProcSpec must hand scopeFor the round's binding -- an empty one
+// would price nothing and silently leave the default ceiling. The TestScopeFor
+// table only pins what scopeFor does with the binding it is given.
+func TestStartRoundStampsTheRoundsBurstOnTheScope(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := seedHeadless(t, fr)
+	tmpl := spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 150, MemoryMax: "2G", CPUQuota: "150%", TasksMax: 64}
+	rt.Scope = &tmpl
+	var seen store.Binding
+	rt.RoundBurst = func(got store.Binding) (int64, bool) {
+		seen = got
+		return 5 << 30, true
+	}
+	if _, err := startRound(context.Background(), rt, nil, b, "the prompt", false); err != nil {
+		t.Fatalf("startRound: %v", err)
+	}
+	if len(fr.specs) != 1 {
+		t.Fatalf("specs = %+v, want one Start", fr.specs)
+	}
+	spec := fr.specs[0]
+	if spec.Scope == nil {
+		t.Fatal("spec.Scope = nil, want the round scope stamped with the burst")
+	}
+	if spec.Scope.MemoryHigh != "5368709120" {
+		t.Errorf("spec.Scope.MemoryHigh = %q, want the burst 5<<30 in plain bytes", spec.Scope.MemoryHigh)
+	}
+	if seen.Name != "webshop" || seen.Round != b.Round || seen.BuilderCandidate != b.BuilderCandidate {
+		t.Errorf("burst seam saw %+v, want the round's own binding", seen)
+	}
+}
+
+// TestBuildSpawnProcSpecPinsTheRoundsWholeSet pins the round path's pin text:
+// without a template pool a round carries only its set, never a single core,
+// so the spec must read the set or the taskset wrap never reaches the round.
+func TestBuildSpawnProcSpecPinsTheRoundsWholeSet(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := seedHeadless(t, fr)
+	rt.Scope = &spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 100}
+	b.RoundCPUs = []int{2, 3}
+	_, spec, cleanup, err := buildSpawnProcSpec(context.Background(), rt, b, []string{"claude", "-p"}, candidate.Candidate{}, nil, false)
+	if err != nil {
+		t.Fatalf("buildSpawnProcSpec: %v", err)
+	}
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if spec.Scope == nil || spec.Scope.AffinityCPUs != "2,3" {
+		t.Fatalf("spec.Scope = %+v, want AffinityCPUs 2,3 from the round's set", spec.Scope)
+	}
+	if spec.Scope.AllowedCPUs != "" {
+		t.Errorf("AllowedCPUs = %q, want empty without a template pool", spec.Scope.AllowedCPUs)
+	}
+}
+
 func TestStartRoundOnTheSameRoundKeepsTheCursor(t *testing.T) {
 	t.Parallel()
 
@@ -605,14 +665,16 @@ func TestScopeUnitNameFor(t *testing.T) {
 // TestScopeFor is the scopeFor table: nil template gives nil, the spec
 // carries the template's other fields, a gate uses GateCPUQuota when set and
 // falls back to CPUQuota when not, the returned spec always zeroes
-// GateCPUQuota, and the template is never mutated.
+// GateCPUQuota and RoundCPUs, a pin overrides AllowedCPUs only when the
+// template names a pool, only a round carries AffinityCPUs, only a round with
+// a positive burst carries MemoryHigh, and the template is never mutated.
 func TestScopeFor(t *testing.T) {
 	t.Parallel()
 
 	base := spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 150, MemoryMax: "2G", CPUQuota: "150%", TasksMax: 64}
 
 	t.Run("nil template gives nil", func(t *testing.T) {
-		if got := scopeFor(Runtime{}, scopeGate, "relevo-gate-local-webshop-1", ""); got != nil {
+		if got := scopeFor(Runtime{}, store.Binding{}, scopeGate, "relevo-gate-local-webshop-1", ""); got != nil {
 			t.Fatalf("scopeFor(nil template) = %+v, want nil", got)
 		}
 	})
@@ -622,7 +684,7 @@ func TestScopeFor(t *testing.T) {
 			tmpl := base
 			tmpl.GateCPUQuota = "300%"
 			rt := Runtime{Scope: &tmpl}
-			got := scopeFor(rt, kind, "unit", "")
+			got := scopeFor(rt, store.Binding{}, kind, "unit", "")
 			if got == nil {
 				t.Fatalf("scopeFor(%s) = nil, want a spec", kind)
 			}
@@ -645,7 +707,7 @@ func TestScopeFor(t *testing.T) {
 	t.Run("gate with GateCPUQuota uses it", func(t *testing.T) {
 		tmpl := base
 		tmpl.GateCPUQuota = "300%"
-		got := scopeFor(Runtime{Scope: &tmpl}, scopeGate, "unit", "")
+		got := scopeFor(Runtime{Scope: &tmpl}, store.Binding{}, scopeGate, "unit", "")
 		if got == nil {
 			t.Fatal("scopeFor = nil, want a spec")
 		}
@@ -659,7 +721,7 @@ func TestScopeFor(t *testing.T) {
 
 	t.Run("gate without GateCPUQuota falls back to CPUQuota", func(t *testing.T) {
 		tmpl := base
-		got := scopeFor(Runtime{Scope: &tmpl}, scopeGate, "unit", "")
+		got := scopeFor(Runtime{Scope: &tmpl}, store.Binding{}, scopeGate, "unit", "")
 		if got == nil {
 			t.Fatal("scopeFor = nil, want a spec")
 		}
@@ -673,11 +735,131 @@ func TestScopeFor(t *testing.T) {
 			tmpl := base
 			tmpl.AllowedCPUs = "0-2"
 			rt := Runtime{Scope: &tmpl}
-			if got := scopeFor(rt, kind, "unit", ""); got == nil || got.AllowedCPUs != "0-2" {
+			if got := scopeFor(rt, store.Binding{}, kind, "unit", ""); got == nil || got.AllowedCPUs != "0-2" {
 				t.Errorf("%s with cpus=\"\" AllowedCPUs = %+v, want the pool 0-2", kind, got)
 			}
-			if got := scopeFor(rt, kind, "unit", "1"); got == nil || got.AllowedCPUs != "1" {
+			if got := scopeFor(rt, store.Binding{}, kind, "unit", "1"); got == nil || got.AllowedCPUs != "1" {
 				t.Errorf("%s with cpus=\"1\" AllowedCPUs = %+v, want 1", kind, got)
+			}
+		}
+	})
+
+	t.Run("round cpus is zeroed", func(t *testing.T) {
+		tmpl := base
+		tmpl.RoundCPUs = 2
+		tmpl.AllowedCPUs = "0-3"
+		got := scopeFor(Runtime{Scope: &tmpl}, store.Binding{}, scopeRound, "unit", "0,1")
+		if got == nil {
+			t.Fatal("scopeFor = nil, want a spec")
+		}
+		if got.RoundCPUs != 0 {
+			t.Errorf("round RoundCPUs = %d, want it zeroed", got.RoundCPUs)
+		}
+		if got.AllowedCPUs != "0,1" {
+			t.Errorf("round AllowedCPUs = %q, want the pin 0,1", got.AllowedCPUs)
+		}
+		if got.AffinityCPUs != "0,1" {
+			t.Errorf("round AffinityCPUs = %q, want the pin 0,1", got.AffinityCPUs)
+		}
+	})
+
+	t.Run("a pin without a pool leaves AllowedCPUs empty", func(t *testing.T) {
+		tmpl := base
+		tmpl.RoundCPUs = 2
+		rt := Runtime{Scope: &tmpl}
+		got := scopeFor(rt, store.Binding{}, scopeRound, "unit", "0,1")
+		if got == nil {
+			t.Fatal("scopeFor = nil, want a spec")
+		}
+		if got.AllowedCPUs != "" {
+			t.Errorf("round AllowedCPUs = %q, want empty without a pool", got.AllowedCPUs)
+		}
+		if got.AffinityCPUs != "0,1" {
+			t.Errorf("round AffinityCPUs = %q, want the pin even without a pool", got.AffinityCPUs)
+		}
+	})
+
+	t.Run("only a round carries affinity", func(t *testing.T) {
+		for _, kind := range []scopeKind{scopeGate, scopeConsult, scopeVerify} {
+			tmpl := base
+			tmpl.AllowedCPUs = "0-3"
+			rt := Runtime{Scope: &tmpl}
+			if got := scopeFor(rt, store.Binding{}, kind, "unit", "0,1"); got == nil || got.AffinityCPUs != "" {
+				t.Errorf("%s AffinityCPUs = %+v, want empty", kind, got)
+			}
+		}
+		tmpl := base
+		tmpl.AllowedCPUs = "0-3"
+		if got := scopeFor(Runtime{Scope: &tmpl}, store.Binding{}, scopeRound, "unit", ""); got == nil || got.AffinityCPUs != "" {
+			t.Errorf("round with cpus=\"\" AffinityCPUs = %+v, want empty", got)
+		}
+	})
+
+	t.Run("nil burst seam leaves no MemoryHigh", func(t *testing.T) {
+		tmpl := base
+		rt := Runtime{Scope: &tmpl}
+		got := scopeFor(rt, store.Binding{Name: "webshop"}, scopeRound, "unit", "0,1")
+		if got == nil {
+			t.Fatal("scopeFor = nil, want a spec")
+		}
+		if got.MemoryHigh != "" {
+			t.Errorf("round MemoryHigh = %q, want empty without a burst seam", got.MemoryHigh)
+		}
+	})
+
+	t.Run("round stamps the burst as plain bytes", func(t *testing.T) {
+		tmpl := base
+		var seen store.Binding
+		rt := Runtime{Scope: &tmpl, RoundBurst: func(b store.Binding) (int64, bool) {
+			seen = b
+			return 5 << 30, true
+		}}
+		b := store.Binding{Name: "webshop", Round: 3}
+		got := scopeFor(rt, b, scopeRound, "unit", "0,1")
+		if got == nil {
+			t.Fatal("scopeFor = nil, want a spec")
+		}
+		if got.MemoryHigh != "5368709120" {
+			t.Errorf("round MemoryHigh = %q, want the burst 5<<30 in plain bytes", got.MemoryHigh)
+		}
+		if seen.Name != "webshop" || seen.Round != 3 {
+			t.Errorf("burst seam saw %+v, want the round's binding", seen)
+		}
+		if got.MemoryMax != "2G" {
+			t.Errorf("round MemoryMax = %q, want the template's ceiling beside the burst", got.MemoryMax)
+		}
+	})
+
+	t.Run("refused and non-positive bursts leave no MemoryHigh", func(t *testing.T) {
+		cases := map[string]func(store.Binding) (int64, bool){
+			"refused":   func(store.Binding) (int64, bool) { return 0, false },
+			"zero":      func(store.Binding) (int64, bool) { return 0, true },
+			"negative":  func(store.Binding) (int64, bool) { return -1 << 30, true },
+			"unlearned": nil,
+		}
+		for name, seam := range cases {
+			t.Run(name, func(t *testing.T) {
+				tmpl := base
+				rt := Runtime{Scope: &tmpl, RoundBurst: seam}
+				got := scopeFor(rt, store.Binding{Name: "webshop"}, scopeRound, "unit", "0,1")
+				if got == nil {
+					t.Fatal("scopeFor = nil, want a spec")
+				}
+				if got.MemoryHigh != "" {
+					t.Errorf("round MemoryHigh = %q, want empty for a %s burst", got.MemoryHigh, name)
+				}
+			})
+		}
+	})
+
+	t.Run("gates consults and verifies never carry a burst", func(t *testing.T) {
+		for _, kind := range []scopeKind{scopeGate, scopeConsult, scopeVerify} {
+			tmpl := base
+			rt := Runtime{Scope: &tmpl, RoundBurst: func(store.Binding) (int64, bool) {
+				return 5 << 30, true
+			}}
+			if got := scopeFor(rt, store.Binding{Name: "webshop"}, kind, "unit", "0,1"); got == nil || got.MemoryHigh != "" {
+				t.Errorf("%s MemoryHigh = %+v, want empty: only rounds carry a burst", kind, got)
 			}
 		}
 	})
@@ -685,10 +867,14 @@ func TestScopeFor(t *testing.T) {
 	t.Run("template is not mutated", func(t *testing.T) {
 		tmpl := base
 		tmpl.GateCPUQuota = "300%"
+		tmpl.AllowedCPUs = "0-3"
 		before := tmpl
-		rt := Runtime{Scope: &tmpl}
-		_ = scopeFor(rt, scopeGate, "unit", "")
-		_ = scopeFor(rt, scopeConsult, "unit", "")
+		rt := Runtime{Scope: &tmpl, RoundBurst: func(store.Binding) (int64, bool) {
+			return 5 << 30, true
+		}}
+		_ = scopeFor(rt, store.Binding{}, scopeGate, "unit", "")
+		_ = scopeFor(rt, store.Binding{}, scopeConsult, "unit", "")
+		_ = scopeFor(rt, store.Binding{Name: "webshop"}, scopeRound, "unit", "0,1")
 		if tmpl != before {
 			t.Errorf("rt.Scope mutated: %+v, want %+v", tmpl, before)
 		}

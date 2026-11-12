@@ -25,7 +25,8 @@ func ScopeUnitFileName(unit string) string {
 
 // ScopeArgv wraps inner (the argv Start would otherwise exec) so it runs as a
 // transient systemd --scope unit; systemd-run execs inner in place, so the pid
-// Start records is inner's own. The quota precedes the pin, the pin memory.
+// Start records is inner's own. The quota precedes the pin, the pin the
+// ceiling, the ceiling the burst, so both memory caps read in one place.
 func ScopeArgv(s spawn.ScopeSpec, inner []string) []string {
 	argv := []string{"systemd-run", "--user", "--scope", "--quiet", "--collect", "--unit=" + ScopeUnitFileName(s.Unit)}
 	if s.NoExpand {
@@ -43,6 +44,9 @@ func ScopeArgv(s spawn.ScopeSpec, inner []string) []string {
 	}
 	if s.MemoryMax != "" {
 		argv = append(argv, "-p", "MemoryMax="+s.MemoryMax)
+	}
+	if s.MemoryHigh != "" {
+		argv = append(argv, "-p", "MemoryHigh="+s.MemoryHigh)
 	}
 	if s.TasksMax != 0 {
 		argv = append(argv, "-p", "TasksMax="+strconv.Itoa(s.TasksMax))
@@ -74,6 +78,26 @@ func ProbeAllowedCPUs(ctx context.Context, slice, cpus string) error {
 	}
 	spec := spawn.ScopeSpec{Unit: unit, Slice: slice, CPUWeight: 100, AllowedCPUs: cpus}
 	return runScopeProbe(ctx, spec, "systemd-run AllowedCPUs="+cpus)
+}
+
+// ProbeTaskset confirms taskset can pin to cpus before the daemon wraps every
+// round with it; a missing or refusing taskset leaves the scope and its pin
+// but drops the wrap. The list is named in the error as the pin probe names
+// its own.
+func ProbeTaskset(ctx context.Context, cpus string) error {
+	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, "taskset", "-c", cpus, "true")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		line := firstNonEmptyLine(stderr.String())
+		if line == "" {
+			line = err.Error()
+		}
+		return fmt.Errorf("taskset -c %s: %s", cpus, line)
+	}
+	return nil
 }
 
 // runScopeProbe runs spec's throwaway scope, returning systemd-run's first
