@@ -1610,6 +1610,33 @@ func TestAdmissionInputs(t *testing.T) {
 			t.Errorf("budget = %d, want 0 with no slice, no override and no meminfo", budget)
 		}
 	})
+
+	t.Run("budget dir error is brake-off", func(t *testing.T) {
+		env := setupTestEnv(t)
+		admitZeroBudget(t, env)
+		fakeLiveInputs(t, func() (string, error) { return "", errors.New("no cgroup") }, nil, mem16)
+		budget, _, pressureOK := env.srv.admissionInputs(nil)
+		if budget != 14*gb {
+			t.Errorf("budget = %d, want 16GiB machine minus 2GiB reserve", budget)
+		}
+		if !pressureOK {
+			t.Error("pressureOK = false, want true with no budget dir to read a brake from")
+		}
+	})
+
+	t.Run("numeric slice without memory.stat reads as full slice", func(t *testing.T) {
+		env := setupTestEnv(t)
+		admitZeroBudget(t, env)
+		dir := writeCgroupTree(t, map[string]string{
+			"memory.max":      "10737418240\n",
+			"memory.pressure": pressureBody("1.0"),
+		})
+		fakeLiveInputs(t, func() (string, error) { return dir, nil }, nil, mem16)
+		budget, _, _ := env.srv.admissionInputs(nil)
+		if budget != 10*gb {
+			t.Errorf("budget = %d, want the full 10GiB slice with no anon to subtract", budget)
+		}
+	})
 }
 
 // TestFindBudgetDir pins the budget walk: a service dir under a numeric slice
@@ -1908,4 +1935,70 @@ func TestAdmitHeldRoundsReportWaits(t *testing.T) {
 			t.Errorf("A wait = (%q, %d), want (pressure, 0)", viewA.Queue.Wait, viewA.Queue.WaitBytes)
 		}
 	})
+}
+
+// TestAdminHeldRoundReportsWait pins the admin threading: a memory-held
+// round's shortfall reaches the admin and fleet surfaces with the same wait
+// and bytes the caller's own queue view carries, since adminOwnerStatus
+// threads the pass's waits into every queued row.
+func TestAdminHeldRoundReportsWait(t *testing.T) {
+	const gb = int64(1 << 30)
+	env := setupTestEnv(t, func(cfg *Config) {
+		cfg.Policy = policy.Policy{Serve: &policy.ServePolicy{MemoryBudget: "10G"}}
+	})
+	ownerB := addOwner(t, env, "bob")
+
+	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, respA, bodyA, "A")
+	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
+	requireCreated(t, respB, bodyB, "B")
+
+	if err := env.srv.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	owners, _, err := AdminStatus(context.Background(), env.srv)
+	if err != nil {
+		t.Fatalf("AdminStatus: %v", err)
+	}
+	var adminRow *view.BindingStatus
+	for i := range owners {
+		if owners[i].Label != "bob" {
+			continue
+		}
+		for j := range owners[i].Report.Bindings {
+			if owners[i].Report.Bindings[j].Name == "api" {
+				adminRow = &owners[i].Report.Bindings[j]
+			}
+		}
+	}
+	if adminRow == nil {
+		t.Fatal("bob's api row missing from AdminStatus")
+	}
+	if adminRow.Queued == nil {
+		t.Fatal("bob's admin row has no QueueView, want the memory hold")
+	}
+	if adminRow.Queued.Wait != waitMemory || adminRow.Queued.WaitBytes != 2*gb {
+		t.Errorf("admin wait = (%q, %d), want (memory, %d)", adminRow.Queued.Wait, adminRow.Queued.WaitBytes, 2*gb)
+	}
+
+	flat, err := FlatStatus(context.Background(), env.srv)
+	if err != nil {
+		t.Fatalf("FlatStatus: %v", err)
+	}
+	var fleetRow *view.BindingStatus
+	for i := range flat.Bindings {
+		if flat.Bindings[i].OwnerLabel == "bob" && flat.Bindings[i].Name == "api" {
+			fleetRow = &flat.Bindings[i]
+		}
+	}
+	if fleetRow == nil {
+		t.Fatal("bob's api row missing from FlatStatus")
+	}
+	if fleetRow.Queued == nil {
+		t.Fatal("bob's fleet row has no QueueView, want the memory hold")
+	}
+	if fleetRow.Queued.Wait != waitMemory || fleetRow.Queued.WaitBytes != 2*gb {
+		t.Errorf("fleet wait = (%q, %d), want (memory, %d)", fleetRow.Queued.Wait, fleetRow.Queued.WaitBytes, 2*gb)
+	}
 }
