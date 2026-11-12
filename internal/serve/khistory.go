@@ -20,6 +20,17 @@ type kSample struct {
 // longer describe this host's parallelism, so every append drops them.
 const kHistoryMaxAge = 24 * time.Hour
 
+// kSampleWindow is one sample's span: a tick lands every few seconds, so each
+// sample keeps the highest count seen in its minute. That bounds the file to
+// a day of minutes, and a minute is short enough that two rounds bursting
+// together still register.
+const kSampleWindow = time.Minute
+
+// kMinSamples is the history depth below which K keeps its cold start: half
+// an hour of busy minutes, so a short quiet spell cannot collapse K to one
+// before rounds have had time to burst together.
+const kMinSamples = 30
+
 // kHistoryPath answers the bursting-count history file. It sits beside the
 // cost files but carries its own shape, so a cost trim never touches it.
 func kHistoryPath(root string) string {
@@ -44,9 +55,12 @@ func loadKHistory(root string) ([]kSample, error) {
 	return samples, nil
 }
 
-// appendKSample records one tick's bursting count, newest-last, pruning
-// samples older than a day by timestamp, never by count. The write is atomic
-// — a temp file in the same directory renamed over the target — so a crash
+// appendKSample records one tick's bursting count, newest-last. A tick inside
+// the newest sample's window raises that sample to its count instead of
+// adding one, and skips the write when nothing rose, so a busy server
+// rewrites the file about once a minute rather than every tick. Samples
+// older than a day drop by timestamp, never by count. The write is atomic —
+// a temp file in the same directory renamed over the target — so a crash
 // leaves the previous history intact. It shares costFileMu because both
 // histories live under costs/ and rename into it.
 func appendKSample(root string, count int, now time.Time) error {
@@ -56,6 +70,13 @@ func appendKSample(root string, count int, now time.Time) error {
 	if err != nil {
 		return err
 	}
+	if n := len(samples); n > 0 && now.Sub(samples[n-1].At) >= 0 && now.Sub(samples[n-1].At) < kSampleWindow {
+		if count <= samples[n-1].Count {
+			return nil
+		}
+		samples[n-1].Count = count
+		return writeKHistory(root, samples)
+	}
 	kept := make([]kSample, 0, len(samples)+1)
 	for _, s := range samples {
 		if now.Sub(s.At) <= kHistoryMaxAge {
@@ -63,6 +84,11 @@ func appendKSample(root string, count int, now time.Time) error {
 		}
 	}
 	kept = append(kept, kSample{Count: count, At: now})
+	return writeKHistory(root, kept)
+}
+
+// writeKHistory replaces the history file with samples, atomically.
+func writeKHistory(root string, kept []kSample) error {
 	raw, err := json.MarshalIndent(kept, "", "  ")
 	if err != nil {
 		return err

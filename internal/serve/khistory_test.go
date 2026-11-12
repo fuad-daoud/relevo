@@ -190,6 +190,8 @@ func TestTickSamplesBursting(t *testing.T) {
 	if err := os.RemoveAll(dirA); err != nil {
 		t.Fatal(err)
 	}
+	later := time.Now().Add(2 * kSampleWindow)
+	env.srv.cfg.Now = func() time.Time { return later }
 	if err := env.srv.Tick(context.Background()); err != nil {
 		t.Fatalf("tick with a vanished dir: %v", err)
 	}
@@ -270,11 +272,11 @@ func TestAdmitKHistoryAdmitsAtOne(t *testing.T) {
 		t.Fatalf("C queue = %+v, want the memory hold under K=2", viewC.Queue)
 	}
 
-	// Six count-1 samples put the p95 at 1 however the tick's own quiet
-	// sample lands.
+	// A full history of count-1 minutes puts the p95 at 1 however the tick's
+	// own quiet sample lands.
 	now := time.Now()
-	for i := range 6 {
-		if err := appendKSample(env.srv.cfg.Root, 1, now.Add(time.Duration(i)*time.Second)); err != nil {
+	for i := range kMinSamples {
+		if err := appendKSample(env.srv.cfg.Root, 1, now.Add(-time.Duration(kMinSamples-i)*kSampleWindow)); err != nil {
 			t.Fatalf("seed k sample %d: %v", i, err)
 		}
 	}
@@ -331,15 +333,15 @@ func TestAdmissionInputsKHistoryUnreadableKeepsColdStart(t *testing.T) {
 }
 
 // TestAdmissionInputsThinKHistoryKeepsColdStart pins the depth rule: a
-// history below seatMinSamples reads as no history, so early quiet ticks keep
+// history below kMinSamples reads as no history, so early quiet minutes keep
 // the cold-start K=2 instead of collapsing it to 1.
 func TestAdmissionInputsThinKHistoryKeepsColdStart(t *testing.T) {
 	const gb = int64(1 << 30)
 	env := setupTestEnv(t)
 	admitZeroBudget(t, env)
 	now := time.Now()
-	for i := range seatMinSamples - 1 {
-		if err := appendKSample(env.srv.cfg.Root, 0, now.Add(time.Duration(i)*time.Second)); err != nil {
+	for i := range kMinSamples - 1 {
+		if err := appendKSample(env.srv.cfg.Root, 0, now.Add(time.Duration(i)*kSampleWindow)); err != nil {
 			t.Fatalf("seed k sample %d: %v", i, err)
 		}
 	}
@@ -355,15 +357,15 @@ func TestAdmissionInputsThinKHistoryKeepsColdStart(t *testing.T) {
 }
 
 // TestAdmissionInputsFullKHistoryYieldsOne pins the depth rule at equality:
-// seatMinSamples quiet samples are enough history to leave the cold-start
-// K=2 for the estimate's floor of 1.
+// kMinSamples quiet minutes are enough history to leave the cold-start K=2
+// for the estimate's floor of 1.
 func TestAdmissionInputsFullKHistoryYieldsOne(t *testing.T) {
 	const gb = int64(1 << 30)
 	env := setupTestEnv(t)
 	admitZeroBudget(t, env)
 	now := time.Now()
-	for i := range seatMinSamples {
-		if err := appendKSample(env.srv.cfg.Root, 0, now.Add(time.Duration(i)*time.Second)); err != nil {
+	for i := range kMinSamples {
+		if err := appendKSample(env.srv.cfg.Root, 0, now.Add(time.Duration(i)*kSampleWindow)); err != nil {
 			t.Fatalf("seed k sample %d: %v", i, err)
 		}
 	}
@@ -375,5 +377,54 @@ func TestAdmissionInputsFullKHistoryYieldsOne(t *testing.T) {
 	_, k, _ := env.srv.admissionInputs(nil)
 	if k != 1 {
 		t.Errorf("k = %d, want 1 with a full quiet history", k)
+	}
+}
+
+// TestKHistoryKeepsOneSamplePerWindow pins the per-minute sample: a tick
+// inside the newest sample's window raises it to a higher count and never
+// adds a sample or lowers one, and the first tick past the window starts the
+// next sample.
+func TestKHistoryKeepsOneSamplePerWindow(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	at := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		count  int
+		offset time.Duration
+	}{{1, 0}, {0, 10 * time.Second}, {2, 20 * time.Second}, {1, kSampleWindow - time.Second}, {0, kSampleWindow}} {
+		if err := appendKSample(root, tc.count, at.Add(tc.offset)); err != nil {
+			t.Fatalf("append %+v: %v", tc, err)
+		}
+	}
+	got, err := loadKHistory(root)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	want := []kSample{{Count: 2, At: at}, {Count: 0, At: at.Add(kSampleWindow)}}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("history = %v, want %v: one sample per window holding its highest count", got, want)
+	}
+}
+
+// TestTickIdleRecordsNoKSample pins that an idle server learns nothing: a tick
+// with no round running writes no sample, so idle hours cannot drag K down.
+func TestTickIdleRecordsNoKSample(t *testing.T) {
+	env := setupTestEnv(t)
+	resp, body := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, resp, body, "A")
+	finishRound(t, env, testRuntime(t, env.srv, env.id), "api", 1)
+	if err := os.Remove(kHistoryPath(env.srv.cfg.Root)); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if err := env.srv.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	got, err := loadKHistory(env.srv.cfg.Root)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("k-history = %v, want no sample from an idle tick", got)
 	}
 }

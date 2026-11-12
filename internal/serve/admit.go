@@ -233,11 +233,11 @@ func (s *Server) admissionInputs(running []runningRound) (budget int64, k int, p
 	} else {
 		counts = kCounts(samples)
 	}
-	// A thin history reads as no history: one quiet tick is not evidence of
-	// low parallelism, the same way lookupSeat sits on its defaults below
-	// seatMinSamples. Without this the first tick's zero would collapse the
-	// cold-start K before any round ever burst.
-	if len(counts) < seatMinSamples {
+	// A thin history reads as no history: a few quiet minutes are not
+	// evidence of low parallelism, the same way lookupSeat sits on its
+	// defaults below seatMinSamples. Without this the first quiet minutes
+	// would collapse the cold-start K before rounds ever burst together.
+	if len(counts) < kMinSamples {
 		counts = nil
 	}
 	k = estimateK(counts, s.cap()+s.plannerCap())

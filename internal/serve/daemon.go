@@ -65,14 +65,19 @@ func (s *Server) Tick(ctx context.Context) error {
 	}
 	s.pruneUnusedRepos(ctx)
 	// The bursting sample rides one fresh census under the same hold, so the
-	// count matches the running set admission decides against. A history
-	// write failure only warns: admission must not fail because history did.
+	// count matches the running set admission decides against. An idle tick
+	// records nothing: with no round running, a zero says nothing about how
+	// many rounds burst together, and idle hours of zeros would drag K to one.
+	// A history write failure only warns: admission must not fail because
+	// history did.
 	c, cerr := s.census()
 	if cerr != nil {
 		slog.Warn("bursting census failed", "err", cerr)
 	}
-	if err := appendKSample(s.cfg.Root, s.sampleBursting(c), s.cfg.Now()); err != nil {
-		slog.Warn("k-history append failed", "err", err)
+	if len(c.RunningRounds) > 0 {
+		if err := appendKSample(s.cfg.Root, s.sampleBursting(c), s.cfg.Now()); err != nil {
+			slog.Warn("k-history append failed", "err", err)
+		}
 	}
 	if err := s.admitLocked(ctx); err != nil {
 		slog.Warn("admit failed", "err", err)
