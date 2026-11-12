@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"reflect"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
@@ -394,8 +393,7 @@ func chainPullInstallRounds(ctx context.Context, rt Runtime, mv remote.ChainMemb
 			}
 		}
 		cur.Builder.RemoteStatus = string(mv.View.RoundState)
-		cur.Builder.RemoteQueue = nil
-		cur.Builder.RemoteLive = nil
+		clearSettledPollFacts(&cur, mv.View.RoundState)
 		return chainPullSaveIfChanged(tx, snap, cur)
 	})
 }
@@ -486,34 +484,6 @@ func chainAllCaughtUp(tx *store.Tx, view remote.ChainView) bool {
 		}
 	}
 	return len(view.Members) > 0
-}
-
-// chainPullSaveIfChanged saves a pull's member only when the pass moved it:
-// an unchanged record is dropped rather than rewritten with a new stamp, so a
-// repeated pass over an unchanged view writes nothing. The snapshot and the
-// mutable copy are compared with the UpdatedAt stamp Save writes dropped on
-// both sides, so any moved field still saves. Save is handed the stamp the record
-// holds: its own check compares the whole row, so a blank stamp reads as a change
-// and rewrites a row in which only machine-local fields moved.
-func chainPullSaveIfChanged(tx *store.Tx, snap, cur store.Binding) error {
-	compared := cur
-	snap.UpdatedAt = time.Time{}
-	compared.UpdatedAt = time.Time{}
-	if reflect.DeepEqual(snap, compared) {
-		return nil
-	}
-	return tx.Save(cur)
-}
-
-// chainPullPutIfChanged is chainPullSaveIfChanged for the chain row the pull
-// rebuilds from the view.
-func chainPullPutIfChanged(tx *store.Tx, snap, row db.ChainRow) error {
-	snap.UpdatedAt = time.Time{}
-	row.UpdatedAt = time.Time{}
-	if reflect.DeepEqual(snap, row) {
-		return nil
-	}
-	return tx.ChainPut(row)
 }
 
 // chainRowFromView is the mirror row carrying the server's state. The row's
