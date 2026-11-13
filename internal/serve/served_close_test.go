@@ -316,9 +316,21 @@ func TestCloseServedRoundRecordsCost(t *testing.T) {
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("save: %v", err)
 	}
+	start := at.Add(-time.Hour)
+	stall := int64(1620000000)
+	wantCPU := int64(2350)
+	if err := rt.Store.AppendLog("api", store.LogEntry{
+		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt,
+		TS: start,
+	}); err != nil {
+		t.Fatalf("append prompt: %v", err)
+	}
 	if err := rt.Store.AppendLog("api", store.LogEntry{
 		Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
-		TS: at, Rusage: &store.Rusage{BaseBytes: &base, BurstBytes: &burst},
+		TS: at, Rusage: &store.Rusage{
+			BaseBytes: &base, BurstBytes: &burst,
+			CPUMS: 6840000, CPUSomeUsec: &stall,
+		},
 	}); err != nil {
 		t.Fatalf("append log: %v", err)
 	}
@@ -343,9 +355,14 @@ func TestCloseServedRoundRecordsCost(t *testing.T) {
 	if cf.LastRound != 1 || len(cf.Samples) != 1 {
 		t.Fatalf("cost file = last %d samples %d, want 1 and 1", cf.LastRound, len(cf.Samples))
 	}
-	want := costSample{Base: base, Burst: burst, Binding: string(env.id) + "/api", Round: 1, At: at}
-	if cf.Samples[0] != want {
+	if cf.Samples[0].Base != base || cf.Samples[0].Burst != burst || cf.Samples[0].Binding != string(env.id)+"/api" || cf.Samples[0].Round != 1 || !cf.Samples[0].At.Equal(at) {
 		t.Fatalf("sample = %+v, want base %d burst %d at %v", cf.Samples[0], base, burst, at)
+	}
+	if cf.Samples[0].CPUWant == nil || *cf.Samples[0].CPUWant != wantCPU {
+		t.Fatalf("sample CPUWant = %v, want %d", cf.Samples[0].CPUWant, wantCPU)
+	}
+	if cf.Samples[0].Burst != burst {
+		t.Fatalf("sample Burst = %d, want %d", cf.Samples[0].Burst, burst)
 	}
 
 	again := CloseServedRound(ctx, costRT, res)
@@ -354,6 +371,40 @@ func TestCloseServedRoundRecordsCost(t *testing.T) {
 	}
 	if cf := readSample(); cf.LastRound != 1 || len(cf.Samples) != 1 {
 		t.Fatalf("after retry: last %d samples %d, want 1 and 1", cf.LastRound, len(cf.Samples))
+	}
+
+	b2 := res
+	b2.Round = 3
+	round2Start := at.Add(30 * time.Minute)
+	round2At := at.Add(90 * time.Minute)
+	if err := rt.Store.AppendLog("api", store.LogEntry{
+		Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt,
+		TS: round2Start,
+	}); err != nil {
+		t.Fatalf("append round 2 prompt: %v", err)
+	}
+	if err := rt.Store.AppendLog("api", store.LogEntry{
+		Round: 2, Direction: store.DirToMasterMind, Kind: store.KindReport,
+		TS: round2At, Rusage: &store.Rusage{
+			BaseBytes: &base, BurstBytes: &burst,
+			CPUMS: 6840000,
+		},
+	}); err != nil {
+		t.Fatalf("append round 2 report: %v", err)
+	}
+	res2 := CloseServedRound(ctx, costRT, b2)
+	if res2.Serve.ClosedRound != 2 {
+		t.Fatalf("second close = closed %d, want 2", res2.Serve.ClosedRound)
+	}
+	cf2 := readSample()
+	if len(cf2.Samples) != 2 {
+		t.Fatalf("after round 2: samples = %d, want 2", len(cf2.Samples))
+	}
+	if cf2.Samples[1].CPUWant != nil {
+		t.Fatalf("round 2 sample CPUWant = %v, want nil", cf2.Samples[1].CPUWant)
+	}
+	if cf2.Samples[1].Burst != burst {
+		t.Fatalf("round 2 sample Burst = %d, want %d", cf2.Samples[1].Burst, burst)
 	}
 }
 

@@ -217,7 +217,7 @@ func TestServedRoundStampsAreThatRounds(t *testing.T) {
 		{TS: start2, Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt},
 	}
 
-	one, oneQueued := servedRoundStamps(entries, 1)
+	one, oneQueued := ServedRoundStamps(entries, 1)
 	if !one.Equal(start1) {
 		t.Errorf("round 1 start = %s, want the admit %s", one, start1)
 	}
@@ -225,7 +225,7 @@ func TestServedRoundStampsAreThatRounds(t *testing.T) {
 		t.Errorf("round 1 queued = %s, want the accept %s", oneQueued, queued1.Add(time.Second))
 	}
 
-	two, twoQueued := servedRoundStamps(entries, 2)
+	two, twoQueued := ServedRoundStamps(entries, 2)
 	if !two.Equal(start2) {
 		t.Errorf("round 2 start = %s, want the unqueued handoff %s", two, start2)
 	}

@@ -292,7 +292,7 @@ func TestSampleForEntry(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := sampleForEntry(tc.entry)
+			got, ok := sampleForEntry(tc.entry, time.Time{})
 			if ok != tc.wantKnown {
 				t.Fatalf("sampleForEntry() known = %v, want %v", ok, tc.wantKnown)
 			}

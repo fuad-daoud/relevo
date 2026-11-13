@@ -11,13 +11,16 @@ import (
 // ignore it. Binding and Round name the sample's own round -- owner/name and
 // round -- so a check settled after the close folds its peak into this sample
 // even after other bindings moved LastBinding on. Empty on samples written
-// before the fields existed, which a fold leaves alone.
+// before the fields existed, which a fold leaves alone. CPUWant carries the
+// milli-cores of CPU the round wanted, nil when the round carried no CPU
+// reading, and a nil is ignored for CPU, never read as zero.
 type costSample struct {
 	Base    int64     `json:"base"`
 	Burst   int64     `json:"burst"`
 	Binding string    `json:"binding,omitempty"`
 	Round   int       `json:"round,omitempty"`
 	At      time.Time `json:"at"`
+	CPUWant *int64    `json:"cpu_want,omitempty"`
 }
 
 const (

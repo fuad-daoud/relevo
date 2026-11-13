@@ -153,7 +153,7 @@ func servedRoundFacts(entries []store.LogEntry, n int) remote.ClosedRoundView {
 			break
 		}
 	}
-	f.RoundStartedAt, f.QueuedAt = servedRoundStamps(entries, n)
+	f.RoundStartedAt, f.QueuedAt = ServedRoundStamps(entries, n)
 	return f
 }
 
