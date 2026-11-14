@@ -186,9 +186,10 @@ func RoundPinText(b store.Binding) string {
 // or a nil tx (a caller with no round to pin) clears both pin fields, and a
 // census error clears them so the round runs unpinned rather than failing.
 // A full pool shares its least-held cores pinned instead of running
-// unpinned. A relaunch or a mid-round switch keeps its set when every core
-// is still in the pool and still free -- whatever a learned size would now
-// say, because repinning a running round moves its threads for no gain; a
+// unpinned. A binding that already holds a set -- its next round, a relaunch
+// or a mid-round switch -- keeps it while every core is still in the pool,
+// still free and still the size this round should get; the set only applies
+// when a process starts, so a changed size repins nothing that is running. A
 // legacy single pin keeps as a size-1 set. Without a template pool the set
 // comes from every online CPU and the single pin stays nil, so gates and
 // consults read unpinned. The returned binding carries RoundCPUs and
@@ -213,9 +214,12 @@ func AssignRoundCPU(deps Deps, tx *store.Tx, b store.Binding) store.Binding {
 		return b
 	}
 
-	// A relaunch after a restart, or a mid-round switch, keeps its set when
-	// every core is still in the pool and no other live round holds one.
-	if keptSet(pool, held, b.RoundCPUs) {
+	// A binding's set outlives its round, so the next round, a relaunch after
+	// a restart and a mid-round switch all find one here. Each keeps it while
+	// it is still the size this round should get, every core is still in the
+	// pool and no other live round holds one; a changed size picks afresh.
+	size := roundSizeFor(deps, b, pool)
+	if len(b.RoundCPUs) == size && keptSet(pool, held, b.RoundCPUs) {
 		if deps.AllowedCPUs == "" {
 			b.RoundCPU = nil
 		}
@@ -236,7 +240,7 @@ func AssignRoundCPU(deps Deps, tx *store.Tx, b store.Binding) store.Binding {
 		readTopology = func(p []int) spawn.CPUTopology { return spawn.ReadCPUTopology("/sys/devices/system/cpu", p) }
 	}
 	topo := readTopology(pool)
-	set, ok := pickCPUSet(pool, held, roundSizeFor(deps, b, pool), topo)
+	set, ok := pickCPUSet(pool, held, size, topo)
 	if !ok {
 		slog.Warn("cpu pool too small; round runs on the whole pool", "binding", b.Name, "round", b.Round, "pool", deps.AllowedCPUs, "held", len(held))
 		b.RoundCPU = nil

@@ -1097,16 +1097,21 @@ func TestAssignRoundCPUConfiguredAbovePoolStaysUnpinned(t *testing.T) {
 	}
 }
 
-// TestAssignRoundCPURelaunchKeepsSetOverLearned pins the relaunch rule: a
-// binding that already holds a set keeps it whatever the learned size now
-// says, bigger or smaller.
-func TestAssignRoundCPURelaunchKeepsSetOverLearned(t *testing.T) {
+// TestAssignRoundCPUHeldSetKeepsOnlyAtItsSize pins what a binding's earlier
+// set does: its next round, a relaunch or a switch keeps it while it is the
+// size the round should get, and picks afresh, bigger or smaller, when the
+// learned size moved.
+func TestAssignRoundCPUHeldSetKeepsOnlyAtItsSize(t *testing.T) {
 	cases := []struct {
 		name    string
 		learned func(store.Binding) (int, bool)
+		want    int
+		keep    bool
 	}{
-		{"learned 4", func(store.Binding) (int, bool) { return 4, true }},
-		{"learned 1", func(store.Binding) (int, bool) { return 1, true }},
+		{"same size keeps", func(store.Binding) (int, bool) { return 2, true }, 2, true},
+		{"no history keeps at the configured size", func(store.Binding) (int, bool) { return 0, false }, 2, true},
+		{"learned 4 grows", func(store.Binding) (int, bool) { return 4, true }, 4, false},
+		{"learned 1 shrinks", func(store.Binding) (int, bool) { return 1, true }, 1, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -1127,8 +1132,11 @@ func TestAssignRoundCPURelaunchKeepsSetOverLearned(t *testing.T) {
 			if err != nil {
 				t.Fatalf("WithLock: %v", err)
 			}
-			if !reflect.DeepEqual(got.RoundCPUs, []int{2, 3}) {
-				t.Errorf("RoundCPUs = %v, want the kept set [2 3] unchanged", got.RoundCPUs)
+			if len(got.RoundCPUs) != c.want {
+				t.Fatalf("RoundCPUs = %v, want %d cores", got.RoundCPUs, c.want)
+			}
+			if kept := reflect.DeepEqual(got.RoundCPUs, []int{2, 3}); kept != c.keep {
+				t.Errorf("RoundCPUs = %v, kept the held set = %v, want %v", got.RoundCPUs, kept, c.keep)
 			}
 		})
 	}

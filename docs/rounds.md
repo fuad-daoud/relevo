@@ -94,8 +94,9 @@ out. `round_cpus` (default 2) is the size a round gets on the local daemon,
 and the cold-start size of a served round; a served round's size is then
 learned per repo and role from its cost history once it has 5 samples with
 CPU data: the p90 of (CPU used + time stalled waiting for a CPU) / wall,
-rounded up, between 1 and 4 and never above the pool. A relaunch keeps its
-set. Each round is pinned with `taskset` to that many CPUs, picked from the
+rounded up, between 1 and 4 and never above the pool. A binding's next
+round, a relaunch or a switch keeps the set it holds while that set is
+still the size it should get, and picks afresh when it is not. Each round is pinned with `taskset` to that many CPUs, picked from the
 `allowed_cpus` pool (`"0-2"`) or, without one, from every online CPU. The
 pick spreads rounds across physical cores before it uses a core's second
 thread, and takes faster cores first on a host whose cores differ in speed;
