@@ -97,8 +97,8 @@ func TestRecordTransportAnswersEveryCallWithAZero(t *testing.T) {
 	if _, err := r.Stats(); err != nil {
 		t.Fatalf("Stats: %v", err)
 	}
-	if err := r.PublishMarks(nil, time.Unix(0, 0).UTC()); err != nil {
-		t.Fatalf("PublishMarks: %v", err)
+	if _, err := r.Head("m1"); err != nil {
+		t.Fatalf("Head: %v", err)
 	}
 	if _, err := r.ReadMarks(); err != nil {
 		t.Fatalf("ReadMarks: %v", err)

@@ -8,6 +8,7 @@ package sync
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"strings"
@@ -88,8 +89,8 @@ func TestTrafficDueAtTheHourAndWithoutAMarker(t *testing.T) {
 }
 
 // TestTrafficDueWithAnUnparseableMarker pins which way a damaged marker is
-// read: due rather than never due, the rule marksDue runs on -- the worst a
-// bad row costs is a publish the throttle was going to skip.
+// read: due rather than never due -- the worst a bad row costs is a publish
+// the throttle was going to skip.
 func TestTrafficDueWithAnUnparseableMarker(t *testing.T) {
 	t.Parallel()
 	_, local := joinPair(t, "m1")
@@ -183,6 +184,23 @@ func snapBody(t *testing.T, kv db.KV) string {
 	return string(body)
 }
 
+// mustMarshal encodes a marker body, which a case writes by hand.
+func mustMarshal(t *testing.T, v any) []byte {
+	t.Helper()
+	body, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("encode the marker: %v", err)
+	}
+	return body
+}
+
+// markerIsSet reports whether a marker exists, so a case asserts a key was left
+// alone rather than only that it was read.
+func markerIsSet(kv db.KV, key string) (any, bool) {
+	_, ok, err := kv.KVGet(key)
+	return nil, ok && err == nil
+}
+
 // TestSteadySkipsATransportWithoutTrafficPublisher pins the silent skip: a
 // client without the optional publisher is this machine's client rather than
 // a fault of this attempt, so the publish is dropped with a debug line and no
@@ -207,10 +225,10 @@ func TestSteadySkipsATransportWithoutTrafficPublisher(t *testing.T) {
 	}
 }
 
-// TestSteadyPublishesTrafficWhenNoMarkMoved pins the cadence the marks
-// throttle does not cover: the account total goes most wrong on a machine
-// that exports heavily while importing nothing, so a traffic publish runs on
-// every steady attempt whether or not the import moved a mark.
+// TestSteadyPublishesTrafficWhenNoMarkMoved pins the cadence: the account
+// total goes most wrong on a machine that exports heavily while importing
+// nothing, so a traffic publish runs on every steady attempt whether or not
+// the import moved a mark.
 func TestSteadyPublishesTrafficWhenNoMarkMoved(t *testing.T) {
 	t.Parallel()
 	shared, local := joinPair(t, "m1")
@@ -223,9 +241,6 @@ func TestSteadyPublishesTrafficWhenNoMarkMoved(t *testing.T) {
 	if log.publishes != 1 {
 		t.Errorf("an attempt that moved no mark published traffic %d times, want it published anyway",
 			log.publishes)
-	}
-	if _, ok := markerIsSet(local, KeyMarksPublished); ok {
-		t.Error("an attempt that moved no mark published marks too, want only the traffic published")
 	}
 }
 

@@ -181,56 +181,6 @@ func TestJoinBytesCountedAcrossWorkerRestart(t *testing.T) {
 	}
 }
 
-// orderedLog records the order of the calls the join test cares about.
-type orderedLog struct {
-	*joinLog
-	events []string
-}
-
-func (o *orderedLog) Append(e []synclog.Entry) ([]synclog.Entry, error) {
-	out, err := o.joinLog.Append(e)
-	if err == nil {
-		o.events = append(o.events, "append")
-	}
-	return out, err
-}
-
-func (o *orderedLog) PublishMarks(m map[string]int, at time.Time) error {
-	o.events = append(o.events, "publish")
-	return o.joinLog.PublishMarks(m, at)
-}
-
-func TestJoinPublishesMarksAfterReconcile(t *testing.T) {
-	for _, failing := range []bool{false, true} {
-		t.Run(fmt.Sprintf("append fails %v", failing), func(t *testing.T) {
-			shared, local := joinPair(t, "m1")
-			passGate(t, shared)
-			seedJoin(t, shared, joinBinding("b1", "m1"), joinBinding("b2", "m1"))
-			log := &orderedLog{joinLog: &joinLog{MemTransport: synclog.NewMemTransport("m1")}}
-			if failing {
-				log.failAt, log.err = 1, errors.New("the worker died")
-			}
-			_, err := runEnable(t, shared, local, []byte(joinToken), log)
-			if failing {
-				if err == nil {
-					t.Fatal("a join whose append failed succeeded")
-				}
-				if len(log.events) != 0 {
-					t.Fatalf("events = %v, want no marks published for a join that did not reconcile", log.events)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("Enable: %v", err)
-			}
-			want := []string{"append", "publish"}
-			if fmt.Sprint(log.events) != fmt.Sprint(want) {
-				t.Fatalf("events = %v, want %v", log.events, want)
-			}
-		})
-	}
-}
-
 // joinNow pins the account tests mid-month, so rows naming "2026-10" are the
 // month holding now.
 var joinNow = time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)

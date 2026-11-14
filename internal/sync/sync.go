@@ -25,9 +25,6 @@ const (
 	KeyAttention = "sync.attention"
 	KeyTimes     = "sync.times"
 	KeyTrouble   = "sync.trouble"
-	// KeyMarksPublished is when this machine last published its import marks to the
-	// log; a marker because the throttle reads it and an old daemon has no field.
-	KeyMarksPublished = "sync.marks.published"
 )
 
 // LocalHandle is the machine-local file beside d, or an error on a handle opened

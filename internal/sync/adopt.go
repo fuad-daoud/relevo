@@ -3,8 +3,9 @@ package sync
 // Adopting an identity: `enable --as X` makes a fresh machine continue as X, an
 // installation whose machine is gone. Nothing reaches the remote but under X, and
 // nothing under X until X's log imports in full: the temporary identity never
-// appends, marks or writes meta, and the machine becomes X in one swap, its first
-// append waiting for the daemon restart reading its origin at open.
+// appends, publishes its traffic row or writes meta, and the machine becomes X in
+// one swap, its first append waiting for the daemon restart reading its origin at
+// open.
 
 import (
 	"context"
@@ -36,7 +37,7 @@ const KeyAdoptPending = db.KeyAdoptPending
 type PendingAdopt = db.PendingAdopt
 
 // adoptQuietFor is how long an identity must have been silent in log and published
-// marks before another machine may take it.
+// traffic before another machine may take it.
 const adoptQuietFor = 24 * time.Hour
 
 // adoptSkew is how far in the future a stamp may sit and still count as live, the
@@ -51,9 +52,9 @@ var adoptIgnoredDocs = []string{"config", SecretsDocName}
 var (
 	// ErrAdoptionLive is an adoption of an identity active within the day.
 	ErrAdoptionLive = errors.New("sync: that identity was active within the last 24 hours: wait, or run relevo db sync disable on the machine that holds it")
-	// ErrAdoptionStampAhead is an adoption of an identity whose log or marks are stamped
-	// further ahead than the skew allows: a wrong clock or forged stamp, never quiet.
-	ErrAdoptionStampAhead = errors.New("sync: that identity's log or marks are stamped in the future: its clock is wrong or the stamp is forged; fix that clock or run relevo db sync disable on the machine that holds it")
+	// ErrAdoptionStampAhead is an adoption of an identity whose log or traffic row is
+	// stamped further ahead than the skew allows: a wrong clock or forged stamp, never quiet.
+	ErrAdoptionStampAhead = errors.New("sync: that identity's log or traffic row is stamped in the future: its clock is wrong or the stamp is forged; fix that clock or run relevo db sync disable on the machine that holds it")
 	// ErrAdoptionSelf is an adoption of the identity already held.
 	ErrAdoptionSelf = errors.New("sync: this machine already is that installation: run relevo db sync enable without --as")
 	// ErrAdoptionClaimed is an adoption another machine claimed first.
@@ -67,12 +68,12 @@ var (
 )
 
 // AdoptionRefusal decides whether an identity is quiet enough to take from its
-// newest entry and mark times, zero when none. Within the last day -- or future
-// within the marks' skew -- is still using it; further ahead is a wrong clock or
+// newest entry and traffic-row times, zero when none. Within the last day -- or
+// future within the skew -- is still using it; further ahead is a wrong clock or
 // forged stamp, never quiet. A fast joiner clock reads as quiet, which is
 // accepted: a group-key holder can already write as any origin.
-func AdoptionRefusal(now, lastEntryAt, lastMarkAt time.Time) error {
-	for _, at := range []time.Time{lastEntryAt, lastMarkAt} {
+func AdoptionRefusal(now, lastEntryAt, lastSeenAt time.Time) error {
+	for _, at := range []time.Time{lastEntryAt, lastSeenAt} {
 		if at.IsZero() {
 			continue
 		}
@@ -365,13 +366,18 @@ func (e *Enabler) adoptClaim(transport synclog.LogTransport, now time.Time) (str
 	if err != nil {
 		return "", err
 	}
-	var lastMark time.Time
-	for _, m := range state.Marks {
-		if m.Reader == a.ID && m.At.After(lastMark) {
-			lastMark = m.At
+	// A machine that only reads still publishes its traffic row every hour, so
+	// the row's time carries the liveness signal. A client without the reader,
+	// the unsupported sentinel and an absent row all read as no signal.
+	var lastSeen time.Time
+	if reader, ok := transport.(synclog.TrafficReader); ok {
+		rows, err := reader.ReadTraffic()
+		if err != nil && !errors.Is(err, errTrafficUnsupported) {
+			return "", fmt.Errorf("sync: adopt: read the traffic: %w", err)
 		}
+		lastSeen = rows[a.ID].At
 	}
-	if err := AdoptionRefusal(now, lastEntry, lastMark); err != nil {
+	if err := AdoptionRefusal(now, lastEntry, lastSeen); err != nil {
 		return "", err
 	}
 	token := ""

@@ -87,48 +87,6 @@ func TestAnAttemptSendsTheOwedHistorySignedAndClearsTheMarker(t *testing.T) {
 	}
 }
 
-// markCountingLog counts mark publishes and can refuse them.
-type markCountingLog struct {
-	*synclog.MemTransport
-	published int
-	refuse    bool
-}
-
-func (l *markCountingLog) PublishMarks(marks map[string]int, at time.Time) error {
-	if l.refuse {
-		return errLogRefused
-	}
-	l.published++
-	return l.MemTransport.PublishMarks(marks, at)
-}
-
-// The end of a join says where the machine has read to, whatever the steady
-// throttle would have done; the debt is only forgiven once that went out.
-func TestFinishingTheOwedHistoryPublishesTheMarksBeforeClearingTheDebt(t *testing.T) {
-	t.Parallel()
-	shared, local, log := owedMachine(t, 0)
-	counting := &markCountingLog{MemTransport: log, refuse: true}
-	runner := &Runner{Client: counting, Local: local}
-
-	if out := runner.SyncOnce(context.Background(), shared); !errors.Is(out.Err, errLogRefused) {
-		t.Fatalf("attempt with marks refused = %v, want the refusal", out.Err)
-	}
-	if _, joining, _ := ReadJoin(local); !joining {
-		t.Error("the debt was cleared though the marks never went out")
-	}
-
-	counting.refuse = false
-	if out := runner.SyncOnce(context.Background(), shared); out.Err != nil {
-		t.Fatalf("attempt: %v", out.Err)
-	}
-	if counting.published == 0 {
-		t.Error("finishing the owed history published no marks")
-	}
-	if _, joining, _ := ReadJoin(local); joining {
-		t.Error("the marker is still set")
-	}
-}
-
 func TestALockedMachineSendsNothingAndStaysOwing(t *testing.T) {
 	t.Parallel()
 	shared, local, log := lockedJoin(t)
