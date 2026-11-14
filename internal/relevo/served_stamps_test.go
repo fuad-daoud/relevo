@@ -19,7 +19,7 @@ func TestServedRoundStampsLocalRoundUnchanged(t *testing.T) {
 		{TS: base.Add(90 * time.Second), Round: 1, Direction: store.DirToMasterMind, Kind: store.KindQueue, Confirmed: true, Note: "started after 1m29s queued"},
 		{TS: base.Add(3 * time.Minute), Round: 1, Direction: store.DirToMasterMind, Kind: store.KindQueue, Confirmed: true, Note: "started after 1m0s queued"},
 	}
-	start, queued := servedRoundStamps(entries, 1)
+	start, queued := ServedRoundStamps(entries, 1)
 	if !start.Equal(base.Add(3 * time.Minute)) {
 		t.Errorf("start = %v, want the newest admit at +3m", start)
 	}
@@ -30,7 +30,7 @@ func TestServedRoundStampsLocalRoundUnchanged(t *testing.T) {
 	direct := []store.LogEntry{
 		{TS: base, Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt},
 	}
-	start, queued = servedRoundStamps(direct, 2)
+	start, queued = ServedRoundStamps(direct, 2)
 	if !start.Equal(base) || !queued.IsZero() {
 		t.Errorf("direct round stamps = %v/%v, want the handoff with no queue stamp", start, queued)
 	}

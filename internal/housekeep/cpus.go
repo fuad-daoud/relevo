@@ -186,17 +186,15 @@ func RoundPinText(b store.Binding) string {
 // or a nil tx (a caller with no round to pin) clears both pin fields, and a
 // census error clears them so the round runs unpinned rather than failing.
 // A full pool shares its least-held cores pinned instead of running
-// unpinned. A relaunch or a mid-round switch keeps its set when every core
-// is still in the pool and still free; a legacy single pin keeps as a
-// size-1 set. Without a template pool the set comes from every online CPU
-// and the single pin stays nil, so gates and consults read unpinned. The
-// returned binding carries RoundCPUs and RoundCPU, so the caller's tx.Save
-// persists them.
+// unpinned. A binding that already holds a set -- its next round, a relaunch
+// or a mid-round switch -- keeps it while every core is still in the pool,
+// still free and still the size this round should get; the set only applies
+// when a process starts, so a changed size repins nothing that is running. A
+// legacy single pin keeps as a size-1 set. Without a template pool the set
+// comes from every online CPU and the single pin stays nil, so gates and
+// consults read unpinned. The returned binding carries RoundCPUs and
+// RoundCPU, so the caller's tx.Save persists them.
 func AssignRoundCPU(deps Deps, tx *store.Tx, b store.Binding) store.Binding {
-	size := deps.RoundCPUs
-	if size < 1 {
-		size = 1
-	}
 	pool := roundPool(deps.AllowedCPUs)
 	if len(pool) == 0 || tx == nil {
 		b.RoundCPU = nil
@@ -216,9 +214,12 @@ func AssignRoundCPU(deps Deps, tx *store.Tx, b store.Binding) store.Binding {
 		return b
 	}
 
-	// A relaunch after a restart, or a mid-round switch, keeps its set when
-	// every core is still in the pool and no other live round holds one.
-	if keptSet(pool, held, b.RoundCPUs) {
+	// A binding's set outlives its round, so the next round, a relaunch after
+	// a restart and a mid-round switch all find one here. Each keeps it while
+	// it is still the size this round should get, every core is still in the
+	// pool and no other live round holds one; a changed size picks afresh.
+	size := roundSizeFor(deps, b, pool)
+	if len(b.RoundCPUs) == size && keptSet(pool, held, b.RoundCPUs) {
 		if deps.AllowedCPUs == "" {
 			b.RoundCPU = nil
 		}
@@ -254,4 +255,21 @@ func AssignRoundCPU(deps Deps, tx *store.Tx, b store.Binding) store.Binding {
 		b.RoundCPU = nil
 	}
 	return b
+}
+
+// roundSizeFor answers the set size this round gets: the configured size
+// until RoundCPUSize learns one. The learned size is clamped to the pool,
+// because a history from a larger host must not unpin a round; the
+// configured one is not, so a configured size above the pool keeps the
+// round on the whole pool, unpinned, with the pool-too-small warn.
+func roundSizeFor(deps Deps, b store.Binding, pool []int) int {
+	size := max(deps.RoundCPUs, 1)
+	if deps.RoundCPUSize == nil {
+		return size
+	}
+	n, ok := deps.RoundCPUSize(b)
+	if !ok {
+		return size
+	}
+	return min(max(n, 1), len(pool))
 }

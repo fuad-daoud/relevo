@@ -71,7 +71,7 @@ var settingHelp = map[string]string{
 	"serve.max_builders":     "How many builders relevo serve runs at once; more rounds wait in its queue.",
 	"serve.max_planners":     "How many planner rounds relevo serve runs at once; planners never take a builder seat.",
 	"serve.scope":            "The scope for rounds relevo serve runs; when set it replaces scope for them.",
-	"serve.scope.round_cpus": "How many pool cores one serve round gets; empty means the 2-core default.",
+	"serve.scope.round_cpus": "How many pool cores one serve round starts with; empty means the 2-core default, and served rounds learn their size from past rounds.",
 	"serve.memory_budget":    "How much memory serve rounds may take together; empty derives it from the slice or the machine.",
 	"scan_patterns":          "Extra patterns that mark a builder's line as instruction-shaped, beside the built-in list.",
 	"notify.webhooks":        "Where relevo posts round and binding events over HTTP.",

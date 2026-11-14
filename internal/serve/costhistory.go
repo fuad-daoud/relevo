@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -146,7 +147,7 @@ func burstBaseOf(r *store.Rusage) (base, burst int64, ok bool) {
 // base is its busy level, never the round's resting one, so the sample's
 // base stays the round's -- a round with no base of its own takes the
 // gate's. A round with no known burst on either side records nothing.
-func sampleForEntry(e store.LogEntry) (costSample, bool) {
+func sampleForEntry(e store.LogEntry, start time.Time) (costSample, bool) {
 	roundBase, roundBurst, roundOK := burstBaseOf(e.Rusage)
 	var gate *store.Rusage
 	if e.Gate != nil {
@@ -164,7 +165,8 @@ func sampleForEntry(e store.LogEntry) (costSample, bool) {
 	if gateOK && roundBase+gateBurst > burst {
 		burst = roundBase + gateBurst
 	}
-	return costSample{Base: base, Burst: burst, At: e.TS}, true
+	cpuWant, _ := cpuWantOf(e, start)
+	return costSample{Base: base, Burst: burst, At: e.TS, CPUWant: cpuWant}, true
 }
 
 // recordClosedCost appends the closed round's measured burst to the cost
@@ -184,7 +186,8 @@ func recordClosedCost(rt relevo.Runtime, b store.Binding, closed int) {
 	if !ok {
 		return
 	}
-	sample, ok := sampleForEntry(entry)
+	start, _ := relevo.ServedRoundStamps(entries, closed)
+	sample, ok := sampleForEntry(entry, start)
 	if !ok {
 		return
 	}

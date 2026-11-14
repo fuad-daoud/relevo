@@ -16,7 +16,7 @@ const admitNotePrefix = "started after "
 // into its builder queue, so a round that waited carries both ends of its wait.
 const serveQueueNotePrefix = "queued ("
 
-// servedRoundStamps is round n's queue wait on the server: when the round was
+// ServedRoundStamps is round n's queue wait on the server: when the round was
 // accepted into the queue, and when its builder began.
 //
 // Both come from the round's own log entries rather than from the binding,
@@ -24,7 +24,10 @@ const serveQueueNotePrefix = "queued ("
 // only the log keeps what each round of this member waited and when it began. A
 // round the server never queued -- handed straight to a builder -- has no accept
 // entry, so it reports no wait and its handoff is its start.
-func servedRoundStamps(entries []store.LogEntry, n int) (start, queued time.Time) {
+//
+// A mid-round switch restarts the scope, and this stamp is not moved by it, so
+// the wall can read long and the sample read low.
+func ServedRoundStamps(entries []store.LogEntry, n int) (start, queued time.Time) {
 	if n <= 0 {
 		return time.Time{}, time.Time{}
 	}

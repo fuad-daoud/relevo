@@ -380,6 +380,11 @@ type Runtime struct {
 	// non-positive burst, means the same: no MemoryHigh.
 	RoundBurst func(b store.Binding) (burst int64, ok bool)
 
+	// RoundCPUSize answers the CPU set size a binding's round should get
+	// from its cost history. Nil on local runtimes, and nil or ok false
+	// means the configured round_cpus.
+	RoundCPUSize func(b store.Binding) (size int, ok bool)
+
 	// RemoteSend ships rounds to a remote server through internal/uplink.
 	// It has no nil guard: a send without the hook fails on the nil call
 	// rather than silently skipping the server.
