@@ -95,13 +95,6 @@ func (s *StopTransport) Stats() (synclog.Stats, error) {
 	return s.inner.Stats()
 }
 
-func (s *StopTransport) PublishMarks(marks map[string]int, at time.Time) error {
-	if s.stopped.Load() {
-		return ErrStopped
-	}
-	return s.inner.PublishMarks(marks, at)
-}
-
 func (s *StopTransport) ReadMarks() (synclog.MarkState, error) {
 	if s.stopped.Load() {
 		return synclog.MarkState{}, ErrStopped
@@ -149,13 +142,6 @@ func (s *StopTransport) PullRange(origin string, after, upto int) ([]synclog.Ent
 		return nil, ErrStopped
 	}
 	return s.inner.PullRange(origin, after, upto)
-}
-
-func (s *StopTransport) CompactOwn(floor int) (synclog.CompactResult, error) {
-	if s.stopped.Load() {
-		return synclog.CompactResult{}, ErrStopped
-	}
-	return s.inner.CompactOwn(floor)
 }
 
 func (s *StopTransport) KeyMeta(ctx context.Context) (synclog.KeyMeta, error) {

@@ -51,15 +51,6 @@ type LogTransport interface {
 	// transport that is refusing to answer.
 	Stats() (Stats, error)
 
-	// PublishMarks records how far this reader has applied of each origin given,
-	// as of at. The reader is the transport's own installation: a mark is what a
-	// compaction floor is computed from, so naming another reader's would choose
-	// what the log may drop on a machine that does not hold those entries.
-	//
-	// An origin's own mark is not published: a reader never needs one, and it
-	// would only give the floor a row to be taught to ignore.
-	PublishMarks(marks map[string]int, at time.Time) error
-
 	// ReadMarks answers with every published mark, the floors the log has
 	// recorded, and each origin's head and entry count: the three inputs a
 	// compaction decides from. With no floors yet it answers an empty set
@@ -73,11 +64,6 @@ type LogTransport interface {
 	// A transport may answer short; the caller asks again from the last
 	// sequence it was given until an answer is empty.
 	PullRange(origin string, after, upto int) ([]Entry, error)
-
-	// CompactOwn drops this installation's own superseded entries up to floor and
-	// records the floor, as one write. The origin is the transport's own, as in
-	// PublishMarks: only the machine that wrote a log may drop from it.
-	CompactOwn(floor int) (CompactResult, error)
 
 	// KeyMeta reads the passphrase material the remote holds, answering Present
 	// false where the log holds none. It precedes any signing: a machine about
