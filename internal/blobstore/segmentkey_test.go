@@ -71,8 +71,11 @@ func TestParseSegmentKey(t *testing.T) {
 		"laptop/log/000000000001/next",          // extra path element
 		Key("laptop", strings.Repeat("ab", 32)), // a body key
 		SizeKey("laptop"),                       // the size key
-		"lap/top/log/000000000001",              // bad origin
-		"",                                      // empty
+		"lap/top/log/000000000001",              // the origin cuts at the first slash, so the missing log/ prefix refuses it, not CheckOrigin
+		"",                                      // no slash at all, refused by the strings.Cut before CheckOrigin
+		"/log/000000000001",                     // empty origin behind well-formed halves, refused by CheckOrigin
+		"lap.top/log/000000000001",              // a non-alphanumeric origin character behind well-formed halves, refused by CheckOrigin
+		strings.Repeat("a", maxOriginLen+1) + "/log/000000000001", // origin past maxOriginLen, refused by CheckOrigin's length branch
 	} {
 		if origin, first, ok := ParseSegmentKey(bad); ok {
 			t.Errorf("ParseSegmentKey(%q) = %q, %d, true", bad, origin, first)
