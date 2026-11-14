@@ -247,6 +247,81 @@ func TestMemPutIfAbsentRace(t *testing.T) {
 	}
 }
 
+// TestMemListAfter pins the fake's start-after behaviour, which the S3
+// endpoint implements itself: strictly greater-than, in key order, so a reader
+// that holds the last segment it fetched does not fetch that segment again. A
+// startAfter that is not a key cuts between the keys around it, an empty one
+// lists the whole prefix, and one below the prefix returns the prefix and
+// nothing outside it.
+func TestMemListAfter(t *testing.T) {
+	m := NewMemBlobStore(nil)
+	ctx := context.Background()
+	keys := []string{
+		"a/log/000000000001",
+		"a/log/000000000257",
+		"a/log/000000000513",
+		"b/log/000000000001",
+	}
+	for _, k := range keys {
+		if err := m.Put(ctx, k, strings.NewReader("x"), 1); err != nil {
+			t.Fatalf("Put %s: %v", k, err)
+		}
+	}
+
+	check := func(name string, got []Object, want ...string) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Fatalf("%s = %+v, want %v", name, got, want)
+		}
+		for i := range want {
+			if got[i].Key != want[i] {
+				t.Errorf("%s object %d = %s, want %s", name, i, got[i].Key, want[i])
+			}
+		}
+	}
+
+	// The key named is excluded, so the reader that holds it is not sent it.
+	check("ListAfter from the first key",
+		mustListAfter(t, m, ctx, "a/log/", "a/log/000000000001"),
+		"a/log/000000000257", "a/log/000000000513")
+	// Nothing sorts above the last key, so the answer is empty.
+	check("ListAfter from the last key",
+		mustListAfter(t, m, ctx, "a/log/", "a/log/000000000513"))
+	// A startAfter that is not a key still cuts the listing at it.
+	check("ListAfter from a key that is not there",
+		mustListAfter(t, m, ctx, "a/log/", "a/log/000000000100"),
+		"a/log/000000000257", "a/log/000000000513")
+	// An empty startAfter is List.
+	fromEmpty := mustListAfter(t, m, ctx, "a/log/", "")
+	listed, err := m.List(ctx, "a/log/")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(fromEmpty) != len(listed) {
+		t.Fatalf("ListAfter with an empty startAfter = %+v, List = %+v", fromEmpty, listed)
+	}
+	for i := range listed {
+		if fromEmpty[i].Key != listed[i].Key {
+			t.Errorf("ListAfter[%d] = %s, List = %s", i, fromEmpty[i].Key, listed[i].Key)
+		}
+	}
+	// A startAfter below the prefix returns the whole prefix and nothing
+	// outside it: "a" sorts below every a/ key.
+	check("ListAfter from below the prefix",
+		mustListAfter(t, m, ctx, "a/log/", "a"),
+		"a/log/000000000001", "a/log/000000000257", "a/log/000000000513")
+}
+
+// mustListAfter calls ListAfter so the cases above can name what they wanted.
+func mustListAfter(t *testing.T, m *MemBlobStore, ctx context.Context, prefix, startAfter string) []Object {
+	t.Helper()
+	got, err := m.ListAfter(ctx, prefix, startAfter)
+	if err != nil {
+		t.Fatalf("ListAfter(%q, %q): %v", prefix, startAfter, err)
+	}
+	return got
+}
+
 // TestMemBlobStoreImplementsBlobStore is the compile-time half of the fake's
 // contract: the fake and the S3 store are interchangeable wherever the sync
 // code takes a BlobStore, so a method added to one and missed on the other has

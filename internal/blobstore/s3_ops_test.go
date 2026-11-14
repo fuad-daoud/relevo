@@ -253,6 +253,180 @@ func TestS3ListFollowsContinuationToken(t *testing.T) {
 	}
 }
 
+// TestS3ListAfterSendsStartAfterOnTheFirstPageOnly pins where start-after
+// rides. The first request names the position; the later ones carry a
+// continuation-token, which already encodes it, and the endpoint ignores
+// start-after once a token is present, so repeating it would be asking the
+// server to honour a parameter it documents away.
+func TestS3ListAfterSendsStartAfterOnTheFirstPageOnly(t *testing.T) {
+	pages := [][]string{
+		{"a/log/000000000001", "a/log/000000000257"},
+		{"a/log/000000000513"},
+		{"b/log/000000000001"},
+	}
+	nextTokens := []string{"token-1", "token-2", ""}
+	var seenStartAfter []string
+	var seenHasParam []bool
+	var seenTokens []string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		// Presence, not value: an empty start-after sent by mistake is still
+		// a parameter on the wire and must be seen here.
+		_, hasParam := q["start-after"]
+		seenHasParam = append(seenHasParam, hasParam)
+		seenStartAfter = append(seenStartAfter, q.Get("start-after"))
+		seenTokens = append(seenTokens, q.Get("continuation-token"))
+		i := len(seenHasParam) - 1
+		truncated := i < len(pages)-1
+		next := ""
+		if truncated {
+			next = nextTokens[i]
+		}
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = io.WriteString(w, listXML(truncated, next, pages[i]))
+	}))
+	defer srv.Close()
+
+	store := NewS3Store(S3Config{Endpoint: srv.URL, Bucket: "bodies", KeyID: "k", Secret: "s"})
+	got, err := store.ListAfter(context.Background(), "a/log/", "a/log/000000000001")
+	if err != nil {
+		t.Fatalf("ListAfter: %v", err)
+	}
+
+	// The client sorts what it collects, so the result is every page's keys
+	// in key order across all three pages.
+	want := []string{
+		"a/log/000000000001",
+		"a/log/000000000257",
+		"a/log/000000000513",
+		"b/log/000000000001",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("ListAfter returned %d objects, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i].Key != want[i] {
+			t.Errorf("object %d = %s, want %s", i, got[i].Key, want[i])
+		}
+	}
+
+	if len(seenStartAfter) != 3 {
+		t.Fatalf("%d requests reached the endpoint, want 3", len(seenStartAfter))
+	}
+	// The first request names the position and carries no token.
+	if !seenHasParam[0] || seenStartAfter[0] != "a/log/000000000001" || seenTokens[0] != "" {
+		t.Errorf("first request = (start-after %q present %t, token %q), want the key and no token",
+			seenStartAfter[0], seenHasParam[0], seenTokens[0])
+	}
+	// The later requests carry only the token the last page handed back.
+	for i := 1; i < 3; i++ {
+		if seenHasParam[i] || seenStartAfter[i] != "" {
+			t.Errorf("page %d sent start-after %q, want none: the continuation token encodes the position",
+				i+1, seenStartAfter[i])
+		}
+		if seenTokens[i] != nextTokens[i-1] {
+			t.Errorf("page %d token = %q, want %q", i+1, seenTokens[i], nextTokens[i-1])
+		}
+	}
+}
+
+// TestS3ListHasNoStartAfter pins that List names no position. An empty
+// start-after is still a parameter on the wire, and an endpoint that reads its
+// presence as a position could cut the listing at nothing.
+func TestS3ListHasNoStartAfter(t *testing.T) {
+	var sawParam bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := r.URL.Query()["start-after"]; ok {
+			sawParam = true
+		}
+		_, _ = io.WriteString(w, listXML(false, "", []string{"a/log/000000000001"}))
+	}))
+	defer srv.Close()
+
+	store := NewS3Store(S3Config{Endpoint: srv.URL, Bucket: "bodies", KeyID: "k", Secret: "s"})
+	got, err := store.List(context.Background(), "a/log/")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 1 || got[0].Key != "a/log/000000000001" {
+		t.Errorf("List = %+v, want the one key", got)
+	}
+	if sawParam {
+		t.Error("List sent a start-after parameter")
+	}
+}
+
+// TestS3ListAfterAgainstAFakeThatHonoursIt pins the two listings against each
+// other: a fake endpoint that filters like S3 does returns exactly what the
+// in-memory store returns for the same keys, so a caller cannot tell the two
+// stores apart by what they hand back.
+func TestS3ListAfterAgainstAFakeThatHonoursIt(t *testing.T) {
+	keys := []string{
+		"a/log/000000000001",
+		"a/log/000000000257",
+		"a/log/000000000513",
+		"b/log/000000000001",
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		prefix := q.Get("prefix")
+		startAfter := q.Get("start-after")
+		var match []string
+		for _, k := range keys {
+			if strings.HasPrefix(k, prefix) && k > startAfter {
+				match = append(match, k)
+			}
+		}
+		_, _ = io.WriteString(w, listXML(false, "", match))
+	}))
+	defer srv.Close()
+
+	store := NewS3Store(S3Config{Endpoint: srv.URL, Bucket: "bodies", KeyID: "k", Secret: "s"})
+	mem := NewMemBlobStore(nil)
+	ctx := context.Background()
+	for _, k := range keys {
+		if err := mem.Put(ctx, k, strings.NewReader("x"), 1); err != nil {
+			t.Fatalf("Put %s: %v", k, err)
+		}
+	}
+	join := func(objs []Object) string {
+		parts := make([]string, len(objs))
+		for i, o := range objs {
+			parts[i] = o.Key
+		}
+		return strings.Join(parts, ",")
+	}
+
+	for _, tc := range []struct{ prefix, startAfter string }{
+		{"a/log/", "a/log/000000000001"},
+		{"a/log/", "a/log/000000000513"},
+		{"a/log/", "a/log/000000000100"},
+		{"a/log/", ""},
+		{"a/log/", "a"},
+		{"", "a/log/000000000001"},
+	} {
+		fromS3, err := store.ListAfter(ctx, tc.prefix, tc.startAfter)
+		if err != nil {
+			t.Fatalf("ListAfter(%q, %q): %v", tc.prefix, tc.startAfter, err)
+		}
+		fromMem, err := mem.ListAfter(ctx, tc.prefix, tc.startAfter)
+		if err != nil {
+			t.Fatalf("mem ListAfter(%q, %q): %v", tc.prefix, tc.startAfter, err)
+		}
+		if len(fromS3) != len(fromMem) {
+			t.Errorf("ListAfter(%q, %q): s3 = [%s], mem = [%s]", tc.prefix, tc.startAfter, join(fromS3), join(fromMem))
+			continue
+		}
+		for i := range fromS3 {
+			if fromS3[i].Key != fromMem[i].Key {
+				t.Errorf("ListAfter(%q, %q): object %d s3 = %s, mem = %s",
+					tc.prefix, tc.startAfter, i, fromS3[i].Key, fromMem[i].Key)
+			}
+		}
+	}
+}
+
 // listXML renders the part of a ListObjectsV2 answer the client reads. The
 // bucket name and the last-modified stamps are included because a client that
 // ignored the size or the timestamp would still pass on keys alone.

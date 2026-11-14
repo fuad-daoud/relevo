@@ -406,6 +406,10 @@ func (f *failingStore) List(context.Context, string) ([]blobstore.Object, error)
 	return nil, f.err
 }
 
+func (f *failingStore) ListAfter(context.Context, string, string) ([]blobstore.Object, error) {
+	return nil, f.err
+}
+
 func (f *failingStore) Delete(context.Context, string) error { return f.err }
 
 // bytesReader wraps a body as the reader the store's Put takes.

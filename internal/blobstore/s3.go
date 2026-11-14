@@ -197,12 +197,24 @@ const listPageCap = 1000
 // List returns every object under prefix, in key order, following continuation
 // tokens until the endpoint reports the listing complete.
 func (s *S3Store) List(ctx context.Context, prefix string) ([]Object, error) {
+	return s.ListAfter(ctx, prefix, "")
+}
+
+// ListAfter lists the objects under prefix whose key sorts after startAfter, in
+// key order, following continuation tokens until the endpoint reports the
+// listing complete. The endpoint filters on start-after, as it does on prefix.
+// It is sent on the first request only: later pages carry a continuation-token,
+// which already encodes the position, and S3 ignores start-after once a token
+// is present.
+func (s *S3Store) ListAfter(ctx context.Context, prefix, startAfter string) ([]Object, error) {
 	var out []Object
 	token := ""
 	for page := 0; page < listPageCap; page++ {
 		q := url.Values{"list-type": {"2"}, "prefix": {prefix}}
 		if token != "" {
 			q.Set("continuation-token", token)
+		} else if startAfter != "" {
+			q.Set("start-after", startAfter)
 		}
 		req, err := s.newRequest(ctx, http.MethodGet, "", q)
 		if err != nil {

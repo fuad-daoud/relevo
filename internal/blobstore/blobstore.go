@@ -52,6 +52,11 @@ type BlobStore interface {
 	Has(ctx context.Context, key string) (bool, error)
 	// List returns every object under prefix, in key order.
 	List(ctx context.Context, prefix string) ([]Object, error)
+	// ListAfter lists the objects under prefix whose key sorts after
+	// startAfter, in key order. startAfter is a full key, exclusive; an empty
+	// one lists everything under prefix. A reader fetching only new segments
+	// passes the key of the last segment it holds.
+	ListAfter(ctx context.Context, prefix, startAfter string) ([]Object, error)
 	// Delete removes key, already absent being no error.
 	Delete(ctx context.Context, key string) error
 }
