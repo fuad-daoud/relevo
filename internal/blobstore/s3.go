@@ -76,6 +76,31 @@ func NewS3Store(cfg S3Config) *S3Store {
 // covers a hash of the exact wire bytes and a streamed body would hash twice; a
 // body is a few megabytes at most.
 func (s *S3Store) Put(ctx context.Context, key string, body io.Reader, size int64) error {
+	return s.putConditional(ctx, key, body, size, false)
+}
+
+// PutIfAbsent stores body under key only when the bucket does not already hold
+// it, and reports whether this call created the object. The endpoint is asked to
+// fail a key that exists (If-None-Match: *), which it answers with 412 or 409;
+// that is the create being refused, not a fault, so it is (false, nil) and the
+// object the first writer stored is untouched.
+func (s *S3Store) PutIfAbsent(ctx context.Context, key string, body io.Reader, size int64) (bool, error) {
+	err := s.putConditional(ctx, key, body, size, true)
+	if err == nil {
+		return true, nil
+	}
+	var se *s3Error
+	if errors.As(err, &se) && (se.Status == http.StatusPreconditionFailed || se.Status == http.StatusConflict) {
+		return false, nil
+	}
+	return false, err
+}
+
+// putConditional is the write both verbs share. A plain Put must reach the
+// endpoint byte-identical to an unconditional one, because the endpoint's
+// overwrite semantics is what Put promises; only a PutIfAbsent carries the
+// If-None-Match condition.
+func (s *S3Store) putConditional(ctx context.Context, key string, body io.Reader, size int64, conditional bool) error {
 	buf, err := readSized(body, size)
 	if err != nil {
 		return fmt.Errorf("blobstore: s3 put %s: %w", key, err)
@@ -89,6 +114,9 @@ func (s *S3Store) Put(ctx context.Context, key string, body io.Reader, size int6
 	req.ContentLength = int64(len(buf))
 	req.Body = io.NopCloser(bytes.NewReader(buf))
 	req.Header.Set("Content-Type", "application/octet-stream")
+	if conditional {
+		req.Header.Set("If-None-Match", "*")
+	}
 	_, err = s.do(req, sum)
 	return err
 }

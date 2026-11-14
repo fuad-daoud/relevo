@@ -53,6 +53,26 @@ func (m *MemBlobStore) Put(_ context.Context, key string, body io.Reader, size i
 	return nil
 }
 
+// PutIfAbsent stores a copy of body under key only when key is absent, and
+// reports whether this call created the object. The body is read and sized
+// before the lock is taken, so a miscounted size is refused even on a key that
+// already exists: the answer would otherwise depend on the object being there,
+// not on the call.
+func (m *MemBlobStore) PutIfAbsent(_ context.Context, key string, body io.Reader, size int64) (bool, error) {
+	buf, err := readSized(body, size)
+	if err != nil {
+		return false, fmt.Errorf("blobstore: mem put %s: %w", key, err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.objects[key]; ok {
+		return false, nil
+	}
+	m.objects[key] = memObject{body: buf, modified: m.now().UTC()}
+	m.Puts++
+	return true, nil
+}
+
 // Get writes a copy of the body under key to w, or reports ErrNotFound.
 func (m *MemBlobStore) Get(_ context.Context, key string, w io.Writer) (int64, error) {
 	m.mu.Lock()

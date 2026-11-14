@@ -38,6 +38,13 @@ type BlobStore interface {
 	// a body of a different length is refused rather than stored under a digest
 	// that no longer describes it.
 	Put(ctx context.Context, key string, body io.Reader, size int64) error
+	// PutIfAbsent stores body under key only when the key is empty, a
+	// create-only write the store itself enforces. An existing key is answered
+	// with (false, nil) and the store is left unchanged; size is checked as in
+	// Put. A caller that retries after a lost response cannot tell its own first
+	// write from another writer's when the answer is created=false, so it must
+	// read the object back before it trusts it.
+	PutIfAbsent(ctx context.Context, key string, body io.Reader, size int64) (bool, error)
 	// Get writes the body under key to w and returns how many bytes it wrote,
 	// or ErrNotFound when the key is not there.
 	Get(ctx context.Context, key string, w io.Writer) (int64, error)

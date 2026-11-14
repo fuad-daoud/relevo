@@ -3,8 +3,10 @@ package blobstore
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -126,6 +128,122 @@ func TestMemBlobStoreRoundTrip(t *testing.T) {
 	}
 	if _, err := m.Get(ctx, key, io.Discard); err == nil {
 		t.Error("Get of an absent key returned no error")
+	}
+}
+
+// TestMemPutIfAbsent pins the create-only write on the fake: a first call
+// creates, a second on the same key is refused without touching the object or
+// the counter, the size is checked whether or not the key exists, and the store
+// keeps its own copy of the bytes.
+func TestMemPutIfAbsent(t *testing.T) {
+	m := NewMemBlobStore(nil)
+	ctx := context.Background()
+	key := Key("laptop", strings.Repeat("a", 64))
+	first := []byte("the body the first writer stored")
+
+	created, err := m.PutIfAbsent(ctx, key, bytes.NewReader(first), int64(len(first)))
+	if err != nil || !created {
+		t.Fatalf("first PutIfAbsent = (%v, %v), want (true, nil)", err, created)
+	}
+	if m.Puts != 1 {
+		t.Errorf("Puts = %d, want 1", m.Puts)
+	}
+
+	// A losing writer's body must not reach the store, and a refused create is
+	// not a landed one.
+	second := []byte("the body a second writer would have stored")
+	created, err = m.PutIfAbsent(ctx, key, bytes.NewReader(second), int64(len(second)))
+	if err != nil || created {
+		t.Errorf("existing key = (%v, %v), want (false, nil)", err, created)
+	}
+	if m.Puts != 1 {
+		t.Errorf("Puts after the refused create = %d, want 1", m.Puts)
+	}
+	var got bytes.Buffer
+	if _, err := m.Get(ctx, key, &got); err != nil || !bytes.Equal(got.Bytes(), first) {
+		t.Errorf("Get = %q (err %v), want the first writer's bytes", got.Bytes(), err)
+	}
+
+	// The size check sees the call itself, not the object that is there: a
+	// miscounted size is refused on a fresh key and on an existing one alike,
+	// and refuses means nothing was stored.
+	if _, err := m.PutIfAbsent(ctx, key, strings.NewReader("mismatched"), 99); err == nil {
+		t.Error("PutIfAbsent on an existing key accepted a miscounted size")
+	}
+	fresh := Key("laptop", strings.Repeat("b", 64))
+	if _, err := m.PutIfAbsent(ctx, fresh, strings.NewReader("mismatched"), 99); err == nil {
+		t.Error("PutIfAbsent on a fresh key accepted a miscounted size")
+	}
+	if ok, _ := m.Has(ctx, fresh); ok {
+		t.Error("the refused call stored an object anyway")
+	}
+
+	// The copy is taken before the call returns: mutating the caller's slice
+	// afterwards cannot change what the store holds.
+	buf := bytes.Clone(first)
+	if _, err := m.PutIfAbsent(ctx, fresh, bytes.NewReader(buf), int64(len(buf))); err != nil {
+		t.Fatalf("PutIfAbsent: %v", err)
+	}
+	for i := range buf {
+		buf[i] = 'x'
+	}
+	var again bytes.Buffer
+	if _, err := m.Get(ctx, fresh, &again); err != nil || !bytes.Equal(again.Bytes(), first) {
+		t.Errorf("Get = %q (err %v), want bytes the caller's mutation cannot reach", again.Bytes(), err)
+	}
+}
+
+// TestMemPutIfAbsentRace pins that the existence check and the store are one
+// step under the lock: sixteen writers race for one key and exactly one of them
+// creates it, the loser returning with the winner's body in the store.
+func TestMemPutIfAbsentRace(t *testing.T) {
+	m := NewMemBlobStore(nil)
+	ctx := context.Background()
+	key := Key("laptop", strings.Repeat("c", 64))
+
+	const writers = 16
+	created := make([]bool, writers)
+	var mu sync.Mutex
+	winner := -1
+	var wg sync.WaitGroup
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			body := []byte(fmt.Sprintf("writer %2d's body", i))
+			c, err := m.PutIfAbsent(ctx, key, bytes.NewReader(body), int64(len(body)))
+			if err != nil {
+				t.Errorf("writer %d: %v", i, err)
+				return
+			}
+			created[i] = c
+			if c {
+				mu.Lock()
+				winner = i
+				mu.Unlock()
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	count := 0
+	for _, c := range created {
+		if c {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("%d writers created the object, want exactly one", count)
+	}
+	if m.Puts != 1 {
+		t.Errorf("Puts = %d, want 1", m.Puts)
+	}
+	var got bytes.Buffer
+	if _, err := m.Get(ctx, key, &got); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if want := fmt.Sprintf("writer %2d's body", winner); !bytes.Equal(got.Bytes(), []byte(want)) {
+		t.Errorf("Get = %q, want the one winner's body %q", got.Bytes(), want)
 	}
 }
 
