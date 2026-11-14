@@ -342,32 +342,6 @@ type normalPublish struct {
 	At    string         `json:"at"`
 }
 
-// readPublished is every publish the fake worker recorded, in the order it took
-// them. A publish answers {} and carries nothing back, so this is the only place
-// the parent can see what the worker was handed.
-func readPublished(t *testing.T, path string) []normalPublish {
-	t.Helper()
-	body, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		t.Fatalf("read the recorded publishes: %v", err)
-	}
-	var out []normalPublish
-	for _, line := range strings.Split(strings.TrimSpace(string(body)), "\n") {
-		if line == "" {
-			continue
-		}
-		var p normalPublish
-		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			t.Fatalf("decode a recorded publish: %v", err)
-		}
-		out = append(out, p)
-	}
-	return out
-}
-
 func (normalBackend) ReadMarks() (syncworker.MarkState, error) {
 	return syncworker.MarkState{
 		Marks:   []syncworker.PublishedMark{{Reader: "origin-a", Origin: "origin-b", Seq: 4, At: pinnedAt}},
