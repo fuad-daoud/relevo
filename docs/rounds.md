@@ -90,13 +90,19 @@ top-level `scope` block configures the scope (`enabled`, `slice`, `cpu_weight`,
 `cpu_quota`, `gate_cpu_quota`, `memory_max`, `tasks_max`); `gate_cpu_quota` is
 the gate's own CPU ceiling, and defaults to `cpu_quota`. `serve.scope` replaces
 that block entirely for served rounds, and `scope: {"enabled": false}` opts
-out. Each round is pinned with `taskset` to `round_cpus` CPUs (default 2),
-picked from the `allowed_cpus` pool (`"0-2"`) or, without one, from every
-online CPU. The pick spreads rounds across physical cores before it uses a
-core's second thread, and takes faster cores first on a host whose cores
-differ in speed; when every CPU is held, a round shares the least-held ones
-and stays pinned. A round runs unpinned only when the pool has fewer CPUs
-than `round_cpus`. The gate runs on its round's CPUs, with or without a
+out. `round_cpus` (default 2) is the size a round gets on the local daemon,
+and the cold-start size of a served round; a served round's size is then
+learned per repo and role from its cost history once it has 5 samples with
+CPU data: the p90 of (CPU used + time stalled waiting for a CPU) / wall,
+rounded up, between 1 and 4 and never above the pool. A relaunch keeps its
+set. Each round is pinned with `taskset` to that many CPUs, picked from the
+`allowed_cpus` pool (`"0-2"`) or, without one, from every online CPU. The
+pick spreads rounds across physical cores before it uses a core's second
+thread, and takes faster cores first on a host whose cores differ in speed;
+when every CPU is held, a round shares the least-held ones and stays
+pinned. A round runs unpinned only when the configured `round_cpus` exceeds
+the pool; a learned size is clamped to it instead. The gate runs on its
+round's CPUs, with or without a
 pool. A chain check runs on its builder member's last set -- or a fresh one
 when the member kept none -- and holds it while the check runs. A consult
 and the verify reviewer stay on the whole pool; without one they run
@@ -462,7 +468,8 @@ round's report entry.
 The record also carries the gate's cgroup measurement (`rusage`) for the
 round's cost sample: a round's seat spans its gate, and a running chain
 check holds one in the builder's class, so the sample covers the round, its
-gate and its check as the max of each -- sequential phases, one seat.
+gate and its check as the max of each -- sequential phases, one seat. The
+sample also records the round's CPU demand, the gate's folded in as the max.
 `relevo show` does not print the measurement; it stays in the JSON.
 
 A round's report entry also carries its **builder session**, `builder_session`

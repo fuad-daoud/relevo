@@ -110,6 +110,7 @@ func (s *Server) wireSeatCost(rt *relevo.Runtime, root string, reg *roles.Regist
 	// records nothing.
 	rt.CostRoot = root
 	rt.RoundBurst = roundBurstFor(root)
+	rt.RoundCPUSize = roundCPUSizeFor(root)
 }
 
 // applyContainer rewires rt for one container-mode owner: its runner starts

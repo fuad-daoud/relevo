@@ -990,3 +990,172 @@ func TestAssignRoundCPUNilTopologyReadsHost(t *testing.T) {
 		t.Errorf("RoundCPUs = %v, want [0 1]", got.RoundCPUs)
 	}
 }
+
+// cpuTestLearnDeps is a Deps whose RoundCPUSize seam answers learned for
+// every binding, the way a served runtime's cost history would.
+func cpuTestLearnDeps(st *store.Store, pool string, size int, learned func(store.Binding) (int, bool)) Deps {
+	return Deps{Topology: noTopology, Store: st, AllowedCPUs: pool, RoundCPUs: size, RoundCPUSize: learned}
+}
+
+// TestAssignRoundCPUUsesLearnedSize pins the learned size on a served round
+// start: learned 3 with a configured 2 spreads over three distinct cores,
+// learned 1 with a configured 2 takes one, and the seam's ok false keeps the
+// configured size. With no pool the learned size picks from every online CPU.
+func TestAssignRoundCPUUsesLearnedSize(t *testing.T) {
+	cases := []struct {
+		name    string
+		pool    string
+		learned func(store.Binding) (int, bool)
+		want    []int
+	}{
+		{"learned 3 over configured 2", "0-3", func(store.Binding) (int, bool) { return 3, true }, []int{0, 1, 2}},
+		{"learned 1 over configured 2", "0-3", func(store.Binding) (int, bool) { return 1, true }, []int{0}},
+		{"learned not ok keeps configured", "0-3", func(store.Binding) (int, bool) { return 0, false }, []int{0, 1}},
+		{"no pool still sizes the set", "", func(store.Binding) (int, bool) { return 3, true }, []int{0, 1, 2}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fakeOnlineCPUs(t, 4)
+			st := storetest.New(t)
+			saveCPUBinding(t, st, "webshop")
+			deps := cpuTestLearnDeps(st, c.pool, 2, c.learned)
+
+			var got store.Binding
+			err := st.WithLock(func(tx *store.Tx) error {
+				b, err := tx.Load("webshop")
+				if err != nil {
+					return err
+				}
+				got = AssignRoundCPU(deps, tx, b)
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("WithLock: %v", err)
+			}
+			if !reflect.DeepEqual(got.RoundCPUs, c.want) {
+				t.Errorf("RoundCPUs = %v, want %v", got.RoundCPUs, c.want)
+			}
+		})
+	}
+}
+
+// TestAssignRoundCPULearnedClampsToPool pins the learned size's pool clamp:
+// a history that learned 4 on a 2-core pool still gets both cores pinned,
+// instead of running unpinned the way an oversized configured size does.
+func TestAssignRoundCPULearnedClampsToPool(t *testing.T) {
+	t.Parallel()
+
+	st := storetest.New(t)
+	saveCPUBinding(t, st, "webshop")
+	deps := cpuTestLearnDeps(st, "0-1", 2, func(store.Binding) (int, bool) { return 4, true })
+
+	var got store.Binding
+	err := st.WithLock(func(tx *store.Tx) error {
+		b, err := tx.Load("webshop")
+		if err != nil {
+			return err
+		}
+		got = AssignRoundCPU(deps, tx, b)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WithLock: %v", err)
+	}
+	if !reflect.DeepEqual(got.RoundCPUs, []int{0, 1}) {
+		t.Errorf("RoundCPUs = %v, want both pool cores [0 1] pinned", got.RoundCPUs)
+	}
+	if got.RoundCPU == nil || *got.RoundCPU != 0 {
+		t.Errorf("RoundCPU = %s, want the set's first core 0", cpuPtrText(got.RoundCPU))
+	}
+}
+
+// TestAssignRoundCPUConfiguredAbovePoolStaysUnpinned pins the configured
+// size's unchanged pool-too-small rule: a configured 4 on a 2-core pool
+// leaves the round on the whole pool, unpinned.
+func TestAssignRoundCPUConfiguredAbovePoolStaysUnpinned(t *testing.T) {
+	t.Parallel()
+
+	st := storetest.New(t)
+	saveCPUBinding(t, st, "webshop")
+	deps := cpuTestLearnDeps(st, "0-1", 4, func(store.Binding) (int, bool) { return 0, false })
+
+	var got store.Binding
+	err := st.WithLock(func(tx *store.Tx) error {
+		b, err := tx.Load("webshop")
+		if err != nil {
+			return err
+		}
+		got = AssignRoundCPU(deps, tx, b)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WithLock: %v", err)
+	}
+	if got.RoundCPUs != nil || got.RoundCPU != nil {
+		t.Errorf("RoundCPUs = %v, RoundCPU = %s; want both nil: the round runs unpinned",
+			got.RoundCPUs, cpuPtrText(got.RoundCPU))
+	}
+}
+
+// TestAssignRoundCPURelaunchKeepsSetOverLearned pins the relaunch rule: a
+// binding that already holds a set keeps it whatever the learned size now
+// says, bigger or smaller.
+func TestAssignRoundCPURelaunchKeepsSetOverLearned(t *testing.T) {
+	cases := []struct {
+		name    string
+		learned func(store.Binding) (int, bool)
+	}{
+		{"learned 4", func(store.Binding) (int, bool) { return 4, true }},
+		{"learned 1", func(store.Binding) (int, bool) { return 1, true }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			st := storetest.New(t)
+			saveCPUBinding(t, st, "webshop")
+			deps := cpuTestLearnDeps(st, "0-3", 2, c.learned)
+
+			var got store.Binding
+			err := st.WithLock(func(tx *store.Tx) error {
+				b, err := tx.Load("webshop")
+				if err != nil {
+					return err
+				}
+				b.RoundCPUs = []int{2, 3}
+				got = AssignRoundCPU(deps, tx, b)
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("WithLock: %v", err)
+			}
+			if !reflect.DeepEqual(got.RoundCPUs, []int{2, 3}) {
+				t.Errorf("RoundCPUs = %v, want the kept set [2 3] unchanged", got.RoundCPUs)
+			}
+		})
+	}
+}
+
+// TestAssignRoundCPUNilSeamUsesConfigured pins the nil seam: a local runtime
+// carries no RoundCPUSize, so the configured size is used.
+func TestAssignRoundCPUNilSeamUsesConfigured(t *testing.T) {
+	t.Parallel()
+
+	st := storetest.New(t)
+	saveCPUBinding(t, st, "webshop")
+	deps := cpuTestSetDeps(st, "0-3", 2)
+
+	var got store.Binding
+	err := st.WithLock(func(tx *store.Tx) error {
+		b, err := tx.Load("webshop")
+		if err != nil {
+			return err
+		}
+		got = AssignRoundCPU(deps, tx, b)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WithLock: %v", err)
+	}
+	if !reflect.DeepEqual(got.RoundCPUs, []int{0, 1}) {
+		t.Errorf("RoundCPUs = %v, want the configured [0 1]", got.RoundCPUs)
+	}
+}

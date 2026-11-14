@@ -75,9 +75,12 @@ type Deps struct {
 	// parsed from. Empty means every online CPU: the round still gets a
 	// set, but no single pin.
 	AllowedCPUs string
-	// RoundCPUs sizes the set one round gets; 0 is a single core, the
-	// directly built default.
+	// RoundCPUs is the configured set size: the fixed size, and a served
+	// round's size until its history is deep enough to learn one.
 	RoundCPUs int
+	// RoundCPUSize answers a served round's learned set size from its cost
+	// history. Nil, or ok false, keeps RoundCPUs.
+	RoundCPUSize func(b store.Binding) (int, bool)
 	// HeldCPUs returns the cores held by live rounds other than self. Nil
 	// means the local census, which reads only the caller's tx.
 	HeldCPUs func(tx *store.Tx, self string) ([]int, error)

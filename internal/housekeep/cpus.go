@@ -187,16 +187,13 @@ func RoundPinText(b store.Binding) string {
 // census error clears them so the round runs unpinned rather than failing.
 // A full pool shares its least-held cores pinned instead of running
 // unpinned. A relaunch or a mid-round switch keeps its set when every core
-// is still in the pool and still free; a legacy single pin keeps as a
-// size-1 set. Without a template pool the set comes from every online CPU
-// and the single pin stays nil, so gates and consults read unpinned. The
-// returned binding carries RoundCPUs and RoundCPU, so the caller's tx.Save
-// persists them.
+// is still in the pool and still free -- whatever a learned size would now
+// say, because repinning a running round moves its threads for no gain; a
+// legacy single pin keeps as a size-1 set. Without a template pool the set
+// comes from every online CPU and the single pin stays nil, so gates and
+// consults read unpinned. The returned binding carries RoundCPUs and
+// RoundCPU, so the caller's tx.Save persists them.
 func AssignRoundCPU(deps Deps, tx *store.Tx, b store.Binding) store.Binding {
-	size := deps.RoundCPUs
-	if size < 1 {
-		size = 1
-	}
 	pool := roundPool(deps.AllowedCPUs)
 	if len(pool) == 0 || tx == nil {
 		b.RoundCPU = nil
@@ -239,7 +236,7 @@ func AssignRoundCPU(deps Deps, tx *store.Tx, b store.Binding) store.Binding {
 		readTopology = func(p []int) spawn.CPUTopology { return spawn.ReadCPUTopology("/sys/devices/system/cpu", p) }
 	}
 	topo := readTopology(pool)
-	set, ok := pickCPUSet(pool, held, size, topo)
+	set, ok := pickCPUSet(pool, held, roundSizeFor(deps, b, pool), topo)
 	if !ok {
 		slog.Warn("cpu pool too small; round runs on the whole pool", "binding", b.Name, "round", b.Round, "pool", deps.AllowedCPUs, "held", len(held))
 		b.RoundCPU = nil
@@ -254,4 +251,21 @@ func AssignRoundCPU(deps Deps, tx *store.Tx, b store.Binding) store.Binding {
 		b.RoundCPU = nil
 	}
 	return b
+}
+
+// roundSizeFor answers the set size this round gets: the configured size
+// until RoundCPUSize learns one. The learned size is clamped to the pool,
+// because a history from a larger host must not unpin a round; the
+// configured one is not, so a configured size above the pool keeps the
+// round on the whole pool, unpinned, with the pool-too-small warn.
+func roundSizeFor(deps Deps, b store.Binding, pool []int) int {
+	size := max(deps.RoundCPUs, 1)
+	if deps.RoundCPUSize == nil {
+		return size
+	}
+	n, ok := deps.RoundCPUSize(b)
+	if !ok {
+		return size
+	}
+	return min(max(n, 1), len(pool))
 }

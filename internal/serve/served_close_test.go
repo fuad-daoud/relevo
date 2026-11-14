@@ -664,6 +664,27 @@ func TestRuntimeAtWiresRoundBurst(t *testing.T) {
 	if (relevo.Runtime{}).RoundBurst != nil {
 		t.Error("zero Runtime RoundBurst != nil: local rounds must carry no burst seam")
 	}
+	if rt.RoundCPUSize == nil {
+		t.Fatal("RoundCPUSize is nil: owner runtimes must serve the learned size")
+	}
+	// The samples carry no CPU data, so the history is too short to learn
+	// from and the configured size stays.
+	if got, ok := rt.RoundCPUSize(bind("", repo)); ok || got != 0 {
+		t.Errorf("RoundCPUSize = %d, %v; want 0, false without CPU data", got, ok)
+	}
+	wantCPU := int64(2350)
+	for round := 1; round <= 5; round++ {
+		if _, err := appendCostSample(root, strings.Repeat("2", 64), "builder", "o/c", round,
+			costSample{CPUWant: &wantCPU}); err != nil {
+			t.Fatalf("append cpu: %v", err)
+		}
+	}
+	if got, ok := rt.RoundCPUSize(bind("", strings.Repeat("2", 64))); !ok || got != 3 {
+		t.Errorf("RoundCPUSize = %d, %v; want 3, true from the learned history", got, ok)
+	}
+	if (relevo.Runtime{}).RoundCPUSize != nil {
+		t.Error("zero Runtime RoundCPUSize != nil: local rounds must carry no size seam")
+	}
 }
 
 // TestRuntimeAtCarriesCPUTopology pins that the server's topology reader

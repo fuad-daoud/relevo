@@ -51,6 +51,7 @@ func HousekeepDeps(rt Runtime) housekeep.Deps {
 		NotQueued:       ErrNotQueued,
 		AllowedCPUs:     housekeepAllowedCPUs(rt),
 		RoundCPUs:       housekeepRoundCPUs(rt),
+		RoundCPUSize:    rt.RoundCPUSize,
 		HeldCPUs:        housekeepHeldCPUs(rt),
 		Topology:        rt.CPUTopology,
 		Scope:           rt.Scope,
