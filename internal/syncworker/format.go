@@ -17,82 +17,26 @@ import (
 
 // logFormatVersion is the version this build writes into the remote's meta. A
 // remote whose meta carries another value defines the log differently, so this
-// build refuses it rather than read columns it may have moved -- except the
-// versions below, which this build knows how to bring forward in place.
-const logFormatVersion = 5
-
-// formatOneVersion is the previous format: the same log without the marks
-// table. A remote at it is upgraded rather than refused.
-const formatOneVersion = 1
-
-// formatTwoVersion is the format before the mac column: this build's tables,
-// with every entry unsigned. It is upgraded in place, and its entries keep a
-// NULL mac, which reads as unsigned rather than as a signature that failed.
-const formatTwoVersion = 2
-
-// formatThreeVersion is the format before the after_origin and after_seq columns.
-// Older entries keep NULL in those columns, which reads as having no dependency.
-const formatThreeVersion = 3
-
-// formatFourVersion is the format that still stores the head table beside the
-// log. A remote at it is upgraded in place by dropping that table, and its
-// rows stay answered from the log.
-const formatFourVersion = 4
+// build refuses it rather than read columns it may have moved.
+const logFormatVersion = 6
 
 // metaFormatKey names the meta row that carries the format version.
 const metaFormatKey = "format"
 
-// addMACStatement is the DDL an upgrade from format two runs.
-const addMACStatement = "ALTER TABLE log ADD COLUMN mac BLOB"
-
-// addAfterOriginStatement and addAfterSeqStatement are the DDLs an upgrade to
-// format 4 runs. Both columns are nullable so older entries read as having no
-// dependency.
-const (
-	addAfterOriginStatement = "ALTER TABLE log ADD COLUMN after_origin TEXT"
-	addAfterSeqStatement    = "ALTER TABLE log ADD COLUMN after_seq INTEGER"
-)
-
-// dropHeadStatement is the DDL every upgrade to this build's format runs. The
-// head is answered from the log rather than stored, so a remote that still
-// stores it drops the table.
-const dropHeadStatement = "DROP TABLE head"
-
-// upgrade is what one older format needs to reach this build's own: the
-// statements to run, and the tables the remote must hold for this build to
-// believe it. The tables are named per format because only format one lacks the
-// marks table; matching them as a pair refuses a remote whose format and tables
-// disagree instead of trying to bring it forward.
-type upgrade struct {
-	tables     []string
-	statements []string
-}
-
-// upgrades is every format this build brings forward rather than refuses. The
-// statements run in one transaction with the format row, so a remote is never
-// left holding half of a format.
-var upgrades = map[int]upgrade{
-	formatOneVersion: {
-		tables:     []string{"head", "log", "meta"},
-		statements: []string{createMarksStatement, addMACStatement, addAfterOriginStatement, addAfterSeqStatement, dropHeadStatement},
-	},
-	formatTwoVersion: {
-		tables:     []string{"head", "log", "marks", "meta"},
-		statements: []string{addMACStatement, addAfterOriginStatement, addAfterSeqStatement, dropHeadStatement},
-	},
-	formatThreeVersion: {
-		tables:     []string{"head", "log", "marks", "meta"},
-		statements: []string{addAfterOriginStatement, addAfterSeqStatement, dropHeadStatement},
-	},
-	formatFourVersion: {
-		tables:     []string{"head", "log", "marks", "meta"},
-		statements: []string{dropHeadStatement},
-	},
+// olderLogTables is the table set a remote at each older format holds. A remote
+// holding one of these sets at that format's number is refused with the migrate
+// message rather than opened or treated as not a log.
+var olderLogTables = map[int][]string{
+	1: {"head", "log", "meta"},
+	2: {"head", "log", "marks", "meta"},
+	3: {"head", "log", "marks", "meta"},
+	4: {"head", "log", "marks", "meta"},
+	5: {"log", "marks", "meta"},
 }
 
 // createStatements is the remote schema, in one place so the create and the
-// classification cannot disagree about what a relevo log is. The marks table is
-// last, so an upgrade from the format without it creates it on its own.
+// classification cannot disagree about what a relevo log is. The first three
+// statements keep indices 0, 1 and 2 for log, meta and marks.
 var createStatements = []string{
 	"CREATE TABLE log (" +
 		"origin TEXT NOT NULL, seq INTEGER NOT NULL, batch INTEGER NOT NULL, " +
@@ -102,14 +46,30 @@ var createStatements = []string{
 		"PRIMARY KEY (origin, seq))",
 	"CREATE TABLE meta (key TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL)",
 	createMarksStatement,
+	"CREATE TABLE heads (" +
+		"origin TEXT NOT NULL PRIMARY KEY, " +
+		"seq INTEGER NOT NULL, " +
+		"key TEXT NOT NULL, " +
+		"entries INTEGER NOT NULL, " +
+		"bytes INTEGER NOT NULL, " +
+		"floor INTEGER NOT NULL DEFAULT 0, " +
+		"legacy_upto INTEGER NOT NULL DEFAULT 0, " +
+		"label TEXT NOT NULL DEFAULT '', " +
+		"at TEXT NOT NULL)",
+	"CREATE TABLE shared (" +
+		"origin TEXT NOT NULL, seq INTEGER NOT NULL, batch INTEGER NOT NULL, " +
+		"tbl TEXT NOT NULL, pk TEXT NOT NULL, op TEXT NOT NULL, " +
+		"schema_version INTEGER NOT NULL, body TEXT, at TEXT NOT NULL, mac BLOB, " +
+		"after_origin TEXT, after_seq INTEGER, " +
+		"PRIMARY KEY (origin, seq))",
 }
 
 // ensureLog makes sure the remote is this log: an empty remote gets the log's
-// tables, one at an older format is brought forward, one whose meta names this
-// format is used, and anything else is refused. A remote classified as
-// something other than a relevo log is never written into. The table set and
-// the format row are matched together, so a remote whose tables and format
-// disagree is refused rather than opened as something it is not.
+// tables, one whose meta names this format is used, one at an older format is
+// refused with the migrate message, and anything else is refused as not a log.
+// A remote classified as something other than a relevo log is never written
+// into. The table set and the format row are matched together, so a remote
+// whose tables and format disagree is refused rather than opened.
 func (b *TursoBackend) ensureLog(ctx context.Context, url string) error {
 	tables, err := userTables(ctx, b.db)
 	if err != nil {
@@ -122,7 +82,7 @@ func (b *TursoBackend) ensureLog(ctx context.Context, url string) error {
 	// this build would refuse is often one whose meta table does not exist to
 	// read -- and that has to answer as a refusal naming the remote, not as a
 	// SQL failure about a table.
-	if !isLogTables(tables) && !isFormatOneTables(tables) && !isFormatFourTables(tables) {
+	if !isLogTables(tables) && !isOlderTables(tables) {
 		return errNotALog(url)
 	}
 	format, err := readFormat(ctx, b.db)
@@ -132,15 +92,15 @@ func (b *TursoBackend) ensureLog(ctx context.Context, url string) error {
 	if format == strconv.Itoa(logFormatVersion) && isLogTables(tables) {
 		return nil
 	}
-	if from, ok := upgrades[atoiOrZero(format)]; ok && slices.Equal(tables, from.tables) {
-		return b.upgradeLog(ctx, from.statements)
+	if older, ok := olderLogTables[atoiOrZero(format)]; ok && slices.Equal(tables, older) {
+		return errMigrate(url, format)
 	}
 	return errNotALog(url)
 }
 
 // atoiOrZero reads a format row as a number, and a row that is not one as zero
-// -- which names no upgrade, so a remote carrying a format this build cannot
-// read is refused rather than guessed at.
+// -- which names no older format, so a remote carrying a format this build
+// cannot read is refused rather than guessed at.
 func atoiOrZero(format string) int {
 	n, err := strconv.Atoi(format)
 	if err != nil {
@@ -178,50 +138,6 @@ func (b *TursoBackend) createLog(ctx context.Context) error {
 	return nil
 }
 
-// upgradeLog brings a remote this build knows how to open at an older format up
-// to this one. The statements and the new format row are written in one replica
-// transaction and pushed, the way createLog writes a whole log, so the remote
-// never holds one without the other: a remote with the column but the old format
-// row would be opened by a build that expects the column's absence to mean
-// something.
-func (b *TursoBackend) upgradeLog(ctx context.Context, statements []string) error {
-	tx, err := b.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("syncworker: upgrade the log: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	for _, stmt := range statements {
-		if _, err := tx.ExecContext(ctx, stmt); err != nil {
-			if isDuplicateColumnError(err) {
-				continue
-			}
-			return fmt.Errorf("syncworker: upgrade the log: %w", err)
-		}
-	}
-	if _, err := tx.ExecContext(ctx,
-		"UPDATE meta SET value = ? WHERE key = ?",
-		strconv.Itoa(logFormatVersion), metaFormatKey); err != nil {
-		return fmt.Errorf("syncworker: write the log format: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("syncworker: upgrade the log: %w", err)
-	}
-	if err := b.driver.Push(ctx); err != nil {
-		return fmt.Errorf("syncworker: push the upgraded log: %w", markTransferRefusal(err))
-	}
-	return nil
-}
-
-// isDuplicateColumnError reports whether err was caused by an ALTER TABLE ADD
-// COLUMN for a column that already exists, as when another worker's upgrade
-// added it first.
-func isDuplicateColumnError(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(strings.ToLower(err.Error()), "duplicate column name")
-}
-
 // userTables is the remote's own tables, which is everything sqlite_master
 // lists that the engine did not create for itself.
 func userTables(ctx context.Context, db *sql.DB) ([]string, error) {
@@ -257,25 +173,22 @@ func engineTable(name string) bool {
 	return false
 }
 
-// isLogTables reports whether the remote holds exactly the log's three tables.
-// Anything else -- another database's tables, a partial create, a log missing
-// its meta -- is a remote this build will not write into.
+// isLogTables reports whether the remote holds exactly this build's five tables.
+// Anything else -- another database's tables, a partial create, an older format
+// -- is a remote this build will not write into.
 func isLogTables(tables []string) bool {
-	return slices.Equal(tables, []string{"log", "marks", "meta"})
+	return slices.Equal(tables, []string{"heads", "log", "marks", "meta", "shared"})
 }
 
-// isFormatOneTables reports whether the remote holds exactly the previous
-// format's tables: the same log without the marks table. It is a format to
-// bring forward, not a partial create of the current set.
-func isFormatOneTables(tables []string) bool {
-	return slices.Equal(tables, []string{"head", "log", "meta"})
-}
-
-// isFormatFourTables reports whether the remote holds exactly the format with
-// the stored head beside the log. It is a format to bring forward, not a
-// partial create of the current set.
-func isFormatFourTables(tables []string) bool {
-	return slices.Equal(tables, []string{"head", "log", "marks", "meta"})
+// isOlderTables reports whether the remote holds the table set of any older
+// format.
+func isOlderTables(tables []string) bool {
+	for _, older := range olderLogTables {
+		if slices.Equal(tables, older) {
+			return true
+		}
+	}
+	return false
 }
 
 // readFormat is the format version the remote's meta carries, and empty when it
@@ -299,4 +212,11 @@ func readFormat(ctx context.Context, db *sql.DB) (string, error) {
 func errNotALog(url string) error {
 	return MarkRefusal(CodeRemote,
 		fmt.Errorf("sync: refusing remote %s: it is not a relevo sync log", url))
+}
+
+// errMigrate is the refusal an older-format remote gets until migrated. It names
+// the URL and format, and repeats on every attempt.
+func errMigrate(url, format string) error {
+	return MarkRefusal(CodeRemote,
+		fmt.Errorf("sync: refusing remote %s at format %s: run relevo db sync migrate once every machine runs this release", url, format))
 }
