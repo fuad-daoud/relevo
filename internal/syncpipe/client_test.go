@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -24,6 +25,8 @@ import (
 // cannot exercise.
 const (
 	fakeWorkerEnv = "RELEVO_SYNCPIPE_FAKE_WORKER"
+	// fakeMigrateStartsEnv names the file where modeMigrate records worker starts.
+	fakeMigrateStartsEnv = "RELEVO_SYNCPIPE_FAKE_MIGRATE_STARTS"
 	// modeHang answers the handshake and then never answers again, which is what
 	// a driver wedged inside a call looks like from the daemon's side.
 	modeHang = "hang"
@@ -69,6 +72,10 @@ const (
 	// keys, which is a worker that stopped keeping its replies to its requests:
 	// the pipe is in step by id, so only the count says it is not.
 	modeBatchShort = "batch-short"
+	// modeMigrate answers the handshake with CodeMigrate on its first start
+	// and normally on later starts, recording each start in the file named by
+	// fakeMigrateStartsEnv so a test can count spawns across processes.
+	modeMigrate = "migrate"
 )
 
 // TestMain hands this binary over to the fake worker before the suite starts,
@@ -152,6 +159,8 @@ func runFakeWorker(mode string) int {
 		return serveNoKeyField()
 	case modeBatchShort:
 		return serveBatchShort()
+	case modeMigrate:
+		return runMigrateWorker()
 	default:
 		if err := syncworker.Serve(os.Stdin, os.Stdout, normalBackend{}); err != nil {
 			fmt.Fprintln(os.Stderr, "fake worker:", err)
@@ -244,6 +253,35 @@ func serveBatchShort() int {
 			return 1
 		}
 	}
+}
+
+// runMigrateWorker serves modeMigrate: it records the start in the file named
+// by fakeMigrateStartsEnv, then refuses the first start with CodeMigrate and
+// answers subsequent starts normally.
+func runMigrateWorker() int {
+	file := os.Getenv(fakeMigrateStartsEnv)
+	if file == "" {
+		return 1
+	}
+	count := 0
+	data, err := os.ReadFile(file)
+	if err == nil {
+		count, _ = strconv.Atoi(strings.TrimSpace(string(data)))
+	}
+	count++
+	if err := os.WriteFile(file, []byte(strconv.Itoa(count)), 0o600); err != nil {
+		return 1
+	}
+	if count == 1 {
+		if err := syncworker.Serve(os.Stdin, os.Stdout, refusingBackend{code: syncworker.CodeMigrate}); err != nil {
+			return 1
+		}
+		return 0
+	}
+	if err := syncworker.Serve(os.Stdin, os.Stdout, normalBackend{}); err != nil {
+		return 1
+	}
+	return 0
 }
 
 // pinnedAt is the moment the fake log's entries were written, so what crosses
@@ -649,6 +687,9 @@ func TestRefusalErrorCarriesTheClassSentinel(t *testing.T) {
 		"a remote refusal": {
 			code: syncworker.CodeRemote, want: relevosync.ErrRemoteRefused, permanent: true,
 		},
+		"a migrate refusal": {
+			code: syncworker.CodeMigrate, want: relevosync.ErrMigrateWaiting, permanent: false,
+		},
 		"a schema refusal": {
 			code: syncworker.CodeSchema, want: relevosync.ErrRemoteSchema, permanent: true,
 		},
@@ -678,6 +719,29 @@ func TestRefusalErrorMapsAQuotaRefusalToTheQuotaSentinel(t *testing.T) {
 	err := refusalError(syncworker.Response{OK: false, Error: "full", Code: syncworker.CodeQuota})
 	if !errors.Is(err, ErrRefused) || !errors.Is(err, relevosync.ErrQuotaReached) {
 		t.Fatalf("err = %v, want ErrRefused and ErrQuotaReached", err)
+	}
+}
+
+// TestRefusalErrorMapsMigrateToMigrateWaiting pins that a migrate refusal
+// carries ErrRefused and ErrMigrateWaiting, not ErrRemoteRefused, and is not
+// permanent so the breaker waits out the window instead of latching.
+func TestRefusalErrorMapsMigrateToMigrateWaiting(t *testing.T) {
+	err := refusalError(syncworker.Response{
+		OK:    false,
+		Error: "remote waiting for migration",
+		Code:  syncworker.CodeMigrate,
+	})
+	if !errors.Is(err, ErrRefused) {
+		t.Errorf("err = %v, want ErrRefused", err)
+	}
+	if !errors.Is(err, relevosync.ErrMigrateWaiting) {
+		t.Errorf("err = %v, want ErrMigrateWaiting", err)
+	}
+	if errors.Is(err, relevosync.ErrRemoteRefused) {
+		t.Errorf("err = %v, must not read as ErrRemoteRefused", err)
+	}
+	if relevosync.IsPermanentRefusal(err) {
+		t.Errorf("IsPermanentRefusal(%v) = true, want false", err)
 	}
 }
 

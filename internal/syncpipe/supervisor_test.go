@@ -2,10 +2,13 @@ package syncpipe
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -371,6 +374,75 @@ func TestSupervisorLatchesOnARefusedHandshake(t *testing.T) {
 	}
 	if got, _ := b.Deaths(); got != 0 {
 		t.Errorf("deaths = %d, want none", got)
+	}
+}
+
+// TestSupervisorWaitsOutMigrateRefusalWithoutLatching pins that a worker whose
+// hello answers CodeMigrate sets a bounded wait rather than latching the breaker:
+// calls inside the window refuse at Begin without starting a worker, and a call
+// once the wait is in the past starts a retry worker whose success ends the wait.
+func TestSupervisorWaitsOutMigrateRefusalWithoutLatching(t *testing.T) {
+	startsFile := filepath.Join(t.TempDir(), "fake-worker-starts")
+	cfg := fakeWorkerCfg(modeMigrate)
+	cfg.Env = append(cfg.Env, fakeMigrateStartsEnv+"="+startsFile)
+
+	readStarts := func() int {
+		data, err := os.ReadFile(startsFile)
+		if err != nil {
+			return 0
+		}
+		n, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+		return n
+	}
+
+	kv := newMemKV()
+	b := breakerOver(kv)
+	s := newSupervisor(t, cfg, b)
+
+	_, err := s.Stats()
+	if latched, lerr := b.Latched(); lerr != nil || latched {
+		t.Fatalf("a migrate refusal latched the machine: latched=%v, err=%v", latched, lerr)
+	}
+	if !errors.Is(err, relevosync.ErrMigrateWaiting) {
+		t.Fatalf("first call = %v, want ErrMigrateWaiting", err)
+	}
+	if got := readStarts(); got != 1 {
+		t.Fatalf("fake starts after first call = %d, want 1", got)
+	}
+
+	if _, err := s.Stats(); !errors.Is(err, relevosync.ErrMigrateWaiting) {
+		t.Fatalf("second call inside window = %v, want ErrMigrateWaiting", err)
+	}
+	if got := readStarts(); got != 1 {
+		t.Fatalf("fake starts after second call = %d, want 1 (no new worker started)", got)
+	}
+
+	st, err := b.State()
+	if err != nil {
+		t.Fatalf("State: %v", err)
+	}
+	st.WaitUntil = time.Now().Add(-time.Minute)
+	body, err := json.Marshal(st)
+	if err != nil {
+		t.Fatalf("marshal breaker state: %v", err)
+	}
+	if err := kv.KVPut(relevosync.KeyDeaths, body); err != nil {
+		t.Fatalf("KVPut: %v", err)
+	}
+
+	if _, err := s.Stats(); err != nil {
+		t.Fatalf("retry call = %v, want success", err)
+	}
+	if got := readStarts(); got != 2 {
+		t.Fatalf("fake starts after retry = %d, want 2", got)
+	}
+
+	st, err = b.State()
+	if err != nil {
+		t.Fatalf("State after retry: %v", err)
+	}
+	if !st.WaitUntil.IsZero() {
+		t.Errorf("WaitUntil after Success = %v, want zero", st.WaitUntil)
 	}
 }
 

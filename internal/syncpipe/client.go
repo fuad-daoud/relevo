@@ -418,6 +418,10 @@ func refusalError(resp syncworker.Response) error {
 		return fmt.Errorf("%w: %w", refused, relevosync.ErrRemoteSchema)
 	case syncworker.CodeRemote:
 		return fmt.Errorf("%w: %w", refused, relevosync.ErrRemoteRefused)
+	case syncworker.CodeMigrate:
+		// The remote is waiting for a migration, not refusing this machine's
+		// work, so it must not read as ErrRemoteRefused.
+		return fmt.Errorf("%w: %w", refused, relevosync.ErrMigrateWaiting)
 	case syncworker.CodeQuota:
 		return fmt.Errorf("%w: %w", refused, relevosync.ErrQuotaReached)
 	case syncworker.CodeBoundary:
