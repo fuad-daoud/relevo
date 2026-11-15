@@ -406,6 +406,9 @@ func TestAppendFailsWhenHeadMovesTwice(t *testing.T) {
 	if logCount != 0 {
 		t.Errorf("log count = %d, want 0", logCount)
 	}
+	if driver.pulls != 1 {
+		t.Errorf("driver pulled %d times, want 1", driver.pulls)
+	}
 	if driver.pushes != 0 {
 		t.Errorf("pushes = %d, want 0", driver.pushes)
 	}
@@ -685,8 +688,11 @@ func TestAppendStoreFailuresWriteNothing(t *testing.T) {
 		driver.pushes = 0
 
 		_, err := b.Append([]Entry{upsertEntry("origin-a", "board", `["b"]`, `{"title":"one"}`)})
-		if err == nil {
-			t.Fatal("append succeeded over failed PutIfAbsent")
+		if err == nil || !strings.Contains(err.Error(), "network timeout") {
+			t.Fatalf("err = %v, want network timeout", err)
+		}
+		if code := RefusalCodeOf(err); code != "" {
+			t.Errorf("refusal code = %q, want %q", code, "")
 		}
 		assertEmptyReplica(t, driver)
 		if driver.pushes != 0 {
@@ -720,8 +726,8 @@ func TestAppendStoreFailuresWriteNothing(t *testing.T) {
 		driver.pushes = 0
 
 		_, err := b.Append([]Entry{upsertEntry("origin-a", "board", `["b"]`, `{"title":"one"}`)})
-		if err == nil {
-			t.Fatal("append succeeded over failed Get")
+		if !errors.Is(err, io.ErrUnexpectedEOF) {
+			t.Fatalf("err = %v, want io.ErrUnexpectedEOF", err)
 		}
 		assertEmptyReplica(t, driver)
 		if driver.pushes != 0 {
