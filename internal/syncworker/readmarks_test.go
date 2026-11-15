@@ -3,8 +3,10 @@ package syncworker
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/blobstore"
@@ -85,8 +87,78 @@ func TestReadMarksReportsWhatTheLogHolds(t *testing.T) {
 	}
 }
 
+// TestReadMarksReportsOnlyLabelledOrigins pins the labels a reader takes beside
+// the heads: each origin's stored label rides Labels, and an origin that named
+// none is absent rather than carried as an empty name.
+// Mutant: drop label from the heads scan.
+func TestReadMarksReportsOnlyLabelledOrigins(t *testing.T) {
+	path := tempReplica(t)
+	store := blobstore.NewMemBlobStore(nil)
+	labelled := backendOnBlobStoreWithSpec(t, &localDriver{path: path}, "origin-a", store, func(s *Spec) { s.Label = "laptop" })
+	if _, err := labelled.Append([]Entry{upsertEntry("origin-a", "board", `["a"]`, `{"title":"one"}`)}); err != nil {
+		t.Fatalf("append as origin-a: %v", err)
+	}
+	plain := backendOnStore(t, &localDriver{path: path}, "origin-b", store)
+	if _, err := plain.Append([]Entry{upsertEntry("origin-b", "board", `["b"]`, `{"title":"two"}`)}); err != nil {
+		t.Fatalf("append as origin-b: %v", err)
+	}
+
+	state, err := labelled.ReadMarks()
+	if err != nil {
+		t.Fatalf("ReadMarks: %v", err)
+	}
+	want := map[string]string{"origin-a": "laptop"}
+	if !reflect.DeepEqual(state.Labels, want) {
+		t.Errorf("labels = %v, want %v: only the origin that named one", state.Labels, want)
+	}
+}
+
+// TestReadMarksCarriesTheLabelsUnderTheirWireName pins the JSON name the labels
+// cross the pipe under: a read_marks reply carries them as labels, so a daemon
+// decoding the reply finds each machine's name without pulling history.
+// Mutant: rename the field's json tag.
+func TestReadMarksCarriesTheLabelsUnderTheirWireName(t *testing.T) {
+	path := tempReplica(t)
+	store := blobstore.NewMemBlobStore(nil)
+	b := backendOnBlobStoreWithSpec(t, &localDriver{path: path}, "origin-a", store, func(s *Spec) { s.Label = "laptop" })
+	if _, err := b.Append([]Entry{upsertEntry("origin-a", "board", `["a"]`, `{"title":"one"}`)}); err != nil {
+		t.Fatalf("append as origin-a: %v", err)
+	}
+	plain := backendOnStore(t, &localDriver{path: path}, "origin-b", store)
+	if _, err := plain.Append([]Entry{upsertEntry("origin-b", "board", `["b"]`, `{"title":"two"}`)}); err != nil {
+		t.Fatalf("append as origin-b: %v", err)
+	}
+
+	s := startWorker(t, b)
+	s.askHello()
+	req := Request{ID: "m", Verb: VerbReadMarks}
+	line, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal read_marks: %v", err)
+	}
+	if _, err := s.p.requests.Write(append(line, '\n')); err != nil {
+		t.Fatalf("write read_marks request: %v", err)
+	}
+	reply, err := readLine(s.p.replies)
+	if err != nil {
+		t.Fatalf("read read_marks reply: %v", err)
+	}
+	// The raw line, not the decoded reply: a round trip agrees with itself
+	// under any tag, and the name is what the daemon reads.
+	if !strings.Contains(string(reply), `"labels":{"origin-a":"laptop"}`) {
+		t.Errorf("read_marks reply %s does not carry the labelled origin under labels", reply)
+	}
+	var resp Response
+	if err := json.Unmarshal(reply, &resp); err != nil {
+		t.Fatalf("decode read_marks reply: %v", err)
+	}
+	if resp.ID != req.ID || !resp.OK {
+		t.Fatalf("read_marks = %+v, want an ok reply to %q", resp, req.ID)
+	}
+}
+
 // TestReadMarksAnswersNilMapsOnAnEmptyLog pins the nil/empty rule: with no heads
-// rows the four maps stay nil rather than empty, so an absent answer and a zero
+// rows the heads maps stay nil rather than empty, so an absent answer and a zero
 // one stay apart on the wire. The signing fields are whatever the replica holds.
 func TestReadMarksAnswersNilMapsOnAnEmptyLog(t *testing.T) {
 	b := backendFor(t, &localDriver{path: tempReplica(t)}, "origin-a")
@@ -96,7 +168,7 @@ func TestReadMarksAnswersNilMapsOnAnEmptyLog(t *testing.T) {
 	}
 	want := MarkState{SignedFrom: state.SignedFrom, SignedTags: state.SignedTags, EpochCuts: state.EpochCuts}
 	if !reflect.DeepEqual(state, want) {
-		t.Errorf("ReadMarks on an empty log = %+v, want nil heads, entries, sizes and floors", state)
+		t.Errorf("ReadMarks on an empty log = %+v, want nil heads, entries, sizes, floors and labels", state)
 	}
 }
 

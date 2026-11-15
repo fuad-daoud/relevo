@@ -465,6 +465,10 @@ type MarkState struct {
 	// a rekey wrote. A row that does not parse arrives as the cut nothing
 	// verifies under, which the reader holds its origin over.
 	EpochCuts map[string]EpochCut `json:"epoch_cuts,omitempty"`
+	// Labels is each origin's display name as its heads row holds it, so a
+	// reader that pulls no history can still name the machines. An origin
+	// with no label is absent.
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // readRequest reads one request line. A clean end of the pipe is io.EOF; a
