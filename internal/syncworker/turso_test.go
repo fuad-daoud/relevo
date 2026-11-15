@@ -141,8 +141,9 @@ func tempReplica(t *testing.T) string {
 // blob store and closes it when the test ends.
 func backendWithStore(t *testing.T, driver ReplicaDriver, origin string, mirror ...string) (*TursoBackend, *blobstore.MemBlobStore) {
 	t.Helper()
-	store := withStore(t)
+	store := blobstore.NewMemBlobStore(nil)
 	b := NewTursoBackend(driver)
+	b.openStore = func(R2Config) blobstore.BlobStore { return store }
 	if err := b.Open(Spec{
 		Version:      ProtocolVersion,
 		Origin:       origin,

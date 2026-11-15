@@ -62,6 +62,10 @@ type TursoBackend struct {
 	// blobs is the bucket segments are written to and fetched from, nil when
 	// hello named no R2 settings.
 	blobs blobstore.BlobStore
+	// openStore builds blobs from hello's settings. It is per backend so tests
+	// running in parallel can each hand their own backend a store without
+	// swapping the package's constructor under one another.
+	openStore func(R2Config) blobstore.BlobStore
 	// page bounds one pull's read. It is a field so a test can lower it and pin
 	// that a cut batch still comes back whole.
 	page int
@@ -89,7 +93,12 @@ var _ Backend = (*TursoBackend)(nil)
 // NewTursoBackend returns the log behind the replica driver owns. The driver is
 // supplied rather than named so a test serves the pipe against a plain file.
 func NewTursoBackend(driver ReplicaDriver) *TursoBackend {
-	return &TursoBackend{driver: driver, page: pullPageSize, warn: os.Stderr}
+	return &TursoBackend{
+		driver:    driver,
+		page:      pullPageSize,
+		warn:      os.Stderr,
+		openStore: func(cfg R2Config) blobstore.BlobStore { return newBlobStore(cfg) },
+	}
 }
 
 // NewTursoBackendForPath returns the backend production runs: the replica at
@@ -114,7 +123,7 @@ func (b *TursoBackend) Open(spec Spec) error {
 	b.spec = spec
 	b.db = db
 	if spec.R2 != nil {
-		b.blobs = newBlobStore(*spec.R2)
+		b.blobs = b.openStore(*spec.R2)
 	} else {
 		b.blobs = nil
 	}
