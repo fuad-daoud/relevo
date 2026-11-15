@@ -66,37 +66,47 @@ func TestDecodeSegmentRefusals(t *testing.T) {
 		name string
 		key  string
 		data []byte
+		// wantErr is a substring of the message of the one guard the case
+		// is about: a neutralised guard then fails the case with the wrong
+		// refusal, not with a success or a later guard's message.
+		wantErr string
 	}
 
 	cases := []testCase{
 		{
-			name: "wrong_key_origin",
-			key:  blobstore.SegmentKey("desktop", baseHdr.First),
-			data: goodData,
+			name:    "wrong_key_origin",
+			key:     blobstore.SegmentKey("desktop", baseHdr.First),
+			data:    goodData,
+			wantErr: `header origin "laptop" is not the key's`,
 		},
 		{
-			name: "first_in_key_not_headers",
-			key:  blobstore.SegmentKey(origin, baseHdr.First+1),
-			data: goodData,
+			name:    "first_in_key_not_headers",
+			key:     blobstore.SegmentKey(origin, baseHdr.First+1),
+			data:    goodData,
+			wantErr: `header first 1 is not the key's 2`,
 		},
 		{
-			name: "key_not_segment_key_body",
-			key:  blobstore.Key(origin, strings.Repeat("ab", 32)),
-			data: goodData,
+			name:    "key_not_segment_key_body",
+			key:     blobstore.Key(origin, strings.Repeat("ab", 32)),
+			data:    goodData,
+			wantErr: "is not a segment key",
 		},
 		{
-			name: "key_not_segment_key_size",
-			key:  blobstore.SizeKey(origin),
-			data: goodData,
+			name:    "key_not_segment_key_size",
+			key:     blobstore.SizeKey(origin),
+			data:    goodData,
+			wantErr: "is not a segment key",
 		},
 		{
-			name: "key_not_segment_key_11digit",
-			key:  origin + "/log/00000000001",
-			data: goodData,
+			name:    "key_not_segment_key_11digit",
+			key:     origin + "/log/00000000001",
+			data:    goodData,
+			wantErr: "is not a segment key",
 		},
 		{
-			name: "v_2",
-			key:  goodKey,
+			name:    "v_2",
+			key:     goodKey,
+			wantErr: "header version 2, want 1",
 			data: func() []byte {
 				h := baseHdr
 				h.V = 2
@@ -105,24 +115,27 @@ func TestDecodeSegmentRefusals(t *testing.T) {
 			}(),
 		},
 		{
-			name: "unknown_header_field",
-			key:  goodKey,
+			name:    "unknown_header_field",
+			key:     goodKey,
+			wantErr: `unknown field "extra"`,
 			data: func() []byte {
 				hLine := strings.TrimSuffix(baseHdrLine, "}") + `,"extra":true}`
 				return assembleAndCompress(hLine, baseEntryLines)
 			}(),
 		},
 		{
-			name: "trailing_garbage_after_header_json",
-			key:  goodKey,
+			name:    "trailing_garbage_after_header_json",
+			key:     goodKey,
+			wantErr: "trailing bytes after the header",
 			data: func() []byte {
 				hLine := baseHdrLine + " trailing_garbage"
 				return assembleAndCompress(hLine, baseEntryLines)
 			}(),
 		},
 		{
-			name: "count_one_more_than_lines",
-			key:  goodKey,
+			name:    "count_one_more_than_lines",
+			key:     goodKey,
+			wantErr: "2 entry lines, header says 3",
 			data: func() []byte {
 				h := baseHdr
 				h.Count = len(baseEntryLines) + 1
@@ -131,8 +144,9 @@ func TestDecodeSegmentRefusals(t *testing.T) {
 			}(),
 		},
 		{
-			name: "count_one_fewer_than_lines",
-			key:  goodKey,
+			name:    "count_one_fewer_than_lines",
+			key:     goodKey,
+			wantErr: "2 entry lines, header says 1",
 			data: func() []byte {
 				h := baseHdr
 				h.Count = len(baseEntryLines) - 1
@@ -141,8 +155,9 @@ func TestDecodeSegmentRefusals(t *testing.T) {
 			}(),
 		},
 		{
-			name: "digest_of_wrong_bytes",
-			key:  goodKey,
+			name:    "digest_of_wrong_bytes",
+			key:     goodKey,
+			wantErr: "entry digest does not match",
 			data: func() []byte {
 				h := baseHdr
 				h.SHA256 = strings.Repeat("0", 64)
@@ -151,8 +166,9 @@ func TestDecodeSegmentRefusals(t *testing.T) {
 			}(),
 		},
 		{
-			name: "one_flipped_byte_inside_entry_line",
-			key:  goodKey,
+			name:    "one_flipped_byte_inside_entry_line",
+			key:     goodKey,
+			wantErr: "entry digest does not match",
 			data: func() []byte {
 				corrupt := make([]string, len(baseEntryLines))
 				copy(corrupt, baseEntryLines)
@@ -161,8 +177,9 @@ func TestDecodeSegmentRefusals(t *testing.T) {
 			}(),
 		},
 		{
-			name: "entry_foreign_origin",
-			key:  goodKey,
+			name:    "entry_foreign_origin",
+			key:     goodKey,
+			wantErr: `entry 1 has origin "desktop"`,
 			data: func() []byte {
 				es := makeTestEntries(origin, 1, 2)
 				es[1].Origin = "desktop"
@@ -171,8 +188,9 @@ func TestDecodeSegmentRefusals(t *testing.T) {
 			}(),
 		},
 		{
-			name: "non_legacy_gap_in_seqs",
-			key:  goodKey,
+			name:    "non_legacy_gap_in_seqs",
+			key:     goodKey,
+			wantErr: "entry 1 has seq 3, want 2",
 			data: func() []byte {
 				es := makeTestEntries(origin, 1, 2)
 				es[1].Seq = 3
@@ -181,29 +199,33 @@ func TestDecodeSegmentRefusals(t *testing.T) {
 			}(),
 		},
 		{
-			name: "legacy_header_over_4096",
-			key:  goodKey,
+			// The header, count, lines, digest and seqs all agree; only the
+			// cap is wrong, and with the cap guard removed the object
+			// decodes -- so the case pins the cap alone.
+			name:    "legacy_header_over_4096",
+			key:     goodKey,
+			wantErr: "header count 4097, want 1 to 4096",
 			data: func() []byte {
-				h := baseHdr
-				h.Legacy = true
-				h.Count = 4097
-				hBytes, _ := json.Marshal(h)
-				return assembleAndCompress(string(hBytes), baseEntryLines)
+				es := makeTestEntries(origin, 1, 4097)
+				_, hLine, eLines := makeGoodPayload(t, origin, es, true)
+				return assembleAndCompress(hLine, eLines)
 			}(),
 		},
 		{
-			name: "non_legacy_header_with_count_257",
-			key:  goodKey,
+			// Same as legacy_header_over_4096, at the non-legacy cap.
+			name:    "non_legacy_header_with_count_257",
+			key:     goodKey,
+			wantErr: "header count 257, want 1 to 256",
 			data: func() []byte {
-				h := baseHdr
-				h.Count = 257
-				hBytes, _ := json.Marshal(h)
-				return assembleAndCompress(string(hBytes), baseEntryLines)
+				es := makeTestEntries(origin, 1, 257)
+				_, hLine, eLines := makeGoodPayload(t, origin, es, false)
+				return assembleAndCompress(hLine, eLines)
 			}(),
 		},
 		{
-			name: "last_not_final_seq",
-			key:  goodKey,
+			name:    "last_not_final_seq",
+			key:     goodKey,
+			wantErr: "header last 3 is not the last entry's 2",
 			data: func() []byte {
 				h := baseHdr
 				h.Last = baseEntries[len(baseEntries)-1].Seq + 1
@@ -212,19 +234,29 @@ func TestDecodeSegmentRefusals(t *testing.T) {
 			}(),
 		},
 		{
-			name: "data_not_ending_in_newline",
-			key:  goodKey,
+			// The digest covers the entry bytes exactly as they are stored,
+			// so dropping the trailing newline is caught by the newline
+			// guard, not by the digest or the line count.
+			name:    "data_not_ending_in_newline",
+			key:     goodKey,
+			wantErr: "entry lines do not end in a newline",
 			data: func() []byte {
+				rawEntries := strings.Join(baseEntryLines, "\n") // no trailing \n
+				digest := sha256.Sum256([]byte(rawEntries))
+				h := baseHdr
+				h.SHA256 = hex.EncodeToString(digest[:])
+				hBytes, _ := json.Marshal(h)
 				var buf bytes.Buffer
-				buf.WriteString(baseHdrLine)
+				buf.Write(hBytes)
 				buf.WriteByte('\n')
-				buf.WriteString(strings.Join(baseEntryLines, "\n")) // no trailing \n
+				buf.WriteString(rawEntries)
 				return segmentEncoder.EncodeAll(buf.Bytes(), nil)
 			}(),
 		},
 		{
-			name: "blank_line_between_entries",
-			key:  goodKey,
+			name:    "blank_line_between_entries",
+			key:     goodKey,
+			wantErr: "blank line at entry 1",
 			data: func() []byte {
 				e0, _ := json.Marshal(baseEntries[0])
 				e1, _ := json.Marshal(baseEntries[1])
@@ -242,8 +274,9 @@ func TestDecodeSegmentRefusals(t *testing.T) {
 			}(),
 		},
 		{
-			name: "entry_not_json",
-			key:  goodKey,
+			name:    "entry_not_json",
+			key:     goodKey,
+			wantErr: "entry 0: invalid character",
 			data: func() []byte {
 				rawEntries := "{not valid json\n"
 				digest := sha256.Sum256([]byte(rawEntries))
@@ -259,18 +292,23 @@ func TestDecodeSegmentRefusals(t *testing.T) {
 			}(),
 		},
 		{
-			name: "empty_data",
-			key:  goodKey,
-			data: []byte{},
+			// Empty input decodes as an empty payload, so the refusal is
+			// the missing header line, not the zstd one.
+			name:    "empty_data",
+			key:     goodKey,
+			wantErr: "has no header line",
+			data:    []byte{},
 		},
 		{
-			name: "data_not_zstd",
-			key:  goodKey,
-			data: []byte("this is plain text, not a zstd frame"),
+			name:    "data_not_zstd",
+			key:     goodKey,
+			wantErr: "not a zstd frame",
+			data:    []byte("this is plain text, not a zstd frame"),
 		},
 		{
-			name: "legacy_first_not_first_entry_seq",
-			key:  goodKey,
+			name:    "legacy_first_not_first_entry_seq",
+			key:     goodKey,
+			wantErr: "header first 1 is not the first entry's 5",
 			data: func() []byte {
 				es := makeTestEntries(origin, 5, 2) // first entry is 5
 				_, _, eLines := makeGoodPayload(t, origin, es, true)
@@ -295,8 +333,9 @@ func TestDecodeSegmentRefusals(t *testing.T) {
 			}(),
 		},
 		{
-			name: "legacy_descending_seqs",
-			key:  goodKey,
+			name:    "legacy_descending_seqs",
+			key:     goodKey,
+			wantErr: "legacy entry 1 has seq 0, not above the previous 1",
 			data: func() []byte {
 				es := makeTestEntries(origin, 1, 2)
 				es[1].Seq = 0 // not strictly increasing
@@ -304,10 +343,21 @@ func TestDecodeSegmentRefusals(t *testing.T) {
 				return assembleAndCompress(hLine, eLines)
 			}(),
 		},
+		{
+			// A valid zstd frame whose payload has no newline at all: it
+			// reaches the header-line cut with nothing to cut.
+			name:    "header_without_newline",
+			key:     goodKey,
+			wantErr: "has no header line",
+			data:    segmentEncoder.EncodeAll([]byte(baseHdrLine), nil),
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.wantErr == "" {
+				t.Fatalf("case %q pins no refusal; every refusal case must name its guard", tc.name)
+			}
 			_, entries, err := DecodeSegment(tc.key, tc.data)
 			if err == nil {
 				t.Fatalf("DecodeSegment succeeded, want refusal; got %d entries", len(entries))
@@ -317,6 +367,9 @@ func TestDecodeSegmentRefusals(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tc.key) {
 				t.Errorf("error %q does not name key %q", err.Error(), tc.key)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error %q does not name the refusal %q", err.Error(), tc.wantErr)
 			}
 		})
 	}

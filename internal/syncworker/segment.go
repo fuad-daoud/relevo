@@ -125,11 +125,25 @@ func encodeSegment(origin string, entries []Entry, legacy bool) ([]byte, Segment
 	// The digest is taken before the header line is written, because the
 	// header carries it: an entry line is not available to the header until
 	// the digest over all of them exists.
+	// A hex sha256 is always 64 characters, so the placeholder digest makes
+	// this header line exactly as long as the real one, and the size below
+	// counts the payload exactly.
+	header.SHA256 = hex.EncodeToString(make([]byte, sha256.Size))
+	phLine, _ := json.Marshal(header)
+	size := len(phLine) + 1
 	var entryLines bytes.Buffer
 	for i := range entries {
 		line, err := json.Marshal(entries[i])
 		if err != nil {
 			return nil, SegmentHeader{}, fmt.Errorf("%w: entry %d: %w", ErrBadSegment, i, err)
+		}
+		// The decoded cap is checked per entry, before the line is
+		// buffered: an oversized body would otherwise be held again in
+		// entryLines and once more in payload, spending the writer's
+		// memory before the refusal fires.
+		size += len(line) + 1
+		if size > segmentMaxDecoded {
+			return nil, SegmentHeader{}, fmt.Errorf("%w: payload is %d bytes, over the %d-byte decoded cap", ErrBadSegment, size, segmentMaxDecoded)
 		}
 		entryLines.Write(line)
 		entryLines.WriteByte('\n')
@@ -143,9 +157,6 @@ func encodeSegment(origin string, entries []Entry, legacy bool) ([]byte, Segment
 	payload.Write(line)
 	payload.WriteByte('\n')
 	payload.Write(entryLines.Bytes())
-	if payload.Len() > segmentMaxDecoded {
-		return nil, SegmentHeader{}, fmt.Errorf("%w: payload is %d bytes, over the %d-byte decoded cap", ErrBadSegment, payload.Len(), segmentMaxDecoded)
-	}
 	object := segmentEncoder.EncodeAll(payload.Bytes(), nil)
 	if len(object) > segmentMaxEncoded {
 		return nil, SegmentHeader{}, fmt.Errorf("%w: object compresses to %d bytes, over the %d-byte cap", ErrBadSegment, len(object), segmentMaxEncoded)

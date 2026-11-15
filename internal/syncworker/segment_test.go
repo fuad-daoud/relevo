@@ -206,13 +206,11 @@ func TestEncodeSegmentRefusals(t *testing.T) {
 			}(),
 		},
 		{
-			name:   "negative_seq",
-			origin: origin,
-			entries: func() []Entry {
-				es := makeTestEntries(origin, 1, 2)
-				es[0].Seq = -1
-				return es
-			}(),
+			// Seqs -1 and 0 are contiguous, so only the negative seq is
+			// wrong: the gap check does not fire first.
+			name:    "negative_seq",
+			origin:  origin,
+			entries: makeTestEntries(origin, -1, 2),
 		},
 		{
 			name:   "seq_gap",
@@ -265,8 +263,17 @@ func TestEncodeSegmentRefusals(t *testing.T) {
 	}
 
 	t.Run("payload_over_decoded_cap", func(t *testing.T) {
+		// One allocation, quoted: the 64 MiB+16 payload is json.RawMessage
+		// by conversion of the same slice, so building the case itself
+		// spends no more memory than the encode it refuses.
+		const bodyLen = (64 << 20) + 16
+		quoted := make([]byte, bodyLen+2)
+		for i := range quoted {
+			quoted[i] = '0'
+		}
+		quoted[0], quoted[bodyLen+1] = '"', '"'
 		oversized := makeTestEntries(origin, 1, 1)
-		oversized[0].Body = json.RawMessage(`"` + strings.Repeat("0", 65<<20) + `"`)
+		oversized[0].Body = json.RawMessage(quoted)
 		_, _, err := EncodeSegment(origin, oversized)
 		if err == nil {
 			t.Fatal("EncodeSegment succeeded on 65 MiB body, want refusal")
