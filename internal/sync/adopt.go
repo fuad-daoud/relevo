@@ -40,8 +40,8 @@ type PendingAdopt = db.PendingAdopt
 // traffic before another machine may take it.
 const adoptQuietFor = 24 * time.Hour
 
-// adoptSkew is how far in the future a stamp may sit and still count as live, the
-// same allowance synclog gives a mark.
+// adoptSkew is how far in the future a stamp may sit and still count as live:
+// clock drift between machines, not a stamp that would stay live forever.
 const adoptSkew = time.Hour
 
 // adoptIgnoredDocs are the document signals a fresh machine always carries: every

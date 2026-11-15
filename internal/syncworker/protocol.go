@@ -30,7 +30,7 @@ import (
 // with one result per key; version 4 has no batch verbs, so a daemon speaking
 // it would read those answers wrongly.
 //
-// Version 6 drops the publish_marks and compact verbs, and read_marks carries
+// Version 6 drops the marks and compaction verbs, and read_marks carries
 // no marks. A daemon speaking version 5 and this worker refuse each other at
 // hello, rather than a daemon asking a worker for a verb its pipe no longer
 // answers.
