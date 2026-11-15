@@ -54,9 +54,9 @@ const (
 func callBound(verb syncworker.Verb) (time.Duration, error) {
 	switch verb {
 	case syncworker.VerbHello, syncworker.VerbExport, syncworker.VerbPull,
-		syncworker.VerbPutBlobs, syncworker.VerbGetBlobs, syncworker.VerbPublishMarks,
+		syncworker.VerbPutBlobs, syncworker.VerbGetBlobs,
 		syncworker.VerbPublishTraffic,
-		syncworker.VerbPullRange, syncworker.VerbCompact:
+		syncworker.VerbPullRange:
 		return dataCallTimeout, nil
 	case syncworker.VerbHead, syncworker.VerbStats, syncworker.VerbReadMarks,
 		syncworker.VerbReadTraffic,

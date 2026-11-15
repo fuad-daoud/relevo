@@ -86,9 +86,8 @@ func AccountTraffic(snap AccountSnapshot, own ByteCounters, origin string, now t
 // marker is absent, which is a machine that has never published, and again
 // once trafficEvery has passed since the last.
 //
-// A marker that will not parse reads as due rather than as never due, the
-// rule marksDue runs on for the reason it gives: the worst a bad marker costs
-// is a publish the throttle was going to skip.
+// A marker that will not parse reads as due rather than as never due: the
+// worst a bad marker costs is a publish the throttle was going to skip.
 func (r *Runner) trafficDue(now time.Time) bool {
 	var last time.Time
 	if err := marker(r.Local, KeyTrafficPublished, &last); err != nil {

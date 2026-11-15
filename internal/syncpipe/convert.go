@@ -3,7 +3,6 @@ package syncpipe
 import (
 	"context"
 	"errors"
-	"sort"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/synclog"
@@ -80,24 +79,11 @@ func entriesFromWire(entries []syncworker.Entry) []synclog.Entry {
 	return out
 }
 
-// PublishMarks records how far this installation applied of each origin. The
-// request carries no reader: the worker takes its own from hello. It carries the
-// time, since only this process knows when it arrived and a mark's age decides
-// whether its reader still counts.
-func (c *Client) PublishMarks(marks map[string]int, at time.Time) error {
-	_, err := c.call(syncworker.Request{
-		Verb:    syncworker.VerbPublishMarks,
-		Publish: marksToWire(marks),
-		At:      &at,
-	})
-	return err
-}
-
-// ReadMarks answers with every published mark and each origin's size. An empty
-// reply is a refusal, not an empty log: the worker always fills the field, so a
-// missing one did not do what was asked. Read as "no reader has published", it
-// would floor every origin at its head and let compaction drop what readers
-// still need.
+// ReadMarks answers with the remote log's floors, heads, entry counts, sizes
+// and signing boundaries. An empty reply is a refusal, not an empty log: the
+// worker always fills the field, so a missing one did not do what was asked.
+// The heads come from the remote, not recomputed here: the worker owns the
+// only replica, so this side holds no log to count from.
 func (c *Client) ReadMarks() (synclog.MarkState, error) {
 	resp, err := c.call(syncworker.Request{Verb: syncworker.VerbReadMarks})
 	if err != nil {
@@ -148,16 +134,6 @@ func (c *Client) PullRange(origin string, after, upto int) ([]synclog.Entry, err
 		return nil, err
 	}
 	return entriesFromWire(resp.Entries), nil
-}
-
-// CompactOwn drops superseded entries to floor. The request names no origin: the
-// worker compacts its own, from hello.
-func (c *Client) CompactOwn(floor int) (synclog.CompactResult, error) {
-	resp, err := c.call(syncworker.Request{Verb: syncworker.VerbCompact, Floor: floor})
-	if err != nil {
-		return synclog.CompactResult{}, err
-	}
-	return synclog.CompactResult{Dropped: resp.Dropped, Floor: resp.Floor}, nil
 }
 
 // KeyMeta reads the passphrase material the remote holds. A missing field is a
@@ -284,26 +260,8 @@ func epochCutsFromWire(cuts map[string]syncworker.EpochCut) map[string]synclog.E
 	return out
 }
 
-// marksToWire renders this reader's published positions, sorted so the same marks
-// always write the same request line.
-func marksToWire(marks map[string]int) []syncworker.Mark {
-	if len(marks) == 0 {
-		return nil
-	}
-	origins := make([]string, 0, len(marks))
-	for origin := range marks {
-		origins = append(origins, origin)
-	}
-	sort.Strings(origins)
-	out := make([]syncworker.Mark, 0, len(origins))
-	for _, origin := range origins {
-		out = append(out, syncworker.Mark{Origin: origin, Seq: marks[origin]})
-	}
-	return out
-}
-
 func markStateFromWire(s syncworker.MarkState) synclog.MarkState {
-	out := synclog.MarkState{
+	return synclog.MarkState{
 		Floors:     s.Floors,
 		Heads:      s.Heads,
 		Entries:    s.Entries,
@@ -312,15 +270,6 @@ func markStateFromWire(s syncworker.MarkState) synclog.MarkState {
 		SignedTags: s.SignedTags,
 		EpochCuts:  epochCutsFromWire(s.EpochCuts),
 	}
-	for _, m := range s.Marks {
-		out.Marks = append(out.Marks, synclog.Mark{
-			Reader: m.Reader,
-			Origin: m.Origin,
-			Seq:    m.Seq,
-			At:     m.At,
-		})
-	}
-	return out
 }
 
 func trafficRowToWire(row synclog.TrafficRow) *syncworker.TrafficRow {

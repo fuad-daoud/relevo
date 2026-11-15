@@ -62,7 +62,7 @@ func adopter(shared *db.DB, local Local, transport synclog.LogTransport, now fun
 
 // TestAdoptionPutsNothingOnTheRemoteUnderAnotherIdentity pins the property the
 // adoption exists for: whatever the machine's temporary identity is, the remote
-// holds no entry, mark or meta row under any id but the adopted one, and the
+// holds no entry or meta row under any id but the adopted one, and the
 // adopted log was imported in full before the machine became it.
 func TestAdoptionPutsNothingOnTheRemoteUnderAnotherIdentity(t *testing.T) {
 	log := deadMachine(t)
@@ -85,9 +85,6 @@ func TestAdoptionPutsNothingOnTheRemoteUnderAnotherIdentity(t *testing.T) {
 		if origin != adoptedID {
 			t.Errorf("the remote holds entries under %q", origin)
 		}
-	}
-	if len(state.Marks) != 0 {
-		t.Errorf("the remote holds marks %+v, want none", state.Marks)
 	}
 	if claims := log.Claims(); len(claims) != 1 || claims[0] != adoptedID {
 		t.Errorf("the remote holds claims %v, want only %q", claims, adoptedID)
@@ -209,15 +206,31 @@ func TestAdoptionRefusesAnIdentityStillInUse(t *testing.T) {
 			t.Errorf("a refused adoption left claims %v", claims)
 		}
 	})
-	t.Run("the reader published a mark within the day", func(t *testing.T) {
+	t.Run("the machine published its traffic within the day", func(t *testing.T) {
 		log := deadMachine(t)
-		if err := log.OnLog(adoptedID).PublishMarks(map[string]int{"other": 1}, adoptLater().Add(-time.Hour)); err != nil {
-			t.Fatalf("PublishMarks: %v", err)
+		seenAt := adoptLater().Add(-time.Hour)
+		if _, err := log.OnLog(adoptedID).PublishTraffic(synclog.TrafficRow{Month: seenAt.UTC().Format("2006-01"), At: seenAt}); err != nil {
+			t.Fatalf("PublishTraffic: %v", err)
 		}
 		shared, local, _ := freshMachine(t, "tmp-m")
 		_, err := adopter(shared, local, log.OnLog("tmp-m"), adoptLater, nil).Enable()
 		if !errors.Is(err, ErrAdoptionLive) {
 			t.Fatalf("Enable = %v, want ErrAdoptionLive", err)
+		}
+	})
+	t.Run("the traffic row is older than a day", func(t *testing.T) {
+		log := deadMachine(t)
+		seenAt := adoptLater().Add(-25 * time.Hour)
+		if _, err := log.OnLog(adoptedID).PublishTraffic(synclog.TrafficRow{Month: seenAt.UTC().Format("2006-01"), At: seenAt}); err != nil {
+			t.Fatalf("PublishTraffic: %v", err)
+		}
+		shared, local, _ := freshMachine(t, "tmp-m")
+		res, err := adopter(shared, local, log.OnLog("tmp-m"), adoptLater, nil).Enable()
+		if err != nil {
+			t.Fatalf("Enable = %v, want the adoption to proceed", err)
+		}
+		if res.Adopted != adoptedID {
+			t.Errorf("adopted = %q, want %q", res.Adopted, adoptedID)
 		}
 	})
 	t.Run("the log is stamped in the future", func(t *testing.T) {
@@ -234,22 +247,65 @@ func TestAdoptionRefusesAnIdentityStillInUse(t *testing.T) {
 	})
 }
 
+// TestAdoptionTrafficReadShapes pins how the liveness read answers: the
+// unsupported sentinel and a transport without the reader are no signal, so
+// the entry time alone decides, and any other read error refuses the adoption.
+func TestAdoptionTrafficReadShapes(t *testing.T) {
+	t.Run("the sentinel proceeds on the entry time alone", func(t *testing.T) {
+		log := deadMachine(t)
+		shared, local, _ := freshMachine(t, "tmp-m")
+		// The production shape: a StopTransport whose inner client carries no
+		// reader answers with the sentinel rather than a row.
+		blind := NewStopTransport(trafficBlind{log.OnLog("tmp-m")})
+		res, err := adopter(shared, local, blind, adoptLater, nil).Enable()
+		if err != nil {
+			t.Fatalf("Enable = %v, want the adoption to proceed on the entry time", err)
+		}
+		if res.Adopted != adoptedID {
+			t.Errorf("adopted = %q, want %q", res.Adopted, adoptedID)
+		}
+	})
+	t.Run("a transport without the reader proceeds on the entry time", func(t *testing.T) {
+		log := deadMachine(t)
+		shared, local, _ := freshMachine(t, "tmp-m")
+		res, err := adopter(shared, local, trafficBlind{log.OnLog("tmp-m")}, adoptLater, nil).Enable()
+		if err != nil {
+			t.Fatalf("Enable = %v, want the adoption to proceed on the entry time", err)
+		}
+		if res.Adopted != adoptedID {
+			t.Errorf("adopted = %q, want %q", res.Adopted, adoptedID)
+		}
+	})
+	t.Run("another read error refuses", func(t *testing.T) {
+		log := deadMachine(t)
+		shared, local, _ := freshMachine(t, "tmp-m")
+		gone := errors.New("the log went away")
+		_, err := adopter(shared, local, failTraffic{LogTransport: log.OnLog("tmp-m"), err: gone}, adoptLater, nil).Enable()
+		if !errors.Is(err, gone) {
+			t.Fatalf("Enable = %v, want the read error wrapped", err)
+		}
+		if claims := log.Claims(); len(claims) != 0 {
+			t.Errorf("a refused adoption left claims %v", claims)
+		}
+	})
+}
+
 // TestAdoptionRefusalWindow pins the rule's edges on its own.
 func TestAdoptionRefusalWindow(t *testing.T) {
 	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	cases := map[string]struct {
-		entry, mark time.Time
+		entry, seen time.Time
 		want        error
 	}{
 		"nothing at all":            {},
 		"an hour old":               {entry: now.Add(-time.Hour), want: ErrAdoptionLive},
-		"just under a day":          {mark: now.Add(-24*time.Hour + time.Minute), want: ErrAdoptionLive},
+		"just under a day":          {seen: now.Add(-24*time.Hour + time.Minute), want: ErrAdoptionLive},
 		"a day old":                 {entry: now.Add(-24 * time.Hour)},
-		"stamped slightly ahead":    {mark: now.Add(30 * time.Minute), want: ErrAdoptionLive},
+		"stamped slightly ahead":    {seen: now.Add(30 * time.Minute), want: ErrAdoptionLive},
 		"stamped far in the future": {entry: now.Add(3 * time.Hour), want: ErrAdoptionStampAhead},
 	}
 	for name, tc := range cases {
-		err := AdoptionRefusal(now, tc.entry, tc.mark)
+		err := AdoptionRefusal(now, tc.entry, tc.seen)
 		if !errors.Is(err, tc.want) || (tc.want == nil && err != nil) {
 			t.Errorf("%s: AdoptionRefusal = %v, want %v", name, err, tc.want)
 		}
@@ -428,10 +484,12 @@ func TestInterruptedAdoptionFinishesOnRerun(t *testing.T) {
 			t.Errorf("the remote holds entries under %q", origin)
 		}
 	}
-	for _, m := range state.Marks {
-		if m.Reader == "tmp-m" {
-			t.Errorf("the remote holds marks under %q", m.Reader)
-		}
+	rows, err := log.ReadTraffic()
+	if err != nil {
+		t.Fatalf("ReadTraffic: %v", err)
+	}
+	if _, ok := rows["tmp-m"]; ok {
+		t.Errorf("the remote holds a traffic row under %q", "tmp-m")
 	}
 	for _, c := range log.Claims() {
 		if c != adoptedID {

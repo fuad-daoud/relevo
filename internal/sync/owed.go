@@ -56,9 +56,6 @@ func (r *Runner) sendOwed(ctx context.Context, shared *db.DB, t *StopTransport) 
 		return true, writeJoin(r.Local, progress)
 	}
 	r.owed = nil
-	if err := r.publishOwedMarks(shared, t); err != nil {
-		return false, err
-	}
 	return false, ClearJoin(r.Local)
 }
 
@@ -105,20 +102,6 @@ func sendOwedSlice(reconciler *synclog.Reconciler, slice time.Duration) (sent in
 			return sent, false, nil
 		}
 	}
-}
-
-// publishOwedMarks says where this machine has read to, as the end of a join does,
-// without waiting for the steady throttle: a joined machine should be counted as a
-// reader from the moment its join ends.
-func (r *Runner) publishOwedMarks(shared *db.DB, t *StopTransport) error {
-	marks, err := shared.ImportMarks()
-	if err != nil {
-		return fmt.Errorf("sync: read this machine's import marks: %w", err)
-	}
-	if err := t.PublishMarks(marks, time.Now().UTC()); err != nil {
-		return fmt.Errorf("sync: publish this machine's import marks: %w", err)
-	}
-	return nil
 }
 
 func (r *Runner) owedSlice() time.Duration {

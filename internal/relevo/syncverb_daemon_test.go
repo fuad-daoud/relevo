@@ -130,8 +130,6 @@ func (j *hangingJoin) Append(entries []synclog.Entry) ([]synclog.Entry, error) {
 func (j *hangingJoin) Head(string) ([]synclog.HeadRow, error) { return nil, nil }
 func (j *hangingJoin) Stats() (synclog.Stats, error)          { return synclog.Stats{}, nil }
 
-func (j *hangingJoin) PublishMarks(map[string]int, time.Time) error { return nil }
-
 func (j *hangingJoin) ReadMarks() (synclog.MarkState, error) { return synclog.MarkState{}, nil }
 
 func (j *hangingJoin) Pull(map[string]int) ([]synclog.Entry, error) {
@@ -324,10 +322,6 @@ func TestRetryStopsAHungSteadyPullAtTheDaemon(t *testing.T) {
 }
 
 func (h *hangingJoin) PullRange(string, int, int) ([]synclog.Entry, error) { return nil, nil }
-
-func (h *hangingJoin) CompactOwn(int) (synclog.CompactResult, error) {
-	return synclog.CompactResult{}, nil
-}
 
 func (h *hangingJoin) KeyMeta(context.Context) (synclog.KeyMeta, error) {
 	return synclog.KeyMeta{}, nil

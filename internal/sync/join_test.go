@@ -130,7 +130,6 @@ func (r *runningLog) Append([]synclog.Entry) ([]synclog.Entry, error) { return n
 func (r *runningLog) Pull(map[string]int) ([]synclog.Entry, error)    { return nil, r.err }
 func (r *runningLog) Head(string) ([]synclog.HeadRow, error)          { return nil, r.err }
 func (r *runningLog) Stats() (synclog.Stats, error)                   { return synclog.Stats{}, r.err }
-func (r *runningLog) PublishMarks(map[string]int, time.Time) error    { return r.err }
 func (r *runningLog) ReadMarks() (synclog.MarkState, error)           { return synclog.MarkState{}, r.err }
 
 // r2Fixture is the complete set of bucket credentials an enable needs. The
@@ -440,10 +439,6 @@ func TestACancelledJoinDoesNotTurnTheMachineOn(t *testing.T) {
 }
 
 func (r *runningLog) PullRange(string, int, int) ([]synclog.Entry, error) { return nil, nil }
-
-func (r *runningLog) CompactOwn(int) (synclog.CompactResult, error) {
-	return synclog.CompactResult{}, nil
-}
 
 func (r *runningLog) KeyMeta(context.Context) (synclog.KeyMeta, error) {
 	return synclog.KeyMeta{}, nil

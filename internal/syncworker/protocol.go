@@ -12,10 +12,10 @@ import (
 	"time"
 )
 
-// ProtocolVersion is what hello announces and what a worker refuses a higher
-// number of. The version travels on the first request rather than in the
-// command line, so the daemon learns what its own child speaks before it sends
-// anything it would otherwise have to take back.
+// ProtocolVersion is what hello announces, and the only version a worker
+// opens: any other is refused. The version travels on the first request rather
+// than in the command line, so the daemon learns what its own child speaks
+// before it sends anything it would otherwise have to take back.
 //
 // Version 2 carries the blob verbs and the R2 settings hello names. Version 3
 // carries key_rekey, which writes the key's new epoch beside it; a daemon on
@@ -29,7 +29,12 @@ import (
 // Version 5 carries put_blobs and get_blobs, which move a batch of bodies
 // with one result per key; version 4 has no batch verbs, so a daemon speaking
 // it would read those answers wrongly.
-const ProtocolVersion = 5
+//
+// Version 6 drops the marks and compaction verbs, and read_marks carries
+// no marks. A daemon speaking version 5 and this worker refuse each other at
+// hello, rather than a daemon asking a worker for a verb its pipe no longer
+// answers.
+const ProtocolVersion = 6
 
 // The refusals the worker answers with rather than dying over: a request that
 // breaks one has a well-formed frame, so the reply carries the reason and the
@@ -67,18 +72,12 @@ const (
 	VerbHead Verb = "head"
 	// VerbStats reports what the log holds.
 	VerbStats Verb = "stats"
-	// VerbPublishMarks records how far this worker has applied of every other
-	// origin, as this worker's own rows.
-	VerbPublishMarks Verb = "publish_marks"
-	// VerbReadMarks reads every published mark, the floors recorded so far, and
-	// each origin's head and entry count.
+	// VerbReadMarks reads the floors recorded so far, and each origin's head
+	// and entry count.
 	VerbReadMarks Verb = "read_marks"
 	// VerbPullRange reads one page of one origin's entries between two
 	// sequences, for a reader whose mark is below the origin's floor.
 	VerbPullRange Verb = "pull_range"
-	// VerbCompact drops this worker's own superseded entries up to a floor and
-	// records the floor.
-	VerbCompact Verb = "compact"
 	// VerbKeyMeta reads the passphrase material the remote holds.
 	VerbKeyMeta Verb = "key_meta"
 	// VerbKeyInit writes that material if the remote holds none, and answers
@@ -185,15 +184,10 @@ type Request struct {
 	// Marks is each other origin's last applied sequence number, so a pull
 	// answers with what follows it and with no mark answered from the start.
 	Marks map[string]int `json:"marks,omitempty"`
-	// Publish is what a publish_marks carries: each origin this reader has
-	// applied to the sequence named, in a list the Marks map cannot share a
-	// field with. The reader is the worker's own origin from hello, so no caller
-	// writes another reader's rows: a mark feeds the compaction floor.
-	Publish []Mark `json:"publish,omitempty"`
-	// At is when this reader reached the marks being published: a mark's age
-	// decides whether its reader still counts towards a floor, and only the
-	// publisher knows when it was really at that sequence. It is a pointer so
-	// a request with no time sends no field.
+	// At is when this claimant made the claim: a claim's age decides whether it
+	// still stands against another machine's, and only the claimant knows when
+	// it was really at that time. It is a pointer so a request with no time
+	// sends no field.
 	At *time.Time `json:"at,omitempty"`
 	// After and Limit page a head read. An empty after starts at the beginning
 	// and a limit of zero means the whole rest, which is what a caller that
@@ -201,10 +195,9 @@ type Request struct {
 	After string `json:"after,omitempty"`
 	Limit int    `json:"limit,omitempty"`
 	// AfterSeq and Upto bound a pull_range to AfterSeq < seq <= Upto of the
-	// origin named above; Floor is what a compact drops up to.
+	// origin named above.
 	AfterSeq int `json:"after_seq,omitempty"`
 	Upto     int `json:"upto,omitempty"`
-	Floor    int `json:"floor,omitempty"`
 	// KeyMeta is the passphrase material a key_init writes. A key_meta carries
 	// none, and a key_rekey names the material the remote is to hold afterwards.
 	KeyMeta *KeyMeta `json:"key_meta,omitempty"`
@@ -260,10 +253,6 @@ type Response struct {
 	// top-level fields, because one of its names is entries, which an export and
 	// a pull already answer under.
 	Marks *MarkState `json:"marks,omitempty"`
-	// Dropped and Floor are what a compact answers with: the entries it removed
-	// and the floor the log now records, which is never below the one before.
-	Dropped int `json:"dropped,omitempty"`
-	Floor   int `json:"floor,omitempty"`
 	// KeyMeta is what a key_meta read and a key_init wrote, and is nil on a remote
 	// that holds no passphrase material at all.
 	KeyMeta *KeyMeta `json:"key_meta,omitempty"`
@@ -429,44 +418,16 @@ type Stats struct {
 	R2Get int64 `json:"r2_get"`
 }
 
-// Mark is one origin's published position, as a publish_marks carries it.
-// There is no reader and no time among them: the reader is the worker's own
-// origin from hello, and the time is the request's own, one value for the
-// whole publish.
-type Mark struct {
-	// Origin is the log the position is in, which is never this reader's own.
-	Origin string `json:"origin"`
-	// Seq is the highest sequence of that origin the reader has applied.
-	Seq int `json:"seq"`
-}
-
-// PublishedMark is a mark as a read_marks hands it back, with the reader and
-// the time. A request cannot name those: letting the publisher choose both
-// would let it vouch for another reader.
-type PublishedMark struct {
-	// Reader is the installation the mark belongs to.
-	Reader string `json:"reader"`
-	// Origin is the log the position is in.
-	Origin string `json:"origin"`
-	// Seq is the highest sequence of that origin the reader has applied.
-	Seq int `json:"seq"`
-	// At is when the reader reached that sequence, which is what decides whether
-	// it still counts towards a floor.
-	At time.Time `json:"at"`
-}
-
-// MarkState is what a read of the marks answers with: every published mark, the
-// floors the remote has recorded, and each origin's head and entry count. It is
-// its own object on the wire because one of its names is entries, which an
-// export and a pull already answer under, and a reply may not say two different
-// things under one name.
+// MarkState is what a read of the marks answers with: the floors the remote has
+// recorded, and each origin's head, entry count and size. It is its own object
+// on the wire because one of its names is entries, which an export and a pull
+// already answer under, and a reply may not say two different things under one
+// name.
 //
 // The maps are nil rather than empty when there is nothing to report, so an
 // absent floor and a floor of zero stay apart.
 type MarkState struct {
-	// Marks are the published positions, one row per reader per origin.
-	Marks []PublishedMark `json:"marks,omitempty"`
-	// Floors is what each origin has already been compacted to.
+	// Floors is what each origin has recorded as its floor.
 	Floors map[string]int `json:"floors,omitempty"`
 	// Heads is each origin's highest sequence in the log.
 	Heads map[string]int `json:"heads,omitempty"`
@@ -537,10 +498,4 @@ func writeResponse(w *bufio.Writer, resp Response) error {
 		return fmt.Errorf("syncworker: flush reply %s: %w", resp.ID, err)
 	}
 	return nil
-}
-
-// CompactResult is what a compaction did, as the backend reports it.
-type CompactResult struct {
-	Dropped int
-	Floor   int
 }

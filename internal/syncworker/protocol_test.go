@@ -82,19 +82,6 @@ func requestWireCases() []wireCase {
 func marksRequestWireCases() []wireCase {
 	return []wireCase{
 		{
-			// A publish carries no reader: the worker takes its own from hello,
-			// so the field is absent from the line rather than sent empty and
-			// read as a reader with no name.
-			name: "request publish_marks",
-			value: Request{
-				ID: "5", Verb: VerbPublishMarks, At: &pinnedAt,
-				Publish: []Mark{{Origin: "origin-b", Seq: 4}, {Origin: "origin-c", Seq: 9}},
-			},
-			wire: `{"id":"5","verb":"publish_marks","publish":[` +
-				`{"origin":"origin-b","seq":4},{"origin":"origin-c","seq":9}],` +
-				`"at":"2026-10-08T09:30:00Z"}`,
-		},
-		{
 			name:  "request read_marks",
 			value: Request{ID: "6", Verb: VerbReadMarks},
 			wire:  `{"id":"6","verb":"read_marks"}`,
@@ -152,7 +139,7 @@ func logRequestWireCases() []wireCase {
 					Bucket:   "relevo-sync", KeyID: "key-1", Secret: "s",
 				},
 			},
-			wire: `{"id":"1","verb":"hello","version":5,"origin":"origin-a",` +
+			wire: `{"id":"1","verb":"hello","version":6,"origin":"origin-a",` +
 				`"token":"t","url":"libsql://remote.example","r2":{` +
 				`"endpoint":"https://acct.r2.cloudflarestorage.com",` +
 				`"bucket":"relevo-sync","key_id":"key-1","secret":"s"}}`,
@@ -166,7 +153,7 @@ func logRequestWireCases() []wireCase {
 				ID: "1", Verb: VerbHello, Version: ProtocolVersion, Origin: "origin-a",
 				Token: "t", URL: "libsql://remote.example",
 			},
-			wire: `{"id":"1","verb":"hello","version":5,"origin":"origin-a",` +
+			wire: `{"id":"1","verb":"hello","version":6,"origin":"origin-a",` +
 				`"token":"t","url":"libsql://remote.example"}`,
 		},
 		{
@@ -264,24 +251,6 @@ func responseWireCases() []wireCase {
 				`{"key":"origin-a/` + strings.Repeat("a", 64) + `","bytes":5},` +
 				`{"key":"origin-a/` + strings.Repeat("c", 64) + `","skipped":true},` +
 				`{"key":"origin-b/` + strings.Repeat("b", 64) + `","error":"not in the store","code":"blob_missing"}]}`,
-		},
-		{
-			// Every map is set and one mark carries its reader, because the
-			// reply is read by a caller deciding what the log may drop: an
-			// empty map and a missing one would look the same here and are not
-			// the same fact.
-			name: "response carrying the mark state",
-			value: Response{ID: "9", OK: true, Marks: &MarkState{
-				Marks:   []PublishedMark{{Reader: "origin-a", Origin: "origin-b", Seq: 4, At: pinnedAt}},
-				Floors:  map[string]int{"origin-b": 3},
-				Heads:   map[string]int{"origin-a": 9, "origin-b": 4},
-				Entries: map[string]int{"origin-a": 7, "origin-b": 4},
-			}},
-			wire: `{"id":"9","ok":true,"marks":{"marks":[` +
-				`{"reader":"origin-a","origin":"origin-b","seq":4,` +
-				`"at":"2026-10-08T09:30:00Z"}],` +
-				`"floors":{"origin-b":3},"heads":{"origin-a":9,"origin-b":4},` +
-				`"entries":{"origin-a":7,"origin-b":4}}}`,
 		},
 		{
 			name:  "response to a shutdown",

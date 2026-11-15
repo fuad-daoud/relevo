@@ -15,20 +15,12 @@ func (m *MemTransport) PullRange(origin string, after, upto int) ([]Entry, error
 	return out, nil
 }
 
-func (m *MemTransport) CompactOwn(floor int) (CompactResult, error) {
-	dropped, err := m.Compact(m.origin, floor)
-	if err != nil {
-		return CompactResult{}, err
-	}
-	m.log.mu.Lock()
-	defer m.log.mu.Unlock()
-	return CompactResult{Dropped: dropped, Floor: m.log.floors[m.origin]}, nil
-}
-
 // Compact drops origin's superseded entries to floor and raises its recorded
 // floor, under one lock so no reader sees one without the other. The floor only
 // rises; a lower one drops what it covers and records nothing. A floor past head is
 // refused; one inside a batch moves down to the batch before, as the worker does.
+// It is the only way a test builds a floor, so the floors migration preserves
+// stay reachable here.
 func (m *MemTransport) Compact(origin string, floor int) (int, error) {
 	l := m.log
 	l.mu.Lock()

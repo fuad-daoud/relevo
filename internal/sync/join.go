@@ -361,11 +361,10 @@ func (e *Enabler) transport() (synclog.LogTransport, error) {
 }
 
 // join runs the pipeline: import every other origin, reconcile this origin's
-// history, publish the marks, then clear the marker. The marks go out only once
-// the reconcile has succeeded, because they say how far this machine has got.
-// Each step counts the worker's bytes, so a worker that dies mid-join loses at
-// most one batch of counts. The first transport call comes before the marker and
-// starts the worker, so a refusing remote leaves no join in progress behind.
+// history, then clear the marker. Each step counts the worker's bytes, so a
+// worker that dies mid-join loses at most one batch of counts. The first
+// transport call comes before the marker and starts the worker, so a refusing
+// remote leaves no join in progress behind.
 func (e *Enabler) join(transport synclog.LogTransport, now time.Time) (res EnableResult, _ error) {
 	// The result is named so the deferred reading lands in what the caller gets:
 	// the runner is seeded from it, and a zero would fold the worker's whole
@@ -399,9 +398,9 @@ func (e *Enabler) join(transport synclog.LogTransport, now time.Time) (res Enabl
 	if err != nil && !res.Locked {
 		return res, err
 	}
-	if err := e.publishMarks(transport); err != nil {
-		return res, err
-	}
+	// The reconcile's last batch leaves the loop without a count, so the
+	// bytes it pushed are folded in here.
+	e.count(transport)
 	// A locked machine still turns on, or unlock -- which needs sync on -- could
 	// never run. The marker stays while this origin's history is owed; the steady
 	// attempts send it once there is a key.
@@ -462,18 +461,6 @@ func (e *Enabler) count(transport synclog.LogTransport) {
 	if cur, err := transport.Stats(); err == nil {
 		recordStats(e.Request.Local, &e.last, cur)
 	}
-}
-
-func (e *Enabler) publishMarks(transport synclog.LogTransport) error {
-	marks, err := e.Request.Shared.ImportMarks()
-	if err != nil {
-		return fmt.Errorf("sync: enable: read the import marks: %w", err)
-	}
-	if err := transport.PublishMarks(marks, e.now().UTC()); err != nil {
-		return fmt.Errorf("sync: enable: publish the marks: %w", err)
-	}
-	e.count(transport)
-	return nil
 }
 
 // reconcile exports this origin's history one bounded chunk at a time. Each

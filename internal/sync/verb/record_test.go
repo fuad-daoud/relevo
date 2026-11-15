@@ -43,21 +43,12 @@ func (r *recordTransport) Stats() (synclog.Stats, error) {
 	return synclog.Stats{}, nil
 }
 
-func (r *recordTransport) PublishMarks(map[string]int, time.Time) error {
-	r.Calls = append(r.Calls, "publish_marks")
-	return nil
-}
-
 func (r *recordTransport) ReadMarks() (synclog.MarkState, error) {
 	r.Calls = append(r.Calls, "read_marks")
 	return synclog.MarkState{}, nil
 }
 
 func (r *recordTransport) PullRange(string, int, int) ([]synclog.Entry, error) { return nil, nil }
-
-func (r *recordTransport) CompactOwn(int) (synclog.CompactResult, error) {
-	return synclog.CompactResult{}, nil
-}
 
 func (r *recordTransport) KeyMeta(context.Context) (synclog.KeyMeta, error) {
 	return synclog.KeyMeta{}, nil
@@ -97,8 +88,8 @@ func TestRecordTransportAnswersEveryCallWithAZero(t *testing.T) {
 	if _, err := r.Stats(); err != nil {
 		t.Fatalf("Stats: %v", err)
 	}
-	if err := r.PublishMarks(nil, time.Unix(0, 0).UTC()); err != nil {
-		t.Fatalf("PublishMarks: %v", err)
+	if _, err := r.Head("m1"); err != nil {
+		t.Fatalf("Head: %v", err)
 	}
 	if _, err := r.ReadMarks(); err != nil {
 		t.Fatalf("ReadMarks: %v", err)

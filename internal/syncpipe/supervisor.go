@@ -108,17 +108,8 @@ func (s *Supervisor) Stats() (synclog.Stats, error) {
 	return out, err
 }
 
-// PublishMarks records how far this installation applied of each origin, through
-// the breaker like every call: a worker silent on a publish is dead whatever it
-// was doing.
-func (s *Supervisor) PublishMarks(marks map[string]int, at time.Time) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.drive("publish_marks", func(c *Client) error { return c.PublishMarks(marks, at) })
-}
-
 // PublishTraffic writes this installation's traffic row and answers with every
-// origin's, through the breaker for the reason PublishMarks gives.
+// origin's, through the breaker so a refusing remote is counted once.
 func (s *Supervisor) PublishTraffic(row synclog.TrafficRow) (map[string]synclog.TrafficRow, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -131,8 +122,8 @@ func (s *Supervisor) PublishTraffic(row synclog.TrafficRow) (map[string]synclog.
 	return out, err
 }
 
-// ReadTraffic answers with every origin's row, through the breaker for the
-// reason PublishMarks gives.
+// ReadTraffic answers with every origin's row, through the breaker so a
+// refusing remote is counted once.
 func (s *Supervisor) ReadTraffic() (map[string]synclog.TrafficRow, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -154,6 +145,7 @@ var (
 	_ synclog.TrafficReader    = (*Client)(nil)
 )
 
+// ReadMarks goes through the breaker so a refusing remote is counted once.
 func (s *Supervisor) ReadMarks() (synclog.MarkState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -166,6 +158,7 @@ func (s *Supervisor) ReadMarks() (synclog.MarkState, error) {
 	return out, err
 }
 
+// PullRange goes through the breaker so a refusing remote is counted once.
 func (s *Supervisor) PullRange(origin string, after, upto int) ([]synclog.Entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -173,18 +166,6 @@ func (s *Supervisor) PullRange(origin string, after, upto int) ([]synclog.Entry,
 	err := s.drive("pull_range", func(c *Client) error {
 		var e error
 		out, e = c.PullRange(origin, after, upto)
-		return e
-	})
-	return out, err
-}
-
-func (s *Supervisor) CompactOwn(floor int) (synclog.CompactResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var out synclog.CompactResult
-	err := s.drive("compact", func(c *Client) error {
-		var e error
-		out, e = c.CompactOwn(floor)
 		return e
 	})
 	return out, err

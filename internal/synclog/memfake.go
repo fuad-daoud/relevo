@@ -7,7 +7,6 @@ import (
 	"os"
 	"sort"
 	"sync"
-	"time"
 
 	"github.com/fuad-daoud/relevo/internal/blobstore"
 )
@@ -25,16 +24,12 @@ type MemTransport struct {
 	log    *memLog
 }
 
-// memLog is the log itself: entries in append order, each origin's sequence,
-// and published marks. It is separate from the transport so two installations
+// memLog is the log itself: entries in append order and each origin's
+// sequence. It is separate from the transport so two installations
 // can hold the same log, the arrangement the exchange runs in.
 type memLog struct {
 	mu      sync.Mutex
 	entries []Entry
-	// marks is keyed by reader then origin: a handle records only its own reader's
-	// rows, and a second handle on the same log sees them, which is the rule the
-	// remote enforces by key.
-	marks map[string]map[string]Mark
 	// floors is what each origin has compacted to.
 	floors map[string]int
 	// signedFrom is the first sequence of each origin that carried a MAC.
@@ -62,7 +57,7 @@ func NewMemTransport(origin string) *MemTransport {
 
 // newMemLog is an empty log.
 func newMemLog() *memLog {
-	return &memLog{marks: make(map[string]map[string]Mark)}
+	return &memLog{}
 }
 
 // OnLog returns a second installation's handle on the same log: each keeps its own
@@ -265,22 +260,15 @@ func (m *MemTransport) Stats() (Stats, error) {
 	return m.log.stats(), nil
 }
 
-// PublishMarks records this reader's position in each origin given. The reader
-// is the transport's own, so one installation's handle cannot write another's
-// rows: the rule the remote enforces by key.
-func (m *MemTransport) PublishMarks(marks map[string]int, at time.Time) error {
-	m.log.publishMarks(m.origin, marks, at)
-	return nil
-}
-
-// ReadMarks answers with every published mark, compaction floors and sizes.
+// ReadMarks answers with the log's shape: compaction floors and each origin's
+// size.
 func (m *MemTransport) ReadMarks() (MarkState, error) {
 	return m.log.markState(), nil
 }
 
 // PublishTraffic records this installation's traffic row and answers with
-// every origin's row. The origin is the transport's own, the same rule
-// PublishMarks has.
+// every origin's row. The origin is the transport's own, so one handle cannot
+// write another's row.
 func (m *MemTransport) PublishTraffic(row TrafficRow) (map[string]TrafficRow, error) {
 	return m.log.publishTraffic(m.origin, row), nil
 }
@@ -291,48 +279,14 @@ func (m *MemTransport) ReadTraffic() (map[string]TrafficRow, error) {
 	return m.log.readTraffic(), nil
 }
 
-// publishMarks writes one reader's rows. A mark only grows, so a lower repeat is
-// ignored rather than moving back: a stale publish must not rewind the reader.
-func (m *memLog) publishMarks(reader string, marks map[string]int, at time.Time) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	held := m.marks[reader]
-	if held == nil {
-		held = make(map[string]Mark, len(marks))
-		m.marks[reader] = held
-	}
-	for origin, seq := range marks {
-		if prior, ok := held[origin]; ok && prior.Seq > seq {
-			continue
-		}
-		held[origin] = Mark{Reader: reader, Origin: origin, Seq: seq, At: at}
-	}
-}
-
-// markState is every mark the log holds and each origin's size, in reader then
-// origin order for a stable walk.
+// markState is the log's shape: each origin's floor, signing boundaries, cuts
+// and size. The signed and cut maps stay nil while the log holds none of them,
+// which is how a reader tells that from an origin at the start.
 func (m *memLog) markState() MarkState {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	var out MarkState
-	readers := make([]string, 0, len(m.marks))
-	for reader := range m.marks {
-		readers = append(readers, reader)
-	}
-	sort.Strings(readers)
-	for _, reader := range readers {
-		held := m.marks[reader]
-		origins := make([]string, 0, len(held))
-		for origin := range held {
-			origins = append(origins, origin)
-		}
-		sort.Strings(origins)
-		for _, origin := range origins {
-			out.Marks = append(out.Marks, held[origin])
-		}
-	}
 	for origin, floor := range m.floors {
 		if out.Floors == nil {
 			out.Floors = make(map[string]int)

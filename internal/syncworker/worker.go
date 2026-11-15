@@ -64,21 +64,14 @@ type Backend interface {
 	Head(origin, after string, limit int) ([]HeadRow, error)
 	// Stats reports what the log holds.
 	Stats() (Stats, error)
-	// PublishMarks records how far this worker has applied of each origin, and
-	// when. The reader is the worker's own origin from hello, never a call
-	// field: a mark is what a compaction floor is computed from.
-	PublishMarks(marks map[string]int, at time.Time) error
-	// ReadMarks answers with every published mark, the floors the remote has
-	// recorded, and each origin's head and entry count.
+	// ReadMarks answers with the floors the remote has recorded, and each
+	// origin's head, entry count and size.
 	ReadMarks() (MarkState, error)
 	// PullRange reads one page of origin's entries with after < seq <= upto from
 	// the replica as it stands, without pulling first: the floor a caller read
-	// with ReadMarks belongs to this same state, and a newer compaction pulled
-	// in between could drop entries the range needs.
+	// with ReadMarks belongs to this same state, and a newer pull in between
+	// could change the entries the range needs.
 	PullRange(origin string, after, upto int) ([]Entry, error)
-	// Compact drops this worker's own superseded entries up to floor and records
-	// the floor, in one transaction and one push.
-	Compact(floor int) (CompactResult, error)
 	// KeyMeta reads the passphrase material the remote holds, answering
 	// Present false on a remote that has none.
 	KeyMeta() (KeyMeta, error)
@@ -166,12 +159,10 @@ var verbHandlers = map[Verb]func(*server, Request) Response{
 	VerbPutBlobs:       (*server).putBlobsVerb,
 	VerbGetBlobs:       (*server).getBlobsVerb,
 	VerbStats:          (*server).stats,
-	VerbPublishMarks:   (*server).publishMarks,
 	VerbReadMarks:      (*server).readMarks,
 	VerbPublishTraffic: (*server).publishTraffic,
 	VerbReadTraffic:    (*server).readTraffic,
 	VerbPullRange:      (*server).pullRange,
-	VerbCompact:        (*server).compact,
 	VerbKeyMeta:        (*server).keyMeta,
 	VerbKeyInit:        (*server).keyInit,
 	VerbKeyRekey:       (*server).keyRekey,

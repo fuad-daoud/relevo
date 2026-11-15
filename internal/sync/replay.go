@@ -129,6 +129,10 @@ func ReplayRefusedPass(shared *db.DB, kv db.KV, t synclog.LogTransport) error {
 // answer. Above the floor every entry is there and the mark must sit on a batch
 // boundary: a mark inside a batch skips the rest of it and the next batch reads
 // as a gap.
+//
+// A floor exists only on an origin compacted before 2026-11-12, when
+// compaction stopped: nothing raises one now, but an origin that carries one
+// still reads a mark below it through the snapshot path.
 func rewindPoint(t synclog.LogTransport, state synclog.MarkState, origin string, target int) (int, bool, error) {
 	head, ok := state.Heads[origin]
 	if !ok || head <= target {

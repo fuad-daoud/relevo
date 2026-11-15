@@ -78,7 +78,6 @@ func (h *hungAppend) Append([]synclog.Entry) ([]synclog.Entry, error) {
 func (h *hungAppend) Pull(map[string]int) ([]synclog.Entry, error) { return nil, nil }
 func (h *hungAppend) Head(string) ([]synclog.HeadRow, error)       { return nil, nil }
 func (h *hungAppend) Stats() (synclog.Stats, error)                { return synclog.Stats{}, nil }
-func (h *hungAppend) PublishMarks(map[string]int, time.Time) error { return nil }
 func (h *hungAppend) ReadMarks() (synclog.MarkState, error)        { return synclog.MarkState{}, nil }
 
 func (h *hungAppend) Cancel() {
@@ -143,7 +142,6 @@ type heldJoin struct {
 
 func (h *heldJoin) Append(entries []synclog.Entry) ([]synclog.Entry, error) { return entries, nil }
 func (h *heldJoin) Stats() (synclog.Stats, error)                           { return synclog.Stats{}, nil }
-func (h *heldJoin) PublishMarks(map[string]int, time.Time) error            { return nil }
 func (h *heldJoin) ReadMarks() (synclog.MarkState, error)                   { return synclog.MarkState{}, nil }
 func (h *heldJoin) Cancel()                                                 { h.stopOnce.Do(func() { close(h.cancelled) }) }
 
@@ -244,7 +242,6 @@ func (h *heldPush) Append(entries []synclog.Entry) ([]synclog.Entry, error) {
 func (h *heldPush) Pull(map[string]int) ([]synclog.Entry, error) { return nil, nil }
 func (h *heldPush) Head(string) ([]synclog.HeadRow, error)       { return nil, nil }
 func (h *heldPush) Stats() (synclog.Stats, error)                { return synclog.Stats{}, nil }
-func (h *heldPush) PublishMarks(map[string]int, time.Time) error { return nil }
 func (h *heldPush) ReadMarks() (synclog.MarkState, error)        { return synclog.MarkState{}, nil }
 
 // Cancel counts the worker cancels. The preempt cancels the runner's worker
@@ -320,10 +317,6 @@ func TestDisableEndsAPushBetweenItsBatches(t *testing.T) {
 
 func (h *hungAppend) PullRange(string, int, int) ([]synclog.Entry, error) { return nil, nil }
 
-func (h *hungAppend) CompactOwn(int) (synclog.CompactResult, error) {
-	return synclog.CompactResult{}, nil
-}
-
 func (h *hungAppend) KeyMeta(context.Context) (synclog.KeyMeta, error) {
 	return synclog.KeyMeta{}, nil
 }
@@ -341,10 +334,6 @@ func (h *hungAppend) PublishEpochCut(context.Context, synclog.EpochCut) error {
 }
 func (h *heldJoin) PullRange(string, int, int) ([]synclog.Entry, error) { return nil, nil }
 
-func (h *heldJoin) CompactOwn(int) (synclog.CompactResult, error) {
-	return synclog.CompactResult{}, nil
-}
-
 func (h *heldJoin) KeyMeta(context.Context) (synclog.KeyMeta, error) {
 	return synclog.KeyMeta{}, nil
 }
@@ -355,10 +344,6 @@ func (h *heldJoin) KeyInit(context.Context, synclog.KeyMeta) (synclog.KeyMeta, e
 
 func (h *heldJoin) PublishEpochCut(context.Context, synclog.EpochCut) error { return nil }
 func (h *heldPush) PullRange(string, int, int) ([]synclog.Entry, error)     { return nil, nil }
-
-func (h *heldPush) CompactOwn(int) (synclog.CompactResult, error) {
-	return synclog.CompactResult{}, nil
-}
 
 func (h *heldPush) KeyMeta(context.Context) (synclog.KeyMeta, error) {
 	return synclog.KeyMeta{}, nil

@@ -51,9 +51,10 @@ func TestMemTransportsReadEachOtherTrafficRows(t *testing.T) {
 
 // TestMemTransportsSeeEachOtherTrafficRows pins the two rules the fake log
 // carries for traffic: a publish answers with every origin's row as the log
-// holds it after the write, and a handle can move only its own origin's row.
-// The second is the rule PublishMarks pins for marks, and two handles on one
-// log are the only way a single-process test can exercise it.
+// holds it after the write, and a handle can move only its own origin's row --
+// the origin is the transport's own, so one handle cannot write another's.
+// Two handles on one log are the only way a single-process test can exercise
+// the second.
 func TestMemTransportsSeeEachOtherTrafficRows(t *testing.T) {
 	a := NewMemTransport("origin-a")
 	b := a.OnLog("origin-b")
