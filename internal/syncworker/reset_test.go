@@ -359,6 +359,39 @@ func TestDiscardErrorRefusesTheHello(t *testing.T) {
 	}
 }
 
+// TestUnknownReplicaReopenErrorRefusesTheHello pins that a re-bootstrap open
+// which fails refuses the handshake, marked as the other open failures are:
+// the error carries a transport needle, so the class is the one markOpenRefusal
+// gives it.
+func TestUnknownReplicaReopenErrorRefusesTheHello(t *testing.T) {
+	path := tempReplica(t)
+	execOn(t, path, createStatements[0], "CREATE TABLE secrets (s TEXT NOT NULL)")
+	openErr := errors.New("open replica: connection reset by peer")
+	driver := &localDriver{path: path}
+	driver.afterDiscard = func(string) {
+		// The error is set after the discard so the first open succeeds and
+		// only the re-bootstrap open fails.
+		driver.openErr = openErr
+	}
+	b := NewTursoBackend(driver)
+	resp := startWorker(t, b).ask(helloRequest("h"))
+	if resp.OK {
+		t.Fatalf("hello = %+v, want the re-bootstrap open's refusal", resp)
+	}
+	if resp.Code != CodeTransport {
+		t.Errorf("code = %q, want %q: the open's error is marked as an open failure", resp.Code, CodeTransport)
+	}
+	if !strings.Contains(resp.Error, openErr.Error()) {
+		t.Errorf("refusal %q does not carry the open's error", resp.Error)
+	}
+	if driver.discards != 1 {
+		t.Errorf("discards = %d, want exactly one", driver.discards)
+	}
+	if driver.opens != 2 {
+		t.Errorf("opens = %d, want the first open and the failed re-bootstrap", driver.opens)
+	}
+}
+
 // TestOlderFormatRefusesWhenThePulledReplicaCannotBeRead pins that a pull
 // which leaves the replica unreadable answers with the read's error rather
 // than the migrate sentence.
