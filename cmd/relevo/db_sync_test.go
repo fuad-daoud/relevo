@@ -434,6 +434,37 @@ func TestDBSyncBackoffIsRefusedWithRetry(t *testing.T) {
 	}
 }
 
+// TestDBSyncMigrateWaitingIsRefusedWithStatus pins the refusal a verb gets
+// while the remote waits for another machine's migration: nothing was written,
+// and no retry on this machine ends the wait, so the reader is sent to status,
+// which shows the wait and names the fix -- not to `relevo bugreport` for a
+// machine behaving as designed. Dropping the arm from dbSyncVerbRefusalFor
+// kills this (the code becomes internal and the next becomes the bug report).
+func TestDBSyncMigrateWaitingIsRefusedWithStatus(t *testing.T) {
+	t.Parallel()
+
+	const message = "sync: push: sync: waiting for another machine to migrate the remote: " +
+		"sync: the remote is not migrated yet; run `relevo db sync migrate` on one machine once every machine runs this release"
+	classified := dbSyncVerbRefusalFor(wire.SyncVerbPush, "", &client.VerbRefusal{
+		Code:    wire.SyncCodeMigrateWaiting,
+		Message: message,
+	})
+
+	var got *cliError
+	if !errors.As(classified, &got) {
+		t.Fatalf("classified = %v, want a cliError", classified)
+	}
+	if got.code != codeRefused {
+		t.Errorf("code = %q, want %q", got.code, codeRefused)
+	}
+	if got.next != "relevo db sync status" {
+		t.Errorf("next = %q, want %q", got.next, "relevo db sync status")
+	}
+	if got.Error() != "refused: "+message {
+		t.Errorf("message = %q, want the refusal's own words untouched", got.Error())
+	}
+}
+
 // TestDBSyncRemoteWithoutTheTableIsRefused pins the other remote refusal: the
 // remote has no table for the rows this machine is pushing. It is refused, and
 // its message says the schema rather than the row order, because the two have

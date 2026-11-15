@@ -293,20 +293,21 @@ func readSyncStatusDoc(t *testing.T, local *db.DB) dbSyncStatusDoc {
 		t.Fatalf("ReadState: %v", err)
 	}
 	return dbSyncStatusDoc{
-		Enabled:      state.Enabled,
-		RemoteURL:    settings.RemoteURL,
-		Namespace:    settings.Namespace,
-		TokenPresent: hasToken,
-		Latched:      state.Attention,
-		LatchCause:   state.LatchCause,
-		RebuildAt:    statusStamp(state.Rebuild.At),
-		RebuildAside: state.Rebuild.Aside,
-		Backlog:      state.Backlog,
-		LastExport:   statusStamp(state.LastExport),
-		LastImport:   statusStamp(state.LastImport),
-		HeldOrigins:  state.Trouble.Held,
-		Dropped:      state.Trouble.Dropped,
-		Gaps:         state.Trouble.Gaps,
+		Enabled:          state.Enabled,
+		RemoteURL:        settings.RemoteURL,
+		Namespace:        settings.Namespace,
+		TokenPresent:     hasToken,
+		Latched:          state.Attention,
+		LatchCause:       state.LatchCause,
+		WaitingMigration: !state.MigrationWait.IsZero(),
+		RebuildAt:        statusStamp(state.Rebuild.At),
+		RebuildAside:     state.Rebuild.Aside,
+		Backlog:          state.Backlog,
+		LastExport:       statusStamp(state.LastExport),
+		LastImport:       statusStamp(state.LastImport),
+		HeldOrigins:      state.Trouble.Held,
+		Dropped:          state.Trouble.Dropped,
+		Gaps:             state.Trouble.Gaps,
 	}
 }
 
@@ -365,6 +366,57 @@ func TestStatusLineOmitsWhatNeverHappened(t *testing.T) {
 		if strings.Contains(line, word) {
 			t.Errorf("a machine with nothing recorded rendered %q (has %q)", line, word)
 		}
+	}
+}
+
+// TestStatusLineShowsTheMigrationWaitAfterALatch pins the wait clause and its
+// place in the fixed order: the latch reads first because it stops the machine
+// until a human acts, and the migration wait follows it because it ends on its
+// own when another machine migrates the remote. The clause names the one
+// command that ends the wait; a machine not waiting renders no clause at all.
+func TestStatusLineShowsTheMigrationWaitAfterALatch(t *testing.T) {
+	const clause = "waiting for migration: the remote is still at the old format; run `relevo db sync migrate --confirm-all-upgraded` on one machine once every machine runs this release"
+	doc := statusLineWithEveryR4Field()
+	doc.WaitingMigration = true
+	line := dbSyncStatusLine(doc)
+	if !strings.Contains(line, clause) {
+		t.Errorf("status line %q is missing the migration wait clause %q", line, clause)
+	}
+	at := -1
+	for _, marker := range []string{"latched:", "waiting for migration:", "backlog:"} {
+		i := strings.Index(line, marker)
+		if i < 0 {
+			t.Fatalf("status line %q has no %q", line, marker)
+		}
+		if i <= at {
+			t.Errorf("%q is out of order in %q", marker, line)
+		}
+		at = i
+	}
+	if plain := dbSyncStatusLine(statusLineWithEveryR4Field()); strings.Contains(plain, "waiting for migration") {
+		t.Errorf("a machine not waiting rendered the wait clause: %q", plain)
+	}
+}
+
+// TestStatusDocCarriesWaitingMigrationOnlyWhenWaiting pins the JSON half: the
+// key is present exactly when the machine is waiting, so a consumer branching
+// on it never reads a wait that is not there.
+func TestStatusDocCarriesWaitingMigrationOnlyWhenWaiting(t *testing.T) {
+	doc := statusLineWithEveryR4Field()
+	doc.WaitingMigration = true
+	body, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("marshal the waiting document: %v", err)
+	}
+	if !strings.Contains(string(body), `"waiting_migration":true`) {
+		t.Errorf("the waiting document %s lacks waiting_migration:true", body)
+	}
+	body, err = json.Marshal(statusLineWithEveryR4Field())
+	if err != nil {
+		t.Fatalf("marshal the plain document: %v", err)
+	}
+	if strings.Contains(string(body), "waiting_migration") {
+		t.Errorf("a machine not waiting carries the key: %s", body)
 	}
 }
 

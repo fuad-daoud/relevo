@@ -248,6 +248,10 @@ func dbSyncVerbRefusalFor(verb, url string, err error) error {
 		// told that and given the verb that clears it now.
 		return failNext(codeRefused, "relevo db sync retry",
 			"%s; it ends on its own, or run `relevo db sync retry` now", refusal.Message)
+	case wire.SyncCodeMigrateWaiting:
+		// Nothing was written, and no retry on this machine ends the wait: the
+		// fix runs on another machine. Status shows the wait and names the fix.
+		return failNext(codeRefused, "relevo db sync status", "%s", refusal.Message)
 	case wire.SyncCodeRemoteRefused, wire.SyncCodeRemoteSchemaMissing:
 		// The remote refused the statement this machine's change set carried: the
 		// reader is told the constraint rather than sent to `relevo bugreport`.

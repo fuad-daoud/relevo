@@ -249,6 +249,54 @@ func TestDBSyncStatusRendersAccountAndIdleHour(t *testing.T) {
 	}
 }
 
+// TestDBSyncStatusReadShowsTheMigrationWait pins the filler: the breaker's
+// migration wait reaches the document from the local breaker marker, so status
+// shows a waiting machine with no remote in reach, and the line carries the
+// wait clause. A machine with no wait marker carries neither the flag nor the
+// clause: absence is the ordinary state, not a wait that ended.
+func TestDBSyncStatusReadShowsTheMigrationWait(t *testing.T) {
+	t.Parallel()
+	shared, err := db.OpenSplit(filepath.Join(t.TempDir(), "relevo.db"), db.Options{Origin: "m1"})
+	if err != nil {
+		t.Fatalf("OpenSplit: %v", err)
+	}
+	t.Cleanup(func() { _ = shared.Close() })
+	local, err := relevosync.LocalHandle(shared)
+	if err != nil {
+		t.Fatalf("LocalHandle: %v", err)
+	}
+
+	doc, err := dbSyncStatusRead(local, shared.Origin())
+	if err != nil {
+		t.Fatalf("dbSyncStatusRead with no wait marker: %v", err)
+	}
+	if doc.WaitingMigration {
+		t.Errorf("a machine with no wait marker reads as waiting: %+v", doc)
+	}
+	if line := dbSyncStatusLine(doc); strings.Contains(line, "waiting for migration") {
+		t.Errorf("a machine with no wait marker rendered the clause: %q", line)
+	}
+
+	wait := time.Date(2026, 10, 4, 12, 10, 0, 0, time.UTC)
+	body, err := json.Marshal(relevosync.BreakerState{WaitUntil: wait})
+	if err != nil {
+		t.Fatalf("encode the breaker state: %v", err)
+	}
+	if err := local.KVPut(relevosync.KeyDeaths, body); err != nil {
+		t.Fatalf("KVPut: %v", err)
+	}
+	doc, err = dbSyncStatusRead(local, shared.Origin())
+	if err != nil {
+		t.Fatalf("dbSyncStatusRead with a wait marker: %v", err)
+	}
+	if !doc.WaitingMigration {
+		t.Errorf("the breaker wait did not reach the document: %+v", doc)
+	}
+	if line := dbSyncStatusLine(doc); !strings.Contains(line, "waiting for migration:") {
+		t.Errorf("the waiting machine's line %q lacks the wait clause", line)
+	}
+}
+
 func boolLit(b bool) string {
 	if b {
 		return "true"
