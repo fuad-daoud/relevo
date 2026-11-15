@@ -1,6 +1,7 @@
 package syncworker
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/blobstore"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
@@ -19,13 +21,16 @@ import (
 //
 // It proves the shape the backend is for: one installation creates the log on
 // an empty remote and pushes, a second joins with its own replica, pulls the
-// first's entry, appends its own, and the first pulls that back.
+// first's entry, appends its own, and the first pulls that back. Each append
+// also publishes its segment to the one bucket both installations share, and
+// the heads rows naming those segments cross the remote with the log rows.
 func TestScratchRemoteExportPullRoundTrip(t *testing.T) {
 	url := os.Getenv("RELEVO_SCRATCH_SYNC_URL")
 	token := os.Getenv("RELEVO_SCRATCH_SYNC_TOKEN")
 	if url == "" || token == "" {
 		t.Skip("set RELEVO_SCRATCH_SYNC_URL and RELEVO_SCRATCH_SYNC_TOKEN to run against a scratch remote")
 	}
+	store := withStore(t)
 	dir := t.TempDir()
 	// A fresh origin per run keeps one run's entries out of the next one's
 	// assertions; the log itself accumulates across runs, which is what a real
@@ -33,7 +38,7 @@ func TestScratchRemoteExportPullRoundTrip(t *testing.T) {
 	aOrigin := "scratch-a-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	bOrigin := "scratch-b-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 
-	a := openScratch(t, filepath.Join(dir, "a.db"), aOrigin, url, token)
+	a := openScratch(t, filepath.Join(dir, "a.db"), aOrigin, url, token, store)
 	written, err := a.Append([]Entry{
 		upsertEntry(aOrigin, "board", `["scratch"]`, `{"title":"round trip"}`),
 	})
@@ -43,8 +48,10 @@ func TestScratchRemoteExportPullRoundTrip(t *testing.T) {
 	if len(written) != 1 || written[0].Seq < 1 {
 		t.Fatalf("append = %+v, want one numbered entry", written)
 	}
+	aKey := blobstore.SegmentKey(aOrigin, written[0].Seq)
+	scratchSegment(t, store, aKey, written[0])
 
-	b := openScratch(t, filepath.Join(dir, "b.db"), bOrigin, url, token)
+	b := openScratch(t, filepath.Join(dir, "b.db"), bOrigin, url, token, store)
 	pulled, err := b.Pull(nil)
 	if err != nil {
 		t.Fatalf("pull from the scratch remote: %v", err)
@@ -53,6 +60,10 @@ func TestScratchRemoteExportPullRoundTrip(t *testing.T) {
 		t.Errorf("the other installation pulled %d entries but not %s seq %d",
 			len(pulled), aOrigin, written[0].Seq)
 	}
+	if key, entries := scratchHeads(t, b, aOrigin); key != aKey || entries != 1 {
+		t.Errorf("heads for %s on the remote = (key %s, entries %d), want (%s, 1)",
+			aOrigin, key, entries, aKey)
+	}
 
 	back, err := b.Append([]Entry{
 		upsertEntry(bOrigin, "board", `["scratch-b"]`, `{"title":"answered"}`),
@@ -60,6 +71,8 @@ func TestScratchRemoteExportPullRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("append back: %v", err)
 	}
+	bKey := blobstore.SegmentKey(bOrigin, back[0].Seq)
+	scratchSegment(t, store, bKey, back[0])
 	pulled, err = a.Pull(nil)
 	if err != nil {
 		t.Fatalf("pull back: %v", err)
@@ -67,6 +80,10 @@ func TestScratchRemoteExportPullRoundTrip(t *testing.T) {
 	if !carries(pulled, bOrigin, back[0].Seq) {
 		t.Errorf("the first installation pulled %d entries but not %s seq %d",
 			len(pulled), bOrigin, back[0].Seq)
+	}
+	if key, entries := scratchHeads(t, a, bOrigin); key != bKey || entries != 1 {
+		t.Errorf("heads for %s on the remote = (key %s, entries %d), want (%s, 1)",
+			bOrigin, key, entries, bKey)
 	}
 
 	head, err := b.Head(bOrigin, "", 0)
@@ -95,8 +112,9 @@ func TestScratchRemoteMovesAHeadRowTwice(t *testing.T) {
 	if url == "" || token == "" {
 		t.Skip("set RELEVO_SCRATCH_SYNC_URL and RELEVO_SCRATCH_SYNC_TOKEN to run against a scratch remote")
 	}
+	store := withStore(t)
 	origin := "scratch-head-" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	b := openScratch(t, filepath.Join(t.TempDir(), "h.db"), origin, url, token)
+	b := openScratch(t, filepath.Join(t.TempDir(), "h.db"), origin, url, token, store)
 
 	first, err := b.Append([]Entry{upsertEntry(origin, "board", `["twice"]`, `{"title":"first"}`)})
 	if err != nil {
@@ -125,11 +143,12 @@ func TestScratchRemoteRoundTripsAcrossACheckpoint(t *testing.T) {
 	if url == "" || token == "" {
 		t.Skip("set RELEVO_SCRATCH_SYNC_URL and RELEVO_SCRATCH_SYNC_TOKEN to run against a scratch remote")
 	}
+	store := withStore(t)
 	dir := t.TempDir()
 	stamp := strconv.FormatInt(time.Now().UnixNano(), 10)
 	aOrigin, bOrigin := "scratch-ckpt-a-"+stamp, "scratch-ckpt-b-"+stamp
-	a := openScratch(t, filepath.Join(dir, "a.db"), aOrigin, url, token)
-	b := openScratch(t, filepath.Join(dir, "b.db"), bOrigin, url, token)
+	a := openScratch(t, filepath.Join(dir, "a.db"), aOrigin, url, token, store)
+	b := openScratch(t, filepath.Join(dir, "b.db"), bOrigin, url, token, store)
 
 	appendOne := func(be *TursoBackend, origin, pk string) Entry {
 		t.Helper()
@@ -176,8 +195,9 @@ func TestScratchRemoteRoundTripsAcrossACheckpoint(t *testing.T) {
 }
 
 // openScratch opens one installation's backend against the real remote through
-// the production driver.
-func openScratch(t *testing.T, replicaPath, origin, url, token string) *TursoBackend {
+// the production driver. The store is the one bucket every installation in the
+// test shares, the way two machines share a real one.
+func openScratch(t *testing.T, replicaPath, origin, url, token string, store *blobstore.MemBlobStore) *TursoBackend {
 	t.Helper()
 	b := NewTursoBackend(newTursoDriver(replicaPath))
 	if err := b.Open(Spec{
@@ -185,11 +205,47 @@ func openScratch(t *testing.T, replicaPath, origin, url, token string) *TursoBac
 		Origin:  origin,
 		URL:     url,
 		Token:   token,
+		R2:      &R2Config{Bucket: "scratch"},
 	}); err != nil {
 		t.Fatalf("open %s against the scratch remote: %v", origin, err)
 	}
+	// Open must have wired the shared fake in: the real constructor would build
+	// a store that reaches a bucket, which no scratch test may.
+	if b.blobs != store {
+		t.Fatalf("open %s did not take the shared store", origin)
+	}
 	t.Cleanup(func() { _ = b.Close() })
 	return b
+}
+
+// scratchSegment pins that an append published its segment to the shared
+// bucket: the object under key is there and decodes back to the entry appended.
+func scratchSegment(t *testing.T, store *blobstore.MemBlobStore, key string, want Entry) {
+	t.Helper()
+	var buf bytes.Buffer
+	if _, err := store.Get(t.Context(), key, &buf); err != nil {
+		t.Fatalf("the shared store does not hold segment %s: %v", key, err)
+	}
+	_, entries, err := DecodeSegment(key, buf.Bytes())
+	if err != nil {
+		t.Fatalf("decode segment %s: %v", key, err)
+	}
+	compareEntries(t, []Entry{want}, entries)
+}
+
+// scratchHeads reads one origin's heads row through the replica a pull synced
+// it into, so the row asserted is the one that crossed the remote rather than
+// the one the writer wrote locally. A second opener on the replica file would
+// invalidate the engine's view of it, so the read goes through the backend's
+// own connection.
+func scratchHeads(t *testing.T, b *TursoBackend, origin string) (key string, entries int) {
+	t.Helper()
+	if err := b.db.QueryRowContext(t.Context(),
+		"SELECT key, entries FROM heads WHERE origin = ?", origin).
+		Scan(&key, &entries); err != nil {
+		t.Fatalf("read heads for %s through the replica: %v", origin, err)
+	}
+	return key, entries
 }
 
 // TestScratchRemoteMACSurvivesThePipeAndTheLog signs an entry whose body is not
@@ -207,8 +263,9 @@ func TestScratchRemoteMACSurvivesThePipeAndTheLog(t *testing.T) {
 	if url == "" || token == "" {
 		t.Skip("set RELEVO_SCRATCH_SYNC_URL and RELEVO_SCRATCH_SYNC_TOKEN to run against a scratch remote")
 	}
+	store := withStore(t)
 	origin := "scratch-mac-" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	b := openScratch(t, filepath.Join(t.TempDir(), "m.db"), origin, url, token)
+	b := openScratch(t, filepath.Join(t.TempDir(), "m.db"), origin, url, token, store)
 
 	key := []byte("the passphrase this machine stretched")
 	// A body written with whitespace and a key in an order of its own, at a time
@@ -244,7 +301,7 @@ func TestScratchRemoteMACSurvivesThePipeAndTheLog(t *testing.T) {
 
 	// A pull returns only other origins' entries, so a second installation
 	// reads it back.
-	reader := openScratch(t, filepath.Join(t.TempDir(), "r.db"), origin+"-reader", url, token)
+	reader := openScratch(t, filepath.Join(t.TempDir(), "r.db"), origin+"-reader", url, token, store)
 	pulled, err := reader.Pull(nil)
 	if err != nil {
 		t.Fatalf("pull from the scratch remote: %v", err)
@@ -314,8 +371,9 @@ func TestScratchRemoteRefusesASignedBatchWithoutABoundary(t *testing.T) {
 	if url == "" || token == "" {
 		t.Skip("set RELEVO_SCRATCH_SYNC_URL and RELEVO_SCRATCH_SYNC_TOKEN to run against a scratch remote")
 	}
+	store := withStore(t)
 	origin := "scratch-bound-" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	b := openScratch(t, filepath.Join(t.TempDir(), "m.db"), origin, url, token)
+	b := openScratch(t, filepath.Join(t.TempDir(), "m.db"), origin, url, token, store)
 	key := []byte("the passphrase this machine stretched")
 
 	e := upsertEntry(origin, "board", `["s"]`, `{"title":"signed"}`)
