@@ -15,6 +15,7 @@ import (
 
 	turso "turso.tech/database/tursogo"
 
+	"github.com/fuad-daoud/relevo/internal/blobstore"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
@@ -100,20 +101,31 @@ func tempReplica(t *testing.T) string {
 	return filepath.Join(t.TempDir(), "relevo-sync.db")
 }
 
-// backendFor opens a backend on a fresh local replica as origin and closes it
-// when the test ends.
-func backendFor(t *testing.T, driver ReplicaDriver, origin string) *TursoBackend {
+// backendWithStore opens a backend on a fresh local replica with an in-memory
+// blob store and closes it when the test ends.
+func backendWithStore(t *testing.T, driver ReplicaDriver, origin string, mirror ...string) (*TursoBackend, *blobstore.MemBlobStore) {
 	t.Helper()
+	store := withStore(t)
 	b := NewTursoBackend(driver)
 	if err := b.Open(Spec{
-		Version: ProtocolVersion,
-		Origin:  origin,
-		URL:     "libsql://scratch.example",
-		Token:   "the-token",
+		Version:      ProtocolVersion,
+		Origin:       origin,
+		URL:          "libsql://scratch.example",
+		Token:        "the-token",
+		R2:           &R2Config{Bucket: "bucket"},
+		MirrorTables: mirror,
 	}); err != nil {
 		t.Fatalf("open backend: %v", err)
 	}
 	t.Cleanup(func() { _ = b.Close() })
+	return b, store
+}
+
+// backendFor opens a backend on a fresh local replica as origin and closes it
+// when the test ends.
+func backendFor(t *testing.T, driver ReplicaDriver, origin string) *TursoBackend {
+	t.Helper()
+	b, _ := backendWithStore(t, driver, origin)
 	return b
 }
 
@@ -1037,13 +1049,23 @@ func TestHeadDerivesNewestPerRow(t *testing.T) {
 func BenchmarkTursoBackendHeadDerived(b *testing.B) {
 	path := filepath.Join(b.TempDir(), "relevo-sync.db")
 	driver := &localDriver{path: path}
+	store := blobstore.NewMemBlobStore(nil)
+	restore := newBlobStore
+	newBlobStore = func(R2Config) blobstore.BlobStore { return store }
+	defer func() { newBlobStore = restore }()
 	be := NewTursoBackend(driver)
-	if err := be.Open(Spec{Version: ProtocolVersion, Origin: "origin-a", URL: "libsql://bench.example", Token: "the-token"}); err != nil {
+	if err := be.Open(Spec{
+		Version: ProtocolVersion,
+		Origin:  "origin-a",
+		URL:     "libsql://bench.example",
+		Token:   "the-token",
+		R2:      &R2Config{Bucket: "bucket"},
+	}); err != nil {
 		b.Fatalf("open: %v", err)
 	}
 	defer func() { _ = be.Close() }()
 	const n = 20000
-	const batch = 1000
+	const batch = SegmentMaxEntries
 	for base := 0; base < n; base += batch {
 		entries := make([]Entry, 0, batch)
 		for i := 0; i < batch && base+i < n; i++ {
@@ -1304,7 +1326,7 @@ func TestBackendRefusesBeforeHello(t *testing.T) {
 // stopped before anything is written.
 func TestBackendRefusesAnotherOriginsEntry(t *testing.T) {
 	driver := &localDriver{path: tempReplica(t)}
-	b := backendFor(t, driver, "origin-a")
+	b, store := backendWithStore(t, driver, "origin-a")
 	if _, err := b.Append([]Entry{upsertEntry("origin-b", "board", `["b"]`, `{}`)}); err == nil {
 		t.Fatal("append accepted another origin's entry")
 	}
@@ -1314,6 +1336,16 @@ func TestBackendRefusesAnotherOriginsEntry(t *testing.T) {
 	}
 	if n != 0 {
 		t.Errorf("a refused append wrote %d log rows, want none", n)
+	}
+	var headsCount int
+	if err := openAt(t, driver.path).QueryRow("SELECT COUNT(*) FROM heads").Scan(&headsCount); err != nil {
+		t.Fatalf("read heads: %v", err)
+	}
+	if headsCount != 0 {
+		t.Errorf("heads count = %d, want 0", headsCount)
+	}
+	if store.Puts != 0 {
+		t.Errorf("store has %d puts, want 0", store.Puts)
 	}
 }
 

@@ -197,6 +197,7 @@ func helloRequest(id string) Request {
 		Origin:  "origin-a",
 		URL:     "libsql://remote.example",
 		Token:   "the-token",
+		R2:      &R2Config{Bucket: "bucket"},
 	}
 }
 
