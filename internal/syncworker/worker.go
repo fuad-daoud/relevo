@@ -27,6 +27,9 @@ type Spec struct {
 	// It arrives on hello with the token and stays for the worker's life, so a
 	// blob verb never carries a credential of its own.
 	R2 *R2Config
+	// MirrorTables names the entry tables the writer copies into shared, which
+	// hello names because the worker writes no table name of its own.
+	MirrorTables []string
 }
 
 // Boundary is the first signed sequence an export predicted for its origin and
@@ -212,7 +215,10 @@ func (s *server) hello(req Request) Response {
 	if req.URL == "" || req.Token == "" {
 		return refuse(req, fmt.Errorf("%w: hello without a remote", ErrProtocol))
 	}
-	spec := Spec{Version: req.Version, Origin: req.Origin, URL: req.URL, Token: req.Token, R2: req.R2}
+	spec := Spec{
+		Version: req.Version, Origin: req.Origin, URL: req.URL, Token: req.Token,
+		R2: req.R2, MirrorTables: req.MirrorTables,
+	}
 	if err := s.backend.Open(spec); err != nil {
 		return refuse(req, err)
 	}

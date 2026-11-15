@@ -138,16 +138,19 @@ func logRequestWireCases() []wireCase {
 					Endpoint: "https://acct.r2.cloudflarestorage.com",
 					Bucket:   "relevo-sync", KeyID: "key-1", Secret: "s",
 				},
+				MirrorTables: []string{"board", "card"},
 			},
 			wire: `{"id":"1","verb":"hello","version":6,"origin":"origin-a",` +
 				`"token":"t","url":"libsql://remote.example","r2":{` +
 				`"endpoint":"https://acct.r2.cloudflarestorage.com",` +
-				`"bucket":"relevo-sync","key_id":"key-1","secret":"s"}}`,
+				`"bucket":"relevo-sync","key_id":"key-1","secret":"s"},` +
+				`"mirror_tables":["board","card"]}`,
 		},
 		{
 			// A hello with no bucket: the R2 block is omitted entirely rather
 			// than sent as an empty object, so a worker on a machine that has no
-			// credentials sees no block at all.
+			// credentials sees no block at all. The same line pins the tables to
+			// mirror being absent when hello names none.
 			name: "request hello without a bucket",
 			value: Request{
 				ID: "1", Verb: VerbHello, Version: ProtocolVersion, Origin: "origin-a",
