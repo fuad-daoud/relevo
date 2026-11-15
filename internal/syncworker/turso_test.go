@@ -1523,22 +1523,6 @@ func TestBackendRefusesWhenTheLogIsGone(t *testing.T) {
 	}
 }
 
-// TestBackendPullRefusesARowItCannotScan pins that a log row whose column types
-// do not match the log is reported rather than read as a zero value. It reads
-// through PullRange, which still reads the log table. The mismatch sits in
-// batch, which the range filter does not touch: a text seq sorts above every
-// numeric upper bound, so the filter would exclude the row before any scan.
-func TestBackendPullRefusesARowItCannotScan(t *testing.T) {
-	driver := &localDriver{path: tempReplica(t)}
-	b := backendFor(t, driver, "origin-a")
-	execOn(t, driver.path,
-		"INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at) "+
-			"VALUES ('origin-b', 1, 'not a number', 'board', '[\"b\"]', 'delete', 1, NULL, '2026-10-08T00:00:00Z')")
-	if _, err := b.PullRange("origin-b", 0, 1); err == nil {
-		t.Error("pull_range read a row whose batch is not a number")
-	}
-}
-
 // TestHeadRefusesARowItCannotRead pins that a corrupt newest row of the log is
 // reported rather than surfacing as an empty hash or a zero sequence: a peer
 // reconciles against exactly what the head returns, so a default read of a
@@ -1580,20 +1564,6 @@ func TestBackendOpenTwiceReleasesTheFirstReplica(t *testing.T) {
 	}
 	if driver.opens != 2 {
 		t.Errorf("the constructor opened %d times, want two", driver.opens)
-	}
-}
-
-// TestBackendPullRefusesARowItCannotRead pins that a log row whose time cannot
-// be parsed is reported rather than read as a zero moment. It reads through
-// PullRange, which still reads the log table.
-func TestBackendPullRefusesARowItCannotRead(t *testing.T) {
-	driver := &localDriver{path: tempReplica(t)}
-	b := backendFor(t, driver, "origin-a")
-	execOn(t, driver.path,
-		"INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at) "+
-			"VALUES ('origin-b', 1, 1, 'board', '[\"b\"]', 'delete', 1, NULL, 'not a time')")
-	if _, err := b.PullRange("origin-b", 0, 1); err == nil {
-		t.Error("pull_range read a row whose time is not a time")
 	}
 }
 

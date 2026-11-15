@@ -5,14 +5,14 @@ import (
 	"fmt"
 )
 
-// pullPageSize bounds one pull's read per origin, in entries. The importer
-// calls Pull once per run, so a backlog larger than a page drains one page per
-// sync tick, and an origin's log far larger than a page is read in bounded
-// fetches rather than one result holding every other origin's history. A page
-// is segments, not rows: the read fetches them in groups of blobBatchWorkers
-// and stops after the group that fills the page, so a page may overshoot by
-// the entries of up to three segments. A legacy segment can end inside a
-// batch; the read completes that batch rather than hand back half of it.
+// pullPageSize bounds one read per origin, in entries. The importer calls Pull
+// once per run, so a backlog larger than a page drains one page per sync tick,
+// and an origin's log far larger than a page is read in bounded fetches rather
+// than one result holding every other origin's history. A page is segments:
+// the read fetches them in groups of blobBatchWorkers and stops after the group
+// that fills the page. A pull's page may overshoot by the entries of up to
+// three segments, and a legacy segment can end inside a batch the pull
+// completes rather than hand back half of it; a range read cuts to the page.
 const pullPageSize = 1024
 
 // readEntries reads every other origin's entries past that origin's mark from
@@ -39,30 +39,9 @@ func (b *TursoBackend) readEntries(ctx context.Context, marks map[string]int) ([
 	return pastMarks(entries, marks), nil
 }
 
-// scanEntries runs one read and turns its rows into entries.
-func (b *TursoBackend) scanEntries(ctx context.Context, query string, args []any) ([]Entry, error) {
-	rows, err := b.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("syncworker: read the log: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	var out []Entry
-	for rows.Next() {
-		e, err := scanEntry(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, e)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("syncworker: read the log: %w", err)
-	}
-	return out, nil
-}
-
-// pastMarks drops the rows a mark already covers. Sequences are cut as the
-// segments are read; what remains is the batch guard: a row whose batch is at
-// or below its origin's mark belongs to a batch the mark's tail covers, and
+// pastMarks drops the entries a mark already covers. Sequences are cut as the
+// segments are read; what remains is the batch guard: an entry whose batch is
+// at or below its origin's mark belongs to a batch the mark's tail covers, and
 // handing back part of it would write an order the exporter never produced.
 func pastMarks(entries []Entry, marks map[string]int) []Entry {
 	var out []Entry
@@ -75,15 +54,68 @@ func pastMarks(entries []Entry, marks map[string]int) []Entry {
 	return out
 }
 
-// PullRange reads one page of an origin's entries in (after, upto].
+// PullRange reads one page of an origin's entries in (after, upto] from the
+// segments its heads row names. It does not pull the replica first: the floor
+// a caller read with ReadMarks belongs to this same replica state. The range
+// is bounded by the head, never by what the bucket happens to hold, and an
+// origin with no heads row answers empty without needing a store.
 func (b *TursoBackend) PullRange(origin string, after, upto int) ([]Entry, error) {
 	if err := b.ready(); err != nil {
 		return nil, err
 	}
-	return b.scanEntries(context.Background(),
-		"SELECT origin, seq, batch, tbl, pk, op, schema_version, body, at, mac, after_origin, after_seq FROM log"+
-			" WHERE origin = ? AND seq > ? AND seq <= ? ORDER BY seq LIMIT ?",
-		[]any{origin, after, upto, b.page})
+	ctx := context.Background()
+	h, ok, err := b.readOriginHead(ctx, origin)
+	if err != nil {
+		return nil, err
+	}
+	upper := min(upto, h.seq)
+	if !ok || after >= upper {
+		return []Entry{}, nil
+	}
+	if b.blobs == nil {
+		return nil, ErrNoR2
+	}
+	keys, err := b.segmentKeys(ctx, h, after, upper)
+	if err != nil {
+		return nil, err
+	}
+	if len(keys) == 0 {
+		return nil, missingHeadSegment(h)
+	}
+	var entries []Entry
+	end := 0
+	for end < len(keys) {
+		groupEnd := min(end+blobBatchWorkers, len(keys))
+		group, err := b.fetchSegments(ctx, keys[end:groupEnd])
+		if err != nil {
+			return nil, err
+		}
+		for _, seg := range group {
+			entries = appendPastMark(entries, rangePrefix(seg.entries, upper), after)
+		}
+		end = groupEnd
+		if len(entries) >= b.page {
+			break
+		}
+	}
+	if len(entries) > b.page {
+		entries = entries[:b.page]
+	}
+	return entries, nil
+}
+
+// rangePrefix cuts a segment's entries at the range's ceiling: a segment the
+// selection kept can still run past it. Entries arrive in sequence order, so
+// the cut is a prefix; entries past the ceiling must not count toward the
+// page, or a segment running past it could end the read before a later
+// segment's in-range entries are fetched.
+func rangePrefix(entries []Entry, upto int) []Entry {
+	for i, e := range entries {
+		if e.Seq > upto {
+			return entries[:i]
+		}
+	}
+	return entries
 }
 
 // pullRange answers with one page of an origin's entries between two sequences.

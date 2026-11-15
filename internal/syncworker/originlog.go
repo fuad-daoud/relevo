@@ -8,6 +8,8 @@ package syncworker
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/fuad-daoud/relevo/internal/blobstore"
@@ -47,6 +49,22 @@ func (b *TursoBackend) readOtherHeads(ctx context.Context) ([]originHead, error)
 		return nil, fmt.Errorf("syncworker: read heads: %w", err)
 	}
 	return out, nil
+}
+
+// readOriginHead reads one origin's heads row, false when there is none: an
+// origin that has not written has nothing to read.
+func (b *TursoBackend) readOriginHead(ctx context.Context, origin string) (originHead, bool, error) {
+	var h originHead
+	err := b.db.QueryRowContext(ctx,
+		"SELECT origin, seq, key, legacy_upto FROM heads WHERE origin = ?", origin).
+		Scan(&h.origin, &h.seq, &h.key, &h.legacyUpto)
+	if errors.Is(err, sql.ErrNoRows) {
+		return originHead{}, false, nil
+	}
+	if err != nil {
+		return originHead{}, false, fmt.Errorf("syncworker: read heads: %w", err)
+	}
+	return h, true, nil
 }
 
 // listStartAfter is the key a listing of one origin's segments starts after.
@@ -96,6 +114,15 @@ func (b *TursoBackend) segmentKeys(ctx context.Context, h originHead, after, upp
 		return nil, fmt.Errorf("syncworker: list %s's segments: %w", h.origin, err)
 	}
 	return selectSegmentKeys(objs, h.origin, after, upper), nil
+}
+
+// missingHeadSegment reports the segment a heads row names as missing. A head
+// past the read's floor with no segment to read would stall the origin
+// silently: there is nothing to hand the importer to report a gap on, so the
+// segment the heads row names is reported missing instead.
+func missingHeadSegment(h originHead) error {
+	return MarkRefusal(CodeBlobMissing,
+		fmt.Errorf("syncworker: heads for %s name segment %s, but none is listed past the mark", h.origin, h.key))
 }
 
 // fetchedSegment is one decoded segment as the read holds it: the key it was
@@ -162,12 +189,8 @@ func (b *TursoBackend) readOrigin(ctx context.Context, h originHead, mark int) (
 	if err != nil {
 		return nil, err
 	}
-	// A head past the mark with no segment to read would stall the origin
-	// silently: there is nothing to hand the importer to report a gap on, so
-	// the segment the heads row names is reported missing instead.
 	if len(keys) == 0 && h.seq > mark {
-		return nil, MarkRefusal(CodeBlobMissing,
-			fmt.Errorf("syncworker: heads for %s name segment %s, but none is listed past the mark", h.origin, h.key))
+		return nil, missingHeadSegment(h)
 	}
 	var entries []Entry
 	var last fetchedSegment

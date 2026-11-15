@@ -11,7 +11,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/fuad-daoud/relevo/internal/blobstore"
 	turso "turso.tech/database/tursogo"
@@ -158,42 +157,6 @@ func (b *TursoBackend) Pull(marks map[string]int) ([]Entry, error) {
 		return nil, fmt.Errorf("syncworker: pull: %w", markTransferRefusal(err))
 	}
 	return b.readEntries(ctx, marks)
-}
-
-// scanEntry reads one log row back into the entry the pipe carries. The MAC
-// reads as raw bytes rather than text: decoding it on the way in would have to
-// be undone on the way out for the two to agree.
-func scanEntry(rows *sql.Rows) (Entry, error) {
-	var (
-		e           Entry
-		body        sql.NullString
-		mac         []byte
-		at          string
-		afterOrigin sql.NullString
-		afterSeq    sql.NullInt64
-	)
-	if err := rows.Scan(&e.Origin, &e.Seq, &e.Batch, &e.Tbl, &e.PK, &e.Op,
-		&e.SchemaVersion, &body, &at, &mac, &afterOrigin, &afterSeq); err != nil {
-		return Entry{}, fmt.Errorf("syncworker: read an entry: %w", err)
-	}
-	if body.Valid {
-		e.Body = json.RawMessage(body.String)
-	}
-	if len(mac) > 0 {
-		e.MAC = mac
-	}
-	parsed, err := time.Parse(time.RFC3339Nano, at)
-	if err != nil {
-		return Entry{}, fmt.Errorf("syncworker: read %s %s time: %w", e.Tbl, e.PK, err)
-	}
-	e.At = parsed
-	if afterOrigin.Valid && afterOrigin.String != "" {
-		e.AfterOrigin = afterOrigin.String
-	}
-	if afterSeq.Valid && afterSeq.Int64 > 0 {
-		e.AfterSeq = int(afterSeq.Int64)
-	}
-	return e, nil
 }
 
 // Head returns one page of an origin's latest state per row, in ascending

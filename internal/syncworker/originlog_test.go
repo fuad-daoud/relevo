@@ -970,3 +970,30 @@ func TestReadOriginAtTheHeadReadsNothing(t *testing.T) {
 		t.Errorf("readOrigin at the head = %+v, %v; want nothing and no refusal", got, err)
 	}
 }
+
+// TestReadOriginHeadReadsOneOrigin pins the single-origin head read: the row's
+// four fields as planted, one origin only, and false for an origin with no
+// row.
+func TestReadOriginHeadReadsOneOrigin(t *testing.T) {
+	path := tempReplica(t)
+	store := blobstore.NewMemBlobStore(nil)
+	reader := backendOnStore(t, &localDriver{path: path}, "origin-a", store)
+	seedOrigin(t, path, store, "origin-b",
+		[]seedSegment{{entries: seedEntries("origin-b", 1, 4)}},
+		seedHeads{seq: 4, key: blobstore.SegmentKey("origin-b", 1), entries: 4, legacyUpto: 2})
+	seedOrigin(t, path, store, "origin-c",
+		[]seedSegment{{entries: seedEntries("origin-c", 1, 2)}},
+		seedHeads{seq: 2, key: blobstore.SegmentKey("origin-c", 1), entries: 2})
+
+	h, ok, err := reader.readOriginHead(context.Background(), "origin-b")
+	if err != nil || !ok {
+		t.Fatalf("readOriginHead = %+v, %v, %v; want origin-b's row", h, ok, err)
+	}
+	want := originHead{origin: "origin-b", key: blobstore.SegmentKey("origin-b", 1), seq: 4, legacyUpto: 2}
+	if h != want {
+		t.Errorf("readOriginHead = %+v, want %+v", h, want)
+	}
+	if _, ok, err := reader.readOriginHead(context.Background(), "origin-x"); err != nil || ok {
+		t.Errorf("readOriginHead of an origin with no row = %v, %v; want false and no error", ok, err)
+	}
+}

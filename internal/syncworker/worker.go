@@ -73,9 +73,9 @@ type Backend interface {
 	// origin's head, entry count and size.
 	ReadMarks() (MarkState, error)
 	// PullRange reads one page of origin's entries with after < seq <= upto from
-	// the replica as it stands, without pulling first: the floor a caller read
-	// with ReadMarks belongs to this same state, and a newer pull in between
-	// could change the entries the range needs.
+	// the segments its heads row names, without pulling first: the floor a caller
+	// read with ReadMarks belongs to this same replica state, and a newer pull in
+	// between could change the entries the range needs.
 	PullRange(origin string, after, upto int) ([]Entry, error)
 	// KeyMeta reads the passphrase material the remote holds, answering
 	// Present false on a remote that has none.
