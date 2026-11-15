@@ -2,10 +2,6 @@ package syncworker
 
 import "regexp"
 
-// logRowOverhead is what a log row costs beside its body, for the columns the
-// body does not carry: where the per-row estimate comes from.
-const logRowOverhead = 96
-
 // quotaWord is the error code Turso documents for a plan quota. It is matched
 // as a whole word, case-sensitively: it is a code and not a sentence, and
 // matching inside a longer word would latch on unrelated text.

@@ -1590,10 +1590,14 @@ func TestBackendRefusesAnotherOriginsEntry(t *testing.T) {
 
 // TestBackendStatsAndErrors pins the stats verb and that a driver which cannot
 // report health, or a replica that cannot be read, refuses rather than reports
-// a size for a log nobody can reach.
+// a size for a log nobody can reach. The numbers come from heads: Entries is the
+// sum of heads.entries, Origins the row count, Seq the highest sequence, so a
+// sparse legacy head whose entries differ from its sequence span is counted as
+// the entries it holds.
 func TestBackendStatsAndErrors(t *testing.T) {
-	driver := &localDriver{path: tempReplica(t)}
-	b := backendFor(t, driver, "origin-a")
+	path := tempReplica(t)
+	driver := &localDriver{path: path}
+	b, store := backendWithStore(t, driver, "origin-a")
 	if _, err := b.Append([]Entry{upsertEntry("origin-a", "board", `["b"]`, `{"title":"one"}`)}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
@@ -1611,6 +1615,26 @@ func TestBackendStatsAndErrors(t *testing.T) {
 	}
 	if driver.stats != before+1 {
 		t.Errorf("driver stats called %d times for one stats, want once", driver.stats-before)
+	}
+
+	// A second origin appends two entries, and a sparse legacy head is seeded
+	// whose three entries sit below sequence 100: the sum, the row count and
+	// the max each come from heads rather than a recount of the log's rows.
+	other := backendOnStore(t, &localDriver{path: path}, "origin-b", store)
+	if _, err := other.Append([]Entry{
+		upsertEntry("origin-b", "board", `["b1"]`, `{"title":"one"}`),
+		upsertEntry("origin-b", "board", `["b2"]`, `{"title":"two"}`),
+	}); err != nil {
+		t.Fatalf("append as origin-b: %v", err)
+	}
+	execOn(t, path, "INSERT INTO heads (origin, seq, key, entries, bytes, legacy_upto, at)"+
+		" VALUES ('origin-c', 100, 'origin-c/log/000000000001', 3, 50, 100, '2026-10-08T09:30:00Z')")
+	stats, err = b.Stats()
+	if err != nil {
+		t.Fatalf("stats over three origins: %v", err)
+	}
+	if stats.Entries != 6 || stats.Origins != 3 || stats.Seq != 100 {
+		t.Errorf("stats = %+v, want entries 6 (1+2+3), origins 3, seq 100", stats)
 	}
 
 	driver.statsErr = errors.New("engine wedged")
@@ -1688,7 +1712,7 @@ func TestBackendAnswersAnEmptyBatch(t *testing.T) {
 // TestBackendRefusesWhenTheLogIsGone pins that a replica whose log vanished
 // is reported, not answered from. The head is derived from the segments, so
 // a missing head table leaves the read answering from what they hold. The
-// pull reads the heads rows and the append and stats read both tables, so
+// pull and stats read the heads rows and the append writes both tables, so
 // both go before those assertions.
 func TestBackendRefusesWhenTheLogIsGone(t *testing.T) {
 	driver := &localDriver{path: tempReplica(t)}

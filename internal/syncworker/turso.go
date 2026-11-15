@@ -203,7 +203,7 @@ func (b *TursoBackend) Stats() (Stats, error) {
 	}
 	var s Stats
 	if err := b.db.QueryRowContext(ctx,
-		"SELECT COUNT(*), COUNT(DISTINCT origin), COALESCE(MAX(seq), 0) FROM log").
+		"SELECT COALESCE(SUM(entries), 0), COUNT(*), COALESCE(MAX(seq), 0) FROM heads").
 		Scan(&s.Entries, &s.Origins, &s.Seq); err != nil {
 		return Stats{}, fmt.Errorf("syncworker: read the log's size: %w", err)
 	}

@@ -209,8 +209,8 @@ func (b *TursoBackend) commitSegment(ctx context.Context, head int, have bool, k
 	}
 
 	for _, e := range entries {
-		// The log table still serves stats, so it is written beside the segment
-		// in the same transaction.
+		// The log row is written in the same transaction as the heads move, so
+		// the batch lands in both or neither.
 		if err := insertRow(ctx, tx, tableLog, e); err != nil {
 			return false, err
 		}
