@@ -1,17 +1,19 @@
 package syncworker
 
-// The pull's read side against seeded segments: a heads row and a bucket are
-// planted directly, so what a pull lists, fetches and returns is pinned without
-// depending on Append. The probe counts and records what the reader asks of the
-// store, which is how a test states that a segment is fetched once, a listing
-// is narrowed, or an orphan is never touched.
+// The segment read side against seeded segments: a heads row and a bucket are
+// planted directly, so what a pull or head lists, fetches and returns is
+// pinned without depending on Append. The probe counts and records what the
+// reader asks of the store, which is how a test states that a segment is
+// fetched once, a listing is narrowed, or an orphan is never touched.
 
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -995,5 +997,327 @@ func TestReadOriginHeadReadsOneOrigin(t *testing.T) {
 	}
 	if _, ok, err := reader.readOriginHead(context.Background(), "origin-x"); err != nil || ok {
 		t.Errorf("readOriginHead of an origin with no row = %v, %v; want false and no error", ok, err)
+	}
+}
+
+// TestHeadFromACursorInsideALegacySegment pins the head read from a cursor in
+// the middle of a legacy segment's sparse seqs: only rows whose newest seq is
+// above the cursor come back, a row whose newest sits at the cursor does not,
+// and the listing stays whole while the cursor is inside the legacy range.
+func TestHeadFromACursorInsideALegacySegment(t *testing.T) {
+	path := tempReplica(t)
+	base := blobstore.NewMemBlobStore(nil)
+	probe := newProbeStore(base)
+	reader := backendOnBlobStore(t, &localDriver{path: path}, "origin-a", probe)
+	e1 := upsertEntry("origin-b", "board", `["k1"]`, `{"title":"one"}`)
+	e1.Seq, e1.Batch = 1, 1
+	e2 := upsertEntry("origin-b", "board", `["k2"]`, `{"title":"two"}`)
+	e2.Seq, e2.Batch = 300, 300
+	e3 := upsertEntry("origin-b", "board", `["k1"]`, `{"title":"one changed"}`)
+	e3.Seq, e3.Batch = 600, 600
+	seedOrigin(t, path, base, "origin-b",
+		[]seedSegment{{entries: []Entry{e1, e2, e3}, legacy: true}},
+		seedHeads{seq: 600, key: blobstore.SegmentKey("origin-b", 1), entries: 3, legacyUpto: 600})
+	hashOne, err := bodyHash(json.RawMessage(`{"title":"one changed"}`))
+	if err != nil {
+		t.Fatalf("bodyHash: %v", err)
+	}
+	hashTwo, err := bodyHash(json.RawMessage(`{"title":"two"}`))
+	if err != nil {
+		t.Fatalf("bodyHash: %v", err)
+	}
+	cases := []struct {
+		cursor string
+		want   []HeadRow
+	}{
+		{"1", []HeadRow{
+			{Tbl: "board", PK: `["k2"]`, Seq: 300, Hash: hashTwo},
+			{Tbl: "board", PK: `["k1"]`, Seq: 600, Hash: hashOne},
+		}},
+		{"300", []HeadRow{{Tbl: "board", PK: `["k1"]`, Seq: 600, Hash: hashOne}}},
+		{"599", []HeadRow{{Tbl: "board", PK: `["k1"]`, Seq: 600, Hash: hashOne}}},
+		{"600", nil},
+	}
+	for _, tc := range cases {
+		got, err := reader.Head("origin-b", tc.cursor, 0)
+		if err != nil {
+			t.Fatalf("head after %q: %v", tc.cursor, err)
+		}
+		if len(got) != len(tc.want) {
+			t.Fatalf("head after %q = %+v, want %+v", tc.cursor, got, tc.want)
+		}
+		for i := range tc.want {
+			if got[i] != tc.want[i] {
+				t.Errorf("head after %q row %d = %+v, want %+v", tc.cursor, i, got[i], tc.want[i])
+			}
+		}
+	}
+	for i, c := range probe.listCalls() {
+		if c.startAfter != "" {
+			t.Errorf("listing %d started after %q, want the whole prefix inside the legacy range", i+1, c.startAfter)
+		}
+	}
+}
+
+// TestHeadNarrowsTheListingToTheCursor pins the cursor's narrowing: the
+// listing starts after the key the cursor's arithmetic names, and only the
+// tail segments that could hold a seq past the cursor are fetched. Mutant:
+// start the walk from the beginning -> the GET count goes red.
+func TestHeadNarrowsTheListingToTheCursor(t *testing.T) {
+	path := tempReplica(t)
+	base := blobstore.NewMemBlobStore(nil)
+	probe := newProbeStore(base)
+	reader := backendOnBlobStore(t, &localDriver{path: path}, "origin-a", probe)
+	segs := make([]seedSegment, 4)
+	for i := range segs {
+		segs[i] = seedSegment{entries: seedEntries("origin-b", i*SegmentMaxEntries+1, SegmentMaxEntries)}
+	}
+	seedOrigin(t, path, base, "origin-b", segs, seedHeads{
+		seq: 4 * SegmentMaxEntries, key: blobstore.SegmentKey("origin-b", 3*SegmentMaxEntries+1),
+		entries: 4 * SegmentMaxEntries,
+	})
+
+	const after = 700
+	got, err := reader.Head("origin-b", strconv.Itoa(after), 0)
+	if err != nil {
+		t.Fatalf("head: %v", err)
+	}
+	if len(got) != 4*SegmentMaxEntries-after {
+		t.Fatalf("head = %d rows, want the %d past the cursor", len(got), 4*SegmentMaxEntries-after)
+	}
+	for i, row := range got {
+		if row.Seq != after+1+i {
+			t.Fatalf("row %d = %+v, want seq %d: every row past the cursor once, in order", i, row, after+1+i)
+		}
+	}
+	if n := probe.gets.Load(); n != 2 {
+		t.Errorf("GET count = %d, want 2: only the tail segments past the cursor", n)
+	}
+	if n := probe.lists.Load(); n != 1 {
+		t.Errorf("LIST count = %d, want 1", n)
+	}
+	calls := probe.listCalls()
+	if len(calls) != 1 {
+		t.Fatalf("recorded %d listings, want 1", len(calls))
+	}
+	if calls[0].prefix != "origin-b/log/" {
+		t.Errorf("listed prefix %q, want origin-b/log/", calls[0].prefix)
+	}
+	if startAfter := blobstore.SegmentKey("origin-b", after-255); calls[0].startAfter != startAfter {
+		t.Errorf("startAfter = %q, want %q: the listing is narrowed to the cursor", calls[0].startAfter, startAfter)
+	}
+}
+
+// TestHeadRefusesAHeadWithNoSegment pins that a heads row past the cursor with
+// nothing to read refuses rather than answering empty: an empty head would
+// tell reconcile the origin holds no rows. The refusal names the heads key
+// and carries its class over the pipe.
+func TestHeadRefusesAHeadWithNoSegment(t *testing.T) {
+	path := tempReplica(t)
+	store := blobstore.NewMemBlobStore(nil)
+	reader := backendOnStore(t, &localDriver{path: path}, "origin-a", store)
+	heads := seedHeads{seq: 4, key: blobstore.SegmentKey("origin-b", 1), entries: 4}
+	seedOrigin(t, path, store, "origin-b", nil, heads)
+
+	_, err := reader.Head("origin-b", "", 0)
+	if code := RefusalCodeOf(err); code != CodeBlobMissing {
+		t.Fatalf("head code = %q, want %q (err = %v)", code, CodeBlobMissing, err)
+	}
+	if !strings.Contains(err.Error(), heads.key) {
+		t.Errorf("refusal %q does not name the heads key %s", err, heads.key)
+	}
+	w := startWorker(t, reader)
+	w.askHello()
+	resp := w.ask(Request{ID: "h", Verb: VerbHead, Origin: "origin-b"})
+	if resp.OK || resp.Code != CodeBlobMissing {
+		t.Fatalf("head over the pipe = %+v, want a %s refusal", resp, CodeBlobMissing)
+	}
+	if !strings.Contains(resp.Error, heads.key) {
+		t.Errorf("pipe refusal %q does not name the heads key %s", resp.Error, heads.key)
+	}
+}
+
+// TestHeadRefusesABadSegment pins that an object which is not a usable segment
+// refuses with ErrBadSegment marked CodeRemote, naming the key it was fetched
+// under, over the call and the pipe.
+func TestHeadRefusesABadSegment(t *testing.T) {
+	path := tempReplica(t)
+	store := blobstore.NewMemBlobStore(nil)
+	reader := backendOnStore(t, &localDriver{path: path}, "origin-a", store)
+	garbage := []byte("not a segment at all")
+	key := blobstore.SegmentKey("origin-b", 1)
+	if err := store.Put(context.Background(), key, bytes.NewReader(garbage), int64(len(garbage))); err != nil {
+		t.Fatalf("put garbage: %v", err)
+	}
+	seedOrigin(t, path, store, "origin-b", nil, seedHeads{seq: 4, key: key, entries: 4})
+
+	_, err := reader.Head("origin-b", "", 0)
+	if !errors.Is(err, ErrBadSegment) {
+		t.Fatalf("err = %v, want ErrBadSegment", err)
+	}
+	if code := RefusalCodeOf(err); code != CodeRemote {
+		t.Errorf("code = %q, want %q", code, CodeRemote)
+	}
+	if !strings.Contains(err.Error(), key) {
+		t.Errorf("refusal %q does not name the key %s", err, key)
+	}
+	w := startWorker(t, reader)
+	w.askHello()
+	resp := w.ask(Request{ID: "h", Verb: VerbHead, Origin: "origin-b"})
+	if resp.OK || resp.Code != CodeRemote {
+		t.Fatalf("head over the pipe = %+v, want a %s refusal", resp, CodeRemote)
+	}
+	if !strings.Contains(resp.Error, key) {
+		t.Errorf("pipe refusal %q does not name the key %s", resp.Error, key)
+	}
+}
+
+// TestHeadWithoutR2 pins the two answers a backend whose hello named no bucket
+// gives: a heads row is refused with ErrNoR2, and an origin with no row
+// answers empty without a store.
+func TestHeadWithoutR2(t *testing.T) {
+	driver := &localDriver{path: tempReplica(t)}
+	b := NewTursoBackend(driver)
+	if err := b.Open(Spec{
+		Version: ProtocolVersion,
+		Origin:  "origin-a",
+		URL:     "libsql://scratch.example",
+		Token:   "the-token",
+	}); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+	execOn(t, driver.path,
+		"INSERT INTO heads (origin, seq, key, entries, bytes, legacy_upto, at)"+
+			" VALUES ('origin-b', 4, 'origin-b/log/000000000001', 4, 100, 0, '2026-10-08T09:30:00Z')")
+
+	if _, err := b.Head("origin-b", "", 0); !errors.Is(err, ErrNoR2) {
+		t.Errorf("head with a head and no bucket = %v, want ErrNoR2", err)
+	}
+	got, err := b.Head("origin-x", "", 0)
+	if err != nil || got == nil || len(got) != 0 {
+		t.Errorf("head with no head and no bucket = %+v, %v; want empty", got, err)
+	}
+}
+
+// TestHeadAnswersAnUnknownOriginWithoutAListing pins that an origin with no
+// heads row answers empty without touching the store.
+func TestHeadAnswersAnUnknownOriginWithoutAListing(t *testing.T) {
+	path := tempReplica(t)
+	base := blobstore.NewMemBlobStore(nil)
+	probe := newProbeStore(base)
+	reader := backendOnBlobStore(t, &localDriver{path: path}, "origin-a", probe)
+	seedOrigin(t, path, base, "origin-b",
+		[]seedSegment{{entries: seedEntries("origin-b", 1, 4)}},
+		seedHeads{seq: 4, key: blobstore.SegmentKey("origin-b", 1), entries: 4})
+
+	got, err := reader.Head("origin-x", "", 0)
+	if err != nil || got == nil || len(got) != 0 {
+		t.Fatalf("head of an unknown origin = %+v, %v; want an empty answer", got, err)
+	}
+	if n := probe.lists.Load(); n != 0 {
+		t.Errorf("LIST count = %d, want 0: an unknown origin is not listed", n)
+	}
+	if n := probe.gets.Load(); n != 0 {
+		t.Errorf("GET count = %d, want 0", n)
+	}
+}
+
+// TestHeadGuardsTheHeadItReads pins the guards that run before any segment key
+// is built, because SegmentKey panics on what it cannot key: an origin no
+// installation can have written answers empty, a sequence past the key range
+// is refused, and a cursor at or past the head answers empty without a
+// listing -- whatever number the cursor names.
+func TestHeadGuardsTheHeadItReads(t *testing.T) {
+	t.Run("an origin that cannot be keyed answers empty", func(t *testing.T) {
+		path := tempReplica(t)
+		base := blobstore.NewMemBlobStore(nil)
+		probe := newProbeStore(base)
+		reader := backendOnBlobStore(t, &localDriver{path: path}, "origin-a", probe)
+		seedOrigin(t, path, base, "bad/origin", nil,
+			seedHeads{seq: 5, key: "bad/origin/log/000000000001", entries: 5})
+
+		got, err := reader.Head("bad/origin", "", 0)
+		if err != nil || len(got) != 0 {
+			t.Fatalf("head of an unkeyable origin = %+v, %v; want empty", got, err)
+		}
+		if n := probe.lists.Load(); n != 0 {
+			t.Errorf("LIST count = %d, want 0: the unkeyable origin is not listed", n)
+		}
+	})
+	t.Run("a sequence past the key range is refused", func(t *testing.T) {
+		path := tempReplica(t)
+		store := blobstore.NewMemBlobStore(nil)
+		reader := backendOnStore(t, &localDriver{path: path}, "origin-a", store)
+		seedOrigin(t, path, store, "origin-c", nil,
+			seedHeads{seq: 1000000000000, key: "origin-c/log/000000000001", entries: 1})
+
+		_, err := reader.Head("origin-c", "", 0)
+		if code := RefusalCodeOf(err); code != CodeRemote {
+			t.Fatalf("head code = %q, want %q (err = %v)", code, CodeRemote, err)
+		}
+		if !strings.Contains(err.Error(), "1000000000000") {
+			t.Errorf("refusal %q does not name the sequence it refused", err)
+		}
+		w := startWorker(t, reader)
+		w.askHello()
+		resp := w.ask(Request{ID: "h", Verb: VerbHead, Origin: "origin-c"})
+		if resp.OK || resp.Code != CodeRemote {
+			t.Fatalf("head over the pipe = %+v, want a %s refusal", resp, CodeRemote)
+		}
+	})
+	t.Run("a cursor at or past the head answers empty without a listing", func(t *testing.T) {
+		path := tempReplica(t)
+		base := blobstore.NewMemBlobStore(nil)
+		probe := newProbeStore(base)
+		reader := backendOnBlobStore(t, &localDriver{path: path}, "origin-a", probe)
+		seedOrigin(t, path, base, "origin-b",
+			[]seedSegment{{entries: seedEntries("origin-b", 1, 4)}},
+			seedHeads{seq: 4, key: blobstore.SegmentKey("origin-b", 1), entries: 4})
+
+		for _, cursor := range []string{"4", "5", "99999999999999"} {
+			got, err := reader.Head("origin-b", cursor, 0)
+			if err != nil || len(got) != 0 {
+				t.Fatalf("head after %q = %+v, %v; want empty", cursor, got, err)
+			}
+		}
+		if n := probe.lists.Load(); n != 0 {
+			t.Errorf("LIST count = %d, want 0: a cursor past the head costs no listing", n)
+		}
+	})
+}
+
+// TestHeadRefusesAHeadsRowItCannotScan pins that a heads row whose column
+// types do not match heads is reported rather than read as a zero value.
+func TestHeadRefusesAHeadsRowItCannotScan(t *testing.T) {
+	path := tempReplica(t)
+	store := blobstore.NewMemBlobStore(nil)
+	reader := backendOnStore(t, &localDriver{path: path}, "origin-a", store)
+	execOn(t, path, "INSERT INTO heads (origin, seq, key, entries, bytes, at)"+
+		" VALUES ('origin-b', 'not a number', 'origin-b/log/000000000001', 1, 1, '2026-10-08T09:30:00Z')")
+	if _, err := reader.Head("origin-b", "", 0); err == nil {
+		t.Error("head read a heads row whose sequence is not a number")
+	}
+}
+
+// TestHeadRefusesWhenTheListingFails pins that a listing the store cannot
+// answer is reported, unmarked: a bucket that did not answer is a fault a
+// retry can get past, not a refusal that repeats.
+func TestHeadRefusesWhenTheListingFails(t *testing.T) {
+	path := tempReplica(t)
+	base := blobstore.NewMemBlobStore(nil)
+	probe := newProbeStore(base)
+	reader := backendOnBlobStore(t, &localDriver{path: path}, "origin-a", probe)
+	seedOrigin(t, path, base, "origin-b",
+		[]seedSegment{{entries: seedEntries("origin-b", 1, 4)}},
+		seedHeads{seq: 4, key: blobstore.SegmentKey("origin-b", 1), entries: 4})
+	probe.listErr = errors.New("bucket unreachable")
+
+	_, err := reader.Head("origin-b", "", 0)
+	if err == nil || !strings.Contains(err.Error(), "bucket unreachable") {
+		t.Fatalf("err = %v, want the listing's failure", err)
+	}
+	if code := RefusalCodeOf(err); code != "" {
+		t.Errorf("code = %q, want none: a failed listing is left to a retry", code)
 	}
 }

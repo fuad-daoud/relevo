@@ -63,9 +63,10 @@ type Backend interface {
 	// log. A hello that named no bucket is refused with ErrNoR2 before any
 	// transfer.
 	Pull(marks map[string]int) ([]Entry, error)
-	// Head returns a page of one origin's latest entry per row, starting after
-	// the given key. An empty after starts at the beginning and a limit of zero
-	// means the whole rest.
+	// Head returns a page of one origin's latest entry per row, derived from
+	// the segments its heads row names, starting after the given sequence
+	// cursor. An empty after starts at the beginning and a limit of zero means
+	// the whole rest.
 	Head(origin, after string, limit int) ([]HeadRow, error)
 	// Stats reports what the log holds.
 	Stats() (Stats, error)
