@@ -34,7 +34,9 @@ func (b *TursoBackend) PublishEpochCut(cut EpochCut) error {
 }
 
 // cutExtension is the one transaction a vouch writes in: the head is read and
-// guarded before any row is written.
+// guarded before any row is written. The head is the heads row rather than a
+// recount of log rows: a vouch may only name a sequence an append recorded,
+// and a log row with no heads row is not one.
 func (b *TursoBackend) cutExtension(ctx context.Context, cut EpochCut) error {
 	tx, err := b.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -42,13 +44,12 @@ func (b *TursoBackend) cutExtension(ctx context.Context, cut EpochCut) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var head sql.NullInt64
-	if err := tx.QueryRowContext(ctx,
-		"SELECT MAX(seq) FROM log WHERE origin = ?", b.spec.Origin).Scan(&head); err != nil {
+	head, _, err := readHead(ctx, tx, b.spec.Origin)
+	if err != nil {
 		return fmt.Errorf("syncworker: push the cut extension: %w", markDriverRefusal(err))
 	}
-	if cut.Seq < 0 || cut.Seq > int(head.Int64) {
-		return fmt.Errorf("syncworker: cut extension: the log's head is %d, not the %d named", head.Int64, cut.Seq)
+	if cut.Seq < 0 || cut.Seq > head {
+		return fmt.Errorf("syncworker: cut extension: the log's head is %d, not the %d named", head, cut.Seq)
 	}
 	if err := writeCutExtension(ctx, tx, b.spec.Origin, cut); err != nil {
 		return err

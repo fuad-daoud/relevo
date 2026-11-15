@@ -122,6 +122,38 @@ func TestKeyRekeyRefusesAMovedHeadAndWritesNothing(t *testing.T) {
 	}
 }
 
+// TestKeyRekeyRefusesWhenTheHeadsRowMovedPastTheLog pins that the check reads
+// the heads table rather than recounting the log: a heads row advanced by SQL
+// past the log's own rows refuses a rekey whose cuts name the head the log
+// still shows, and writes nothing.
+func TestKeyRekeyRefusesWhenTheHeadsRowMovedPastTheLog(t *testing.T) {
+	t.Parallel()
+	path := tempReplica(t)
+	b := backendFor(t, &localDriver{path: path}, "origin-a")
+	if _, err := b.Append([]Entry{upsertEntry("origin-a", "board", `["u"]`, `{"title":"one"}`)}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	// The caller observes through ReadMarks, which derives heads from the log,
+	// so its cuts name the head the log shows while the heads row moves past it.
+	observed := headsOf(t, b)
+	execOn(t, path, "UPDATE heads SET seq = 2 WHERE origin = 'origin-a'")
+
+	stale := rekeySpec(t, 1, observed)
+	_, err := b.KeyRekey(stale)
+	if err == nil {
+		t.Fatal("a rekey whose cuts named the log's head while the heads row had moved came back as a success")
+	}
+	if !contains(err.Error(), "origin-a's head is 2") {
+		t.Errorf("refusal = %v, want the head check naming the moved head", err)
+	}
+	if _, ok := metaRow(t, path, metaKeyEpochKey); ok {
+		t.Error("a refused rekey wrote key_epoch")
+	}
+	if _, ok := metaRow(t, path, metaKDFSaltKey); ok {
+		t.Error("a refused rekey wrote a salt")
+	}
+}
+
 // TestKeyRekeyIsACompareAndSetOnTheEpoch pins that two machines rekeying at
 // once ends with the epoch advanced exactly once: the second caller, still
 // holding the epoch it read, changes nothing -- not the epoch, not the salt it
@@ -194,9 +226,9 @@ func TestKeyRekeyFailsOnABrokenRemote(t *testing.T) {
 
 	path = tempReplica(t)
 	b = backendFor(t, &localDriver{path: path}, "origin-a")
-	execOn(t, path, "DROP TABLE log")
+	execOn(t, path, "DROP TABLE heads")
 	if _, err := b.KeyRekey(rekeySpec(t, 1, nil)); err == nil {
-		t.Error("a rekey over a remote with no log table came back as a success")
+		t.Error("a rekey over a remote with no heads table came back as a success")
 	}
 }
 

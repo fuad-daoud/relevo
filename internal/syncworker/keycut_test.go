@@ -155,3 +155,62 @@ func cutRowHeld(t *testing.T, path, origin string) (string, bool) {
 	t.Helper()
 	return cutMeta(t, path, origin)
 }
+
+// TestKeyCutWithNoHeadsRowAcceptsZeroAndRefusesOne pins the head read's
+// missing-row case: an origin that has not appended has head 0, so a vouch at
+// 0 is carried out and one at 1 vouches for history nobody appended.
+func TestKeyCutWithNoHeadsRowAcceptsZeroAndRefusesOne(t *testing.T) {
+	path := tempReplica(t)
+	b := backendFor(t, &localDriver{path: path}, "origin-a")
+	s := startWorker(t, b)
+	if resp := s.ask(helloRequest("h")); !resp.OK {
+		t.Fatalf("hello: %+v", resp)
+	}
+	tag := synclog.EpochCutTag([]byte("k"), "origin-a", 2, 0)
+	resp := s.ask(Request{ID: "c0", Verb: VerbKeyCut, Cut: outEpochCut(synclog.EpochCut{Epoch: 2, Seq: 0, Tag: tag})})
+	if !resp.OK {
+		t.Fatalf("key_cut at seq 0 with no heads row = %+v, want it carried out", resp)
+	}
+	resp = s.ask(Request{ID: "c1", Verb: VerbKeyCut, Cut: outEpochCut(synclog.EpochCut{Epoch: 2, Seq: 1, Tag: tag})})
+	if resp.OK {
+		t.Error("key_cut at seq 1 with no heads row came back as a success")
+	}
+}
+
+// TestKeyCutRefusesALogSeqWithNoHeadsRow pins that the bound is the heads row,
+// not the log's rows: a log row seeded without a heads row does not raise the
+// head, so a vouch at that row's sequence is refused and stores nothing.
+func TestKeyCutRefusesALogSeqWithNoHeadsRow(t *testing.T) {
+	path := tempReplica(t)
+	b := backendFor(t, &localDriver{path: path}, "origin-a")
+	execOn(t, path, "INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, at) "+
+		"VALUES ('origin-a', 1, 1, 'board', '[\"k\"]', 'upsert', 3, '2026-11-15T00:00:00Z')")
+	s := startWorker(t, b)
+	if resp := s.ask(helloRequest("h")); !resp.OK {
+		t.Fatalf("hello: %+v", resp)
+	}
+	cut := synclog.EpochCut{Epoch: 2, Seq: 1, Tag: synclog.EpochCutTag([]byte("k"), "origin-a", 2, 1)}
+	resp := s.ask(Request{ID: "c1", Verb: VerbKeyCut, Cut: outEpochCut(cut)})
+	if resp.OK {
+		t.Error("key_cut at a log row's seq with no heads row came back as a success")
+	}
+	if _, ok := cutRowHeld(t, path, "origin-a"); ok {
+		t.Error("a refused vouch wrote a cut row")
+	}
+}
+
+// TestKeyCutFailsOnABrokenRemote pins that a vouch over a remote missing the
+// heads table is a failure, never a write that skipped the read it could not
+// make.
+func TestKeyCutFailsOnABrokenRemote(t *testing.T) {
+	path := tempReplica(t)
+	b := backendFor(t, &localDriver{path: path}, "origin-a")
+	execOn(t, path, "DROP TABLE heads")
+	cut := EpochCut{Epoch: 2, Seq: 0, Tag: synclog.EpochCutTag([]byte("k"), "origin-a", 2, 0)}
+	if err := b.PublishEpochCut(cut); err == nil {
+		t.Error("a vouch over a remote with no heads table came back as a success")
+	}
+	if _, ok := cutRowHeld(t, path, "origin-a"); ok {
+		t.Error("a refused vouch wrote a cut row")
+	}
+}

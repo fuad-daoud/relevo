@@ -234,7 +234,7 @@ func (b *TursoBackend) rekeyTx(ctx context.Context, spec KeyRekeySpec) error {
 		return fmt.Errorf("syncworker: rekey the key: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	heads, err := readLogHeads(ctx, tx)
+	heads, err := readHeads(ctx, tx)
 	if err != nil {
 		return err
 	}
@@ -281,10 +281,11 @@ func writeRekeyRows(ctx context.Context, tx *sql.Tx, spec KeyRekeySpec) error {
 	return nil
 }
 
-// readLogHeads is every origin's highest sequence in the log, the fact a cut is
-// predicted from and checked against.
-func readLogHeads(ctx context.Context, tx *sql.Tx) (map[string]int, error) {
-	rows, err := tx.QueryContext(ctx, "SELECT origin, MAX(seq) FROM log GROUP BY origin")
+// readHeads is every origin's head as the heads table holds it, the fact a cut
+// is predicted from and checked against. An origin with no heads row is absent
+// from the map.
+func readHeads(ctx context.Context, tx *sql.Tx) (map[string]int, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT origin, seq FROM heads")
 	if err != nil {
 		return nil, fmt.Errorf("syncworker: rekey the key: %w", markDriverRefusal(err))
 	}
@@ -292,11 +293,11 @@ func readLogHeads(ctx context.Context, tx *sql.Tx) (map[string]int, error) {
 	heads := make(map[string]int)
 	for rows.Next() {
 		var origin string
-		var seq sql.NullInt64
+		var seq int
 		if err := rows.Scan(&origin, &seq); err != nil {
 			return nil, fmt.Errorf("syncworker: rekey the key: %w", err)
 		}
-		heads[origin] = int(seq.Int64)
+		heads[origin] = seq
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("syncworker: rekey the key: %w", err)
