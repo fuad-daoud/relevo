@@ -144,15 +144,25 @@ func (b *TursoBackend) Open(spec Spec) error {
 // drains one page per sync tick, and a batch beginning at or before a mark is
 // skipped whole: half of one would apply an order the exporter never wrote. A
 // hello that named no bucket is refused before any transfer: the segments have
-// nowhere to be read from, and the refusal costs no traffic.
+// nowhere to be read from, and the refusal costs no traffic. With HistoryNone,
+// Pull answers from the shared table only and never lists or fetches segments,
+// even when hello named no bucket.
 func (b *TursoBackend) Pull(marks map[string]int) ([]Entry, error) {
 	if err := b.ready(); err != nil {
 		return nil, err
 	}
+	ctx := context.Background()
+	if b.spec.History == HistoryNone {
+		if err := b.transfer(ctx, b.driver.Pull); err != nil {
+			return nil, fmt.Errorf("syncworker: pull: %w", markTransferRefusal(err))
+		}
+		return b.sharedPull(ctx, marks)
+	}
+	// A full-history worker with no bucket gets ErrNoR2: answering it from
+	// shared would let the importer move a mark past rows nothing fetched.
 	if b.blobs == nil {
 		return nil, ErrNoR2
 	}
-	ctx := context.Background()
 	if err := b.transfer(ctx, b.driver.Pull); err != nil {
 		return nil, fmt.Errorf("syncworker: pull: %w", markTransferRefusal(err))
 	}

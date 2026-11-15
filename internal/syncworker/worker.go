@@ -68,7 +68,8 @@ type Backend interface {
 	// mark given for it, read from the bucket's segments in sequence order and
 	// in whole batches. An origin with no mark is read from the start of its
 	// log. A hello that named no bucket is refused with ErrNoR2 before any
-	// transfer.
+	// transfer. With HistoryNone, Pull answers from the shared table only and
+	// never lists or fetches segments, even when hello named no bucket.
 	Pull(marks map[string]int) ([]Entry, error)
 	// Head returns a page of one origin's latest entry per row, derived from
 	// the segments its heads row names, starting after the given sequence
@@ -83,7 +84,9 @@ type Backend interface {
 	// PullRange reads one page of origin's entries with after < seq <= upto from
 	// the segments its heads row names, without pulling first: the floor a caller
 	// read with ReadMarks belongs to this same replica state, and a newer pull in
-	// between could change the entries the range needs.
+	// between could change the entries the range needs. With HistoryNone or
+	// when hello named no bucket, PullRange answers from the shared table only
+	// without reading heads or segments.
 	PullRange(origin string, after, upto int) ([]Entry, error)
 	// KeyMeta reads the passphrase material the remote holds, answering
 	// Present false on a remote that has none.

@@ -326,9 +326,10 @@ func TestPullRangeAnswersAnUnknownOriginWithoutAListing(t *testing.T) {
 	}
 }
 
-// TestPullRangeWithoutR2 pins the two answers a backend whose hello named no
-// bucket gives: a heads row is refused with ErrNoR2 before any transfer, and
-// an origin with no row answers empty without a store.
+// TestPullRangeWithoutR2 pins that a worker opened with no R2 settings serves
+// PullRange from shared (which lets a joiner read doc:secrets before it has
+// credentials), zero store operations, while the same worker's Pull, Head and
+// Append verbs still return ErrNoR2.
 func TestPullRangeWithoutR2(t *testing.T) {
 	driver := &localDriver{path: tempReplica(t)}
 	b := NewTursoBackend(driver)
@@ -342,15 +343,31 @@ func TestPullRangeWithoutR2(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = b.Close() })
 	execOn(t, driver.path,
-		"INSERT INTO heads (origin, seq, key, entries, bytes, legacy_upto, at)"+
-			" VALUES ('origin-b', 4, 'origin-b/log/000000000001', 4, 100, 0, '2026-10-08T09:30:00Z')")
+		"INSERT INTO heads (origin, seq, key, entries, bytes, at) VALUES ('origin-b', 1, 'origin-b/log/000000000001', 1, 100, '2026-10-08T09:30:00Z')")
+	execOn(t, driver.path,
+		"INSERT INTO shared (origin, seq, batch, tbl, pk, op, schema_version, body, at)"+
+			" VALUES ('origin-b', 1, 1, 'doc:secrets', '[\"s\"]', 'upsert', 1, '{\"token\":\"secret\"}', '2026-10-08T09:30:00Z')")
 
-	if _, err := b.PullRange("origin-b", 0, 4); !errors.Is(err, ErrNoR2) {
-		t.Errorf("PullRange with a head and no bucket = %v, want ErrNoR2", err)
+	got, err := b.PullRange("origin-b", 0, 4)
+	if err != nil {
+		t.Fatalf("PullRange with no bucket: %v", err)
 	}
-	got, err := b.PullRange("origin-x", 0, 4)
-	if err != nil || len(got) != 0 {
-		t.Errorf("PullRange with no head and no bucket = %+v, %v; want empty", got, err)
+	if len(got) != 1 || got[0].Tbl != "doc:secrets" {
+		t.Errorf("PullRange = %+v, want doc:secrets entry", got)
+	}
+	if _, err := b.Pull(nil); !errors.Is(err, ErrNoR2) {
+		t.Errorf("Pull without R2 = %v, want ErrNoR2", err)
+	}
+	if _, err := b.Head("origin-b", "", 0); !errors.Is(err, ErrNoR2) {
+		t.Errorf("Head without R2 = %v, want ErrNoR2", err)
+	}
+	if _, err := b.Append([]Entry{upsertEntry("origin-a", "doc:secrets", `["s2"]`, `{"k":"v"}`)}); !errors.Is(err, ErrNoR2) {
+		t.Errorf("Append without R2 = %v, want ErrNoR2", err)
+	}
+
+	empty, err := b.PullRange("origin-x", 0, 4)
+	if err != nil || len(empty) != 0 {
+		t.Errorf("PullRange with no head and no bucket = %+v, %v; want empty", empty, err)
 	}
 	if driver.pulls != 0 {
 		t.Errorf("driver pulled %d times, want 0: a range read costs no transfer", driver.pulls)

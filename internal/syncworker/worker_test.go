@@ -264,9 +264,13 @@ func (s *session) ask(req Request) Response {
 }
 
 // askHello opens a conversation and fails the test if the handshake is refused.
-func (s *session) askHello() {
+func (s *session) askHello(mutate ...func(*Request)) {
 	s.t.Helper()
-	if resp := s.ask(helloRequest("h")); !resp.OK {
+	req := helloRequest("h")
+	for _, m := range mutate {
+		m(&req)
+	}
+	if resp := s.ask(req); !resp.OK {
 		s.t.Fatalf("hello = %+v, want ok", resp)
 	}
 }
