@@ -51,9 +51,9 @@ type LogTransport interface {
 	// transport that is refusing to answer.
 	Stats() (Stats, error)
 
-	// ReadMarks answers with every published mark, the floors the log has
-	// recorded, and each origin's head and entry count: the three inputs a
-	// compaction decides from. With no floors yet it answers an empty set
+	// ReadMarks answers with the floors origins compacted to before compaction
+	// stopped, each origin's head, entry count and size, and the signing
+	// boundaries and epoch cuts. With no floors yet it answers an empty set
 	// rather than an error, because nothing has compacted.
 	ReadMarks() (MarkState, error)
 
@@ -167,22 +167,14 @@ type KeyRekeySpec struct {
 	Cuts map[string]EpochCut
 }
 
-// CompactResult is what one compaction did: how many entries it dropped and the
-// floor it now records, never below the previous one.
-type CompactResult struct {
-	Dropped int
-	Floor   int
-}
-
-// MarkState is what a transport holds about compaction: the marks readers
-// published, and the log's own size per origin.
+// MarkState is what a transport holds about the log's shape: the floors origins
+// compacted to before compaction stopped, each origin's head, entry count and
+// size, and the signing boundaries and epoch cuts.
 //
 // The maps are nil rather than empty when there is nothing to report, so an
 // origin that has compacted nothing and one whose floor is at the start of its
 // log stay apart -- the two mean different things to whoever reads them.
 type MarkState struct {
-	// Marks are the published positions, one per reader per origin.
-	Marks []Mark
 	// Floors is what each origin has already been compacted to.
 	Floors map[string]int
 	// Heads is each origin's highest sequence in the log.
@@ -236,8 +228,8 @@ type TrafficRow struct {
 // for it with a type assertion and skips the publish elsewhere.
 type TrafficPublisher interface {
 	// PublishTraffic writes this installation's own row -- the origin is the
-	// transport's own, the rule PublishMarks states -- and answers with every
-	// origin's row as the log holds it after the write.
+	// transport's own, so one handle cannot write another's row -- and answers
+	// with every origin's row as the log holds it after the write.
 	PublishTraffic(row TrafficRow) (map[string]TrafficRow, error)
 }
 

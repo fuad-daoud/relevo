@@ -55,11 +55,6 @@ func (r *recordTransport) Stats() (synclog.Stats, error) {
 	return synclog.Stats{}, nil
 }
 
-func (r *recordTransport) PublishMarks(map[string]int, time.Time) error {
-	r.Calls = append(r.Calls, "publish_marks")
-	return nil
-}
-
 func (r *recordTransport) ReadMarks() (synclog.MarkState, error) {
 	r.Calls = append(r.Calls, "read_marks")
 	return synclog.MarkState{}, nil
@@ -91,7 +86,6 @@ func (b *syncBlackhole) Append([]synclog.Entry) ([]synclog.Entry, error) { retur
 func (b *syncBlackhole) Pull(map[string]int) ([]synclog.Entry, error)    { return nil, b.wait() }
 func (b *syncBlackhole) Head(string) ([]synclog.HeadRow, error)          { return nil, b.wait() }
 func (b *syncBlackhole) Stats() (synclog.Stats, error)                   { return synclog.Stats{}, b.wait() }
-func (b *syncBlackhole) PublishMarks(map[string]int, time.Time) error    { return b.wait() }
 func (b *syncBlackhole) ReadMarks() (synclog.MarkState, error)           { return synclog.MarkState{}, b.wait() }
 
 // Cancel releases every call waiting on the blackhole, which is what killing
@@ -540,10 +534,6 @@ func sealAndCount(t *testing.T, client synclog.LogTransport) int {
 
 func (r *recordTransport) PullRange(string, int, int) ([]synclog.Entry, error) { return nil, nil }
 
-func (r *recordTransport) CompactOwn(int) (synclog.CompactResult, error) {
-	return synclog.CompactResult{}, nil
-}
-
 func (r *recordTransport) KeyMeta(context.Context) (synclog.KeyMeta, error) {
 	return synclog.KeyMeta{}, nil
 }
@@ -558,10 +548,6 @@ func (r *recordTransport) KeyRekey(context.Context, synclog.KeyRekeySpec) (syncl
 
 func (r *recordTransport) PublishEpochCut(context.Context, synclog.EpochCut) error { return nil }
 func (s *syncBlackhole) PullRange(string, int, int) ([]synclog.Entry, error)       { return nil, nil }
-
-func (s *syncBlackhole) CompactOwn(int) (synclog.CompactResult, error) {
-	return synclog.CompactResult{}, nil
-}
 
 func (s *syncBlackhole) KeyMeta(context.Context) (synclog.KeyMeta, error) {
 	return synclog.KeyMeta{}, nil

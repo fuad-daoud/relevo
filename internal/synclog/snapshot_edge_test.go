@@ -16,20 +16,6 @@ func headOf(t *testing.T, log *MemTransport, origin string) int {
 	return state.Heads[origin]
 }
 
-func TestMemCompactOwnReportsTheRecordedFloor(t *testing.T) {
-	t.Parallel()
-	m := NewMemTransport("o")
-	appendOne(t, m, "binding", `["a"]`)
-	appendOne(t, m, "binding", `["a"]`)
-	res, err := m.CompactOwn(2)
-	if err != nil || res.Dropped != 1 || res.Floor != 2 {
-		t.Fatalf("CompactOwn = %+v, %v; want one dropped at floor 2", res, err)
-	}
-	if _, err := m.CompactOwn(9); err == nil {
-		t.Fatal("CompactOwn past the head succeeded")
-	}
-}
-
 // An entry a newer binary wrote holds the origin where it stands, the way a
 // batch does, and the mark does not move.
 func TestSnapshotHoldsAtAnEntryFromANewerWriter(t *testing.T) {

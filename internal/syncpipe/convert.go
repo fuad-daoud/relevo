@@ -261,8 +261,8 @@ func epochCutsFromWire(cuts map[string]syncworker.EpochCut) map[string]synclog.E
 }
 
 func markStateFromWire(s syncworker.MarkState) synclog.MarkState {
-	// Marks is not copied: the daemon publishes none and compacts nothing, so
-	// a reader's published position is not a fact it acts on.
+	// The wire's Marks stay behind: the daemon publishes none and acts on no
+	// reader's published position.
 	return synclog.MarkState{
 		Floors:     s.Floors,
 		Heads:      s.Heads,

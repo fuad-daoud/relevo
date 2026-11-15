@@ -61,10 +61,9 @@ func TestMemTransportCarriesMACThroughPullRangeAndCompaction(t *testing.T) {
 	}
 
 	// Compacting to the first write drops it as superseded and keeps the
-	// second, which is the entry whose signature has to come back intact. Only
-	// the origin that wrote the entries may compact them.
-	if _, err := writer.CompactOwn(1); err != nil {
-		t.Fatalf("CompactOwn: %v", err)
+	// second, which is the entry whose signature has to come back intact.
+	if _, err := writer.Compact("origin-a", 1); err != nil {
+		t.Fatalf("Compact: %v", err)
 	}
 	kept, err := reader.PullRange("origin-a", 1, 2)
 	if err != nil {
