@@ -30,6 +30,13 @@ type Spec struct {
 	// MirrorTables names the entry tables the writer copies into shared, which
 	// hello names because the worker writes no table name of its own.
 	MirrorTables []string
+	// Label is this machine's display name, display-only: the writer keeps it
+	// current in heads.label. Empty means hello carried no label, which leaves
+	// any label already stored alone.
+	Label string
+	// History is the history mode hello named, stored as HistoryFull when hello
+	// named no mode, so every later reader compares against one value.
+	History string
 }
 
 // Boundary is the first signed sequence an export predicted for its origin and
@@ -218,9 +225,19 @@ func (s *server) hello(req Request) Response {
 	if req.URL == "" || req.Token == "" {
 		return refuse(req, fmt.Errorf("%w: hello without a remote", ErrProtocol))
 	}
+	if req.History != "" && req.History != HistoryFull && req.History != HistoryNone {
+		return refuse(req, fmt.Errorf("%w: hello with an unknown history %q", ErrProtocol, req.History))
+	}
+	// An absent mode is stored as full rather than left empty, so every later
+	// reader compares against one value instead of guessing what absence means.
+	history := req.History
+	if history == "" {
+		history = HistoryFull
+	}
 	spec := Spec{
 		Version: req.Version, Origin: req.Origin, URL: req.URL, Token: req.Token,
 		R2: req.R2, MirrorTables: req.MirrorTables,
+		Label: req.Label, History: history,
 	}
 	if err := s.backend.Open(spec); err != nil {
 		return refuse(req, err)

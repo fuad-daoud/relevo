@@ -401,6 +401,41 @@ func TestWorkerHelloCarriesTheTablesToMirror(t *testing.T) {
 	}
 }
 
+// TestWorkerHelloStoresTheLabelAndOneHistoryValue pins that hello hands the
+// label to the backend whole and stores the history as one value: a hello
+// naming no mode is stored as HistoryFull, so every later reader compares
+// against one value rather than guessing what an absence means.
+func TestWorkerHelloStoresTheLabelAndOneHistoryValue(t *testing.T) {
+	cases := map[string]struct {
+		history string
+		want    string
+	}{
+		"no history named": {history: "", want: HistoryFull},
+		"full history":     {history: HistoryFull, want: HistoryFull},
+		"no history kept":  {history: HistoryNone, want: HistoryNone},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			b := &fakeBackend{}
+			w := startWorker(t, b)
+			req := helloRequest("h")
+			req.Label = "laptop"
+			req.History = tc.history
+			if resp := w.ask(req); !resp.OK {
+				t.Fatalf("hello = %+v, want ok", resp)
+			}
+			assertOpenedOnce(t, b, "origin-a")
+			spec := b.specs()[0]
+			if spec.Label != "laptop" {
+				t.Errorf("Open spec Label = %q, want the label hello named", spec.Label)
+			}
+			if spec.History != tc.want {
+				t.Errorf("Open spec History = %q, want %q", spec.History, tc.want)
+			}
+		})
+	}
+}
+
 // assertOpenedOnce pins that hello is what opens the remote, and that what it
 // carried reached the backend whole: the origin every later request is checked
 // against, and the token the worker owns for the rest of its life.
@@ -488,9 +523,9 @@ func TestWorkerRefusesAVerbBeforeHello(t *testing.T) {
 }
 
 // TestWorkerRefusesAHelloItCannotSpeak covers the handshakes a worker has no
-// way to serve: a pipe version it does not speak, and one missing what it would
-// work for. All are refused before Open, so no remote is opened for a
-// conversation that was never going to happen.
+// way to serve: a pipe version it does not speak, one missing what it would
+// work for, and a history mode it does not know. All are refused before Open,
+// so no remote is opened for a conversation that was never going to happen.
 func TestWorkerRefusesAHelloItCannotSpeak(t *testing.T) {
 	cases := map[string]func(Request) Request{
 		"a version it does not speak": func(r Request) Request {
@@ -500,6 +535,10 @@ func TestWorkerRefusesAHelloItCannotSpeak(t *testing.T) {
 		"no origin": func(r Request) Request { r.Origin = ""; return r },
 		"no remote": func(r Request) Request { r.URL = ""; return r },
 		"no token":  func(r Request) Request { r.Token = ""; return r },
+		"a history it does not speak": func(r Request) Request {
+			r.History = "sometimes"
+			return r
+		},
 	}
 	for name, breakIt := range cases {
 		t.Run(name, func(t *testing.T) {

@@ -157,6 +157,81 @@ func TestAppendWritesOneSegmentAndMovesHeads(t *testing.T) {
 	}
 }
 
+// headsLabel reads the label an origin's heads row holds, which is what the
+// label tests assert the writer wrote and kept current.
+func headsLabel(t *testing.T, path, origin string) string {
+	t.Helper()
+	var label string
+	if err := openAt(t, path).QueryRow("SELECT label FROM heads WHERE origin = ?", origin).Scan(&label); err != nil {
+		t.Fatalf("read heads label: %v", err)
+	}
+	return label
+}
+
+// TestAppendFirstExportWritesTheLabel pins that the first export's heads insert
+// carries the spec's label, so the head names the machine that wrote it.
+// Mutant: drop the label from the insert.
+func TestAppendFirstExportWritesTheLabel(t *testing.T) {
+	driver := &localDriver{path: tempReplica(t)}
+	store := blobstore.NewMemBlobStore(nil)
+	b := backendOnBlobStoreWithSpec(t, driver, "origin-a", store, func(s *Spec) { s.Label = "laptop" })
+
+	if _, err := b.Append([]Entry{upsertEntry("origin-a", "board", `["b1"]`, `{"title":"one"}`)}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if got := headsLabel(t, driver.path, "origin-a"); got != "laptop" {
+		t.Errorf("heads label = %q, want the label the spec named", got)
+	}
+}
+
+// TestAppendUpdateKeepsTheLabelCurrent pins that an export after a re-hello
+// with a new label moves heads.label to it: the label names the machine that
+// exports now, not the one that exported first.
+// Mutant: drop the label from the update.
+func TestAppendUpdateKeepsTheLabelCurrent(t *testing.T) {
+	path := tempReplica(t)
+	store := blobstore.NewMemBlobStore(nil)
+	first := backendOnBlobStoreWithSpec(t, &localDriver{path: path}, "origin-a", store, func(s *Spec) { s.Label = "laptop" })
+	if _, err := first.Append([]Entry{upsertEntry("origin-a", "board", `["b1"]`, `{"title":"one"}`)}); err != nil {
+		t.Fatalf("first append: %v", err)
+	}
+
+	// The re-hello is a second backend on the same replica path and store, the
+	// way the append tests reopen one.
+	second := backendOnBlobStoreWithSpec(t, &localDriver{path: path}, "origin-a", store, func(s *Spec) { s.Label = "desk" })
+	if _, err := second.Append([]Entry{upsertEntry("origin-a", "board", `["b2"]`, `{"title":"two"}`)}); err != nil {
+		t.Fatalf("second append: %v", err)
+	}
+	if got := headsLabel(t, path, "origin-a"); got != "desk" {
+		t.Errorf("heads label = %q, want the re-hello's label", got)
+	}
+}
+
+// TestAppendEmptyLabelNeverBlanksTheStoredOne pins that a re-hello carrying no
+// label keeps the stored one through the next export: a machine that names
+// none must not erase the label an earlier hello wrote.
+// Mutant: bind the label without the COALESCE guard.
+func TestAppendEmptyLabelNeverBlanksTheStoredOne(t *testing.T) {
+	path := tempReplica(t)
+	store := blobstore.NewMemBlobStore(nil)
+	first := backendOnBlobStoreWithSpec(t, &localDriver{path: path}, "origin-a", store, func(s *Spec) { s.Label = "laptop" })
+	if _, err := first.Append([]Entry{upsertEntry("origin-a", "board", `["b1"]`, `{"title":"one"}`)}); err != nil {
+		t.Fatalf("first append: %v", err)
+	}
+	second := backendOnBlobStoreWithSpec(t, &localDriver{path: path}, "origin-a", store, func(s *Spec) { s.Label = "desk" })
+	if _, err := second.Append([]Entry{upsertEntry("origin-a", "board", `["b2"]`, `{"title":"two"}`)}); err != nil {
+		t.Fatalf("second append: %v", err)
+	}
+
+	third := backendOnBlobStoreWithSpec(t, &localDriver{path: path}, "origin-a", store, nil)
+	if _, err := third.Append([]Entry{upsertEntry("origin-a", "board", `["b3"]`, `{"title":"three"}`)}); err != nil {
+		t.Fatalf("third append: %v", err)
+	}
+	if got := headsLabel(t, path, "origin-a"); got != "desk" {
+		t.Errorf("heads label = %q, want the stored label kept: a hello with no label blanked it", got)
+	}
+}
+
 // TestAppendAdoptsOrphanFromCrashedPut pins that a segment object present at
 // the expected key without a matching heads row is adopted and committed before
 // the retried export is numbered and written.
