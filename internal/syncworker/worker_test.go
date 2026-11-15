@@ -197,6 +197,7 @@ func helloRequest(id string) Request {
 		Origin:  "origin-a",
 		URL:     "libsql://remote.example",
 		Token:   "the-token",
+		R2:      &R2Config{Bucket: "bucket"},
 	}
 }
 
@@ -378,6 +379,25 @@ func TestWorkerServesExportPullHeadStatsShutdown(t *testing.T) {
 	}
 	if got := b.lastPull(); got["origin-b"] != 3 {
 		t.Errorf("Pull read as %v, want the marks the request carried", got)
+	}
+}
+
+// TestWorkerHelloCarriesTheTablesToMirror pins that hello hands the mirror list
+// to the backend whole. The worker writes no table name of its own, so the list
+// can only come from hello; anything reading the spec reads what hello named.
+func TestWorkerHelloCarriesTheTablesToMirror(t *testing.T) {
+	b := &fakeBackend{}
+	w := startWorker(t, b)
+
+	req := helloRequest("h")
+	req.MirrorTables = []string{"board", "card"}
+	if resp := w.ask(req); !resp.OK {
+		t.Fatalf("hello = %+v, want ok", resp)
+	}
+
+	assertOpenedOnce(t, b, "origin-a")
+	if got := b.specs()[0].MirrorTables; len(got) != 2 || got[0] != "board" || got[1] != "card" {
+		t.Errorf("Open spec MirrorTables = %v, want the tables hello named", got)
 	}
 }
 

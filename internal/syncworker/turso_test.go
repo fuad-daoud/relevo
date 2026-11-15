@@ -15,6 +15,7 @@ import (
 
 	turso "turso.tech/database/tursogo"
 
+	"github.com/fuad-daoud/relevo/internal/blobstore"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
@@ -32,6 +33,8 @@ type localDriver struct {
 	stats  int
 	// checkpoints counts the WAL checkpoints the backend asked for.
 	checkpoints int
+	// discards counts the Discard calls the backend made.
+	discards int
 	// engineBytes is what the engine's own counters read as. A transfer that
 	// moves bytes sets it, and the backend's cumulative totals follow from the
 	// difference between the readings either side.
@@ -40,13 +43,20 @@ type localDriver struct {
 	// bootstrapped is what Open reports it downloaded.
 	bootstrapped int64
 
-	openErr  error
-	pushErr  error
-	pullErr  error
-	statsErr error
+	openErr    error
+	pushErr    error
+	pullErr    error
+	statsErr   error
+	discardErr error
 	// afterPush runs once a push succeeds, so a test can change the replica
 	// between a publish's push and the read that follows it.
 	afterPush func(*sql.DB)
+	// afterDiscard runs once the replica's files are removed, so a test can
+	// seed what the remote the next Open bootstraps from holds.
+	afterDiscard func(path string)
+	// afterPull runs once a pull succeeds, so a test can make the remote's
+	// migration appear in the replica.
+	afterPull func(db *sql.DB)
 }
 
 func (d *localDriver) Bootstrapped() int64 { return d.bootstrapped }
@@ -77,7 +87,34 @@ func (d *localDriver) Push(context.Context) error {
 
 func (d *localDriver) Pull(context.Context) error {
 	d.pulls++
+	if d.pullErr == nil && d.afterPull != nil {
+		d.afterPull(d.db)
+	}
 	return d.pullErr
+}
+
+// Discard closes the replica and removes its file and the WAL sidecars, which
+// stands for the driver's files going so the next Open bootstraps again.
+func (d *localDriver) Discard(context.Context) error {
+	d.discards++
+	if d.discardErr != nil {
+		return d.discardErr
+	}
+	if d.db != nil {
+		if err := d.db.Close(); err != nil {
+			return err
+		}
+		d.db = nil
+	}
+	for _, name := range []string{d.path, d.path + "-wal", d.path + "-shm"} {
+		if err := os.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	if d.afterDiscard != nil {
+		d.afterDiscard(d.path)
+	}
+	return nil
 }
 
 func (d *localDriver) Checkpoint(context.Context) error {
@@ -100,20 +137,32 @@ func tempReplica(t *testing.T) string {
 	return filepath.Join(t.TempDir(), "relevo-sync.db")
 }
 
-// backendFor opens a backend on a fresh local replica as origin and closes it
-// when the test ends.
-func backendFor(t *testing.T, driver ReplicaDriver, origin string) *TursoBackend {
+// backendWithStore opens a backend on a fresh local replica with an in-memory
+// blob store and closes it when the test ends.
+func backendWithStore(t *testing.T, driver ReplicaDriver, origin string, mirror ...string) (*TursoBackend, *blobstore.MemBlobStore) {
 	t.Helper()
+	store := blobstore.NewMemBlobStore(nil)
 	b := NewTursoBackend(driver)
+	b.openStore = func(R2Config) blobstore.BlobStore { return store }
 	if err := b.Open(Spec{
-		Version: ProtocolVersion,
-		Origin:  origin,
-		URL:     "libsql://scratch.example",
-		Token:   "the-token",
+		Version:      ProtocolVersion,
+		Origin:       origin,
+		URL:          "libsql://scratch.example",
+		Token:        "the-token",
+		R2:           &R2Config{Bucket: "bucket"},
+		MirrorTables: mirror,
 	}); err != nil {
 		t.Fatalf("open backend: %v", err)
 	}
 	t.Cleanup(func() { _ = b.Close() })
+	return b, store
+}
+
+// backendFor opens a backend on a fresh local replica as origin and closes it
+// when the test ends.
+func backendFor(t *testing.T, driver ReplicaDriver, origin string) *TursoBackend {
+	t.Helper()
+	b, _ := backendWithStore(t, driver, origin)
 	return b
 }
 
@@ -189,7 +238,20 @@ type logRow struct {
 // snapshotLog reads every log row in full sequence order.
 func snapshotLog(t *testing.T, path string) []logRow {
 	t.Helper()
-	rows, err := openAt(t, path).Query("SELECT origin, seq, batch, tbl, pk, op, schema_version, body, at, mac, after_origin, after_seq FROM log ORDER BY origin, seq")
+	hasMAC := tablesHaveColumn(t, path, "log", "mac")
+	hasAfter := tablesHaveColumn(t, path, "log", "after_origin")
+
+	var query string
+	switch {
+	case hasMAC && hasAfter:
+		query = "SELECT origin, seq, batch, tbl, pk, op, schema_version, body, at, mac, after_origin, after_seq FROM log ORDER BY origin, seq"
+	case hasMAC:
+		query = "SELECT origin, seq, batch, tbl, pk, op, schema_version, body, at, mac FROM log ORDER BY origin, seq"
+	default:
+		query = "SELECT origin, seq, batch, tbl, pk, op, schema_version, body, at FROM log ORDER BY origin, seq"
+	}
+
+	rows, err := openAt(t, path).Query(query)
 	if err != nil {
 		t.Fatalf("read the log: %v", err)
 	}
@@ -197,8 +259,19 @@ func snapshotLog(t *testing.T, path string) []logRow {
 	var out []logRow
 	for rows.Next() {
 		var r logRow
-		if err := rows.Scan(&r.origin, &r.seq, &r.batch, &r.tbl, &r.pk, &r.op,
-			&r.schema, &r.body, &r.at, &r.mac, &r.afterOrigin, &r.afterSeq); err != nil {
+		var err error
+		switch {
+		case hasMAC && hasAfter:
+			err = rows.Scan(&r.origin, &r.seq, &r.batch, &r.tbl, &r.pk, &r.op,
+				&r.schema, &r.body, &r.at, &r.mac, &r.afterOrigin, &r.afterSeq)
+		case hasMAC:
+			err = rows.Scan(&r.origin, &r.seq, &r.batch, &r.tbl, &r.pk, &r.op,
+				&r.schema, &r.body, &r.at, &r.mac)
+		default:
+			err = rows.Scan(&r.origin, &r.seq, &r.batch, &r.tbl, &r.pk, &r.op,
+				&r.schema, &r.body, &r.at)
+		}
+		if err != nil {
 			t.Fatalf("scan a log row: %v", err)
 		}
 		out = append(out, r)
@@ -284,6 +357,23 @@ func seedFormatThreeRemote(t *testing.T, path string) {
 	execOn(t, path, logFormatThree, headTableStatement, createStatements[1],
 		createStatements[2],
 		"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '3')")
+}
+
+// seedFormatFourRemote creates the format 4 remote: the head table beside the
+// full log, marks and meta, with format row 4.
+func seedFormatFourRemote(t *testing.T, path string) {
+	t.Helper()
+	execOn(t, path, createStatements[0], headTableStatement, createStatements[1],
+		createStatements[2],
+		"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '4')")
+}
+
+// seedFormatFiveRemote creates the format 5 remote: log, meta and marks from
+// createStatements[0..2], with format row 5.
+func seedFormatFiveRemote(t *testing.T, path string) {
+	t.Helper()
+	execOn(t, path, createStatements[0], createStatements[1], createStatements[2],
+		"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '5')")
 }
 
 // signedFromMeta is the sequence the meta records an origin started signing at.
@@ -377,7 +467,7 @@ func TestReplicaOpensOnlyThroughTheSyncConstructor(t *testing.T) {
 }
 
 // TestFirstUseCreatesTheRemoteLogTables pins the first-use contract: an empty
-// remote gets log, marks and meta with the format row, the schema is pushed so
+// remote gets the five tables with the format row, the schema is pushed so
 // the remote learns it, and a re-run against the same replica changes nothing
 // and does not error.
 func TestFirstUseCreatesTheRemoteLogTables(t *testing.T) {
@@ -386,19 +476,31 @@ func TestFirstUseCreatesTheRemoteLogTables(t *testing.T) {
 	b := backendFor(t, driver, "origin-a")
 
 	tables := replicaTables(t, path)
-	for _, want := range []string{"log", "marks", "meta"} {
+	for _, want := range []string{"heads", "log", "marks", "meta", "shared"} {
 		if !tables[want] {
 			t.Errorf("first use did not create %q; the replica holds %v", want, tables)
 		}
 	}
-	if len(tables) != 3 {
-		t.Errorf("first use created %v, want exactly log, marks and meta", tables)
+	if len(tables) != 5 {
+		t.Errorf("first use created %v, want exactly five tables: heads, log, marks, meta, shared", tables)
 	}
-	if got := metaFormat(t, path); got != strconv.Itoa(logFormatVersion) {
-		t.Errorf("meta format = %q, want %d", got, logFormatVersion)
+	if got := metaFormat(t, path); got != "6" {
+		t.Errorf("meta format = %q, want 6", got)
+	}
+	for _, tbl := range []string{"heads", "shared"} {
+		var count int
+		if err := openAt(t, path).QueryRow("SELECT COUNT(*) FROM " + tbl).Scan(&count); err != nil {
+			t.Fatalf("count rows in %s: %v", tbl, err)
+		}
+		if count != 0 {
+			t.Errorf("%s table holds %d rows, want empty on first use", tbl, count)
+		}
 	}
 	if driver.pushes != 1 {
 		t.Errorf("first use pushed %d times, want once: the remote learns the schema from a push", driver.pushes)
+	}
+	if driver.pulls != 0 {
+		t.Errorf("first use pulled %d times, want none: an empty remote never pulls on open", driver.pulls)
 	}
 	_ = b.Close()
 
@@ -407,66 +509,66 @@ func TestFirstUseCreatesTheRemoteLogTables(t *testing.T) {
 	if again.pushes != 0 {
 		t.Errorf("a re-run pushed %d times, want none: the log was already there", again.pushes)
 	}
-	if tables := replicaTables(t, path); len(tables) != 3 {
-		t.Errorf("a re-run left %v, want the same three tables", tables)
+	if again.pulls != 0 {
+		t.Errorf("a re-run pulled %d times, want none: the current set never pulls on open", again.pulls)
+	}
+	if tables := replicaTables(t, path); len(tables) != 5 {
+		t.Errorf("a re-run left %v, want the same five tables", tables)
 	}
 }
 
-// TestHelloUpgradesFormatOneToFive pins the oldest remote this build brings
-// forward rather than refuses: a log at the first format has neither the marks
-// table nor the mac column, and a machine that has not synced since that change
-// would otherwise be left holding a remote no build of this version will open.
-//
-// The upgrade writes the missing table and column, drops the stored head and
-// writes the new format row in one transaction and pushes, so the remote never
-// holds one without the others, and a re-run finds a log at the current
-// format and writes nothing.
-func TestHelloUpgradesFormatOneToFive(t *testing.T) {
-	path := tempReplica(t)
-	seedFormatOneRemote(t, path)
-	// An entry already in it, so the upgrade is shown to leave the log alone
-	// rather than to reach it.
-	execOn(t, path, "INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at)"+
-		" VALUES ('origin-a', 1, 1, 'board', '[\"b\"]', 'upsert', 3, '{\"title\":\"one\"}', '2026-10-08T09:30:00Z')")
+// TestHelloRefusesAnOlderFormatWithTheMigrateMessage pins that a remote at any
+// of formats 1-5 is refused with the migrate message, leaving the remote's
+// tables and log rows unchanged without pushing.
+func TestHelloRefusesAnOlderFormatWithTheMigrateMessage(t *testing.T) {
+	cases := []struct {
+		format int
+		seed   func(t *testing.T, path string)
+	}{
+		{format: 1, seed: seedFormatOneRemote},
+		{format: 2, seed: seedFormatTwoRemote},
+		{format: 3, seed: seedFormatThreeRemote},
+		{format: 4, seed: seedFormatFourRemote},
+		{format: 5, seed: seedFormatFiveRemote},
+	}
+	const wantSentence = "run relevo db sync migrate once every machine runs this release"
+	for _, tc := range cases {
+		t.Run(strconv.Itoa(tc.format), func(t *testing.T) {
+			path := tempReplica(t)
+			tc.seed(t, path)
+			execOn(t, path, "INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at)"+
+				" VALUES ('origin-a', 1, 1, 'board', '[\"a\"]', 'upsert', 3, '{\"title\":\"one\"}', '2026-10-08T09:30:00Z')")
+			beforeTables := replicaTables(t, path)
+			beforeRows := snapshotLog(t, path)
 
-	driver := &localDriver{path: path}
-	b := backendFor(t, driver, "origin-b")
-
-	if tables := replicaTables(t, path); tables["head"] {
-		t.Errorf("the upgrade left %v, want no head table: the head is answered from the log", tables)
-	}
-	if tables := replicaTables(t, path); len(tables) != 3 {
-		t.Errorf("the upgrade left %v, want the current format's three tables", tables)
-	}
-	if got := metaFormat(t, path); got != strconv.Itoa(logFormatVersion) {
-		t.Errorf("meta format = %q, want %d after the upgrade", got, logFormatVersion)
-	}
-	if driver.pushes != 1 {
-		t.Errorf("the upgrade pushed %d times, want once: the remote learns the new schema from a push",
-			driver.pushes)
-	}
-
-	// The entry that was there is still there: an upgrade is a schema change,
-	// not a rewrite.
-	written, err := b.Pull(map[string]int{"origin-a": 0})
-	if err != nil {
-		t.Fatalf("pull from the upgraded log: %v", err)
-	}
-	if !carries(written, "origin-a", 1) {
-		t.Errorf("the upgraded log pulled %d entries but not origin-a seq 1: the upgrade moved the log",
-			len(written))
-	}
-	_ = b.Close()
-
-	// A re-run finds a log at the current format and writes nothing, which is
-	// what makes the upgrade a one-time event rather than one per open.
-	again := &localDriver{path: path}
-	backendFor(t, again, "origin-b")
-	if again.pushes != 0 {
-		t.Errorf("a re-run pushed %d times, want none: the log was already at the current format", again.pushes)
-	}
-	if tables := replicaTables(t, path); len(tables) != 3 {
-		t.Errorf("a re-run left %v, want the same three tables", tables)
+			driver := &localDriver{path: path}
+			b := NewTursoBackend(driver)
+			resp := startWorker(t, b).ask(helloRequest("h"))
+			if resp.OK {
+				t.Fatalf("hello = %+v, want a refusal", resp)
+			}
+			if resp.Code != CodeRemote {
+				t.Errorf("code = %q, want %q: the refusal repeats on every attempt", resp.Code, CodeRemote)
+			}
+			if !strings.Contains(resp.Error, wantSentence) {
+				t.Errorf("refusal %q does not contain %q", resp.Error, wantSentence)
+			}
+			if !strings.Contains(resp.Error, "libsql://remote.example") {
+				t.Errorf("refusal %q does not name the remote", resp.Error)
+			}
+			if afterTables := replicaTables(t, path); !reflect.DeepEqual(afterTables, beforeTables) {
+				t.Errorf("tables after the refusal = %v, want %v", afterTables, beforeTables)
+			}
+			if afterRows := snapshotLog(t, path); !reflect.DeepEqual(afterRows, beforeRows) {
+				t.Errorf("log rows after the refusal = %+v, want %+v", afterRows, beforeRows)
+			}
+			if driver.pushes != 0 {
+				t.Errorf("a refused remote pushed %d times, want none", driver.pushes)
+			}
+			if driver.pulls != 1 {
+				t.Errorf("pulls = %d, want exactly one: an older format pulls once before the refusal", driver.pulls)
+			}
+		})
 	}
 }
 
@@ -491,7 +593,7 @@ func TestFirstUseLooksPastTheEnginesOwnTables(t *testing.T) {
 	execOn(t, path, engineTables...)
 	driver := &localDriver{path: path}
 	b := backendFor(t, driver, "origin-a")
-	for _, want := range []string{"log", "marks", "meta"} {
+	for _, want := range []string{"heads", "log", "marks", "meta", "shared"} {
 		if !replicaTables(t, path)[want] {
 			t.Errorf("first use over the engine's tables did not create %q", want)
 		}
@@ -510,51 +612,38 @@ func TestFirstUseLooksPastTheEnginesOwnTables(t *testing.T) {
 
 // TestWorkerRefusesARemoteThatIsNotALog pins the refusal a remote that is not
 // this log gets: it is answered with the URL it named and a reason, before any
-// table is created or row is written.
+// table is created or row is written. The remote keeps its shape across a
+// reset, so a replica thrown away and bootstrapped again meets the same
+// refusal.
 func TestWorkerRefusesARemoteThatIsNotALog(t *testing.T) {
-	cases := map[string]func(t *testing.T, path string){
-		"another database's tables": func(t *testing.T, path string) {
-			execOn(t, path, "CREATE TABLE secrets (s TEXT NOT NULL)")
-		},
-		"another database's tables beside the engine's": func(t *testing.T, path string) {
-			execOn(t, path, append(append([]string(nil), engineTables...), "CREATE TABLE secrets (s TEXT NOT NULL)")...)
-		},
-		"a log with no meta": func(t *testing.T, path string) {
-			execOn(t, path, createStatements[0], createStatements[2])
-		},
-		"a meta with no format row": func(t *testing.T, path string) {
-			execOn(t, path, createStatements[0], createStatements[1], createStatements[2])
-		},
-		"a different format": func(t *testing.T, path string) {
-			execOn(t, path, append(append([]string(nil), createStatements...),
-				"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '99')")...)
-		},
+	cases := map[string][]string{
+		"another database's tables": {"CREATE TABLE secrets (s TEXT NOT NULL)"},
+		"another database's tables beside the engine's": append(append([]string(nil), engineTables...),
+			"CREATE TABLE secrets (s TEXT NOT NULL)"),
+		"a log with no meta":        {createStatements[0], createStatements[2]},
+		"a meta with no format row": {createStatements[0], createStatements[1], createStatements[2]},
+		"a different format": append(append([]string(nil), createStatements...),
+			"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '99')"),
 		// The tables of an older format with the current format's row, and the
 		// other way round: a remote in neither shape, which the checks must not
 		// read as one.
-		"the older tables at the current format": func(t *testing.T, path string) {
-			execOn(t, path, logWithoutMAC, headTableStatement, createStatements[1],
-				"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '"+strconv.Itoa(logFormatVersion)+"')")
-		},
-		"the current tables at the older format": func(t *testing.T, path string) {
-			execOn(t, path, append(append([]string(nil), createStatements...),
-				"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '1')")...)
-		},
-		"format two's tables at format one's row": func(t *testing.T, path string) {
-			execOn(t, path, logWithoutMAC, headTableStatement, createStatements[1],
-				createStatements[2],
-				"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '1')")
-		},
-		"a format above this build's": func(t *testing.T, path string) {
-			execOn(t, path, append(append([]string(nil), createStatements...),
-				"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '6')")...)
-		},
+		"the older tables at the current format": {logWithoutMAC, headTableStatement, createStatements[1],
+			"INSERT INTO meta (key, value) VALUES ('" + metaFormatKey + "', '" + strconv.Itoa(logFormatVersion) + "')"},
+		"the current tables at the older format": append(append([]string(nil), createStatements...),
+			"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '1')"),
+		"format two's tables at format one's row": {logWithoutMAC, headTableStatement, createStatements[1],
+			createStatements[2],
+			"INSERT INTO meta (key, value) VALUES ('" + metaFormatKey + "', '1')"},
+		"a format above this build's": append(append([]string(nil), createStatements...),
+			"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '7')"),
 	}
-	for name, seed := range cases {
+	for name, stmts := range cases {
 		t.Run(name, func(t *testing.T) {
 			path := tempReplica(t)
-			seed(t, path)
-			b := NewTursoBackend(&localDriver{path: path})
+			execOn(t, path, stmts...)
+			driver := &localDriver{path: path}
+			driver.afterDiscard = func(p string) { reseedReplica(t, p, stmts) }
+			b := NewTursoBackend(driver)
 			resp := startWorker(t, b).ask(helloRequest("h"))
 			if resp.OK {
 				t.Fatalf("hello = %+v, want a refusal", resp)
@@ -568,6 +657,10 @@ func TestWorkerRefusesARemoteThatIsNotALog(t *testing.T) {
 			if !strings.Contains(resp.Error, "not a relevo sync log") {
 				t.Errorf("refusal %q does not say what the remote is not", resp.Error)
 			}
+			const migrateSentence = "run relevo db sync migrate once every machine runs this release"
+			if strings.Contains(resp.Error, migrateSentence) {
+				t.Errorf("refusal %q contains %q, want absent", resp.Error, migrateSentence)
+			}
 		})
 	}
 }
@@ -575,14 +668,14 @@ func TestWorkerRefusesARemoteThatIsNotALog(t *testing.T) {
 // TestWorkerRefusalLeavesTheRemoteUntouched pins that a remote the handshake
 // refuses is never written into: its tables and every log row read back the
 // same after the refusal, and no push went out. The two shapes are the
-// current tables at the older format four -- the 4-upgrade's table set does
-// not match, so no upgrade runs -- and a format above this build's.
+// current tables at the older format four -- the format 4 table set does
+// not match, so it is refused as not a log -- and a format above this build's.
 func TestWorkerRefusalLeavesTheRemoteUntouched(t *testing.T) {
 	sentinel := "INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at)" +
 		" VALUES ('origin-a', 1, 1, 'board', '[\"s\"]', 'upsert', 3, '{\"title\":\"sentinel\"}', '2026-10-08T09:30:00Z')"
 	cases := map[string]string{
 		"the current tables at format four": "4",
-		"a format above this build's":       "6",
+		"a format above this build's":       "7",
 	}
 	for name, format := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -610,6 +703,9 @@ func TestWorkerRefusalLeavesTheRemoteUntouched(t *testing.T) {
 			}
 			if driver.pushes != 0 {
 				t.Errorf("a refused remote pushed %d times, want none", driver.pushes)
+			}
+			if driver.pulls != 0 {
+				t.Errorf("a refused remote pulled %d times, want none: only the older-format branch pulls", driver.pulls)
 			}
 		})
 	}
@@ -989,13 +1085,23 @@ func TestHeadDerivesNewestPerRow(t *testing.T) {
 func BenchmarkTursoBackendHeadDerived(b *testing.B) {
 	path := filepath.Join(b.TempDir(), "relevo-sync.db")
 	driver := &localDriver{path: path}
+	store := blobstore.NewMemBlobStore(nil)
+	restore := newBlobStore
+	newBlobStore = func(R2Config) blobstore.BlobStore { return store }
+	defer func() { newBlobStore = restore }()
 	be := NewTursoBackend(driver)
-	if err := be.Open(Spec{Version: ProtocolVersion, Origin: "origin-a", URL: "libsql://bench.example", Token: "the-token"}); err != nil {
+	if err := be.Open(Spec{
+		Version: ProtocolVersion,
+		Origin:  "origin-a",
+		URL:     "libsql://bench.example",
+		Token:   "the-token",
+		R2:      &R2Config{Bucket: "bucket"},
+	}); err != nil {
 		b.Fatalf("open: %v", err)
 	}
 	defer func() { _ = be.Close() }()
 	const n = 20000
-	const batch = 1000
+	const batch = SegmentMaxEntries
 	for base := 0; base < n; base += batch {
 		entries := make([]Entry, 0, batch)
 		for i := 0; i < batch && base+i < n; i++ {
@@ -1256,7 +1362,7 @@ func TestBackendRefusesBeforeHello(t *testing.T) {
 // stopped before anything is written.
 func TestBackendRefusesAnotherOriginsEntry(t *testing.T) {
 	driver := &localDriver{path: tempReplica(t)}
-	b := backendFor(t, driver, "origin-a")
+	b, store := backendWithStore(t, driver, "origin-a")
 	if _, err := b.Append([]Entry{upsertEntry("origin-b", "board", `["b"]`, `{}`)}); err == nil {
 		t.Fatal("append accepted another origin's entry")
 	}
@@ -1266,6 +1372,16 @@ func TestBackendRefusesAnotherOriginsEntry(t *testing.T) {
 	}
 	if n != 0 {
 		t.Errorf("a refused append wrote %d log rows, want none", n)
+	}
+	var headsCount int
+	if err := openAt(t, driver.path).QueryRow("SELECT COUNT(*) FROM heads").Scan(&headsCount); err != nil {
+		t.Fatalf("read heads: %v", err)
+	}
+	if headsCount != 0 {
+		t.Errorf("heads count = %d, want 0", headsCount)
+	}
+	if store.Puts != 0 {
+		t.Errorf("store has %d puts, want 0", store.Puts)
 	}
 }
 

@@ -176,6 +176,10 @@ type Request struct {
 	// machine may sync rows with no bucket; the blob verbs are then refused
 	// rather than failing on a nil.
 	R2 *R2Config `json:"r2,omitempty"`
+	// MirrorTables names the entry tables the writer copies into shared, on
+	// hello alone. It travels there because the worker writes no table name of
+	// its own, so the daemon is the one place the list lives.
+	MirrorTables []string `json:"mirror_tables,omitempty"`
 	// Blobs is the batch put_blobs uploads or get_blobs fetches, one item per
 	// key; it is absent on any other verb.
 	Blobs []BlobItem `json:"blobs,omitempty"`

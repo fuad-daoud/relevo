@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/blobstore"
 	turso "turso.tech/database/tursogo"
 )
 
@@ -47,6 +48,9 @@ type ReplicaDriver interface {
 	// Checkpoint folds the replica's WAL into its database file. The engine
 	// never does this on its own for a sync replica.
 	Checkpoint(ctx context.Context) error
+	// Discard removes the replica and the driver's files so the next Open
+	// bootstraps it again.
+	Discard(ctx context.Context) error
 }
 
 // TursoBackend is the log behind the worker's replica. It is what serves the
@@ -55,6 +59,13 @@ type TursoBackend struct {
 	driver ReplicaDriver
 	spec   Spec
 	db     *sql.DB
+	// blobs is the bucket segments are written to and fetched from, nil when
+	// hello named no R2 settings.
+	blobs blobstore.BlobStore
+	// openStore builds blobs from hello's settings. It is per backend so tests
+	// running in parallel can each hand their own backend a store without
+	// swapping the package's constructor under one another.
+	openStore func(R2Config) blobstore.BlobStore
 	// page bounds one pull's read. It is a field so a test can lower it and pin
 	// that a cut batch still comes back whole.
 	page int
@@ -82,7 +93,12 @@ var _ Backend = (*TursoBackend)(nil)
 // NewTursoBackend returns the log behind the replica driver owns. The driver is
 // supplied rather than named so a test serves the pipe against a plain file.
 func NewTursoBackend(driver ReplicaDriver) *TursoBackend {
-	return &TursoBackend{driver: driver, page: pullPageSize, warn: os.Stderr}
+	return &TursoBackend{
+		driver:    driver,
+		page:      pullPageSize,
+		warn:      os.Stderr,
+		openStore: func(cfg R2Config) blobstore.BlobStore { return newBlobStore(cfg) },
+	}
 }
 
 // NewTursoBackendForPath returns the backend production runs: the replica at
@@ -106,119 +122,19 @@ func (b *TursoBackend) Open(spec Spec) error {
 	}
 	b.spec = spec
 	b.db = db
+	if spec.R2 != nil {
+		b.blobs = b.openStore(*spec.R2)
+	} else {
+		b.blobs = nil
+	}
 	b.bytes.TursoReceived += b.driver.Bootstrapped()
-	if err := b.ensureLog(ctx, spec.URL); err != nil {
+	if err := b.resetUnknownShape(ctx); err != nil {
 		_ = b.Close()
 		return err
 	}
-	return nil
-}
-
-// Append writes one batch of this origin's entries as a single replica
-// transaction and pushes it. Sequence numbers come from the replica's own
-// high-water mark, never from the request: a file restored from a backup
-// arrives with entries it never wrote, and a request's numbering could reuse a
-// number the log already holds. The push comes before the reply: the daemon
-// clears the outbox only once it has the numbered entries back, and a reply
-// sent before the push would let it drop changes the log never received.
-func (b *TursoBackend) Append(entries []Entry) ([]Entry, error) {
-	return b.AppendSigned(entries, Boundary{})
-}
-
-// AppendSigned is Append with the boundary the exporter predicted for its first
-// signed entry.
-func (b *TursoBackend) AppendSigned(entries []Entry, boundary Boundary) ([]Entry, error) {
-	if err := b.ready(); err != nil {
-		return nil, err
-	}
-	if len(entries) == 0 {
-		return []Entry{}, nil
-	}
-	for _, e := range entries {
-		if e.Origin != b.spec.Origin {
-			return nil, fmt.Errorf("syncworker: append %s %s as %s: %w", e.Tbl, e.PK, e.Origin, ErrForeignOrigin)
-		}
-	}
-	ctx := context.Background()
-	written, err := b.writeBatch(ctx, entries, boundary)
-	if err != nil {
-		return nil, err
-	}
-	if err := b.transfer(ctx, b.driver.Push); err != nil {
-		return nil, fmt.Errorf("syncworker: push: %w", markTransferRefusal(err))
-	}
-	return written, nil
-}
-
-// writeBatch numbers one batch and writes its log rows in one transaction: a
-// reader sees the whole batch or none of it.
-func (b *TursoBackend) writeBatch(ctx context.Context, entries []Entry, boundary Boundary) ([]Entry, error) {
-	tx, err := b.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("syncworker: append: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	var high sql.NullInt64
-	if err := tx.QueryRowContext(ctx,
-		"SELECT MAX(seq) FROM log WHERE origin = ?", b.spec.Origin).Scan(&high); err != nil {
-		return nil, fmt.Errorf("syncworker: read the high sequence: %w", err)
-	}
-	next := int(high.Int64) + 1
-	written := make([]Entry, 0, len(entries))
-	for i, e := range entries {
-		e.Origin = b.spec.Origin
-		e.Seq = next + i
-		// Every entry carries the request's first sequence, so a reader can tell
-		// where the batch ends and apply it whole.
-		e.Batch = next
-		if e.Op == opUpsert {
-			// The digest is checked here so an unhashable body refuses the
-			// batch at append, rather than failing the later derived read.
-			if _, err := bodyHash(e.Body); err != nil {
-				return nil, fmt.Errorf("syncworker: hash %s %s: %w", e.Tbl, e.PK, err)
-			}
-		}
-		if err := insertEntry(ctx, tx, e); err != nil {
-			return nil, err
-		}
-		written = append(written, e)
-	}
-	if err := writeSignedFrom(ctx, tx, b.spec.Origin, written, boundary); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("syncworker: append: %w", err)
-	}
-	return written, nil
-}
-
-// insertEntry writes one entry's log row. A delete carries no body, so it
-// stores NULL rather than an empty string that would read as a body; an
-// unsigned entry's MAC stores NULL the same way, which is not a MAC that failed
-// to verify.
-func insertEntry(ctx context.Context, tx *sql.Tx, e Entry) error {
-	var body any
-	if e.Op == opUpsert {
-		body = string(e.Body)
-	}
-	var mac any
-	if len(e.MAC) > 0 {
-		mac = e.MAC
-	}
-	var afterOrigin any
-	if e.AfterOrigin != "" {
-		afterOrigin = e.AfterOrigin
-	}
-	var afterSeq any
-	if e.AfterSeq > 0 {
-		afterSeq = e.AfterSeq
-	}
-	if _, err := tx.ExecContext(ctx,
-		"INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at, mac, after_origin, after_seq)"+
-			" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		e.Origin, e.Seq, e.Batch, e.Tbl, e.PK, e.Op, e.SchemaVersion, body,
-		e.At.UTC().Format(time.RFC3339Nano), mac, afterOrigin, afterSeq); err != nil {
-		return fmt.Errorf("syncworker: append %s %s: %w", e.Tbl, e.PK, err)
+	if err := b.ensureLog(ctx, spec.URL); err != nil {
+		_ = b.Close()
+		return err
 	}
 	return nil
 }
@@ -391,6 +307,7 @@ func (b *TursoBackend) Stats() (Stats, error) {
 	// The byte counters ride along with the log's size, read from this worker's
 	// accumulated totals rather than the engine's own running counters.
 	s.TursoSent, s.TursoReceived = b.bytes.TursoSent, b.bytes.TursoReceived
+	s.R2Put, s.R2Get = b.bytes.R2Put, b.bytes.R2Get
 	return s, nil
 }
 
