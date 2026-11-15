@@ -50,14 +50,22 @@ func TestMemTransportReadMarksReportsTheLogSize(t *testing.T) {
 		t.Errorf("m2's size = head %d entries %d, want 1 and 1",
 			state.Heads["m2"], state.Entries["m2"])
 	}
+	if state.Floors != nil {
+		t.Errorf("floors = %v, want nil: nothing has compacted", state.Floors)
+	}
 
 	// An empty log reports empty rather than a head of zero per origin: nothing
-	// has written, which is a different fact from an origin at the start.
+	// has written, which is a different fact from an origin at the start, and an
+	// origin that compacted nothing stays apart from one whose floor is at the
+	// start, because the two mean different things to the reader.
 	empty, err := NewMemTransport("m9").ReadMarks()
 	if err != nil {
 		t.Fatalf("ReadMarks on an empty log: %v", err)
 	}
 	if len(empty.Heads) != 0 || len(empty.Entries) != 0 {
 		t.Errorf("an empty log reported %+v, want nothing at all", empty)
+	}
+	if empty.Floors != nil {
+		t.Errorf("floors = %v, want nil: nothing has compacted", empty.Floors)
 	}
 }
