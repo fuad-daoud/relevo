@@ -290,6 +290,9 @@ func TestPullRangeCutsToThePage(t *testing.T) {
 		if len(page) != 2 {
 			t.Fatalf("page after %d = %d entries, want exactly 2", after, len(page))
 		}
+		if page[0].Seq <= after {
+			t.Fatalf("page after %d starts at %d: the cursor did not advance", after, page[0].Seq)
+		}
 		got = append(got, page...)
 		after = page[len(page)-1].Seq
 	}
