@@ -445,8 +445,9 @@ func TestAppendRefusesOversizeEntries(t *testing.T) {
 	}
 }
 
-// TestAppendRefusesWhenNoR2 pins that a backend opened without R2 refuses Append
-// with ErrNoR2 without modifying replica or pushing, while read verbs still answer.
+// TestAppendRefusesWhenNoR2 pins that a backend opened without R2 refuses
+// Append and Pull with ErrNoR2 without modifying the replica, pushing or
+// pulling, while Head and Stats still answer.
 func TestAppendRefusesWhenNoR2(t *testing.T) {
 	driver := &localDriver{path: tempReplica(t)}
 	b := NewTursoBackend(driver)
@@ -471,8 +472,11 @@ func TestAppendRefusesWhenNoR2(t *testing.T) {
 	}
 	assertEmptyReplica(t, driver)
 
-	if _, err := b.Pull(nil); err != nil {
-		t.Errorf("Pull failed: %v", err)
+	if _, err := b.Pull(nil); !errors.Is(err, ErrNoR2) || errors.Unwrap(err) != nil {
+		t.Fatalf("pull err = %v, want unwrapped ErrNoR2 sentinel", err)
+	}
+	if driver.pulls != 0 {
+		t.Errorf("driver pulled %d times, want 0: a pull with no bucket costs no transfer", driver.pulls)
 	}
 	if _, err := b.Head("origin-a", "", 0); err != nil {
 		t.Errorf("Head failed: %v", err)
@@ -508,6 +512,16 @@ func TestAppendRefusesWhenNoR2(t *testing.T) {
 	}
 	if !strings.Contains(resp.Error, ErrNoR2.Error()) {
 		t.Errorf("export error = %q, want containing %q", resp.Error, ErrNoR2.Error())
+	}
+	pullResp := w.ask(Request{ID: "3", Verb: VerbPull})
+	if pullResp.OK {
+		t.Fatalf("pull succeeded, want refusal: %+v", pullResp)
+	}
+	if !strings.Contains(pullResp.Error, ErrNoR2.Error()) {
+		t.Errorf("pull error = %q, want containing %q", pullResp.Error, ErrNoR2.Error())
+	}
+	if driver2.pulls != 0 {
+		t.Errorf("driver pulled %d times over the pipe, want 0: a pull with no bucket costs no transfer", driver2.pulls)
 	}
 }
 

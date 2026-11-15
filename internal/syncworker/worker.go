@@ -58,8 +58,10 @@ type Backend interface {
 	// refused: an installation appends only for the rows it owns.
 	Append(entries []Entry) ([]Entry, error)
 	// Pull returns one page per origin of every other origin's entries past the
-	// mark given for it, in sequence order and in whole batches. An origin with
-	// no mark is read from the start of its log.
+	// mark given for it, read from the bucket's segments in sequence order and
+	// in whole batches. An origin with no mark is read from the start of its
+	// log. A hello that named no bucket is refused with ErrNoR2 before any
+	// transfer.
 	Pull(marks map[string]int) ([]Entry, error)
 	// Head returns a page of one origin's latest entry per row, starting after
 	// the given key. An empty after starts at the beginning and a limit of zero

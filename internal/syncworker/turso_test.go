@@ -142,6 +142,24 @@ func tempReplica(t *testing.T) string {
 func backendWithStore(t *testing.T, driver ReplicaDriver, origin string, mirror ...string) (*TursoBackend, *blobstore.MemBlobStore) {
 	t.Helper()
 	store := blobstore.NewMemBlobStore(nil)
+	return backendOnStore(t, driver, origin, store, mirror...), store
+}
+
+// backendOnStore opens a backend on a fresh local replica sharing the given
+// in-memory store and closes it when the test ends. Two backends that must see
+// each other's segments share one store through it, the way two machines share
+// one bucket.
+func backendOnStore(t *testing.T, driver ReplicaDriver, origin string, store *blobstore.MemBlobStore, mirror ...string) *TursoBackend {
+	t.Helper()
+	return backendOnBlobStore(t, driver, origin, store, mirror...)
+}
+
+// backendOnBlobStore is backendOnStore for any store, which is how a reader
+// takes a probe wrapping the one the writers share. The store is handed over
+// through openStore, never by swapping the package's constructor, so parallel
+// tests cannot race on it.
+func backendOnBlobStore(t *testing.T, driver ReplicaDriver, origin string, store blobstore.BlobStore, mirror ...string) *TursoBackend {
+	t.Helper()
 	b := NewTursoBackend(driver)
 	b.openStore = func(R2Config) blobstore.BlobStore { return store }
 	if err := b.Open(Spec{
@@ -155,7 +173,7 @@ func backendWithStore(t *testing.T, driver ReplicaDriver, origin string, mirror 
 		t.Fatalf("open backend: %v", err)
 	}
 	t.Cleanup(func() { _ = b.Close() })
-	return b, store
+	return b
 }
 
 // backendFor opens a backend on a fresh local replica as origin and closes it
@@ -754,11 +772,12 @@ func TestExportAssignsMaxPlusOneAndRepliesOnlyAfterPush(t *testing.T) {
 // and nothing at or below the mark.
 func TestPullReturnsOnlyEntriesPastTheMarks(t *testing.T) {
 	path := tempReplica(t)
-	a := backendFor(t, &localDriver{path: path}, "origin-a")
+	store := blobstore.NewMemBlobStore(nil)
+	a := backendOnStore(t, &localDriver{path: path}, "origin-a", store)
 	if _, err := a.Append([]Entry{upsertEntry("origin-a", "board", `["a"]`, `{"title":"mine"}`)}); err != nil {
 		t.Fatalf("append as origin-a: %v", err)
 	}
-	b := backendFor(t, &localDriver{path: path}, "origin-b")
+	b := backendOnStore(t, &localDriver{path: path}, "origin-b", store)
 	if _, err := b.Append([]Entry{
 		upsertEntry("origin-b", "board", `["b1"]`, `{"title":"one"}`),
 		upsertEntry("origin-b", "board", `["b2"]`, `{"title":"two"}`),
@@ -797,30 +816,18 @@ func TestPullReturnsOnlyEntriesPastTheMarks(t *testing.T) {
 	}
 }
 
-// TestPullReadsOnlyWhatIsPastTheMarks pins that a pull narrows its read in SQL
-// per origin: one mark filter per origin, so the log is not read whole and
-// filtered here, bounded to one page. An origin with no mark is read from its
-// first sequence. The backend reads through that statement, so an entry at or
-// below a mark does not come back even when the mark sits inside its batch.
+// TestPullReadsOnlyWhatIsPastTheMarks pins that a pull reads only what is past
+// each origin's mark: the listing is narrowed per origin, so mostly-applied
+// history is not listed whole and filtered here. An origin with no mark is
+// read from its first sequence. An entry at or below a mark does not come back
+// even when the mark sits inside its batch. The narrowing itself is pinned by
+// the listStartAfter and selectSegmentKeys table tests.
 func TestPullReadsOnlyWhatIsPastTheMarks(t *testing.T) {
 	t.Parallel()
-	origins := []string{"origin-b", "origin-c"}
-	query, args := pullQuery(origins, map[string]int{"origin-b": 7}, 100)
-
-	if got := strings.Count(query, "(origin = ? AND seq > ?)"); got != len(origins) {
-		t.Fatalf("the pull filters %d origins in SQL, want one clause per origin:\n%s", got, query)
-	}
-	if !strings.Contains(query, "ORDER BY origin, seq") || !strings.Contains(query, "LIMIT ?") {
-		t.Fatalf("the pull is not ordered and bounded:\n%s", query)
-	}
-	want := []any{"origin-b", 7, "origin-c", 0, 100}
-	if !reflect.DeepEqual(args, want) {
-		t.Errorf("pull args = %v, want %v", args, want)
-	}
-
 	path := tempReplica(t)
-	a := backendFor(t, &localDriver{path: path}, "origin-a")
-	b := backendFor(t, &localDriver{path: path}, "origin-b")
+	store := blobstore.NewMemBlobStore(nil)
+	a := backendOnStore(t, &localDriver{path: path}, "origin-a", store)
+	b := backendOnStore(t, &localDriver{path: path}, "origin-b", store)
 	if _, err := b.Append([]Entry{
 		upsertEntry("origin-b", "board", `["b1"]`, `{"title":"one"}`),
 		upsertEntry("origin-b", "board", `["b2"]`, `{"title":"two"}`),
@@ -838,15 +845,16 @@ func TestPullReadsOnlyWhatIsPastTheMarks(t *testing.T) {
 	assertSeqs(t, got, 3)
 }
 
-// TestPullCompletesABatchThePageCut pins that a page small enough to end inside
-// a batch still returns the batch whole: a batch is applied whole and the mark
-// moves to its tail, so half of one would let the next pull drop the other half
-// as though the mark covered it.
+// TestPullCompletesABatchThePageCut pins that a page smaller than one segment
+// still returns the batch whole: a batch is applied whole and the mark moves
+// to its tail, so half of one would let the next pull drop the other half as
+// though the mark covered it.
 func TestPullCompletesABatchThePageCut(t *testing.T) {
 	t.Parallel()
 	path := tempReplica(t)
-	a := backendFor(t, &localDriver{path: path}, "origin-a")
-	b := backendFor(t, &localDriver{path: path}, "origin-b")
+	store := blobstore.NewMemBlobStore(nil)
+	a := backendOnStore(t, &localDriver{path: path}, "origin-a", store)
+	b := backendOnStore(t, &localDriver{path: path}, "origin-b", store)
 	a.page = 2
 	if _, err := b.Append([]Entry{
 		upsertEntry("origin-b", "board", `["b1"]`, `{"title":"one"}`),
@@ -874,12 +882,14 @@ func TestPullCompletesABatchThePageCut(t *testing.T) {
 func TestPullMakesProgressOnEveryOrigin(t *testing.T) {
 	t.Parallel()
 	path := tempReplica(t)
-	a := backendFor(t, &localDriver{path: path}, "origin-a")
-	b := backendFor(t, &localDriver{path: path}, "origin-b")
-	c := backendFor(t, &localDriver{path: path}, "origin-c")
+	store := blobstore.NewMemBlobStore(nil)
+	a := backendOnStore(t, &localDriver{path: path}, "origin-a", store)
+	b := backendOnStore(t, &localDriver{path: path}, "origin-b", store)
+	c := backendOnStore(t, &localDriver{path: path}, "origin-c", store)
 	a.page = 3
-	// origin-b sorts first and alone fills a page, and its mark stays put, so a
-	// pull that ran one global LIMIT would spend the whole page on it.
+	// origin-b sorts first and its single four-entry segment fills the page,
+	// and its mark stays put, so a pull that read one global page would spend
+	// it all on origin-b.
 	if _, err := b.Append([]Entry{
 		upsertEntry("origin-b", "board", `["b1"]`, `{"title":"one"}`),
 		upsertEntry("origin-b", "board", `["b2"]`, `{"title":"two"}`),
@@ -1484,7 +1494,9 @@ func TestBackendAnswersAnEmptyBatch(t *testing.T) {
 
 // TestBackendRefusesWhenTheLogIsGone pins that a replica whose log vanished
 // is reported, not answered from. The head is derived from the log, so a
-// missing head table leaves the read answering from what the log holds.
+// missing head table leaves the read answering from what the log holds. The
+// pull reads the heads rows and the append and stats read both tables, so
+// both go before those assertions.
 func TestBackendRefusesWhenTheLogIsGone(t *testing.T) {
 	driver := &localDriver{path: tempReplica(t)}
 	b := backendFor(t, driver, "origin-a")
@@ -1499,7 +1511,7 @@ func TestBackendRefusesWhenTheLogIsGone(t *testing.T) {
 	if len(head) != 1 || head[0].PK != `["b"]` || head[0].Seq != 1 {
 		t.Errorf("head over a missing head table = %+v, want the one log row at seq 1", head)
 	}
-	execOn(t, driver.path, "DROP TABLE log")
+	execOn(t, driver.path, "DROP TABLE log", "DROP TABLE heads")
 	if _, err := b.Pull(nil); err == nil {
 		t.Error("pull succeeded over a missing log table")
 	}
@@ -1512,15 +1524,18 @@ func TestBackendRefusesWhenTheLogIsGone(t *testing.T) {
 }
 
 // TestBackendPullRefusesARowItCannotScan pins that a log row whose column types
-// do not match the log is reported rather than read as a zero value.
+// do not match the log is reported rather than read as a zero value. It reads
+// through PullRange, which still reads the log table. The mismatch sits in
+// batch, which the range filter does not touch: a text seq sorts above every
+// numeric upper bound, so the filter would exclude the row before any scan.
 func TestBackendPullRefusesARowItCannotScan(t *testing.T) {
 	driver := &localDriver{path: tempReplica(t)}
 	b := backendFor(t, driver, "origin-a")
 	execOn(t, driver.path,
 		"INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at) "+
-			"VALUES ('origin-b', 'not a number', 1, 'board', '[\"b\"]', 'delete', 1, NULL, '2026-10-08T00:00:00Z')")
-	if _, err := b.Pull(nil); err == nil {
-		t.Error("pull read a row whose sequence is not a number")
+			"VALUES ('origin-b', 1, 'not a number', 'board', '[\"b\"]', 'delete', 1, NULL, '2026-10-08T00:00:00Z')")
+	if _, err := b.PullRange("origin-b", 0, 1); err == nil {
+		t.Error("pull_range read a row whose batch is not a number")
 	}
 }
 
@@ -1569,15 +1584,16 @@ func TestBackendOpenTwiceReleasesTheFirstReplica(t *testing.T) {
 }
 
 // TestBackendPullRefusesARowItCannotRead pins that a log row whose time cannot
-// be parsed is reported rather than read as a zero moment.
+// be parsed is reported rather than read as a zero moment. It reads through
+// PullRange, which still reads the log table.
 func TestBackendPullRefusesARowItCannotRead(t *testing.T) {
 	driver := &localDriver{path: tempReplica(t)}
 	b := backendFor(t, driver, "origin-a")
 	execOn(t, driver.path,
 		"INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at) "+
 			"VALUES ('origin-b', 1, 1, 'board', '[\"b\"]', 'delete', 1, NULL, 'not a time')")
-	if _, err := b.Pull(nil); err == nil {
-		t.Error("pull read a row whose time is not a time")
+	if _, err := b.PullRange("origin-b", 0, 1); err == nil {
+		t.Error("pull_range read a row whose time is not a time")
 	}
 }
 

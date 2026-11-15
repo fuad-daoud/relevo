@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/blobstore"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
@@ -19,7 +20,8 @@ import (
 func TestTursoBackendAppendsAndPullsAfter(t *testing.T) {
 	path := tempReplica(t)
 	driver := &localDriver{path: path}
-	b := backendFor(t, driver, "origin-a")
+	store := blobstore.NewMemBlobStore(nil)
+	b := backendOnStore(t, driver, "origin-a", store)
 	defer func() { _ = b.Close() }()
 
 	entries := []Entry{
@@ -48,7 +50,7 @@ func TestTursoBackendAppendsAndPullsAfter(t *testing.T) {
 		t.Errorf("written entry After = (%q, %d), want (origin-0, 99)", written[0].AfterOrigin, written[0].AfterSeq)
 	}
 
-	b2 := backendFor(t, driver, "origin-b")
+	b2 := backendOnStore(t, driver, "origin-b", store)
 	defer func() { _ = b2.Close() }()
 	pulled, err := b2.Pull(map[string]int{"origin-a": 0})
 	if err != nil {

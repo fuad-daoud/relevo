@@ -140,23 +140,24 @@ func (b *TursoBackend) Open(spec Spec) error {
 }
 
 // Pull applies the remote's changes to the replica, then returns one page per
-// origin of every other origin's entries past the mark given for it. A backlog
-// larger than a page drains one page per sync tick, and a batch beginning at or
-// before a mark is skipped whole: half of one would apply an order the exporter
-// never wrote.
+// origin of every other origin's entries past the mark given for it, read from
+// the bucket's segments the heads rows name. A backlog larger than a page
+// drains one page per sync tick, and a batch beginning at or before a mark is
+// skipped whole: half of one would apply an order the exporter never wrote. A
+// hello that named no bucket is refused before any transfer: the segments have
+// nowhere to be read from, and the refusal costs no traffic.
 func (b *TursoBackend) Pull(marks map[string]int) ([]Entry, error) {
 	if err := b.ready(); err != nil {
 		return nil, err
+	}
+	if b.blobs == nil {
+		return nil, ErrNoR2
 	}
 	ctx := context.Background()
 	if err := b.transfer(ctx, b.driver.Pull); err != nil {
 		return nil, fmt.Errorf("syncworker: pull: %w", markTransferRefusal(err))
 	}
-	entries, err := b.readEntries(ctx, marks)
-	if err != nil {
-		return nil, err
-	}
-	return entries, nil
+	return b.readEntries(ctx, marks)
 }
 
 // scanEntry reads one log row back into the entry the pipe carries. The MAC
