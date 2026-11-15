@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	turso "turso.tech/database/tursogo"
 )
@@ -119,6 +121,38 @@ func (d *tursoDriver) Stats(ctx context.Context) (turso.TursoSyncDbStats, error)
 // Checkpoint folds the replica's WAL into its database file.
 func (d *tursoDriver) Checkpoint(ctx context.Context) error {
 	return d.sdb.Checkpoint(ctx)
+}
+
+// Discard removes the replica and every driver file named after it so the
+// next Open bootstraps it again. The engine handle is dropped rather than
+// closed because the bindings expose no close, the reason Close gives. The
+// file rule repeats internal/sync's ReplicaFiles, which this package may not
+// import because it may not reach that package's database; the two must
+// agree. A missing directory or file is not an error.
+func (d *tursoDriver) Discard(ctx context.Context) error {
+	d.sdb = nil
+	dir := filepath.Dir(d.path)
+	base := filepath.Base(d.path)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("syncworker: discard %s: %w", d.path, err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if name != base && !strings.HasPrefix(name, base+"-") && !strings.HasPrefix(name, base+".") {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("syncworker: discard %s: %w", d.path, err)
+		}
+	}
+	return nil
 }
 
 // bytesDelta returns what one push or pull moved, from the engine's own totals

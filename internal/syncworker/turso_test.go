@@ -33,6 +33,8 @@ type localDriver struct {
 	stats  int
 	// checkpoints counts the WAL checkpoints the backend asked for.
 	checkpoints int
+	// discards counts the Discard calls the backend made.
+	discards int
 	// engineBytes is what the engine's own counters read as. A transfer that
 	// moves bytes sets it, and the backend's cumulative totals follow from the
 	// difference between the readings either side.
@@ -41,13 +43,20 @@ type localDriver struct {
 	// bootstrapped is what Open reports it downloaded.
 	bootstrapped int64
 
-	openErr  error
-	pushErr  error
-	pullErr  error
-	statsErr error
+	openErr    error
+	pushErr    error
+	pullErr    error
+	statsErr   error
+	discardErr error
 	// afterPush runs once a push succeeds, so a test can change the replica
 	// between a publish's push and the read that follows it.
 	afterPush func(*sql.DB)
+	// afterDiscard runs once the replica's files are removed, so a test can
+	// seed what the remote the next Open bootstraps from holds.
+	afterDiscard func(path string)
+	// afterPull runs once a pull succeeds, so a test can make the remote's
+	// migration appear in the replica.
+	afterPull func(db *sql.DB)
 }
 
 func (d *localDriver) Bootstrapped() int64 { return d.bootstrapped }
@@ -78,7 +87,34 @@ func (d *localDriver) Push(context.Context) error {
 
 func (d *localDriver) Pull(context.Context) error {
 	d.pulls++
+	if d.pullErr == nil && d.afterPull != nil {
+		d.afterPull(d.db)
+	}
 	return d.pullErr
+}
+
+// Discard closes the replica and removes its file and the WAL sidecars, which
+// stands for the driver's files going so the next Open bootstraps again.
+func (d *localDriver) Discard(context.Context) error {
+	d.discards++
+	if d.discardErr != nil {
+		return d.discardErr
+	}
+	if d.db != nil {
+		if err := d.db.Close(); err != nil {
+			return err
+		}
+		d.db = nil
+	}
+	for _, name := range []string{d.path, d.path + "-wal", d.path + "-shm"} {
+		if err := os.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	if d.afterDiscard != nil {
+		d.afterDiscard(d.path)
+	}
+	return nil
 }
 
 func (d *localDriver) Checkpoint(context.Context) error {
@@ -462,12 +498,18 @@ func TestFirstUseCreatesTheRemoteLogTables(t *testing.T) {
 	if driver.pushes != 1 {
 		t.Errorf("first use pushed %d times, want once: the remote learns the schema from a push", driver.pushes)
 	}
+	if driver.pulls != 0 {
+		t.Errorf("first use pulled %d times, want none: an empty remote never pulls on open", driver.pulls)
+	}
 	_ = b.Close()
 
 	again := &localDriver{path: path}
 	backendFor(t, again, "origin-a")
 	if again.pushes != 0 {
 		t.Errorf("a re-run pushed %d times, want none: the log was already there", again.pushes)
+	}
+	if again.pulls != 0 {
+		t.Errorf("a re-run pulled %d times, want none: the current set never pulls on open", again.pulls)
 	}
 	if tables := replicaTables(t, path); len(tables) != 5 {
 		t.Errorf("a re-run left %v, want the same five tables", tables)
@@ -522,6 +564,9 @@ func TestHelloRefusesAnOlderFormatWithTheMigrateMessage(t *testing.T) {
 			if driver.pushes != 0 {
 				t.Errorf("a refused remote pushed %d times, want none", driver.pushes)
 			}
+			if driver.pulls != 1 {
+				t.Errorf("pulls = %d, want exactly one: an older format pulls once before the refusal", driver.pulls)
+			}
 		})
 	}
 }
@@ -566,51 +611,38 @@ func TestFirstUseLooksPastTheEnginesOwnTables(t *testing.T) {
 
 // TestWorkerRefusesARemoteThatIsNotALog pins the refusal a remote that is not
 // this log gets: it is answered with the URL it named and a reason, before any
-// table is created or row is written.
+// table is created or row is written. The remote keeps its shape across a
+// reset, so a replica thrown away and bootstrapped again meets the same
+// refusal.
 func TestWorkerRefusesARemoteThatIsNotALog(t *testing.T) {
-	cases := map[string]func(t *testing.T, path string){
-		"another database's tables": func(t *testing.T, path string) {
-			execOn(t, path, "CREATE TABLE secrets (s TEXT NOT NULL)")
-		},
-		"another database's tables beside the engine's": func(t *testing.T, path string) {
-			execOn(t, path, append(append([]string(nil), engineTables...), "CREATE TABLE secrets (s TEXT NOT NULL)")...)
-		},
-		"a log with no meta": func(t *testing.T, path string) {
-			execOn(t, path, createStatements[0], createStatements[2])
-		},
-		"a meta with no format row": func(t *testing.T, path string) {
-			execOn(t, path, createStatements[0], createStatements[1], createStatements[2])
-		},
-		"a different format": func(t *testing.T, path string) {
-			execOn(t, path, append(append([]string(nil), createStatements...),
-				"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '99')")...)
-		},
+	cases := map[string][]string{
+		"another database's tables": {"CREATE TABLE secrets (s TEXT NOT NULL)"},
+		"another database's tables beside the engine's": append(append([]string(nil), engineTables...),
+			"CREATE TABLE secrets (s TEXT NOT NULL)"),
+		"a log with no meta":        {createStatements[0], createStatements[2]},
+		"a meta with no format row": {createStatements[0], createStatements[1], createStatements[2]},
+		"a different format": append(append([]string(nil), createStatements...),
+			"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '99')"),
 		// The tables of an older format with the current format's row, and the
 		// other way round: a remote in neither shape, which the checks must not
 		// read as one.
-		"the older tables at the current format": func(t *testing.T, path string) {
-			execOn(t, path, logWithoutMAC, headTableStatement, createStatements[1],
-				"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '"+strconv.Itoa(logFormatVersion)+"')")
-		},
-		"the current tables at the older format": func(t *testing.T, path string) {
-			execOn(t, path, append(append([]string(nil), createStatements...),
-				"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '1')")...)
-		},
-		"format two's tables at format one's row": func(t *testing.T, path string) {
-			execOn(t, path, logWithoutMAC, headTableStatement, createStatements[1],
-				createStatements[2],
-				"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '1')")
-		},
-		"a format above this build's": func(t *testing.T, path string) {
-			execOn(t, path, append(append([]string(nil), createStatements...),
-				"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '7')")...)
-		},
+		"the older tables at the current format": {logWithoutMAC, headTableStatement, createStatements[1],
+			"INSERT INTO meta (key, value) VALUES ('" + metaFormatKey + "', '" + strconv.Itoa(logFormatVersion) + "')"},
+		"the current tables at the older format": append(append([]string(nil), createStatements...),
+			"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '1')"),
+		"format two's tables at format one's row": {logWithoutMAC, headTableStatement, createStatements[1],
+			createStatements[2],
+			"INSERT INTO meta (key, value) VALUES ('" + metaFormatKey + "', '1')"},
+		"a format above this build's": append(append([]string(nil), createStatements...),
+			"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '7')"),
 	}
-	for name, seed := range cases {
+	for name, stmts := range cases {
 		t.Run(name, func(t *testing.T) {
 			path := tempReplica(t)
-			seed(t, path)
-			b := NewTursoBackend(&localDriver{path: path})
+			execOn(t, path, stmts...)
+			driver := &localDriver{path: path}
+			driver.afterDiscard = func(p string) { reseedReplica(t, p, stmts) }
+			b := NewTursoBackend(driver)
 			resp := startWorker(t, b).ask(helloRequest("h"))
 			if resp.OK {
 				t.Fatalf("hello = %+v, want a refusal", resp)
@@ -670,6 +702,9 @@ func TestWorkerRefusalLeavesTheRemoteUntouched(t *testing.T) {
 			}
 			if driver.pushes != 0 {
 				t.Errorf("a refused remote pushed %d times, want none", driver.pushes)
+			}
+			if driver.pulls != 0 {
+				t.Errorf("a refused remote pulled %d times, want none: only the older-format branch pulls", driver.pulls)
 			}
 		})
 	}

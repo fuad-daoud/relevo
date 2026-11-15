@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/synclog"
@@ -351,6 +352,23 @@ func (d *sharedRemoteDriver) Stats(context.Context) (turso.TursoSyncDbStats, err
 }
 
 func (d *sharedRemoteDriver) Checkpoint(context.Context) error { return nil }
+
+// Discard closes the replica and removes its file and the WAL sidecars, the
+// same shape localDriver's discard has.
+func (d *sharedRemoteDriver) Discard(context.Context) error {
+	if d.db != nil {
+		if err := d.db.Close(); err != nil {
+			return err
+		}
+		d.db = nil
+	}
+	for _, name := range []string{d.path, d.path + "-wal", d.path + "-shm"} {
+		if err := os.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}
 
 // TestTwoSameFromRekeysEndWithExactlyOneWinnerAndLoserReportsRace pins that when two
 // workers attempt same-From rekeys against a shared remote, exactly one winner's

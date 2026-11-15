@@ -65,11 +65,12 @@ var createStatements = []string{
 }
 
 // ensureLog makes sure the remote is this log: an empty remote gets the log's
-// tables, one whose meta names this format is used, one at an older format is
-// refused with the migrate message, and anything else is refused as not a log.
-// A remote classified as something other than a relevo log is never written
-// into. The table set and the format row are matched together, so a remote
-// whose tables and format disagree is refused rather than opened.
+// tables, one whose meta names this format is used, one at an older format
+// pulls once and is classified again before the migrate message, and anything
+// else is refused as not a log. A remote classified as something other than a
+// relevo log is never written into. The table set and the format row are
+// matched together, so a remote whose tables and format disagree is refused
+// rather than opened.
 func (b *TursoBackend) ensureLog(ctx context.Context, url string) error {
 	tables, err := userTables(ctx, b.db)
 	if err != nil {
@@ -93,9 +94,73 @@ func (b *TursoBackend) ensureLog(ctx context.Context, url string) error {
 		return nil
 	}
 	if older, ok := olderLogTables[atoiOrZero(format)]; ok && slices.Equal(tables, older) {
-		return errMigrate(url, format)
+		return b.pullOlderFormat(ctx, url, format)
 	}
 	return errNotALog(url)
+}
+
+// unknownShape reports whether a table set matches no shape this build
+// classifies: neither the current log's tables nor any older format's. An
+// empty set is not unknown: it is the empty remote the log is created on.
+func unknownShape(tables []string) bool {
+	return len(tables) != 0 && !isLogTables(tables) && !isOlderTables(tables)
+}
+
+// resetUnknownShape throws away a pre-existing replica that matches no known
+// shape and bootstraps it again from the remote, once per Open: a replica
+// this open bootstrapped already is the remote, and a second mismatch falls
+// through to ensureLog, which refuses it as not a log rather than discarding
+// again.
+func (b *TursoBackend) resetUnknownShape(ctx context.Context) error {
+	tables, err := userTables(ctx, b.db)
+	if err != nil {
+		// An unreadable replica is ensureLog's to refuse: it reads the same
+		// tables and answers with the same error.
+		return nil
+	}
+	if !unknownShape(tables) || b.driver.Bootstrapped() != 0 {
+		return nil
+	}
+	// The connection goes before the files; a close that fails does not stop
+	// the discard, which is what the reset is for.
+	_ = b.Close()
+	if err := b.driver.Discard(ctx); err != nil {
+		return fmt.Errorf("syncworker: discard the replica: %w", markOpenRefusal(err))
+	}
+	db, err := b.driver.Open(ctx, b.spec)
+	if err != nil {
+		return fmt.Errorf("syncworker: open replica: %w", markOpenRefusal(err))
+	}
+	b.db = db
+	b.bytes.TursoReceived += b.driver.Bootstrapped()
+	return nil
+}
+
+// pullOlderFormat gives an older-format replica one pull before the migrate
+// refusal: a machine that was offline while another migrated the remote still
+// holds the older tables until it pulls, and Open does not pull an existing
+// replica. A pull of an unchanged remote costs a few hundred bytes, so the
+// refusal stays cheap while the remote is unmigrated. Only this branch pulls:
+// the current set and an empty remote never do.
+func (b *TursoBackend) pullOlderFormat(ctx context.Context, url, format string) error {
+	if err := b.transfer(ctx, b.driver.Pull); err != nil {
+		return fmt.Errorf("syncworker: pull: %w", markTransferRefusal(err))
+	}
+	tables, err := userTables(ctx, b.db)
+	if err != nil {
+		return fmt.Errorf("syncworker: read the remote's tables: %w", err)
+	}
+	if !isLogTables(tables) {
+		return errMigrate(url, format)
+	}
+	current, err := readFormat(ctx, b.db)
+	if err != nil {
+		return err
+	}
+	if current != strconv.Itoa(logFormatVersion) {
+		return errMigrate(url, format)
+	}
+	return nil
 }
 
 // atoiOrZero reads a format row as a number, and a row that is not one as zero

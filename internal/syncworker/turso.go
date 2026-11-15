@@ -48,6 +48,9 @@ type ReplicaDriver interface {
 	// Checkpoint folds the replica's WAL into its database file. The engine
 	// never does this on its own for a sync replica.
 	Checkpoint(ctx context.Context) error
+	// Discard removes the replica and the driver's files so the next Open
+	// bootstraps it again.
+	Discard(ctx context.Context) error
 }
 
 // TursoBackend is the log behind the worker's replica. It is what serves the
@@ -116,6 +119,10 @@ func (b *TursoBackend) Open(spec Spec) error {
 		b.blobs = nil
 	}
 	b.bytes.TursoReceived += b.driver.Bootstrapped()
+	if err := b.resetUnknownShape(ctx); err != nil {
+		_ = b.Close()
+		return err
+	}
 	if err := b.ensureLog(ctx, spec.URL); err != nil {
 		_ = b.Close()
 		return err
