@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/blobstore"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
@@ -17,9 +18,11 @@ import (
 func TestSignedEntryVerifiesAfterThePipeAndTheLog(t *testing.T) {
 	path := tempReplica(t)
 	// Two handles on one replica: an append is only readable by another origin,
-	// since a machine's own writes are already in its file.
-	writer := backendFor(t, &localDriver{path: path}, "origin-a")
-	reader := backendFor(t, &localDriver{path: path}, "origin-b")
+	// since a machine's own writes are already in its file. One store feeds
+	// both, the way one bucket feeds two machines.
+	store := blobstore.NewMemBlobStore(nil)
+	writer := backendOnStore(t, &localDriver{path: path}, "origin-a", store)
+	reader := backendOnStore(t, &localDriver{path: path}, "origin-b", store)
 	key := []byte("the passphrase this machine stretched")
 
 	// A body written with whitespace and columns in an order of its own, at a
@@ -69,13 +72,14 @@ func TestSignedEntryVerifiesAfterThePipeAndTheLog(t *testing.T) {
 }
 
 // TestAnUnsignedEntryIsStoredWithoutAMAC pins that an entry written before this
-// machine had a key leaves a NULL in the column, which is what a reader takes
-// as unsigned. An empty blob would be a different answer: it looks like a
-// signature of nothing rather than the absence of one.
+// machine had a key stores no MAC, which is what a reader takes as unsigned. An
+// empty blob would be a different answer: it looks like a signature of nothing
+// rather than the absence of one.
 func TestAnUnsignedEntryIsStoredWithoutAMAC(t *testing.T) {
 	path := tempReplica(t)
-	writer := backendFor(t, &localDriver{path: path}, "origin-a")
-	reader := backendFor(t, &localDriver{path: path}, "origin-b")
+	store := blobstore.NewMemBlobStore(nil)
+	writer := backendOnStore(t, &localDriver{path: path}, "origin-a", store)
+	reader := backendOnStore(t, &localDriver{path: path}, "origin-b", store)
 
 	written, err := writer.Append([]Entry{upsertEntry("origin-a", "board", `["u"]`, `{"title":"unsigned"}`)})
 	if err != nil {
@@ -84,8 +88,12 @@ func TestAnUnsignedEntryIsStoredWithoutAMAC(t *testing.T) {
 	if len(written) != 1 {
 		t.Fatalf("append = %d entries, want 1", len(written))
 	}
-	if mac, present := logMAC(t, path, written[0].Seq); present {
-		t.Errorf("the row holds a MAC of %x, want NULL", mac)
+	_, entries := decodeStoreSegment(t, store, blobstore.SegmentKey("origin-a", written[0].Seq))
+	if len(entries) != 1 {
+		t.Fatalf("the segment holds %d entries, want 1", len(entries))
+	}
+	if entries[0].MAC != nil {
+		t.Errorf("the stored entry holds a MAC of %x, want none", entries[0].MAC)
 	}
 	pulled, err := reader.Pull(nil)
 	if err != nil {

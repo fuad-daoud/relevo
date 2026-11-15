@@ -11,10 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/blobstore"
 )
 
-const (
-	tableLog    = "log"
-	tableShared = "shared"
-)
+const tableShared = "shared"
 
 // errHeadMoved reports that an origin's heads row moved twice during one export,
 // meaning concurrent writers keep racing it.
@@ -209,12 +206,9 @@ func (b *TursoBackend) commitSegment(ctx context.Context, head int, have bool, k
 	}
 
 	for _, e := range entries {
-		// The log table still serves pull, head and stats, so it is written beside
-		// the segment in the same transaction.
-		if err := insertRow(ctx, tx, tableLog, e); err != nil {
-			return false, err
-		}
 		if _, ok := mirror[e.Tbl]; ok {
+			// The shared row is written in the same transaction as the heads
+			// move, so the batch lands in both or neither.
 			if err := insertRow(ctx, tx, tableShared, e); err != nil {
 				return false, err
 			}

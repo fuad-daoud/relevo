@@ -35,17 +35,9 @@ var olderLogTables = map[int][]string{
 }
 
 // createStatements is the remote schema, in one place so the create and the
-// classification cannot disagree about what a relevo log is. The first three
-// statements keep indices 0, 1 and 2 for log, meta and marks.
+// classification cannot disagree about what a relevo log is: the heads, meta
+// and shared tables, in that order.
 var createStatements = []string{
-	"CREATE TABLE log (" +
-		"origin TEXT NOT NULL, seq INTEGER NOT NULL, batch INTEGER NOT NULL, " +
-		"tbl TEXT NOT NULL, pk TEXT NOT NULL, op TEXT NOT NULL, " +
-		"schema_version INTEGER NOT NULL, body TEXT, at TEXT NOT NULL, mac BLOB, " +
-		"after_origin TEXT, after_seq INTEGER, " +
-		"PRIMARY KEY (origin, seq))",
-	"CREATE TABLE meta (key TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL)",
-	createMarksStatement,
 	"CREATE TABLE heads (" +
 		"origin TEXT NOT NULL PRIMARY KEY, " +
 		"seq INTEGER NOT NULL, " +
@@ -56,6 +48,7 @@ var createStatements = []string{
 		"legacy_upto INTEGER NOT NULL DEFAULT 0, " +
 		"label TEXT NOT NULL DEFAULT '', " +
 		"at TEXT NOT NULL)",
+	"CREATE TABLE meta (key TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL)",
 	"CREATE TABLE shared (" +
 		"origin TEXT NOT NULL, seq INTEGER NOT NULL, batch INTEGER NOT NULL, " +
 		"tbl TEXT NOT NULL, pk TEXT NOT NULL, op TEXT NOT NULL, " +
@@ -238,11 +231,11 @@ func engineTable(name string) bool {
 	return false
 }
 
-// isLogTables reports whether the remote holds exactly this build's five tables.
+// isLogTables reports whether the remote holds exactly this build's three tables.
 // Anything else -- another database's tables, a partial create, an older format
 // -- is a remote this build will not write into.
 func isLogTables(tables []string) bool {
-	return slices.Equal(tables, []string{"heads", "log", "marks", "meta", "shared"})
+	return slices.Equal(tables, []string{"heads", "meta", "shared"})
 }
 
 // isOlderTables reports whether the remote holds the table set of any older

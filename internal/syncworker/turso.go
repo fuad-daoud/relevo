@@ -11,7 +11,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/fuad-daoud/relevo/internal/blobstore"
 	turso "turso.tech/database/tursogo"
@@ -140,64 +139,30 @@ func (b *TursoBackend) Open(spec Spec) error {
 }
 
 // Pull applies the remote's changes to the replica, then returns one page per
-// origin of every other origin's entries past the mark given for it. A backlog
-// larger than a page drains one page per sync tick, and a batch beginning at or
-// before a mark is skipped whole: half of one would apply an order the exporter
-// never wrote.
+// origin of every other origin's entries past the mark given for it, read from
+// the bucket's segments the heads rows name. A backlog larger than a page
+// drains one page per sync tick, and a batch beginning at or before a mark is
+// skipped whole: half of one would apply an order the exporter never wrote. A
+// hello that named no bucket is refused before any transfer: the segments have
+// nowhere to be read from, and the refusal costs no traffic.
 func (b *TursoBackend) Pull(marks map[string]int) ([]Entry, error) {
 	if err := b.ready(); err != nil {
 		return nil, err
+	}
+	if b.blobs == nil {
+		return nil, ErrNoR2
 	}
 	ctx := context.Background()
 	if err := b.transfer(ctx, b.driver.Pull); err != nil {
 		return nil, fmt.Errorf("syncworker: pull: %w", markTransferRefusal(err))
 	}
-	entries, err := b.readEntries(ctx, marks)
-	if err != nil {
-		return nil, err
-	}
-	return entries, nil
-}
-
-// scanEntry reads one log row back into the entry the pipe carries. The MAC
-// reads as raw bytes rather than text: decoding it on the way in would have to
-// be undone on the way out for the two to agree.
-func scanEntry(rows *sql.Rows) (Entry, error) {
-	var (
-		e           Entry
-		body        sql.NullString
-		mac         []byte
-		at          string
-		afterOrigin sql.NullString
-		afterSeq    sql.NullInt64
-	)
-	if err := rows.Scan(&e.Origin, &e.Seq, &e.Batch, &e.Tbl, &e.PK, &e.Op,
-		&e.SchemaVersion, &body, &at, &mac, &afterOrigin, &afterSeq); err != nil {
-		return Entry{}, fmt.Errorf("syncworker: read an entry: %w", err)
-	}
-	if body.Valid {
-		e.Body = json.RawMessage(body.String)
-	}
-	if len(mac) > 0 {
-		e.MAC = mac
-	}
-	parsed, err := time.Parse(time.RFC3339Nano, at)
-	if err != nil {
-		return Entry{}, fmt.Errorf("syncworker: read %s %s time: %w", e.Tbl, e.PK, err)
-	}
-	e.At = parsed
-	if afterOrigin.Valid && afterOrigin.String != "" {
-		e.AfterOrigin = afterOrigin.String
-	}
-	if afterSeq.Valid && afterSeq.Int64 > 0 {
-		e.AfterSeq = int(afterSeq.Int64)
-	}
-	return e, nil
+	return b.readEntries(ctx, marks)
 }
 
 // Head returns one page of an origin's latest state per row, in ascending
-// sequence order. An empty cursor starts at the beginning and a limit of zero
-// means the whole rest.
+// sequence order, derived from the segments the origin's heads row names. An
+// empty cursor starts at the beginning and a limit of zero means the whole
+// rest.
 func (b *TursoBackend) Head(origin, after string, limit int) ([]HeadRow, error) {
 	if err := b.ready(); err != nil {
 		return nil, err
@@ -214,79 +179,17 @@ func (b *TursoBackend) Head(origin, after string, limit int) ([]HeadRow, error) 
 		start = n
 	}
 	ctx := context.Background()
-	newest, err := b.newestPerRow(ctx, origin)
+	h, ok, err := b.readOriginHead(ctx, origin)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := b.db.QueryContext(ctx,
-		"SELECT tbl, pk, seq, op, body FROM log WHERE origin = ? AND seq > ? ORDER BY seq", origin, start)
-	if err != nil {
-		return nil, fmt.Errorf("syncworker: read head: %w", err)
+	if !ok {
+		return []HeadRow{}, nil
 	}
-	defer func() { _ = rows.Close() }()
-	return collectHead(rows, newest, limit)
-}
-
-// headKey names one row of a table, the unit the head keeps a latest state for.
-type headKey struct{ tbl, pk string }
-
-// newestPerRow maps each of the origin's rows to its highest sequence, reading no
-// bodies. The grouping is done here rather than as a grouped subquery in SQL: the
-// engine evaluates that subquery about a hundred times slower than this one scan
-// on a log of tens of thousands of entries, slow enough to time a reconcile out.
-func (b *TursoBackend) newestPerRow(ctx context.Context, origin string) (map[headKey]int, error) {
-	rows, err := b.db.QueryContext(ctx, "SELECT tbl, pk, seq FROM log WHERE origin = ?", origin)
-	if err != nil {
-		return nil, fmt.Errorf("syncworker: read head: %w", err)
+	if b.blobs == nil {
+		return nil, ErrNoR2
 	}
-	defer func() { _ = rows.Close() }()
-	newest := make(map[headKey]int)
-	for rows.Next() {
-		var key headKey
-		var seq int
-		if err := rows.Scan(&key.tbl, &key.pk, &seq); err != nil {
-			return nil, fmt.Errorf("syncworker: read a head row: %w", err)
-		}
-		if seq > newest[key] {
-			newest[key] = seq
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("syncworker: read head: %w", err)
-	}
-	return newest, nil
-}
-
-// collectHead reads the origin's entries in sequence order and keeps only each
-// row's newest one, skipping a row whose newest entry deletes it and hashing each
-// survivor's body as it scans, so no page holds bodies. The limit applies after
-// both filters, so a superseded or deleted row inside the range cannot end the
-// walk early.
-func collectHead(rows *sql.Rows, newest map[headKey]int, limit int) ([]HeadRow, error) {
-	var out []HeadRow
-	for rows.Next() {
-		var tbl, pk, op string
-		var seq int
-		var body sql.NullString
-		if err := rows.Scan(&tbl, &pk, &seq, &op, &body); err != nil {
-			return nil, fmt.Errorf("syncworker: read a head row: %w", err)
-		}
-		if seq != newest[headKey{tbl: tbl, pk: pk}] || op == opDelete {
-			continue
-		}
-		hash, err := bodyHash(json.RawMessage(body.String))
-		if err != nil {
-			return nil, fmt.Errorf("syncworker: hash %s %s: %w", tbl, pk, err)
-		}
-		out = append(out, HeadRow{Tbl: tbl, PK: pk, Seq: seq, Hash: hash})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("syncworker: read head: %w", err)
-	}
-	if limit > 0 && len(out) > limit {
-		out = out[:limit]
-	}
-	return out, nil
+	return b.deriveHead(ctx, h, start, limit)
 }
 
 // Stats reports what the log holds: entries, origins, and the highest sequence.
@@ -300,7 +203,7 @@ func (b *TursoBackend) Stats() (Stats, error) {
 	}
 	var s Stats
 	if err := b.db.QueryRowContext(ctx,
-		"SELECT COUNT(*), COUNT(DISTINCT origin), COALESCE(MAX(seq), 0) FROM log").
+		"SELECT COALESCE(SUM(entries), 0), COUNT(*), COALESCE(MAX(seq), 0) FROM heads").
 		Scan(&s.Entries, &s.Origins, &s.Seq); err != nil {
 		return Stats{}, fmt.Errorf("syncworker: read the log's size: %w", err)
 	}

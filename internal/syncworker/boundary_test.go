@@ -11,11 +11,13 @@ func signedEntry(pk string) Entry {
 	return e
 }
 
-func logRows(t *testing.T, path string) int {
+// headEntries is the entry count the heads rows record, which is what an
+// append moves: a refused append leaves it where it was.
+func headEntries(t *testing.T, path string) int {
 	t.Helper()
 	var n int
-	if err := openAt(t, path).QueryRow("SELECT COUNT(*) FROM log").Scan(&n); err != nil {
-		t.Fatalf("count the log: %v", err)
+	if err := openAt(t, path).QueryRow("SELECT COALESCE(SUM(entries), 0) FROM heads").Scan(&n); err != nil {
+		t.Fatalf("count the heads entries: %v", err)
 	}
 	return n
 }
@@ -33,8 +35,8 @@ func TestWorkerRefusesAMispredictedBoundary(t *testing.T) {
 	if !errors.Is(err, ErrBoundary) || RefusalCodeOf(err) != CodeBoundary {
 		t.Fatalf("append = %v (code %q), want ErrBoundary under CodeBoundary", err, RefusalCodeOf(err))
 	}
-	if n := logRows(t, path); n != 1 {
-		t.Errorf("the log holds %d rows, want 1: a refused append wrote entries", n)
+	if n := headEntries(t, path); n != 1 {
+		t.Errorf("the heads hold %d entries, want 1: a refused append wrote entries", n)
 	}
 	if _, ok := signedFromMeta(t, path, "origin-a"); ok {
 		t.Error("a refused append wrote the boundary row")
@@ -49,8 +51,8 @@ func TestWorkerRefusesASignedBatchWithoutABoundaryOnAnUnsignedOrigin(t *testing.
 	if !errors.Is(err, ErrBoundary) {
 		t.Fatalf("append = %v, want ErrBoundary", err)
 	}
-	if n := logRows(t, path); n != 0 {
-		t.Errorf("the log holds %d rows after the refusal", n)
+	if n := headEntries(t, path); n != 0 {
+		t.Errorf("the heads hold %d entries after the refusal", n)
 	}
 }
 

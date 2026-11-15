@@ -58,12 +58,15 @@ type Backend interface {
 	// refused: an installation appends only for the rows it owns.
 	Append(entries []Entry) ([]Entry, error)
 	// Pull returns one page per origin of every other origin's entries past the
-	// mark given for it, in sequence order and in whole batches. An origin with
-	// no mark is read from the start of its log.
+	// mark given for it, read from the bucket's segments in sequence order and
+	// in whole batches. An origin with no mark is read from the start of its
+	// log. A hello that named no bucket is refused with ErrNoR2 before any
+	// transfer.
 	Pull(marks map[string]int) ([]Entry, error)
-	// Head returns a page of one origin's latest entry per row, starting after
-	// the given key. An empty after starts at the beginning and a limit of zero
-	// means the whole rest.
+	// Head returns a page of one origin's latest entry per row, derived from
+	// the segments its heads row names, starting after the given sequence
+	// cursor. An empty after starts at the beginning and a limit of zero means
+	// the whole rest.
 	Head(origin, after string, limit int) ([]HeadRow, error)
 	// Stats reports what the log holds.
 	Stats() (Stats, error)
@@ -71,9 +74,9 @@ type Backend interface {
 	// origin's head, entry count and size.
 	ReadMarks() (MarkState, error)
 	// PullRange reads one page of origin's entries with after < seq <= upto from
-	// the replica as it stands, without pulling first: the floor a caller read
-	// with ReadMarks belongs to this same state, and a newer pull in between
-	// could change the entries the range needs.
+	// the segments its heads row names, without pulling first: the floor a caller
+	// read with ReadMarks belongs to this same replica state, and a newer pull in
+	// between could change the entries the range needs.
 	PullRange(origin string, after, upto int) ([]Entry, error)
 	// KeyMeta reads the passphrase material the remote holds, answering
 	// Present false on a remote that has none.

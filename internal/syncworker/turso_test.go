@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -142,6 +143,24 @@ func tempReplica(t *testing.T) string {
 func backendWithStore(t *testing.T, driver ReplicaDriver, origin string, mirror ...string) (*TursoBackend, *blobstore.MemBlobStore) {
 	t.Helper()
 	store := blobstore.NewMemBlobStore(nil)
+	return backendOnStore(t, driver, origin, store, mirror...), store
+}
+
+// backendOnStore opens a backend on a fresh local replica sharing the given
+// in-memory store and closes it when the test ends. Two backends that must see
+// each other's segments share one store through it, the way two machines share
+// one bucket.
+func backendOnStore(t *testing.T, driver ReplicaDriver, origin string, store *blobstore.MemBlobStore, mirror ...string) *TursoBackend {
+	t.Helper()
+	return backendOnBlobStore(t, driver, origin, store, mirror...)
+}
+
+// backendOnBlobStore is backendOnStore for any store, which is how a reader
+// takes a probe wrapping the one the writers share. The store is handed over
+// through openStore, never by swapping the package's constructor, so parallel
+// tests cannot race on it.
+func backendOnBlobStore(t *testing.T, driver ReplicaDriver, origin string, store blobstore.BlobStore, mirror ...string) *TursoBackend {
+	t.Helper()
 	b := NewTursoBackend(driver)
 	b.openStore = func(R2Config) blobstore.BlobStore { return store }
 	if err := b.Open(Spec{
@@ -155,7 +174,7 @@ func backendWithStore(t *testing.T, driver ReplicaDriver, origin string, mirror 
 		t.Fatalf("open backend: %v", err)
 	}
 	t.Cleanup(func() { _ = b.Close() })
-	return b, store
+	return b
 }
 
 // backendFor opens a backend on a fresh local replica as origin and closes it
@@ -283,14 +302,32 @@ func snapshotLog(t *testing.T, path string) []logRow {
 }
 
 // logWithoutMAC is the log table as a build before the mac column wrote it. It
-// is spelled out rather than taken from createStatements, which carries the
-// current format's column and would seed a remote this build could not recognise
-// as older.
+// is spelled out rather than taken from createStatements, which carries no log
+// table: an older remote is seeded with the columns its own format wrote.
 const logWithoutMAC = "CREATE TABLE log (" +
 	"origin TEXT NOT NULL, seq INTEGER NOT NULL, batch INTEGER NOT NULL, " +
 	"tbl TEXT NOT NULL, pk TEXT NOT NULL, op TEXT NOT NULL, " +
 	"schema_version INTEGER NOT NULL, body TEXT, at TEXT NOT NULL, " +
 	"PRIMARY KEY (origin, seq))"
+
+// logWithMACAndAfter is the log table as formats 4 and 5 held it, with the mac
+// and after columns. It is spelled out rather than taken from createStatements,
+// which carries no log table: an older remote is seeded with the columns its
+// own format wrote.
+const logWithMACAndAfter = "CREATE TABLE log (" +
+	"origin TEXT NOT NULL, seq INTEGER NOT NULL, batch INTEGER NOT NULL, " +
+	"tbl TEXT NOT NULL, pk TEXT NOT NULL, op TEXT NOT NULL, " +
+	"schema_version INTEGER NOT NULL, body TEXT, at TEXT NOT NULL, mac BLOB, " +
+	"after_origin TEXT, after_seq INTEGER, " +
+	"PRIMARY KEY (origin, seq))"
+
+// marksTableStatement is the marks table as the older formats held it: one row
+// per reader per origin. It is spelled out rather than taken from
+// createStatements, which carries no marks table.
+const marksTableStatement = "CREATE TABLE marks (" +
+	"reader TEXT NOT NULL, origin TEXT NOT NULL, seq INTEGER NOT NULL, " +
+	"at TEXT NOT NULL, " +
+	"PRIMARY KEY (reader, origin))"
 
 // headTableStatement is the head table as a remote that still stores it holds
 // it. It is spelled out rather than taken from createStatements, which carries
@@ -334,12 +371,12 @@ func seedFormatOneRemote(t *testing.T, path string) {
 		"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '1')")
 }
 
-// seedFormatTwoRemote creates this build's tables with the log as it was before
-// the mac column, and records format two.
+// seedFormatTwoRemote creates the format 2 remote: the head table beside the
+// log as it was before the mac column, marks and meta, with format row 2.
 func seedFormatTwoRemote(t *testing.T, path string) {
 	t.Helper()
 	execOn(t, path, logWithoutMAC, headTableStatement, createStatements[1],
-		createStatements[2],
+		marksTableStatement,
 		"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '2')")
 }
 
@@ -350,12 +387,12 @@ const logFormatThree = "CREATE TABLE log (" +
 	"schema_version INTEGER NOT NULL, body TEXT, at TEXT NOT NULL, mac BLOB, " +
 	"PRIMARY KEY (origin, seq))"
 
-// seedFormatThreeRemote creates this build's tables with the log as it was in format 3,
-// and records format three in meta.
+// seedFormatThreeRemote creates the format 3 remote: the head table beside the
+// log as it was in format 3, marks and meta, with format row 3.
 func seedFormatThreeRemote(t *testing.T, path string) {
 	t.Helper()
 	execOn(t, path, logFormatThree, headTableStatement, createStatements[1],
-		createStatements[2],
+		marksTableStatement,
 		"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '3')")
 }
 
@@ -363,16 +400,16 @@ func seedFormatThreeRemote(t *testing.T, path string) {
 // full log, marks and meta, with format row 4.
 func seedFormatFourRemote(t *testing.T, path string) {
 	t.Helper()
-	execOn(t, path, createStatements[0], headTableStatement, createStatements[1],
-		createStatements[2],
+	execOn(t, path, logWithMACAndAfter, headTableStatement, createStatements[1],
+		marksTableStatement,
 		"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '4')")
 }
 
-// seedFormatFiveRemote creates the format 5 remote: log, meta and marks from
-// createStatements[0..2], with format row 5.
+// seedFormatFiveRemote creates the format 5 remote: the full log, meta and
+// marks, with format row 5.
 func seedFormatFiveRemote(t *testing.T, path string) {
 	t.Helper()
-	execOn(t, path, createStatements[0], createStatements[1], createStatements[2],
+	execOn(t, path, logWithMACAndAfter, createStatements[1], marksTableStatement,
 		"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '5')")
 }
 
@@ -388,17 +425,6 @@ func signedFromMeta(t *testing.T, path, origin string) (string, bool) {
 		t.Fatalf("read %s: %v", signedFromPrefix+origin, err)
 	}
 	return value, true
-}
-
-// logMAC is the MAC stored on one row of the replica's log, and whether it is
-// NULL -- which is how an entry written before this machine had a key reads.
-func logMAC(t *testing.T, path string, seq int) ([]byte, bool) {
-	t.Helper()
-	var mac []byte
-	if err := openAt(t, path).QueryRow("SELECT mac FROM log WHERE seq = ?", seq).Scan(&mac); err != nil {
-		t.Fatalf("read the mac of seq %d: %v", seq, err)
-	}
-	return mac, mac != nil
 }
 
 // assertSeqs pins the sequence numbers of a batch, so a test states the
@@ -458,7 +484,7 @@ func TestReplicaOpensOnlyThroughTheSyncConstructor(t *testing.T) {
 	}
 
 	var n int
-	if err := openAt(t, path).QueryRow("SELECT COUNT(*) FROM log").Scan(&n); err != nil {
+	if err := openAt(t, path).QueryRow("SELECT entries FROM heads WHERE origin = 'origin-a'").Scan(&n); err != nil {
 		t.Fatalf("read the replica: %v", err)
 	}
 	if n != 1 {
@@ -467,7 +493,7 @@ func TestReplicaOpensOnlyThroughTheSyncConstructor(t *testing.T) {
 }
 
 // TestFirstUseCreatesTheRemoteLogTables pins the first-use contract: an empty
-// remote gets the five tables with the format row, the schema is pushed so
+// remote gets the three tables with the format row, the schema is pushed so
 // the remote learns it, and a re-run against the same replica changes nothing
 // and does not error.
 func TestFirstUseCreatesTheRemoteLogTables(t *testing.T) {
@@ -476,13 +502,18 @@ func TestFirstUseCreatesTheRemoteLogTables(t *testing.T) {
 	b := backendFor(t, driver, "origin-a")
 
 	tables := replicaTables(t, path)
-	for _, want := range []string{"heads", "log", "marks", "meta", "shared"} {
+	for _, want := range []string{"heads", "meta", "shared"} {
 		if !tables[want] {
 			t.Errorf("first use did not create %q; the replica holds %v", want, tables)
 		}
 	}
-	if len(tables) != 5 {
-		t.Errorf("first use created %v, want exactly five tables: heads, log, marks, meta, shared", tables)
+	for _, absent := range []string{"log", "marks"} {
+		if tables[absent] {
+			t.Errorf("first use created %q, which the log's schema does not hold", absent)
+		}
+	}
+	if len(tables) != 3 {
+		t.Errorf("first use created %v, want exactly three tables: heads, meta, shared", tables)
 	}
 	if got := metaFormat(t, path); got != "6" {
 		t.Errorf("meta format = %q, want 6", got)
@@ -512,8 +543,8 @@ func TestFirstUseCreatesTheRemoteLogTables(t *testing.T) {
 	if again.pulls != 0 {
 		t.Errorf("a re-run pulled %d times, want none: the current set never pulls on open", again.pulls)
 	}
-	if tables := replicaTables(t, path); len(tables) != 5 {
-		t.Errorf("a re-run left %v, want the same five tables", tables)
+	if tables := replicaTables(t, path); len(tables) != 3 {
+		t.Errorf("a re-run left %v, want the same three tables", tables)
 	}
 }
 
@@ -593,9 +624,15 @@ func TestFirstUseLooksPastTheEnginesOwnTables(t *testing.T) {
 	execOn(t, path, engineTables...)
 	driver := &localDriver{path: path}
 	b := backendFor(t, driver, "origin-a")
-	for _, want := range []string{"heads", "log", "marks", "meta", "shared"} {
-		if !replicaTables(t, path)[want] {
+	tables := replicaTables(t, path)
+	for _, want := range []string{"heads", "meta", "shared"} {
+		if !tables[want] {
 			t.Errorf("first use over the engine's tables did not create %q", want)
+		}
+	}
+	for _, absent := range []string{"log", "marks"} {
+		if tables[absent] {
+			t.Errorf("first use over the engine's tables created %q, which the log's schema does not hold", absent)
 		}
 	}
 	if driver.pushes != 1 {
@@ -632,7 +669,7 @@ func TestWorkerRefusesARemoteThatIsNotALog(t *testing.T) {
 		"the current tables at the older format": append(append([]string(nil), createStatements...),
 			"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '1')"),
 		"format two's tables at format one's row": {logWithoutMAC, headTableStatement, createStatements[1],
-			createStatements[2],
+			marksTableStatement,
 			"INSERT INTO meta (key, value) VALUES ('" + metaFormatKey + "', '1')"},
 		"a format above this build's": append(append([]string(nil), createStatements...),
 			"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '7')"),
@@ -668,21 +705,22 @@ func TestWorkerRefusesARemoteThatIsNotALog(t *testing.T) {
 // TestWorkerRefusalLeavesTheRemoteUntouched pins that a remote the handshake
 // refuses is never written into: its tables and every log row read back the
 // same after the refusal, and no push went out. The two shapes are the
-// current tables at the older format four -- the format 4 table set does
-// not match, so it is refused as not a log -- and a format above this build's.
+// format-5 table set at format four -- the set and the format row disagree,
+// so it is refused as not a log -- and the same set at a format above this
+// build's.
 func TestWorkerRefusalLeavesTheRemoteUntouched(t *testing.T) {
 	sentinel := "INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at)" +
 		" VALUES ('origin-a', 1, 1, 'board', '[\"s\"]', 'upsert', 3, '{\"title\":\"sentinel\"}', '2026-10-08T09:30:00Z')"
 	cases := map[string]string{
-		"the current tables at format four": "4",
-		"a format above this build's":       "7",
+		"the older tables at format four": "4",
+		"a format above this build's":     "7",
 	}
 	for name, format := range cases {
 		t.Run(name, func(t *testing.T) {
 			path := tempReplica(t)
-			execOn(t, path, append(append([]string(nil), createStatements...),
+			execOn(t, path, logWithMACAndAfter, createStatements[1], marksTableStatement,
 				"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '"+format+"')",
-				sentinel)...)
+				sentinel)
 			beforeTables := replicaTables(t, path)
 			beforeRows := snapshotLog(t, path)
 
@@ -754,11 +792,12 @@ func TestExportAssignsMaxPlusOneAndRepliesOnlyAfterPush(t *testing.T) {
 // and nothing at or below the mark.
 func TestPullReturnsOnlyEntriesPastTheMarks(t *testing.T) {
 	path := tempReplica(t)
-	a := backendFor(t, &localDriver{path: path}, "origin-a")
+	store := blobstore.NewMemBlobStore(nil)
+	a := backendOnStore(t, &localDriver{path: path}, "origin-a", store)
 	if _, err := a.Append([]Entry{upsertEntry("origin-a", "board", `["a"]`, `{"title":"mine"}`)}); err != nil {
 		t.Fatalf("append as origin-a: %v", err)
 	}
-	b := backendFor(t, &localDriver{path: path}, "origin-b")
+	b := backendOnStore(t, &localDriver{path: path}, "origin-b", store)
 	if _, err := b.Append([]Entry{
 		upsertEntry("origin-b", "board", `["b1"]`, `{"title":"one"}`),
 		upsertEntry("origin-b", "board", `["b2"]`, `{"title":"two"}`),
@@ -797,30 +836,18 @@ func TestPullReturnsOnlyEntriesPastTheMarks(t *testing.T) {
 	}
 }
 
-// TestPullReadsOnlyWhatIsPastTheMarks pins that a pull narrows its read in SQL
-// per origin: one mark filter per origin, so the log is not read whole and
-// filtered here, bounded to one page. An origin with no mark is read from its
-// first sequence. The backend reads through that statement, so an entry at or
-// below a mark does not come back even when the mark sits inside its batch.
+// TestPullReadsOnlyWhatIsPastTheMarks pins that a pull reads only what is past
+// each origin's mark: the listing is narrowed per origin, so mostly-applied
+// history is not listed whole and filtered here. An origin with no mark is
+// read from its first sequence. An entry at or below a mark does not come back
+// even when the mark sits inside its batch. The narrowing itself is pinned by
+// the listStartAfter and selectSegmentKeys table tests.
 func TestPullReadsOnlyWhatIsPastTheMarks(t *testing.T) {
 	t.Parallel()
-	origins := []string{"origin-b", "origin-c"}
-	query, args := pullQuery(origins, map[string]int{"origin-b": 7}, 100)
-
-	if got := strings.Count(query, "(origin = ? AND seq > ?)"); got != len(origins) {
-		t.Fatalf("the pull filters %d origins in SQL, want one clause per origin:\n%s", got, query)
-	}
-	if !strings.Contains(query, "ORDER BY origin, seq") || !strings.Contains(query, "LIMIT ?") {
-		t.Fatalf("the pull is not ordered and bounded:\n%s", query)
-	}
-	want := []any{"origin-b", 7, "origin-c", 0, 100}
-	if !reflect.DeepEqual(args, want) {
-		t.Errorf("pull args = %v, want %v", args, want)
-	}
-
 	path := tempReplica(t)
-	a := backendFor(t, &localDriver{path: path}, "origin-a")
-	b := backendFor(t, &localDriver{path: path}, "origin-b")
+	store := blobstore.NewMemBlobStore(nil)
+	a := backendOnStore(t, &localDriver{path: path}, "origin-a", store)
+	b := backendOnStore(t, &localDriver{path: path}, "origin-b", store)
 	if _, err := b.Append([]Entry{
 		upsertEntry("origin-b", "board", `["b1"]`, `{"title":"one"}`),
 		upsertEntry("origin-b", "board", `["b2"]`, `{"title":"two"}`),
@@ -838,15 +865,16 @@ func TestPullReadsOnlyWhatIsPastTheMarks(t *testing.T) {
 	assertSeqs(t, got, 3)
 }
 
-// TestPullCompletesABatchThePageCut pins that a page small enough to end inside
-// a batch still returns the batch whole: a batch is applied whole and the mark
-// moves to its tail, so half of one would let the next pull drop the other half
-// as though the mark covered it.
+// TestPullCompletesABatchThePageCut pins that a page smaller than one segment
+// still returns the batch whole: a batch is applied whole and the mark moves
+// to its tail, so half of one would let the next pull drop the other half as
+// though the mark covered it.
 func TestPullCompletesABatchThePageCut(t *testing.T) {
 	t.Parallel()
 	path := tempReplica(t)
-	a := backendFor(t, &localDriver{path: path}, "origin-a")
-	b := backendFor(t, &localDriver{path: path}, "origin-b")
+	store := blobstore.NewMemBlobStore(nil)
+	a := backendOnStore(t, &localDriver{path: path}, "origin-a", store)
+	b := backendOnStore(t, &localDriver{path: path}, "origin-b", store)
 	a.page = 2
 	if _, err := b.Append([]Entry{
 		upsertEntry("origin-b", "board", `["b1"]`, `{"title":"one"}`),
@@ -874,12 +902,14 @@ func TestPullCompletesABatchThePageCut(t *testing.T) {
 func TestPullMakesProgressOnEveryOrigin(t *testing.T) {
 	t.Parallel()
 	path := tempReplica(t)
-	a := backendFor(t, &localDriver{path: path}, "origin-a")
-	b := backendFor(t, &localDriver{path: path}, "origin-b")
-	c := backendFor(t, &localDriver{path: path}, "origin-c")
+	store := blobstore.NewMemBlobStore(nil)
+	a := backendOnStore(t, &localDriver{path: path}, "origin-a", store)
+	b := backendOnStore(t, &localDriver{path: path}, "origin-b", store)
+	c := backendOnStore(t, &localDriver{path: path}, "origin-c", store)
 	a.page = 3
-	// origin-b sorts first and alone fills a page, and its mark stays put, so a
-	// pull that ran one global LIMIT would spend the whole page on it.
+	// origin-b sorts first and its single four-entry segment fills the page,
+	// and its mark stays put, so a pull that read one global page would spend
+	// it all on origin-b.
 	if _, err := b.Append([]Entry{
 		upsertEntry("origin-b", "board", `["b1"]`, `{"title":"one"}`),
 		upsertEntry("origin-b", "board", `["b2"]`, `{"title":"two"}`),
@@ -983,12 +1013,10 @@ func TestHeadPagesInSeqOrder(t *testing.T) {
 // TestHeadDerivesNewestPerRow pins the derived read: the newest entry per row
 // wins across separate batches, a newest delete drops the row, a deleted row
 // recreated later comes back, and the digest of each survivor is the worker's
-// own bodyHash of the stored body. Any stored head table is dropped first, so
-// a read from stored state answers empty or refuses. Paging the derived head a row at
-// a time meets the whole head exactly, which is what keeps a newest-is-delete
-// row inside the page range from ending the walk early. Compacting away the
-// superseded entries leaves the head unchanged, since compaction keeps the
-// newest per row.
+// own bodyHash of the stored body. A head table an older format stored plays
+// no part: the read derives from the segments alone. Paging the derived head
+// a row at a time meets the whole head exactly, which is what keeps a
+// newest-is-delete row inside the page range from ending the walk early.
 func TestHeadDerivesNewestPerRow(t *testing.T) {
 	path := tempReplica(t)
 	b := backendFor(t, &localDriver{path: path}, "origin-a")
@@ -1023,8 +1051,8 @@ func TestHeadDerivesNewestPerRow(t *testing.T) {
 	if _, err := other.Append([]Entry{upsertEntry("origin-b", "board", `["other"]`, `{"title":"elsewhere"}`)}); err != nil {
 		t.Fatalf("append as origin-b: %v", err)
 	}
-	// The table the stored read answered from is gone: what follows answers
-	// from the log alone.
+	// A stored head table plays no part in the read: what follows answers
+	// from the segments alone.
 	execOn(t, path, "DROP TABLE IF EXISTS head")
 	whole, err := b.Head("origin-a", "", 0)
 	if err != nil {
@@ -1080,16 +1108,141 @@ func TestHeadDerivesNewestPerRow(t *testing.T) {
 	}
 }
 
+// exchangeHash is the exchange's digest of a literal body, the one the head
+// must carry for the row that body wrote. It is read from synclog rather than
+// the worker's own bodyHash so the expectation does not depend on the code it
+// checks.
+func exchangeHash(t *testing.T, body string) string {
+	t.Helper()
+	h, err := synclog.BodyHash(json.RawMessage(body))
+	if err != nil {
+		t.Fatalf("BodyHash(%s): %v", body, err)
+	}
+	return h
+}
+
+// TestHeadMatchesTheSQLWalk pins the segment derivation over one fixture:
+// superseded upserts, a delete, a delete then recreate, a doc table, an
+// after-bearing entry, rows split over five segments -- two bulk appends of
+// 256 entries and three small batches -- and a second origin whose rows must
+// not leak in. The head equals the literal expectations, and paging a row at
+// a time from each cursor meets the whole.
+func TestHeadMatchesTheSQLWalk(t *testing.T) {
+	path := tempReplica(t)
+	store := blobstore.NewMemBlobStore(nil)
+	a := backendOnStore(t, &localDriver{path: path}, "origin-a", store)
+	other := backendOnStore(t, &localDriver{path: path}, "origin-b", store)
+	if _, err := other.Append([]Entry{upsertEntry("origin-b", "board", `["other"]`, `{"title":"elsewhere"}`)}); err != nil {
+		t.Fatalf("append as origin-b: %v", err)
+	}
+	appendBatch := func(entries []Entry) {
+		t.Helper()
+		if _, err := a.Append(entries); err != nil {
+			t.Fatalf("append %d entries: %v", len(entries), err)
+		}
+	}
+	fillers := func(prefix string, n int) []Entry {
+		entries := make([]Entry, 0, n)
+		for i := 0; i < n; i++ {
+			entries = append(entries, upsertEntry("origin-a", "board",
+				fmt.Sprintf(`["%s%d"]`, prefix, i), fmt.Sprintf(`{"title":"%s%d"}`, prefix, i)))
+		}
+		return entries
+	}
+	// Two bulk appends fill the first two segments; the small batches after
+	// them carry the rows whose state moves across segments.
+	appendBatch(fillers("f", 256))
+	appendBatch(fillers("g", 256))
+	dep := upsertEntry("origin-a", "board", `["dep"]`, `{"title":"depends"}`)
+	dep.AfterOrigin, dep.AfterSeq = "origin-b", 1
+	appendBatch([]Entry{
+		upsertEntry("origin-a", "board", `["k1"]`, `{"title":"one"}`),
+		upsertEntry("origin-a", "board", `["k2"]`, `{"title":"two"}`),
+		upsertEntry("origin-a", "board", `["k3"]`, `{"title":"three"}`),
+		upsertEntry("origin-a", "doc:notes", `["d1"]`, `{"stamp":"5","value":{"$blob":"AQID"}}`),
+		dep,
+		upsertEntry("origin-a", "board", `["f0"]`, `{"title":"f0 changed"}`),
+	})
+	appendBatch([]Entry{
+		upsertEntry("origin-a", "board", `["k1"]`, `{"b":"two","a":"one"}`),
+		{Origin: "origin-a", Tbl: "board", PK: `["k2"]`, Op: opDelete, SchemaVersion: 3, At: pinnedAt},
+		{Origin: "origin-a", Tbl: "board", PK: `["k3"]`, Op: opDelete, SchemaVersion: 3, At: pinnedAt},
+	})
+	appendBatch([]Entry{upsertEntry("origin-a", "board", `["k3"]`, `{"title":"recreated"}`)})
+
+	whole, err := a.Head("origin-a", "", 0)
+	if err != nil {
+		t.Fatalf("head: %v", err)
+	}
+
+	// The literal expectations: the interesting rows with the exchange's
+	// digest of their literal bodies, and the mechanical fillers.
+	want := make([]HeadRow, 0, 516)
+	for i := 1; i < 256; i++ {
+		want = append(want, HeadRow{Tbl: "board", PK: fmt.Sprintf(`["f%d"]`, i), Seq: i + 1,
+			Hash: exchangeHash(t, fmt.Sprintf(`{"title":"f%d"}`, i))})
+	}
+	for i := 0; i < 256; i++ {
+		want = append(want, HeadRow{Tbl: "board", PK: fmt.Sprintf(`["g%d"]`, i), Seq: 257 + i,
+			Hash: exchangeHash(t, fmt.Sprintf(`{"title":"g%d"}`, i))})
+	}
+	want = append(want,
+		HeadRow{Tbl: "doc:notes", PK: `["d1"]`, Seq: 516, Hash: exchangeHash(t, `{"stamp":"5","value":{"$blob":"AQID"}}`)},
+		HeadRow{Tbl: "board", PK: `["dep"]`, Seq: 517, Hash: exchangeHash(t, `{"title":"depends"}`)},
+		HeadRow{Tbl: "board", PK: `["f0"]`, Seq: 518, Hash: exchangeHash(t, `{"title":"f0 changed"}`)},
+		HeadRow{Tbl: "board", PK: `["k1"]`, Seq: 519, Hash: exchangeHash(t, `{"b":"two","a":"one"}`)},
+		HeadRow{Tbl: "board", PK: `["k3"]`, Seq: 522, Hash: exchangeHash(t, `{"title":"recreated"}`)},
+	)
+	if len(whole) != len(want) {
+		t.Fatalf("head = %d rows, want %d", len(whole), len(want))
+	}
+	for i := range want {
+		if whole[i] != want[i] {
+			t.Errorf("row %d = %+v, want %+v", i, whole[i], want[i])
+		}
+	}
+
+	var paged []HeadRow
+	after := ""
+	for {
+		page, err := a.Head("origin-a", after, 1)
+		if err != nil {
+			t.Fatalf("head page after %q: %v", after, err)
+		}
+		if len(page) == 0 {
+			break
+		}
+		if len(page) != 1 {
+			t.Fatalf("page after %q = %d rows, want one", after, len(page))
+		}
+		paged = append(paged, page...)
+		after = strconv.Itoa(page[0].Seq)
+		if len(paged) > len(want) {
+			t.Fatal("paging did not end")
+		}
+	}
+	if !reflect.DeepEqual(paged, whole) {
+		t.Fatalf("paged head = %d rows, whole head = %d rows; a cursor lost or repeated a row", len(paged), len(whole))
+	}
+
+	mine, err := other.Head("origin-b", "", 0)
+	if err != nil {
+		t.Fatalf("other origin's head: %v", err)
+	}
+	wantOther := []HeadRow{{Tbl: "board", PK: `["other"]`, Seq: 1, Hash: exchangeHash(t, `{"title":"elsewhere"}`)}}
+	if !reflect.DeepEqual(mine, wantOther) {
+		t.Errorf("origin-b's head = %+v, want %+v", mine, wantOther)
+	}
+}
+
 // BenchmarkTursoBackendHeadDerived measures one whole derived head over a
 // single-origin log, built outside the timed section.
 func BenchmarkTursoBackendHeadDerived(b *testing.B) {
 	path := filepath.Join(b.TempDir(), "relevo-sync.db")
 	driver := &localDriver{path: path}
 	store := blobstore.NewMemBlobStore(nil)
-	restore := newBlobStore
-	newBlobStore = func(R2Config) blobstore.BlobStore { return store }
-	defer func() { newBlobStore = restore }()
 	be := NewTursoBackend(driver)
+	be.openStore = func(R2Config) blobstore.BlobStore { return store }
 	if err := be.Open(Spec{
 		Version: ProtocolVersion,
 		Origin:  "origin-a",
@@ -1366,13 +1519,6 @@ func TestBackendRefusesAnotherOriginsEntry(t *testing.T) {
 	if _, err := b.Append([]Entry{upsertEntry("origin-b", "board", `["b"]`, `{}`)}); err == nil {
 		t.Fatal("append accepted another origin's entry")
 	}
-	var n int
-	if err := openAt(t, driver.path).QueryRow("SELECT COUNT(*) FROM log").Scan(&n); err != nil {
-		t.Fatalf("read the replica: %v", err)
-	}
-	if n != 0 {
-		t.Errorf("a refused append wrote %d log rows, want none", n)
-	}
 	var headsCount int
 	if err := openAt(t, driver.path).QueryRow("SELECT COUNT(*) FROM heads").Scan(&headsCount); err != nil {
 		t.Fatalf("read heads: %v", err)
@@ -1387,10 +1533,14 @@ func TestBackendRefusesAnotherOriginsEntry(t *testing.T) {
 
 // TestBackendStatsAndErrors pins the stats verb and that a driver which cannot
 // report health, or a replica that cannot be read, refuses rather than reports
-// a size for a log nobody can reach.
+// a size for a log nobody can reach. The numbers come from heads: Entries is the
+// sum of heads.entries, Origins the row count, Seq the highest sequence, so a
+// sparse legacy head whose entries differ from its sequence span is counted as
+// the entries it holds.
 func TestBackendStatsAndErrors(t *testing.T) {
-	driver := &localDriver{path: tempReplica(t)}
-	b := backendFor(t, driver, "origin-a")
+	path := tempReplica(t)
+	driver := &localDriver{path: path}
+	b, store := backendWithStore(t, driver, "origin-a")
 	if _, err := b.Append([]Entry{upsertEntry("origin-a", "board", `["b"]`, `{"title":"one"}`)}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
@@ -1408,6 +1558,26 @@ func TestBackendStatsAndErrors(t *testing.T) {
 	}
 	if driver.stats != before+1 {
 		t.Errorf("driver stats called %d times for one stats, want once", driver.stats-before)
+	}
+
+	// A second origin appends two entries, and a sparse legacy head is seeded
+	// whose three entries sit below sequence 100: the sum, the row count and
+	// the max each come from heads rather than a recount of the log's rows.
+	other := backendOnStore(t, &localDriver{path: path}, "origin-b", store)
+	if _, err := other.Append([]Entry{
+		upsertEntry("origin-b", "board", `["b1"]`, `{"title":"one"}`),
+		upsertEntry("origin-b", "board", `["b2"]`, `{"title":"two"}`),
+	}); err != nil {
+		t.Fatalf("append as origin-b: %v", err)
+	}
+	execOn(t, path, "INSERT INTO heads (origin, seq, key, entries, bytes, legacy_upto, at)"+
+		" VALUES ('origin-c', 100, 'origin-c/log/000000000001', 3, 50, 100, '2026-10-08T09:30:00Z')")
+	stats, err = b.Stats()
+	if err != nil {
+		t.Fatalf("stats over three origins: %v", err)
+	}
+	if stats.Entries != 6 || stats.Origins != 3 || stats.Seq != 100 {
+		t.Errorf("stats = %+v, want entries 6 (1+2+3), origins 3, seq 100", stats)
 	}
 
 	driver.statsErr = errors.New("engine wedged")
@@ -1483,8 +1653,10 @@ func TestBackendAnswersAnEmptyBatch(t *testing.T) {
 }
 
 // TestBackendRefusesWhenTheLogIsGone pins that a replica whose log vanished
-// is reported, not answered from. The head is derived from the log, so a
-// missing head table leaves the read answering from what the log holds.
+// is reported, not answered from. The head is derived from the segments, so
+// a missing head table leaves the read answering from what they hold. The
+// pull and stats read the heads rows and the append moves heads, so it goes
+// before those assertions.
 func TestBackendRefusesWhenTheLogIsGone(t *testing.T) {
 	driver := &localDriver{path: tempReplica(t)}
 	b := backendFor(t, driver, "origin-a")
@@ -1497,62 +1669,68 @@ func TestBackendRefusesWhenTheLogIsGone(t *testing.T) {
 		t.Fatalf("head over a missing head table: %v", err)
 	}
 	if len(head) != 1 || head[0].PK != `["b"]` || head[0].Seq != 1 {
-		t.Errorf("head over a missing head table = %+v, want the one log row at seq 1", head)
+		t.Errorf("head over a missing head table = %+v, want the one entry at seq 1", head)
 	}
-	execOn(t, driver.path, "DROP TABLE log")
+	execOn(t, driver.path, "DROP TABLE heads")
 	if _, err := b.Pull(nil); err == nil {
-		t.Error("pull succeeded over a missing log table")
+		t.Error("pull succeeded over a missing heads table")
 	}
 	if _, err := b.Append([]Entry{upsertEntry("origin-a", "board", `["b"]`, `{"title":"one"}`)}); err == nil {
-		t.Error("append succeeded over a missing log table")
+		t.Error("append succeeded over a missing heads table")
 	}
 	if _, err := b.Stats(); err == nil {
-		t.Error("stats succeeded over a missing log table")
+		t.Error("stats succeeded over a missing heads table")
 	}
 }
 
-// TestBackendPullRefusesARowItCannotScan pins that a log row whose column types
-// do not match the log is reported rather than read as a zero value.
-func TestBackendPullRefusesARowItCannotScan(t *testing.T) {
-	driver := &localDriver{path: tempReplica(t)}
-	b := backendFor(t, driver, "origin-a")
-	execOn(t, driver.path,
-		"INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at) "+
-			"VALUES ('origin-b', 'not a number', 1, 'board', '[\"b\"]', 'delete', 1, NULL, '2026-10-08T00:00:00Z')")
-	if _, err := b.Pull(nil); err == nil {
-		t.Error("pull read a row whose sequence is not a number")
-	}
-}
-
-// TestHeadRefusesARowItCannotRead pins that a corrupt newest row of the log is
-// reported rather than surfacing as an empty hash or a zero sequence: a peer
+// TestHeadRefusesARowItCannotRead pins that a newest row whose body is not a
+// JSON object is reported rather than surfacing as an empty hash: a peer
 // reconciles against exactly what the head returns, so a default read of a
-// row the worker cannot even interpret would silently present a different
-// state than the origin holds.
+// row the worker cannot interpret would silently present a different state
+// than the origin holds. A bad body a later entry supersedes is not the row's
+// state and is not an error. A sequence is an integer in a decoded segment,
+// and DecodeSegment refuses a non-contiguous or lying header, so there is no
+// unscannable sequence to plant here.
 func TestHeadRefusesARowItCannotRead(t *testing.T) {
-	driver := &localDriver{path: tempReplica(t)}
-	b := backendFor(t, driver, "origin-a")
-	if _, err := b.Append([]Entry{upsertEntry("origin-a", "board", `["b"]`, `{"title":"one"}`)}); err != nil {
-		t.Fatalf("append: %v", err)
-	}
-	execOn(t, driver.path, "INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at)"+
-		" VALUES ('origin-a', 2, 2, 'board', '[\"b\"]', 'upsert', 3, 'not json', '2026-10-08T09:30:00Z')")
-	if _, err := b.Head("origin-a", "", 0); err == nil {
-		t.Error("head read a newest row whose body is not a JSON object")
-	} else if !strings.HasPrefix(err.Error(), "syncworker: hash board") {
-		t.Errorf("head error = %v, want the hash refusal naming the row it could not hash", err)
-	}
-	// The body stays a valid object here, so only the sequence can be what
-	// the read refuses on: the scan fails before any hashing runs.
-	execOn(t, driver.path,
-		"DELETE FROM log WHERE origin = 'origin-a' AND seq = 2",
-		"INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at)"+
-			" VALUES ('origin-a', 'xx', 2, 'board', '[\"b\"]', 'upsert', 3, '{\"title\":\"two\"}', '2026-10-08T09:30:00Z')")
-	if _, err := b.Head("origin-a", "", 0); err == nil {
-		t.Error("head read a newest row whose sequence is not a number")
-	} else if !strings.HasPrefix(err.Error(), "syncworker: read a head row") {
-		t.Errorf("head error = %v, want the scan refusal naming the row read", err)
-	}
+	t.Run("a newest body that is not an object refuses", func(t *testing.T) {
+		path := tempReplica(t)
+		store := blobstore.NewMemBlobStore(nil)
+		b := backendOnStore(t, &localDriver{path: path}, "origin-a", store)
+		// The body is valid JSON for the segment's encoding, but not an
+		// object, so only the head's hash refuses it.
+		bad := upsertEntry("origin-a", "board", `["b"]`, `[1]`)
+		bad.Seq, bad.Batch = 1, 1
+		seedOrigin(t, path, store, "origin-a", []seedSegment{{entries: []Entry{bad}}},
+			seedHeads{seq: 1, key: blobstore.SegmentKey("origin-a", 1), entries: 1})
+		if _, err := b.Head("origin-a", "", 0); err == nil {
+			t.Fatal("head read a newest row whose body is not a JSON object")
+		} else if !strings.HasPrefix(err.Error(), "syncworker: hash board") {
+			t.Errorf("head error = %v, want the hash refusal naming the row it could not hash", err)
+		}
+	})
+	t.Run("a superseded bad body is not an error", func(t *testing.T) {
+		path := tempReplica(t)
+		store := blobstore.NewMemBlobStore(nil)
+		b := backendOnStore(t, &localDriver{path: path}, "origin-a", store)
+		bad := upsertEntry("origin-a", "board", `["b"]`, `[1]`)
+		bad.Seq, bad.Batch = 1, 1
+		good := upsertEntry("origin-a", "board", `["b"]`, `{"title":"two"}`)
+		good.Seq, good.Batch = 2, 2
+		seedOrigin(t, path, store, "origin-a",
+			[]seedSegment{{entries: []Entry{bad}}, {entries: []Entry{good}}},
+			seedHeads{seq: 2, key: blobstore.SegmentKey("origin-a", 2), entries: 2})
+		rows, err := b.Head("origin-a", "", 0)
+		if err != nil {
+			t.Fatalf("head over a superseded bad body: %v", err)
+		}
+		wantHash, err := synclog.BodyHash(json.RawMessage(`{"title":"two"}`))
+		if err != nil {
+			t.Fatalf("BodyHash: %v", err)
+		}
+		if len(rows) != 1 || rows[0].Seq != 2 || rows[0].Hash != wantHash {
+			t.Errorf("head = %+v, want the good row at seq 2 with its digest", rows)
+		}
+	})
 }
 
 // TestBackendOpenTwiceReleasesTheFirstReplica pins that a second handshake on
@@ -1565,19 +1743,6 @@ func TestBackendOpenTwiceReleasesTheFirstReplica(t *testing.T) {
 	}
 	if driver.opens != 2 {
 		t.Errorf("the constructor opened %d times, want two", driver.opens)
-	}
-}
-
-// TestBackendPullRefusesARowItCannotRead pins that a log row whose time cannot
-// be parsed is reported rather than read as a zero moment.
-func TestBackendPullRefusesARowItCannotRead(t *testing.T) {
-	driver := &localDriver{path: tempReplica(t)}
-	b := backendFor(t, driver, "origin-a")
-	execOn(t, driver.path,
-		"INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at) "+
-			"VALUES ('origin-b', 1, 1, 'board', '[\"b\"]', 'delete', 1, NULL, 'not a time')")
-	if _, err := b.Pull(nil); err == nil {
-		t.Error("pull read a row whose time is not a time")
 	}
 }
 

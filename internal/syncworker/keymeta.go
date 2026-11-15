@@ -478,35 +478,6 @@ func parseBoundary(value string) (int, []byte) {
 	return seq, tag
 }
 
-// readMetaPositions reads the meta rows whose key begins with prefix into a map
-// keyed by the rest of it. The meta table is written by other machines, so a
-// row that is not a non-negative number is skipped: one unreadable row must not
-// stop a reader from reading the rest, the same rule a malformed mark is read
-// under.
-func (b *TursoBackend) readMetaPositions(ctx context.Context, prefix string, into *map[string]int) error {
-	rows, err := b.db.QueryContext(ctx,
-		"SELECT key, value FROM meta WHERE key LIKE ?", prefix+"%")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var key, value sql.NullString
-		if err := rows.Scan(&key, &value); err != nil {
-			return err
-		}
-		position, err := strconv.Atoi(value.String)
-		if err != nil || position < 0 {
-			continue
-		}
-		if *into == nil {
-			*into = make(map[string]int)
-		}
-		(*into)[key.String[len(prefix):]] = position
-	}
-	return rows.Err()
-}
-
 // keyMeta answers with the passphrase material the remote holds.
 func (s *server) keyMeta(req Request) Response {
 	key, err := s.backend.KeyMeta()

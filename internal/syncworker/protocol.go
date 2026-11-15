@@ -437,8 +437,8 @@ type MarkState struct {
 	Heads map[string]int `json:"heads,omitempty"`
 	// Entries is how many entries the log holds for each origin.
 	Entries map[string]int `json:"entries,omitempty"`
-	// Sizes is each origin's log size in bytes, estimated as the bodies plus a
-	// fixed overhead per row.
+	// Sizes is each origin's size in bytes: the total bytes of the segment
+	// objects it has published, as its heads row records them.
 	Sizes map[string]int64 `json:"sizes,omitempty"`
 	// SignedFrom is the first sequence of each origin that was signed. An
 	// origin with no entry is not named, which is how a reader tells "nothing

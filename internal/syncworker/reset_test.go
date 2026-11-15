@@ -1,14 +1,19 @@
 package syncworker
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/fuad-daoud/relevo/internal/blobstore"
 	turso "turso.tech/database/tursogo"
 )
 
@@ -56,13 +61,13 @@ func TestUnknownReplicaIsDiscardedAndBootstrappedAgain(t *testing.T) {
 		t.Errorf("opens = %d, want the first open and the re-bootstrap", driver.opens)
 	}
 	tables := replicaTables(t, path)
-	for _, want := range []string{"heads", "log", "marks", "meta", "shared"} {
+	for _, want := range []string{"heads", "meta", "shared"} {
 		if !tables[want] {
 			t.Errorf("the fresh replica does not hold %q; it holds %v", want, tables)
 		}
 	}
-	if len(tables) != 5 {
-		t.Errorf("the fresh replica holds %v, want exactly the log's five tables", tables)
+	if len(tables) != 3 {
+		t.Errorf("the fresh replica holds %v, want exactly the log's three tables", tables)
 	}
 	if got := metaFormat(t, path); got != "6" {
 		t.Errorf("meta format = %q, want 6", got)
@@ -135,20 +140,40 @@ func TestOlderFormatPullsOnceBeforeTheMigrateRefusal(t *testing.T) {
 
 // TestOlderFormatOpensWhenThePullBringsTheCurrentLog pins the machine that was
 // offline while another migrated: its format-5 replica pulls once, the pull
-// brings the current tables and a row, and hello opens without a discard.
+// brings the current tables and a row, and hello opens without a discard. The
+// pull reads the migrated row from the bucket's segment, so the segment is in
+// the store the backend opens and the heads row arrives with the pull.
 func TestOlderFormatOpensWhenThePullBringsTheCurrentLog(t *testing.T) {
 	path := tempReplica(t)
 	seedFormatFiveRemote(t, path)
+	migrated := []Entry{{
+		Origin: "origin-b", Seq: 1, Batch: 1, Tbl: "board", PK: `["b"]`, Op: opUpsert,
+		SchemaVersion: 3, Body: json.RawMessage(`{"title":"migrated"}`),
+		At: time.Date(2026, 10, 8, 9, 30, 0, 0, time.UTC),
+	}}
+	data, _, err := EncodeSegment("origin-b", migrated)
+	if err != nil {
+		t.Fatalf("encode the migrated segment: %v", err)
+	}
+	key := blobstore.SegmentKey("origin-b", 1)
+	store := blobstore.NewMemBlobStore(nil)
+	if err := store.Put(context.Background(), key, bytes.NewReader(data), int64(len(data))); err != nil {
+		t.Fatalf("seed the migrated segment: %v", err)
+	}
 	driver := &localDriver{path: path}
 	driver.afterPull = func(db *sql.DB) {
 		// The migration appears once; a later pull brings nothing new.
 		driver.afterPull = nil
 		for _, stmt := range []string{
-			createStatements[3],
-			createStatements[4],
+			createStatements[0],
+			createStatements[2],
 			"UPDATE meta SET value = '6' WHERE key = '" + metaFormatKey + "'",
-			"INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at)" +
-				" VALUES ('origin-b', 1, 1, 'board', '[\"b\"]', 'upsert', 3, '{\"title\":\"migrated\"}', '2026-10-08T09:30:00Z')",
+			// The migration drops the tables the current format does not
+			// hold, so the replica answers with the current set alone.
+			"DROP TABLE log",
+			"DROP TABLE marks",
+			"INSERT INTO heads (origin, seq, key, entries, bytes, at)" +
+				" VALUES ('origin-b', 1, '" + key + "', 1, " + strconv.Itoa(len(data)) + ", '2026-10-08T09:30:00Z')",
 		} {
 			if _, err := db.Exec(stmt); err != nil {
 				t.Errorf("the pull brings %q: %v", stmt, err)
@@ -156,6 +181,7 @@ func TestOlderFormatOpensWhenThePullBringsTheCurrentLog(t *testing.T) {
 		}
 	}
 	b := NewTursoBackend(driver)
+	b.openStore = func(R2Config) blobstore.BlobStore { return store }
 	w := startWorker(t, b)
 	resp := w.ask(helloRequest("h"))
 	if !resp.OK {
@@ -426,8 +452,10 @@ func TestOlderFormatRefusesWhenThePulledFormatCannotBeRead(t *testing.T) {
 	driver := &localDriver{path: path}
 	driver.afterPull = func(db *sql.DB) {
 		for _, stmt := range []string{
-			createStatements[3],
-			createStatements[4],
+			createStatements[0],
+			createStatements[2],
+			"DROP TABLE log",
+			"DROP TABLE marks",
 			"DROP TABLE meta",
 			"CREATE TABLE meta (name TEXT)",
 		} {
@@ -457,7 +485,14 @@ func TestOlderFormatStillRefusesWhenThePullBringsCurrentTablesAtAnOlderFormat(t 
 	seedFormatFiveRemote(t, path)
 	driver := &localDriver{path: path}
 	driver.afterPull = func(db *sql.DB) {
-		for _, stmt := range []string{createStatements[3], createStatements[4]} {
+		// The current tables arrive, but the format row stays at the older
+		// number: the refusal must come from the row, not the table set.
+		for _, stmt := range []string{
+			createStatements[0],
+			createStatements[2],
+			"DROP TABLE log",
+			"DROP TABLE marks",
+		} {
 			if _, err := db.Exec(stmt); err != nil {
 				t.Errorf("the pull brings %q: %v", stmt, err)
 			}

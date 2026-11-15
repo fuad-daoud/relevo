@@ -1,8 +1,13 @@
 package syncworker
 
 import (
+	"bytes"
+	"context"
 	"errors"
+	"reflect"
 	"testing"
+
+	"github.com/fuad-daoud/relevo/internal/blobstore"
 )
 
 // execOnErr runs one statement against a replica path, for the rows a case seeds
@@ -17,21 +22,26 @@ func execOnErr(t *testing.T, path, stmt string) error {
 // hello opened one.
 func errorsIsNoReplica(err error) bool { return errors.Is(err, ErrNoHello) }
 
-// TestReadMarksReportsWhatTheLogHolds pins the three answers a compaction reads
-// beside the marks: each origin's head, how many entries it holds, and the
-// floors the remote has recorded. The floors are seeded directly because
-// nothing writes them in this slice, and a read that did not find them would
-// floor an origin below what the remote has already dropped.
+// TestReadMarksReportsWhatTheLogHolds pins the answers a reader takes beside the
+// marks: each origin's head, how many entries it holds, the bytes of its
+// segments, and the floor it has recorded. The floor is seeded directly because
+// nothing writes it in this slice, and a read that did not find it would floor
+// an origin below what the remote has already dropped. A second origin at floor
+// zero stays out of Floors while its head is still reported.
 func TestReadMarksReportsWhatTheLogHolds(t *testing.T) {
 	path := tempReplica(t)
-	b := backendFor(t, &localDriver{path: path}, "origin-a")
-	if _, err := b.Append([]Entry{
-		upsertEntry("origin-a", "board", `["a"]`, `{"title":"one"}`),
-		upsertEntry("origin-a", "board", `["b"]`, `{"title":"two"}`),
-	}); err != nil {
-		t.Fatalf("append: %v", err)
+	b, store := backendWithStore(t, &localDriver{path: path}, "origin-a")
+	if _, err := b.Append([]Entry{upsertEntry("origin-a", "board", `["a"]`, `{"title":"one"}`)}); err != nil {
+		t.Fatalf("append one: %v", err)
 	}
-	if err := execOnErr(t, path, "INSERT INTO meta (key, value) VALUES ('floor.origin-a', '4')"); err != nil {
+	if _, err := b.Append([]Entry{upsertEntry("origin-a", "board", `["b"]`, `{"title":"two"}`)}); err != nil {
+		t.Fatalf("append two: %v", err)
+	}
+	other := backendOnStore(t, &localDriver{path: path}, "origin-b", store)
+	if _, err := other.Append([]Entry{upsertEntry("origin-b", "board", `["c"]`, `{"title":"three"}`)}); err != nil {
+		t.Fatalf("append as origin-b: %v", err)
+	}
+	if err := execOnErr(t, path, "UPDATE heads SET floor = 4 WHERE origin = 'origin-a'"); err != nil {
 		t.Fatalf("seed a floor: %v", err)
 	}
 
@@ -42,12 +52,89 @@ func TestReadMarksReportsWhatTheLogHolds(t *testing.T) {
 	if state.Floors["origin-a"] != 4 {
 		t.Errorf("floors = %v, want origin-a at 4", state.Floors)
 	}
-	if state.Heads["origin-a"] != 2 || state.Entries["origin-a"] != 2 {
-		t.Errorf("sizes = heads %v entries %v, want the two appended entries",
-			state.Heads, state.Entries)
+	if _, ok := state.Floors["origin-b"]; ok {
+		t.Errorf("floors = %v, want origin-b absent: its floor is zero", state.Floors)
 	}
-	if want := int64(2*len(`{"title":"one"}`) + 2*logRowOverhead); state.Sizes["origin-a"] != want {
-		t.Errorf("sizes = %v, want origin-a at %d: the bodies plus the per-row overhead", state.Sizes, want)
+	if state.Heads["origin-a"] != 2 || state.Entries["origin-a"] != 2 {
+		t.Errorf("heads %v entries %v, want the two appended entries", state.Heads, state.Entries)
+	}
+	if state.Heads["origin-b"] != 1 {
+		t.Errorf("heads = %v, want origin-b present at 1", state.Heads)
+	}
+
+	// Sizes are the segment objects' bytes, not an estimate of the bodies:
+	// the sum of the stored objects' lengths, which heads.bytes accumulates
+	// as each segment is published. The two must agree after two appends.
+	var want int64
+	for _, key := range []string{blobstore.SegmentKey("origin-a", 1), blobstore.SegmentKey("origin-a", 2)} {
+		var buf bytes.Buffer
+		if _, err := store.Get(context.Background(), key, &buf); err != nil {
+			t.Fatalf("get segment %s: %v", key, err)
+		}
+		want += int64(buf.Len())
+	}
+	if state.Sizes["origin-a"] != want {
+		t.Errorf("sizes = %v, want origin-a at %d: the bytes of its two segments", state.Sizes, want)
+	}
+	var headBytes int64
+	if err := openAt(t, path).QueryRow("SELECT bytes FROM heads WHERE origin = 'origin-a'").Scan(&headBytes); err != nil {
+		t.Fatalf("read heads bytes: %v", err)
+	}
+	if headBytes != want {
+		t.Errorf("heads bytes = %d, want %d: the stored objects' lengths", headBytes, want)
+	}
+}
+
+// TestReadMarksAnswersNilMapsOnAnEmptyLog pins the nil/empty rule: with no heads
+// rows the four maps stay nil rather than empty, so an absent answer and a zero
+// one stay apart on the wire. The signing fields are whatever the replica holds.
+func TestReadMarksAnswersNilMapsOnAnEmptyLog(t *testing.T) {
+	b := backendFor(t, &localDriver{path: tempReplica(t)}, "origin-a")
+	state, err := b.ReadMarks()
+	if err != nil {
+		t.Fatalf("ReadMarks: %v", err)
+	}
+	want := MarkState{SignedFrom: state.SignedFrom, SignedTags: state.SignedTags, EpochCuts: state.EpochCuts}
+	if !reflect.DeepEqual(state, want) {
+		t.Errorf("ReadMarks on an empty log = %+v, want nil heads, entries, sizes and floors", state)
+	}
+}
+
+// TestReadMarksIgnoresAStaleFloorMetaRow pins that a floor row an older build
+// recorded in meta plays no part: the floor is read from heads, so an origin
+// whose heads floor is zero stays out of Floors even when a stale meta row names
+// one. Mutant: read the meta floor prefix again -> the stale row reappears.
+func TestReadMarksIgnoresAStaleFloorMetaRow(t *testing.T) {
+	path := tempReplica(t)
+	b := backendFor(t, &localDriver{path: path}, "origin-a")
+	if _, err := b.Append([]Entry{upsertEntry("origin-a", "board", `["a"]`, `{"title":"one"}`)}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if err := execOnErr(t, path, "INSERT INTO meta (key, value) VALUES ('floor.origin-a', '4')"); err != nil {
+		t.Fatalf("seed a stale floor row: %v", err)
+	}
+
+	state, err := b.ReadMarks()
+	if err != nil {
+		t.Fatalf("ReadMarks: %v", err)
+	}
+	if _, ok := state.Floors["origin-a"]; ok {
+		t.Errorf("floors = %v, want origin-a absent: the stale meta row is not read", state.Floors)
+	}
+	if state.Heads["origin-a"] != 1 {
+		t.Errorf("heads = %v, want origin-a at 1", state.Heads)
+	}
+}
+
+// TestReadMarksRefusesAHeadsRowItCannotScan pins that a heads row whose column
+// types do not match heads is reported rather than read as a zero value.
+func TestReadMarksRefusesAHeadsRowItCannotScan(t *testing.T) {
+	path := tempReplica(t)
+	b := backendFor(t, &localDriver{path: path}, "origin-a")
+	execOn(t, path, "INSERT INTO heads (origin, seq, key, entries, bytes, at)"+
+		" VALUES ('origin-b', 'not a number', 'origin-b/log/000000000001', 1, 1, '2026-10-08T09:30:00Z')")
+	if _, err := b.ReadMarks(); err == nil {
+		t.Error("ReadMarks read a heads row whose sequence is not a number")
 	}
 }
 
@@ -80,26 +167,47 @@ func TestReadMarksReportsAnUnreachableReplica(t *testing.T) {
 }
 
 // TestReadMarksReportsAMissingTable pins that ReadMarks reports a remote whose
-// tables are not there rather than answering from what they happen to hold.
+// heads table is not there rather than answering from what it happens to hold,
+// and that the schema class crosses the pipe. A remote that lost its meta loses
+// the boundaries and cuts with it, which is reported rather than read as empty.
 func TestReadMarksReportsAMissingTable(t *testing.T) {
 	path := tempReplica(t)
 	driver := &localDriver{path: path}
 	b := backendFor(t, driver, "origin-a")
-	execOn(t, path, "DROP TABLE log")
+	execOn(t, path, "DROP TABLE heads")
 
 	_, err := b.ReadMarks()
 	if err == nil {
-		t.Fatal("a read against a remote with no log table came back as a mark state")
+		t.Fatal("a read against a remote with no heads table came back as a mark state")
 	}
-	if !contains(err.Error(), "log") {
+	if !contains(err.Error(), "heads") {
 		t.Errorf("refusal %q does not name the table that is missing", err)
 	}
 
-	// A remote that lost its meta loses the floors with it, which is reported
-	// rather than read as empty floors.
-	execOn(t, path, "CREATE TABLE log (origin TEXT, seq INTEGER, batch INTEGER, tbl TEXT, pk TEXT, op TEXT, schema_version INTEGER, body TEXT, at TEXT, mac BLOB, after_origin TEXT, after_seq INTEGER)")
-	execOn(t, path, "DROP TABLE meta")
-	if _, err := b.ReadMarks(); err == nil {
+	// The class the daemon latches on crosses read_marks. The local file
+	// driver reports a missing table in SQLite's own words, which the
+	// classifier leaves unmarked, so the engine-shaped refusal it does read
+	// is driven here to pin the class a missing heads table carries.
+	w := startWorker(t, refusingBackend{fail: markDriverRefusal(
+		errors.New("sync engine: failed to execute sql: no such table: heads"))})
+	w.askHello()
+	resp := w.ask(Request{ID: "m", Verb: VerbReadMarks})
+	if resp.OK {
+		t.Fatalf("read_marks over a missing heads table = %+v, want a refusal", resp)
+	}
+	if resp.Code != CodeSchema {
+		t.Errorf("read_marks code = %q, want %q", resp.Code, CodeSchema)
+	}
+	if !contains(resp.Error, "heads") {
+		t.Errorf("read_marks refusal %q does not name the table that is missing", resp.Error)
+	}
+
+	// A fresh replica keeps the heads read intact, so losing meta is what
+	// fails the read rather than the heads table dropped above.
+	metaPath := tempReplica(t)
+	metaBackend := backendFor(t, &localDriver{path: metaPath}, "origin-a")
+	execOn(t, metaPath, "DROP TABLE meta")
+	if _, err := metaBackend.ReadMarks(); err == nil {
 		t.Error("a read against a remote with no meta came back as a mark state")
 	}
 }

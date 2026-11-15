@@ -35,8 +35,8 @@ func (b *TursoBackend) PublishEpochCut(cut EpochCut) error {
 
 // cutExtension is the one transaction a vouch writes in: the head is read and
 // guarded before any row is written. The head is the heads row rather than a
-// recount of log rows: a vouch may only name a sequence an append recorded,
-// and a log row with no heads row is not one.
+// recount of stored entries: a vouch may only name a sequence an append
+// recorded, and a segment with no heads row is not one.
 func (b *TursoBackend) cutExtension(ctx context.Context, cut EpochCut) error {
 	tx, err := b.db.BeginTx(ctx, nil)
 	if err != nil {

@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -45,9 +47,39 @@ func (h *hookedStore) Get(ctx context.Context, key string, w io.Writer) (int64, 
 	return h.BlobStore.Get(ctx, key, w)
 }
 
+// decodeStoreSegment fetches the segment at key from the store and decodes it,
+// which is how a test reads back what an append wrote.
+func decodeStoreSegment(t *testing.T, store blobstore.BlobStore, key string) (SegmentHeader, []Entry) {
+	t.Helper()
+	var buf bytes.Buffer
+	if _, err := store.Get(context.Background(), key, &buf); err != nil {
+		t.Fatalf("get segment %s: %v", key, err)
+	}
+	header, entries, err := DecodeSegment(key, buf.Bytes())
+	if err != nil {
+		t.Fatalf("decode segment %s: %v", key, err)
+	}
+	return header, entries
+}
+
+// storeSegmentKeys lists the segment keys the store holds under one origin's
+// prefix, in key order, so a test can assert exactly which segments exist.
+func storeSegmentKeys(t *testing.T, store blobstore.BlobStore, origin string) []string {
+	t.Helper()
+	objs, err := store.ListAfter(context.Background(), origin+"/log/", "")
+	if err != nil {
+		t.Fatalf("list %s's segments: %v", origin, err)
+	}
+	keys := make([]string, 0, len(objs))
+	for _, obj := range objs {
+		keys = append(keys, obj.Key)
+	}
+	return keys
+}
+
 // TestAppendWritesOneSegmentAndMovesHeads pins that a batch of entries produces
 // exactly one segment object, numbers sequence contiguous from the replica's
-// high-water mark, and records the new head and byte count in heads and log.
+// high-water mark, and records the new head and byte count in heads.
 // Mutant: stop writing heads.
 func TestAppendWritesOneSegmentAndMovesHeads(t *testing.T) {
 	driver := &localDriver{path: tempReplica(t)}
@@ -76,6 +108,9 @@ func TestAppendWritesOneSegmentAndMovesHeads(t *testing.T) {
 	if header.Count != 2 || header.First != 1 || header.Last != 2 || len(entries) != 2 {
 		t.Fatalf("decoded header = %+v, entries = %d", header, len(entries))
 	}
+	// The entries round-trip whole: seqs, batch, body, time, and the MAC and
+	// After fields, which are absent here and must stay absent.
+	compareEntries(t, written, entries)
 
 	db := openAt(t, driver.path)
 	var seq, entriesCount, bytesCount, floor int
@@ -87,11 +122,6 @@ func TestAppendWritesOneSegmentAndMovesHeads(t *testing.T) {
 	if seq != 2 || headKey != key1 || entriesCount != 2 || bytesCount != int(n1) || floor != 0 {
 		t.Errorf("heads = (seq %d, key %s, entries %d, bytes %d, floor %d), want (2, %s, 2, %d, 0)",
 			seq, headKey, entriesCount, bytesCount, floor, key1, n1)
-	}
-
-	logRows := snapshotLog(t, driver.path)
-	if len(logRows) != 2 || logRows[0].seq != 1 || logRows[1].seq != 2 {
-		t.Errorf("log rows = %+v, want 2 rows", logRows)
 	}
 
 	e3 := upsertEntry("origin-a", "board", `["b3"]`, `{"title":"three"}`)
@@ -109,6 +139,11 @@ func TestAppendWritesOneSegmentAndMovesHeads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get second segment %s: %v", key3, err)
 	}
+	_, entries3, err := DecodeSegment(key3, buf3.Bytes())
+	if err != nil {
+		t.Fatalf("decode second segment: %v", err)
+	}
+	compareEntries(t, written2, entries3)
 	if err := db.QueryRow("SELECT seq, key, entries, bytes FROM heads WHERE origin = 'origin-a'").
 		Scan(&seq, &headKey, &entriesCount, &bytesCount); err != nil {
 		t.Fatalf("read heads after second append: %v", err)
@@ -116,6 +151,9 @@ func TestAppendWritesOneSegmentAndMovesHeads(t *testing.T) {
 	if seq != 3 || headKey != key3 || entriesCount != 3 || bytesCount != int(n1+n3) {
 		t.Errorf("heads after second append = (seq %d, key %s, entries %d, bytes %d), want (3, %s, 3, %d)",
 			seq, headKey, entriesCount, bytesCount, key3, n1+n3)
+	}
+	if tables := replicaTables(t, driver.path); tables["log"] || tables["marks"] {
+		t.Errorf("the replica after an append holds %v, want no log or marks table", tables)
 	}
 }
 
@@ -173,10 +211,12 @@ func TestAppendAdoptsOrphanFromCrashedPut(t *testing.T) {
 		t.Errorf("heads = (seq %d, entries %d), want (3, 3)", seq, entriesCount)
 	}
 
-	logRows := snapshotLog(t, driver.path)
-	if len(logRows) != 3 || logRows[0].seq != 1 || logRows[1].seq != 2 || logRows[2].seq != 3 {
-		t.Errorf("log rows = %+v, want rows 1, 2, 3", logRows)
-	}
+	// The adopted orphan keeps its own entries, and the retried export lands
+	// in its own segment past them.
+	_, entries1 := decodeStoreSegment(t, store, key1)
+	compareEntries(t, orphanEntries, entries1)
+	_, entries3 := decodeStoreSegment(t, store, key3)
+	compareEntries(t, reply, entries3)
 }
 
 // TestAppendRefusesBadOrphanAdoption pins that an orphan object whose header
@@ -208,7 +248,7 @@ func TestAppendRefusesBadOrphanAdoption(t *testing.T) {
 			t.Errorf("refusal code = %q, want %q", code, CodeRemote)
 		}
 
-		assertEmptyReplica(t, driver)
+		assertEmptyReplica(t, driver, store, key)
 		if driver.pushes != 0 {
 			t.Errorf("driver pushed %d times, want 0", driver.pushes)
 		}
@@ -239,7 +279,7 @@ func TestAppendRefusesBadOrphanAdoption(t *testing.T) {
 			t.Errorf("refusal code = %q, want %q", code, CodeRemote)
 		}
 
-		assertEmptyReplica(t, driver)
+		assertEmptyReplica(t, driver, store, key)
 		if driver.pushes != 0 {
 			t.Errorf("driver pushed %d times, want 0", driver.pushes)
 		}
@@ -256,43 +296,23 @@ func TestAppendRacesAnotherWriterAndPulls(t *testing.T) {
 
 	baseStore := blobstore.NewMemBlobStore(nil)
 	var bA *TursoBackend
+	var writtenA, writtenA2 []Entry
 	hooked := &hookedStore{
 		BlobStore: baseStore,
 		beforePutIfAbsentOnce: func(ctx context.Context, key string) {
 			// Writer A runs first inside B's PutIfAbsent hook.
-			_, err := bA.Append([]Entry{upsertEntry("origin-a", "board", `["a"]`, `{"title":"A"}`)})
+			var err error
+			writtenA, err = bA.Append([]Entry{upsertEntry("origin-a", "board", `["a"]`, `{"title":"A"}`)})
 			if err != nil {
 				t.Errorf("writer A append: %v", err)
 			}
 		},
 	}
 
-	spec := Spec{
-		Version: ProtocolVersion,
-		Origin:  "origin-a",
-		URL:     "libsql://scratch.example",
-		Token:   "the-token",
-		R2:      &R2Config{Bucket: "bucket"},
-	}
-
-	// Open backend A with the plain baseStore.
-	restore := newBlobStore
-	newBlobStore = func(R2Config) blobstore.BlobStore { return baseStore }
-	bA = NewTursoBackend(driverA)
-	if err := bA.Open(spec); err != nil {
-		t.Fatalf("open A: %v", err)
-	}
-	t.Cleanup(func() { _ = bA.Close() })
-
-	// Open backend B with the hooked store.
-	newBlobStore = func(R2Config) blobstore.BlobStore { return hooked }
-	t.Cleanup(func() { newBlobStore = restore })
-
-	bB := NewTursoBackend(driverB)
-	if err := bB.Open(spec); err != nil {
-		t.Fatalf("open B: %v", err)
-	}
-	t.Cleanup(func() { _ = bB.Close() })
+	// Both backends take their store through openStore: A the plain base
+	// store, B the hooked one that lets A run first.
+	bA = backendOnBlobStore(t, driverA, "origin-a", baseStore)
+	bB := backendOnBlobStore(t, driverB, "origin-a", hooked)
 
 	writtenB, err := bB.Append([]Entry{upsertEntry("origin-a", "board", `["b"]`, `{"title":"B"}`)})
 	if err != nil {
@@ -300,15 +320,6 @@ func TestAppendRacesAnotherWriterAndPulls(t *testing.T) {
 	}
 	if len(writtenB) != 1 || writtenB[0].Seq != 2 {
 		t.Fatalf("written B = %+v, want seq 2", writtenB)
-	}
-
-	key1 := blobstore.SegmentKey("origin-a", 1)
-	key2 := blobstore.SegmentKey("origin-a", 2)
-	for _, k := range []string{key1, key2} {
-		has, err := baseStore.Has(context.Background(), k)
-		if err != nil || !has {
-			t.Errorf("store has %s = %v (%v), want true", k, has, err)
-		}
 	}
 
 	db := openAt(t, path)
@@ -320,17 +331,25 @@ func TestAppendRacesAnotherWriterAndPulls(t *testing.T) {
 		t.Errorf("heads seq = %d, want 2", headsSeq)
 	}
 
-	rows := snapshotLog(t, path)
-	if len(rows) != 2 || rows[0].seq != 1 || rows[1].seq != 2 {
-		t.Errorf("log rows = %+v, want seq 1 and 2 with no duplicates", rows)
+	key1 := blobstore.SegmentKey("origin-a", 1)
+	key2 := blobstore.SegmentKey("origin-a", 2)
+	// Exactly the segments for seq 1 and 2: the loser's put became an orphan
+	// the winner adopted, so no sequence was written twice.
+	if keys := storeSegmentKeys(t, baseStore, "origin-a"); !reflect.DeepEqual(keys, []string{key1, key2}) {
+		t.Errorf("store holds %v, want exactly the segments for seq 1 and 2", keys)
 	}
+	_, entries1 := decodeStoreSegment(t, baseStore, key1)
+	compareEntries(t, writtenA, entries1)
+	_, entries2 := decodeStoreSegment(t, baseStore, key2)
+	compareEntries(t, writtenB, entries2)
 	if driverB.pulls != 1 {
 		t.Errorf("driver B pulled %d times, want 1", driverB.pulls)
 	}
 
 	// Race again when heads already exists: this tests compare-and-set on the UPDATE path.
 	hooked.beforePutIfAbsentOnce = func(ctx context.Context, key string) {
-		_, err := bA.Append([]Entry{upsertEntry("origin-a", "board", `["a2"]`, `{"title":"A2"}`)})
+		var err error
+		writtenA2, err = bA.Append([]Entry{upsertEntry("origin-a", "board", `["a2"]`, `{"title":"A2"}`)})
 		if err != nil {
 			t.Errorf("writer A second append: %v", err)
 		}
@@ -348,17 +367,22 @@ func TestAppendRacesAnotherWriterAndPulls(t *testing.T) {
 	if headsSeq != 4 {
 		t.Errorf("heads seq = %d, want 4", headsSeq)
 	}
-	rows = snapshotLog(t, path)
-	if len(rows) != 4 {
-		t.Errorf("log rows count = %d, want 4", len(rows))
+	key3 := blobstore.SegmentKey("origin-a", 3)
+	key4 := blobstore.SegmentKey("origin-a", 4)
+	if keys := storeSegmentKeys(t, baseStore, "origin-a"); !reflect.DeepEqual(keys, []string{key1, key2, key3, key4}) {
+		t.Errorf("store holds %v, want exactly the segments for seq 1 through 4", keys)
 	}
+	_, entries3 := decodeStoreSegment(t, baseStore, key3)
+	compareEntries(t, writtenA2, entries3)
+	_, entries4 := decodeStoreSegment(t, baseStore, key4)
+	compareEntries(t, writtenB2, entries4)
 	if driverB.pulls != 2 {
 		t.Errorf("driver B pulled %d times, want 2", driverB.pulls)
 	}
 }
 
 // TestAppendFailsWhenHeadMovesTwice pins that when the compare-and-set loses
-// twice in one export, append returns errHeadMoved without writing log rows.
+// twice in one export, append returns errHeadMoved without committing entries.
 func TestAppendFailsWhenHeadMovesTwice(t *testing.T) {
 	driver := &localDriver{path: tempReplica(t)}
 	baseStore := blobstore.NewMemBlobStore(nil)
@@ -377,21 +401,7 @@ func TestAppendFailsWhenHeadMovesTwice(t *testing.T) {
 		},
 	}
 
-	restore := newBlobStore
-	newBlobStore = func(R2Config) blobstore.BlobStore { return hooked }
-	t.Cleanup(func() { newBlobStore = restore })
-
-	b := NewTursoBackend(driver)
-	if err := b.Open(Spec{
-		Version: ProtocolVersion,
-		Origin:  "origin-a",
-		URL:     "libsql://scratch.example",
-		Token:   "the-token",
-		R2:      &R2Config{Bucket: "bucket"},
-	}); err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() { _ = b.Close() })
+	b := backendOnBlobStore(t, driver, "origin-a", hooked)
 	driver.pushes = 0
 
 	_, err := b.Append([]Entry{upsertEntry("origin-a", "board", `["b"]`, `{"title":"b"}`)})
@@ -399,12 +409,17 @@ func TestAppendFailsWhenHeadMovesTwice(t *testing.T) {
 		t.Fatalf("err = %v, want errHeadMoved", err)
 	}
 
-	var logCount int
-	if err := openAt(t, driver.path).QueryRow("SELECT COUNT(*) FROM log").Scan(&logCount); err != nil {
-		t.Fatalf("read log: %v", err)
+	// The hook's heads row stands unmoved: the lost race committed no
+	// entries, so its seq, key and entry count are the ones the hook wrote.
+	var seq, entriesCount int
+	var headKey string
+	if err := openAt(t, driver.path).QueryRow("SELECT seq, key, entries FROM heads WHERE origin = 'origin-a'").
+		Scan(&seq, &headKey, &entriesCount); err != nil {
+		t.Fatalf("read heads: %v", err)
 	}
-	if logCount != 0 {
-		t.Errorf("log count = %d, want 0", logCount)
+	if seq != 109 || headKey != "k" || entriesCount != 1 {
+		t.Errorf("heads = (seq %d, key %s, entries %d), want the hook's (109, k, 1): the lost race committed entries",
+			seq, headKey, entriesCount)
 	}
 	if driver.pulls != 1 {
 		t.Errorf("driver pulled %d times, want 1", driver.pulls)
@@ -433,7 +448,7 @@ func TestAppendRefusesOversizeEntries(t *testing.T) {
 	if store.Puts != 0 {
 		t.Errorf("store puts = %d, want 0", store.Puts)
 	}
-	assertEmptyReplica(t, driver)
+	assertEmptyReplica(t, driver, store)
 
 	entries256 := entries257[:256]
 	written, err := b.Append(entries256)
@@ -445,8 +460,9 @@ func TestAppendRefusesOversizeEntries(t *testing.T) {
 	}
 }
 
-// TestAppendRefusesWhenNoR2 pins that a backend opened without R2 refuses Append
-// with ErrNoR2 without modifying replica or pushing, while read verbs still answer.
+// TestAppendRefusesWhenNoR2 pins that a backend opened without R2 refuses
+// Append and Pull with ErrNoR2 without modifying the replica, pushing or
+// pulling, while Head and Stats still answer.
 func TestAppendRefusesWhenNoR2(t *testing.T) {
 	driver := &localDriver{path: tempReplica(t)}
 	b := NewTursoBackend(driver)
@@ -469,10 +485,13 @@ func TestAppendRefusesWhenNoR2(t *testing.T) {
 	if driver.pushes != 0 {
 		t.Errorf("driver pushed %d times, want 0", driver.pushes)
 	}
-	assertEmptyReplica(t, driver)
+	assertEmptyReplica(t, driver, nil)
 
-	if _, err := b.Pull(nil); err != nil {
-		t.Errorf("Pull failed: %v", err)
+	if _, err := b.Pull(nil); !errors.Is(err, ErrNoR2) || errors.Unwrap(err) != nil {
+		t.Fatalf("pull err = %v, want unwrapped ErrNoR2 sentinel", err)
+	}
+	if driver.pulls != 0 {
+		t.Errorf("driver pulled %d times, want 0: a pull with no bucket costs no transfer", driver.pulls)
 	}
 	if _, err := b.Head("origin-a", "", 0); err != nil {
 		t.Errorf("Head failed: %v", err)
@@ -508,6 +527,16 @@ func TestAppendRefusesWhenNoR2(t *testing.T) {
 	}
 	if !strings.Contains(resp.Error, ErrNoR2.Error()) {
 		t.Errorf("export error = %q, want containing %q", resp.Error, ErrNoR2.Error())
+	}
+	pullResp := w.ask(Request{ID: "3", Verb: VerbPull})
+	if pullResp.OK {
+		t.Fatalf("pull succeeded, want refusal: %+v", pullResp)
+	}
+	if !strings.Contains(pullResp.Error, ErrNoR2.Error()) {
+		t.Errorf("pull error = %q, want containing %q", pullResp.Error, ErrNoR2.Error())
+	}
+	if driver2.pulls != 0 {
+		t.Errorf("driver pulled %d times over the pipe, want 0: a pull with no bucket costs no transfer", driver2.pulls)
 	}
 }
 
@@ -658,7 +687,7 @@ func TestAppendSignedBoundaryThroughAdoption(t *testing.T) {
 		if !errors.Is(err, ErrBoundary) {
 			t.Fatalf("err = %v, want ErrBoundary", err)
 		}
-		assertEmptyReplica(t, driver)
+		assertEmptyReplica(t, driver, store, blobstore.SegmentKey(origin, 1))
 	})
 }
 
@@ -672,19 +701,7 @@ func TestAppendStoreFailuresWriteNothing(t *testing.T) {
 			BlobStore:       baseStore,
 			failPutIfAbsent: errors.New("network timeout"),
 		}
-		restore := newBlobStore
-		newBlobStore = func(R2Config) blobstore.BlobStore { return hooked }
-		t.Cleanup(func() { newBlobStore = restore })
-
-		b := NewTursoBackend(driver)
-		_ = b.Open(Spec{
-			Version: ProtocolVersion,
-			Origin:  "origin-a",
-			URL:     "libsql://scratch.example",
-			Token:   "the-token",
-			R2:      &R2Config{Bucket: "bucket"},
-		})
-		t.Cleanup(func() { _ = b.Close() })
+		b := backendOnBlobStore(t, driver, "origin-a", hooked)
 		driver.pushes = 0
 
 		_, err := b.Append([]Entry{upsertEntry("origin-a", "board", `["b"]`, `{"title":"one"}`)})
@@ -694,7 +711,7 @@ func TestAppendStoreFailuresWriteNothing(t *testing.T) {
 		if code := RefusalCodeOf(err); code != "" {
 			t.Errorf("refusal code = %q, want %q", code, "")
 		}
-		assertEmptyReplica(t, driver)
+		assertEmptyReplica(t, driver, baseStore)
 		if driver.pushes != 0 {
 			t.Errorf("pushes = %d, want 0", driver.pushes)
 		}
@@ -710,26 +727,14 @@ func TestAppendStoreFailuresWriteNothing(t *testing.T) {
 			BlobStore: baseStore,
 			failGet:   io.ErrUnexpectedEOF,
 		}
-		restore := newBlobStore
-		newBlobStore = func(R2Config) blobstore.BlobStore { return hooked }
-		t.Cleanup(func() { newBlobStore = restore })
-
-		b := NewTursoBackend(driver)
-		_ = b.Open(Spec{
-			Version: ProtocolVersion,
-			Origin:  "origin-a",
-			URL:     "libsql://scratch.example",
-			Token:   "the-token",
-			R2:      &R2Config{Bucket: "bucket"},
-		})
-		t.Cleanup(func() { _ = b.Close() })
+		b := backendOnBlobStore(t, driver, "origin-a", hooked)
 		driver.pushes = 0
 
 		_, err := b.Append([]Entry{upsertEntry("origin-a", "board", `["b"]`, `{"title":"one"}`)})
 		if !errors.Is(err, io.ErrUnexpectedEOF) {
 			t.Fatalf("err = %v, want io.ErrUnexpectedEOF", err)
 		}
-		assertEmptyReplica(t, driver)
+		assertEmptyReplica(t, driver, baseStore, key1)
 		if driver.pushes != 0 {
 			t.Errorf("pushes = %d, want 0", driver.pushes)
 		}
@@ -820,7 +825,7 @@ func TestAppendRefusesUnhashableBody(t *testing.T) {
 	if store.Puts != 0 {
 		t.Errorf("store puts = %d, want 0", store.Puts)
 	}
-	assertEmptyReplica(t, driver)
+	assertEmptyReplica(t, driver, store)
 	if driver.pushes != 0 {
 		t.Errorf("driver pushed %d times, want 0", driver.pushes)
 	}
@@ -841,21 +846,7 @@ func TestAppendCasLostPullFailure(t *testing.T) {
 		},
 	}
 
-	restore := newBlobStore
-	newBlobStore = func(R2Config) blobstore.BlobStore { return hooked }
-	t.Cleanup(func() { newBlobStore = restore })
-
-	b := NewTursoBackend(driver)
-	if err := b.Open(Spec{
-		Version: ProtocolVersion,
-		Origin:  "origin-a",
-		URL:     "libsql://scratch.example",
-		Token:   "the-token",
-		R2:      &R2Config{Bucket: "bucket"},
-	}); err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() { _ = b.Close() })
+	b := backendOnBlobStore(t, driver, "origin-a", hooked)
 
 	_, err := b.Append([]Entry{upsertEntry("origin-a", "board", `["b"]`, `{"title":"b"}`)})
 	if err == nil || !strings.Contains(err.Error(), "network down") {
@@ -873,20 +864,32 @@ func TestReadHeadReturnsErrorOnClosedDB(t *testing.T) {
 	}
 }
 
-func assertEmptyReplica(t *testing.T, driver *localDriver) {
+// assertEmptyReplica pins that a refused append committed nothing: no heads
+// row, and no segment in the store beyond the keys the test seeded itself. A
+// nil store stands for a backend opened without a bucket.
+func assertEmptyReplica(t *testing.T, driver *localDriver, store blobstore.BlobStore, seeded ...string) {
 	t.Helper()
 	db := openAt(t, driver.path)
-	var headsCount, logCount int
+	var headsCount int
 	if err := db.QueryRow("SELECT COUNT(*) FROM heads").Scan(&headsCount); err != nil {
 		t.Fatalf("read heads count: %v", err)
 	}
 	if headsCount != 0 {
 		t.Errorf("heads count = %d, want 0", headsCount)
 	}
-	if err := db.QueryRow("SELECT COUNT(*) FROM log").Scan(&logCount); err != nil {
-		t.Fatalf("read log count: %v", err)
+	if store == nil {
+		return
 	}
-	if logCount != 0 {
-		t.Errorf("log count = %d, want 0", logCount)
+	objs, err := store.ListAfter(context.Background(), "", "")
+	if err != nil {
+		t.Fatalf("list the store: %v", err)
+	}
+	var keys []string
+	for _, obj := range objs {
+		keys = append(keys, obj.Key)
+	}
+	sort.Strings(seeded)
+	if !reflect.DeepEqual(keys, seeded) {
+		t.Errorf("store holds %v, want only the seeded %v: the refused append wrote a segment", keys, seeded)
 	}
 }
