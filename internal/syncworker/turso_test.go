@@ -302,14 +302,32 @@ func snapshotLog(t *testing.T, path string) []logRow {
 }
 
 // logWithoutMAC is the log table as a build before the mac column wrote it. It
-// is spelled out rather than taken from createStatements, which carries the
-// current format's column and would seed a remote this build could not recognise
-// as older.
+// is spelled out rather than taken from createStatements, which carries no log
+// table: an older remote is seeded with the columns its own format wrote.
 const logWithoutMAC = "CREATE TABLE log (" +
 	"origin TEXT NOT NULL, seq INTEGER NOT NULL, batch INTEGER NOT NULL, " +
 	"tbl TEXT NOT NULL, pk TEXT NOT NULL, op TEXT NOT NULL, " +
 	"schema_version INTEGER NOT NULL, body TEXT, at TEXT NOT NULL, " +
 	"PRIMARY KEY (origin, seq))"
+
+// logWithMACAndAfter is the log table as formats 4 and 5 held it, with the mac
+// and after columns. It is spelled out rather than taken from createStatements,
+// which carries no log table: an older remote is seeded with the columns its
+// own format wrote.
+const logWithMACAndAfter = "CREATE TABLE log (" +
+	"origin TEXT NOT NULL, seq INTEGER NOT NULL, batch INTEGER NOT NULL, " +
+	"tbl TEXT NOT NULL, pk TEXT NOT NULL, op TEXT NOT NULL, " +
+	"schema_version INTEGER NOT NULL, body TEXT, at TEXT NOT NULL, mac BLOB, " +
+	"after_origin TEXT, after_seq INTEGER, " +
+	"PRIMARY KEY (origin, seq))"
+
+// marksTableStatement is the marks table as the older formats held it: one row
+// per reader per origin. It is spelled out rather than taken from
+// createStatements, which carries no marks table.
+const marksTableStatement = "CREATE TABLE marks (" +
+	"reader TEXT NOT NULL, origin TEXT NOT NULL, seq INTEGER NOT NULL, " +
+	"at TEXT NOT NULL, " +
+	"PRIMARY KEY (reader, origin))"
 
 // headTableStatement is the head table as a remote that still stores it holds
 // it. It is spelled out rather than taken from createStatements, which carries
@@ -353,12 +371,12 @@ func seedFormatOneRemote(t *testing.T, path string) {
 		"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '1')")
 }
 
-// seedFormatTwoRemote creates this build's tables with the log as it was before
-// the mac column, and records format two.
+// seedFormatTwoRemote creates the format 2 remote: the head table beside the
+// log as it was before the mac column, marks and meta, with format row 2.
 func seedFormatTwoRemote(t *testing.T, path string) {
 	t.Helper()
 	execOn(t, path, logWithoutMAC, headTableStatement, createStatements[1],
-		createStatements[2],
+		marksTableStatement,
 		"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '2')")
 }
 
@@ -369,12 +387,12 @@ const logFormatThree = "CREATE TABLE log (" +
 	"schema_version INTEGER NOT NULL, body TEXT, at TEXT NOT NULL, mac BLOB, " +
 	"PRIMARY KEY (origin, seq))"
 
-// seedFormatThreeRemote creates this build's tables with the log as it was in format 3,
-// and records format three in meta.
+// seedFormatThreeRemote creates the format 3 remote: the head table beside the
+// log as it was in format 3, marks and meta, with format row 3.
 func seedFormatThreeRemote(t *testing.T, path string) {
 	t.Helper()
 	execOn(t, path, logFormatThree, headTableStatement, createStatements[1],
-		createStatements[2],
+		marksTableStatement,
 		"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '3')")
 }
 
@@ -382,16 +400,16 @@ func seedFormatThreeRemote(t *testing.T, path string) {
 // full log, marks and meta, with format row 4.
 func seedFormatFourRemote(t *testing.T, path string) {
 	t.Helper()
-	execOn(t, path, createStatements[0], headTableStatement, createStatements[1],
-		createStatements[2],
+	execOn(t, path, logWithMACAndAfter, headTableStatement, createStatements[1],
+		marksTableStatement,
 		"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '4')")
 }
 
-// seedFormatFiveRemote creates the format 5 remote: log, meta and marks from
-// createStatements[0..2], with format row 5.
+// seedFormatFiveRemote creates the format 5 remote: the full log, meta and
+// marks, with format row 5.
 func seedFormatFiveRemote(t *testing.T, path string) {
 	t.Helper()
-	execOn(t, path, createStatements[0], createStatements[1], createStatements[2],
+	execOn(t, path, logWithMACAndAfter, createStatements[1], marksTableStatement,
 		"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '5')")
 }
 
@@ -407,17 +425,6 @@ func signedFromMeta(t *testing.T, path, origin string) (string, bool) {
 		t.Fatalf("read %s: %v", signedFromPrefix+origin, err)
 	}
 	return value, true
-}
-
-// logMAC is the MAC stored on one row of the replica's log, and whether it is
-// NULL -- which is how an entry written before this machine had a key reads.
-func logMAC(t *testing.T, path string, seq int) ([]byte, bool) {
-	t.Helper()
-	var mac []byte
-	if err := openAt(t, path).QueryRow("SELECT mac FROM log WHERE seq = ?", seq).Scan(&mac); err != nil {
-		t.Fatalf("read the mac of seq %d: %v", seq, err)
-	}
-	return mac, mac != nil
 }
 
 // assertSeqs pins the sequence numbers of a batch, so a test states the
@@ -477,7 +484,7 @@ func TestReplicaOpensOnlyThroughTheSyncConstructor(t *testing.T) {
 	}
 
 	var n int
-	if err := openAt(t, path).QueryRow("SELECT COUNT(*) FROM log").Scan(&n); err != nil {
+	if err := openAt(t, path).QueryRow("SELECT entries FROM heads WHERE origin = 'origin-a'").Scan(&n); err != nil {
 		t.Fatalf("read the replica: %v", err)
 	}
 	if n != 1 {
@@ -486,7 +493,7 @@ func TestReplicaOpensOnlyThroughTheSyncConstructor(t *testing.T) {
 }
 
 // TestFirstUseCreatesTheRemoteLogTables pins the first-use contract: an empty
-// remote gets the five tables with the format row, the schema is pushed so
+// remote gets the three tables with the format row, the schema is pushed so
 // the remote learns it, and a re-run against the same replica changes nothing
 // and does not error.
 func TestFirstUseCreatesTheRemoteLogTables(t *testing.T) {
@@ -495,13 +502,18 @@ func TestFirstUseCreatesTheRemoteLogTables(t *testing.T) {
 	b := backendFor(t, driver, "origin-a")
 
 	tables := replicaTables(t, path)
-	for _, want := range []string{"heads", "log", "marks", "meta", "shared"} {
+	for _, want := range []string{"heads", "meta", "shared"} {
 		if !tables[want] {
 			t.Errorf("first use did not create %q; the replica holds %v", want, tables)
 		}
 	}
-	if len(tables) != 5 {
-		t.Errorf("first use created %v, want exactly five tables: heads, log, marks, meta, shared", tables)
+	for _, absent := range []string{"log", "marks"} {
+		if tables[absent] {
+			t.Errorf("first use created %q, which the log's schema does not hold", absent)
+		}
+	}
+	if len(tables) != 3 {
+		t.Errorf("first use created %v, want exactly three tables: heads, meta, shared", tables)
 	}
 	if got := metaFormat(t, path); got != "6" {
 		t.Errorf("meta format = %q, want 6", got)
@@ -531,8 +543,8 @@ func TestFirstUseCreatesTheRemoteLogTables(t *testing.T) {
 	if again.pulls != 0 {
 		t.Errorf("a re-run pulled %d times, want none: the current set never pulls on open", again.pulls)
 	}
-	if tables := replicaTables(t, path); len(tables) != 5 {
-		t.Errorf("a re-run left %v, want the same five tables", tables)
+	if tables := replicaTables(t, path); len(tables) != 3 {
+		t.Errorf("a re-run left %v, want the same three tables", tables)
 	}
 }
 
@@ -612,9 +624,15 @@ func TestFirstUseLooksPastTheEnginesOwnTables(t *testing.T) {
 	execOn(t, path, engineTables...)
 	driver := &localDriver{path: path}
 	b := backendFor(t, driver, "origin-a")
-	for _, want := range []string{"heads", "log", "marks", "meta", "shared"} {
-		if !replicaTables(t, path)[want] {
+	tables := replicaTables(t, path)
+	for _, want := range []string{"heads", "meta", "shared"} {
+		if !tables[want] {
 			t.Errorf("first use over the engine's tables did not create %q", want)
+		}
+	}
+	for _, absent := range []string{"log", "marks"} {
+		if tables[absent] {
+			t.Errorf("first use over the engine's tables created %q, which the log's schema does not hold", absent)
 		}
 	}
 	if driver.pushes != 1 {
@@ -651,7 +669,7 @@ func TestWorkerRefusesARemoteThatIsNotALog(t *testing.T) {
 		"the current tables at the older format": append(append([]string(nil), createStatements...),
 			"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '1')"),
 		"format two's tables at format one's row": {logWithoutMAC, headTableStatement, createStatements[1],
-			createStatements[2],
+			marksTableStatement,
 			"INSERT INTO meta (key, value) VALUES ('" + metaFormatKey + "', '1')"},
 		"a format above this build's": append(append([]string(nil), createStatements...),
 			"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '7')"),
@@ -687,21 +705,22 @@ func TestWorkerRefusesARemoteThatIsNotALog(t *testing.T) {
 // TestWorkerRefusalLeavesTheRemoteUntouched pins that a remote the handshake
 // refuses is never written into: its tables and every log row read back the
 // same after the refusal, and no push went out. The two shapes are the
-// current tables at the older format four -- the format 4 table set does
-// not match, so it is refused as not a log -- and a format above this build's.
+// format-5 table set at format four -- the set and the format row disagree,
+// so it is refused as not a log -- and the same set at a format above this
+// build's.
 func TestWorkerRefusalLeavesTheRemoteUntouched(t *testing.T) {
 	sentinel := "INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at)" +
 		" VALUES ('origin-a', 1, 1, 'board', '[\"s\"]', 'upsert', 3, '{\"title\":\"sentinel\"}', '2026-10-08T09:30:00Z')"
 	cases := map[string]string{
-		"the current tables at format four": "4",
-		"a format above this build's":       "7",
+		"the older tables at format four": "4",
+		"a format above this build's":     "7",
 	}
 	for name, format := range cases {
 		t.Run(name, func(t *testing.T) {
 			path := tempReplica(t)
-			execOn(t, path, append(append([]string(nil), createStatements...),
+			execOn(t, path, logWithMACAndAfter, createStatements[1], marksTableStatement,
 				"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '"+format+"')",
-				sentinel)...)
+				sentinel)
 			beforeTables := replicaTables(t, path)
 			beforeRows := snapshotLog(t, path)
 
@@ -1102,71 +1121,12 @@ func exchangeHash(t *testing.T, body string) string {
 	return h
 }
 
-// oldSQLHead re-derives an origin's head from the log table with SQL: the
-// newest sequence per row, then the entries in sequence order, keeping each
-// row's newest, skipping a newest delete, and hashing survivors with the
-// exchange's digest. It is the oracle the segment derivation is measured
-// against while the log is still written beside the segments; it goes when
-// the log table does, and the literal expectations beside it stay.
-func oldSQLHead(t *testing.T, path, origin string) []HeadRow {
-	t.Helper()
-	db := openAt(t, path)
-	newest := make(map[headKey]int)
-	rows, err := db.Query("SELECT tbl, pk, seq FROM log WHERE origin = ?", origin)
-	if err != nil {
-		t.Fatalf("read the log: %v", err)
-	}
-	for rows.Next() {
-		var key headKey
-		var seq int
-		if err := rows.Scan(&key.tbl, &key.pk, &seq); err != nil {
-			t.Fatalf("scan a log row: %v", err)
-		}
-		if seq > newest[key] {
-			newest[key] = seq
-		}
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("read the log: %v", err)
-	}
-	// One connection serves the handle, so the first read closes before the
-	// second opens.
-	_ = rows.Close()
-	entries, err := db.Query("SELECT tbl, pk, seq, op, body FROM log WHERE origin = ? AND seq > 0 ORDER BY seq", origin)
-	if err != nil {
-		t.Fatalf("read the log: %v", err)
-	}
-	defer func() { _ = entries.Close() }()
-	var out []HeadRow
-	for entries.Next() {
-		var tbl, pk, op string
-		var seq int
-		var body sql.NullString
-		if err := entries.Scan(&tbl, &pk, &seq, &op, &body); err != nil {
-			t.Fatalf("scan a log row: %v", err)
-		}
-		if seq != newest[headKey{tbl: tbl, pk: pk}] || op == opDelete {
-			continue
-		}
-		hash, err := synclog.BodyHash(json.RawMessage(body.String))
-		if err != nil {
-			t.Fatalf("BodyHash of %s %s: %v", tbl, pk, err)
-		}
-		out = append(out, HeadRow{Tbl: tbl, PK: pk, Seq: seq, Hash: hash})
-	}
-	if err := entries.Err(); err != nil {
-		t.Fatalf("read the log: %v", err)
-	}
-	return out
-}
-
-// TestHeadMatchesTheSQLWalk pins the segment derivation against the SQL walk
-// of the log over one fixture: superseded upserts, a delete, a delete then
-// recreate, a doc table, an after-bearing entry, rows split over five
-// segments -- two bulk appends of 256 entries and three small batches -- and
-// a second origin whose rows must not leak in. The head equals the oracle,
-// equals the literal expectations, and paging a row at a time from each
-// cursor meets the whole.
+// TestHeadMatchesTheSQLWalk pins the segment derivation over one fixture:
+// superseded upserts, a delete, a delete then recreate, a doc table, an
+// after-bearing entry, rows split over five segments -- two bulk appends of
+// 256 entries and three small batches -- and a second origin whose rows must
+// not leak in. The head equals the literal expectations, and paging a row at
+// a time from each cursor meets the whole.
 func TestHeadMatchesTheSQLWalk(t *testing.T) {
 	path := tempReplica(t)
 	store := blobstore.NewMemBlobStore(nil)
@@ -1214,19 +1174,9 @@ func TestHeadMatchesTheSQLWalk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("head: %v", err)
 	}
-	oracle := oldSQLHead(t, path, "origin-a")
-	if !reflect.DeepEqual(whole, oracle) {
-		for i := 0; i < len(whole) && i < len(oracle); i++ {
-			if whole[i] != oracle[i] {
-				t.Fatalf("head differs from the SQL walk at row %d: %+v vs %+v", i, whole[i], oracle[i])
-			}
-		}
-		t.Fatalf("head = %d rows, SQL walk = %d rows", len(whole), len(oracle))
-	}
 
 	// The literal expectations: the interesting rows with the exchange's
-	// digest of their literal bodies, and the mechanical fillers. These stay
-	// when the oracle goes with the log table.
+	// digest of their literal bodies, and the mechanical fillers.
 	want := make([]HeadRow, 0, 516)
 	for i := 1; i < 256; i++ {
 		want = append(want, HeadRow{Tbl: "board", PK: fmt.Sprintf(`["f%d"]`, i), Seq: i + 1,
@@ -1569,13 +1519,6 @@ func TestBackendRefusesAnotherOriginsEntry(t *testing.T) {
 	if _, err := b.Append([]Entry{upsertEntry("origin-b", "board", `["b"]`, `{}`)}); err == nil {
 		t.Fatal("append accepted another origin's entry")
 	}
-	var n int
-	if err := openAt(t, driver.path).QueryRow("SELECT COUNT(*) FROM log").Scan(&n); err != nil {
-		t.Fatalf("read the replica: %v", err)
-	}
-	if n != 0 {
-		t.Errorf("a refused append wrote %d log rows, want none", n)
-	}
 	var headsCount int
 	if err := openAt(t, driver.path).QueryRow("SELECT COUNT(*) FROM heads").Scan(&headsCount); err != nil {
 		t.Fatalf("read heads: %v", err)
@@ -1712,8 +1655,8 @@ func TestBackendAnswersAnEmptyBatch(t *testing.T) {
 // TestBackendRefusesWhenTheLogIsGone pins that a replica whose log vanished
 // is reported, not answered from. The head is derived from the segments, so
 // a missing head table leaves the read answering from what they hold. The
-// pull and stats read the heads rows and the append writes both tables, so
-// both go before those assertions.
+// pull and stats read the heads rows and the append moves heads, so it goes
+// before those assertions.
 func TestBackendRefusesWhenTheLogIsGone(t *testing.T) {
 	driver := &localDriver{path: tempReplica(t)}
 	b := backendFor(t, driver, "origin-a")
@@ -1726,17 +1669,17 @@ func TestBackendRefusesWhenTheLogIsGone(t *testing.T) {
 		t.Fatalf("head over a missing head table: %v", err)
 	}
 	if len(head) != 1 || head[0].PK != `["b"]` || head[0].Seq != 1 {
-		t.Errorf("head over a missing head table = %+v, want the one log row at seq 1", head)
+		t.Errorf("head over a missing head table = %+v, want the one entry at seq 1", head)
 	}
-	execOn(t, driver.path, "DROP TABLE log", "DROP TABLE heads")
+	execOn(t, driver.path, "DROP TABLE heads")
 	if _, err := b.Pull(nil); err == nil {
-		t.Error("pull succeeded over a missing log table")
+		t.Error("pull succeeded over a missing heads table")
 	}
 	if _, err := b.Append([]Entry{upsertEntry("origin-a", "board", `["b"]`, `{"title":"one"}`)}); err == nil {
-		t.Error("append succeeded over a missing log table")
+		t.Error("append succeeded over a missing heads table")
 	}
 	if _, err := b.Stats(); err == nil {
-		t.Error("stats succeeded over a missing log table")
+		t.Error("stats succeeded over a missing heads table")
 	}
 }
 

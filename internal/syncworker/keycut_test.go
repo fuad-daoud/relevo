@@ -1,10 +1,13 @@
 package syncworker
 
 import (
+	"bytes"
+	"context"
 	"database/sql"
 	"errors"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/blobstore"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
@@ -178,13 +181,21 @@ func TestKeyCutWithNoHeadsRowAcceptsZeroAndRefusesOne(t *testing.T) {
 }
 
 // TestKeyCutRefusesALogSeqWithNoHeadsRow pins that the bound is the heads row,
-// not the log's rows: a log row seeded without a heads row does not raise the
-// head, so a vouch at that row's sequence is refused and stores nothing.
+// not the stored segments: a segment seeded without a heads row does not raise
+// the head, so a vouch at that segment's sequence is refused and stores nothing.
 func TestKeyCutRefusesALogSeqWithNoHeadsRow(t *testing.T) {
 	path := tempReplica(t)
-	b := backendFor(t, &localDriver{path: path}, "origin-a")
-	execOn(t, path, "INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, at) "+
-		"VALUES ('origin-a', 1, 1, 'board', '[\"k\"]', 'upsert', 3, '2026-11-15T00:00:00Z')")
+	b, store := backendWithStore(t, &localDriver{path: path}, "origin-a")
+	e := upsertEntry("origin-a", "board", `["k"]`, `{"title":"one"}`)
+	e.Seq, e.Batch = 1, 1
+	data, _, err := EncodeSegment("origin-a", []Entry{e})
+	if err != nil {
+		t.Fatalf("encode the seeded segment: %v", err)
+	}
+	key := blobstore.SegmentKey("origin-a", 1)
+	if err := store.Put(context.Background(), key, bytes.NewReader(data), int64(len(data))); err != nil {
+		t.Fatalf("seed the segment: %v", err)
+	}
 	s := startWorker(t, b)
 	if resp := s.ask(helloRequest("h")); !resp.OK {
 		t.Fatalf("hello: %+v", resp)
@@ -192,7 +203,7 @@ func TestKeyCutRefusesALogSeqWithNoHeadsRow(t *testing.T) {
 	cut := synclog.EpochCut{Epoch: 2, Seq: 1, Tag: synclog.EpochCutTag([]byte("k"), "origin-a", 2, 1)}
 	resp := s.ask(Request{ID: "c1", Verb: VerbKeyCut, Cut: outEpochCut(cut)})
 	if resp.OK {
-		t.Error("key_cut at a log row's seq with no heads row came back as a success")
+		t.Error("key_cut at a stored segment's seq with no heads row came back as a success")
 	}
 	if _, ok := cutRowHeld(t, path, "origin-a"); ok {
 		t.Error("a refused vouch wrote a cut row")

@@ -72,9 +72,9 @@ func TestSignedEntryVerifiesAfterThePipeAndTheLog(t *testing.T) {
 }
 
 // TestAnUnsignedEntryIsStoredWithoutAMAC pins that an entry written before this
-// machine had a key leaves a NULL in the column, which is what a reader takes
-// as unsigned. An empty blob would be a different answer: it looks like a
-// signature of nothing rather than the absence of one.
+// machine had a key stores no MAC, which is what a reader takes as unsigned. An
+// empty blob would be a different answer: it looks like a signature of nothing
+// rather than the absence of one.
 func TestAnUnsignedEntryIsStoredWithoutAMAC(t *testing.T) {
 	path := tempReplica(t)
 	store := blobstore.NewMemBlobStore(nil)
@@ -88,8 +88,12 @@ func TestAnUnsignedEntryIsStoredWithoutAMAC(t *testing.T) {
 	if len(written) != 1 {
 		t.Fatalf("append = %d entries, want 1", len(written))
 	}
-	if mac, present := logMAC(t, path, written[0].Seq); present {
-		t.Errorf("the row holds a MAC of %x, want NULL", mac)
+	_, entries := decodeStoreSegment(t, store, blobstore.SegmentKey("origin-a", written[0].Seq))
+	if len(entries) != 1 {
+		t.Fatalf("the segment holds %d entries, want 1", len(entries))
+	}
+	if entries[0].MAC != nil {
+		t.Errorf("the stored entry holds a MAC of %x, want none", entries[0].MAC)
 	}
 	pulled, err := reader.Pull(nil)
 	if err != nil {

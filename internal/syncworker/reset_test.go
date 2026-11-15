@@ -61,13 +61,13 @@ func TestUnknownReplicaIsDiscardedAndBootstrappedAgain(t *testing.T) {
 		t.Errorf("opens = %d, want the first open and the re-bootstrap", driver.opens)
 	}
 	tables := replicaTables(t, path)
-	for _, want := range []string{"heads", "log", "marks", "meta", "shared"} {
+	for _, want := range []string{"heads", "meta", "shared"} {
 		if !tables[want] {
 			t.Errorf("the fresh replica does not hold %q; it holds %v", want, tables)
 		}
 	}
-	if len(tables) != 5 {
-		t.Errorf("the fresh replica holds %v, want exactly the log's five tables", tables)
+	if len(tables) != 3 {
+		t.Errorf("the fresh replica holds %v, want exactly the log's three tables", tables)
 	}
 	if got := metaFormat(t, path); got != "6" {
 		t.Errorf("meta format = %q, want 6", got)
@@ -165,13 +165,15 @@ func TestOlderFormatOpensWhenThePullBringsTheCurrentLog(t *testing.T) {
 		// The migration appears once; a later pull brings nothing new.
 		driver.afterPull = nil
 		for _, stmt := range []string{
-			createStatements[3],
-			createStatements[4],
+			createStatements[0],
+			createStatements[2],
 			"UPDATE meta SET value = '6' WHERE key = '" + metaFormatKey + "'",
+			// The migration drops the tables the current format does not
+			// hold, so the replica answers with the current set alone.
+			"DROP TABLE log",
+			"DROP TABLE marks",
 			"INSERT INTO heads (origin, seq, key, entries, bytes, at)" +
 				" VALUES ('origin-b', 1, '" + key + "', 1, " + strconv.Itoa(len(data)) + ", '2026-10-08T09:30:00Z')",
-			"INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at)" +
-				" VALUES ('origin-b', 1, 1, 'board', '[\"b\"]', 'upsert', 3, '{\"title\":\"migrated\"}', '2026-10-08T09:30:00Z')",
 		} {
 			if _, err := db.Exec(stmt); err != nil {
 				t.Errorf("the pull brings %q: %v", stmt, err)
@@ -450,8 +452,10 @@ func TestOlderFormatRefusesWhenThePulledFormatCannotBeRead(t *testing.T) {
 	driver := &localDriver{path: path}
 	driver.afterPull = func(db *sql.DB) {
 		for _, stmt := range []string{
-			createStatements[3],
-			createStatements[4],
+			createStatements[0],
+			createStatements[2],
+			"DROP TABLE log",
+			"DROP TABLE marks",
 			"DROP TABLE meta",
 			"CREATE TABLE meta (name TEXT)",
 		} {
@@ -481,7 +485,14 @@ func TestOlderFormatStillRefusesWhenThePullBringsCurrentTablesAtAnOlderFormat(t 
 	seedFormatFiveRemote(t, path)
 	driver := &localDriver{path: path}
 	driver.afterPull = func(db *sql.DB) {
-		for _, stmt := range []string{createStatements[3], createStatements[4]} {
+		// The current tables arrive, but the format row stays at the older
+		// number: the refusal must come from the row, not the table set.
+		for _, stmt := range []string{
+			createStatements[0],
+			createStatements[2],
+			"DROP TABLE log",
+			"DROP TABLE marks",
+		} {
 			if _, err := db.Exec(stmt); err != nil {
 				t.Errorf("the pull brings %q: %v", stmt, err)
 			}

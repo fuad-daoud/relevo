@@ -8,14 +8,6 @@ import (
 	"context"
 )
 
-// createMarksStatement is the marks table: one row per reader per origin. It is
-// created so a format-5 remote and a new one agree, and nothing writes or reads
-// it.
-const createMarksStatement = "CREATE TABLE marks (" +
-	"reader TEXT NOT NULL, origin TEXT NOT NULL, seq INTEGER NOT NULL, " +
-	"at TEXT NOT NULL, " +
-	"PRIMARY KEY (reader, origin))"
-
 // ReadMarks answers with each origin's head, entry count and size, and the
 // floor it has recorded. The heads are read as recorded rather than recomputed:
 // a caller recounting from entries it does not hold would floor an origin at a

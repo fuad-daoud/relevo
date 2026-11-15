@@ -23,7 +23,7 @@ import (
 // an empty remote and pushes, a second joins with its own replica, pulls the
 // first's entry, appends its own, and the first pulls that back. Each append
 // also publishes its segment to the one bucket both installations share, and
-// the heads rows naming those segments cross the remote with the log rows.
+// the heads rows naming those segments cross the remote.
 func TestScratchRemoteExportPullRoundTrip(t *testing.T) {
 	url := os.Getenv("RELEVO_SCRATCH_SYNC_URL")
 	token := os.Getenv("RELEVO_SCRATCH_SYNC_TOKEN")

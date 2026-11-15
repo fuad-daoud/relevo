@@ -2,8 +2,7 @@ package syncworker
 
 // The pull's read side: given each other origin's heads row and the mark the
 // reader holds, list the segments past the mark, fetch them, and hand back
-// whole batches. The bucket's segments are the log's history here; the log
-// table is written beside them but not read.
+// whole batches. The bucket's segments are the log's history here.
 
 import (
 	"bytes"
