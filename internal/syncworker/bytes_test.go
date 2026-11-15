@@ -148,16 +148,12 @@ func TestTransferCountsAcrossAStatsCallThatFails(t *testing.T) {
 }
 
 // TestWorkerRefusesWrongProtocolVersion pins the handshake gate: a worker on
-// version 5 refuses a daemon on any other number, naming both, because every
+// version 6 refuses a daemon on any other number, naming both, because every
 // answer after it would be in a vocabulary the daemon reads wrongly.
-//
-// The mutation is accepting version 1, which would let a version 1 daemon start
-// a version 5 worker and discover the difference at the first put_blobs, after
-// the exporter had written entries pointing at objects nobody uploaded.
 func TestWorkerRefusesWrongProtocolVersion(t *testing.T) {
 	t.Parallel()
 	backend := &fakeBackend{}
-	for _, version := range []int{0, 1, 2, 3, 4, 6} {
+	for _, version := range []int{0, 1, 2, 3, 4, 5, 7} {
 		s := &server{backend: backend}
 		resp := s.dispatch(Request{
 			ID: "1", Verb: VerbHello, Version: version,
@@ -173,8 +169,8 @@ func TestWorkerRefusesWrongProtocolVersion(t *testing.T) {
 			t.Errorf("version %d refusal %q does not name what arrived", version, resp.Error)
 		}
 	}
-	if ProtocolVersion != 5 {
-		t.Errorf("ProtocolVersion = %d, want 5", ProtocolVersion)
+	if ProtocolVersion != 6 {
+		t.Errorf("ProtocolVersion = %d, want 6", ProtocolVersion)
 	}
 }
 

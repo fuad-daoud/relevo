@@ -79,9 +79,6 @@ func TestSupervisorCountsAMarksRefusal(t *testing.T) {
 func TestMarkStateFromWireCarriesTheSizes(t *testing.T) {
 	got := markStateFromWire(syncworker.MarkState{
 		Sizes: map[string]int64{"a": 7},
-		// The wire still names a reader's published positions; feeding one
-		// shows the conversion leaves it behind rather than failing the read.
-		Marks: []syncworker.PublishedMark{{Reader: "origin-a", Origin: "origin-b", Seq: 4}},
 	})
 	if got.Sizes["a"] != 7 {
 		t.Errorf("Sizes = %v, want a=7", got.Sizes)

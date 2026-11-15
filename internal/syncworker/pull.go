@@ -138,3 +138,26 @@ func pastMarks(entries []Entry, marks map[string]int) []Entry {
 	}
 	return out
 }
+
+// PullRange reads one page of an origin's entries in (after, upto].
+func (b *TursoBackend) PullRange(origin string, after, upto int) ([]Entry, error) {
+	if err := b.ready(); err != nil {
+		return nil, err
+	}
+	return b.scanEntries(context.Background(),
+		"SELECT origin, seq, batch, tbl, pk, op, schema_version, body, at, mac, after_origin, after_seq FROM log"+
+			" WHERE origin = ? AND seq > ? AND seq <= ? ORDER BY seq LIMIT ?",
+		[]any{origin, after, upto, b.page})
+}
+
+// pullRange answers with one page of an origin's entries between two sequences.
+func (s *server) pullRange(req Request) Response {
+	if req.Origin == "" || req.AfterSeq < 0 || req.Upto <= req.AfterSeq {
+		return refuse(req, fmt.Errorf("%w: pull_range of %q over (%d, %d]", ErrProtocol, req.Origin, req.AfterSeq, req.Upto))
+	}
+	entries, err := s.backend.PullRange(req.Origin, req.AfterSeq, req.Upto)
+	if err != nil {
+		return refuse(req, err)
+	}
+	return Response{ID: req.ID, OK: true, Entries: entries}
+}

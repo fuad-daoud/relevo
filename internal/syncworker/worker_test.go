@@ -35,9 +35,7 @@ type fakeBackend struct {
 	stats   Stats
 	fail    error
 
-	// published records each publish_marks as it arrived, and markState is
-	// what a read_marks answers with.
-	published []published
+	// markState is what a read_marks answers with.
 	markState MarkState
 	// key is the passphrase material the fake log holds.
 	key KeyMeta
@@ -97,24 +95,6 @@ func (f *fakeBackend) Stats() (Stats, error) {
 	return f.stats, nil
 }
 
-// published records one publish_marks as it arrived, so a test asserts what the
-// worker was asked to write rather than what the log holds afterwards.
-type published struct {
-	marks map[string]int
-	at    time.Time
-}
-
-func (f *fakeBackend) PublishMarks(marks map[string]int, at time.Time) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.published = append(f.published, published{marks: marks, at: at})
-	if f.fail != nil {
-		return f.fail
-	}
-	f.markState.Marks = nil
-	return nil
-}
-
 func (f *fakeBackend) ReadMarks() (MarkState, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -152,8 +132,6 @@ func (f *fakeBackend) KeyInit(key KeyMeta) (KeyMeta, error) {
 
 func (f *fakeBackend) KeyRekey(KeyRekeySpec) (KeyMeta, error) { return KeyMeta{}, f.fail }
 func (f *fakeBackend) PublishEpochCut(EpochCut) error         { return f.fail }
-
-func (f *fakeBackend) Compact(int) (CompactResult, error) { return CompactResult{}, f.fail }
 
 func (f *fakeBackend) Close() error {
 	f.mu.Lock()
@@ -701,7 +679,7 @@ func TestVerbsNamesEveryDispatchedVerb(t *testing.T) {
 	for _, verb := range Verbs() {
 		names = append(names, string(verb))
 	}
-	if got := strings.Join(names, ","); got != "claim_identity,compact,export,get_blobs,head,hello,key_cut,key_init,key_meta,key_rekey,publish_marks,publish_traffic,pull,pull_range,put_blobs,read_marks,read_traffic,shutdown,stats" {
+	if got := strings.Join(names, ","); got != "claim_identity,export,get_blobs,head,hello,key_cut,key_init,key_meta,key_rekey,publish_traffic,pull,pull_range,put_blobs,read_marks,read_traffic,shutdown,stats" {
 		t.Errorf("Verbs() = %q, want the pipe's own verb set", got)
 	}
 }

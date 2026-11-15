@@ -976,20 +976,6 @@ func TestHeadDerivesNewestPerRow(t *testing.T) {
 	if !reflect.DeepEqual(paged, whole) {
 		t.Errorf("paged head = %+v, whole head = %+v; a delete inside the range ended the walk early", paged, whole)
 	}
-	before, err := b.Head("origin-a", "", 0)
-	if err != nil {
-		t.Fatalf("head before compact: %v", err)
-	}
-	if _, err := b.Compact(8); err != nil {
-		t.Fatalf("compact: %v", err)
-	}
-	after, err := b.Head("origin-a", "", 0)
-	if err != nil {
-		t.Fatalf("head after compact: %v", err)
-	}
-	if !reflect.DeepEqual(after, before) {
-		t.Errorf("head after compact = %+v, before = %+v; compaction moved the newest", after, before)
-	}
 	if _, err := b.Head("origin-a", "not a number", 0); err == nil {
 		t.Error("head accepted a cursor that is not a sequence")
 	}
@@ -1505,8 +1491,6 @@ func (r refusingBackend) Head(string, string, int) ([]HeadRow, error) {
 }
 func (r refusingBackend) Stats() (Stats, error) { return Stats{}, r.fail }
 
-func (r refusingBackend) PublishMarks(map[string]int, time.Time) error { return r.fail }
-
 func (r refusingBackend) ReadMarks() (MarkState, error) { return MarkState{}, r.fail }
 
 func (r refusingBackend) KeyMeta() (KeyMeta, error) { return KeyMeta{}, r.fail }
@@ -1574,8 +1558,6 @@ func TestWorkerSQLUsesNoUpsert(t *testing.T) {
 }
 
 func (r refusingBackend) PullRange(string, int, int) ([]Entry, error) { return nil, nil }
-
-func (r refusingBackend) Compact(int) (CompactResult, error) { return CompactResult{}, nil }
 
 func (r refusingBackend) ClaimIdentity(string, string, time.Time) (string, time.Time, error) {
 	return "", time.Time{}, nil
