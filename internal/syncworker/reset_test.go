@@ -121,8 +121,8 @@ func TestOlderFormatPullsOnceBeforeTheMigrateRefusal(t *testing.T) {
 	if resp.OK {
 		t.Fatalf("hello = %+v, want the migrate refusal", resp)
 	}
-	if resp.Code != CodeRemote {
-		t.Errorf("code = %q, want %q", resp.Code, CodeRemote)
+	if resp.Code != CodeMigrate {
+		t.Errorf("code = %q, want %q", resp.Code, CodeMigrate)
 	}
 	if !strings.Contains(resp.Error, "run relevo db sync migrate once every machine runs this release") {
 		t.Errorf("refusal %q does not carry the migrate message", resp.Error)
@@ -502,6 +502,9 @@ func TestOlderFormatStillRefusesWhenThePullBringsCurrentTablesAtAnOlderFormat(t 
 	resp := startWorker(t, b).ask(helloRequest("h"))
 	if resp.OK {
 		t.Fatalf("hello = %+v, want the migrate refusal", resp)
+	}
+	if resp.Code != CodeMigrate {
+		t.Errorf("code = %q, want %q", resp.Code, CodeMigrate)
 	}
 	if !strings.Contains(resp.Error, "run relevo db sync migrate once every machine runs this release") {
 		t.Errorf("refusal %q does not carry the migrate message", resp.Error)

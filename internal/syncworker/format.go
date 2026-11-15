@@ -275,6 +275,6 @@ func errNotALog(url string) error {
 // errMigrate is the refusal an older-format remote gets until migrated. It names
 // the URL and format, and repeats on every attempt.
 func errMigrate(url, format string) error {
-	return MarkRefusal(CodeRemote,
+	return MarkRefusal(CodeMigrate,
 		fmt.Errorf("sync: refusing remote %s at format %s: run relevo db sync migrate once every machine runs this release", url, format))
 }

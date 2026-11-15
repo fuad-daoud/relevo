@@ -221,6 +221,11 @@ func responseWireCases() []wireCase {
 			wire:  `{"id":"3","ok":false,"error":"not a relevo sync log","code":"remote"}`,
 		},
 		{
+			name:  "response carrying a migrate refusal",
+			value: Response{ID: "3", OK: false, Error: "refusing remote: run relevo db sync migrate", Code: CodeMigrate},
+			wire:  `{"id":"3","ok":false,"error":"refusing remote: run relevo db sync migrate","code":"migrate"}`,
+		},
+		{
 			name: "response carrying a head page",
 			value: Response{ID: "4", OK: true, Head: []HeadRow{
 				{Tbl: "task", PK: `["t-1"]`, Seq: 7, Hash: "abc123"},

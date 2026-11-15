@@ -555,6 +555,10 @@ func TestWorkerMarksOnlyARefusalThatRepeats(t *testing.T) {
 			fail: MarkRefusal(CodeRemote, errors.New("remote refused: not a relevo log")),
 			want: CodeRemote,
 		},
+		"a migrate refusal that repeats": {
+			fail: MarkRefusal(CodeMigrate, errors.New("older format remote")),
+			want: CodeMigrate,
+		},
 		"a schema refusal that repeats": {
 			fail: MarkRefusal(CodeSchema, errors.New("the remote has no table")),
 			want: CodeSchema,
@@ -687,6 +691,50 @@ func TestWorkerPackageDoesNotImportInternalDB(t *testing.T) {
 		if line == dbPath || strings.HasPrefix(line, dbPath+"/") {
 			t.Errorf("internal/syncworker depends on %s; the worker may only reach the log through its Backend", line)
 		}
+	}
+}
+
+// TestWorkerHelloOnFormatFiveRemoteAnswersCodeMigrate pins that a hello on a
+// format-5 remote answers Response.Code == CodeMigrate with the unchanged Error
+// text: that is the reply the daemon reads to retry instead of latching. A
+// non-log remote still answers CodeRemote so the daemon latches.
+func TestWorkerHelloOnFormatFiveRemoteAnswersCodeMigrate(t *testing.T) {
+	path := tempReplica(t)
+	seedFormatFiveRemote(t, path)
+	driver := &localDriver{path: path}
+	b := NewTursoBackend(driver)
+	w := startWorker(t, b)
+	resp := w.ask(helloRequest("h"))
+	if resp.OK {
+		t.Fatalf("hello = %+v, want the migrate refusal", resp)
+	}
+	if resp.Code != CodeMigrate {
+		t.Errorf("code = %q, want %q", resp.Code, CodeMigrate)
+	}
+	const wantSentence = "run relevo db sync migrate once every machine runs this release"
+	if !strings.Contains(resp.Error, wantSentence) {
+		t.Errorf("refusal %q does not contain %q", resp.Error, wantSentence)
+	}
+	if !strings.Contains(resp.Error, "libsql://remote.example") {
+		t.Errorf("refusal %q does not name the remote", resp.Error)
+	}
+
+	notLogPath := tempReplica(t)
+	stmts := []string{"CREATE TABLE secrets (s TEXT NOT NULL)"}
+	execOn(t, notLogPath, stmts...)
+	notLogDriver := &localDriver{path: notLogPath}
+	notLogDriver.afterDiscard = func(p string) { reseedReplica(t, p, stmts) }
+	notLogBackend := NewTursoBackend(notLogDriver)
+	notLogWorker := startWorker(t, notLogBackend)
+	notLogResp := notLogWorker.ask(helloRequest("h-non-log"))
+	if notLogResp.OK {
+		t.Fatalf("hello on non-log = %+v, want a refusal", notLogResp)
+	}
+	if notLogResp.Code != CodeRemote {
+		t.Errorf("code = %q, want %q", notLogResp.Code, CodeRemote)
+	}
+	if !strings.Contains(notLogResp.Error, "not a relevo sync log") {
+		t.Errorf("refusal %q does not carry the not-a-log message", notLogResp.Error)
 	}
 }
 

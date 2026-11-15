@@ -305,6 +305,10 @@ const (
 	// came back. Nothing says the remote refused anything, so a later attempt
 	// can get past it.
 	CodeTransport RefusalCode = "transport"
+	// CodeMigrate is a remote at a format this release does not open. It repeats
+	// until some machine runs the migrate verb, and no change on this machine
+	// fixes it, so the daemon waits and retries instead of latching.
+	CodeMigrate RefusalCode = "migrate"
 )
 
 // RefusalError is an error a backend marked with the class of refusal it is, so
