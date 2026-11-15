@@ -781,6 +781,9 @@ func TestSyncVerbClassificationIsTotal(t *testing.T) {
 		{db.ErrPreflightRefused, wire.SyncCodePreflightRefused},
 		{db.ErrContended, wire.SyncCodeContended},
 		{relevosync.ErrBackingOff, wire.SyncCodeBackingOff},
+		{fmt.Errorf("sync: pull: %w", relevosync.ErrMigrateWaiting), wire.SyncCodeMigrateWaiting},
+		{fmt.Errorf("%s: remote is waiting for migration: %w", relevosync.WorkerRefusedText, relevosync.ErrMigrateWaiting), wire.SyncCodeMigrateWaiting},
+		{fmt.Errorf("%w: %w", relevosync.ErrRemoteRefused, relevosync.ErrMigrateWaiting), wire.SyncCodeMigrateWaiting},
 		{db.ErrInvalid, wire.SyncCodeInvalid},
 		{errors.New("something else"), wire.SyncCodeInternal},
 	}
@@ -842,6 +845,37 @@ func TestARemoteRefusalIsAClassNotAnInternal(t *testing.T) {
 				t.Errorf("Classify(%v) = %q, want %q", tc.err, got, tc.want)
 			}
 		})
+	}
+}
+
+type pullMigrateWaiting struct {
+	*recordTransport
+	err error
+}
+
+func (p *pullMigrateWaiting) Pull(map[string]int) ([]synclog.Entry, error) {
+	return nil, p.err
+}
+
+// TestSyncPullMigrateWaitingIsARefusal pins that a pull met with a remote waiting
+// on migration reports a migrate_waiting refusal rather than internal.
+func TestSyncPullMigrateWaitingIsARefusal(t *testing.T) {
+	f := newVerbFixture(t)
+	transport := &pullMigrateWaiting{
+		recordTransport: f.client,
+		err:             fmt.Errorf("sync: pull: %w", relevosync.ErrMigrateWaiting),
+	}
+	f.runner.Runner.Client = transport
+	f.runner.Open = func(context.Context) (synclog.LogTransport, error) {
+		return transport, nil
+	}
+
+	res := f.runner.Run(context.Background(), &wire.SyncVerb{Verb: wire.SyncVerbPull}, nil)
+	if res.OK {
+		t.Fatal("pull reported OK, want refusal")
+	}
+	if res.Code != wire.SyncCodeMigrateWaiting {
+		t.Fatalf("code = %q, want %q", res.Code, wire.SyncCodeMigrateWaiting)
 	}
 }
 

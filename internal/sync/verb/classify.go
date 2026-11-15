@@ -69,6 +69,9 @@ func Classify(err error) string {
 		// A body the log names is gone from the bucket. The message names the
 		// row and the machine that wrote it; nothing in this build is at fault.
 		return wire.SyncCodeRemoteRefused
+	case errors.Is(err, relevosync.ErrMigrateWaiting):
+		// Waiting is neither a refusal of this machine's rows nor a defect.
+		return wire.SyncCodeMigrateWaiting
 	case errors.Is(err, relevosync.ErrRemoteRefused):
 		// A remote refusing a statement is a refusal, not an internal failure:
 		// the message names the constraint and the call, and the reader's answer

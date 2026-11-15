@@ -235,6 +235,9 @@ const (
 	// moved before this caller's transaction landed, so nothing of this
 	// caller's was written and its key is an old one now.
 	SyncCodeEpochRace = "epoch_race"
+	// SyncCodeMigrateWaiting is a refusal because the remote has not been
+	// migrated; it ends when a machine runs the migrate verb.
+	SyncCodeMigrateWaiting = "migrate_waiting"
 	// SyncCodeInternal is a failure with no class of its own -- the daemon's
 	// own bug, or a hook that panicked or reported nothing.
 	SyncCodeInternal = "internal"
