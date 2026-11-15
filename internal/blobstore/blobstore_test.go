@@ -3,8 +3,10 @@ package blobstore
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -127,6 +129,197 @@ func TestMemBlobStoreRoundTrip(t *testing.T) {
 	if _, err := m.Get(ctx, key, io.Discard); err == nil {
 		t.Error("Get of an absent key returned no error")
 	}
+}
+
+// TestMemPutIfAbsent pins the create-only write on the fake: a first call
+// creates, a second on the same key is refused without touching the object or
+// the counter, the size is checked whether or not the key exists, and the store
+// keeps its own copy of the bytes.
+func TestMemPutIfAbsent(t *testing.T) {
+	m := NewMemBlobStore(nil)
+	ctx := context.Background()
+	key := Key("laptop", strings.Repeat("a", 64))
+	first := []byte("the body the first writer stored")
+
+	created, err := m.PutIfAbsent(ctx, key, bytes.NewReader(first), int64(len(first)))
+	if err != nil || !created {
+		t.Fatalf("first PutIfAbsent = (%v, %v), want (true, nil)", err, created)
+	}
+	if m.Puts != 1 {
+		t.Errorf("Puts = %d, want 1", m.Puts)
+	}
+
+	// A losing writer's body must not reach the store, and a refused create is
+	// not a landed one.
+	second := []byte("the body a second writer would have stored")
+	created, err = m.PutIfAbsent(ctx, key, bytes.NewReader(second), int64(len(second)))
+	if err != nil || created {
+		t.Errorf("existing key = (%v, %v), want (false, nil)", err, created)
+	}
+	if m.Puts != 1 {
+		t.Errorf("Puts after the refused create = %d, want 1", m.Puts)
+	}
+	var got bytes.Buffer
+	if _, err := m.Get(ctx, key, &got); err != nil || !bytes.Equal(got.Bytes(), first) {
+		t.Errorf("Get = %q (err %v), want the first writer's bytes", got.Bytes(), err)
+	}
+
+	// The size check sees the call itself, not the object that is there: a
+	// miscounted size is refused on a fresh key and on an existing one alike,
+	// and refuses means nothing was stored.
+	if _, err := m.PutIfAbsent(ctx, key, strings.NewReader("mismatched"), 99); err == nil {
+		t.Error("PutIfAbsent on an existing key accepted a miscounted size")
+	}
+	fresh := Key("laptop", strings.Repeat("b", 64))
+	if _, err := m.PutIfAbsent(ctx, fresh, strings.NewReader("mismatched"), 99); err == nil {
+		t.Error("PutIfAbsent on a fresh key accepted a miscounted size")
+	}
+	if ok, _ := m.Has(ctx, fresh); ok {
+		t.Error("the refused call stored an object anyway")
+	}
+
+	// The copy is taken before the call returns: mutating the caller's slice
+	// afterwards cannot change what the store holds.
+	buf := bytes.Clone(first)
+	if _, err := m.PutIfAbsent(ctx, fresh, bytes.NewReader(buf), int64(len(buf))); err != nil {
+		t.Fatalf("PutIfAbsent: %v", err)
+	}
+	for i := range buf {
+		buf[i] = 'x'
+	}
+	var again bytes.Buffer
+	if _, err := m.Get(ctx, fresh, &again); err != nil || !bytes.Equal(again.Bytes(), first) {
+		t.Errorf("Get = %q (err %v), want bytes the caller's mutation cannot reach", again.Bytes(), err)
+	}
+}
+
+// TestMemPutIfAbsentRace pins that the existence check and the store are one
+// step under the lock: sixteen writers race for one key and exactly one of them
+// creates it, the loser returning with the winner's body in the store.
+func TestMemPutIfAbsentRace(t *testing.T) {
+	m := NewMemBlobStore(nil)
+	ctx := context.Background()
+	key := Key("laptop", strings.Repeat("c", 64))
+
+	const writers = 16
+	created := make([]bool, writers)
+	var mu sync.Mutex
+	winner := -1
+	var wg sync.WaitGroup
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			body := []byte(fmt.Sprintf("writer %2d's body", i))
+			c, err := m.PutIfAbsent(ctx, key, bytes.NewReader(body), int64(len(body)))
+			if err != nil {
+				t.Errorf("writer %d: %v", i, err)
+				return
+			}
+			created[i] = c
+			if c {
+				mu.Lock()
+				winner = i
+				mu.Unlock()
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	count := 0
+	for _, c := range created {
+		if c {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("%d writers created the object, want exactly one", count)
+	}
+	if m.Puts != 1 {
+		t.Errorf("Puts = %d, want 1", m.Puts)
+	}
+	var got bytes.Buffer
+	if _, err := m.Get(ctx, key, &got); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if want := fmt.Sprintf("writer %2d's body", winner); !bytes.Equal(got.Bytes(), []byte(want)) {
+		t.Errorf("Get = %q, want the one winner's body %q", got.Bytes(), want)
+	}
+}
+
+// TestMemListAfter pins the fake's start-after behaviour, which the S3
+// endpoint implements itself: strictly greater-than, in key order, so a reader
+// that holds the last segment it fetched does not fetch that segment again. A
+// startAfter that is not a key cuts between the keys around it, an empty one
+// lists the whole prefix, and one below the prefix returns the prefix and
+// nothing outside it.
+func TestMemListAfter(t *testing.T) {
+	m := NewMemBlobStore(nil)
+	ctx := context.Background()
+	keys := []string{
+		"a/log/000000000001",
+		"a/log/000000000257",
+		"a/log/000000000513",
+		"b/log/000000000001",
+	}
+	for _, k := range keys {
+		if err := m.Put(ctx, k, strings.NewReader("x"), 1); err != nil {
+			t.Fatalf("Put %s: %v", k, err)
+		}
+	}
+
+	check := func(name string, got []Object, want ...string) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Fatalf("%s = %+v, want %v", name, got, want)
+		}
+		for i := range want {
+			if got[i].Key != want[i] {
+				t.Errorf("%s object %d = %s, want %s", name, i, got[i].Key, want[i])
+			}
+		}
+	}
+
+	// The key named is excluded, so the reader that holds it is not sent it.
+	check("ListAfter from the first key",
+		mustListAfter(t, m, ctx, "a/log/", "a/log/000000000001"),
+		"a/log/000000000257", "a/log/000000000513")
+	// Nothing sorts above the last key, so the answer is empty.
+	check("ListAfter from the last key",
+		mustListAfter(t, m, ctx, "a/log/", "a/log/000000000513"))
+	// A startAfter that is not a key still cuts the listing at it.
+	check("ListAfter from a key that is not there",
+		mustListAfter(t, m, ctx, "a/log/", "a/log/000000000100"),
+		"a/log/000000000257", "a/log/000000000513")
+	// An empty startAfter is List.
+	fromEmpty := mustListAfter(t, m, ctx, "a/log/", "")
+	listed, err := m.List(ctx, "a/log/")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(fromEmpty) != len(listed) {
+		t.Fatalf("ListAfter with an empty startAfter = %+v, List = %+v", fromEmpty, listed)
+	}
+	for i := range listed {
+		if fromEmpty[i].Key != listed[i].Key {
+			t.Errorf("ListAfter[%d] = %s, List = %s", i, fromEmpty[i].Key, listed[i].Key)
+		}
+	}
+	// A startAfter below the prefix returns the whole prefix and nothing
+	// outside it: "a" sorts below every a/ key.
+	check("ListAfter from below the prefix",
+		mustListAfter(t, m, ctx, "a/log/", "a"),
+		"a/log/000000000001", "a/log/000000000257", "a/log/000000000513")
+}
+
+// mustListAfter calls ListAfter so the cases above can name what they wanted.
+func mustListAfter(t *testing.T, m *MemBlobStore, ctx context.Context, prefix, startAfter string) []Object {
+	t.Helper()
+	got, err := m.ListAfter(ctx, prefix, startAfter)
+	if err != nil {
+		t.Fatalf("ListAfter(%q, %q): %v", prefix, startAfter, err)
+	}
+	return got
 }
 
 // TestMemBlobStoreImplementsBlobStore is the compile-time half of the fake's

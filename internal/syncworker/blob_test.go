@@ -389,6 +389,10 @@ type failingStore struct {
 
 func (f *failingStore) Put(context.Context, string, io.Reader, int64) error { return f.err }
 
+func (f *failingStore) PutIfAbsent(context.Context, string, io.Reader, int64) (bool, error) {
+	return false, f.err
+}
+
 func (f *failingStore) Get(context.Context, string, io.Writer) (int64, error) {
 	if f.notFound {
 		return 0, fmt.Errorf("blobstore: mem get: %w", blobstore.ErrNotFound)
@@ -399,6 +403,10 @@ func (f *failingStore) Get(context.Context, string, io.Writer) (int64, error) {
 func (f *failingStore) Has(context.Context, string) (bool, error) { return false, f.err }
 
 func (f *failingStore) List(context.Context, string) ([]blobstore.Object, error) {
+	return nil, f.err
+}
+
+func (f *failingStore) ListAfter(context.Context, string, string) ([]blobstore.Object, error) {
 	return nil, f.err
 }
 

@@ -38,6 +38,13 @@ type BlobStore interface {
 	// a body of a different length is refused rather than stored under a digest
 	// that no longer describes it.
 	Put(ctx context.Context, key string, body io.Reader, size int64) error
+	// PutIfAbsent stores body under key only when the key is empty, a
+	// create-only write the store itself enforces. An existing key is answered
+	// with (false, nil) and the store is left unchanged; size is checked as in
+	// Put. A caller that retries after a lost response cannot tell its own first
+	// write from another writer's when the answer is created=false, so it must
+	// read the object back before it trusts it.
+	PutIfAbsent(ctx context.Context, key string, body io.Reader, size int64) (bool, error)
 	// Get writes the body under key to w and returns how many bytes it wrote,
 	// or ErrNotFound when the key is not there.
 	Get(ctx context.Context, key string, w io.Writer) (int64, error)
@@ -45,6 +52,11 @@ type BlobStore interface {
 	Has(ctx context.Context, key string) (bool, error)
 	// List returns every object under prefix, in key order.
 	List(ctx context.Context, prefix string) ([]Object, error)
+	// ListAfter lists the objects under prefix whose key sorts after
+	// startAfter, in key order. startAfter is a full key, exclusive; an empty
+	// one lists everything under prefix. A reader fetching only new segments
+	// passes the key of the last segment it holds.
+	ListAfter(ctx context.Context, prefix, startAfter string) ([]Object, error)
 	// Delete removes key, already absent being no error.
 	Delete(ctx context.Context, key string) error
 }
@@ -106,6 +118,62 @@ func SizeOrigin(key string) (string, bool) {
 		return "", false
 	}
 	return origin, true
+}
+
+// segmentLog is the middle segment of a segment key. With the number it is 16
+// characters, never a body key's 64 hex, so no segment key can equal a body key.
+const segmentLog = "log/"
+
+// segmentDigits is the width a segment key pads the first sequence number to: a
+// fixed width keeps a bucket listing's key order in sequence order, and 12
+// digits outlast any sequence the log can reach.
+const segmentDigits = 12
+
+// SegmentKey returns the key of one log segment, <origin>/log/<first>, the
+// first sequence number zero-padded to segmentDigits digits. It panics like
+// Key: callers check a remote origin with CheckOrigin first, so a failure here
+// is a bug, and an unchecked origin would address another machine's prefix.
+func SegmentKey(origin string, first int) string {
+	if CheckOrigin(origin) != nil {
+		panic("blobstore: SegmentKey: origin must be letters, digits, '-' or '_'")
+	}
+	if first < 0 || first > 999999999999 {
+		panic("blobstore: SegmentKey: first must be 0 to 999999999999")
+	}
+	return origin + "/" + segmentLog + fmt.Sprintf("%0*d", segmentDigits, first)
+}
+
+// ParseSegmentKey splits a segment key into its origin and first sequence
+// number. It accepts exactly <valid origin>/log/<12 ASCII digits>, so
+// SegmentKey of its result equals the key again: a shorter or longer number,
+// a sign or a non-digit is refused rather than folded. The digits are read by
+// hand because strconv.Atoi would take a sign, whose key does not round-trip.
+func ParseSegmentKey(key string) (origin string, first int, ok bool) {
+	origin, rest, ok := strings.Cut(key, "/")
+	if !ok || !strings.HasPrefix(rest, segmentLog) {
+		return "", 0, false
+	}
+	digits := rest[len(segmentLog):]
+	if len(digits) != segmentDigits {
+		return "", 0, false
+	}
+	for i := 0; i < len(digits); i++ {
+		c := digits[i]
+		if c < '0' || c > '9' {
+			return "", 0, false
+		}
+		first = first*10 + int(c-'0')
+	}
+	if CheckOrigin(origin) != nil {
+		return "", 0, false
+	}
+	return origin, first, true
+}
+
+// IsSegmentKey reports whether key addresses a log segment.
+func IsSegmentKey(key string) bool {
+	_, _, ok := ParseSegmentKey(key)
+	return ok
 }
 
 // IsBodyKey reports whether key addresses a body: an origin, then 64 lowercase

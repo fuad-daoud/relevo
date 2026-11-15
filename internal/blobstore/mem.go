@@ -53,6 +53,26 @@ func (m *MemBlobStore) Put(_ context.Context, key string, body io.Reader, size i
 	return nil
 }
 
+// PutIfAbsent stores a copy of body under key only when key is absent, and
+// reports whether this call created the object. The body is read and sized
+// before the lock is taken, so a miscounted size is refused even on a key that
+// already exists: the answer would otherwise depend on the object being there,
+// not on the call.
+func (m *MemBlobStore) PutIfAbsent(_ context.Context, key string, body io.Reader, size int64) (bool, error) {
+	buf, err := readSized(body, size)
+	if err != nil {
+		return false, fmt.Errorf("blobstore: mem put %s: %w", key, err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.objects[key]; ok {
+		return false, nil
+	}
+	m.objects[key] = memObject{body: buf, modified: m.now().UTC()}
+	m.Puts++
+	return true, nil
+}
+
 // Get writes a copy of the body under key to w, or reports ErrNotFound.
 func (m *MemBlobStore) Get(_ context.Context, key string, w io.Writer) (int64, error) {
 	m.mu.Lock()
@@ -79,12 +99,19 @@ func (m *MemBlobStore) Has(_ context.Context, key string) (bool, error) {
 
 // List returns every object whose key starts with prefix, in the S3 store's key
 // order, so a caller cannot tell the two apart by what it walks.
-func (m *MemBlobStore) List(_ context.Context, prefix string) ([]Object, error) {
+func (m *MemBlobStore) List(ctx context.Context, prefix string) ([]Object, error) {
+	return m.ListAfter(ctx, prefix, "")
+}
+
+// ListAfter returns the objects whose key starts with prefix and sorts strictly
+// after startAfter, in the S3 store's key order, matching the endpoint's own
+// start-after filtering.
+func (m *MemBlobStore) ListAfter(_ context.Context, prefix, startAfter string) ([]Object, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []Object
 	for key, obj := range m.objects {
-		if len(key) >= len(prefix) && key[:len(prefix)] == prefix {
+		if len(key) >= len(prefix) && key[:len(prefix)] == prefix && key > startAfter {
 			out = append(out, Object{Key: key, Size: int64(len(obj.body)), Modified: obj.modified})
 		}
 	}
