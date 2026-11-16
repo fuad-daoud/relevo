@@ -239,6 +239,16 @@ func TestMissingBodyLatchesWithItsOwnCause(t *testing.T) {
 			want: bodyCause,
 		},
 		{
+			name: "segment colon",
+			err:  fmt.Errorf("refused: synclog: fetch %s: %w", segKey, synclog.ErrBlobMissing),
+			want: segCause,
+		},
+		{
+			name: "body semicolon",
+			err:  fmt.Errorf("refused: syncworker: fetch %s; not in the store: %w", bodyKey, synclog.ErrBlobMissing),
+			want: bodyCause,
+		},
+		{
 			name: "no key",
 			err: fmt.Errorf("refused: import: nothing listed under origin-a/log/7, not even %s: %w",
 				upperKey, synclog.ErrBlobMissing),
