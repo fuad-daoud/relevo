@@ -579,7 +579,9 @@ main() {
 			refuse "bucket holds foreign origins: $(printf '%s\n' "$_m_foreign" | join_lines)"
 		fi
 	fi
-	printf '%s\n' "$_m_keys" | key_origins > "$origins_file"
+	# The origins record stays as state_setup seeded it: recording the
+	# post-wipe listing would adopt the foreign origins the wipe left
+	# behind, and the record is the whole of what this script may delete.
 	# --wipe and --dry-run are honored by the preflight; the seed/migrate/measure
 	# phases are not implemented, so a real run stops here after the reads (and
 	# any owned-origin deletes) with the same exit.

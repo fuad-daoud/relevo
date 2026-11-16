@@ -180,13 +180,14 @@ reset_fixtures() {
 	printf '0\n' > "$work/relevo-exit"
 	printf '%s\n' '{"baton":null,"results":[{"type":"ok","response":{"type":"execute","result":{"cols":[{"name":"name"}],"rows":[]}}},{"type":"ok","response":{"type":"close"}}]}' > "$work/turso-tables.json"
 	printf '%s\n' '{"baton":null,"results":[{"type":"ok","response":{"type":"execute","result":{"cols":[{"name":"value"}],"rows":[]}}},{"type":"ok","response":{"type":"close"}}]}' > "$work/turso-marker.json"
+	printf '%s\n' '{"results":[{"type":"error","error":{"message":"no such table: meta"}}]}' > "$work/turso-marker-no-meta.json"
 	printf '200\n' > "$work/turso-http-code"
 	: > "$work/bucket-keys"
 	printf 'false\n' > "$work/bucket-truncated"
 	printf '200\n' > "$work/bucket-http-code"
 	printf '204\n' > "$work/delete-http-code"
 	printf '%s\n' '  --aws-sigv4 <provider1[:prvdr2[:reg[:srv]]]>  AWS V4 signature auth' > "$work/curl-help"
-	rm -f "$work/deleted-keys" "$work/stubborn-key" "$work/curl-fail"
+	rm -f "$work/deleted-keys" "$work/stubborn-key" "$work/curl-fail" "$work/turso-marker-current" "$work/turso-marker-current.json"
 }
 reset_fixtures
 
@@ -197,7 +198,9 @@ reset_fixtures
 # bucket listing is regenerated from bucket-keys minus the keys deleted so
 # far, so a wipe's re-list proof runs against a listing that really changed;
 # stubborn-key stays listed even after its delete, to exercise the proof's
-# refusal.
+# refusal. A marker query answers the pipeline error when the tables fixture
+# has no meta row, and the current run's recorded id when the marker-current
+# control file is set.
 cat > "$fakebin/curl" <<EOF
 #!/bin/sh
 work='$work'
@@ -249,7 +252,22 @@ case \$url in
 	printf '%s\n' "\$body" >> "\$work/curl-bodies"
 	case \$body in
 	*sqlite_master*) fixture="\$work/turso-tables.json" ;;
-	*syncproof.run*) fixture="\$work/turso-marker.json" ;;
+	*syncproof.run*)
+		# No meta row in the tables fixture means no meta table: the real
+		# endpoint rejects this query, so answer the pipeline error, not the
+		# ok marker fixture.
+		if ! grep -q '"value":"meta"' "\$work/turso-tables.json"; then
+			fixture="\$work/turso-marker-no-meta.json"
+		elif [ -f "\$work/turso-marker-current" ]; then
+			# The control file selects the current run's own id as the marker.
+			# The -H header file lives in this run's state dir, and the runs
+			# file beside it holds the id state_setup recorded for the run.
+			printf '{"results":[{"type":"ok","response":{"type":"execute","result":{"rows":[[{"type":"text","value":"%s"}]]}}}]}' "\$(cat "\${hf%/turso-header}/runs")" > "\$work/turso-marker-current.json"
+			fixture="\$work/turso-marker-current.json"
+		else
+			fixture="\$work/turso-marker.json"
+		fi
+		;;
 	*) printf 'unexpected pipeline SQL: %s\n' "\$body" >> "\$work/fake-fail"; exit 99 ;;
 	esac
 	printf '%s\n%s' "\$(cat "\$fixture")" "\$(cat "\$work/turso-http-code")"
@@ -756,6 +774,15 @@ status 'scratch_turso_owned: no runs file is not owned' 1
 srcfi "$work/tables-mixed" scratch_turso_owned '20260101T000000Z-111' "$work/runs-seeded"
 status 'scratch_turso_owned: internals beside user tables still check the marker' 0
 
+# The runs record the marker check reads, through the srcf path (the core's
+# own state_setup): exactly the current run id, as the sole line of the runs
+# file. The inner shell expands the state_setup variables, so the assertion
+# compares the record against the id this very run was given.
+# shellcheck disable=SC2016 # the inner shell expands $runs_file/$run_id, not this shell
+srcf eval '[ "$(cat "$runs_file")" = "$run_id" ] && [ "$(wc -l < "$runs_file")" -eq 1 ] && printf runs-record-ok'
+status 'the runs-record check succeeds' 0
+equals 'state_setup writes exactly the current run id as the sole runs line' 'runs-record-ok'
+
 # Through main: unowned tables refuse naming them, and --wipe does not waive.
 printf '%s\n' '{"results":[{"type":"ok","response":{"type":"execute","result":{"rows":[[{"type":"text","value":"meta"}],[{"type":"text","value":"entries"}]]}}}]}' > "$work/turso-tables.json"
 sp --env "$work/preflight.env"
@@ -767,6 +794,18 @@ absent 'the Turso refusal stops before the phases' 'not implemented'
 sp --env "$work/preflight.env" --wipe
 status '--wipe does not waive the Turso refusal' 2
 carries 'the wiped Turso refusal still names the tables' 'entries'
+reset_fixtures
+
+# A marker holding this run's own id owns the tables: the tables fixture lists
+# meta plus a user table, the bucket is empty, and the marker-current control
+# makes the fake answer the marker query with the id this run's state_setup
+# just recorded, so main passes the Turso check through the entry point.
+printf '%s\n' '{"results":[{"type":"ok","response":{"type":"execute","result":{"rows":[[{"type":"text","value":"meta"}],[{"type":"text","value":"entries"}]]}}}]}' > "$work/turso-tables.json"
+touch "$work/turso-marker-current"
+sp --env "$work/preflight.env"
+status 'a marker-owned Turso passes the preflight' 2
+carries 'the marker-owned run reaches the phases' 'not implemented'
+absent 'the marker-owned run has no Turso refusal' 'not this script'
 reset_fixtures
 
 # A failed probe is exit 2, never an empty database: a non-200 status, a curl
@@ -819,18 +858,38 @@ sp --env "$work/preflight.env"
 status 'an empty bucket passes the preflight' 2
 carries 'the empty-bucket run reaches the phases' 'not implemented'
 absent 'the empty-bucket run has no foreign refusal' 'foreign origins'
-printf 'foreign/log/000000000001\nforeign/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n' > "$work/bucket-keys"
+printf 'foreign/log/000000000001\n' > "$work/bucket-keys"
 sp --env "$work/preflight.env"
 status 'a foreign bucket is refused' 2
 carries 'the foreign refusal names foreign origins' 'foreign origins'
 carries 'the foreign refusal names the origin' 'foreign'
 absent 'the foreign refusal stops before the phases' 'not implemented'
+find "$work/tmp" -mindepth 1 -maxdepth 1 | sort > "$work/wipe-dirs-before"
 sp --env "$work/preflight.env" --wipe
 status '--wipe waives the foreign refusal' 2
 carries 'the wiped foreign run reaches the phases' 'not implemented'
 if [ -f "$work/deleted-keys" ]; then
 	echo "FAIL: --wipe with no recorded origins deleted something: $(cat "$work/deleted-keys")"
 	fail=1
+fi
+# The wipe run's own state dir is the one new entry under the suite TMPDIR.
+# Its origins record must not name the foreign origin the wipe left behind:
+# the record is the whole of what this script may touch, so a foreign line
+# in it would license deleting the foreign objects.
+find "$work/tmp" -mindepth 1 -maxdepth 1 | sort > "$work/wipe-dirs-after"
+grep -vxF -f "$work/wipe-dirs-before" "$work/wipe-dirs-after" > "$work/wipe-new-dirs" || :
+if [ "$(wc -l < "$work/wipe-new-dirs")" -ne 1 ]; then
+	echo "FAIL: the wiped foreign run did not leave exactly one new state dir: $(cat "$work/wipe-new-dirs")"
+	fail=1
+else
+	_wipe_state=$(cat "$work/wipe-new-dirs")
+	if [ ! -f "$_wipe_state/origins" ]; then
+		echo "FAIL: the wiped foreign run left no origins file in $_wipe_state"
+		fail=1
+	elif grep -qxF foreign "$_wipe_state/origins"; then
+		echo "FAIL: the wiped foreign run recorded the foreign origin as its own: $(cat "$_wipe_state/origins")"
+		fail=1
+	fi
 fi
 reset_fixtures
 
