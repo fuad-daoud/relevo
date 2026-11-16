@@ -83,8 +83,8 @@ type dbSyncStatusDoc struct {
 	// beside Account because JSON consumers read them.
 	Bytes          *relevosync.ByteCounters `json:"bytes,omitempty"`
 	QuotaTursoSync int64                    `json:"quota_turso_sync,omitempty"`
-	// Storage is the last daily measurement of the replica and the bucket,
-	// absent until one was taken, read against the two storage quotas.
+	// Storage is the last daily measurement of the bucket's history, absent
+	// until one was taken and read against the R2 storage quota.
 	Storage           *relevosync.Storage `json:"storage,omitempty"`
 	QuotaTursoStorage int64               `json:"quota_turso_storage,omitempty"`
 	QuotaR2Storage    int64               `json:"quota_r2_storage,omitempty"`

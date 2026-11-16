@@ -18,13 +18,6 @@ import (
 // ErrJoinOverQuota reports a join estimated past the month's left Turso traffic.
 var ErrJoinOverQuota = errors.New("sync: the join would use more Turso traffic than this month has left")
 
-// LogSize is what one origin publishes about its log under blobstore.SizeKey.
-type LogSize struct {
-	Entries int       `json:"entries"`
-	Bytes   int64     `json:"bytes"`
-	At      time.Time `json:"at"`
-}
-
 // JoinEstimate is what a join is expected to cost: the segments the bucket holds,
 // and what the worker pulled through Turso to learn them.
 type JoinEstimate struct {
@@ -41,21 +34,6 @@ type JoinEstimate struct {
 	// Known is whether TursoBytes was read; unknown proves nothing, so the
 	// guard lets the join proceed.
 	Known bool
-}
-
-// bucketTotals lists the bucket once: body bytes; any other key is ignored.
-func bucketTotals(ctx context.Context, store blobstore.BlobStore) (int64, error) {
-	objects, err := store.List(ctx, "")
-	if err != nil {
-		return 0, fmt.Errorf("sync: list the bucket: %w", err)
-	}
-	var bodies int64
-	for _, o := range objects {
-		if blobstore.IsBodyKey(o.Key) {
-			bodies += o.Size
-		}
-	}
-	return bodies, nil
 }
 
 // segmentTotals lists the bucket once, counting segment keys; bodies, old size

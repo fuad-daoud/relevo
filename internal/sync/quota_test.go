@@ -1,13 +1,9 @@
 package sync
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -18,7 +14,7 @@ import (
 
 func TestStatusShowsStorageAgainstQuotas(t *testing.T) {
 	t.Parallel()
-	settings := Settings{QuotaTursoSync: 1000, QuotaTursoStorage: 2000, QuotaR2Storage: 4000}
+	settings := Settings{QuotaTursoSync: 1000, QuotaR2Storage: 4000}
 	q := QuotaReading{
 		Account:     Account{Total: 2220, Machines: 3, ReadAt: time.Date(2026, 10, 27, 14, 5, 0, 0, time.UTC)},
 		Own:         250,
@@ -27,16 +23,18 @@ func TestStatusShowsStorageAgainstQuotas(t *testing.T) {
 		Projectable: true,
 	}
 	got := FormatQuotas(ByteCounters{TursoPush: 100, TursoPull: 150}, q, settings,
-		Storage{Turso: 500, R2: 2000, At: time.Unix(0, 0).UTC()})
+		Storage{R2: 2000, At: time.Unix(0, 0).UTC()})
 	for _, want := range []string{
 		"this machine: turso sync 250 B",
 		"account: turso sync 2.2 kB of 1.0 kB (222.0%) across 3 machines, on pace for 3.0 kB, as of 14:05Z",
-		"turso storage 500 B of 2.0 kB (25.0%)",
-		"r2 storage 2.0 kB of 4.0 kB (50.0%)",
+		"r2 history 2.0 kB of 4.0 kB (50.0%)",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("%q lacks %q", got, want)
 		}
+	}
+	if strings.Contains(got, "turso storage") {
+		t.Errorf("%q still reports a Turso storage figure, want only the R2 history clause", got)
 	}
 }
 
@@ -69,41 +67,64 @@ func TestQuotaLatchDoesNotRetry(t *testing.T) {
 	}
 }
 
-func TestSteadyPublishesLogSizeAndMeasuresStorage(t *testing.T) {
+// A steady attempt over a bucket holding segments stores exactly their byte
+// total, ignoring body keys by shape, and publishes nothing under an origin's
+// former size key. A later segment inside the day leaves the reading alone,
+// because the measurement runs at most once a day.
+func TestSteadyMeasuresHistoryStorageFromSegments(t *testing.T) {
 	t.Parallel()
 	shared, local := joinPair(t, "m1")
 	seedJoin(t, shared, joinBinding("b1", "m1"))
-	replica := filepath.Join(t.TempDir(), "replica.db")
-	if err := os.WriteFile(replica, make([]byte, 321), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	store := blobstore.NewMemBlobStore(nil)
+	put := func(key string, size int) {
+		t.Helper()
+		if err := store.Put(context.Background(), key, strings.NewReader(strings.Repeat("x", size)), int64(size)); err != nil {
+			t.Fatalf("put %s: %v", key, err)
+		}
+	}
+	put(blobstore.SegmentKey("m2", 0), 100)
+	put(blobstore.SegmentKey("m2", 1), 200)
+	put(blobstore.Key("m2", strings.Repeat("ab", 32)), 7)
 	runner := &Runner{
 		Client: synclog.NewMemTransport("m1"), Local: local,
-		Blobs: func() blobstore.BlobStore { return store }, ReplicaPath: replica,
+		Blobs: func() blobstore.BlobStore { return store },
 	}
 	if res := runner.SyncOnce(context.Background(), shared); res.Err != nil || res.Exported != 1 {
 		t.Fatalf("SyncOnce = %+v", res)
 	}
-	objects, err := store.List(context.Background(), blobstore.SizeKey("m1"))
-	if err != nil || len(objects) != 1 {
-		t.Fatalf("size objects = %v, %v, want m1's log size", objects, err)
+	st, err := ReadStorage(local)
+	if err != nil || st.R2 != 300 || st.At.IsZero() {
+		t.Fatalf("storage = %+v, %v, want exactly the segments' 300 bytes", st, err)
 	}
-	var size LogSize
-	var buf bytes.Buffer
-	if _, err := store.Get(context.Background(), objects[0].Key, &buf); err != nil {
-		t.Fatal(err)
+	objects, err := store.List(context.Background(), "")
+	if err != nil {
+		t.Fatalf("list the bucket: %v", err)
 	}
-	if err := json.Unmarshal(buf.Bytes(), &size); err != nil || size.Entries != 1 || size.Bytes <= synclog.LogRowOverhead {
-		t.Errorf("published size = %+v, %v, want one entry with its body and overhead", size, err)
+	for _, o := range objects {
+		if origin, ok := blobstore.SizeOrigin(o.Key); ok {
+			t.Errorf("a size object for %s is published, want only segment and body keys", origin)
+		}
+	}
+	put(blobstore.SegmentKey("m3", 0), 50)
+	if res := runner.SyncOnce(context.Background(), shared); res.Err != nil {
+		t.Fatalf("second SyncOnce = %+v", res)
+	}
+	if again, err := ReadStorage(local); err != nil || again != st {
+		t.Errorf("storage after a second attempt = %+v, %v, want the first reading %+v", again, err, st)
+	}
+}
+
+// A stored reading from before the Turso figure went away still loads: the
+// dead key is ignored while the R2 figure and the instant stand.
+func TestReadStorageIgnoresTheRetiredTursoKey(t *testing.T) {
+	t.Parallel()
+	_, local := joinPair(t, "m1")
+	at := time.Date(2026, 10, 27, 14, 5, 0, 0, time.UTC)
+	if err := local.KVPut(KeyStorage, []byte(`{"turso":500,"r2":2000,"at":"2026-10-27T14:05:00Z"}`)); err != nil {
+		t.Fatalf("KVPut: %v", err)
 	}
 	st, err := ReadStorage(local)
-	if err != nil || st.Turso != size.Bytes || st.At.IsZero() {
-		t.Errorf("storage = %+v, %v, want the remote log's %d bytes and not the replica file's 321", st, err, size.Bytes)
-	}
-
-	again := runner.SyncOnce(context.Background(), shared)
-	if again.Err != nil || store.Puts != 1 {
-		t.Errorf("a second attempt published again: %d puts, %v", store.Puts, again.Err)
+	if err != nil || st.R2 != 2000 || !st.At.Equal(at) {
+		t.Errorf("storage = %+v, %v, want R2 2000 at %v", st, err, at)
 	}
 }
