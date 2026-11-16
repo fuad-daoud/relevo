@@ -195,7 +195,7 @@ reset_fixtures() {
 	printf '200\n' > "$work/bucket-http-code"
 	printf '204\n' > "$work/delete-http-code"
 	printf '%s\n' '  --aws-sigv4 <provider1[:prvdr2[:reg[:srv]]]>  AWS V4 signature auth' > "$work/curl-help"
-	rm -f "$work/deleted-keys" "$work/stubborn-key" "$work/curl-fail" "$work/turso-marker-current" "$work/turso-marker-current.json"
+	rm -f "$work/deleted-keys" "$work/stubborn-key" "$work/curl-fail" "$work/turso-marker-current" "$work/turso-marker-current.json" "$work/turso-write-err" "$work/turso-write-err.json"
 }
 reset_fixtures
 
@@ -208,7 +208,9 @@ reset_fixtures
 # stubborn-key stays listed even after its delete, to exercise the proof's
 # refusal. A marker query answers the pipeline error when the tables fixture
 # has no meta row, and the current run's recorded id when the marker-current
-# control file is set.
+# control file is set. The write-err control file answers write bodies with
+# the error-result fixture, so the real turso_exec can be driven to its
+# refusal; the read probes keep their own fixtures either way.
 cat > "$fakebin/curl" <<EOF
 #!/bin/sh
 work='$work'
@@ -276,7 +278,13 @@ case \$url in
 			fixture="\$work/turso-marker.json"
 		fi
 		;;
-	*) printf 'unexpected pipeline SQL: %s\n' "\$body" >> "\$work/fake-fail"; exit 99 ;;
+	*)
+		if [ -f "\$work/turso-write-err" ]; then
+			fixture="\$work/turso-write-err.json"
+		else
+			printf 'unexpected pipeline SQL: %s\n' "\$body" >> "\$work/fake-fail"; exit 99
+		fi
+		;;
 	esac
 	printf '%s\n%s' "\$(cat "\$fixture")" "\$(cat "\$work/turso-http-code")"
 	;;
@@ -1048,23 +1056,30 @@ guard_line='test -n "$RELEVO_SANDBOX" || { echo '\''not in a sandbox'\'' >&2; ex
 before=$(find "$work/tmp" -mindepth 1 -maxdepth 1 | sort)
 sp --env "$work/preflight.env" --log-mb 20 --dry-run
 status 'the plan dry run exits 0' 0
-ordered 'the plan prints creates, enables, seed and migrate in order' \
+ordered 'the plan prints creates, enables, pushes, seed and migrate in order' \
 	'scripts/relevo-sandbox.sh create sp-a' \
 	'scripts/relevo-sandbox.sh create sp-b' \
 	'scripts/relevo-sandbox.sh create sp-none' \
 	'plan: enable sp-a' \
+	'relevo db sync enable --url' \
 	'plan: unlock sp-a --new' \
+	'relevo db sync unlock --new --passphrase-stdin' \
+	'relevo db sync push --json' \
 	'plan: enable sp-b' \
+	'plan: push sp-b' \
 	'plan: enable sp-none' \
+	'--r2-key-id "$RELEVO_SCRATCH_R2_KEY_ID" --history none' \
+	'plan: push sp-none' \
 	'plan: seed format-5' \
-	'plan: migrate from sp-a'
+	'plan: migrate from sp-a' \
+	'relevo db sync migrate --confirm-all-upgraded --json'
 carries 'the plan carries the guard line' "$guard_line"
 carries 'the plan names the token stdin source' 'token: stdin'
 carries 'the plan names the R2 secret env source' 'r2.secret: RELEVO_R2_SECRET'
 carries 'the plan names the joiner passphrase env source' 'passphrase: RELEVO_SYNC_PASSPHRASE'
 carries 'the plan pins the seed batch count for 20 MiB' '41 batches of 500 rows (--log-mb 20)'
 carries 'the plan migrate line carries the confirm flag' 'relevo db sync migrate --confirm-all-upgraded --json'
-carries 'the plan none enable carries --history none' 'relevo db sync enable --history none'
+carries 'the plan none enable appends --history none last' '--r2-key-id "$RELEVO_SCRATCH_R2_KEY_ID" --history none'
 absent 'the plan echoes no sentinel token' "$s_token"
 absent 'the plan echoes no sentinel secret' "$s_secret"
 absent 'the plan echoes no sentinel key id' "$s_keyid"
@@ -1075,6 +1090,174 @@ if [ "$before" != "$after" ]; then
 	fail=1
 fi
 reset_fixtures
+
+# --- the real enable snippets, captured through a recording sb_sh ---
+
+# The enables are pinned as the exact snippets the real functions hand to
+# sb_sh: a recording stub stores each invocation's stdin as one numbered
+# record (in call order) plus the sandbox name it was addressed to, and
+# executes nothing. The preflight env is in force with its sentinel values,
+# so a snippet that inlined a secret instead of naming its variable would
+# carry a sentinel into the record and fail the absence assertions below.
+mkdir -p "$work/enable-capture"
+export CAP_DIR="$work/enable-capture"
+srcf eval '
+sb_sh() {
+	_cap_n=$((_cap_n + 1))
+	printf "%s\n" "$1" >> "$CAP_DIR/names"
+	cat > "$CAP_DIR/snippet-$_cap_n"
+}
+_cap_n=0
+sync_passphrase=capture-passphrase-7e2d
+enable_first
+enable_joiner sp-b ""
+enable_joiner sp-none " --history none"
+'
+status 'the real enables run against the recording sb_sh' 0
+if [ ! -f "$CAP_DIR/snippet-7" ] || [ -f "$CAP_DIR/snippet-8" ]; then
+	echo "FAIL: the enables produce exactly seven snippets"
+	fail=1
+fi
+printf 'sp-a\nsp-a\nsp-a\nsp-b\nsp-b\nsp-none\nsp-none\n' > "$work/enable-names-want"
+if ! cmp -s "$work/enable-names-want" "$CAP_DIR/names"; then
+	echo "FAIL: the enables address sp-a three times, then sp-b and sp-none twice each:"
+	diff "$work/enable-names-want" "$CAP_DIR/names" || :
+	fail=1
+fi
+
+# The expected snippets, written out byte for byte: the guard first, then the
+# secret routing (token on stdin, R2 secret via RELEVO_R2_SECRET, passphrase
+# unset for the first machine and via RELEVO_SYNC_PASSPHRASE for the joiners)
+# and the verb with its flags. sp-none's want is sp-b's with --history none
+# appended last, the exact shape the real enable_joiner builds.
+cat > "$work/enable-want-1" <<EOF
+$guard_line
+unset RELEVO_SYNC_PASSPHRASE
+export RELEVO_R2_SECRET="\$RELEVO_SCRATCH_R2_SECRET"
+printf '%s' "\$RELEVO_SCRATCH_SYNC_TOKEN" | relevo db sync enable --url "\$RELEVO_SCRATCH_SYNC_URL" --token-stdin --r2-endpoint "\$RELEVO_SCRATCH_R2_ENDPOINT" --r2-bucket "\$RELEVO_SCRATCH_R2_BUCKET" --r2-key-id "\$RELEVO_SCRATCH_R2_KEY_ID"
+EOF
+cat > "$work/enable-want-2" <<EOF
+$guard_line
+printf '%s' "\$sync_passphrase" | relevo db sync unlock --new --passphrase-stdin
+EOF
+cat > "$work/enable-want-3" <<EOF
+$guard_line
+relevo db sync push --json
+EOF
+cat > "$work/enable-want-4" <<EOF
+$guard_line
+export RELEVO_R2_SECRET="\$RELEVO_SCRATCH_R2_SECRET"
+export RELEVO_SYNC_PASSPHRASE="\$sync_passphrase"
+printf '%s' "\$RELEVO_SCRATCH_SYNC_TOKEN" | relevo db sync enable --url "\$RELEVO_SCRATCH_SYNC_URL" --token-stdin --r2-endpoint "\$RELEVO_SCRATCH_R2_ENDPOINT" --r2-bucket "\$RELEVO_SCRATCH_R2_BUCKET" --r2-key-id "\$RELEVO_SCRATCH_R2_KEY_ID"
+EOF
+sed '$ s/$/ --history none/' "$work/enable-want-4" > "$work/enable-want-6"
+cp "$work/enable-want-3" "$work/enable-want-5"
+cp "$work/enable-want-3" "$work/enable-want-7"
+snippet_is() {
+	if ! cmp -s "$work/enable-want-$1" "$CAP_DIR/snippet-$1"; then
+		echo "FAIL: $2:"
+		diff "$work/enable-want-$1" "$CAP_DIR/snippet-$1" || :
+		fail=1
+	fi
+}
+snippet_is 1 'enable_first enables sp-a with the token on stdin, the R2 secret exported and the passphrase unset'
+snippet_is 2 'enable_first creates the key with unlock --new'
+snippet_is 3 'enable_first drives the first push'
+snippet_is 4 'enable_joiner sp-b enables with full history'
+snippet_is 5 'enable_joiner sp-b drives its first push'
+snippet_is 6 'enable_joiner sp-none appends --history none last'
+snippet_is 7 'enable_joiner sp-none drives its first push'
+_g_bad=''
+for i in 1 2 3 4 5 6 7; do
+	[ "$(head -n1 "$CAP_DIR/snippet-$i")" = "$guard_line" ] || _g_bad="$_g_bad $i"
+done
+if [ -n "$_g_bad" ]; then
+	echo "FAIL: every enable snippet starts with the exact guard line (offenders:$_g_bad)"
+	fail=1
+fi
+for i in 1 2 3 4 5 7; do
+	if grep -qF -- '--history none' "$CAP_DIR/snippet-$i"; then
+		echo "FAIL: --history none appears only in the sp-none enable (found in snippet $i)"
+		fail=1
+	fi
+done
+cat "$CAP_DIR"/snippet-* >> "$all"
+for s in "$s_url" "$s_token" "$s_endpoint" "$s_bucket" "$s_keyid" "$s_secret"; do
+	if grep -qF -- "$s" "$CAP_DIR"/snippet-*; then
+		echo "FAIL: the enable snippets carry no sentinel secret value (\"$s\" present)"
+		fail=1
+	fi
+done
+if grep -qF -- 'capture-passphrase-7e2d' "$CAP_DIR"/snippet-*; then
+	echo "FAIL: the enable snippets never inline the passphrase"
+	fail=1
+fi
+
+# --- the dry-run plan agrees with the real enable snippets ---
+
+# The plan follows the real run, never the reverse: the enable/unlock/push
+# verb lines extracted from the dry-run plan must equal, in order, the verbs
+# the real enables hand to sb_sh (the records above). The migrate verb is
+# pinned by the plan-order assertion; the enables are what this compares.
+sp --env "$work/preflight.env" --log-mb 20 --dry-run
+status 'the agreement dry run exits 0' 0
+printf '%s\n' "$out" | grep -E '^relevo db sync (enable|unlock|push) ' > "$work/plan-verbs" || :
+: > "$work/real-verbs"
+for i in 1 2 3 4 5 6 7; do
+	grep -o 'relevo db sync .*' "$CAP_DIR/snippet-$i" >> "$work/real-verbs" || :
+done
+if ! cmp -s "$work/real-verbs" "$work/plan-verbs"; then
+	echo "FAIL: the dry-run plan and the real enable snippets agree on the verb sequence:"
+	diff "$work/real-verbs" "$work/plan-verbs" || :
+	fail=1
+fi
+reset_fixtures
+
+# --- run_phases drives the phases in the real order ---
+
+# The real run_phases with every phase stubbed to log its name and arguments:
+# the logged order is the run's contract (create, enable sp-a and learn its
+# origin, enable the joiners, seed around that origin, migrate). The
+# record_new_origins stub answers the origin the seed must receive, so the
+# log also pins that the seed's origin is the one learned from the bucket.
+export PHASE_LOG="$work/phase-log"
+export PHASE_PASS="$work/phase-pass"
+: > "$PHASE_LOG"
+srcf eval '
+gen_passphrase() { printf "gen_passphrase\n" >> "$PHASE_LOG"; printf "phase-passphrase"; }
+create_sandboxes() { printf "create_sandboxes\n" >> "$PHASE_LOG"; }
+enable_first() { printf "enable_first\n" >> "$PHASE_LOG"; }
+enable_joiner() { printf "enable_joiner %s [%s]\n" "$1" "$2" >> "$PHASE_LOG"; }
+record_new_origins() { printf "record_new_origins\n" >> "$PHASE_LOG"; printf "origin-from-record\n"; }
+seed_log() { printf "seed_log %s %s\n" "$1" "$2" >> "$PHASE_LOG"; }
+migrate_run() { printf "migrate_run\n" >> "$PHASE_LOG"; }
+log_mb=20
+run_phases
+printf "%s" "$sync_passphrase" > "$PHASE_PASS"
+'
+status 'run_phases drives the phases' 0
+carries 'run_phases reports the run complete' 'run complete'
+cat > "$work/phase-log-want" <<'EOF'
+gen_passphrase
+create_sandboxes
+enable_first
+record_new_origins
+enable_joiner sp-b []
+record_new_origins
+enable_joiner sp-none [ --history none]
+record_new_origins
+seed_log origin-from-record 20
+migrate_run
+EOF
+if ! cmp -s "$work/phase-log-want" "$PHASE_LOG"; then
+	echo "FAIL: run_phases orders create, enables, seed and migrate:"
+	diff "$work/phase-log-want" "$PHASE_LOG" || :
+	fail=1
+fi
+if [ "$(cat "$PHASE_PASS" 2>/dev/null)" != phase-passphrase ]; then
+	echo "FAIL: run_phases takes the passphrase from gen_passphrase"
+	fail=1
+fi
 
 # seed_batches: the predicted batch count is the target over the bytes a batch
 # carries, rounded up; pinned for 20 and two other sizes.
@@ -1224,6 +1407,16 @@ printf '%s\n' "$out" >> "$all"
 status 'sb_sh refuses without the sandbox marker' 1
 absent 'the unguarded sandbox never runs the command' 'inside-ok'
 carries 'the guard refusal names the sandbox' 'not in a sandbox'
+# A marker naming another sandbox: env.sh always sets RELEVO_SANDBOX to the
+# sandbox's own name, so a non-empty marker naming a different sandbox means
+# the snippet was delivered to the wrong one -- the in-snippet guard alone
+# cannot see the mismatch, and sb_sh must refuse before the eval.
+printf 'export RELEVO_SANDBOX=other-name\n' > "$work/sb-root/sp-x/env.sh"
+out=$(SYNC_PROOF_SOURCED=1 sh -c '. "$1"; sandbox_root=$2; sb_sh sp-x' sh "$script" "$work/sb-root" < "$work/snippet-ok" 2>&1) && got=0 || got=$?
+printf '%s\n' "$out" >> "$all"
+status 'sb_sh refuses a marker naming another sandbox' 1
+absent 'the wrong-name sandbox never runs the command' 'inside-ok'
+carries 'the wrong-name refusal keeps the guard wording' 'not in a sandbox'
 
 # migrate_field: both extractors read the same migrate document, booleans render
 # lowercase so already_migrated reads the same whichever tool is on PATH.
@@ -1260,6 +1453,22 @@ for tool in jq python3; do
 	ext "$tool" turso_exec_verdict "$work/exec-empty.json"
 	equals "turso_exec_verdict ($tool): an empty response is an error" 'error empty pipeline response'
 done
+
+# The real turso_exec against the fake curl, not a stub: the write-err control
+# answers the write body with the exec-err shape (one ok result, then an error
+# result), and the batch must refuse with exit 2 -- a refused insert halts the
+# seed rather than falling back to a smaller unmeasured one. The seed_log
+# tests below stub turso_exec out; this one drives the real pipeline path.
+cp "$work/exec-err.json" "$work/turso-write-err.json"
+touch "$work/turso-write-err"
+printf 'INSERT INTO x VALUES (1)\n' > "$work/exec-write.sql"
+srcfi "$work/exec-write.sql" turso_exec
+status 'turso_exec refuses an error result from the real pipeline path' 2
+carries 'the turso_exec refusal names the scratch write' 'scratch Turso write failed:'
+carries 'the turso_exec refusal names the server message' 'boom'
+log_has "$work/curl-bodies" 'INSERT INTO x VALUES (1)' 'turso_exec sends the statement to the pipeline'
+rm -f "$work/turso-write-err"
+reset_fixtures
 
 # turso_multi_request: one execute per statement plus a close, SQL preserved.
 printf 'CREATE TABLE x (a)\nINSERT INTO x VALUES (1)\n' > "$work/stmts.txt"

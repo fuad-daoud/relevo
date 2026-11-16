@@ -768,6 +768,16 @@ sb_sh() {
 	(
 		# shellcheck disable=SC1090 # the path is built at run time from the sandbox root
 		. "$_ss_env"
+		# env.sh always exports RELEVO_SANDBOX as the sandbox's own name
+		# (relevo-sandbox.sh's write_env_sh writes `export RELEVO_SANDBOX=%s`
+		# with the name), so a marker naming another sandbox means the
+		# snippet was delivered to the wrong one. The in-snippet guard only
+		# tests that the marker is non-empty and can never catch that; this
+		# name check is the only form of the guard that can refuse here.
+		if [ "${RELEVO_SANDBOX:-}" != "$1" ]; then
+			echo 'not in a sandbox' >&2
+			exit 1
+		fi
 		eval "$_ss_snippet"
 	)
 }
@@ -960,14 +970,23 @@ print_plan() {
 	printf 'plan: unlock sp-a --new (passphrase: stdin, generated per run)\n'
 	printf '%s\n' "$sandbox_guard"
 	printf 'relevo db sync unlock --new --passphrase-stdin\n'
+	printf 'plan: push sp-a (first push)\n'
+	printf '%s\n' "$sandbox_guard"
+	printf 'relevo db sync push --json\n'
 	printf 'plan: enable sp-b (joiner; token: stdin, r2.secret: RELEVO_R2_SECRET, passphrase: RELEVO_SYNC_PASSPHRASE)\n'
 	printf '. %s/sp-b/env.sh\n' "$sandbox_root"
 	printf '%s\n' "$sandbox_guard"
 	printf 'relevo db sync enable --url "$RELEVO_SCRATCH_SYNC_URL" --token-stdin --r2-endpoint "$RELEVO_SCRATCH_R2_ENDPOINT" --r2-bucket "$RELEVO_SCRATCH_R2_BUCKET" --r2-key-id "$RELEVO_SCRATCH_R2_KEY_ID"\n'
+	printf 'plan: push sp-b (first push)\n'
+	printf '%s\n' "$sandbox_guard"
+	printf 'relevo db sync push --json\n'
 	printf 'plan: enable sp-none (joiner, --history none; same secret sources as sp-b)\n'
 	printf '. %s/sp-none/env.sh\n' "$sandbox_root"
 	printf '%s\n' "$sandbox_guard"
-	printf 'relevo db sync enable --history none --url "$RELEVO_SCRATCH_SYNC_URL" --token-stdin --r2-endpoint "$RELEVO_SCRATCH_R2_ENDPOINT" --r2-bucket "$RELEVO_SCRATCH_R2_BUCKET" --r2-key-id "$RELEVO_SCRATCH_R2_KEY_ID"\n'
+	printf 'relevo db sync enable --url "$RELEVO_SCRATCH_SYNC_URL" --token-stdin --r2-endpoint "$RELEVO_SCRATCH_R2_ENDPOINT" --r2-bucket "$RELEVO_SCRATCH_R2_BUCKET" --r2-key-id "$RELEVO_SCRATCH_R2_KEY_ID" --history none\n'
+	printf 'plan: push sp-none (first push)\n'
+	printf '%s\n' "$sandbox_guard"
+	printf 'relevo db sync push --json\n'
 	printf 'plan: learn each origin from the bucket after its first push; append to origins\n'
 	printf 'plan: seed format-5 log for the sp-a origin, %s batches of %s rows (--log-mb %s)\n' "$(seed_batches "$log_mb")" "$seed_batch_rows" "$log_mb"
 	printf 'plan: migrate from sp-a\n'
