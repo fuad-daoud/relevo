@@ -95,4 +95,7 @@ func TestIsBodyKeyRefusesSegmentKeys(t *testing.T) {
 	if IsSegmentKey("laptop/log-size.json") {
 		t.Errorf("size key %q reads as a segment key", "laptop/log-size.json")
 	}
+	if IsBodyKey("laptop/log-size.json") {
+		t.Errorf("size key %q reads as a body key", "laptop/log-size.json")
+	}
 }
