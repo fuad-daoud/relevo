@@ -65,6 +65,11 @@ var createStatements = []string{
 // matched together, so a remote whose tables and format disagree is refused
 // rather than opened.
 func (b *TursoBackend) ensureLog(ctx context.Context, url string) error {
+	// A migrate hello opens an unmigrated remote for the migrate verb alone,
+	// so it classifies before any branch below could create or pull.
+	if b.spec.Migrate {
+		return b.ensureLogForMigrate(ctx, url)
+	}
 	tables, err := userTables(ctx, b.db)
 	if err != nil {
 		return fmt.Errorf("syncworker: read the remote's tables: %w", err)
@@ -75,8 +80,9 @@ func (b *TursoBackend) ensureLog(ctx context.Context, url string) error {
 	// The table set is checked before the format row is read, because a remote
 	// this build would refuse is often one whose meta table does not exist to
 	// read -- and that has to answer as a refusal naming the remote, not as a
-	// SQL failure about a table.
-	if !isLogTables(tables) && !isOlderTables(tables) {
+	// SQL failure about a table. A migration in progress classifies here so
+	// the reset keeps a replica holding unpushed migration state.
+	if !isLogTables(tables) && !isOlderTables(tables) && !isMigratingTables(tables) {
 		return errNotALog(url)
 	}
 	format, err := readFormat(ctx, b.db)
@@ -86,6 +92,12 @@ func (b *TursoBackend) ensureLog(ctx context.Context, url string) error {
 	if format == strconv.Itoa(logFormatVersion) && isLogTables(tables) {
 		return nil
 	}
+	// A remote mid-migration pulls once like an older format: a machine that
+	// was offline while another finished still holds the old tables until it
+	// does, and then it opens at the new format or is refused to migrate.
+	if format == migratingFormat && isMigratingTables(tables) {
+		return b.pullOlderFormat(ctx, url, format)
+	}
 	if older, ok := olderLogTables[atoiOrZero(format)]; ok && slices.Equal(tables, older) {
 		return b.pullOlderFormat(ctx, url, format)
 	}
@@ -93,10 +105,11 @@ func (b *TursoBackend) ensureLog(ctx context.Context, url string) error {
 }
 
 // unknownShape reports whether a table set matches no shape this build
-// classifies: neither the current log's tables nor any older format's. An
-// empty set is not unknown: it is the empty remote the log is created on.
+// classifies: neither the current log's tables, any older format's, nor a
+// migration in progress. An empty set is not unknown: it is the empty remote
+// the log is created on.
 func unknownShape(tables []string) bool {
-	return len(tables) != 0 && !isLogTables(tables) && !isOlderTables(tables)
+	return len(tables) != 0 && !isLogTables(tables) && !isOlderTables(tables) && !isMigratingTables(tables)
 }
 
 // resetUnknownShape throws away a pre-existing replica that matches no known

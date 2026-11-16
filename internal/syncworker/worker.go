@@ -30,6 +30,10 @@ type Spec struct {
 	// MirrorTables names the entry tables the writer copies into shared, which
 	// hello names because the worker writes no table name of its own.
 	MirrorTables []string
+	// Migrate opens an unmigrated remote for the migrate verb alone, and every
+	// other verb on the pipe is refused so no row is read through a
+	// half-migrated schema.
+	Migrate bool
 }
 
 // Boundary is the first signed sequence an export predicted for its origin and
@@ -194,6 +198,12 @@ func (s *server) dispatch(req Request) Response {
 	if s.spec == nil && req.Verb != VerbHello {
 		return refuse(req, ErrNoHello)
 	}
+	// A migration pipe serves the migrate handshake alone: any other verb
+	// would read through a schema the verb is still moving, so it is refused
+	// while the pipe stays usable for hello and shutdown.
+	if s.spec != nil && s.spec.Migrate && !migrateVerbs[req.Verb] {
+		return refuse(req, fmt.Errorf("%w: verb %q on a migration pipe", ErrProtocol, req.Verb))
+	}
 	handle, ok := verbHandlers[req.Verb]
 	if !ok {
 		return refuse(req, fmt.Errorf("%w: verb %q", ErrProtocol, req.Verb))
@@ -220,7 +230,7 @@ func (s *server) hello(req Request) Response {
 	}
 	spec := Spec{
 		Version: req.Version, Origin: req.Origin, URL: req.URL, Token: req.Token,
-		R2: req.R2, MirrorTables: req.MirrorTables,
+		R2: req.R2, MirrorTables: req.MirrorTables, Migrate: req.Migrate,
 	}
 	if err := s.backend.Open(spec); err != nil {
 		return refuse(req, err)
@@ -315,4 +325,12 @@ func checkEntry(e Entry) error {
 // acted on without parsing its words.
 func refuse(req Request, err error) Response {
 	return Response{ID: req.ID, OK: false, Error: err.Error(), Code: RefusalCodeOf(err)}
+}
+
+// migrateVerbs is every verb a migration pipe answers: the handshake that
+// opens it and the shutdown that ends it. The migrate verb itself joins this
+// set once it exists; every other verb is refused on the pipe.
+var migrateVerbs = map[Verb]bool{
+	VerbHello:    true,
+	VerbShutdown: true,
 }

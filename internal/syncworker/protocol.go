@@ -227,6 +227,10 @@ type Request struct {
 	ClaimToken string `json:"claim_token,omitempty"`
 	// Traffic is the one row a publish_traffic writes, keyed on hello.
 	Traffic *TrafficRow `json:"traffic,omitempty"`
+	// Migrate opens an unmigrated remote for the migrate verb only, on hello
+	// alone. It is omitted on every normal hello, so a hello without it
+	// carries no migrate key.
+	Migrate bool `json:"migrate,omitempty"`
 }
 
 // Response is one line of the pipe, from the worker to the daemon.
