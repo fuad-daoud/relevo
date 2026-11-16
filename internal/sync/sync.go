@@ -62,6 +62,10 @@ type State struct {
 	// Rebuild is the last automatic replica rebuild, zero when never: every state
 	// reader says what the machine did to recover.
 	Rebuild Rebuild
+	// MigrationWait is when the breaker's migration wait ends, zero when not
+	// waiting: the remote needs a migrate on another machine before this one can
+	// sync, so the machine is behind, not broken.
+	MigrationWait time.Time
 }
 
 // tick is the marker one finished tick writes; a failed tick leaves OK false and
@@ -119,14 +123,16 @@ const (
 const BacklogThreshold int64 = 100
 
 // Token is the whole statusline mapping: off never reads as behind, attention
-// outranks a failed tick, reported trouble reads as behind, and a failed tick
-// outranks a backlog.
+// outranks a failed tick, a migration wait and reported trouble read as behind,
+// and a failed tick outranks a backlog.
 func Token(s State) string {
 	switch {
 	case !s.Enabled:
 		return TokenOff
 	case s.Attention:
 		return TokenErr
+	case !s.MigrationWait.IsZero():
+		return TokenBehind
 	case !s.Trouble.Empty():
 		return TokenBehind
 	case !s.LastTickOK:
@@ -160,6 +166,7 @@ func ReadState(kv db.KV) (State, error) {
 		tm    Times
 		tr    Trouble
 		at    Attempt
+		bs    BreakerState
 		reads = []struct {
 			key string
 			out any
@@ -172,6 +179,7 @@ func ReadState(kv db.KV) (State, error) {
 			{KeyTrouble, &tr},
 			{KeyLastAttempt, &at},
 			{KeyRebuild, &s.Rebuild},
+			{KeyDeaths, &bs},
 		}
 	)
 	for _, r := range reads {
@@ -183,6 +191,7 @@ func ReadState(kv db.KV) (State, error) {
 	s.Attention = a.Message != ""
 	s.LatchCause = a.Message
 	s.LastExport, s.LastImport, s.Trouble, s.Attempt = tm.Export, tm.Import, tr, at
+	s.MigrationWait = bs.WaitUntil
 	return s, nil
 }
 

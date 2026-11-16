@@ -34,27 +34,36 @@ var olderLogTables = map[int][]string{
 	5: {"log", "marks", "meta"},
 }
 
+// createHeadsStatement is the heads table: one row per origin with its head,
+// size and label. It is named so the migration builds the same table without
+// indexing into the schema list.
+const createHeadsStatement = "CREATE TABLE heads (" +
+	"origin TEXT NOT NULL PRIMARY KEY, " +
+	"seq INTEGER NOT NULL, " +
+	"key TEXT NOT NULL, " +
+	"entries INTEGER NOT NULL, " +
+	"bytes INTEGER NOT NULL, " +
+	"floor INTEGER NOT NULL DEFAULT 0, " +
+	"legacy_upto INTEGER NOT NULL DEFAULT 0, " +
+	"label TEXT NOT NULL DEFAULT '', " +
+	"at TEXT NOT NULL)"
+
+// createSharedStatement is the shared table: the mirrored rows every reader
+// serves. It is named for the same reason the heads statement is.
+const createSharedStatement = "CREATE TABLE shared (" +
+	"origin TEXT NOT NULL, seq INTEGER NOT NULL, batch INTEGER NOT NULL, " +
+	"tbl TEXT NOT NULL, pk TEXT NOT NULL, op TEXT NOT NULL, " +
+	"schema_version INTEGER NOT NULL, body TEXT, at TEXT NOT NULL, mac BLOB, " +
+	"after_origin TEXT, after_seq INTEGER, " +
+	"PRIMARY KEY (origin, seq))"
+
 // createStatements is the remote schema, in one place so the create and the
 // classification cannot disagree about what a relevo log is: the heads, meta
 // and shared tables, in that order.
 var createStatements = []string{
-	"CREATE TABLE heads (" +
-		"origin TEXT NOT NULL PRIMARY KEY, " +
-		"seq INTEGER NOT NULL, " +
-		"key TEXT NOT NULL, " +
-		"entries INTEGER NOT NULL, " +
-		"bytes INTEGER NOT NULL, " +
-		"floor INTEGER NOT NULL DEFAULT 0, " +
-		"legacy_upto INTEGER NOT NULL DEFAULT 0, " +
-		"label TEXT NOT NULL DEFAULT '', " +
-		"at TEXT NOT NULL)",
+	createHeadsStatement,
 	"CREATE TABLE meta (key TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL)",
-	"CREATE TABLE shared (" +
-		"origin TEXT NOT NULL, seq INTEGER NOT NULL, batch INTEGER NOT NULL, " +
-		"tbl TEXT NOT NULL, pk TEXT NOT NULL, op TEXT NOT NULL, " +
-		"schema_version INTEGER NOT NULL, body TEXT, at TEXT NOT NULL, mac BLOB, " +
-		"after_origin TEXT, after_seq INTEGER, " +
-		"PRIMARY KEY (origin, seq))",
+	createSharedStatement,
 }
 
 // ensureLog makes sure the remote is this log: an empty remote gets the log's
@@ -65,6 +74,11 @@ var createStatements = []string{
 // matched together, so a remote whose tables and format disagree is refused
 // rather than opened.
 func (b *TursoBackend) ensureLog(ctx context.Context, url string) error {
+	// A migrate hello opens an unmigrated remote for the migrate verb alone,
+	// so it classifies before any branch below could create or pull.
+	if b.spec.Migrate {
+		return b.ensureLogForMigrate(ctx, url)
+	}
 	tables, err := userTables(ctx, b.db)
 	if err != nil {
 		return fmt.Errorf("syncworker: read the remote's tables: %w", err)
@@ -75,8 +89,9 @@ func (b *TursoBackend) ensureLog(ctx context.Context, url string) error {
 	// The table set is checked before the format row is read, because a remote
 	// this build would refuse is often one whose meta table does not exist to
 	// read -- and that has to answer as a refusal naming the remote, not as a
-	// SQL failure about a table.
-	if !isLogTables(tables) && !isOlderTables(tables) {
+	// SQL failure about a table. A migration in progress classifies here so
+	// the reset keeps a replica holding unpushed migration state.
+	if !isLogTables(tables) && !isOlderTables(tables) && !isMigratingTables(tables) {
 		return errNotALog(url)
 	}
 	format, err := readFormat(ctx, b.db)
@@ -86,6 +101,12 @@ func (b *TursoBackend) ensureLog(ctx context.Context, url string) error {
 	if format == strconv.Itoa(logFormatVersion) && isLogTables(tables) {
 		return nil
 	}
+	// A remote mid-migration pulls once like an older format: a machine that
+	// was offline while another finished still holds the old tables until it
+	// does, and then it opens at the new format or is refused to migrate.
+	if format == migratingFormat && isMigratingTables(tables) {
+		return b.pullOlderFormat(ctx, url, format)
+	}
 	if older, ok := olderLogTables[atoiOrZero(format)]; ok && slices.Equal(tables, older) {
 		return b.pullOlderFormat(ctx, url, format)
 	}
@@ -93,10 +114,11 @@ func (b *TursoBackend) ensureLog(ctx context.Context, url string) error {
 }
 
 // unknownShape reports whether a table set matches no shape this build
-// classifies: neither the current log's tables nor any older format's. An
-// empty set is not unknown: it is the empty remote the log is created on.
+// classifies: neither the current log's tables, any older format's, nor a
+// migration in progress. An empty set is not unknown: it is the empty remote
+// the log is created on.
 func unknownShape(tables []string) bool {
-	return len(tables) != 0 && !isLogTables(tables) && !isOlderTables(tables)
+	return len(tables) != 0 && !isLogTables(tables) && !isOlderTables(tables) && !isMigratingTables(tables)
 }
 
 // resetUnknownShape throws away a pre-existing replica that matches no known
@@ -275,6 +297,6 @@ func errNotALog(url string) error {
 // errMigrate is the refusal an older-format remote gets until migrated. It names
 // the URL and format, and repeats on every attempt.
 func errMigrate(url, format string) error {
-	return MarkRefusal(CodeRemote,
+	return MarkRefusal(CodeMigrate,
 		fmt.Errorf("sync: refusing remote %s at format %s: run relevo db sync migrate once every machine runs this release", url, format))
 }

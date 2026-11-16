@@ -35,6 +35,9 @@ type dbSyncStatusDoc struct {
 	// Latched and LatchCause describe a breaker that stopped the machine until retry.
 	Latched    bool   `json:"latched,omitempty"`
 	LatchCause string `json:"latch_cause,omitempty"`
+	// WaitingMigration says the breaker is waiting out the remote's migration:
+	// the fix runs on another machine, so this one is behind, not broken.
+	WaitingMigration bool `json:"waiting_migration,omitempty"`
 	// RebuildAt and RebuildAside are the last automatic replica rebuild, absent
 	// until one ran.
 	RebuildAt    string `json:"rebuild_at,omitempty"`
@@ -200,6 +203,9 @@ func dbSyncStatusDetails(doc dbSyncStatusDoc) string {
 	}
 	if doc.Latched {
 		fmt.Fprintf(&b, " · latched: %s", doc.LatchCause)
+	}
+	if doc.WaitingMigration {
+		b.WriteString(" · waiting for migration: the remote is still at the old format; run `relevo db sync migrate --confirm-all-upgraded` on one machine once every machine runs this release")
 	}
 	if doc.RebuildAt != "" {
 		fmt.Fprintf(&b, " · rebuilt: %s", doc.RebuildAt)

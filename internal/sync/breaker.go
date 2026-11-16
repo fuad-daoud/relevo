@@ -60,6 +60,9 @@ type BreakerState struct {
 	// At is when the most recent death was counted; the backoff is measured
 	// from it.
 	At time.Time `json:"at,omitempty"`
+	// WaitUntil is when the migration wait ends; calls refuse until then. Zero
+	// when not waiting.
+	WaitUntil time.Time `json:"wait_until,omitempty"`
 }
 
 type Breaker struct {
@@ -118,7 +121,8 @@ func (b *Breaker) LatchCause() (string, error) {
 }
 
 // Begin opens one call: it counts a marker a previous call left behind, refuses
-// while latched or backing off, and writes the in-call marker the reply clears.
+// while latched, waiting for a migration or backing off, and writes the in-call
+// marker the reply clears.
 func (b *Breaker) Begin(verb string) error {
 	if err := b.Observe(); err != nil {
 		return err
@@ -130,16 +134,22 @@ func (b *Breaker) Begin(verb string) error {
 	if latched {
 		return ErrLatched
 	}
+	st, err := b.State()
+	if err != nil {
+		return err
+	}
+	// The wait refuses as ErrMigrateWaiting, not ErrBackingOff: the attempt
+	// record and the verb classifier must say waiting for migration, and the
+	// next hello once the window ends is the retry.
+	if st.WaitUntil.After(b.now()) {
+		return fmt.Errorf("sync: waiting for another machine to migrate the remote: %w", ErrMigrateWaiting)
+	}
 	due, err := b.Due()
 	if err != nil {
 		return err
 	}
 	if !due {
 		return ErrBackingOff
-	}
-	st, err := b.State()
-	if err != nil {
-		return err
 	}
 	return WriteInCall(b.kv, InCall{At: b.now().UTC(), Verb: verb, N: st.Seen + 1})
 }
@@ -178,8 +188,9 @@ func (b *Breaker) Observe() error {
 	return nil
 }
 
-// Success starts the count over. It does not clear an existing latch: only Clear
-// unlatches a machine.
+// Success starts the count over and ends a migration wait: the remote answered,
+// so there is nothing left to wait for. It does not clear an existing latch:
+// only Clear unlatches a machine.
 func (b *Breaker) Success() error {
 	st, err := b.State()
 	if err != nil {
@@ -187,13 +198,24 @@ func (b *Breaker) Success() error {
 	}
 	st.Deaths = 0
 	st.At = time.Time{}
+	st.WaitUntil = time.Time{}
 	return b.save(st)
 }
 
 // Refused records a reply the worker sent and declined. One that repeats on
 // every attempt latches at once, because waiting out three predictable deaths
 // only delays the human who must act; anything else stays on the ordinary path.
+// A migrate refusal is the exception: the fix runs on another machine, so this
+// one waits out MigrateRetryEvery and retries instead of latching.
 func (b *Breaker) Refused(err error) error {
+	if errors.Is(err, ErrMigrateWaiting) {
+		st, serr := b.State()
+		if serr != nil {
+			return serr
+		}
+		st.WaitUntil = b.now().Add(MigrateRetryEvery)
+		return b.save(st)
+	}
 	if !IsPermanentRefusal(err) {
 		return nil
 	}
@@ -219,6 +241,11 @@ func (b *Breaker) Due() (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	// The wait is tested before the zero-death shortcut: a waiting machine
+	// counts no deaths, so the shortcut would let it through.
+	if st.WaitUntil.After(b.now()) {
+		return false, nil
+	}
 	if st.Deaths == 0 {
 		return true, nil
 	}
@@ -227,7 +254,8 @@ func (b *Breaker) Due() (bool, error) {
 
 // Clear unlatches the machine and starts the count over, which is the retry an
 // operator asked for: the latch goes and the next three deaths are measured
-// fresh.
+// fresh. A migration wait ends here too, so a migrate run by hand is followed
+// by an attempt at once.
 func (b *Breaker) Clear() error {
 	if err := ClearLatch(b.kv); err != nil {
 		return err
@@ -242,6 +270,7 @@ func (b *Breaker) Clear() error {
 	st.Deaths = 0
 	st.Seen = 0
 	st.At = time.Time{}
+	st.WaitUntil = time.Time{}
 	return b.save(st)
 }
 

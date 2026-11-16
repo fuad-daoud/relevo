@@ -3,6 +3,7 @@ package syncpipe
 import (
 	"context"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/synclog"
@@ -309,6 +310,54 @@ func headFromWire(rows []syncworker.HeadRow) []synclog.HeadRow {
 		})
 	}
 	return out
+}
+
+// Migrate runs the format migration and answers with what one call moved and
+// built. An empty reply is a refusal, not a no-op migration: the worker always
+// answers with what the call did, so a missing field did not do what was asked.
+func (c *Client) Migrate() (synclog.MigrateResult, error) {
+	resp, err := c.call(syncworker.Request{Verb: syncworker.VerbMigrate})
+	if err != nil {
+		return synclog.MigrateResult{}, err
+	}
+	if resp.Migrate == nil {
+		return synclog.MigrateResult{}, errors.New("syncpipe: the worker answered migrate with no result")
+	}
+	return migrateFromWire(*resp.Migrate), nil
+}
+
+// migrateFromWire reads back what one migration moved and built. The origins
+// travel as a map on the wire and as a sorted slice here, so a report over
+// them reads the same on every run.
+func migrateFromWire(m syncworker.MigrateResult) synclog.MigrateResult {
+	origins := make([]synclog.MigrateEntry, 0, len(m.Origins))
+	for origin, o := range m.Origins {
+		origins = append(origins, synclog.MigrateEntry{
+			Origin: origin,
+			MigrateOrigin: synclog.MigrateOrigin{
+				Rows:       o.Rows,
+				Objects:    o.Objects,
+				Seq:        o.Seq,
+				Floor:      o.Floor,
+				LegacyUpto: o.LegacyUpto,
+				Label:      o.Label,
+			},
+		})
+	}
+	sort.Slice(origins, func(i, j int) bool { return origins[i].Origin < origins[j].Origin })
+	return synclog.MigrateResult{
+		AlreadyMigrated: m.AlreadyMigrated,
+		Origins:         origins,
+		Rows:            m.Rows,
+		ObjectsCreated:  m.ObjectsCreated,
+		ObjectsVerified: m.ObjectsVerified,
+		RowsSwept:       m.RowsSwept,
+		SharedRows:      m.SharedRows,
+		R2Put:           m.R2Put,
+		R2Get:           m.R2Get,
+		TursoSent:       m.TursoSent,
+		TursoReceived:   m.TursoReceived,
+	}
 }
 
 // statsFromWire reads back what the log holds and moved. Byte counters carry

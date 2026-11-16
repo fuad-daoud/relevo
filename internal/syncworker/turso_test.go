@@ -591,8 +591,8 @@ func TestHelloRefusesAnOlderFormatWithTheMigrateMessage(t *testing.T) {
 			if resp.OK {
 				t.Fatalf("hello = %+v, want a refusal", resp)
 			}
-			if resp.Code != CodeRemote {
-				t.Errorf("code = %q, want %q: the refusal repeats on every attempt", resp.Code, CodeRemote)
+			if resp.Code != CodeMigrate {
+				t.Errorf("code = %q, want %q: the refusal repeats on every attempt", resp.Code, CodeMigrate)
 			}
 			if !strings.Contains(resp.Error, wantSentence) {
 				t.Errorf("refusal %q does not contain %q", resp.Error, wantSentence)
@@ -611,6 +611,40 @@ func TestHelloRefusesAnOlderFormatWithTheMigrateMessage(t *testing.T) {
 			}
 			if driver.pulls != 1 {
 				t.Errorf("pulls = %d, want exactly one: an older format pulls once before the refusal", driver.pulls)
+			}
+		})
+	}
+}
+
+// TestBackendRefusesOlderFormatsWithCodeMigrate pins that b.Open returns an
+// error marked CodeMigrate on any of formats 1-5 so the daemon retries instead
+// of latching.
+func TestBackendRefusesOlderFormatsWithCodeMigrate(t *testing.T) {
+	cases := []struct {
+		format int
+		seed   func(t *testing.T, path string)
+	}{
+		{format: 1, seed: seedFormatOneRemote},
+		{format: 2, seed: seedFormatTwoRemote},
+		{format: 3, seed: seedFormatThreeRemote},
+		{format: 4, seed: seedFormatFourRemote},
+		{format: 5, seed: seedFormatFiveRemote},
+	}
+	const wantSentence = "run relevo db sync migrate once every machine runs this release"
+	for _, tc := range cases {
+		t.Run(strconv.Itoa(tc.format), func(t *testing.T) {
+			path := tempReplica(t)
+			tc.seed(t, path)
+			b := NewTursoBackend(&localDriver{path: path})
+			err := b.Open(Spec{Origin: "origin-a", URL: "libsql://remote.example", Token: "t"})
+			if err == nil {
+				t.Fatalf("open = nil, want a refusal")
+			}
+			if code := RefusalCodeOf(err); code != CodeMigrate {
+				t.Errorf("refusal code = %q, want %q", code, CodeMigrate)
+			}
+			if !strings.Contains(err.Error(), wantSentence) {
+				t.Errorf("refusal %q does not contain %q", err.Error(), wantSentence)
 			}
 		})
 	}
@@ -1793,6 +1827,7 @@ func (r refusingBackend) KeyInit(KeyMeta) (KeyMeta, error) { return KeyMeta{}, r
 
 func (r refusingBackend) KeyRekey(KeyRekeySpec) (KeyMeta, error) { return KeyMeta{}, r.fail }
 func (r refusingBackend) PublishEpochCut(EpochCut) error         { return r.fail }
+func (r refusingBackend) Migrate() (MigrateResult, error)        { return MigrateResult{}, r.fail }
 
 func (r refusingBackend) Close() error { return nil }
 

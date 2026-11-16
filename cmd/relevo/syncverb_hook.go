@@ -80,6 +80,11 @@ func buildVerbRunner(d *db.DB) *verb.Runner {
 		OpenNoBucket: func(context.Context) (synclog.LogTransport, bool, error) {
 			return syncpipe.OpenNoBucketSupervisor(d, local)
 		},
+		// The migration rewrites the released replica, so it opens the
+		// migrator rather than the worker: the worker is cancelled first.
+		OpenMigrate: func(context.Context) (synclog.Migrator, error) {
+			return syncpipe.OpenMigrator(d, local)
+		},
 	})
 }
 

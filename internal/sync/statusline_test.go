@@ -188,6 +188,16 @@ func TestTokenIsTheWholeMapping(t *testing.T) {
 			TokenBehind,
 		},
 		{
+			"behind on a migration wait",
+			State{Enabled: true, LastTickOK: true, MigrationWait: tokenNow.Add(time.Minute)},
+			TokenBehind,
+		},
+		{
+			"err outranks a migration wait",
+			State{Enabled: true, Attention: true, MigrationWait: tokenNow.Add(time.Minute)},
+			TokenErr,
+		},
+		{
 			"err outranks import trouble",
 			State{Enabled: true, Attention: true, Trouble: Trouble{Gaps: []string{"m3 is held at 7"}}},
 			TokenErr,

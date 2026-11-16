@@ -46,6 +46,10 @@ type Runner struct {
 	// verb, so the remote and the token it is built from are the ones just
 	// stored.
 	Open func(context.Context) (synclog.LogTransport, error)
+	// OpenMigrate builds the migrator the migrate verb drives, against the
+	// released replica. Nil means the daemon was never wired for the verb and a
+	// migrate is refused rather than opened by hand.
+	OpenMigrate func(context.Context) (synclog.Migrator, error)
 	// OpenNoBucket builds the transport a join's passphrase check drives, where the
 	// stored bucket set may be incomplete: the credentials arrive in the fleet's
 	// secrets document, which is only on the remote the worker is opened to
@@ -120,6 +124,11 @@ func (v *Runner) Run(ctx context.Context, verb *wire.SyncVerb, token []byte) *wi
 		// that lands while a verb holds the slot, and the trigger is all this
 		// verb does.
 		return v.attempt()
+	case wire.SyncVerbMigrate:
+		// A migration must not interleave with a tick: both rewrite the
+		// replica, so it takes the guard. It never preempts, which would mark
+		// a join stopped.
+		return v.runGuarded(func() *wire.SyncResult { return v.migrate(ctx, verb) })
 	case wire.SyncVerbDisable:
 		// A disable must not queue behind a call that can run for the whole
 		// data-call bound: a joined machine reads off for the whole join, and a

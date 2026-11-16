@@ -95,6 +95,9 @@ const (
 	VerbClaim Verb = "claim_identity"
 	// VerbShutdown ends the pipe after its reply.
 	VerbShutdown Verb = "shutdown"
+	// VerbMigrate runs the format-5 to format-6 migration on a pipe a migrate
+	// hello opened, and is refused on any other pipe.
+	VerbMigrate Verb = "migrate"
 )
 
 // The history modes a hello names. The worker reads the mode and never writes
@@ -241,6 +244,10 @@ type Request struct {
 	ClaimToken string `json:"claim_token,omitempty"`
 	// Traffic is the one row a publish_traffic writes, keyed on hello.
 	Traffic *TrafficRow `json:"traffic,omitempty"`
+	// Migrate opens an unmigrated remote for the migrate verb only, on hello
+	// alone. It is omitted on every normal hello, so a hello without it
+	// carries no migrate key.
+	Migrate bool `json:"migrate,omitempty"`
 }
 
 // Response is one line of the pipe, from the worker to the daemon.
@@ -281,6 +288,9 @@ type Response struct {
 	// Traffic is a publish_traffic or read_traffic answer: every origin's row
 	// the replica holds.
 	Traffic map[string]TrafficRow `json:"traffic,omitempty"`
+	// Migrate is what one migrate call did: its rows, objects and byte
+	// deltas, on the migrate verb alone.
+	Migrate *MigrateResult `json:"migrate,omitempty"`
 }
 
 // RefusalCode is the class of a refusal the worker answered with: the worker's
@@ -319,6 +329,13 @@ const (
 	// came back. Nothing says the remote refused anything, so a later attempt
 	// can get past it.
 	CodeTransport RefusalCode = "transport"
+	// CodeMigrate is a remote at a format this release does not open. It repeats
+	// until some machine runs the migrate verb, and no change on this machine
+	// fixes it, so the daemon waits and retries instead of latching.
+	CodeMigrate RefusalCode = "migrate"
+	// CodeMigrateIncomplete is a migration that found rows an old binary wrote
+	// after the read above the segments: running the verb again sweeps them.
+	CodeMigrateIncomplete RefusalCode = "migrate_incomplete"
 )
 
 // RefusalError is an error a backend marked with the class of refusal it is, so

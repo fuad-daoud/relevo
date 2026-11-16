@@ -39,7 +39,7 @@ var registryDBVerbs = []verbEntry{
 	{
 		Name:    "db sync",
 		Summary: "turn this machine's cloud sync on and off, and drive or inspect it by hand",
-		Args:    "enable|disable|retry|status|push|pull|reconcile|unlock|rekey|invite",
+		Args:    "enable|disable|retry|status|push|pull|reconcile|unlock|rekey|invite|migrate",
 		Flags:   []string{},
 		Exit:    []int{0, 2},
 		Errors:  []string{},
@@ -73,6 +73,15 @@ var registryDBVerbs = []verbEntry{
 		Output:  "json:DbSyncInviteDoc",
 		Exit:    []int{0, 1, 2},
 		Errors:  []string{"config_invalid", "internal", "refused", "usage"},
+	},
+	{
+		Name:    "db sync migrate",
+		Summary: "move the remote to the format only this release reads, once, after every machine runs this release",
+		Args:    "--confirm-all-upgraded [--json]",
+		Flags:   []string{"--confirm-all-upgraded", "--json"},
+		Output:  "json:DbSyncMigrateDoc",
+		Exit:    []int{0, 1, 2},
+		Errors:  []string{"config_invalid", "internal", "refused", "remote_auth", "remote_unreachable", "usage"},
 	},
 	{
 		Name:    "db sync pull",
