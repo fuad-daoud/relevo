@@ -101,8 +101,8 @@ func TestSteadyMeasuresHistoryStorageFromSegments(t *testing.T) {
 		t.Fatalf("list the bucket: %v", err)
 	}
 	for _, o := range objects {
-		if origin, ok := blobstore.SizeOrigin(o.Key); ok {
-			t.Errorf("a size object for %s is published, want only segment and body keys", origin)
+		if strings.HasSuffix(o.Key, "/log-size.json") {
+			t.Errorf("a size object %q is published, want only segment and body keys", o.Key)
 		}
 	}
 	put(blobstore.SegmentKey("m3", 0), 50)

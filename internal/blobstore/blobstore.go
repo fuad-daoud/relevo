@@ -100,26 +100,6 @@ func Key(origin, sha256hex string) string {
 	return origin + "/" + sha256hex
 }
 
-// sizeName is the last segment of an origin's published log size. It is not 64
-// hex characters, so no body key can equal it.
-const sizeName = "log-size.json"
-
-func SizeKey(origin string) string {
-	if CheckOrigin(origin) != nil {
-		panic("blobstore: SizeKey: origin must be letters, digits, '-' or '_'")
-	}
-	return origin + "/" + sizeName
-}
-
-// SizeOrigin returns the origin a size key belongs to, and whether key is one.
-func SizeOrigin(key string) (string, bool) {
-	origin, name, ok := strings.Cut(key, "/")
-	if !ok || name != sizeName || CheckOrigin(origin) != nil {
-		return "", false
-	}
-	return origin, true
-}
-
 // segmentLog is the middle segment of a segment key. With the number it is 16
 // characters, never a body key's 64 hex, so no segment key can equal a body key.
 const segmentLog = "log/"

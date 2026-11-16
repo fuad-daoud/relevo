@@ -201,7 +201,7 @@ func TestEstimateJoinCountsSegmentsFromTheListing(t *testing.T) {
 	put(blobstore.SegmentKey("m3", 5), 300)
 	wantLatest := base.Add(3 * time.Second)
 	put(blobstore.Key("m2", strings.Repeat("ab", 32)), 7)
-	put(blobstore.SizeKey("m2"), 9)
+	put("m2/log-size.json", 9)
 	put("m2/notes.txt", 2)
 	put("loose", 1)
 	est, err := EstimateJoin(context.Background(), noGetStore{BlobStore: store, t: t})
@@ -239,7 +239,7 @@ func TestEstimateJoinCountsA100kKeyListing(t *testing.T) {
 	for i := range 100 {
 		origin := fmt.Sprintf("old-%d", i)
 		body := []byte(`{"entries":1,"bytes":5000}`)
-		if err := store.Put(context.Background(), blobstore.SizeKey(origin), bytes.NewReader(body), int64(len(body))); err != nil {
+		if err := store.Put(context.Background(), origin+"/log-size.json", bytes.NewReader(body), int64(len(body))); err != nil {
 			t.Fatalf("put size %d: %v", i, err)
 		}
 	}
