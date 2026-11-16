@@ -238,8 +238,28 @@ func (r *Runner) Stop() {
 }
 
 // drainImport reads the other origins page by page, each Import under the step
-// bound, until a run moves no mark or the attempt's deadline passes.
+// bound, until a run moves no mark or the attempt's deadline passes. A machine
+// reading none of the history mirrors the documents instead, once and without
+// the loop: the pre-pass counts redeliveries as handled, so looping while a run
+// moved would spin to the deadline on unchanged documents. The refused-rows
+// replay stays on the full path only: a none machine never refused a row.
 func (r *Runner) drainImport(ctx context.Context, shared *db.DB, t *StopTransport) (synclog.ImportResult, error) {
+	if local, ok := r.Local.(Local); ok {
+		if none, err := ReadHistoryNone(local); err != nil {
+			return synclog.ImportResult{}, err
+		} else if none {
+			var applied int
+			err := within(ctx, t, r.stepTimeout(), func() error {
+				n, perr := PrepassMirrored(shared, local, t)
+				applied = n
+				return perr
+			})
+			if err != nil {
+				return synclog.ImportResult{}, err
+			}
+			return MirroredResult(applied), nil
+		}
+	}
 	deadline := time.Now().Add(SteadyImportDeadline)
 	return drainImport(func() (synclog.ImportResult, error) {
 		var res synclog.ImportResult

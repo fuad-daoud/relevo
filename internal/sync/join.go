@@ -447,6 +447,19 @@ func (e *Enabler) drainImport(transport synclog.LogTransport) (synclog.ImportRes
 	if err := e.prepassSecrets(transport); err != nil {
 		return synclog.ImportResult{}, err
 	}
+	// A machine reading none of the history mirrors the documents instead of
+	// importing: the pre-pass applies them without moving a mark, and the loop
+	// below would pull every row such a machine never reads.
+	if none, err := ReadHistoryNone(e.Request.Local); err != nil {
+		return synclog.ImportResult{}, err
+	} else if none {
+		applied, err := PrepassMirrored(e.Request.Shared, e.Request.Local, transport)
+		if err != nil {
+			return synclog.ImportResult{}, err
+		}
+		SettleFiles(e.Request.Shared)
+		return MirroredResult(applied), nil
+	}
 	deadline := e.now().Add(JoinImportDeadline)
 	res, err := drainImport(func() (synclog.ImportResult, error) {
 		imp := synclog.NewImporter(e.Request.Shared, transport)
