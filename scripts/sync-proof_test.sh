@@ -1512,6 +1512,20 @@ chmod +x "$work/fake-sandbox.sh"
 export FAKE_SB="$work/fake-sandbox.sh"
 export FAKE_SB_LOG="$work/fake-sandbox-calls"
 
+# A second create stub prints ready notes to stdout like the real sandbox
+# script's cmd_create: only a printing stub can pin that the joiner create
+# keeps them off the caller's stdout. The silent stub above stays for the
+# lifecycle tests: their stdout assertions read the sandboxes record alone,
+# and create_sandboxes does not redirect its creates.
+cat > "$work/fake-sandbox-print.sh" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >> "$FAKE_SB_LOG"
+printf 'sandbox %s is ready. Enter it with:\n' "$2"
+printf '  relevo-sandbox.sh shell %s\n' "$2"
+EOF
+chmod +x "$work/fake-sandbox-print.sh"
+export FAKE_SB_PRINT="$work/fake-sandbox-print.sh"
+
 # create_sandboxes refuses to reuse an existing sandbox of the run's names,
 # before creating any.
 mkdir -p "$work/reuse-root/sp-a"
@@ -1719,10 +1733,17 @@ fi
 mkdir -p "$work/fresh-root-d"
 export FAKE_ROOT="$work/fresh-root-d"
 : > "$FAKE_SB_LOG"
-srcf eval 'sandbox_root=$FAKE_ROOT; sandbox_script=$FAKE_SB; create_joiner sp-d; cat "$sandboxes_file"'
+# A combined capture cannot tell stdout from stderr, so the create's stderr
+# goes to a file: the equals below then reads stdout alone (a leaked ready
+# note would mix into the record), and the file pins the notes on stderr.
+export JOINER_ERR="$work/joiner-stderr"
+srcf eval 'sandbox_root=$FAKE_ROOT; sandbox_script=$FAKE_SB_PRINT; create_joiner sp-d 2>"$JOINER_ERR"; cat "$sandboxes_file"'
 status 'create_joiner succeeds from an empty root' 0
 equals 'create_joiner records the joiner sandbox' 'sp-d'
 log_has "$FAKE_SB_LOG" 'create sp-d' 'create_joiner creates sp-d'
+log_has "$JOINER_ERR" 'sandbox sp-d is ready' 'the joiner create ready notes travel on stderr'
+cat "$JOINER_ERR" >> "$all"
+unset JOINER_ERR
 # A failed create refuses before anything is recorded: the record append
 # follows the create, so a refusal never licenses destroying a sandbox this
 # run did not create.
@@ -2191,10 +2212,12 @@ reset_fixtures
 rm -rf "$MEAS_DIR"
 mkdir -p "$MEAS_DIR"
 export MIG_DOC='{"already_migrated":false,"rows":20480,"turso_sent_bytes":21000000,"turso_received_bytes":21000000,"objects_written":80,"r2_put_bytes":20000000,"r2_get_bytes":1000,"duration_s":5400}'
+# The idle put delta (+7) shifts the day snapshots by the same offset: real
+# counters never fall between snaps, and the day deltas stay unchanged.
 printf '%s\n' '{"enabled":true,"bytes":{"turso_push":2000000,"turso_pull":5000,"r2_put":800000,"r2_get":100}}' > "$MEAS_DIR/sp-a-status-1"
-printf '%s\n' '{"enabled":true,"bytes":{"turso_push":2000000,"turso_pull":6000,"r2_put":800000,"r2_get":105}}' > "$MEAS_DIR/sp-a-status-2"
-printf '%s\n' '{"enabled":true,"bytes":{"turso_push":2000000,"turso_pull":6000,"r2_put":800000,"r2_get":105}}' > "$MEAS_DIR/sp-a-status-3"
-printf '%s\n' '{"enabled":true,"bytes":{"turso_push":5000000,"turso_pull":6000,"r2_put":2400000,"r2_get":105}}' > "$MEAS_DIR/sp-a-status-4"
+printf '%s\n' '{"enabled":true,"bytes":{"turso_push":2000000,"turso_pull":6000,"r2_put":800007,"r2_get":105}}' > "$MEAS_DIR/sp-a-status-2"
+printf '%s\n' '{"enabled":true,"bytes":{"turso_push":2000000,"turso_pull":6000,"r2_put":800007,"r2_get":105}}' > "$MEAS_DIR/sp-a-status-3"
+printf '%s\n' '{"enabled":true,"bytes":{"turso_push":5000000,"turso_pull":6000,"r2_put":2400007,"r2_get":105}}' > "$MEAS_DIR/sp-a-status-4"
 printf '%s\n' '{"enabled":true,"bytes":{"turso_push":100,"turso_pull":1000,"r2_put":0,"r2_get":500}}' > "$MEAS_DIR/sp-b-status-1"
 printf '%s\n' '{"enabled":true,"bytes":{"turso_push":100,"turso_pull":1500,"r2_put":0,"r2_get":900}}' > "$MEAS_DIR/sp-b-status-2"
 printf '%s\n' '{"enabled":true,"bytes":{"turso_push":100,"turso_pull":1500,"r2_put":0,"r2_get":900}}' > "$MEAS_DIR/sp-b-status-3"
@@ -2208,7 +2231,7 @@ status 'the flag-scenario measured run exits 0' 0
 _meas_out=$out
 meas_row 'idle poll r2 +[0-9]'
 carries 'any idle R2 byte movement flags' 'FLAG'
-carries 'the idle R2 movement measures 5 bytes' ' 5 '
+carries 'the idle R2 movement measures the put+get sum (12 bytes)' ' 12 '
 meas_row 'none zero get'
 carries 'a non-zero none-get flags' 'FLAG'
 meas_row 'join log shipped'

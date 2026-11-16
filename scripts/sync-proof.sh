@@ -1107,7 +1107,7 @@ create_joiner() {
 	if [ -e "$sandbox_root/$1" ]; then
 		refuse "sandbox $1 already exists; refusing to reuse it (destroy it first)"
 	fi
-	"$sandbox_script" create "$1" || refuse "sandbox create failed for $1"
+	"$sandbox_script" create "$1" >&2 || refuse "sandbox create failed for $1"
 	printf '%s\n' "$1" >> "$sandboxes_file"
 }
 
