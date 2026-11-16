@@ -310,7 +310,9 @@ func ReadInCall(kv db.KV) (InCall, bool, error) {
 }
 
 // SetAttention writes the marker reading as sync:err. The message is fixed text
-// from this tree: neither a worker's nor a remote's words may reach the surfaces.
+// from this tree: neither a worker's nor a remote's words may reach the
+// surfaces. The one exception is a missing object's key, which reaches only
+// after a bucket key shape check accepted it.
 func SetAttention(kv db.KV, message string, at time.Time) error {
 	body, err := json.Marshal(attention{At: at.UTC(), Message: message})
 	if err != nil {

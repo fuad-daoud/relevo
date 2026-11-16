@@ -1,13 +1,12 @@
 package sync
 
 // The join guard: a join reads every other origin's whole log through Turso, so it
-// estimates from the bucket before any worker exists, refusing what the month's
-// left Turso traffic would not fit.
+// refuses what the month's left Turso traffic would not fit. The segment half is
+// estimated from the bucket before any worker exists; the Turso half is read from
+// the open worker once the join has one.
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -19,114 +18,53 @@ import (
 // ErrJoinOverQuota reports a join estimated past the month's left Turso traffic.
 var ErrJoinOverQuota = errors.New("sync: the join would use more Turso traffic than this month has left")
 
-// maxSizeObject bounds a published log size object, which is really a few dozen
-// bytes; a larger one is not ours and is ignored rather than read.
-const maxSizeObject = 4096
-
-// The bucket is written by untrusted other machines, so the estimate bounds both
-// takes: how many size objects read, and how large a size believed. Past maxLogSize
-// is no log this design produces; bounding each keeps the sum from overflowing past
-// the guard.
-const (
-	maxSizeKeys = 1000
-	maxLogSize  = int64(1) << 40
-)
-
-// LogSize is what one origin publishes about its log under blobstore.SizeKey.
-type LogSize struct {
-	Entries int       `json:"entries"`
-	Bytes   int64     `json:"bytes"`
-	At      time.Time `json:"at"`
-}
-
-// JoinEstimate is what a join is expected to cost, read from the bucket alone.
+// JoinEstimate is what a join is expected to cost: the segments the bucket holds,
+// and what the worker pulled through Turso to learn them.
 type JoinEstimate struct {
-	// R2Bytes is every body in the bucket, reported never refused: no egress charge,
-	// no added storage.
-	R2Bytes int64
-	// TursoBytes is the sum of every origin's published log size.
+	// Segments is how many log segments the bucket holds.
+	Segments int
+	// SegmentBytes is the listed size of those segments.
+	SegmentBytes int64
+	// Latest is the newest segment's listing time, zero when the bucket holds
+	// none: the time hint a joiner weighs against its own freshness.
+	Latest time.Time
+	// TursoBytes is what the worker pulled through Turso, the figure the guard
+	// judges against the quota left.
 	TursoBytes int64
-	// Known is whether any origin published a size; unknown proves nothing, so the
+	// Known is whether TursoBytes was read; unknown proves nothing, so the
 	// guard lets the join proceed.
 	Known bool
 }
 
-// bucketTotals lists the bucket once: body bytes and published size keys; any other
-// key is neither and is ignored.
-func bucketTotals(ctx context.Context, store blobstore.BlobStore) (int64, []string, error) {
+// segmentTotals lists the bucket once, counting segment keys; bodies, old size
+// objects and every other key are ignored by key shape alone.
+func segmentTotals(ctx context.Context, store blobstore.BlobStore) (segments int, total int64, latest time.Time, err error) {
 	objects, err := store.List(ctx, "")
 	if err != nil {
-		return 0, nil, fmt.Errorf("sync: list the bucket: %w", err)
+		return 0, 0, time.Time{}, fmt.Errorf("sync: list the bucket: %w", err)
 	}
-	var bodies int64
-	var sizes []string
 	for _, o := range objects {
-		if blobstore.IsBodyKey(o.Key) {
-			bodies += o.Size
-		} else if _, ok := blobstore.SizeOrigin(o.Key); ok && o.Size <= maxSizeObject {
-			sizes = append(sizes, o.Key)
+		if !blobstore.IsSegmentKey(o.Key) {
+			continue
+		}
+		segments++
+		total += o.Size
+		if o.Modified.After(latest) {
+			latest = o.Modified
 		}
 	}
-	return bodies, sizes, nil
+	return segments, total, latest, nil
 }
 
-// EstimateJoin totals the bucket's bodies and every origin's published log size.
+// EstimateJoin counts the bucket's segments, fetching nothing: the listing
+// carries every figure the R2 half needs. The Turso half stays unset, which the
+// guard reads as unknown.
 func EstimateJoin(ctx context.Context, store blobstore.BlobStore) (JoinEstimate, error) {
-	bodies, keys, err := bucketTotals(ctx, store)
+	segments, total, latest, err := segmentTotals(ctx, store)
 	if err != nil {
 		return JoinEstimate{}, err
 	}
-	est := JoinEstimate{R2Bytes: bodies}
-	if len(keys) > maxSizeKeys {
-		keys = keys[:maxSizeKeys]
-	}
-	for _, key := range keys {
-		size, ok, err := readLogSize(ctx, store, key)
-		if err != nil {
-			return JoinEstimate{}, err
-		}
-		if !ok {
-			continue
-		}
-		est.TursoBytes += size
-		est.Known = true
-	}
-	return est, nil
-}
-
-// readLogSize reads one published size, false for a non-size: over-long, non-JSON,
-// or a size no log has. The read stops past maxSizeObject whatever the listing said.
-func readLogSize(ctx context.Context, store blobstore.BlobStore, key string) (int64, bool, error) {
-	var buf bytes.Buffer
-	if _, err := store.Get(ctx, key, &limitedWriter{w: &buf, left: maxSizeObject + 1}); err != nil {
-		if errors.Is(err, errObjectTooLarge) {
-			return 0, false, nil
-		}
-		return 0, false, fmt.Errorf("sync: read %s: %w", key, err)
-	}
-	var size LogSize
-	if err := json.Unmarshal(buf.Bytes(), &size); err != nil || size.Bytes < 0 || size.Bytes > maxLogSize {
-		return 0, false, nil
-	}
-	return size.Bytes, true, nil
-}
-
-// errObjectTooLarge stops a read past what the object may hold.
-var errObjectTooLarge = errors.New("sync: the object is larger than a size object")
-
-// limitedWriter takes at most left bytes, failing the write that would pass it to
-// end the download rather than buffer it.
-type limitedWriter struct {
-	w    *bytes.Buffer
-	left int
-}
-
-func (l *limitedWriter) Write(p []byte) (int, error) {
-	if len(p) >= l.left {
-		return 0, errObjectTooLarge
-	}
-	l.left -= len(p)
-	return l.w.Write(p)
+	return JoinEstimate{Segments: segments, SegmentBytes: total, Latest: latest}, nil
 }
 
 // GuardJoin refuses a join whose known estimate tops this machine's quota left;
@@ -192,9 +130,11 @@ func withNoAccount(local Local, refuse error, now time.Time) error {
 	return fmt.Errorf("%w; %s", refuse, noAccountNote(snap, now))
 }
 
-// guard estimates the join, refusing when it does not fit, reporting whether a
-// bucket was consulted at all. The transport is not open yet on this path, so the
-// figures are this machine's, with the note that the account could not be seen.
+// guard estimates the join from the bucket's segments, reporting whether a
+// bucket was consulted at all. The Turso half stays unset: nothing Turso-side
+// has been read on this path, and the guard must not open a worker or add Turso
+// traffic to learn it. A plain enable therefore never refuses here; the join's
+// guard refuses once its worker exists.
 func (e *Enabler) guard(plan EnablePlan, now time.Time) (JoinEstimate, bool, error) {
 	if e.Blobs == nil {
 		return JoinEstimate{}, false, nil
@@ -226,10 +166,11 @@ func (e *Enabler) guard(plan EnablePlan, now time.Time) (JoinEstimate, bool, err
 // imported credentials rather than the command's: same rule and refusal on a later
 // reading, since no bucket estimates before the secrets document applies. A machine
 // with no bucket store consults nothing and is not guarded: no installed store means
-// no bucket to overrun. The transport's rows then judge the same estimate against
-// the account total; when they name no account the local figures stand, with the
-// note that the account could not be seen. The read publishes nothing: the account
-// markers move only on a successful publish.
+// no bucket to overrun. The Turso half is read from the worker's Stats, what this
+// worker pulled through Turso; the transport's rows then judge the same estimate
+// against the account total, and when they name no account the local figures stand,
+// with the note that the account could not be seen. The read publishes nothing:
+// the account markers move only on a successful publish.
 func (e *Enabler) guardJoined(transport synclog.LogTransport) (JoinEstimate, bool, error) {
 	stored, err := ReadR2(e.Request.Local)
 	if err != nil {
@@ -240,12 +181,16 @@ func (e *Enabler) guardJoined(transport synclog.LogTransport) (JoinEstimate, boo
 	if err != nil || !guarded {
 		return est, guarded, err
 	}
+	// The Turso half arrives only once a worker exists: a readable zero is
+	// known, while an unreadable one leaves the estimate unknown.
+	if transport != nil {
+		if stats, serr := transport.Stats(); serr == nil {
+			est.TursoBytes = stats.TursoReceived
+			est.Known = true
+		}
+	}
 	// Yes joins past the guard's refusal, whichever figures it was read against.
 	if e.Request.Yes {
-		return est, guarded, nil
-	}
-	rows, ok := readAccountRows(transport, now)
-	if !ok {
 		return est, guarded, nil
 	}
 	settings, err := ReadSettings(e.Request.Local)
@@ -255,6 +200,13 @@ func (e *Enabler) guardJoined(transport synclog.LogTransport) (JoinEstimate, boo
 	used, err := ReadBytes(e.Request.Local, now)
 	if err != nil {
 		return est, guarded, err
+	}
+	rows, ok := readAccountRows(transport, now)
+	if !ok {
+		if err := GuardJoin(est, settings.TursoSyncQuota(), used.TursoPush+used.TursoPull); err != nil {
+			return est, guarded, withNoAccount(e.Request.Local, err, now)
+		}
+		return est, guarded, nil
 	}
 	return est, guarded, GuardJoinAccount(est, settings.TursoSyncQuota(), rows, used, e.Request.Shared.Origin(), now)
 }

@@ -194,6 +194,7 @@ func dbSyncStatusRead(local relevosync.Local, origin string) (dbSyncStatusDoc, e
 		Enabled:          state.Enabled,
 		RemoteURL:        settings.RemoteURL,
 		Namespace:        settings.Namespace,
+		History:          settings.History,
 		TokenPresent:     hasToken,
 		Key:              key,
 		R2Configured:     r2Ready,

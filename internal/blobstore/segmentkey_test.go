@@ -70,7 +70,7 @@ func TestParseSegmentKey(t *testing.T) {
 		"laptop/log/000000000001/",              // trailing slash
 		"laptop/log/000000000001/next",          // extra path element
 		Key("laptop", strings.Repeat("ab", 32)), // a body key
-		SizeKey("laptop"),                       // the size key
+		"laptop/log-size.json",                  // an old size object, neither a segment nor a body key
 		"lap/top/log/000000000001",              // the origin cuts at the first slash, so the missing log/ prefix refuses it, not CheckOrigin
 		"",                                      // no slash at all, refused by the strings.Cut before CheckOrigin
 		"/log/000000000001",                     // empty origin behind well-formed halves, refused by CheckOrigin
@@ -89,13 +89,13 @@ func TestIsBodyKeyRefusesSegmentKeys(t *testing.T) {
 	if IsBodyKey(key) {
 		t.Errorf("IsBodyKey(%q) = true", key)
 	}
-	if origin, ok := SizeOrigin(key); ok || origin != "" {
-		t.Errorf("SizeOrigin(%q) = %q, %v", key, origin, ok)
-	}
 	if IsSegmentKey(Key("laptop", strings.Repeat("ab", 32))) {
 		t.Errorf("body key %q reads as a segment key", Key("laptop", strings.Repeat("ab", 32)))
 	}
-	if IsSegmentKey(SizeKey("laptop")) {
-		t.Errorf("size key %q reads as a segment key", SizeKey("laptop"))
+	if IsSegmentKey("laptop/log-size.json") {
+		t.Errorf("size key %q reads as a segment key", "laptop/log-size.json")
+	}
+	if IsBodyKey("laptop/log-size.json") {
+		t.Errorf("size key %q reads as a body key", "laptop/log-size.json")
 	}
 }

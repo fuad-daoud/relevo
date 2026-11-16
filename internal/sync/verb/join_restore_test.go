@@ -3,7 +3,6 @@ package verb
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
 // stagedRows is localState plus every row the secrets document can land on and
@@ -74,9 +74,20 @@ func TestAJoinRefusedForNoBucketCredentialsLeavesAnEmptyMachineEmpty(t *testing.
 	sameRows(t, before, stagedRows(t, local))
 }
 
+// quotaStats reports a fixed Turso total while moving nothing itself: the
+// bootstrap figure the open worker already read.
+type quotaStats struct {
+	*synclog.MemTransport
+	total int64
+}
+
+func (q *quotaStats) Stats() (synclog.Stats, error) {
+	return synclog.Stats{TursoReceived: q.total}, nil
+}
+
 func TestAJoinRefusedForTheQuotaRestoresRowsThatAlreadyExisted(t *testing.T) {
 	t.Parallel()
-	runner, local, _ := joinMachine(t, joinPassphrase)
+	runner, local, log := joinMachine(t, joinPassphrase)
 	now := time.Unix(0, 0).UTC()
 	if err := relevosync.PutSettings(local, relevosync.Settings{RemoteURL: "libsql://was-here.invalid", QuotaTursoSync: 1000}, now); err != nil {
 		t.Fatalf("PutSettings: %v", err)
@@ -89,11 +100,13 @@ func TestAJoinRefusedForTheQuotaRestoresRowsThatAlreadyExisted(t *testing.T) {
 		t.Fatalf("SetR2: %v", err)
 	}
 	store := blobstore.NewMemBlobStore(nil)
-	size, _ := json.Marshal(relevosync.LogSize{Entries: 1, Bytes: 5000, At: now})
-	if err := store.Put(context.Background(), blobstore.SizeKey("m2"), bytes.NewReader(size), int64(len(size))); err != nil {
-		t.Fatalf("put size: %v", err)
+	if err := store.Put(context.Background(), blobstore.SegmentKey("m2", 0), bytes.NewReader(make([]byte, 10)), 10); err != nil {
+		t.Fatalf("put segment: %v", err)
 	}
 	runner.Blobs = func(relevosync.R2Secrets) blobstore.BlobStore { return store }
+	runner.Open = func(context.Context) (synclog.LogTransport, error) {
+		return &quotaStats{MemTransport: log, total: 5000}, nil
+	}
 	before := stagedRows(t, local)
 
 	res := runner.Run(context.Background(), joinVerb(t, joinPassphrase), []byte(joinToken+joinPassphrase))

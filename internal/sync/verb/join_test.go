@@ -199,7 +199,8 @@ func TestJoinNeedsNoBucketCredentialsOnTheCommandLine(t *testing.T) {
 // hold every origin it could not fetch. The refusal names both fixes, because
 // which one applies is a fact this machine cannot see: the inviter may never
 // have configured a bucket, or it may have and the joiner may be pointed
-// somewhere else.
+// somewhere else. It also says why the credentials are mandatory: sync history
+// is stored in R2.
 func TestAJoinWithNoFleetCredentialsIsRefusedNamingBothFixes(t *testing.T) {
 	t.Parallel()
 	runner, local := joinRunner(t)
@@ -220,6 +221,9 @@ func TestAJoinWithNoFleetCredentialsIsRefusedNamingBothFixes(t *testing.T) {
 		if !strings.Contains(res.Message, want) {
 			t.Errorf("the refusal does not name %q: %s", want, res.Message)
 		}
+	}
+	if !strings.Contains(res.Message, "sync history is stored in R2, so joining requires bucket credentials") {
+		t.Errorf("the refusal does not state that joining needs bucket credentials for the R2 history: %s", res.Message)
 	}
 	if on, err := relevosync.Enabled(local); err != nil || on {
 		t.Errorf("sync is on = %v (%v), want the machine left off", on, err)

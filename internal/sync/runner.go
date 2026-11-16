@@ -50,8 +50,8 @@ type Runner struct {
 	// Blobs returns the in-process bucket store, or nil when the machine has no
 	// bucket. It is a func so the credentials are read when needed.
 	Blobs func() blobstore.BlobStore
-	// ReplicaPath is the worker's replica file, whose size is the Turso storage
-	// in use.
+	// ReplicaPath is the worker's replica file the turn-off deletes and a
+	// rebuild asides.
 	ReplicaPath string
 
 	// active is the transport the work in flight drives, so Stop can end it

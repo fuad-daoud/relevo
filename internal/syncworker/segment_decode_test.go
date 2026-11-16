@@ -93,7 +93,7 @@ func TestDecodeSegmentRefusals(t *testing.T) {
 		},
 		{
 			name:    "key_not_segment_key_size",
-			key:     blobstore.SizeKey(origin),
+			key:     origin + "/log-size.json",
 			data:    goodData,
 			wantErr: "is not a segment key",
 		},

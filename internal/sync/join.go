@@ -203,7 +203,8 @@ type EnableResult struct {
 	// Batches is the reconcile's transport append count.
 	Batches int
 	// Guarded is whether the join was estimated against a bucket; an estimate
-	// that is not Known means no machine had published its log size.
+	// that is not Known means no Turso figure was read, so the guard let the
+	// join proceed unchecked.
 	Guarded  bool
 	Estimate JoinEstimate
 	// Stats is the worker's last reading the runner counts on from.

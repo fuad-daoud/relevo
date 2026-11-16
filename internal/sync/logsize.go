@@ -1,12 +1,10 @@
 package sync
 
-// What the daemon measures for other machines and for status: this machine's
-// log size, published to the bucket for the join guard, and the storage in use.
+// What the daemon measures for status: the history's storage in the bucket,
+// summed from the segment listing.
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -16,14 +14,11 @@ import (
 )
 
 const (
-	// KeySizePublished is when this machine last published its log size.
-	KeySizePublished = "sync.size.published"
 	// KeyStorage is the storage last measured, as a Storage.
 	KeyStorage = "sync.storage"
 
-	sizeEvery    = 24 * time.Hour
 	storageEvery = 24 * time.Hour
-	// measureTimeout bounds one bucket round trip of either measurement.
+	// measureTimeout bounds the bucket listing the storage measurement reads.
 	measureTimeout = 2 * time.Minute
 )
 
@@ -50,47 +45,11 @@ func (r *Runner) bucket() blobstore.BlobStore {
 	return r.Blobs()
 }
 
-// publishSize writes this machine's log size to the bucket at most once a day,
-// after an export that appended something.
-// Another machine's join guard reads it before opening a worker. A failure is
-// logged: the size is advice and the next tick tries again.
-func (r *Runner) publishSize(origin string, t *StopTransport, appended bool, now time.Time) {
-	store := r.bucket()
-	if store == nil || !appended {
-		return
-	}
-	var last time.Time
-	if err := marker(r.Local, KeySizePublished, &last); err != nil {
-		slog.Warn("sync: read the size marker", "err", err)
-	}
-	if now.Sub(last) < sizeEvery {
-		return
-	}
-	state, err := t.ReadMarks()
-	if err != nil {
-		slog.Warn("sync: read the log size", "err", err)
-		return
-	}
-	body, err := json.Marshal(LogSize{Entries: state.Entries[origin], Bytes: state.Sizes[origin], At: now})
-	if err != nil {
-		slog.Warn("sync: encode the log size", "err", err)
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), measureTimeout)
-	defer cancel()
-	if err := store.Put(ctx, blobstore.SizeKey(origin), bytes.NewReader(body), int64(len(body))); err != nil {
-		slog.Warn("sync: publish the log size", "err", err)
-		return
-	}
-	r.put(KeySizePublished, now)
-}
-
-// Storage is what this machine last measured of the two stores. A zero At is a
-// machine that has not measured yet.
+// Storage is what this machine last measured of the bucket's history. A zero
+// At is a machine that has not measured yet.
 type Storage struct {
-	Turso int64     `json:"turso"`
-	R2    int64     `json:"r2"`
-	At    time.Time `json:"at"`
+	R2 int64     `json:"r2"`
+	At time.Time `json:"at"`
 }
 
 // ReadStorage returns the last measurement, zero when there is none.
@@ -102,14 +61,12 @@ func ReadStorage(kv db.KV) (Storage, error) {
 	return s, nil
 }
 
-// measureStorage records what the remote log holds and the bucket's total, at
-// most once a day.
+// measureStorage records the bucket's segment bytes, at most once a day.
 //
-// Turso is the sum of every origin's log size the remote reports, the figure the
-// join guard compares against the quota. The local replica file is not that: a
-// partial copy plus write-ahead files says nothing about what the cloud
-// database bills.
-func (r *Runner) measureStorage(t *StopTransport, now time.Time) {
+// The listing carries the figure: segmentTotals counts segment keys by shape,
+// so no Turso read is needed. The driver reports no database size, only WAL
+// sizes and network counters, so no Turso figure is stored.
+func (r *Runner) measureStorage(now time.Time) {
 	store := r.bucket()
 	if store == nil {
 		return
@@ -118,36 +75,26 @@ func (r *Runner) measureStorage(t *StopTransport, now time.Time) {
 	if err == nil && now.Sub(prior.At) < storageEvery {
 		return
 	}
-	state, err := t.ReadMarks()
-	if err != nil {
-		slog.Warn("sync: measure the log", "err", err)
-		return
-	}
-	var logBytes int64
-	for _, size := range state.Sizes {
-		logBytes += size
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), measureTimeout)
 	defer cancel()
-	bodies, _, err := bucketTotals(ctx, store)
+	_, total, _, err := segmentTotals(ctx, store)
 	if err != nil {
 		slog.Warn("sync: measure the bucket", "err", err)
 		return
 	}
-	r.put(KeyStorage, Storage{Turso: logBytes, R2: bodies, At: now})
+	r.put(KeyStorage, Storage{R2: total, At: now})
 }
 
 // FormatQuotas is the status clause for the month's Turso traffic -- this
-// machine's counts, then the account's against the quota -- and the two
-// stores' storage against theirs. Storage never measured reads "not measured
+// machine's counts, then the account's against the quota -- and the history's
+// storage in R2 against its quota. Storage never measured reads "not measured
 // yet", never zero.
 func FormatQuotas(c ByteCounters, q QuotaReading, s Settings, st Storage) string {
 	out := FormatBytes(c) + "; " + FormatAccount(q)
 	if st.At.IsZero() {
 		return out + "; storage: not measured yet"
 	}
-	return out + fmt.Sprintf("; turso storage %s; r2 storage %s",
-		share(st.Turso, s.TursoStorageQuota()), share(st.R2, s.R2StorageQuota()))
+	return out + "; r2 history " + share(st.R2, s.R2StorageQuota())
 }
 
 // FormatAccount is the account clause of the month: every machine's published

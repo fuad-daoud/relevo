@@ -76,6 +76,11 @@ func TestTheCompletenessCheckRefusesBeforeTheGuard(t *testing.T) {
 	if !strings.Contains(err.Error(), "invite") {
 		t.Errorf("the refusal gives this machine's flag but not the inviter's fix: %v", err)
 	}
+	// The refusal also states why the credentials are mandatory: sync history
+	// lives in R2, so a join without them holds every origin unfetchable.
+	if !strings.Contains(err.Error(), "sync history is stored in R2, so joining requires bucket credentials") {
+		t.Errorf("the refusal does not state that joining needs bucket credentials for the R2 history: %v", err)
+	}
 }
 
 // TestTheCompletenessCheckLeavesAMachineThatSetItsOwnAlone pins the other half:
