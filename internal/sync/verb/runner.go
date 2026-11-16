@@ -25,6 +25,7 @@ type RunnerDeps struct {
 	Blobs        func(relevosync.R2Secrets) blobstore.BlobStore
 	Open         func(context.Context) (synclog.LogTransport, error)
 	OpenNoBucket func(context.Context) (synclog.LogTransport, bool, error)
+	OpenMigrate  func(context.Context) (synclog.Migrator, error)
 }
 
 // NewRunner is the one constructor for a verb runner, shared by the owner's hook
@@ -47,5 +48,6 @@ func NewRunner(deps RunnerDeps) *Runner {
 		Blobs:        deps.Blobs,
 		Open:         deps.Open,
 		OpenNoBucket: deps.OpenNoBucket,
+		OpenMigrate:  deps.OpenMigrate,
 	}
 }

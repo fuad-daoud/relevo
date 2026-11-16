@@ -162,6 +162,10 @@ const (
 	// the other machines seeing in seconds sends this instead of waiting for
 	// the window.
 	SyncVerbAttempt = "attempt"
+	// SyncVerbMigrate runs the format migration against the released replica.
+	// The caller confirmed every machine runs this release, so the remote may
+	// move to the format only this build reads.
+	SyncVerbMigrate = "migrate"
 )
 
 // The refusal codes a SyncResult carries. They are a closed set and every one is
@@ -238,6 +242,9 @@ const (
 	// SyncCodeMigrateWaiting is a refusal because the remote has not been
 	// migrated; it ends when a machine runs the migrate verb.
 	SyncCodeMigrateWaiting = "migrate_waiting"
+	// SyncCodeMigrateIncomplete is a migration that found rows an old binary
+	// wrote after the read; running the verb again sweeps them.
+	SyncCodeMigrateIncomplete = "migrate_incomplete"
 	// SyncCodeInternal is a failure with no class of its own -- the daemon's
 	// own bug, or a hook that panicked or reported nothing.
 	SyncCodeInternal = "internal"
@@ -311,6 +318,9 @@ type SyncVerb struct {
 	// attempt, ignoring the window an automatic rebuild waits out: it is the
 	// human's answer to a replica the machine latched on.
 	Rebuild bool `json:"rebuild,omitempty"`
+	// ConfirmAllUpgraded says every machine already runs this release, so the
+	// remote may move to the format an older binary cannot read.
+	ConfirmAllUpgraded bool `json:"confirm_all_upgraded,omitempty"`
 }
 
 // SyncFreshen is the hint that a reader wants current data. It carries nothing
@@ -362,4 +372,36 @@ type SyncResult struct {
 	// Aside is the folder a `retry --rebuild` moved the replica's copy into,
 	// so the answer names the evidence; empty when nothing was moved.
 	Aside string `json:"aside,omitempty"`
+	// Migrate is what one migrate verb moved and built, in the shape the CLI
+	// prints. It is a pointer so every other verb answers without it.
+	Migrate *SyncMigrate `json:"migrate,omitempty"`
+}
+
+// SyncMigrateOrigin is one origin's share of a migration: the rows read, the
+// objects those rows now live in, the head the migration recorded, and the
+// floor and label the heads row carries.
+type SyncMigrateOrigin struct {
+	Origin     string `json:"origin"`
+	Rows       int    `json:"rows,omitempty"`
+	Objects    int    `json:"objects,omitempty"`
+	Seq        int    `json:"seq,omitempty"`
+	Floor      int    `json:"floor,omitempty"`
+	LegacyUpto int    `json:"legacy_upto,omitempty"`
+	Label      string `json:"label,omitempty"`
+}
+
+// SyncMigrate is what one migrate call did. The byte totals are this call's
+// deltas, so a long-lived worker's earlier totals never leak in.
+type SyncMigrate struct {
+	AlreadyMigrated bool                `json:"already_migrated,omitempty"`
+	Origins         []SyncMigrateOrigin `json:"origins,omitempty"`
+	Rows            int                 `json:"rows,omitempty"`
+	ObjectsCreated  int                 `json:"objects_created,omitempty"`
+	ObjectsVerified int                 `json:"objects_verified,omitempty"`
+	RowsSwept       int                 `json:"rows_swept,omitempty"`
+	SharedRows      int                 `json:"shared_rows,omitempty"`
+	R2Put           int64               `json:"r2_put,omitempty"`
+	R2Get           int64               `json:"r2_get,omitempty"`
+	TursoSent       int64               `json:"turso_sent,omitempty"`
+	TursoReceived   int64               `json:"turso_received,omitempty"`
 }
