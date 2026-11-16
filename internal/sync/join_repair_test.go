@@ -56,12 +56,12 @@ func TestJoinReuploadsABodyTheBucketLost(t *testing.T) {
 	}
 }
 
-// The listing is of this machine's bodies only: another origin's bodies and the
-// published log sizes are not this join's to repair.
+// The listing is of this machine's bodies only: another origin's segments and
+// this origin's own non-body keys are not this join's to repair.
 func TestOwnBodiesListsOnlyThisOriginsBodies(t *testing.T) {
 	t.Parallel()
 	shared, local := joinPair(t, "m1")
-	store := guardBucket(t, 10, map[string]int64{"m1": 5})
+	store := guardBucket(t, map[string][]int64{"m1": {5}, "m2": {6}})
 	mine := blobstore.Key("m1", strings.Repeat("cd", 32))
 	if err := store.Put(context.Background(), mine, strings.NewReader("x"), 1); err != nil {
 		t.Fatalf("put: %v", err)

@@ -129,7 +129,7 @@ func (r *Runner) measureStorage(t *StopTransport, now time.Time) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), measureTimeout)
 	defer cancel()
-	bodies, _, err := bucketTotals(ctx, store)
+	bodies, err := bucketTotals(ctx, store)
 	if err != nil {
 		slog.Warn("sync: measure the bucket", "err", err)
 		return
