@@ -64,6 +64,12 @@ func (b *TursoBackend) ensureLogForMigrate(ctx context.Context, url string) erro
 	if len(tables) == 0 {
 		return errNotALog(url)
 	}
+	// A remote without a meta table carries no format row to read, so the
+	// tables are classified before the row is read: reading first would fail
+	// on the missing table instead of refusing with the remote's name.
+	if !isLogTables(tables) && !isOlderTables(tables) && !isMigratingTables(tables) {
+		return errNotALog(url)
+	}
 	format, err := readFormat(ctx, b.db)
 	if err != nil {
 		return err
@@ -74,7 +80,7 @@ func (b *TursoBackend) ensureLogForMigrate(ctx context.Context, url string) erro
 	if format == strconv.Itoa(formatFive) && slices.Equal(tables, olderLogTables[formatFive]) {
 		return nil
 	}
-	if format == migratingFormat {
+	if format == migratingFormat && isMigratingTables(tables) {
 		if canResumeMigration(tables) {
 			return nil
 		}

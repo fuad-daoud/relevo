@@ -387,6 +387,102 @@ func TestMigrateHelloOpensOnlyWhatTheVerbCanFinish(t *testing.T) {
 	}
 }
 
+// TestMigrateHelloRefusesUnclassifiedRemoteAsNotALog pins that a migrate hello
+// refuses any remote the verb cannot finish as not a log. The tables are
+// classified before the format row is read, because a remote without a meta
+// table carries no row to read: reading first would fail on the missing table
+// instead of refusing with the remote's name. A migrating row on the wrong
+// tables and an unreadable format row are refused the same way, without a
+// push, a pull, or a second discard past the reset's once-only one.
+func TestMigrateHelloRefusesUnclassifiedRemoteAsNotALog(t *testing.T) {
+	const want = "not a relevo sync log"
+	extraBesideMigration := append(append([]string(nil), migratingTableSets["format five"]...),
+		"CREATE TABLE extra (x TEXT)")
+	olderTables := []string{
+		logWithMACAndAfter, headTableStatement, createStatements[1], marksTableStatement,
+	}
+	for _, tc := range []struct {
+		name string
+		// seed writes the remote the migrate hello meets. reseed, when set,
+		// writes what the re-bootstrap finds after the reset discards an
+		// unknown shape once.
+		seed, reseed func(t *testing.T, path string)
+		discards     int
+		// absent, when set, must not appear in the refusal.
+		absent string
+	}{
+		{
+			name: "an unrelated table",
+			seed: func(t *testing.T, path string) {
+				execOn(t, path, "CREATE TABLE users (id INT)")
+			},
+			reseed: func(t *testing.T, path string) {
+				reseedReplica(t, path, []string{"CREATE TABLE users (id INT)"})
+			},
+			discards: 1,
+			absent:   "no such table",
+		},
+		{
+			name: "an extra table beside a migration",
+			seed: func(t *testing.T, path string) {
+				seedTablesWithFormat(t, path, migratingFormat, extraBesideMigration...)
+			},
+			reseed: func(t *testing.T, path string) {
+				reseedReplica(t, path, append(extraBesideMigration,
+					"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '"+migratingFormat+"')"))
+			},
+			discards: 1,
+		},
+		{
+			name: "older tables at the migrating row",
+			seed: func(t *testing.T, path string) {
+				seedTablesWithFormat(t, path, migratingFormat, olderTables...)
+			},
+			discards: 0,
+		},
+		{
+			name: "format-five tables at an unreadable row",
+			seed: func(t *testing.T, path string) {
+				seedFormatFiveRemote(t, path)
+				execOn(t, path, "UPDATE meta SET value = 'garbage' WHERE key = '"+metaFormatKey+"'")
+			},
+			discards: 0,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := tempReplica(t)
+			tc.seed(t, path)
+			driver := &localDriver{path: path}
+			if tc.reseed != nil {
+				driver.afterDiscard = func(p string) { tc.reseed(t, p) }
+			}
+			b := NewTursoBackend(driver)
+			resp := startWorker(t, b).ask(migrateHello("h"))
+			if resp.OK {
+				t.Fatalf("migrate hello = %+v, want a refusal", resp)
+			}
+			if resp.Code != CodeRemote {
+				t.Errorf("code = %q, want %q", resp.Code, CodeRemote)
+			}
+			if !strings.Contains(resp.Error, want) {
+				t.Errorf("refusal %q does not say the remote is not a log", resp.Error)
+			}
+			if tc.absent != "" && strings.Contains(resp.Error, tc.absent) {
+				t.Errorf("refusal %q names the missing table instead of the remote", resp.Error)
+			}
+			if driver.pushes != 0 {
+				t.Errorf("pushes = %d, want none: a refused remote is never written into", driver.pushes)
+			}
+			if driver.pulls != 0 {
+				t.Errorf("pulls = %d, want none: a refused remote is never read past its tables", driver.pulls)
+			}
+			if driver.discards != tc.discards {
+				t.Errorf("discards = %d, want %d", driver.discards, tc.discards)
+			}
+		})
+	}
+}
+
 // TestMigrationPipeRefusesEveryOtherVerb pins the migration pipe: after a
 // migrate hello, stats, pull and export are refused as not the pipe's
 // protocol while hello and shutdown still answer, and a normal hello serves
