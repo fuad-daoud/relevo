@@ -133,6 +133,17 @@ func TestJoinGuardUnknownEstimateProceeds(t *testing.T) {
 	}
 }
 
+func TestJoinGuardReadableZeroIsKnown(t *testing.T) {
+	t.Parallel()
+	est, guarded, err := guardedEnable(t, guardBucket(t, map[string][]int64{"m2": {10}}), 0, false, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("guardJoined with a zero Turso reading: %v", err)
+	}
+	if !guarded || !est.Known || est.TursoBytes != 0 {
+		t.Errorf("estimate = %+v, guarded %v, want a guarded join with a known zero Turso figure", est, guarded)
+	}
+}
+
 // noGetStore fails the test on any fetch: the estimate reads the listing alone.
 type noGetStore struct {
 	blobstore.BlobStore
