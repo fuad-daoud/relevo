@@ -189,3 +189,36 @@ you pass `--force`.
 `RELEVO_SANDBOX_ROOT` moves the root, and the name must match
 `^[a-z][a-z0-9-]{0,12}$`. Every subcommand takes `--dry-run`, which prints the
 actions and writes nothing.
+
+## The sync-proof run
+
+`scripts/sync-proof.sh` proves a scratch sync remote can carry a relevo run
+within its quota: it seeds a format-5 log of a chosen size, migrates it, runs
+the traffic phases (next pull, fresh join, idle poll, a 5,000-entry compressed
+day) and prints the measured-traffic table beside the design's predictions.
+The table goes to stdout and is saved as `table.txt` in the run's state dir.
+
+The scratch credentials live in an env file, `~/.config/relevo-r2log-scratch.env`
+by default, holding six variables: `RELEVO_SCRATCH_SYNC_URL`,
+`RELEVO_SCRATCH_SYNC_TOKEN`, `RELEVO_SCRATCH_R2_ENDPOINT`,
+`RELEVO_SCRATCH_R2_BUCKET`, `RELEVO_SCRATCH_R2_KEY_ID` and
+`RELEVO_SCRATCH_R2_SECRET`. A refusal names the missing variables only; no
+value is ever printed.
+
+| Flag | Meaning |
+| --- | --- |
+| `--env FILE` | read the credentials from FILE instead of the default env path |
+| `--log-mb N` | size of the seeded log in mebibytes, a positive integer (default 20) |
+| `--wipe` | delete the script's own recorded bucket objects before seeding; it never waives the Turso ownership refusal and never deletes objects under foreign origins |
+| `--dry-run` | print the verdicts and the full ordered command plan; create nothing |
+
+The preflight refuses when the month's projected traffic plus the run's
+estimate would pass 95% of the account's Turso quota. The run phases
+(sandboxes, seed, migrate, measurement) execute only under
+`SYNC_PROOF_RUN_PHASES=1`; without it the script stops after the preflight.
+
+The sandboxes are built from the invoking checkout, like `create` above, and
+the script installs nothing: no binary lands in `~/.local/bin` and no service
+unit is written. It needs the developer's installed `relevo` on PATH for the
+quota read, `jq` or `python3` for the JSON extraction, and a curl with
+`--aws-sigv4` support (7.75+).
