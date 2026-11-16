@@ -86,7 +86,7 @@ func (m *migrator) Close() error {
 	return m.client.Close()
 }
 
-// workerConfig is the body both openers build from. Credentials are read here, so
+// workerConfig is the body every opener builds from. Credentials are read here, so
 // nothing outside ever holds them and the handshake assembles in one place.
 // refuseIncomplete is the caller's answer to an incomplete set: the enable's
 // preflight should have caught it, while the join's first worker opens for exactly
