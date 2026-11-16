@@ -125,6 +125,25 @@ func TestMigrateSurfacesTheOldRefusals(t *testing.T) {
 		}
 	})
 
+	t.Run("a format-5 remote rewritten to 4 is too old through the verb", func(t *testing.T) {
+		path := tempReplica(t)
+		seedFormatFiveRemote(t, path)
+		store := blobstore.NewMemBlobStore(nil)
+		b, _ := openMigrateBackend(t, path, store, "origin-a")
+		execOn(t, path, headTableStatement,
+			"UPDATE meta SET value = '4' WHERE key = '"+metaFormatKey+"'")
+		_, err := b.Migrate()
+		if err == nil {
+			t.Fatal("migrate on a format-4 table set reported no error")
+		}
+		if code := RefusalCodeOf(err); code != CodeRemote {
+			t.Errorf("code = %q, want %q", code, CodeRemote)
+		}
+		if !strings.Contains(err.Error(), "format 5 only") {
+			t.Errorf("refusal %q does not say only format 5 migrates", err)
+		}
+	})
+
 	t.Run("an unrelated remote is not a log", func(t *testing.T) {
 		path := tempReplica(t)
 		seedFormatFiveRemote(t, path)

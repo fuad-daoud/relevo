@@ -95,6 +95,89 @@ func TestMigrateReportsATransferFailure(t *testing.T) {
 	})
 }
 
+// TestMigrateRefusesATableTheFirstPullBrings pins the second check: a pull
+// that brings an unrelated table refuses as not a log rather than migrating
+// a remote that stopped being one.
+func TestMigrateRefusesATableTheFirstPullBrings(t *testing.T) {
+	path := tempReplica(t)
+	seedFormatFiveRemote(t, path)
+	seedFormatFiveLog(t, path, legacyLogEntries("origin-b", 1, 5))
+	store := blobstore.NewMemBlobStore(nil)
+	b, driver := openMigrateBackend(t, path, store, "origin-a")
+	driver.afterPull = func(db *sql.DB) {
+		if driver.pulls == 1 {
+			if _, err := db.Exec("CREATE TABLE extra (x TEXT)"); err != nil {
+				t.Errorf("bring the unrelated table: %v", err)
+			}
+		}
+	}
+	_, err := b.Migrate()
+	if err == nil {
+		t.Fatal("migrate past a pull that brought an unrelated table reported no error")
+	}
+	if code := RefusalCodeOf(err); code != CodeRemote {
+		t.Errorf("code = %q, want %q", code, CodeRemote)
+	}
+	if !contains(err.Error(), "not a relevo sync log") {
+		t.Errorf("refusal %q does not say the remote is not a log", err)
+	}
+}
+
+// TestMigrateRefusesAnUnreadableFormat pins the fall-through: a table set the
+// verb reads at a format number no older release wrote is not a log rather
+// than a migration the verb can finish.
+func TestMigrateRefusesAnUnreadableFormat(t *testing.T) {
+	path := tempReplica(t)
+	seedFormatFiveRemote(t, path)
+	seedFormatFiveLog(t, path, legacyLogEntries("origin-b", 1, 5))
+	store := blobstore.NewMemBlobStore(nil)
+	b, _ := openMigrateBackend(t, path, store, "origin-a")
+	execOn(t, path, "UPDATE meta SET value = '9' WHERE key = '"+metaFormatKey+"'")
+	_, err := b.Migrate()
+	if err == nil {
+		t.Fatal("migrate at an unreadable format reported no error")
+	}
+	if code := RefusalCodeOf(err); code != CodeRemote {
+		t.Errorf("code = %q, want %q", code, CodeRemote)
+	}
+	if !contains(err.Error(), "not a relevo sync log") {
+		t.Errorf("refusal %q does not say the remote is not a log", err)
+	}
+}
+
+// TestMigrateReportsAFailedFinishingPush pins the finished branch: a re-run
+// that finds format 6 and loses its finishing push reports the push rather
+// than answering already-migrated.
+func TestMigrateReportsAFailedFinishingPush(t *testing.T) {
+	path := tempReplica(t)
+	seedFormatFiveRemote(t, path)
+	seedFormatFiveLog(t, path, legacyLogEntries("origin-b", 1, 10))
+	store := blobstore.NewMemBlobStore(nil)
+	b, driver := openMigrateBackend(t, path, store, "origin-a")
+	driver.afterPull = func(db *sql.DB) {
+		if driver.pulls == 2 {
+			driver.pushErr = errors.New("connection reset by peer")
+		}
+	}
+	if _, err := b.Migrate(); err == nil {
+		t.Fatal("the run with the commit push failing reported no error")
+	}
+	if got := metaFormat(t, path); got != "6" {
+		t.Fatalf("meta format = %q, want 6 locally after the commit", got)
+	}
+	driver.afterPull = nil
+	result, err := b.Migrate()
+	if err == nil {
+		t.Fatal("the re-run past a failing finishing push reported no error")
+	}
+	if !contains(err.Error(), "push the migrated log") {
+		t.Errorf("error %q does not say the finishing push failed", err)
+	}
+	if result.AlreadyMigrated {
+		t.Error("the failed re-run reported already-migrated")
+	}
+}
+
 // TestMigrateRefusesAnUnkeyableOrigin pins the up-front refusal: an origin
 // that cannot be keyed refuses before any object exists.
 func TestMigrateRefusesAnUnkeyableOrigin(t *testing.T) {

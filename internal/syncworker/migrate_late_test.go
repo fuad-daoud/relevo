@@ -3,6 +3,7 @@ package syncworker
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -60,6 +61,80 @@ func TestMigrateSweepsALateRow(t *testing.T) {
 type discardWriter struct{}
 
 func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
+
+// TestMigrateReportsAFailedSweepPull pins that a pull failing mid-sweep stops
+// the run with the pull named. The flip already ran, so the format stays
+// migrating and no heads exist.
+func TestMigrateReportsAFailedSweepPull(t *testing.T) {
+	path := tempReplica(t)
+	seedFormatFiveRemote(t, path)
+	seedFormatFiveLog(t, path, legacyLogEntries("origin-b", 1, 5))
+	store := blobstore.NewMemBlobStore(nil)
+	b, driver := openMigrateBackend(t, path, store, "origin-a")
+	driver.afterPull = func(db *sql.DB) {
+		if driver.pulls == 1 {
+			driver.afterPull = func(*sql.DB) {
+				driver.pullErr = errors.New("connection reset by peer")
+			}
+		}
+	}
+	_, err := b.Migrate()
+	if err == nil {
+		t.Fatal("migrate past a failed sweep pull reported no error")
+	}
+	if !contains(err.Error(), "migrate pull") {
+		t.Errorf("error %q does not name the sweep pull", err)
+	}
+	if got := metaFormat(t, path); got != migratingFormat {
+		t.Errorf("meta format = %q, want %q after the failed sweep", got, migratingFormat)
+	}
+	if tables := replicaTables(t, path); tables["heads"] {
+		t.Errorf("the failed sweep holds heads, want none: %v", tables)
+	}
+}
+
+// TestMigrateReportsALogLostMidSweep pins that a log vanishing after the
+// sweep's pull is reported: the post-pull maxes read fails, and the format
+// stays migrating for the next run.
+func TestMigrateReportsALogLostMidSweep(t *testing.T) {
+	path := tempReplica(t)
+	seedFormatFiveRemote(t, path)
+	seedFormatFiveLog(t, path, legacyLogEntries("origin-b", 1, 5))
+	store := blobstore.NewMemBlobStore(nil)
+	b, driver := openMigrateBackend(t, path, store, "origin-a")
+	driver.afterPull = func(db *sql.DB) {
+		if driver.pulls == 2 {
+			if _, err := db.Exec("DROP TABLE log"); err != nil {
+				t.Errorf("drop the log mid-sweep: %v", err)
+			}
+		}
+	}
+	_, err := b.Migrate()
+	if err == nil {
+		t.Fatal("migrate past a log lost mid-sweep reported no error")
+	}
+	if !contains(err.Error(), "no such table") {
+		t.Errorf("error %q does not name the missing log table", err)
+	}
+	if got := metaFormat(t, path); got != migratingFormat {
+		t.Errorf("meta format = %q, want %q after the failed sweep", got, migratingFormat)
+	}
+}
+
+// TestSweepReadsReportAMissingLog pins that the sweep's reads report a log
+// they cannot query: the first maxes read and the late-row count fail alike
+// on a replica with no log table. Direct calls, because the verb only reaches
+// these statements after checkMigratable proved the log exists.
+func TestSweepReadsReportAMissingLog(t *testing.T) {
+	b := backendOnStore(t, &localDriver{path: tempReplica(t)}, "origin-a", blobstore.NewMemBlobStore(nil))
+	ctx := context.Background()
+	if _, _, _, err := b.sweepSegments(ctx); err == nil || !contains(err.Error(), "no such table") {
+		t.Errorf("sweepSegments = %v, want the missing log table", err)
+	}
+	if _, err := b.countAbove(ctx, map[string]int{"origin-b": 0}, []string{"origin-b"}); err == nil || !contains(err.Error(), "no such table") {
+		t.Errorf("countAbove = %v, want the missing log table", err)
+	}
+}
 
 // TestMigrateRefusesWhenLateRowsKeepComing pins the bound: a hook inserting
 // on every pull refuses with CodeMigrateIncomplete, the old tables stay,

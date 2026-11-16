@@ -208,7 +208,7 @@ func (b *TursoBackend) sweepSegments(ctx context.Context) (map[string]originWrit
 	writes := make(map[string]originWrite)
 	covered := make(map[string]int)
 	swept := 0
-	for pass := 0; pass < migrateSweepPasses; pass++ {
+	for pass := 1; ; pass++ {
 		maxes, err := b.logOriginMaxes(ctx)
 		if err != nil {
 			return nil, nil, 0, err
@@ -232,13 +232,12 @@ func (b *TursoBackend) sweepSegments(ctx context.Context) (map[string]originWrit
 			return nil, nil, 0, err
 		}
 		swept += n
-		if pass == migrateSweepPasses-1 {
+		if pass == migrateSweepPasses {
 			return nil, nil, 0, MarkRefusal(CodeMigrateIncomplete,
 				fmt.Errorf("syncworker: rows for %s are above the migrated segments: run the migrate again to sweep them",
 					strings.Join(blockers, ", ")))
 		}
 	}
-	return writes, covered, swept, nil
 }
 
 // writeOrigins writes one pass of segments for every origin the log names, in

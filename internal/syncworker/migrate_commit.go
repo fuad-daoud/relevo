@@ -149,11 +149,14 @@ func (b *TursoBackend) readTxLabels(ctx context.Context, tx *sql.Tx, logMax map[
 		err = tx.QueryRowContext(ctx,
 			"SELECT body FROM log WHERE tbl = 'installation' AND pk = ? AND op = 'upsert' ORDER BY seq DESC LIMIT 1",
 			string(pk)).Scan(&body)
-		if errors.Is(err, sql.ErrNoRows) || !body.Valid {
+		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
 		if err != nil {
 			return nil, fmt.Errorf("syncworker: read the label: %w", err)
+		}
+		if !body.Valid {
+			continue
 		}
 		if label := labelOf(body.String); label != "" {
 			out[origin] = label
