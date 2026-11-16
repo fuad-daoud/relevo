@@ -8,9 +8,12 @@
 # the account quota read from the developer's installed relevo, the scratch
 # Turso ownership check and the bucket ownership check. Sourcing it with
 # SYNC_PROOF_SOURCED set defines the functions and runs nothing, so the test
-# script drives each one with no network, no sandbox and no credentials. The
-# seed/migrate/measure phases are not implemented; a real run stops after the
-# preflight with exit 2, and --dry-run prints the verdicts and creates nothing.
+# script drives each one with no network, no sandbox and no credentials.
+#
+# The run phases (sandbox setup, the format-5 seed, the migrate) execute only
+# under SYNC_PROOF_RUN_PHASES=1; without it a real run stops after the preflight
+# with exit 2, so no test creates a sandbox or reaches a network. --dry-run
+# prints the verdicts and the full ordered command plan and creates nothing.
 #
 # No env value is ever printed: a refusal names the missing variables, never
 # their contents, so a secret cannot reach a terminal or a log through here.
@@ -43,13 +46,18 @@ Prove a scratch remote can carry a relevo sync run within its quota.
                 waives the Turso ownership refusal and never deletes objects
                 under foreign origins
   --dry-run     print the env file path, the estimate and the quota, Turso and
-                bucket ownership verdicts; create nothing
+                bucket ownership verdicts, and the full ordered command plan
+                (creates, enables with secret sources named, seed batch count,
+                migrate); create nothing
   --help        this help
 
 The env file must set RELEVO_SCRATCH_SYNC_URL, RELEVO_SCRATCH_SYNC_TOKEN,
 RELEVO_SCRATCH_R2_ENDPOINT, RELEVO_SCRATCH_R2_BUCKET, RELEVO_SCRATCH_R2_KEY_ID
 and RELEVO_SCRATCH_R2_SECRET. A refusal names the missing variables only;
 no value is ever printed.
+
+The run phases (sandbox setup, format-5 seed, migrate) run only when
+SYNC_PROOF_RUN_PHASES=1; otherwise the script stops after the preflight.
 EOF
 }
 
@@ -293,7 +301,9 @@ turso_endpoint() {
 # token as a -H header line. umask 077 makes both mode 600 at creation, so no
 # other user can read them while they exist; cleanup removes them on exit.
 # The runs file records this run's id (the Turso marker is checked against
-# it) and the origins file starts empty: a fresh run owns no origin yet.
+# it), the origins file starts empty (a fresh run owns no origin yet), and the
+# sandboxes file starts empty: it records only the sandboxes this run creates,
+# which is the whole of what cleanup may destroy.
 state_setup() {
 	run_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
 	state_dir=${TMPDIR:-/tmp}/sync-proof-$run_id
@@ -301,6 +311,8 @@ state_setup() {
 	turso_header_file=$state_dir/turso-header
 	runs_file=$state_dir/runs
 	origins_file=$state_dir/origins
+	sandboxes_file=$state_dir/sandboxes
+	migrate_file=$state_dir/migrate.json
 	pipeline_url=$(turso_endpoint "$RELEVO_SCRATCH_SYNC_URL")
 	trap cleanup EXIT
 	mkdir -p "$state_dir"
@@ -309,16 +321,22 @@ state_setup() {
 	(umask 077; printf 'Authorization: Bearer %s\n' "$RELEVO_SCRATCH_SYNC_TOKEN" > "$turso_header_file")
 	printf '%s\n' "$run_id" > "$runs_file"
 	: > "$origins_file"
+	: > "$sandboxes_file"
 }
 
 # cleanup removes the credential files so they never outlive the run; a
 # dry-run removes its whole state dir, since a preview must leave nothing
-# behind. A failed removal is ignored: the run's own verdict and exit status
-# stand, and the files are unreachable once the process exits anyway.
+# behind. On a non-zero exit it also destroys the sandboxes this run created,
+# leaving the scratch remote and bucket as found except the seeded log. A failed
+# removal or destroy is ignored: the run's own verdict and exit status stand,
+# and the files are unreachable once the process exits anyway.
 cleanup() {
+	_cl_status=$?
 	rm -f "$r2_cred_file" "$turso_header_file" 2>/dev/null || :
 	if [ "${dry_run:-0}" = 1 ]; then
 		rm -rf "$state_dir" 2>/dev/null || :
+	elif [ "$_cl_status" -ne 0 ]; then
+		destroy_sandboxes
 	fi
 }
 
@@ -517,6 +535,447 @@ EOF
 	printf '%s\n' "$_bw_after"
 }
 
+# --- the run phases: sandbox setup, format-5 seed, migrate ---
+#
+# The phases run only when SYNC_PROOF_RUN_PHASES=1. The test harness and any
+# casual invocation leave it unset, so main stops after the preflight and no
+# test creates a sandbox or reaches a network; the measured run sets it.
+# --dry-run always previews the ordered command plan instead of running it.
+
+# The sandboxes this run creates, in enable order: sp-a is the first machine (it
+# creates the key and is the migrator), sp-b joins reading full history, sp-none
+# joins reading none. The names match relevo-sandbox.sh's name rule.
+sandbox_names='sp-a sp-b sp-none'
+
+# create builds ./cmd/relevo from the invoking checkout, so it runs from this
+# checkout's root and the sandbox script is addressed relative to that root; the
+# test overrides sandbox_script with a stub. The root mirrors relevo-sandbox.sh.
+sandbox_script=scripts/relevo-sandbox.sh
+sandbox_root=${RELEVO_SANDBOX_ROOT:-${HOME:-}/.local/share/relevo-sandboxes}
+
+# The exact guard every in-sandbox snippet starts with (docs/env-sandbox.md):
+# RELEVO_SANDBOX is set iff the sandbox exports are in force, so a command never
+# runs against the developer's own state root when env.sh was not sourced.
+sandbox_guard='test -n "$RELEVO_SANDBOX" || { echo '\''not in a sandbox'\'' >&2; exit 1; }'
+
+# The seed's batch model: one HTTP request carries seed_batch_rows rows (the
+# >=500-row batch floor), bodies average seed_body_avg bytes. seed_batches
+# predicts the count from this model for the dry run; the real seed reads the
+# stored size back and tops up, so the prediction is never the measured figure.
+seed_batch_rows=500
+seed_body_avg=1024
+seed_body_min=512
+seed_body_spread=1024
+
+# The migrate's wall-clock bound in seconds: the worker's 30-minute migration
+# budget that dbSyncMigrateBound (cmd/relevo/db_sync_migrate.go) clears plus dial
+# slack, so the CLI never gives up before the worker does.
+migrate_bound_s=1800
+
+# The format-5 log and marks DDL are copied verbatim from the shapes the sync
+# worker's own tests seed an older remote with (internal/syncworker/turso_test.go:
+# logWithMACAndAfter and marksTableStatement); the table set log,marks,meta is
+# olderLogTables[5] in internal/syncworker/format.go. Copying them keeps the
+# seeded remote exactly what the migrator classifies as format 5, not a lookalike.
+seed_log_ddl='CREATE TABLE log (origin TEXT NOT NULL, seq INTEGER NOT NULL, batch INTEGER NOT NULL, tbl TEXT NOT NULL, pk TEXT NOT NULL, op TEXT NOT NULL, schema_version INTEGER NOT NULL, body TEXT, at TEXT NOT NULL, mac BLOB, after_origin TEXT, after_seq INTEGER, PRIMARY KEY (origin, seq))'
+seed_marks_ddl='CREATE TABLE marks (reader TEXT NOT NULL, origin TEXT NOT NULL, seq INTEGER NOT NULL, at TEXT NOT NULL, PRIMARY KEY (reader, origin))'
+seed_meta_ddl='CREATE TABLE meta (key TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL)'
+
+# seed_batches LOG_MB prints the predicted batch count: target bytes over the
+# bytes one batch carries, rounded up. Integer ceil keeps a partial batch counted
+# as one whole request.
+seed_batches() {
+	_sb_target=$(( $1 * 1024 * 1024 ))
+	_sb_bpb=$(( seed_batch_rows * seed_body_avg ))
+	printf '%s\n' "$(( (_sb_target + _sb_bpb - 1) / _sb_bpb ))"
+}
+
+# seed_body_len N prints row N's body length: a fixed minimum plus N mod the
+# spread, so lengths vary across rows and the compression a later phase measures
+# is honest rather than one repeated string.
+seed_body_len() {
+	printf '%s\n' "$(( seed_body_min + ($1 % seed_body_spread) ))"
+}
+
+# seed_statements prints the format-5 schema and marker rows, one statement per
+# line: exactly log, marks and meta (no heads or shared table), meta.format='5',
+# and the syncproof.run marker holding this run's id. The drops that clear what a
+# prior enable left are seed_reset_statements, kept apart so this list is only
+# what a format-5 log is.
+seed_statements() {
+	printf '%s\n' "$seed_log_ddl"
+	printf '%s\n' "$seed_marks_ddl"
+	printf '%s\n' "$seed_meta_ddl"
+	printf "INSERT INTO meta (key, value) VALUES ('format', '5')\n"
+	printf "INSERT INTO meta (key, value) VALUES ('syncproof.run', '%s')\n" "$run_id"
+}
+
+# seed_reset_statements prints the drops that clear whatever the remote holds
+# (the enables create heads/meta/shared at format 6) so the seed leaves exactly
+# log, marks, meta. IF EXISTS keeps a fresh or partly-seeded remote safe.
+seed_reset_statements() {
+	printf '%s\n' 'DROP TABLE IF EXISTS heads'
+	printf '%s\n' 'DROP TABLE IF EXISTS shared'
+	printf '%s\n' 'DROP TABLE IF EXISTS log'
+	printf '%s\n' 'DROP TABLE IF EXISTS marks'
+	printf '%s\n' 'DROP TABLE IF EXISTS meta'
+}
+
+# seed_batch_sql ORIGIN START COUNT prints one INSERT carrying COUNT log rows for
+# ORIGIN, sequences START..START+COUNT-1. Each body is a per-row pseudo-random
+# word (a Lehmer generator seeded from the row number) repeated to the row's
+# length, so content and length both vary. awk builds the batch in one pass; the
+# single quote travels as a variable so the SQL literals stay readable.
+seed_batch_sql() {
+	awk -v q="'" -v origin="$1" -v start="$2" -v count="$3" \
+		-v bmin="$seed_body_min" -v bspread="$seed_body_spread" '
+	BEGIN {
+		gsub(q, q q, origin)
+		printf "INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at, mac, after_origin, after_seq) VALUES "
+		for (i = 0; i < count; i++) {
+			n = start + i
+			L = bmin + (n % bspread)
+			x = (n * 48271) % 2147483647
+			w = ""
+			for (c = 0; c < 16; c++) { x = (x * 48271) % 2147483647; w = w sprintf("%c", 97 + (x % 26)) }
+			body = ""
+			while (length(body) < L) body = body w
+			body = substr(body, 1, L)
+			pk = q "[\"" n "\"]" q
+			t = q origin q ", " n ", 1, " q "round" q ", " pk ", " q "upsert" q ", 1, " q body q ", " q "2026-01-01T00:00:00Z" q ", NULL, NULL, NULL"
+			if (i > 0) printf ","
+			printf "(%s)", t
+		}
+		printf "\n"
+	}'
+}
+
+# turso_multi_request reads statements on stdin (one per line) and prints a
+# pipeline body with one execute per statement and a final close. The JSON tool
+# escapes each statement, so SQL is never pasted into a template.
+turso_multi_request() {
+	case $json_tool in
+	jq)
+		jq -c -R -s '{requests: ([split("\n")[] | select(length > 0) | {type: "execute", stmt: {sql: .}}] + [{type: "close"}])}'
+		;;
+	python3)
+		python3 -c 'import json, sys
+stmts = [l for l in sys.stdin.read().split("\n") if l]
+reqs = [{"type": "execute", "stmt": {"sql": s}} for s in stmts] + [{"type": "close"}]
+print(json.dumps({"requests": reqs}, separators=(",", ":")))'
+		;;
+	esac
+}
+
+# turso_exec_verdict reads a pipeline response and prints ok when no result is an
+# error, else error MESSAGE for the first one. A write batch landed only when
+# every statement did; an empty response is an error, never a silent success.
+turso_exec_verdict() {
+	case $json_tool in
+	jq)
+		jq -r 'if ((.results // []) | length) == 0 then "error empty pipeline response"
+			else ([.results[] | select(.type == "error")]) as $err
+			| if ($err | length) == 0 then "ok" else "error " + ($err[0].error.message // "pipeline error result") end end'
+		;;
+	python3)
+		python3 -c 'import json, sys
+d = json.load(sys.stdin)
+res = d.get("results") or []
+if not res:
+    print("error empty pipeline response")
+else:
+    errs = [r for r in res if r.get("type") == "error"]
+    if not errs:
+        print("ok")
+    else:
+        print("error " + str(errs[0].get("error", {}).get("message", "pipeline error result")))'
+		;;
+	esac
+}
+
+# turso_exec reads statements on stdin and runs them against the scratch
+# pipeline, refusing (exit 2) on a curl failure, a non-200 status or any error
+# result: a refused batched insert halts the seed rather than falling back to a
+# smaller unmeasured one. The bearer token travels in the mode-600 header file.
+turso_exec() {
+	_te_req=$(turso_multi_request)
+	# A newline cannot survive $( ): command substitution strips trailing
+	# newlines, so the body/status separator is a quoted literal.
+	_te_nl='
+'
+	if ! _te_resp=$(printf '%s\n' "$_te_req" | curl -sS -X POST -H @"$turso_header_file" --data-binary @- -w '\n%{http_code}' "$pipeline_url"); then
+		refuse 'scratch Turso write failed: curl could not reach the pipeline endpoint'
+	fi
+	_te_code=${_te_resp##*"$_te_nl"}
+	_te_body=${_te_resp%"$_te_nl"*}
+	[ "$_te_code" = 200 ] || refuse "scratch Turso write failed: HTTP $_te_code"
+	if ! _te_verdict=$(printf '%s\n' "$_te_body" | turso_exec_verdict); then
+		refuse 'scratch Turso write failed: unreadable pipeline response'
+	fi
+	[ "$_te_verdict" = ok ] || refuse "scratch Turso write failed: ${_te_verdict#error }"
+}
+
+# turso_size prints "ROWS BYTES" read back from the log: the count and the sum of
+# body lengths the server stores, never a client-side estimate. coalesce reads an
+# empty log's sum as 0.
+turso_size() {
+	turso_query "SELECT count(*) || ' ' || coalesce(sum(length(body)), 0) FROM log"
+}
+
+# seed_log ORIGIN LOG_MB resets the remote to the format-5 schema and fills log
+# with synthetic rows for ORIGIN until the stored body bytes are within 5% of
+# LOG_MB mebibytes, reading the size back after every batch and topping up. A
+# batch the endpoint refuses, or a size that cannot be brought into the band,
+# halts (exit 2): never a smaller unmeasured seed.
+seed_log() {
+	_sl_origin=$1
+	_sl_target=$(( $2 * 1024 * 1024 ))
+	_sl_low=$(( _sl_target * 95 / 100 ))
+	_sl_high=$(( _sl_target * 105 / 100 ))
+	seed_reset_statements | turso_exec
+	seed_statements | turso_exec
+	_sl_rows=0
+	_sl_bytes=0
+	while [ "$_sl_bytes" -lt "$_sl_low" ]; do
+		_sl_start=$(( _sl_rows + 1 ))
+		seed_batch_sql "$_sl_origin" "$_sl_start" "$seed_batch_rows" | turso_exec
+		_sl_size=$(turso_size)
+		_sl_rows=${_sl_size%% *}
+		_sl_bytes=${_sl_size##* }
+		case $_sl_rows in '' | *[!0-9]*) refuse 'seed: the log size read back is not a number' ;; esac
+		case $_sl_bytes in '' | *[!0-9]*) refuse 'seed: the log size read back is not a number' ;; esac
+	done
+	if [ "$_sl_bytes" -gt "$_sl_high" ]; then
+		refuse "seed: log overshot the 5% band: $_sl_bytes bytes against target $_sl_target"
+	fi
+	printf '%s: seeded %s rows, %s body bytes (target %s)\n' "$prog" "$_sl_rows" "$_sl_bytes" "$_sl_target" >&2
+}
+
+# sb_env NAME prints the env.sh path of a sandbox under the root.
+sb_env() {
+	printf '%s/%s/env.sh\n' "$sandbox_root" "$1"
+}
+
+# sb_sh NAME reads a shell snippet on stdin and runs it inside sandbox NAME: a
+# subshell sources the sandbox's env.sh (the recipe that enters it), then evals
+# the snippet in that same subshell so the scratch variables the caller holds
+# stay in scope. Every snippet starts with the guard line; env.sh puts the
+# sandbox's own bin first on PATH, so relevo here is the sandbox's build, never
+# the caller's.
+sb_sh() {
+	_ss_env=$(sb_env "$1")
+	_ss_snippet=$(cat)
+	(
+		# shellcheck disable=SC1090 # the path is built at run time from the sandbox root
+		. "$_ss_env"
+		eval "$_ss_snippet"
+	)
+}
+
+# record_new_origins lists the bucket and appends every first-segment not already
+# in the origins record, printing the newly recorded origins. After one
+# sandbox's first push the new origin is that sandbox's; the record stays the
+# whole of what this run may delete.
+record_new_origins() {
+	_rn_keys=$(bucket_list)
+	_rn_new=$(printf '%s\n' "$_rn_keys" | bucket_foreign "$origins_file")
+	if [ -n "$_rn_new" ]; then
+		printf '%s\n' "$_rn_new" >> "$origins_file"
+	fi
+	printf '%s\n' "$_rn_new"
+}
+
+# create_sandboxes refuses to reuse any existing sandbox of the run's names
+# before creating any, then creates each from this checkout's root and records
+# it. The record is what cleanup destroys: only this run's creations.
+create_sandboxes() {
+	# shellcheck disable=SC2086 # the names are a space-separated list to iterate
+	for _cs_name in $sandbox_names; do
+		if [ -e "$sandbox_root/$_cs_name" ]; then
+			refuse "sandbox $_cs_name already exists; refusing to reuse it (destroy it first)"
+		fi
+	done
+	# shellcheck disable=SC2086 # the names are a space-separated list to iterate
+	for _cs_name in $sandbox_names; do
+		"$sandbox_script" create "$_cs_name" || refuse "sandbox create failed for $_cs_name"
+		printf '%s\n' "$_cs_name" >> "$sandboxes_file"
+	done
+}
+
+# gen_passphrase prints a fresh sync passphrase for the scratch key, never echoed
+# elsewhere. The scratch remote holds no key before this run, so the passphrase
+# is this run's own; it reaches the verbs only via stdin or the documented env
+# name, never argv.
+gen_passphrase() {
+	od -An -tx1 -N24 /dev/urandom | tr -d ' \n'
+}
+
+# enable_first enables sp-a on the still-empty remote, then creates the key with
+# unlock --new and drives the first push. a is enabled before the seed so it
+# exists as an origin the seed can fill: its installation id is learned from the
+# bucket after this push, and the seed then resets the remote to format 5 around
+# that origin. The enable carries no passphrase (an enable never creates key
+# material), so a joins locked and unlock --new sends the history it owes.
+enable_first() {
+	sb_sh sp-a <<EOF
+$sandbox_guard
+unset RELEVO_SYNC_PASSPHRASE
+export RELEVO_R2_SECRET="\$RELEVO_SCRATCH_R2_SECRET"
+printf '%s' "\$RELEVO_SCRATCH_SYNC_TOKEN" | relevo db sync enable --url "\$RELEVO_SCRATCH_SYNC_URL" --token-stdin --r2-endpoint "\$RELEVO_SCRATCH_R2_ENDPOINT" --r2-bucket "\$RELEVO_SCRATCH_R2_BUCKET" --r2-key-id "\$RELEVO_SCRATCH_R2_KEY_ID"
+EOF
+	sb_sh sp-a <<EOF
+$sandbox_guard
+printf '%s' "\$sync_passphrase" | relevo db sync unlock --new --passphrase-stdin
+EOF
+	sb_sh sp-a <<EOF
+$sandbox_guard
+relevo db sync push --json
+EOF
+}
+
+# enable_joiner NAME HISTORY enables a joining machine with the same scratch
+# remote and bucket. HISTORY is empty for full or " --history none" for a none
+# machine (refused beside --as, which is never passed). The passphrase rides
+# RELEVO_SYNC_PASSPHRASE so the enable verifies it against the key sp-a created;
+# the token is the one stdin secret, the R2 secret the env one.
+enable_joiner() {
+	_ej_name=$1
+	_ej_hist=$2
+	sb_sh "$_ej_name" <<EOF
+$sandbox_guard
+export RELEVO_R2_SECRET="\$RELEVO_SCRATCH_R2_SECRET"
+export RELEVO_SYNC_PASSPHRASE="\$sync_passphrase"
+printf '%s' "\$RELEVO_SCRATCH_SYNC_TOKEN" | relevo db sync enable --url "\$RELEVO_SCRATCH_SYNC_URL" --token-stdin --r2-endpoint "\$RELEVO_SCRATCH_R2_ENDPOINT" --r2-bucket "\$RELEVO_SCRATCH_R2_BUCKET" --r2-key-id "\$RELEVO_SCRATCH_R2_KEY_ID"$_ej_hist
+EOF
+	sb_sh "$_ej_name" <<EOF
+$sandbox_guard
+relevo db sync push --json
+EOF
+}
+
+# migrate_field FIELD reads a migrate JSON document on stdin and prints the
+# field's value, empty when absent. Booleans render lowercase in both tools so
+# already_migrated reads the same whichever extractor is on PATH.
+migrate_field() {
+	case $json_tool in
+	jq)
+		jq -r --arg f "$1" 'if has($f) then .[$f] else empty end'
+		;;
+	python3)
+		python3 -c 'import json, sys
+d = json.load(sys.stdin)
+v = d.get(sys.argv[1])
+if v is None:
+    print("")
+elif isinstance(v, bool):
+    print(str(v).lower())
+else:
+    print(v)' "$1"
+		;;
+	esac
+}
+
+# migrate_run times the migrate from sp-a, saves its JSON, and refuses loudly if
+# already_migrated is true (the seed did not land). It records sent, received and
+# the duration against the 30-minute bound. The DROP TABLE log push is inside the
+# commit transaction (internal/syncworker/migrate_commit.go finishTxMigration)
+# and shares the call's one turso_sent_bytes delta (internal/syncworker/migrate.go
+# migrateResult): no separate counter exists, so it is never split out by estimate.
+migrate_run() {
+	_mr_start=$(date +%s)
+	if ! sb_sh sp-a > "$migrate_file" <<EOF
+$sandbox_guard
+relevo db sync migrate --confirm-all-upgraded --json
+EOF
+	then
+		refuse 'migrate failed: relevo db sync migrate returned non-zero'
+	fi
+	_mr_end=$(date +%s)
+	_mr_dur=$(( _mr_end - _mr_start ))
+	_mr_already=$(migrate_field already_migrated < "$migrate_file")
+	if [ "$_mr_already" = true ]; then
+		refuse 'migrate reported already_migrated=true: the format-5 seed did not land'
+	fi
+	_mr_sent=$(migrate_field turso_sent_bytes < "$migrate_file")
+	_mr_recv=$(migrate_field turso_received_bytes < "$migrate_file")
+	_mr_rows=$(migrate_field rows < "$migrate_file")
+	_mr_objects=$(migrate_field objects_written < "$migrate_file")
+	_mr_r2put=$(migrate_field r2_put_bytes < "$migrate_file")
+	_mr_r2get=$(migrate_field r2_get_bytes < "$migrate_file")
+	printf '%s: migrate rows=%s objects_written=%s turso_sent_bytes=%s turso_received_bytes=%s r2_put_bytes=%s r2_get_bytes=%s duration=%ss bound=%ss\n' \
+		"$prog" "$_mr_rows" "$_mr_objects" "$_mr_sent" "$_mr_recv" "$_mr_r2put" "$_mr_r2get" "$_mr_dur" "$migrate_bound_s" >&2
+	if [ "$_mr_dur" -gt "$migrate_bound_s" ]; then
+		printf '%s: migrate duration %ss exceeded the %ss bound\n' "$prog" "$_mr_dur" "$migrate_bound_s" >&2
+	fi
+}
+
+# destroy_sandboxes destroys only the sandboxes this run recorded creating. A
+# failed destroy is ignored with a note: cleanup must not replace the run's own
+# exit status, and a sandbox left behind is the operator's to remove.
+destroy_sandboxes() {
+	[ -n "${sandboxes_file:-}" ] && [ -f "$sandboxes_file" ] || return 0
+	while IFS= read -r _ds_name || [ -n "$_ds_name" ]; do
+		[ -n "$_ds_name" ] || continue
+		if ! "$sandbox_script" destroy "$_ds_name"; then
+			printf '%s: cleanup could not destroy sandbox %s\n' "$prog" "$_ds_name" >&2
+		fi
+	done < "$sandboxes_file"
+}
+
+# run_phases drives the whole measured run: create the sandboxes, enable them
+# (sp-a first, creating the key), learn each origin from its first push, seed the
+# format-5 log around sp-a's origin, then migrate from sp-a and stop. The traffic
+# phases are a later run; this one ends at the migrate.
+run_phases() {
+	sync_passphrase=$(gen_passphrase)
+	create_sandboxes
+	enable_first
+	migrator_origin=$(record_new_origins | head -n1)
+	[ -n "$migrator_origin" ] || refuse 'could not learn sp-a origin from the bucket after its first push'
+	enable_joiner sp-b ''
+	record_new_origins >/dev/null
+	enable_joiner sp-none ' --history none'
+	record_new_origins >/dev/null
+	seed_log "$migrator_origin" "$log_mb"
+	migrate_run
+	printf '%s: run complete (migrate recorded in %s)\n' "$prog" "$migrate_file" >&2
+}
+
+# print_plan prints the ordered command plan a real run executes, for --dry-run.
+# Secret sources are named but no value appears: the token and passphrase travel
+# by stdin, the R2 secret by RELEVO_R2_SECRET, the passphrase for the joiners by
+# RELEVO_SYNC_PASSPHRASE, and the URL/endpoint/bucket/key-id by the scratch env
+# variables. Each in-sandbox snippet starts with the guard line. This plan and
+# the enable/migrate functions above must agree on the verb sequence.
+print_plan() {
+	printf 'plan: create sandboxes (from this checkout root)\n'
+	# shellcheck disable=SC2086 # the names are a space-separated list to iterate
+	for _pp_name in $sandbox_names; do
+		printf '%s create %s\n' "$sandbox_script" "$_pp_name"
+	done
+	printf 'plan: enable sp-a (first machine; token: stdin, r2.secret: RELEVO_R2_SECRET, no passphrase)\n'
+	printf '. %s/sp-a/env.sh\n' "$sandbox_root"
+	printf '%s\n' "$sandbox_guard"
+	printf 'relevo db sync enable --url "$RELEVO_SCRATCH_SYNC_URL" --token-stdin --r2-endpoint "$RELEVO_SCRATCH_R2_ENDPOINT" --r2-bucket "$RELEVO_SCRATCH_R2_BUCKET" --r2-key-id "$RELEVO_SCRATCH_R2_KEY_ID"\n'
+	printf 'plan: unlock sp-a --new (passphrase: stdin, generated per run)\n'
+	printf '%s\n' "$sandbox_guard"
+	printf 'relevo db sync unlock --new --passphrase-stdin\n'
+	printf 'plan: enable sp-b (joiner; token: stdin, r2.secret: RELEVO_R2_SECRET, passphrase: RELEVO_SYNC_PASSPHRASE)\n'
+	printf '. %s/sp-b/env.sh\n' "$sandbox_root"
+	printf '%s\n' "$sandbox_guard"
+	printf 'relevo db sync enable --url "$RELEVO_SCRATCH_SYNC_URL" --token-stdin --r2-endpoint "$RELEVO_SCRATCH_R2_ENDPOINT" --r2-bucket "$RELEVO_SCRATCH_R2_BUCKET" --r2-key-id "$RELEVO_SCRATCH_R2_KEY_ID"\n'
+	printf 'plan: enable sp-none (joiner, --history none; same secret sources as sp-b)\n'
+	printf '. %s/sp-none/env.sh\n' "$sandbox_root"
+	printf '%s\n' "$sandbox_guard"
+	printf 'relevo db sync enable --history none --url "$RELEVO_SCRATCH_SYNC_URL" --token-stdin --r2-endpoint "$RELEVO_SCRATCH_R2_ENDPOINT" --r2-bucket "$RELEVO_SCRATCH_R2_BUCKET" --r2-key-id "$RELEVO_SCRATCH_R2_KEY_ID"\n'
+	printf 'plan: learn each origin from the bucket after its first push; append to origins\n'
+	printf 'plan: seed format-5 log for the sp-a origin, %s batches of %s rows (--log-mb %s)\n' "$(seed_batches "$log_mb")" "$seed_batch_rows" "$log_mb"
+	printf 'plan: migrate from sp-a\n'
+	printf '. %s/sp-a/env.sh\n' "$sandbox_root"
+	printf '%s\n' "$sandbox_guard"
+	printf 'relevo db sync migrate --confirm-all-upgraded --json\n'
+}
+
 main() {
 	parse_args "$@"
 	load_env "$env_file"
@@ -570,6 +1029,7 @@ main() {
 		else
 			printf 'bucket: not owned (foreign origins: %s)\n' "$(printf '%s\n' "$_m_foreign" | join_lines)"
 		fi
+		print_plan
 		exit 0
 	fi
 	if [ -n "$_m_foreign" ]; then
@@ -582,10 +1042,15 @@ main() {
 	# The origins record stays as state_setup seeded it: recording the
 	# post-wipe listing would adopt the foreign origins the wipe left
 	# behind, and the record is the whole of what this script may delete.
-	# --wipe and --dry-run are honored by the preflight; the seed/migrate/measure
-	# phases are not implemented, so a real run stops here after the reads (and
-	# any owned-origin deletes) with the same exit.
-	printf '%s: run phases are not implemented (wipe=%s dry-run=%s)\n' "$prog" "$wipe" "$dry_run" >&2
+	# The run phases execute only under SYNC_PROOF_RUN_PHASES=1 (the measured
+	# run); without it the script stops here after the reads and any
+	# owned-origin deletes, so a test or casual invocation never creates a
+	# sandbox or reaches a network.
+	if [ "${SYNC_PROOF_RUN_PHASES:-0}" = 1 ]; then
+		run_phases
+		exit 0
+	fi
+	printf '%s: run phases are not implemented for this invocation (set SYNC_PROOF_RUN_PHASES=1 to run them; wipe=%s dry-run=%s)\n' "$prog" "$wipe" "$dry_run" >&2
 	exit 2
 }
 

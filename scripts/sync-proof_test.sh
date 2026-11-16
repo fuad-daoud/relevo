@@ -88,6 +88,14 @@ ext() {
 	printf '%s\n' "$out" >> "$all"
 }
 
+# exta is ext for an extractor function that takes one argument (the field name):
+# the document still arrives on stdin, the argument after the function.
+# shellcheck disable=SC2016 # the inner sh expands $1/$2/$3/$4, not this shell
+exta() {
+	out=$(SYNC_PROOF_SOURCED=1 sh -c '. "$1"; json_tool=$2; "$3" "$4"' sh "$script" "$1" "$2" "$3" < "$4" 2>&1) && got=0 || got=$?
+	printf '%s\n' "$out" >> "$all"
+}
+
 status() {
 	if [ "$got" -ne "$2" ]; then
 		echo "FAIL: $1 (exit $got, want $2): $out"
@@ -1029,6 +1037,272 @@ sp --env "$work/preflight.env" --dry-run
 status 'a dry run with a missing account exits 2' 2
 carries 'the dry-run hard error names account' 'account missing'
 reset_fixtures
+
+# --- the run phases: dry-run plan, seed model, sandbox lifecycle, cleanup ---
+
+# The exact guard line every in-sandbox snippet starts with (docs/env-sandbox.md).
+guard_line='test -n "$RELEVO_SANDBOX" || { echo '\''not in a sandbox'\'' >&2; exit 1; }'
+
+# The dry-run command plan: the ordered verb sequence a real run executes, with
+# secret sources named but no value present. The verdicts still print first.
+before=$(find "$work/tmp" -mindepth 1 -maxdepth 1 | sort)
+sp --env "$work/preflight.env" --log-mb 20 --dry-run
+status 'the plan dry run exits 0' 0
+ordered 'the plan prints creates, enables, seed and migrate in order' \
+	'scripts/relevo-sandbox.sh create sp-a' \
+	'scripts/relevo-sandbox.sh create sp-b' \
+	'scripts/relevo-sandbox.sh create sp-none' \
+	'plan: enable sp-a' \
+	'plan: unlock sp-a --new' \
+	'plan: enable sp-b' \
+	'plan: enable sp-none' \
+	'plan: seed format-5' \
+	'plan: migrate from sp-a'
+carries 'the plan carries the guard line' "$guard_line"
+carries 'the plan names the token stdin source' 'token: stdin'
+carries 'the plan names the R2 secret env source' 'r2.secret: RELEVO_R2_SECRET'
+carries 'the plan names the joiner passphrase env source' 'passphrase: RELEVO_SYNC_PASSPHRASE'
+carries 'the plan pins the seed batch count for 20 MiB' '41 batches of 500 rows (--log-mb 20)'
+carries 'the plan migrate line carries the confirm flag' 'relevo db sync migrate --confirm-all-upgraded --json'
+carries 'the plan none enable carries --history none' 'relevo db sync enable --history none'
+absent 'the plan echoes no sentinel token' "$s_token"
+absent 'the plan echoes no sentinel secret' "$s_secret"
+absent 'the plan echoes no sentinel key id' "$s_keyid"
+# The plan is a preview: it creates nothing and leaves no state dir.
+after=$(find "$work/tmp" -mindepth 1 -maxdepth 1 | sort)
+if [ "$before" != "$after" ]; then
+	echo "FAIL: the plan dry run left a state dir: [$before] -> [$after]"
+	fail=1
+fi
+reset_fixtures
+
+# seed_batches: the predicted batch count is the target over the bytes a batch
+# carries, rounded up; pinned for 20 and two other sizes.
+src seed_batches 20
+equals 'seed_batches 20 is 41' '41'
+src seed_batches 7
+equals 'seed_batches 7 is 15' '15'
+src seed_batches 1
+equals 'seed_batches 1 is 3' '3'
+
+# seed_body_len: the varying length model, minimum plus row mod spread.
+src seed_body_len 1
+equals 'seed_body_len 1 is 513' '513'
+src seed_body_len 500
+equals 'seed_body_len 500 is 1012' '1012'
+src seed_body_len 1024
+equals 'seed_body_len 1024 wraps to the minimum' '512'
+
+# seed_statements: exactly the format-5 tables (log, marks, meta), the format row
+# at 5 and the run marker; no heads or shared table is seeded.
+srcf seed_statements
+status 'seed_statements succeeds' 0
+carries 'seed_statements sets format 5' "VALUES ('format', '5')"
+carries 'seed_statements writes the run marker' "VALUES ('syncproof.run',"
+carries 'seed_statements creates the log table' 'CREATE TABLE log ('
+carries 'seed_statements creates the marks table' 'CREATE TABLE marks ('
+carries 'seed_statements creates the meta table' 'CREATE TABLE meta ('
+absent 'seed_statements seeds no heads table' 'CREATE TABLE heads'
+absent 'seed_statements seeds no shared table' 'CREATE TABLE shared'
+# Exactly three CREATE TABLE statements: log, marks, meta.
+if [ "$(printf '%s\n' "$out" | grep -c '^CREATE TABLE ')" -ne 3 ]; then
+	echo "FAIL: seed_statements did not create exactly three tables: $out"
+	fail=1
+fi
+
+# seed_batch_sql: one INSERT whose rows match the length model and whose bodies
+# are distinct, proven against a real SQLite with no network. The byte total is
+# the sum of seed_body_len over the rows, so the generator and the model agree.
+if command -v python3 >/dev/null 2>&1 && command -v awk >/dev/null 2>&1; then
+	src seed_batch_sql testorigin 1 500
+	status 'seed_batch_sql succeeds' 0
+	printf '%s\n' "$out" > "$work/batch.sql"
+	pyout=$(python3 - "$work/batch.sql" <<'PY'
+import sqlite3, sys
+sql = open(sys.argv[1]).read()
+ddl = "CREATE TABLE log (origin TEXT NOT NULL, seq INTEGER NOT NULL, batch INTEGER NOT NULL, tbl TEXT NOT NULL, pk TEXT NOT NULL, op TEXT NOT NULL, schema_version INTEGER NOT NULL, body TEXT, at TEXT NOT NULL, mac BLOB, after_origin TEXT, after_seq INTEGER, PRIMARY KEY (origin, seq))"
+c = sqlite3.connect(":memory:")
+c.execute(ddl)
+c.execute(sql)
+n, s = c.execute("SELECT count(*), sum(length(body)) FROM log").fetchone()
+d = c.execute("SELECT count(DISTINCT body) FROM log").fetchone()[0]
+expected = sum(512 + (i % 1024) for i in range(1, 501))
+print("ok" if (n == 500 and s == expected and d == 500) else "bad rows=%s bytes=%s distinct=%s" % (n, s, d))
+PY
+	) && pygot=0 || pygot=$?
+	printf '%s\n' "$pyout" >> "$all"
+	if [ "$pygot" -ne 0 ] || [ "$pyout" != ok ]; then
+		echo "FAIL: seed_batch_sql rows/bytes/distinct do not match the model: $pyout"
+		fail=1
+	fi
+fi
+
+# record_new_origins: learns the new first-segment after a push and records it,
+# so a second listing of the same bucket learns nothing new.
+printf 'neworigin/log/000000000001\n' > "$work/bucket-keys"
+srcf eval 'first=$(record_new_origins); second=$(record_new_origins); printf "%s|%s" "$first" "$second"'
+status 'record_new_origins succeeds' 0
+equals 'record_new_origins learns then remembers' 'neworigin|'
+reset_fixtures
+
+# A stub sandbox script records every create/destroy call; the lifecycle and
+# cleanup tests drive it instead of the real script (no build, no network).
+cat > "$work/fake-sandbox.sh" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >> "$FAKE_SB_LOG"
+exit "${FAKE_SB_EXIT:-0}"
+EOF
+chmod +x "$work/fake-sandbox.sh"
+export FAKE_SB="$work/fake-sandbox.sh"
+export FAKE_SB_LOG="$work/fake-sandbox-calls"
+
+# create_sandboxes refuses to reuse an existing sandbox of the run's names,
+# before creating any.
+mkdir -p "$work/reuse-root/sp-a"
+export FAKE_ROOT="$work/reuse-root"
+: > "$FAKE_SB_LOG"
+srcf eval 'sandbox_root=$FAKE_ROOT; sandbox_script=$FAKE_SB; create_sandboxes'
+status 'create refuses to reuse an existing sandbox' 2
+carries 'the reuse refusal names the sandbox' 'sp-a'
+if [ -s "$FAKE_SB_LOG" ]; then
+	echo "FAIL: create called the sandbox script despite the reuse refusal: $(cat "$FAKE_SB_LOG")"
+	fail=1
+fi
+
+# create_sandboxes creates each name from an empty root and records exactly those
+# names in the sandboxes file (the whole of what cleanup may destroy).
+mkdir -p "$work/fresh-root"
+export FAKE_ROOT="$work/fresh-root"
+: > "$FAKE_SB_LOG"
+srcf eval 'sandbox_root=$FAKE_ROOT; sandbox_script=$FAKE_SB; create_sandboxes; cat "$sandboxes_file"'
+status 'create_sandboxes succeeds from an empty root' 0
+equals 'create_sandboxes records the three names' "$(printf 'sp-a\nsp-b\nsp-none')"
+log_has "$FAKE_SB_LOG" 'create sp-a' 'create_sandboxes creates sp-a'
+log_has "$FAKE_SB_LOG" 'create sp-b' 'create_sandboxes creates sp-b'
+log_has "$FAKE_SB_LOG" 'create sp-none' 'create_sandboxes creates sp-none'
+
+# Cleanup on failure: a non-zero exit after sandboxes are recorded destroys each
+# recorded sandbox. The failing stub verb is the non-zero exit; the trap fires.
+export FAKE_ROOT="$work/fresh-root"
+: > "$FAKE_SB_LOG"
+srcf eval 'sandbox_script=$FAKE_SB; printf "sp-a\nsp-b\nsp-none\n" > "$sandboxes_file"; exit 3'
+status 'a failing run exits non-zero' 3
+log_has "$FAKE_SB_LOG" 'destroy sp-a' 'cleanup destroys sp-a on failure'
+log_has "$FAKE_SB_LOG" 'destroy sp-b' 'cleanup destroys sp-b on failure'
+log_has "$FAKE_SB_LOG" 'destroy sp-none' 'cleanup destroys sp-none on failure'
+
+# A successful exit destroys nothing: cleanup only fires the destroys on failure.
+: > "$FAKE_SB_LOG"
+srcf eval 'sandbox_script=$FAKE_SB; printf "sp-a\n" > "$sandboxes_file"; exit 0'
+status 'a successful run exits 0' 0
+if [ -s "$FAKE_SB_LOG" ]; then
+	echo "FAIL: a successful run destroyed sandboxes: $(cat "$FAKE_SB_LOG")"
+	fail=1
+fi
+
+# A failed destroy is ignored: the run's own exit status stands, with a note.
+export FAKE_SB_EXIT=1
+: > "$FAKE_SB_LOG"
+srcf eval 'sandbox_script=$FAKE_SB; printf "sp-a\n" > "$sandboxes_file"; exit 3'
+status 'a failed destroy does not replace the run status' 3
+carries 'the failed destroy is noted' 'cleanup could not destroy sandbox sp-a'
+unset FAKE_SB_EXIT
+
+# sb_sh sources the sandbox env.sh then runs the guard-prefixed snippet: with the
+# marker set the snippet runs; without it the guard refuses before any command.
+mkdir -p "$work/sb-root/sp-x/bin"
+printf 'export RELEVO_SANDBOX=sp-x\n' > "$work/sb-root/sp-x/env.sh"
+printf '%s\n' "$guard_line" 'echo inside-ok' > "$work/snippet-ok"
+out=$(SYNC_PROOF_SOURCED=1 sh -c '. "$1"; sandbox_root=$2; sb_sh sp-x' sh "$script" "$work/sb-root" < "$work/snippet-ok" 2>&1) && got=0 || got=$?
+printf '%s\n' "$out" >> "$all"
+status 'sb_sh runs the snippet inside the sandbox' 0
+carries 'sb_sh reaches the guarded command' 'inside-ok'
+# Outside a sandbox the marker is empty (defined, not unset): the guard refuses.
+printf 'export RELEVO_SANDBOX=\n' > "$work/sb-root/sp-x/env.sh"
+out=$(SYNC_PROOF_SOURCED=1 sh -c '. "$1"; sandbox_root=$2; sb_sh sp-x' sh "$script" "$work/sb-root" < "$work/snippet-ok" 2>&1) && got=0 || got=$?
+printf '%s\n' "$out" >> "$all"
+status 'sb_sh refuses without the sandbox marker' 1
+absent 'the unguarded sandbox never runs the command' 'inside-ok'
+carries 'the guard refusal names the sandbox' 'not in a sandbox'
+
+# migrate_field: both extractors read the same migrate document, booleans render
+# lowercase so already_migrated reads the same whichever tool is on PATH.
+printf '%s\n' '{"already_migrated":false,"rows":41,"turso_sent_bytes":123,"objects_written":7}' > "$work/migrate-doc.json"
+for tool in jq python3; do
+	command -v "$tool" >/dev/null 2>&1 || continue
+	exta "$tool" migrate_field already_migrated "$work/migrate-doc.json"
+	equals "migrate_field ($tool): false renders lowercase" 'false'
+	exta "$tool" migrate_field rows "$work/migrate-doc.json"
+	equals "migrate_field ($tool): rows" '41'
+	exta "$tool" migrate_field turso_sent_bytes "$work/migrate-doc.json"
+	equals "migrate_field ($tool): sent bytes" '123'
+	exta "$tool" migrate_field absent "$work/migrate-doc.json"
+	equals "migrate_field ($tool): an absent field is empty" ''
+done
+printf '%s\n' '{"already_migrated":true}' > "$work/migrate-true.json"
+for tool in jq python3; do
+	command -v "$tool" >/dev/null 2>&1 || continue
+	exta "$tool" migrate_field already_migrated "$work/migrate-true.json"
+	equals "migrate_field ($tool): true renders lowercase" 'true'
+done
+
+# turso_exec_verdict: ok only when no result is an error; the first error names
+# its message; an empty response is an error, never a silent success.
+printf '%s\n' '{"results":[{"type":"ok","response":{"type":"execute","result":{}}},{"type":"ok","response":{"type":"close"}}]}' > "$work/exec-ok.json"
+printf '%s\n' '{"results":[{"type":"ok","response":{}},{"type":"error","error":{"message":"boom"}}]}' > "$work/exec-err.json"
+printf '%s\n' '{"results":[]}' > "$work/exec-empty.json"
+for tool in jq python3; do
+	command -v "$tool" >/dev/null 2>&1 || continue
+	ext "$tool" turso_exec_verdict "$work/exec-ok.json"
+	equals "turso_exec_verdict ($tool): all ok" 'ok'
+	ext "$tool" turso_exec_verdict "$work/exec-err.json"
+	equals "turso_exec_verdict ($tool): the first error names its message" 'error boom'
+	ext "$tool" turso_exec_verdict "$work/exec-empty.json"
+	equals "turso_exec_verdict ($tool): an empty response is an error" 'error empty pipeline response'
+done
+
+# turso_multi_request: one execute per statement plus a close, SQL preserved.
+printf 'CREATE TABLE x (a)\nINSERT INTO x VALUES (1)\n' > "$work/stmts.txt"
+for tool in jq python3; do
+	command -v "$tool" >/dev/null 2>&1 || continue
+	ext "$tool" turso_multi_request "$work/stmts.txt"
+	status "turso_multi_request ($tool) succeeds" 0
+	carries "turso_multi_request ($tool) carries the first statement" 'CREATE TABLE x (a)'
+	carries "turso_multi_request ($tool) carries the second statement" 'INSERT INTO x VALUES (1)'
+	carries "turso_multi_request ($tool) closes the connection" '"type":"close"'
+done
+
+# seed_log's top-up loop, with the write and the read-back stubbed (no network):
+# it stops inside the 5% band, halts on an overshoot, and halts on a read-back
+# that is not a number. The write stub drains stdin like the real turso_exec, so
+# the batch generator never blocks on a full pipe.
+srcf eval 'turso_exec() { cat >/dev/null; }; turso_size() { _n=0; [ -f "$state_dir/sz" ] && _n=$(cat "$state_dir/sz"); _n=$((_n+500000)); printf "%s" "$_n" > "$state_dir/sz"; printf "500 %s" "$_n"; }; seed_log testorigin 1'
+status 'seed_log tops up into the band' 0
+carries 'seed_log reports the measured bytes' '1000000 body bytes'
+srcf eval 'turso_exec() { cat >/dev/null; }; turso_size() { printf "500 2000000"; }; seed_log testorigin 1'
+status 'seed_log halts on an overshoot' 2
+carries 'the overshoot refusal names the band' 'overshot the 5% band'
+srcf eval 'turso_exec() { cat >/dev/null; }; turso_size() { printf "abc def"; }; seed_log testorigin 1'
+status 'seed_log halts on a non-number read-back' 2
+carries 'the non-number refusal names the read-back' 'not a number'
+
+# migrate_run, with sb_sh stubbed to emit a fixture document (no sandbox, no
+# network): already_migrated=true fails loudly, a failed verb refuses, and a
+# fresh migration records its bytes and the duration bound.
+export MR_DOC='{"already_migrated":true,"rows":0}'
+srcf eval 'sb_sh() { printf "%s" "$MR_DOC"; }; migrate_run'
+status 'migrate refuses already_migrated=true' 2
+carries 'the already-migrated refusal names the seed' 'already_migrated=true'
+srcf eval 'sb_sh() { return 1; }; migrate_run'
+status 'migrate refuses a failed verb' 2
+carries 'the failed-migrate refusal names the verb' 'migrate failed'
+export MR_DOC='{"already_migrated":false,"rows":41,"turso_sent_bytes":100,"turso_received_bytes":200,"objects_written":7,"r2_put_bytes":300,"r2_get_bytes":50}'
+srcf eval 'sb_sh() { printf "%s" "$MR_DOC"; }; migrate_run'
+status 'migrate records a fresh migration' 0
+carries 'migrate reports the sent bytes' 'turso_sent_bytes=100'
+carries 'migrate reports the received bytes' 'turso_received_bytes=200'
+carries 'migrate reports the duration bound' 'bound=1800s'
+unset MR_DOC
 
 # --- hygiene sweeps ---
 
