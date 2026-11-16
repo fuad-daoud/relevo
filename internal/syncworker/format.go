@@ -34,27 +34,36 @@ var olderLogTables = map[int][]string{
 	5: {"log", "marks", "meta"},
 }
 
+// createHeadsStatement is the heads table: one row per origin with its head,
+// size and label. It is named so the migration builds the same table without
+// indexing into the schema list.
+const createHeadsStatement = "CREATE TABLE heads (" +
+	"origin TEXT NOT NULL PRIMARY KEY, " +
+	"seq INTEGER NOT NULL, " +
+	"key TEXT NOT NULL, " +
+	"entries INTEGER NOT NULL, " +
+	"bytes INTEGER NOT NULL, " +
+	"floor INTEGER NOT NULL DEFAULT 0, " +
+	"legacy_upto INTEGER NOT NULL DEFAULT 0, " +
+	"label TEXT NOT NULL DEFAULT '', " +
+	"at TEXT NOT NULL)"
+
+// createSharedStatement is the shared table: the mirrored rows every reader
+// serves. It is named for the same reason the heads statement is.
+const createSharedStatement = "CREATE TABLE shared (" +
+	"origin TEXT NOT NULL, seq INTEGER NOT NULL, batch INTEGER NOT NULL, " +
+	"tbl TEXT NOT NULL, pk TEXT NOT NULL, op TEXT NOT NULL, " +
+	"schema_version INTEGER NOT NULL, body TEXT, at TEXT NOT NULL, mac BLOB, " +
+	"after_origin TEXT, after_seq INTEGER, " +
+	"PRIMARY KEY (origin, seq))"
+
 // createStatements is the remote schema, in one place so the create and the
 // classification cannot disagree about what a relevo log is: the heads, meta
 // and shared tables, in that order.
 var createStatements = []string{
-	"CREATE TABLE heads (" +
-		"origin TEXT NOT NULL PRIMARY KEY, " +
-		"seq INTEGER NOT NULL, " +
-		"key TEXT NOT NULL, " +
-		"entries INTEGER NOT NULL, " +
-		"bytes INTEGER NOT NULL, " +
-		"floor INTEGER NOT NULL DEFAULT 0, " +
-		"legacy_upto INTEGER NOT NULL DEFAULT 0, " +
-		"label TEXT NOT NULL DEFAULT '', " +
-		"at TEXT NOT NULL)",
+	createHeadsStatement,
 	"CREATE TABLE meta (key TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL)",
-	"CREATE TABLE shared (" +
-		"origin TEXT NOT NULL, seq INTEGER NOT NULL, batch INTEGER NOT NULL, " +
-		"tbl TEXT NOT NULL, pk TEXT NOT NULL, op TEXT NOT NULL, " +
-		"schema_version INTEGER NOT NULL, body TEXT, at TEXT NOT NULL, mac BLOB, " +
-		"after_origin TEXT, after_seq INTEGER, " +
-		"PRIMARY KEY (origin, seq))",
+	createSharedStatement,
 }
 
 // ensureLog makes sure the remote is this log: an empty remote gets the log's

@@ -313,6 +313,9 @@ const (
 	// until some machine runs the migrate verb, and no change on this machine
 	// fixes it, so the daemon waits and retries instead of latching.
 	CodeMigrate RefusalCode = "migrate"
+	// CodeMigrateIncomplete is a migration that found rows an old binary wrote
+	// after the read above the segments: running the verb again sweeps them.
+	CodeMigrateIncomplete RefusalCode = "migrate_incomplete"
 )
 
 // RefusalError is an error a backend marked with the class of refusal it is, so
