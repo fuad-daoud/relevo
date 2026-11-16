@@ -12,7 +12,7 @@ import (
 func enableWarning(res relevosync.EnableResult) string {
 	var out []string
 	if res.Guarded && !res.Estimate.Known {
-		out = append(out, "no machine has published its log size, so the join was not checked against the Turso quota")
+		out = append(out, "the join's Turso cost could not be read, so it was not checked against the Turso quota")
 	}
 	if res.Locked {
 		out = append(out, "this machine's log is signed and it holds no key, so its own history was not sent; run relevo db sync unlock to send it")

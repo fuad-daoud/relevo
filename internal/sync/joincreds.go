@@ -23,7 +23,8 @@ import (
 var ErrNoR2AfterJoin = errors.New("sync: enable --join: the fleet's secrets document carried no " +
 	SecretR2Endpoint + ", " + SecretR2Bucket + ", " + SecretR2KeyID + " and " + SecretR2Secret +
 	": either run `relevo db sync enable --r2-endpoint ... --r2-bucket ... --r2-key-id ... --r2-secret-stdin` " +
-	"on this machine, or fix the machine that ran `relevo db sync invite`, whose own secrets have not been shared")
+	"on this machine, or fix the machine that ran `relevo db sync invite`, whose own secrets have not been shared" +
+	"; sync history is stored in R2, so joining requires bucket credentials")
 
 // prepassSecrets applies the fleet's secrets document ahead of the join's rows; a
 // plain enable already stores its credentials by import, so only a join walks.
