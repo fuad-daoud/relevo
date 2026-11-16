@@ -124,6 +124,9 @@ This is an ops step, not code.
   same identity; run `relevo db sync disable` on one of the two. Adoption trusts
   the remote and the joiner's clock, so run it only on a machine you control and
   after the old machine is truly off.
+- A server that needs no history runs with `--history none`; see
+  [The database](database.md#cloud-sync) for what that mode reads and how to
+  leave it.
 
 ## Running chains
 

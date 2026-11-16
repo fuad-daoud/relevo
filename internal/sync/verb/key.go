@@ -52,6 +52,20 @@ func ExportOnce(shared *db.DB, t synclog.LogTransport) (synclog.ExportResult, er
 }
 
 func ImportOnce(shared *db.DB, t synclog.LogTransport) (synclog.ImportResult, error) {
+	// A machine reading none of the history mirrors the documents instead of
+	// importing: the same routing the steady and join pulls run, so the
+	// one-shot agrees with the tick.
+	if local := shared.Local(); local != nil {
+		if none, err := relevosync.ReadHistoryNone(local); err != nil {
+			return synclog.ImportResult{}, err
+		} else if none {
+			applied, err := relevosync.PrepassMirrored(shared, local, t)
+			if err != nil {
+				return synclog.ImportResult{}, err
+			}
+			return relevosync.MirroredResult(applied), nil
+		}
+	}
 	i, err := keyedImporter(shared, t)
 	if err != nil {
 		return synclog.ImportResult{}, err

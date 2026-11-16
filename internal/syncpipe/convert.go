@@ -269,6 +269,7 @@ func markStateFromWire(s syncworker.MarkState) synclog.MarkState {
 		SignedFrom: s.SignedFrom,
 		SignedTags: s.SignedTags,
 		EpochCuts:  epochCutsFromWire(s.EpochCuts),
+		Labels:     s.Labels,
 	}
 }
 

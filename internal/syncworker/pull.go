@@ -63,6 +63,9 @@ func (b *TursoBackend) PullRange(origin string, after, upto int) ([]Entry, error
 	if err := b.ready(); err != nil {
 		return nil, err
 	}
+	if b.spec.History == HistoryNone || b.blobs == nil {
+		return b.sharedRange(context.Background(), origin, after, upto)
+	}
 	ctx := context.Background()
 	h, ok, err := b.readOriginHead(ctx, origin)
 	if err != nil {

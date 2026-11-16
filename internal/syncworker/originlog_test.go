@@ -32,6 +32,7 @@ type probeStore struct {
 	blobstore.BlobStore
 	gets    atomic.Int64
 	lists   atomic.Int64
+	puts    atomic.Int64
 	mu      sync.Mutex
 	listed  []listCall
 	missing map[string]bool
@@ -45,6 +46,16 @@ type listCall struct{ prefix, startAfter string }
 
 func newProbeStore(base blobstore.BlobStore) *probeStore {
 	return &probeStore{BlobStore: base, missing: make(map[string]bool)}
+}
+
+func (p *probeStore) Put(ctx context.Context, key string, body io.Reader, size int64) error {
+	p.puts.Add(1)
+	return p.BlobStore.Put(ctx, key, body, size)
+}
+
+func (p *probeStore) PutIfAbsent(ctx context.Context, key string, body io.Reader, size int64) (bool, error) {
+	p.puts.Add(1)
+	return p.BlobStore.PutIfAbsent(ctx, key, body, size)
 }
 
 func (p *probeStore) Get(ctx context.Context, key string, w io.Writer) (int64, error) {

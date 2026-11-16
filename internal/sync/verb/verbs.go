@@ -359,22 +359,32 @@ func (v *Runner) enable(ctx context.Context, verb *wire.SyncVerb, tail []byte) *
 	if err != nil {
 		return Refusal(Classify(err), err)
 	}
+	// An adoption the verb cannot carry is refused before anything is staged
+	// or opened, so neither arm below needs its own copy of the check.
+	adopt, err := v.adoption(verb)
+	if err != nil {
+		return Refusal(Classify(err), err)
+	}
 	if verb.Join {
-		return v.enableJoin(ctx, verb, token, passphrase, r2)
+		return v.enableJoin(ctx, verb, token, passphrase, r2, adopt)
 	}
 	// A plain enable that was handed a passphrase gets the same verify the join
 	// does, before anything is stored. One that was handed none has nothing to
 	// verify and goes on exactly as it always did.
 	var staged *verified
 	if len(bytes.TrimSpace(passphrase)) > 0 {
-		done, err := v.stageAndVerify(ctx, verb.RemoteURL, token, passphrase, false, r2)
+		history, err := relevosync.ParseHistory(verb.History)
+		if err != nil {
+			return Refusal(Classify(err), err)
+		}
+		done, err := v.stageAndVerify(ctx, verb.RemoteURL, history, token, passphrase, false, r2)
 		if err != nil {
 			v.recordJoinFailure(err)
 			return Refusal(Classify(err), err)
 		}
 		staged = done
 	}
-	return v.enablePipeline(ctx, verb, token, r2, false, staged)
+	return v.enablePipeline(ctx, verb, token, r2, false, staged, adopt)
 }
 
 // openTransport returns the log an enable drives: the opener the wiring

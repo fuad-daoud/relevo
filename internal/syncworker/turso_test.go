@@ -161,16 +161,29 @@ func backendOnStore(t *testing.T, driver ReplicaDriver, origin string, store *bl
 // tests cannot race on it.
 func backendOnBlobStore(t *testing.T, driver ReplicaDriver, origin string, store blobstore.BlobStore, mirror ...string) *TursoBackend {
 	t.Helper()
+	return backendOnBlobStoreWithSpec(t, driver, origin, store, nil, mirror...)
+}
+
+// backendOnBlobStoreWithSpec is backendOnBlobStore with mutate applied to the
+// spec before Open, which is how a test opens a backend carrying a label or a
+// history mode without widening the mirror list every other caller passes. A
+// nil mutator opens the plain spec.
+func backendOnBlobStoreWithSpec(t *testing.T, driver ReplicaDriver, origin string, store blobstore.BlobStore, mutate func(*Spec), mirror ...string) *TursoBackend {
+	t.Helper()
 	b := NewTursoBackend(driver)
 	b.openStore = func(R2Config) blobstore.BlobStore { return store }
-	if err := b.Open(Spec{
+	spec := Spec{
 		Version:      ProtocolVersion,
 		Origin:       origin,
 		URL:          "libsql://scratch.example",
 		Token:        "the-token",
 		R2:           &R2Config{Bucket: "bucket"},
 		MirrorTables: mirror,
-	}); err != nil {
+	}
+	if mutate != nil {
+		mutate(&spec)
+	}
+	if err := b.Open(spec); err != nil {
 		t.Fatalf("open backend: %v", err)
 	}
 	t.Cleanup(func() { _ = b.Close() })

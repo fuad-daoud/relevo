@@ -30,6 +30,13 @@ type Spec struct {
 	// MirrorTables names the entry tables the writer copies into shared, which
 	// hello names because the worker writes no table name of its own.
 	MirrorTables []string
+	// Label is this machine's display name, display-only: the writer keeps it
+	// current in heads.label. Empty means hello carried no label, which leaves
+	// any label already stored alone.
+	Label string
+	// History is the history mode hello named, stored as HistoryFull when hello
+	// named no mode, so every later reader compares against one value.
+	History string
 	// Migrate opens an unmigrated remote for the migrate verb alone, and every
 	// other verb on the pipe is refused so no row is read through a
 	// half-migrated schema.
@@ -65,7 +72,8 @@ type Backend interface {
 	// mark given for it, read from the bucket's segments in sequence order and
 	// in whole batches. An origin with no mark is read from the start of its
 	// log. A hello that named no bucket is refused with ErrNoR2 before any
-	// transfer.
+	// transfer. With HistoryNone, Pull answers from the shared table only and
+	// never lists or fetches segments, even when hello named no bucket.
 	Pull(marks map[string]int) ([]Entry, error)
 	// Head returns a page of one origin's latest entry per row, derived from
 	// the segments its heads row names, starting after the given sequence
@@ -80,7 +88,9 @@ type Backend interface {
 	// PullRange reads one page of origin's entries with after < seq <= upto from
 	// the segments its heads row names, without pulling first: the floor a caller
 	// read with ReadMarks belongs to this same replica state, and a newer pull in
-	// between could change the entries the range needs.
+	// between could change the entries the range needs. With HistoryNone or
+	// when hello named no bucket, PullRange answers from the shared table only
+	// without reading heads or segments.
 	PullRange(origin string, after, upto int) ([]Entry, error)
 	// KeyMeta reads the passphrase material the remote holds, answering
 	// Present false on a remote that has none.
@@ -232,9 +242,19 @@ func (s *server) hello(req Request) Response {
 	if req.URL == "" || req.Token == "" {
 		return refuse(req, fmt.Errorf("%w: hello without a remote", ErrProtocol))
 	}
+	if req.History != "" && req.History != HistoryFull && req.History != HistoryNone {
+		return refuse(req, fmt.Errorf("%w: hello with an unknown history %q", ErrProtocol, req.History))
+	}
+	// An absent mode is stored as full rather than left empty, so every later
+	// reader compares against one value instead of guessing what absence means.
+	history := req.History
+	if history == "" {
+		history = HistoryFull
+	}
 	spec := Spec{
 		Version: req.Version, Origin: req.Origin, URL: req.URL, Token: req.Token,
-		R2: req.R2, MirrorTables: req.MirrorTables, Migrate: req.Migrate,
+		R2: req.R2, MirrorTables: req.MirrorTables,
+		Label: req.Label, History: history, Migrate: req.Migrate,
 	}
 	if err := s.backend.Open(spec); err != nil {
 		return refuse(req, err)

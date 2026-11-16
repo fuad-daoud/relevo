@@ -135,6 +135,8 @@ type dbSyncVerbOptions struct {
 	Yes bool
 	// AdoptAs is enable's --as.
 	AdoptAs string
+	// History is enable's --history mode, empty for full.
+	History string
 	// DryRun is reconcile's --dry-run.
 	DryRun bool
 	// New is unlock's --new.
@@ -175,6 +177,7 @@ func sendSyncVerbToken(ctx context.Context, shared *db.DB, verb string, token []
 		Join:             opts.Join,
 		Yes:              opts.Yes,
 		AdoptAs:          opts.AdoptAs,
+		History:          opts.History,
 		DryRun:           opts.DryRun,
 		New:              opts.New,
 		Rebuild:          opts.Rebuild,

@@ -56,10 +56,10 @@ var registryDBVerbs = []verbEntry{
 	{
 		Name:    "db sync enable",
 		Summary: "turn sync on for this machine: join with a code from db sync invite (--join-stdin), or name a remote with --url and --token-stdin",
-		Args: "[--url URL] [--token-stdin] [--passphrase-stdin] [--join-stdin] " +
+		Args: "[--url URL] [--token-stdin] [--passphrase-stdin] [--history MODE] [--join-stdin] " +
 			"[--r2-endpoint URL] [--r2-bucket NAME] [--r2-key-id ID] [--r2-secret-stdin] " +
 			"[--as INSTALLATION] [--yes] [--timeout D] [--json]",
-		Flags: []string{"--as", "--join-stdin", "--json", "--passphrase-stdin", "--r2-bucket", "--r2-endpoint",
+		Flags: []string{"--as", "--history", "--join-stdin", "--json", "--passphrase-stdin", "--r2-bucket", "--r2-endpoint",
 			"--r2-key-id", "--r2-secret-stdin", "--timeout", "--token-stdin", "--url", "--yes"},
 		Output: "json:DbSyncOutcomeDoc",
 		Exit:   []int{0, 1, 2},

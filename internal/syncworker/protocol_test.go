@@ -150,7 +150,8 @@ func logRequestWireCases() []wireCase {
 			// A hello with no bucket: the R2 block is omitted entirely rather
 			// than sent as an empty object, so a worker on a machine that has no
 			// credentials sees no block at all. The same line pins the tables to
-			// mirror being absent when hello names none.
+			// mirror, the label and the history being absent when hello names
+			// none.
 			name: "request hello without a bucket",
 			value: Request{
 				ID: "1", Verb: VerbHello, Version: ProtocolVersion, Origin: "origin-a",
@@ -158,6 +159,16 @@ func logRequestWireCases() []wireCase {
 			},
 			wire: `{"id":"1","verb":"hello","version":6,"origin":"origin-a",` +
 				`"token":"t","url":"libsql://remote.example"}`,
+		},
+		{
+			name: "request hello with a label and history",
+			value: Request{
+				ID: "1", Verb: VerbHello, Version: ProtocolVersion, Origin: "origin-a",
+				Token: "t", URL: "libsql://remote.example",
+				Label: "laptop", History: HistoryNone,
+			},
+			wire: `{"id":"1","verb":"hello","version":6,"origin":"origin-a",` +
+				`"token":"t","url":"libsql://remote.example","label":"laptop","history":"none"}`,
 		},
 		{
 			name: "request export",

@@ -1,6 +1,7 @@
 package syncpipe
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -76,6 +77,9 @@ const (
 	// and normally on later starts, recording each start in the file named by
 	// fakeMigrateStartsEnv so a test can count spawns across processes.
 	modeMigrate = "migrate"
+	// modeEchoHello reports the hello it was opened with on stderr, so a test
+	// pins what crossed the pipe rather than what the handshake assembled.
+	modeEchoHello = "echo-hello"
 )
 
 // TestMain hands this binary over to the fake worker before the suite starts,
@@ -161,6 +165,11 @@ func runFakeWorker(mode string) int {
 		return serveBatchShort()
 	case modeMigrate:
 		return runMigrateWorker()
+	case modeEchoHello:
+		if err := syncworker.Serve(os.Stdin, os.Stdout, echoHelloBackend{}); err != nil {
+			return 1
+		}
+		return 0
 	default:
 		if err := syncworker.Serve(os.Stdin, os.Stdout, normalBackend{}); err != nil {
 			fmt.Fprintln(os.Stderr, "fake worker:", err)
@@ -284,6 +293,38 @@ func runMigrateWorker() int {
 	return 0
 }
 
+// echoHelloBackend reports the hello it was opened with on stderr and then
+// serves as the well-behaved worker does. Stderr is the report channel because
+// a reply carries no hello fields to echo in, while the parent holds the
+// child's stderr; the write happens before the handshake's reply, so a parent
+// that got the reply finds the report already on its way.
+type echoHelloBackend struct{ normalBackend }
+
+func (echoHelloBackend) Open(spec syncworker.Spec) error {
+	fmt.Fprintf(os.Stderr, "history=%s label=%s tables=%s\n",
+		spec.History, spec.Label, strings.Join(spec.MirrorTables, ","))
+	return nil
+}
+
+// lockedBuffer is an stderr sink the test polls while the child's copy
+// goroutine still writes: a plain buffer trips the race detector.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 // pinnedAt is the moment the fake log's entries were written, so what crosses
 // the pipe is a value the test can name rather than a clock reading.
 var pinnedAt = time.Date(2026, 10, 8, 9, 30, 0, 0, time.UTC)
@@ -346,6 +387,7 @@ func (normalBackend) ReadMarks() (syncworker.MarkState, error) {
 	return syncworker.MarkState{
 		Heads:   map[string]int{"origin-a": 9, "origin-b": 4},
 		Entries: map[string]int{"origin-a": 7, "origin-b": 4},
+		Labels:  map[string]string{"origin-b": "the laptop"},
 	}, nil
 }
 
@@ -500,6 +542,89 @@ func startFakeWorker(t *testing.T, mode string, cfg Config) (*Client, error) {
 		t.Cleanup(func() { _ = c.Close() })
 	}
 	return c, err
+}
+
+// TestHelloRequestCarriesHistoryLabelAndMirrorTables pins that the handshake
+// sends the three hello-alone fields: a none config's hello names them all,
+// and the worker reads history from there.
+func TestHelloRequestCarriesHistoryLabelAndMirrorTables(t *testing.T) {
+	cfg := handshake()
+	cfg.History = syncworker.HistoryNone
+	cfg.Label = "laptop"
+	cfg.MirrorTables = []string{"doc:config", "doc:secrets"}
+	req := helloRequest(cfg)
+	if req.History != syncworker.HistoryNone || req.Label != "laptop" {
+		t.Errorf("helloRequest = history %q label %q, want none and laptop", req.History, req.Label)
+	}
+	if len(req.MirrorTables) != 2 || req.MirrorTables[0] != "doc:config" || req.MirrorTables[1] != "doc:secrets" {
+		t.Errorf("helloRequest mirror tables = %v, want the mirrored documents' tables", req.MirrorTables)
+	}
+	line, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal hello: %v", err)
+	}
+	for _, want := range []string{`"history":"none"`, `"label":"laptop"`, `"mirror_tables":["doc:config","doc:secrets"]`} {
+		if !strings.Contains(string(line), want) {
+			t.Errorf("hello line %s misses %s", line, want)
+		}
+	}
+}
+
+// TestHelloRequestLeavesAnEmptyConfigOmitemptyClean pins that a config naming
+// none of the three sends none of them: the fields are omitempty, so a hello
+// without them encodes to the same short line as before they existed.
+func TestHelloRequestLeavesAnEmptyConfigOmitemptyClean(t *testing.T) {
+	line, err := json.Marshal(helloRequest(handshake()))
+	if err != nil {
+		t.Fatalf("marshal hello: %v", err)
+	}
+	for _, field := range []string{"history", "label", "mirror_tables"} {
+		if strings.Contains(string(line), field) {
+			t.Errorf("hello line %s carries %s, want it omitted when empty", line, field)
+		}
+	}
+	want := `{"id":"","verb":"hello","version":6,"origin":"origin-a",` +
+		`"token":"the-token","url":"libsql://remote.example"}`
+	if string(line) != want {
+		t.Errorf("hello line:\n got %s\nwant %s", line, want)
+	}
+}
+
+// TestPipeClientHellosHistoryLabelAndMirrorTables pins the three hello-alone
+// fields over the real pipe: a none config's hello reaches the worker and the
+// worker opens with the history, label and mirror tables it named.
+func TestPipeClientHellosHistoryLabelAndMirrorTables(t *testing.T) {
+	var errBuf lockedBuffer
+	cfg := handshake()
+	cfg.History = syncworker.HistoryNone
+	cfg.Label = "laptop"
+	cfg.MirrorTables = []string{"doc:config", "doc:secrets"}
+	cfg.Stderr = &errBuf
+	c, err := startFakeWorker(t, modeEchoHello, cfg)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// The child's stderr travels over its own pipe, so the report lands after
+	// the handshake's reply: poll rather than read once.
+	var got string
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		got = errBuf.String()
+		if strings.Contains(got, "tables=") || !time.Now().Before(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	for _, want := range []string{"history=none", "label=laptop", "tables=doc:config,doc:secrets"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("worker opened with %q, want it to carry %s", got, want)
+		}
+	}
+	// The worker that opened with the three fields still serves: the hello the
+	// fields travelled on was a handshake, not a refusal.
+	if _, err := c.Stats(); err != nil {
+		t.Errorf("Stats over the worker the hello named the fields to: %v", err)
+	}
 }
 
 // TestPipeClientDrivesAWorkerOverAPipe is the client's whole contract in one

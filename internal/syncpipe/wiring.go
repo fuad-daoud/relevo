@@ -82,14 +82,39 @@ func workerConfig(shared *db.DB, local relevosync.Local, refuseIncomplete bool) 
 	if err != nil {
 		return Config{}, err
 	}
+	// A none section reads from shared alone; anything else reads full, which
+	// travels as empty because the worker stores an unnamed mode as full.
+	history := ""
+	if settings.HistoryNone() {
+		history = syncworker.HistoryNone
+	}
 	return Config{
-		Args:        []string{"sync-worker", "--replica", ReplicaPath(shared.Path())},
-		Origin:      shared.Origin(),
-		URL:         settings.RemoteURL,
-		Token:       string(token),
-		R2:          bucket,
-		BlobStaging: staging,
+		Args:         []string{"sync-worker", "--replica", ReplicaPath(shared.Path())},
+		Origin:       shared.Origin(),
+		URL:          settings.RemoteURL,
+		Token:        string(token),
+		R2:           bucket,
+		BlobStaging:  staging,
+		History:      history,
+		Label:        workerLabel(shared),
+		MirrorTables: relevosync.MirrorTables(),
 	}, nil
+}
+
+// workerLabel is this installation's display name from the directory the daemon
+// projected at startup: a missing row or list error leaves it empty because the
+// label is display-only and must not stop a worker over a name.
+func workerLabel(shared *db.DB) string {
+	rows, err := shared.InstallationList()
+	if err != nil {
+		return ""
+	}
+	for _, row := range rows {
+		if row.ID == shared.Origin() {
+			return row.Label
+		}
+	}
+	return ""
 }
 
 // ReplicaPath is the replica beside a shared database: the driver's one file,

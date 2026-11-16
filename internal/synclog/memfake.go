@@ -46,6 +46,9 @@ type memLog struct {
 	// traffic is each origin's published month of sync traffic: one row per
 	// machine, overwritten by its own publishes.
 	traffic map[string]TrafficRow
+	// labels is the name each origin's machine gave itself, laid down by
+	// hand: the fake holds no heads table to read one from.
+	labels map[string]string
 }
 
 // NewMemTransport returns a handle on an empty log for the installation named
@@ -261,9 +264,21 @@ func (m *MemTransport) Stats() (Stats, error) {
 }
 
 // ReadMarks answers with the log's shape: compaction floors and each origin's
-// size.
+// size and label.
 func (m *MemTransport) ReadMarks() (MarkState, error) {
 	return m.log.markState(), nil
+}
+
+// SetLabel records the name origin's machine gave itself. The fake holds no
+// heads table to read one from, so a test lays it down by hand and ReadMarks
+// carries it beside the heads.
+func (m *MemTransport) SetLabel(origin, label string) {
+	m.log.mu.Lock()
+	defer m.log.mu.Unlock()
+	if m.log.labels == nil {
+		m.log.labels = make(map[string]string)
+	}
+	m.log.labels[origin] = label
 }
 
 // PublishTraffic records this installation's traffic row and answers with
@@ -279,9 +294,9 @@ func (m *MemTransport) ReadTraffic() (map[string]TrafficRow, error) {
 	return m.log.readTraffic(), nil
 }
 
-// markState is the log's shape: each origin's floor, signing boundaries, cuts
-// and size. The signed and cut maps stay nil while the log holds none of them,
-// which is how a reader tells that from an origin at the start.
+// markState is the log's shape: each origin's floor, signing boundaries, cuts,
+// size and label. The signed, cut and label maps stay nil while the log holds
+// none of them, which is how a reader tells that from an origin at the start.
 func (m *memLog) markState() MarkState {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -307,6 +322,12 @@ func (m *memLog) markState() MarkState {
 		out.EpochCuts = make(map[string]EpochCut, len(m.epochCut))
 		for origin, cut := range m.epochCut {
 			out.EpochCuts[origin] = cut
+		}
+	}
+	if len(m.labels) > 0 {
+		out.Labels = make(map[string]string, len(m.labels))
+		for origin, label := range m.labels {
+			out.Labels[origin] = label
 		}
 	}
 	out.Heads = make(map[string]int)

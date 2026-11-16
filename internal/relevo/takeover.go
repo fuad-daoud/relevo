@@ -17,6 +17,7 @@ type TakeoverFacts struct {
 	This        string
 	Force       bool
 	SyncEnabled bool
+	HistoryNone bool
 	Locked      bool
 	// RootFound is true when this machine holds the binding's root row.
 	RootFound bool
@@ -41,6 +42,8 @@ func TakeoverPlan(f TakeoverFacts) (TakeoverDecision, error) {
 	switch {
 	case !f.SyncEnabled:
 		return TakeoverDecision{}, refusal.New("sync is off on this machine: relevo db sync enable first; a takeover travels through the sync log")
+	case f.HistoryNone:
+		return TakeoverDecision{}, refusal.New("sync history is none on this machine: disable, then enable --history full; a takeover reads another machine's history")
 	case f.Locked:
 		return TakeoverDecision{}, refusal.New("sync is locked on this machine: relevo db sync unlock first; a takeover is signed")
 	case !f.Force:
@@ -79,7 +82,7 @@ func Takeover(ctx context.Context, rt Runtime, opts TakeoverOptions) (TakeoverDe
 	if err != nil {
 		return TakeoverDecision{}, err
 	}
-	if settings.Enabled && opts.Drain != nil {
+	if settings.Enabled && !settings.HistoryNone() && opts.Drain != nil {
 		if err := opts.Drain(ctx); err != nil {
 			return TakeoverDecision{}, err
 		}
@@ -96,7 +99,8 @@ func Takeover(ctx context.Context, rt Runtime, opts TakeoverOptions) (TakeoverDe
 	key, _ := relevosync.KeyState(local)
 	dec, err := TakeoverPlan(TakeoverFacts{
 		Name: opts.Name, This: d.Origin(), Force: opts.Force,
-		SyncEnabled: settings.Enabled, Locked: key == "locked" || key == "stale",
+		SyncEnabled: settings.Enabled, HistoryNone: settings.HistoryNone(),
+		Locked:    key == "locked" || key == "stale",
 		RootFound: found, Writer: writer, Mark: marks[writer],
 	})
 	if err != nil {
