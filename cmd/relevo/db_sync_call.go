@@ -165,8 +165,12 @@ func sendSyncVerb(ctx context.Context, shared *db.DB, verb string, opts dbSyncVe
 // The token is the frame's raw tail and nothing else: it is not logged or
 // formatted into an error, and the socket's uid check means sender and daemon
 // are the same user, so the value crosses the stream between them and nowhere else.
-func sendSyncVerbToken(ctx context.Context, shared *db.DB, verb string, token []byte, opts dbSyncVerbOptions) (*wire.SyncResult, error) {
-	req := &wire.SyncVerb{
+// syncVerbRequestOf is the frame one verb sends: the verb name and the flags
+// the daemon cannot read for itself. It is a pure constructor so a test pins
+// the copy with no owner; the token still travels as the call's separate
+// argument, never in the frame.
+func syncVerbRequestOf(verb string, opts dbSyncVerbOptions) *wire.SyncVerb {
+	return &wire.SyncVerb{
 		Header:             wire.Header{Type: wire.TypeSyncVerb},
 		Verb:               verb,
 		RemoteURL:          opts.RemoteURL,
@@ -186,6 +190,10 @@ func sendSyncVerbToken(ctx context.Context, shared *db.DB, verb string, token []
 		Rebuild:            opts.Rebuild,
 		ConfirmAllUpgraded: opts.ConfirmAllUpgraded,
 	}
+}
+
+func sendSyncVerbToken(ctx context.Context, shared *db.DB, verb string, token []byte, opts dbSyncVerbOptions) (*wire.SyncResult, error) {
+	req := syncVerbRequestOf(verb, opts)
 	res, err := shared.SyncVerb(ctx, req, token)
 	if err != nil {
 		return nil, dbSyncVerbTransport(err)

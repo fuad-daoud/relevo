@@ -262,6 +262,38 @@ func TestDBSyncMigrateVerbWaitingIsRefusedWithStatus(t *testing.T) {
 	}
 }
 
+// TestSyncVerbRequestCarriesConfirmAllUpgraded pins that the migrate frame
+// carries the confirm flag into the daemon: dropping the copy would send a
+// confirmed migration as an unconfirmed one. The zero option pins the other
+// side, so the test is not a constant-true check.
+func TestSyncVerbRequestCarriesConfirmAllUpgraded(t *testing.T) {
+	t.Parallel()
+
+	got := syncVerbRequestOf(wire.SyncVerbMigrate, dbSyncVerbOptions{ConfirmAllUpgraded: true})
+	if got.Verb != wire.SyncVerbMigrate {
+		t.Errorf("frame verb = %q, want %q", got.Verb, wire.SyncVerbMigrate)
+	}
+	if !got.ConfirmAllUpgraded {
+		t.Errorf("frame ConfirmAllUpgraded = false, want true")
+	}
+
+	zero := syncVerbRequestOf(wire.SyncVerbMigrate, dbSyncVerbOptions{})
+	if zero.ConfirmAllUpgraded {
+		t.Errorf("zero frame ConfirmAllUpgraded = true, want false")
+	}
+}
+
+// TestDBSyncMigrateBoundOutlivesTheWorker pins that the CLI waits out the
+// migration: the 30 minutes below is the daemon's worker bound for the call,
+// so the client must clear it or it gives up before the worker answers.
+func TestDBSyncMigrateBoundOutlivesTheWorker(t *testing.T) {
+	t.Parallel()
+
+	if dbSyncMigrateBound <= 30*time.Minute {
+		t.Errorf("dbSyncMigrateBound = %v, want strictly above 30m", dbSyncMigrateBound)
+	}
+}
+
 // TestDBSyncMigrateIsInTheUsage pins that the usage names the verb's line and
 // its one-sentence rule: run once, on one machine, after every machine runs
 // this release, leaving the machine's own outbox alone.
