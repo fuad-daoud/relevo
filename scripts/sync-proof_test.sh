@@ -247,7 +247,7 @@ done
 check_kfile() {
 	[ -n "\$kfile" ] || { printf 'R2 request without -K\n' >> "\$work/fake-fail"; exit 99; }
 	[ -f "\$kfile" ] || { printf '-K file missing: %s\n' "\$kfile" >> "\$work/fake-fail"; exit 99; }
-	[ "\$(stat -c '%a' "\$kfile")" = 600 ] || { printf '-K file not mode 600\n' >> "\$work/fake-fail"; exit 99; }
+	[ "\$(ls -l "\$kfile" | cut -c1-10)" = '-rw-------' ] || { printf '-K file not mode 600\n' >> "\$work/fake-fail"; exit 99; }
 	grep -qxF 'user = "$s_keyid:$s_secret"' "\$kfile" || { printf '-K file lacks the key pair\n' >> "\$work/fake-fail"; exit 99; }
 	[ "\$sigv4" = 'aws:amz:auto:s3' ] || { printf 'bad --aws-sigv4: %s\n' "\$sigv4" >> "\$work/fake-fail"; exit 99; }
 }
@@ -256,7 +256,7 @@ case \$url in
 	[ -n "\$hfile" ] || { printf 'pipeline request without -H\n' >> "\$work/fake-fail"; exit 99; }
 	hf=\${hfile#@}
 	[ -f "\$hf" ] || { printf '-H file missing\n' >> "\$work/fake-fail"; exit 99; }
-	[ "\$(stat -c '%a' "\$hf")" = 600 ] || { printf '-H file not mode 600\n' >> "\$work/fake-fail"; exit 99; }
+	[ "\$(ls -l "\$hf" | cut -c1-10)" = '-rw-------' ] || { printf '-H file not mode 600\n' >> "\$work/fake-fail"; exit 99; }
 	grep -qxF 'Authorization: Bearer $s_token' "\$hf" || { printf '-H file lacks the bearer token\n' >> "\$work/fake-fail"; exit 99; }
 	[ "\$method" = POST ] || { printf 'pipeline method not POST: %s\n' "\$method" >> "\$work/fake-fail"; exit 99; }
 	body=\$(cat)
@@ -353,7 +353,7 @@ ln -s "$(command -v jq)" "$work/min-nocurl/jq"
 # plus the fake curl/relevo and python3, but no jq.
 pybin="$work/pybin"
 mkdir -p "$pybin"
-for tool in date mkdir chmod rm grep sed sort cat stat python3; do
+for tool in date mkdir chmod rm grep sed sort cat ls cut python3; do
 	ln -s "$(command -v "$tool")" "$pybin/$tool"
 done
 cp "$fakebin/curl" "$pybin/curl"
