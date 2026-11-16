@@ -189,32 +189,123 @@ func TestEnablePreflightOrder(t *testing.T) {
 		}
 	}
 	cases := []struct {
-		name  string
-		setup func(t *testing.T, local Local)
-		url   string
-		want  error
+		name    string
+		setup   func(t *testing.T, local Local)
+		url     string
+		history string
+		want    error
 	}{
 		{"already enabled wins over every later check", func(t *testing.T, local Local) {
 			t.Helper()
 			if err := MarkEnabled(local, true, now); err != nil {
 				t.Fatalf("MarkEnabled: %v", err)
 			}
-		}, "", ErrAlreadyEnabled},
-		{"no token wins over the remote and the gate", func(*testing.T, Local) {}, "", ErrNoToken},
-		{"a stored token passes the token check and the missing remote decides", stored, "", ErrNoRemote},
-		{"a conflicting url wins over the gate", pointed, "libsql://flag.invalid", ErrRemoteConflict},
-		{"the origin gate is last", pointed, "", db.ErrPreflightRefused},
+		}, "", "sometimes", ErrAlreadyEnabled},
+		{"no token wins over the remote and the gate", func(*testing.T, Local) {}, "", "", ErrNoToken},
+		{"a stored token passes the token check and the missing remote decides", stored, "", "", ErrNoRemote},
+		{"a conflicting url wins over the gate", pointed, "libsql://flag.invalid", "", ErrRemoteConflict},
+		{"a bad history wins over the gate", pointed, "", "sometimes", db.ErrInvalid},
+		{"the origin gate is last", pointed, "", "", db.ErrPreflightRefused},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			shared, local := joinPair(t, "m1")
 			tc.setup(t, local)
-			_, err := EnableRequest{Local: local, Shared: shared, URL: tc.url}.Preflight()
+			_, err := EnableRequest{Local: local, Shared: shared, URL: tc.url, History: tc.history}.Preflight()
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("Preflight = %v, want %v", err, tc.want)
 			}
 		})
+	}
+}
+
+// TestEnablePreflightFlipRefusedOnRunningMachine pins that Preflight on a running
+// machine with a mode flip refuses and leaves the section's history untouched.
+func TestEnablePreflightFlipRefusedOnRunningMachine(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(0, 0).UTC()
+	shared, local := joinPair(t, "m1")
+	if err := MarkEnabled(local, true, now); err != nil {
+		t.Fatalf("MarkEnabled: %v", err)
+	}
+	if err := PutSettings(local, Settings{RemoteURL: joinRemote, History: ""}, now); err != nil {
+		t.Fatalf("PutSettings: %v", err)
+	}
+	_, err := EnableRequest{
+		Local:   local,
+		Shared:  shared,
+		URL:     joinRemote,
+		Token:   []byte(joinToken),
+		History: HistoryNone,
+	}.Preflight()
+	if !errors.Is(err, ErrAlreadyEnabled) {
+		t.Fatalf("Preflight = %v, want ErrAlreadyEnabled", err)
+	}
+	st, err := ReadSettings(local)
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	if st.HistoryNone() {
+		t.Error("Preflight on running machine changed history, want untouched")
+	}
+}
+
+// TestEnablePreflightBadHistoryRefusedBeforeOriginGate pins that a bad history
+// mode on a machine that is off is refused before the origin gate is reached.
+func TestEnablePreflightBadHistoryRefusedBeforeOriginGate(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(0, 0).UTC()
+	shared, local := joinPair(t, "m1")
+	if err := SetToken(local, []byte(joinToken), now); err != nil {
+		t.Fatalf("SetToken: %v", err)
+	}
+	storeR2(t, local)
+	if err := PutSettings(local, Settings{RemoteURL: joinRemote}, now); err != nil {
+		t.Fatalf("PutSettings: %v", err)
+	}
+	_, err := EnableRequest{
+		Local:   local,
+		Shared:  shared,
+		URL:     joinRemote,
+		History: "sometimes",
+	}.Preflight()
+	if !errors.Is(err, db.ErrInvalid) {
+		t.Fatalf("Preflight = %v, want db.ErrInvalid", err)
+	}
+	if errors.Is(err, db.ErrPreflightRefused) {
+		t.Error("Preflight reached the origin gate")
+	}
+}
+
+// TestEnablerStoreResetsToFullOnReenable pins that storing history none persists
+// it and a later store with empty history resets the section to full.
+func TestEnablerStoreResetsToFullOnReenable(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(0, 0).UTC()
+	_, local := joinPair(t, "m1")
+	e := &Enabler{Request: EnableRequest{Local: local}}
+
+	if err := e.store(EnablePlan{Remote: joinRemote, History: HistoryNone}, now); err != nil {
+		t.Fatalf("store(none): %v", err)
+	}
+	st, err := ReadSettings(local)
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	if st.History != HistoryNone || !st.HistoryNone() {
+		t.Fatalf("stored history = %q, want %q", st.History, HistoryNone)
+	}
+
+	if err := e.store(EnablePlan{Remote: joinRemote, History: ""}, now); err != nil {
+		t.Fatalf("store(full): %v", err)
+	}
+	st, err = ReadSettings(local)
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	if st.History != "" || st.HistoryNone() {
+		t.Fatalf("stored history after reset = %q, want empty full", st.History)
 	}
 }
 

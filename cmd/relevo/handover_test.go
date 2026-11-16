@@ -3,8 +3,10 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/store"
+	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
 // These cases stop at flag parsing or at a refusal the rules in internal/relevo
@@ -33,5 +35,26 @@ func TestHandoverAndTakeoverUsageAndRefusals(t *testing.T) {
 				t.Errorf("message = %q, want it to contain %q", ce.message, c.text)
 			}
 		})
+	}
+}
+
+// TestTakeoverRefusedOnHistoryNoneMachine pins that takeover on a machine with
+// sync history set to none refuses and names the re-enable fix.
+func TestTakeoverRefusedOnHistoryNoneMachine(t *testing.T) {
+	docsEnv(t)
+	seedWriteBinding(t, "alpha", store.Binding{})
+	d, err := openDBDirect(machineDBPath())
+	if err != nil {
+		t.Fatalf("openDBDirect: %v", err)
+	}
+	if err := relevosync.PutSettings(d.Local(), relevosync.Settings{Enabled: true, History: relevosync.HistoryNone}, time.Now()); err != nil {
+		_ = d.Close()
+		t.Fatalf("PutSettings: %v", err)
+	}
+	_ = d.Close()
+	_, _, err = captureOutput(t, func() error { return run([]string{"takeover", "alpha", "--force"}) })
+	ce := requireCLIError(t, err, codeRefused, "")
+	if !strings.Contains(ce.message, "disable, then enable --history full") {
+		t.Errorf("message = %q, want it to contain %q", ce.message, "disable, then enable --history full")
 	}
 }

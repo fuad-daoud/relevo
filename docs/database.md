@@ -56,6 +56,18 @@ machines share the same bindings. It is off until joined:
 half by hand. `relevo help --json db sync` lists every verb (`enable`,
 `disable`, `retry`, `status`, `push`, `pull`, `reconcile`, `unlock`, `invite`).
 
+`relevo db sync enable` takes `--history full|none`: how much of the log
+this machine reads. The mode is the machine-local `sync` section's `history`,
+`full` unless the enable named `none`. A `none` machine changes no R2 object
+and no Turso table: it changes only what the worker reads, and the machine
+still exports its own segments. It reads `shared` only, so it applies the
+config and secrets documents and no history, and its machine list is filled
+from each origin's label in `heads`. A joiner holding only the join code reads
+the fleet's R2 credentials from `shared` in either mode. The mode changes only
+through `relevo db sync disable` followed by a fresh `relevo db sync enable`:
+an enable on a machine that is on is refused, and each enable states its own
+mode, with no flag meaning full. `--history none` is refused beside `--as`.
+
 ## Running the daemon
 
 `relevo daemon` is the reconciler and the one process that opens `relevo.db`:

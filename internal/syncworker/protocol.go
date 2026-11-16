@@ -97,6 +97,14 @@ const (
 	VerbShutdown Verb = "shutdown"
 )
 
+// The history modes a hello names. The worker reads the mode and never writes
+// it; a hello naming no mode is stored as HistoryFull, so every later reader
+// compares against one value.
+const (
+	HistoryFull = "full"
+	HistoryNone = "none"
+)
+
 // KeyMeta is the passphrase material a remote holds, as the pipe carries it.
 //
 // Salt and check travel as base64: encoding/json encodes a byte slice that way,
@@ -180,6 +188,12 @@ type Request struct {
 	// hello alone. It travels there because the worker writes no table name of
 	// its own, so the daemon is the one place the list lives.
 	MirrorTables []string `json:"mirror_tables,omitempty"`
+	// Label is this machine's display name, on hello alone. It is display-only:
+	// the writer lands it in heads.label beside the origin's head.
+	Label string `json:"label,omitempty"`
+	// History is the history mode this machine's log runs in, on hello alone:
+	// what the worker reads, never what it writes.
+	History string `json:"history,omitempty"`
 	// Blobs is the batch put_blobs uploads or get_blobs fetches, one item per
 	// key; it is absent on any other verb.
 	Blobs []BlobItem `json:"blobs,omitempty"`
@@ -451,6 +465,10 @@ type MarkState struct {
 	// a rekey wrote. A row that does not parse arrives as the cut nothing
 	// verifies under, which the reader holds its origin over.
 	EpochCuts map[string]EpochCut `json:"epoch_cuts,omitempty"`
+	// Labels is each origin's display name as its heads row holds it, so a
+	// reader that pulls no history can still name the machines. An origin
+	// with no label is absent.
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // readRequest reads one request line. A clean end of the pipe is io.EOF; a

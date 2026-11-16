@@ -17,7 +17,7 @@ import (
 
 // dbSyncUsage is what a bare `relevo db sync` prints. Each verb parses its own
 // flags, and the R2 flags live in db_sync_r2.go, which is where they are installed.
-const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [--passphrase-stdin]\n" +
+const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [--passphrase-stdin] [--history full|none]\n" +
 	"       relevo db sync enable [--join-stdin] [--yes] [--timeout D] [--json]\n" +
 	"       relevo db sync enable --as INSTALLATION --yes [--url URL] [--timeout D] [--json]\n" +
 	dbSyncR2Usage +
@@ -69,6 +69,10 @@ const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [-
 	"--as continues as an installation the remote already holds instead of\n" +
 	"joining as a new one. It spends this machine's identity and cannot be\n" +
 	"undone, so it needs --yes, and it never goes beside --join-stdin.\n" +
+	"--history names how much of the log this machine reads: full, the default,\n" +
+	"or none, where a none machine reads no history, only the config and secrets\n" +
+	"documents. A machine's mode changes only through `relevo db sync disable`\n" +
+	"then `relevo db sync enable --history ...`.\n" +
 	dbSyncR2UsageText +
 	"disable marks this machine off, forgets the token, stops the worker,\n" +
 	"deletes relevo-sync.db and the driver's files beside it, and drops the\n" +
@@ -130,6 +134,7 @@ type dbSyncEnableFlagValues struct {
 	timeout         *time.Duration
 	yes             *bool
 	adoptAs         *string
+	history         *string
 	dbSyncR2Flags
 }
 
@@ -143,6 +148,7 @@ func dbSyncEnableFlagSet(fs *flag.FlagSet) *dbSyncEnableFlagValues {
 	v.timeout = fs.Duration("timeout", dbSyncDefaultTimeout, "bound the remote probe and the open")
 	v.yes = fs.Bool("yes", false, "join even when the estimate exceeds what is left of this month's Turso quota")
 	v.adoptAs = fs.String("as", "", "continue as this installation id instead of joining as a new one; needs --yes")
+	v.history = fs.String("history", "", "full (default) or none: a none machine reads no history, only the config and secrets documents")
 	installR2Flags(fs, &v.dbSyncR2Flags)
 	return v
 }
@@ -271,6 +277,22 @@ func resolveDBSyncEnableSecrets(v *dbSyncEnableFlagValues) (dbSyncJoin, []byte, 
 	return join, token, pass, nil
 }
 
+// dbSyncEnableHistory validates the enable's --history mode before anything is
+// dialed: an unknown mode is refused naming the fix, and --history none cannot
+// go beside --as, because an adoption continues as an installation whose
+// history a none machine never reads. The verb refuses the same combination
+// itself, because the cockpit reaches it without this client.
+func dbSyncEnableHistory(history, as string) error {
+	stored, err := relevosync.ParseHistory(history)
+	if err != nil {
+		return fail(codeUsage, "%v", err)
+	}
+	if stored == relevosync.HistoryNone && as != "" {
+		return fail(codeUsage, "%v", fmt.Errorf("sync: --as cannot be used with --history none: run enable without --history none: %w", db.ErrInvalid))
+	}
+	return nil
+}
+
 // cmdDBSyncEnable runs the enable path through the daemon.
 //
 // The token is resolved here and nowhere else and is never stored, logged or
@@ -293,6 +315,10 @@ func cmdDBSyncEnable(args []string) error {
 		return err
 	}
 
+	if err := dbSyncEnableHistory(*v.history, *v.adoptAs); err != nil {
+		return err
+	}
+
 	shared, err := dialSyncVerb()
 	if err != nil {
 		return err
@@ -305,7 +331,7 @@ func cmdDBSyncEnable(args []string) error {
 	if err := dbSyncAdoptIntake(*v.adoptAs, *v.yes, join.joining); err != nil {
 		return err
 	}
-	opts := dbSyncVerbOptions{RemoteURL: join.remote, Timeout: *v.timeout, Yes: *v.yes, Join: join.joining, AdoptAs: *v.adoptAs}
+	opts := dbSyncVerbOptions{RemoteURL: join.remote, Timeout: *v.timeout, Yes: *v.yes, Join: join.joining, AdoptAs: *v.adoptAs, History: *v.history}
 	tail, err := dbSyncEnableR2Tail(token, pass, v.dbSyncR2Flags, &opts)
 	if err != nil {
 		return err

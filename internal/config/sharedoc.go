@@ -6,11 +6,14 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/sync"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
-// Config is the name the config document travels under, as `doc:config` on the log.
-const Config = "config"
+// Config is the name the config document travels under, as `doc:config` on the
+// log. It is the sync package's name for the same document, which is where the
+// adoption's ignored signals read it from.
+const Config = sync.ConfigDocName
 
 // supersededSourcePrefix labels the revision an arriving item lands under when it
 // would leave the merged config invalid: the entry was newer and still lost

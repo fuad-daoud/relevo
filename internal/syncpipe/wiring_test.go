@@ -173,6 +173,103 @@ func TestOpenNoBucketSupervisor(t *testing.T) {
 	})
 }
 
+// TestWorkerConfigCarriesHistoryLabelAndMirrorTables pins the three hello-alone
+// fields workerConfig fills from what the daemon holds: a none section travels
+// as the worker's none mode while a default travels empty for the worker to
+// read as full, the mirror tables are the mirrored documents' own tables, and
+// the label is the installation directory's row for this origin. Both openers
+// share the function, so the no-bucket opener's config carries history and
+// mirror tables too: a joiner that asked for none must have its bucketless
+// worker answer from shared.
+func TestWorkerConfigCarriesHistoryLabelAndMirrorTables(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(0, 0).UTC()
+	newRows := func(t *testing.T, history string) (*db.DB, relevosync.Local) {
+		t.Helper()
+		shared, local := wiringPair(t)
+		if err := relevosync.PutSettings(local, relevosync.Settings{
+			RemoteURL: "libsql://wiring.invalid", History: history,
+		}, now); err != nil {
+			t.Fatalf("PutSettings: %v", err)
+		}
+		if err := relevosync.SetToken(local, []byte("token"), now); err != nil {
+			t.Fatalf("SetToken: %v", err)
+		}
+		return shared, local
+	}
+	wantTables := []string{"doc:config", "doc:secrets"}
+
+	t.Run("none maps to the worker's none mode", func(t *testing.T) {
+		t.Parallel()
+		shared, local := newRows(t, relevosync.HistoryNone)
+		cfg, err := workerConfig(shared, local, false)
+		if err != nil {
+			t.Fatalf("workerConfig: %v", err)
+		}
+		if cfg.History != syncworker.HistoryNone {
+			t.Errorf("worker history = %q, want %q", cfg.History, syncworker.HistoryNone)
+		}
+		if !slices.Equal(cfg.MirrorTables, wantTables) {
+			t.Errorf("worker mirror tables = %v, want %v", cfg.MirrorTables, wantTables)
+		}
+	})
+
+	t.Run("default travels empty for the worker to read as full", func(t *testing.T) {
+		t.Parallel()
+		shared, local := newRows(t, "")
+		cfg, err := workerConfig(shared, local, false)
+		if err != nil {
+			t.Fatalf("workerConfig: %v", err)
+		}
+		if cfg.History != "" {
+			t.Errorf("worker history = %q, want empty for full", cfg.History)
+		}
+		if !slices.Equal(cfg.MirrorTables, wantTables) {
+			t.Errorf("worker mirror tables = %v, want %v", cfg.MirrorTables, wantTables)
+		}
+	})
+
+	t.Run("label follows the installation directory row", func(t *testing.T) {
+		t.Parallel()
+		shared, local := newRows(t, "")
+		cfg, err := workerConfig(shared, local, false)
+		if err != nil {
+			t.Fatalf("workerConfig: %v", err)
+		}
+		if cfg.Label != "" {
+			t.Errorf("worker label = %q, want empty with no directory row", cfg.Label)
+		}
+		if err := shared.Tx(func(tx *db.Tx) error {
+			return tx.InstallationTouch(shared.Origin(), "laptop", now)
+		}); err != nil {
+			t.Fatalf("InstallationTouch: %v", err)
+		}
+		cfg, err = workerConfig(shared, local, false)
+		if err != nil {
+			t.Fatalf("workerConfig: %v", err)
+		}
+		if cfg.Label != "laptop" {
+			t.Errorf("worker label = %q, want the directory row's label", cfg.Label)
+		}
+	})
+
+	t.Run("no-bucket opener carries history and mirror tables", func(t *testing.T) {
+		t.Parallel()
+		shared, local := newRows(t, relevosync.HistoryNone)
+		sup, _, err := OpenNoBucketSupervisor(shared, local)
+		if err != nil {
+			t.Fatalf("OpenNoBucketSupervisor: %v", err)
+		}
+		t.Cleanup(func() { _ = sup.Close() })
+		if sup.cfg.History != syncworker.HistoryNone {
+			t.Errorf("bucketless worker history = %q, want %q", sup.cfg.History, syncworker.HistoryNone)
+		}
+		if !slices.Equal(sup.cfg.MirrorTables, wantTables) {
+			t.Errorf("bucketless worker mirror tables = %v, want %v", sup.cfg.MirrorTables, wantTables)
+		}
+	})
+}
+
 // wiringRows opens the split pair with the two rows every opener reads and, per
 // complete, the whole bucket set.
 func wiringRows(t *testing.T, complete bool) (*db.DB, relevosync.Local) {

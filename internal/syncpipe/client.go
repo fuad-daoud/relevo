@@ -99,6 +99,15 @@ type Config struct {
 	// credential staying here would be one more in daemon memory. Nil is no bucket,
 	// and the blob verbs are then refused.
 	R2 *syncworker.R2Config
+	// History is the history mode this machine reads in, carried by hello alone
+	// like R2: the worker reads it and never writes it. Empty is full.
+	History string
+	// Label is this machine's display name, carried by hello alone like R2: the
+	// writer lands it in heads.label and reads nothing back from it.
+	Label string
+	// MirrorTables names the entry tables the writer copies into shared, carried
+	// by hello alone like R2: the worker writes no table name of its own.
+	MirrorTables []string
 	// BlobStaging is the folder the daemon stages bodies under and the worker reads.
 	// It travels in the config because both name the file: a side computing it alone
 	// would name one the other never looks at.
@@ -213,15 +222,19 @@ func Start(cfg Config) (*Client, error) {
 	return c, nil
 }
 
-// helloRequest is the handshake: pipe version, origin, remote and token.
+// helloRequest is the handshake: pipe version, origin, remote, token and the
+// three hello-alone fields.
 func helloRequest(cfg Config) syncworker.Request {
 	return syncworker.Request{
-		Verb:    syncworker.VerbHello,
-		Version: syncworker.ProtocolVersion,
-		Origin:  cfg.Origin,
-		URL:     cfg.URL,
-		Token:   cfg.Token,
-		R2:      cfg.R2,
+		Verb:         syncworker.VerbHello,
+		Version:      syncworker.ProtocolVersion,
+		Origin:       cfg.Origin,
+		URL:          cfg.URL,
+		Token:        cfg.Token,
+		R2:           cfg.R2,
+		History:      cfg.History,
+		Label:        cfg.Label,
+		MirrorTables: cfg.MirrorTables,
 	}
 }
 

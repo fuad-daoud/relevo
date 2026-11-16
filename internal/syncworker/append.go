@@ -171,9 +171,11 @@ func (b *TursoBackend) commitSegment(ctx context.Context, head int, have bool, k
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if have {
+		// An empty label keeps the stored one: a hello that carried none must
+		// not blank a label an earlier hello named.
 		res, err := tx.ExecContext(ctx,
-			"UPDATE heads SET seq = ?, key = ?, entries = entries + ?, bytes = bytes + ?, at = ? WHERE origin = ? AND seq = ?",
-			header.Last, key, header.Count, size, now, b.spec.Origin, head)
+			"UPDATE heads SET seq = ?, key = ?, entries = entries + ?, bytes = bytes + ?, label = COALESCE(NULLIF(?, ''), label), at = ? WHERE origin = ? AND seq = ?",
+			header.Last, key, header.Count, size, b.spec.Label, now, b.spec.Origin, head)
 		if err != nil {
 			return false, fmt.Errorf("syncworker: update heads: %w", err)
 		}
@@ -186,8 +188,8 @@ func (b *TursoBackend) commitSegment(ctx context.Context, head int, have bool, k
 		}
 	} else {
 		res, err := tx.ExecContext(ctx,
-			"INSERT OR IGNORE INTO heads (origin, seq, key, entries, bytes, at) VALUES (?, ?, ?, ?, ?, ?)",
-			b.spec.Origin, header.Last, key, header.Count, size, now)
+			"INSERT OR IGNORE INTO heads (origin, seq, key, entries, bytes, label, at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+			b.spec.Origin, header.Last, key, header.Count, size, b.spec.Label, now)
 		if err != nil {
 			return false, fmt.Errorf("syncworker: insert heads: %w", err)
 		}

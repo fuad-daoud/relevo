@@ -21,6 +21,10 @@ type Settings struct {
 	RemoteURL string `json:"remote_url,omitempty"`
 	// Namespace is the remote's namespace, optional on the remote's own terms.
 	Namespace string `json:"namespace,omitempty"`
+	// History is how much of the log this machine reads, full or none. It is
+	// machine-local: it is what this machine reads, and the shared file never
+	// carries it.
+	History string `json:"history,omitempty"`
 	// QuotaTursoSync, QuotaTursoStorage and QuotaR2Storage are the plan limits
 	// in bytes that status reads the month's counters against; zero selects the
 	// default.
@@ -50,6 +54,31 @@ func orDefault(v, def int64) int64 {
 	return v
 }
 
+// HistoryFull and HistoryNone are the reading modes a sync section names: the
+// whole log, or none of its history beyond the mirrored documents.
+const (
+	HistoryFull = "full"
+	HistoryNone = "none"
+)
+
+// ParseHistory maps a reading mode to its stored form: "" for full and "none"
+// for none, so a default machine's section stays byte-identical and an older
+// binary's DisallowUnknownFields parse of it is unharmed. An unknown mode is
+// refused with the fix named.
+func ParseHistory(mode string) (string, error) {
+	switch mode {
+	case "", HistoryFull:
+		return "", nil
+	case HistoryNone:
+		return HistoryNone, nil
+	default:
+		return "", fmt.Errorf("sync: history %q is not a reading mode: want full or none: %w", mode, db.ErrInvalid)
+	}
+}
+
+// HistoryNone reports whether this machine reads none of the log's history.
+func (s Settings) HistoryNone() bool { return s.History == HistoryNone }
+
 // ParseSettings parses a sync section body. An unknown field is refused rather
 // than dropped: a misspelled key would otherwise read back as the default and
 // the machine would then sync with it.
@@ -69,10 +98,10 @@ func ParseSettings(body []byte) (Settings, error) {
 	return st, nil
 }
 
-// validate refuses a body whose numbers are negative or whose URL is unusable.
-// The remote's reachability and this machine's origin are checked when sync is
-// enabled, not here: this is the shape of the settings, not whether they may be
-// used.
+// validate refuses a body whose numbers are negative, whose URL is unusable or
+// whose history mode is unknown. The remote's reachability and this machine's
+// origin are checked when sync is enabled, not here: this is the shape of the
+// settings, not whether they may be used.
 func (s Settings) validate() error {
 	if s.QuotaTursoSync < 0 || s.QuotaTursoStorage < 0 || s.QuotaR2Storage < 0 {
 		return fmt.Errorf("sync: a quota is negative: %w", db.ErrInvalid)
@@ -82,6 +111,9 @@ func (s Settings) validate() error {
 	}
 	if s.Namespace != "" && !validNamespace(s.Namespace) {
 		return fmt.Errorf("sync: namespace holds a character a URL path cannot carry: %w", db.ErrInvalid)
+	}
+	if _, err := ParseHistory(s.History); err != nil {
+		return err
 	}
 	return nil
 }

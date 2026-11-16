@@ -297,6 +297,8 @@ type SyncVerb struct {
 	// AdoptAs makes an enable continue as that installation instead of joining
 	// under the machine's own identity.
 	AdoptAs string `json:"adopt_as,omitempty"`
+	// History is an enable's --history mode, empty for full.
+	History string `json:"history,omitempty"`
 	// DryRun asks a reconcile to report what it would append and append
 	// nothing. A reconcile without it is refused.
 	DryRun bool `json:"dry_run,omitempty"`

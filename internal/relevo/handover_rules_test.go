@@ -150,6 +150,7 @@ func TestTakeoverPlanRules(t *testing.T) {
 		want string
 	}{
 		{"sync off", func(f *TakeoverFacts) { f.SyncEnabled = false }, "sync is off"},
+		{"history none", func(f *TakeoverFacts) { f.HistoryNone = true }, "disable, then enable --history full"},
 		{"locked", func(f *TakeoverFacts) { f.Locked = true }, "locked"},
 		{"no force", func(f *TakeoverFacts) { f.Force = false }, "--force"},
 		{"no root", func(f *TakeoverFacts) { f.RootFound = false }, "db sync pull"},

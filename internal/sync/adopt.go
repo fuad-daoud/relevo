@@ -47,7 +47,7 @@ const adoptSkew = time.Hour
 // adoptIgnoredDocs are the document signals a fresh machine always carries: every
 // open signals the config document, and the enable's own store step signals the
 // secrets one; neither is a change the machine made under its old identity.
-var adoptIgnoredDocs = []string{"config", SecretsDocName}
+var adoptIgnoredDocs = []string{ConfigDocName, SecretsDocName}
 
 var (
 	// ErrAdoptionLive is an adoption of an identity active within the day.

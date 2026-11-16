@@ -39,6 +39,13 @@ const SecretClientKey = "client.key"
 // stamped write turns invisible to the other reader.
 const SecretsDocName = "secrets"
 
+// ConfigDocName is the name the config document travels under, as `doc:config`
+// on the log. It lives here rather than in the config package that owns the
+// document, because this package reads the name too -- an adoption ignores the
+// signal every open leaves -- and the two must agree or the ignore misses the
+// document and a fresh machine reads as holding changes of its own.
+const ConfigDocName = "config"
+
 // SecretStampKey is the write-stamp key of one shared secret. The prefix keeps a
 // secret's stamp from reading as a config section's: both live in one table.
 func SecretStampKey(name string) string { return SecretsDocName + "/" + name }
