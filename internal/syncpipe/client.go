@@ -41,6 +41,10 @@ var (
 const (
 	dataCallTimeout    = 10 * time.Minute
 	controlCallTimeout = 30 * time.Second
+	// migrateCallTimeout bounds the one migration call: it reads on the order
+	// of 150k rows into some 40 segment objects, then commits one transaction
+	// and pushes twice, so the 10-minute data bound is too short.
+	migrateCallTimeout = 30 * time.Minute
 )
 
 // callBound is the bound one call runs under, by the kind of work it moves. Data
@@ -56,9 +60,10 @@ func callBound(verb syncworker.Verb) (time.Duration, error) {
 	case syncworker.VerbHello, syncworker.VerbExport, syncworker.VerbPull,
 		syncworker.VerbPutBlobs, syncworker.VerbGetBlobs,
 		syncworker.VerbPublishTraffic,
-		syncworker.VerbPullRange,
-		syncworker.VerbMigrate:
+		syncworker.VerbPullRange:
 		return dataCallTimeout, nil
+	case syncworker.VerbMigrate:
+		return migrateCallTimeout, nil
 	case syncworker.VerbHead, syncworker.VerbStats, syncworker.VerbReadMarks,
 		syncworker.VerbReadTraffic,
 		syncworker.VerbKeyMeta, syncworker.VerbKeyInit, syncworker.VerbKeyRekey,
@@ -119,6 +124,9 @@ type Config struct {
 	// OnMiss reports a worker that stopped answering an accepted call, for breaker
 	// counting. A refusal is not a miss and never reaches it.
 	OnMiss func(error)
+	// Migrate opens an unmigrated remote for the migrate verb only. It is
+	// false on every normal worker, so a normal hello carries no migrate key.
+	Migrate bool
 }
 
 // withDefaults fills in what the caller left alone, so a config says only what
@@ -224,7 +232,7 @@ func Start(cfg Config) (*Client, error) {
 }
 
 // helloRequest is the handshake: pipe version, origin, remote, token and the
-// three hello-alone fields.
+// four hello-alone fields.
 func helloRequest(cfg Config) syncworker.Request {
 	return syncworker.Request{
 		Verb:         syncworker.VerbHello,
@@ -236,6 +244,7 @@ func helloRequest(cfg Config) syncworker.Request {
 		History:      cfg.History,
 		Label:        cfg.Label,
 		MirrorTables: cfg.MirrorTables,
+		Migrate:      cfg.Migrate,
 	}
 }
 
@@ -328,50 +337,6 @@ func (c *Client) GetBlobs(items []synclog.BlobBatchItem) ([]synclog.BlobBatchRes
 	return c.batchVerdicts(syncworker.VerbGetBlobs, resp, items)
 }
 
-// batchRequest names every item's key, staging file and size limit beside one
-// verb, where a single call names them on the request itself.
-func batchRequest(verb syncworker.Verb, items []synclog.BlobBatchItem) syncworker.Request {
-	blobs := make([]syncworker.BlobItem, len(items))
-	for n, item := range items {
-		blobs[n] = syncworker.BlobItem{Key: item.Key, Staging: item.Staging, Max: item.Max}
-	}
-	return syncworker.Request{Verb: verb, Blobs: blobs}
-}
-
-// batchVerdicts reads one batch reply into a verdict per key, mapping each
-// refusal code to its sentinel exactly as a whole-call refusal is mapped, and
-// returns the batch's refusal for the breaker: the first permanent failure in
-// key order, otherwise the first failed key. A reply that answers some other
-// number of keys than were asked is a worker out of step, so it ends the pipe
-// the way a reply with the wrong id does rather than leaving a verdict a
-// caller would have to guess at.
-func (c *Client) batchVerdicts(verb syncworker.Verb, resp syncworker.Response,
-	items []synclog.BlobBatchItem) ([]synclog.BlobBatchResult, error) {
-	if len(resp.Results) != len(items) {
-		return nil, c.miss(fmt.Errorf("%s answered %d results for %d keys",
-			verb, len(resp.Results), len(items)))
-	}
-	out := make([]synclog.BlobBatchResult, len(items))
-	var firstFailed, firstPermanent error
-	for n, r := range resp.Results {
-		verdict := synclog.BlobBatchResult{Key: items[n].Key, Bytes: r.Bytes, Skipped: r.Skipped}
-		if r.Error != "" {
-			verdict.Err = refusalError(syncworker.Response{Error: r.Error, Code: r.Code})
-			if firstFailed == nil {
-				firstFailed = verdict.Err
-			}
-			if firstPermanent == nil && relevosync.IsPermanentRefusal(verdict.Err) {
-				firstPermanent = verdict.Err
-			}
-		}
-		out[n] = verdict
-	}
-	if firstPermanent != nil {
-		return out, firstPermanent
-	}
-	return out, firstFailed
-}
-
 func (c *Client) call(req syncworker.Request) (syncworker.Response, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -436,6 +401,11 @@ func refusalError(resp syncworker.Response) error {
 		// The remote is waiting for a migration, not refusing this machine's
 		// work, so it must not read as ErrRemoteRefused.
 		return fmt.Errorf("%w: %w", refused, relevosync.ErrMigrateWaiting)
+	case syncworker.CodeMigrateIncomplete:
+		// The migration found rows an old binary wrote after the read above
+		// the segments: running the verb again sweeps them, so the answer is
+		// the incomplete sentinel rather than a refused remote.
+		return fmt.Errorf("%w: %w", refused, relevosync.ErrMigrateIncomplete)
 	case syncworker.CodeQuota:
 		return fmt.Errorf("%w: %w", refused, relevosync.ErrQuotaReached)
 	case syncworker.CodeBoundary:

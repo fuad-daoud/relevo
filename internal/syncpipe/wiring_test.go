@@ -2,8 +2,11 @@ package syncpipe
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -299,4 +302,111 @@ func TestReplicaPathSitsBesideTheSharedDatabase(t *testing.T) {
 	if want := "/state/relevo/relevo-sync.db"; got != want {
 		t.Errorf("ReplicaPath = %q, want %q", got, want)
 	}
+}
+
+// The migrator cases drive OpenMigrator against this test binary as the worker,
+// named through the environment the child inherits. They stay sequential:
+// that inheritance would leak into parallel siblings' children, which name
+// their own mode through the same variable.
+
+// TestOpenMigratorDrivesOneWorkerAndReapsIt pins the one-shot transport: it
+// opens from the stored rows, the migrate verb crosses it, and Close reaps the
+// worker. The verb succeeding proves the hello carried the migrate flag, since
+// the worker refuses the verb on any other pipe.
+func TestOpenMigratorDrivesOneWorkerAndReapsIt(t *testing.T) {
+	shared, local := wiringRows(t, true)
+	t.Setenv(fakeWorkerEnv, modeNormal)
+	m, err := OpenMigrator(shared, local)
+	if err != nil {
+		t.Fatalf("OpenMigrator: %v", err)
+	}
+	got, err := m.Migrate()
+	if err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	if want := wantMigratedResult(); !reflect.DeepEqual(got, want) {
+		t.Errorf("Migrate = %+v, want %+v", got, want)
+	}
+	if err := m.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	mm, ok := m.(*migrator)
+	if !ok {
+		t.Fatalf("OpenMigrator holds %T, want the one-shot transport", m)
+	}
+	if !waitForExit(t, mm.client, 10*time.Second) {
+		t.Error("the migrate worker is still running after Close")
+	}
+}
+
+// TestOpenMigratorRefusesWithoutStoredRows pins that the migrator answers a
+// machine with no remote the way the supervisor's opener does: with the
+// sentinel rather than a worker that can only fail at its handshake.
+func TestOpenMigratorRefusesWithoutStoredRows(t *testing.T) {
+	shared, local := wiringPair(t)
+	if _, err := OpenMigrator(shared, local); !errors.Is(err, relevosync.ErrNoRemote) {
+		t.Fatalf("OpenMigrator = %v, want ErrNoRemote", err)
+	}
+}
+
+// TestOpenMigratorSurfacesAHelloRefusalWithNoWorkerLeft pins that a refused
+// hello propagates from OpenMigrator's start and leaves no worker running: no
+// transport escapes, and the recorded pid goes quiet once the parent closes
+// the pipe it refused over.
+func TestOpenMigratorSurfacesAHelloRefusalWithNoWorkerLeft(t *testing.T) {
+	shared, local := wiringRows(t, true)
+	pidFile := filepath.Join(t.TempDir(), "worker.pid")
+	t.Setenv(fakeWorkerEnv, modeRefuseHelloPid)
+	t.Setenv(fakeWorkerPidFileEnv, pidFile)
+	m, err := OpenMigrator(shared, local)
+	if err == nil {
+		t.Fatal("OpenMigrator over a refusing worker = nil, want the refusal")
+	}
+	if m != nil {
+		t.Error("OpenMigrator answered a transport with the refusal, want nil")
+	}
+	if !errors.Is(err, ErrRefused) {
+		t.Errorf("OpenMigrator = %v, want a refusal rather than a failure", err)
+	}
+	pid := readWorkerPid(t, pidFile, 10*time.Second)
+	if alive, ok := workerPidAlive(pid); !ok {
+		t.Skip("the reaping check needs a unix pid probe")
+	} else if alive && !waitForPidGone(pid, 10*time.Second) {
+		t.Errorf("the refused worker %d is still running", pid)
+	}
+}
+
+// readWorkerPid polls the file the fake worker records its pid in, failing
+// the test when the child never starts rather than reading an absent file.
+func readWorkerPid(t *testing.T, file string, grace time.Duration) int {
+	t.Helper()
+	deadline := time.Now().Add(grace)
+	for {
+		data, err := os.ReadFile(file)
+		if err == nil {
+			pid, err := strconv.Atoi(string(data))
+			if err == nil {
+				return pid
+			}
+			t.Fatalf("worker pid %q does not parse: %v", data, err)
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("the fake worker never recorded its pid in %s", file)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// waitForPidGone reports whether pid stops answering the liveness probe
+// within the grace: a reaped worker's pid goes quiet once its pipe closes.
+func waitForPidGone(pid int, grace time.Duration) bool {
+	deadline := time.Now().Add(grace)
+	for time.Now().Before(deadline) {
+		if alive, ok := workerPidAlive(pid); !ok || !alive {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	alive, _ := workerPidAlive(pid)
+	return !alive
 }

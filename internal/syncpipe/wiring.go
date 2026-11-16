@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/synclog"
 	"github.com/fuad-daoud/relevo/internal/syncworker"
 )
 
@@ -42,6 +43,47 @@ func OpenNoBucketSupervisor(shared *db.DB, local relevosync.Local) (*Supervisor,
 	}
 	sup := NewSupervisor(cfg, relevosync.NewBreaker(local))
 	return sup, cfg.R2 == nil, nil
+}
+
+// OpenMigrator builds the one-shot transport the migrate verb drives: the same
+// worker config the steady worker starts from, so the migration carries the
+// mirror tables it must fill, with the hello flag that opens an unmigrated
+// remote for the migrate verb alone. The hello and its refusals surface here,
+// so a remote that is already migrated or unreachable never leaves a worker
+// behind.
+func OpenMigrator(shared *db.DB, local relevosync.Local) (synclog.Migrator, error) {
+	cfg, err := workerConfig(shared, local, true)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Migrate = true
+	c, err := Start(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &migrator{client: c}, nil
+}
+
+// migrator is the one-shot migrate transport: one client and the Close that
+// reaps it. It bypasses the Supervisor because one call needs no breaker
+// accounting: the steady worker's deaths and waits are not this verb's, and
+// the caller releases the steady worker before the verb runs, so no
+// supervisor is needed to share one.
+type migrator struct {
+	client *Client
+}
+
+// The migrator is the migrate transport; naming it here turns a lost method
+// into a build error.
+var _ synclog.Migrator = (*migrator)(nil)
+
+func (m *migrator) Migrate() (synclog.MigrateResult, error) {
+	return m.client.Migrate()
+}
+
+// Close reaps the worker, so no migration child outlives the verb.
+func (m *migrator) Close() error {
+	return m.client.Close()
 }
 
 // workerConfig is the body both openers build from. Credentials are read here, so
