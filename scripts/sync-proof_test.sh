@@ -97,6 +97,7 @@ carries '--help names --log-mb' '--log-mb'
 
 # The sourcing guard: with SYNC_PROOF_SOURCED set, sourcing defines the
 # functions and runs nothing, so the echo after the source still runs.
+# shellcheck disable=SC2016 # the inner sh expands $1, not this shell
 out=$(SYNC_PROOF_SOURCED=1 sh -c '. "$1"; echo sourced-ok' sh "$script" 2>&1) && got=0 || got=$?
 printf '%s\n' "$out" >> "$all"
 equals 'sourcing with SYNC_PROOF_SOURCED runs no main' 'sourced-ok'
@@ -292,7 +293,6 @@ equals 'flag_ratio: zero measured against positive predicted flags' 'FLAG'
 # print_table: the exact header and rows, the flag column driven by flag_ratio.
 # The format is the rendering contract; the flag values below are literals, so
 # a broken flag wiring changes the rendered bytes and fails the cmp.
-tab=$(printf '\t')
 printf 'seed\t100\t100\tbytes\nmigrate\t300\t100\tbytes\nwipe\t40\t100\tbytes\n' > "$work/table.in"
 {
 	printf '%-16s %14s %14s %-6s %s\n' name measured predicted unit flag
@@ -300,6 +300,7 @@ printf 'seed\t100\t100\tbytes\nmigrate\t300\t100\tbytes\nwipe\t40\t100\tbytes\n'
 	printf '%-16s %14s %14s %-6s %s\n' migrate 300 100 bytes FLAG
 	printf '%-16s %14s %14s %-6s %s\n' wipe 40 100 bytes FLAG
 } > "$work/table.expected"
+# shellcheck disable=SC2016 # the inner sh expands $1, not this shell
 SYNC_PROOF_SOURCED=1 sh -c '. "$1"; print_table' sh "$script" < "$work/table.in" > "$work/table.actual" 2> "$work/table.err"
 cat "$work/table.actual" "$work/table.err" >> "$all"
 if ! cmp -s "$work/table.expected" "$work/table.actual"; then
@@ -319,6 +320,7 @@ printf 'seed\t100\t100\tbytes\n\nmigrate\t300\t100\tbytes' > "$work/table2.in"
 	printf '%-16s %14s %14s %-6s %s\n' seed 100 100 bytes ''
 	printf '%-16s %14s %14s %-6s %s\n' migrate 300 100 bytes FLAG
 } > "$work/table2.expected"
+# shellcheck disable=SC2016 # the inner sh expands $1, not this shell
 SYNC_PROOF_SOURCED=1 sh -c '. "$1"; print_table' sh "$script" < "$work/table2.in" > "$work/table2.actual" 2>&1
 cat "$work/table2.actual" >> "$all"
 if ! cmp -s "$work/table2.expected" "$work/table2.actual"; then
@@ -329,6 +331,7 @@ fi
 
 # A name carrying spaces stays one field under the tab IFS.
 printf 'my log\t100\t100\tbytes\n' > "$work/table3.in"
+# shellcheck disable=SC2016 # the inner sh expands $1, not this shell
 SYNC_PROOF_SOURCED=1 sh -c '. "$1"; print_table' sh "$script" < "$work/table3.in" > "$work/table3.actual" 2>&1
 cat "$work/table3.actual" >> "$all"
 if ! grep -qF 'my log' "$work/table3.actual"; then

@@ -122,6 +122,8 @@ load_env() {
 			'RELEVO_SCRATCH_SYNC_URL RELEVO_SCRATCH_SYNC_TOKEN RELEVO_SCRATCH_R2_ENDPOINT RELEVO_SCRATCH_R2_BUCKET RELEVO_SCRATCH_R2_KEY_ID RELEVO_SCRATCH_R2_SECRET' >&2
 		exit 2
 	fi
+	# shellcheck disable=SC1090,SC1091 # the path is supplied at run time (--env or the
+	# default under $HOME), so shellcheck cannot follow it
 	. "$_le_file"
 	_le_missing=''
 	[ -n "${RELEVO_SCRATCH_SYNC_URL:-}" ] || _le_missing="$_le_missing RELEVO_SCRATCH_SYNC_URL"
