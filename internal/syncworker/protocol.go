@@ -95,6 +95,9 @@ const (
 	VerbClaim Verb = "claim_identity"
 	// VerbShutdown ends the pipe after its reply.
 	VerbShutdown Verb = "shutdown"
+	// VerbMigrate runs the format-5 to format-6 migration on a pipe a migrate
+	// hello opened, and is refused on any other pipe.
+	VerbMigrate Verb = "migrate"
 )
 
 // KeyMeta is the passphrase material a remote holds, as the pipe carries it.
@@ -271,6 +274,9 @@ type Response struct {
 	// Traffic is a publish_traffic or read_traffic answer: every origin's row
 	// the replica holds.
 	Traffic map[string]TrafficRow `json:"traffic,omitempty"`
+	// Migrate is what one migrate call did: its rows, objects and byte
+	// deltas, on the migrate verb alone.
+	Migrate *MigrateResult `json:"migrate,omitempty"`
 }
 
 // RefusalCode is the class of a refusal the worker answered with: the worker's

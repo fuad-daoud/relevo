@@ -276,3 +276,18 @@ func (b *TursoBackend) countAbove(ctx context.Context, covered map[string]int, b
 	}
 	return total, nil
 }
+
+// migrate runs the migration on a pipe a migrate hello opened, answering with
+// what one call moved and built. A normal pipe is refused before the backend
+// is reached, so the verb is answered even where the backend would refuse it
+// too. A backend refusal travels whole, so a repeating cause keeps its class.
+func (s *server) migrate(req Request) Response {
+	if !s.spec.Migrate {
+		return refuse(req, fmt.Errorf("%w: migrate on a pipe not opened for it", ErrProtocol))
+	}
+	res, err := s.backend.Migrate()
+	if err != nil {
+		return refuse(req, err)
+	}
+	return Response{ID: req.ID, OK: true, Migrate: &res}
+}

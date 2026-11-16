@@ -938,6 +938,18 @@ func (normalBackend) ClaimIdentity(_, token string, at time.Time) (string, time.
 	return token, at, nil
 }
 
+func (r refusingBackend) Migrate() (syncworker.MigrateResult, error) {
+	return syncworker.MigrateResult{}, r.fail()
+}
+
+func (v verbsRefusingBackend) Migrate() (syncworker.MigrateResult, error) {
+	return syncworker.MigrateResult{}, v.fail()
+}
+
+func (normalBackend) Migrate() (syncworker.MigrateResult, error) {
+	return syncworker.MigrateResult{}, nil
+}
+
 // TestRefusalErrorKeepsACorruptReplicaARefusal pins that a transport reply whose
 // detail also says the replica is unreadable stays a refusal: the rebuild that
 // recovers a corrupt replica acts only on a refusal it can read.

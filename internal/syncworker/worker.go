@@ -101,6 +101,9 @@ type Backend interface {
 	// none, holds the caller's own, or holds one older than synclog's TTL, then
 	// answers with the claim the remote holds. An empty token only reads.
 	ClaimIdentity(origin, token string, at time.Time) (string, time.Time, error)
+	// Migrate converts a format-5 remote into this build's format, answering
+	// with what one call moved and built.
+	Migrate() (MigrateResult, error)
 	// Close releases the remote and the replica.
 	Close() error
 }
@@ -179,6 +182,7 @@ var verbHandlers = map[Verb]func(*server, Request) Response{
 	VerbKeyCut:         (*server).keyCut,
 	VerbClaim:          (*server).claimIdentity,
 	VerbShutdown:       (*server).shutdown,
+	VerbMigrate:        (*server).migrate,
 }
 
 // Verbs returns every request verb this pipe speaks, sorted for a stable order,
@@ -333,4 +337,5 @@ func refuse(req Request, err error) Response {
 var migrateVerbs = map[Verb]bool{
 	VerbHello:    true,
 	VerbShutdown: true,
+	VerbMigrate:  true,
 }

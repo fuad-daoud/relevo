@@ -1814,6 +1814,7 @@ func (r refusingBackend) KeyInit(KeyMeta) (KeyMeta, error) { return KeyMeta{}, r
 
 func (r refusingBackend) KeyRekey(KeyRekeySpec) (KeyMeta, error) { return KeyMeta{}, r.fail }
 func (r refusingBackend) PublishEpochCut(EpochCut) error         { return r.fail }
+func (r refusingBackend) Migrate() (MigrateResult, error)        { return MigrateResult{}, r.fail }
 
 func (r refusingBackend) Close() error { return nil }
 

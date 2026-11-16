@@ -132,6 +132,7 @@ func (f *fakeBackend) KeyInit(key KeyMeta) (KeyMeta, error) {
 
 func (f *fakeBackend) KeyRekey(KeyRekeySpec) (KeyMeta, error) { return KeyMeta{}, f.fail }
 func (f *fakeBackend) PublishEpochCut(EpochCut) error         { return f.fail }
+func (f *fakeBackend) Migrate() (MigrateResult, error)        { return MigrateResult{}, f.fail }
 
 func (f *fakeBackend) Close() error {
 	f.mu.Lock()
@@ -747,7 +748,7 @@ func TestVerbsNamesEveryDispatchedVerb(t *testing.T) {
 	for _, verb := range Verbs() {
 		names = append(names, string(verb))
 	}
-	if got := strings.Join(names, ","); got != "claim_identity,export,get_blobs,head,hello,key_cut,key_init,key_meta,key_rekey,publish_traffic,pull,pull_range,put_blobs,read_marks,read_traffic,shutdown,stats" {
+	if got := strings.Join(names, ","); got != "claim_identity,export,get_blobs,head,hello,key_cut,key_init,key_meta,key_rekey,migrate,publish_traffic,pull,pull_range,put_blobs,read_marks,read_traffic,shutdown,stats" {
 		t.Errorf("Verbs() = %q, want the pipe's own verb set", got)
 	}
 }
