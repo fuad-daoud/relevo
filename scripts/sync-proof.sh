@@ -1,7 +1,8 @@
 #!/bin/sh
 # scripts/sync-proof.sh -- prove a scratch remote can carry a relevo sync run
 # without spending the operator's real quota: seed a log of a chosen size,
-# migrate it, and measure the traffic against the remote's quota.
+# migrate it, run the traffic phases and print the measured-traffic table
+# beside the design's predictions, read against the remote's quota.
 #
 # The pure core (argument and env parsing, the quota arithmetic, the run's own
 # traffic estimate, the measured-traffic table) plus the read-only preflight:
@@ -10,10 +11,11 @@
 # SYNC_PROOF_SOURCED set defines the functions and runs nothing, so the test
 # script drives each one with no network, no sandbox and no credentials.
 #
-# The run phases (sandbox setup, the format-5 seed, the migrate) execute only
-# under SYNC_PROOF_RUN_PHASES=1; without it a real run stops after the preflight
-# with exit 2, so no test creates a sandbox or reaches a network. --dry-run
-# prints the verdicts and the full ordered command plan and creates nothing.
+# The run phases (sandbox setup, the format-5 seed, the migrate, the traffic
+# measurement) execute only under SYNC_PROOF_RUN_PHASES=1; without it a real run
+# stops after the preflight with exit 2, so no test creates a sandbox or reaches
+# a network. --dry-run prints the verdicts and the full ordered command plan
+# and creates nothing.
 #
 # No env value is ever printed: a refusal names the missing variables, never
 # their contents, so a secret cannot reach a terminal or a log through here.
@@ -48,7 +50,7 @@ Prove a scratch remote can carry a relevo sync run within its quota.
   --dry-run     print the env file path, the estimate and the quota, Turso and
                 bucket ownership verdicts, and the full ordered command plan
                 (creates, enables with secret sources named, seed batch count,
-                migrate); create nothing
+                migrate, traffic phases); create nothing
   --help        this help
 
 The env file must set RELEVO_SCRATCH_SYNC_URL, RELEVO_SCRATCH_SYNC_TOKEN,
@@ -56,8 +58,12 @@ RELEVO_SCRATCH_R2_ENDPOINT, RELEVO_SCRATCH_R2_BUCKET, RELEVO_SCRATCH_R2_KEY_ID
 and RELEVO_SCRATCH_R2_SECRET. A refusal names the missing variables only;
 no value is ever printed.
 
-The run phases (sandbox setup, format-5 seed, migrate) run only when
-SYNC_PROOF_RUN_PHASES=1; otherwise the script stops after the preflight.
+A measured run prints its table to stdout and saves it as table.txt in the
+run's state dir.
+
+The run phases (sandbox setup, format-5 seed, migrate, traffic measurement)
+run only when SYNC_PROOF_RUN_PHASES=1; otherwise the script stops after the
+preflight.
 EOF
 }
 
@@ -186,16 +192,27 @@ flag_ratio() {
 	fi
 }
 
+# row_flag MEASURED PREDICTED prints one table row's flag. An n/a figure -- a
+# count the bucket keeps no counter for, or a prediction the design gives no
+# figure for -- has no ratio to flag, so the column stays empty rather than
+# guessing one; every numeric pair goes through flag_ratio unchanged.
+row_flag() {
+	case $1 in n/a*) return 0 ;; esac
+	case $2 in n/a*) return 0 ;; esac
+	flag_ratio "$1" "$2"
+}
+
 # print_table reads name<TAB>measured<TAB>predicted<TAB>unit rows on stdin and
-# prints the measured-traffic table, its flag column driven by flag_ratio. The
-# tab IFS splits each row on tabs only, so a name carrying spaces stays one
-# field. `|| [ -n "$_pt_name" ]` reads a final row that has no trailing newline.
+# prints the measured-traffic table, its flag column driven by row_flag
+# (flag_ratio for a numeric pair). The tab IFS splits each row on tabs only, so
+# a name carrying spaces stays one field. `|| [ -n "$_pt_name" ]` reads a final
+# row that has no trailing newline.
 print_table() {
 	_pt_tab=$(printf '\t')
 	printf '%-16s %14s %14s %-6s %s\n' name measured predicted unit flag
 	while IFS="$_pt_tab" read -r _pt_name _pt_measured _pt_predicted _pt_unit || [ -n "$_pt_name" ]; do
 		[ -n "$_pt_name" ] || continue
-		_pt_flag=$(flag_ratio "$_pt_measured" "$_pt_predicted")
+		_pt_flag=$(row_flag "$_pt_measured" "$_pt_predicted")
 		printf '%-16s %14s %14s %-6s %s\n' "$_pt_name" "$_pt_measured" "$_pt_predicted" "$_pt_unit" "$_pt_flag"
 	done
 }
@@ -303,7 +320,8 @@ turso_endpoint() {
 # The runs file records this run's id (the Turso marker is checked against
 # it), the origins file starts empty (a fresh run owns no origin yet), and the
 # sandboxes file starts empty: it records only the sandboxes this run creates,
-# which is the whole of what cleanup may destroy.
+# which is the whole of what cleanup may destroy. The table files name the
+# measured rows and the printed table; measure_setup starts the rows file empty.
 state_setup() {
 	run_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
 	state_dir=${TMPDIR:-/tmp}/sync-proof-$run_id
@@ -313,6 +331,8 @@ state_setup() {
 	origins_file=$state_dir/origins
 	sandboxes_file=$state_dir/sandboxes
 	migrate_file=$state_dir/migrate.json
+	table_rows_file=$state_dir/table-rows
+	table_file=$state_dir/table.txt
 	pipeline_url=$(turso_endpoint "$RELEVO_SCRATCH_SYNC_URL")
 	trap cleanup EXIT
 	mkdir -p "$state_dir"
@@ -535,12 +555,14 @@ EOF
 	printf '%s\n' "$_bw_after"
 }
 
-# --- the run phases: sandbox setup, format-5 seed, migrate ---
+# --- the run phases: sandbox setup, format-5 seed, migrate, measurement ---
 #
 # The phases run only when SYNC_PROOF_RUN_PHASES=1. The test harness and any
 # casual invocation leave it unset, so main stops after the preflight and no
 # test creates a sandbox or reaches a network; the measured run sets it.
 # --dry-run always previews the ordered command plan instead of running it.
+# The setup verbs' output goes to stderr and the measurement verbs' output to
+# state-dir files: stdout belongs to the measured table, the run's deliverable.
 
 # The sandboxes this run creates, in enable order: sp-a is the first machine (it
 # creates the key and is the migrator), sp-b joins reading full history, sp-none
@@ -827,17 +849,17 @@ gen_passphrase() {
 # that origin. The enable carries no passphrase (an enable never creates key
 # material), so a joins locked and unlock --new sends the history it owes.
 enable_first() {
-	sb_sh sp-a <<EOF
+	sb_sh sp-a >&2 <<EOF
 $sandbox_guard
 unset RELEVO_SYNC_PASSPHRASE
 export RELEVO_R2_SECRET="\$RELEVO_SCRATCH_R2_SECRET"
 printf '%s' "\$RELEVO_SCRATCH_SYNC_TOKEN" | relevo db sync enable --url "\$RELEVO_SCRATCH_SYNC_URL" --token-stdin --r2-endpoint "\$RELEVO_SCRATCH_R2_ENDPOINT" --r2-bucket "\$RELEVO_SCRATCH_R2_BUCKET" --r2-key-id "\$RELEVO_SCRATCH_R2_KEY_ID"
 EOF
-	sb_sh sp-a <<EOF
+	sb_sh sp-a >&2 <<EOF
 $sandbox_guard
 printf '%s' "\$sync_passphrase" | relevo db sync unlock --new --passphrase-stdin
 EOF
-	sb_sh sp-a <<EOF
+	sb_sh sp-a >&2 <<EOF
 $sandbox_guard
 relevo db sync push --json
 EOF
@@ -851,13 +873,13 @@ EOF
 enable_joiner() {
 	_ej_name=$1
 	_ej_hist=$2
-	sb_sh "$_ej_name" <<EOF
+	sb_sh "$_ej_name" >&2 <<EOF
 $sandbox_guard
 export RELEVO_R2_SECRET="\$RELEVO_SCRATCH_R2_SECRET"
 export RELEVO_SYNC_PASSPHRASE="\$sync_passphrase"
 printf '%s' "\$RELEVO_SCRATCH_SYNC_TOKEN" | relevo db sync enable --url "\$RELEVO_SCRATCH_SYNC_URL" --token-stdin --r2-endpoint "\$RELEVO_SCRATCH_R2_ENDPOINT" --r2-bucket "\$RELEVO_SCRATCH_R2_BUCKET" --r2-key-id "\$RELEVO_SCRATCH_R2_KEY_ID"$_ej_hist
 EOF
-	sb_sh "$_ej_name" <<EOF
+	sb_sh "$_ej_name" >&2 <<EOF
 $sandbox_guard
 relevo db sync push --json
 EOF
@@ -885,6 +907,30 @@ else:
 	esac
 }
 
+# migrate_add_duration SECONDS records the run's wall-clock duration in the
+# saved migrate document as duration_s: the verb's own document carries no
+# duration field (DbSyncMigrateDoc has none), and the table's duration row
+# reads the record alone, not the run's memory.
+migrate_add_duration() {
+	case $json_tool in
+	jq)
+		jq --argjson d "$1" '. + {duration_s: $d}' "$migrate_file" > "$migrate_file.tmp" ||
+			refuse 'migrate: could not record the duration'
+		;;
+	python3)
+		python3 -c 'import json, sys
+p = sys.argv[1]
+with open(p) as f:
+    d = json.load(f)
+d["duration_s"] = int(sys.argv[2])
+with open(p + ".tmp", "w") as f:
+    json.dump(d, f)' "$migrate_file" "$1" ||
+			refuse 'migrate: could not record the duration'
+		;;
+	esac
+	mv "$migrate_file.tmp" "$migrate_file" || refuse 'migrate: could not record the duration'
+}
+
 # migrate_run times the migrate from sp-a, saves its JSON, and refuses loudly if
 # already_migrated is true (the seed did not land). It records sent, received and
 # the duration against the 30-minute bound. The DROP TABLE log push is inside the
@@ -902,6 +948,7 @@ EOF
 	fi
 	_mr_end=$(date +%s)
 	_mr_dur=$(( _mr_end - _mr_start ))
+	migrate_add_duration "$_mr_dur"
 	_mr_already=$(migrate_field already_migrated < "$migrate_file")
 	if [ "$_mr_already" = true ]; then
 		refuse 'migrate reported already_migrated=true: the format-5 seed did not land'
@@ -919,6 +966,410 @@ EOF
 	fi
 }
 
+# --- the traffic measurement: snapshots, deltas, the measured table ---
+#
+# Every phase snapshots the acting machine's own status counters and the bucket
+# listing before and after its act, and the row is the delta. The counters are
+# cumulative per machine and month, read inside the sandbox so they are that
+# machine's; the listing delta is the PUT count, because the bucket keeps no
+# operation counter. GET and LIST counts have no counter at all: their rows say
+# n/a (no counter) and the bytes rows carry the measured figure -- a count is
+# never estimated from bytes.
+
+# The compressed day's model: day_entries entries written on sp-a in bursts of
+# day_burst, one push per burst. One config set writes one shared config-document
+# key (the repos section is per-item, internal/config/localkeys.go), and a push
+# exports the burst's changed keys as one append -- one segment
+# (internal/synclog/docexport.go, internal/syncworker/append.go). A burst over
+# SegmentMaxEntries (256) new keys would be refused by the worker, so the burst
+# stays under the cap; 33-key bursts predict ceil(5000/33) = 152 segments against
+# the design's ~150.
+day_entries=5000
+day_burst=33
+# The entry body's filler length: a small config entry's size, so the day's
+# bodies are neither empty rows nor seed-sized pages.
+day_body_len=200
+# The design's day figures: ~150 segments for 5,000 entries (floor 20, ceiling
+# 308), and a full-client day total of 1.6-3.0 MB whose midpoint 2.3 MB is the
+# predicted value -- providers bill in powers of 1000, so 2.3 MB is 2300000 bytes.
+day_predicted_segments=150
+day_segment_floor=20
+day_segment_ceiling=308
+day_full_client_predicted=2300000
+# The idle poll's call count: consecutive pulls with no writes between.
+idle_poll_calls=60
+
+# bytes_field FIELD reads a `relevo db sync status --json` document on stdin and
+# prints bytes.FIELD. The bytes object is omitempty -- absent until something
+# moved this month -- so an absent object or field reads as 0: a machine that
+# moved nothing has zero counters, not missing ones.
+bytes_field() {
+	case $json_tool in
+	jq)
+		jq -r --arg f "$1" '.bytes[$f] // 0'
+		;;
+	python3)
+		python3 -c 'import json, sys
+d = json.load(sys.stdin)
+b = d.get("bytes") or {}
+print(b.get(sys.argv[1], 0))' "$1"
+		;;
+	esac
+}
+
+# counter_delta PREV CUR prints what a cumulative counter moved between two
+# readings. A reading lower than the last means the worker restarted and counts
+# from zero again, so the new reading is itself the delta -- subtracting would
+# be negative and would lose everything the new worker moved (the rule
+# internal/sync/bytes.go counterDelta keeps for the month's own counters).
+counter_delta() {
+	if [ "$2" -lt "$1" ]; then
+		printf '%s\n' "$2"
+	else
+		printf '%s\n' "$(( $2 - $1 ))"
+	fi
+}
+
+# snap NAME FILE saves sandbox NAME's own status document to FILE. A failed verb
+# exits non-zero and halts the run: an empty snapshot measured as zero traffic
+# would be a quiet phase that never happened.
+snap() {
+	sb_sh "$1" > "$2" <<EOF
+$sandbox_guard
+relevo db sync status --json
+EOF
+}
+
+# status_deltas LABEL BEFORE AFTER prints the four counter deltas between two
+# status documents, one per line in ByteCounters' order (turso_push, turso_pull,
+# r2_put, r2_get). A counter that fell is a worker restart: the after value is
+# the delta, and the reset is noted on stderr so a reset reading is never
+# mistaken for a quiet phase.
+status_deltas() {
+	_sd_label=$1
+	_sd_before=$2
+	_sd_after=$3
+	[ -s "$_sd_before" ] || refuse "status snapshot for $_sd_label is empty (before)"
+	[ -s "$_sd_after" ] || refuse "status snapshot for $_sd_label is empty (after)"
+	for _sd_f in turso_push turso_pull r2_put r2_get; do
+		_sd_b=$(bytes_field "$_sd_f" < "$_sd_before")
+		_sd_a=$(bytes_field "$_sd_f" < "$_sd_after")
+		case $_sd_b in '' | *[!0-9]*) refuse "status bytes for $_sd_label are not counters: $_sd_f" ;; esac
+		case $_sd_a in '' | *[!0-9]*) refuse "status bytes for $_sd_label are not counters: $_sd_f" ;; esac
+		if [ "$_sd_a" -lt "$_sd_b" ]; then
+			printf '%s: %s %s counter reset (worker restart): after %s, using the after value as the delta\n' \
+				"$prog" "$_sd_label" "$_sd_f" "$_sd_a" >&2
+		fi
+		counter_delta "$_sd_b" "$_sd_a"
+	done
+}
+
+# read_deltas FILE sets d_push, d_pull, d_put and d_get from the four lines
+# status_deltas printed, in that order.
+read_deltas() {
+	{ IFS= read -r d_push; IFS= read -r d_pull; IFS= read -r d_put; IFS= read -r d_get; } < "$1"
+}
+
+# new_segment_keys BEFORE AFTER ORIGIN prints the segment keys (<origin>/log/…)
+# ORIGIN holds in AFTER that BEFORE lacks: the objects a phase's pushes put.
+# awk matches the prefix exactly, so an origin that is a suffix of another
+# cannot pass for it; body keys (<origin>/<digest>) are not segments and stay
+# out. The listing delta is the PUT count because the bucket keeps no counter.
+new_segment_keys() {
+	awk -v p="$3/log/" 'index($0, p) == 1' "$2" | grep -vxF -f "$1" || :
+}
+
+# count_lines TEXT prints how many non-empty lines TEXT holds: the count of a
+# key list, where the empty list (one empty line from printf) is zero.
+count_lines() {
+	printf '%s\n' "$1" | grep -c . || :
+}
+
+# table_row NAME MEASURED PREDICTED UNIT appends one row to the run's table
+# input: the tab-separated shape print_table reads, where a name carrying
+# spaces stays one field.
+table_row() {
+	printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >> "$table_rows_file"
+}
+
+# measure_setup starts the measured table: the rows file every phase appends
+# to, named by state_setup beside the run's other files. The table file the run
+# prints and saves lives in the same state dir, which a dry run removes whole
+# and a real run keeps for the operator.
+measure_setup() {
+	: > "$table_rows_file"
+}
+
+# create_joiner NAME creates one more sandbox mid-run (the fresh join's sp-d),
+# refusing an existing one before creating, and records it: the record stays
+# the whole of what cleanup may destroy.
+create_joiner() {
+	if [ -e "$sandbox_root/$1" ]; then
+		refuse "sandbox $1 already exists; refusing to reuse it (destroy it first)"
+	fi
+	"$sandbox_script" create "$1" || refuse "sandbox create failed for $1"
+	printf '%s\n' "$1" >> "$sandboxes_file"
+}
+
+# day_entry_names START COUNT prints COUNT lines, each one entry's repos key and
+# name: a 64-digit zero-padded id (the hex shape a repos identity carries) and a
+# label plus a per-entry pseudo-random word (the seed's Lehmer generator)
+# repeated to day_body_len bytes, so content and length both vary and the
+# compression the day measures is honest rather than one repeated string.
+day_entry_names() {
+	awk -v start="$1" -v count="$2" -v len="$day_body_len" 'BEGIN {
+		for (i = 0; i < count; i++) {
+			n = start + i
+			x = (n * 48271) % 2147483647
+			w = ""
+			for (c = 0; c < 16; c++) { x = (x * 48271) % 2147483647; w = w sprintf("%c", 97 + (x % 26)) }
+			body = ""
+			while (length(body) < len) body = body w
+			printf "%064d sync-proof day entry %d %s\n", n, n, substr(body, 1, len)
+		}
+	}'
+}
+
+# gen_day_entries writes the day's entries on sp-a: bursts of day_burst config
+# sets, one shared repos key each, then one push exporting the burst. The repos
+# entry is name-only -- valid on every reader (internal/config/repos.go
+# ParseRepos accepts it) and naming no real repository, so the day applies
+# everywhere without touching a binding. db query cannot seed these rows (it is
+# read-only), and reconcile walks the row tables, not the config document's
+# keys: push per burst is the public path that appends the entries.
+gen_day_entries() {
+	_gd_n=0
+	while [ "$_gd_n" -lt "$day_entries" ]; do
+		_gd_left=$(( day_entries - _gd_n ))
+		_gd_burst=$day_burst
+		[ "$_gd_left" -ge "$_gd_burst" ] || _gd_burst=$_gd_left
+		day_entry_names "$(( _gd_n + 1 ))" "$_gd_burst" > "$state_dir/day-names"
+		while read -r _gd_id _gd_name; do
+			_gd_n=$(( _gd_n + 1 ))
+			sb_sh sp-a >> "$state_dir/cd-sets.log" <<EOF
+$sandbox_guard
+relevo config set repos.$_gd_id '{"name":"$_gd_name"}'
+EOF
+		done < "$state_dir/day-names"
+		sb_sh sp-a >> "$state_dir/cd-pushes.jsonl" <<EOF
+$sandbox_guard
+relevo db sync push --json
+EOF
+	done
+}
+
+# phase_migrate_rows feeds the migrate's recorded figures into the table: the
+# Turso bytes and the duration from migrate.json, the object count as the PUT
+# count. The DROP TABLE log push shares the migrate's one turso_sent_bytes
+# delta -- no separate counter exists -- so its row carries n/a and the
+# footnote carries the wording, never a split figure.
+phase_migrate_rows() {
+	_pm_sent=$(migrate_field turso_sent_bytes < "$migrate_file")
+	_pm_recv=$(migrate_field turso_received_bytes < "$migrate_file")
+	_pm_dur=$(migrate_field duration_s < "$migrate_file")
+	_pm_objs=$(migrate_field objects_written < "$migrate_file")
+	for _pm_v in "$_pm_sent" "$_pm_recv" "$_pm_dur" "$_pm_objs"; do
+		case $_pm_v in '' | *[!0-9]*) refuse 'migrate record carries a non-numeric figure' ;; esac
+	done
+	table_row 'migrate sent' "$_pm_sent" n/a bytes
+	table_row 'migrate received' "$_pm_recv" n/a bytes
+	table_row 'drop-push' n/a n/a bytes
+	table_row 'migrate duration' "$_pm_dur" "$migrate_bound_s" s
+	table_row 'migrate puts' "$_pm_objs" n/a count
+}
+
+# phase_next_pull measures b's first pull after the migrate: one pull, the
+# machine's Turso pull and R2 get bytes for that call, and the listing delta's
+# PUT count (a pull writes no segments).
+phase_next_pull() {
+	snap sp-b "$state_dir/np-before.json"
+	bucket_list > "$state_dir/np-keys-before"
+	sb_sh sp-b > "$state_dir/np-pull.json" <<EOF
+$sandbox_guard
+relevo db sync pull --json
+EOF
+	snap sp-b "$state_dir/np-after.json"
+	bucket_list > "$state_dir/np-keys-after"
+	status_deltas sp-b "$state_dir/np-before.json" "$state_dir/np-after.json" > "$state_dir/np-deltas"
+	read_deltas "$state_dir/np-deltas"
+	table_row 'next pull turso' "$d_pull" n/a bytes
+	table_row 'next pull r2get' "$d_get" n/a bytes
+	table_row 'next pull gets' 'n/a (no counter)' n/a count
+	table_row 'next pull lists' 'n/a (no counter)' n/a count
+	_np_puts=$(new_segment_keys "$state_dir/np-keys-before" "$state_dir/np-keys-after" "$origin_b")
+	table_row 'next pull puts' "$(count_lines "$_np_puts")" n/a count
+}
+
+# phase_fresh_join creates sp-d after the migrate and enables it full: the
+# join's total Turso pull and R2 get bytes and its elapsed time. The verdict row
+# asks whether the dropped log table's pages shipped: they would arrive as Turso
+# pull bytes, so a join pulling materially less than the seeded log (under half,
+# the table's own half threshold) shows they did not ship -- the history travels
+# as R2 segments instead. The design predicts they do not ship (0).
+phase_fresh_join() {
+	create_joiner sp-d
+	snap sp-d "$state_dir/fj-before.json"
+	bucket_list > "$state_dir/fj-keys-before"
+	_fj_start=$(date +%s)
+	enable_joiner sp-d ''
+	_fj_end=$(date +%s)
+	snap sp-d "$state_dir/fj-after.json"
+	bucket_list > "$state_dir/fj-keys-after"
+	origin_d=$(record_new_origins | head -n1)
+	[ -n "$origin_d" ] || refuse 'could not learn sp-d origin from the bucket after its join'
+	status_deltas sp-d "$state_dir/fj-before.json" "$state_dir/fj-after.json" > "$state_dir/fj-deltas"
+	read_deltas "$state_dir/fj-deltas"
+	table_row 'fresh join turso' "$d_pull" n/a bytes
+	table_row 'fresh join r2get' "$d_get" n/a bytes
+	table_row 'fresh join time' "$(( _fj_end - _fj_start ))" n/a s
+	table_row 'fresh join gets' 'n/a (no counter)' n/a count
+	table_row 'fresh join lists' 'n/a (no counter)' n/a count
+	_fj_puts=$(new_segment_keys "$state_dir/fj-keys-before" "$state_dir/fj-keys-after" "$origin_d")
+	table_row 'fresh join puts' "$(count_lines "$_fj_puts")" n/a count
+	_fj_seed=$(( log_mb * 1024 * 1024 ))
+	_fj_ship=1
+	if [ "$d_pull" -lt $(( _fj_seed / 2 )) ]; then
+		_fj_ship=0
+	fi
+	table_row 'join log shipped' "$_fj_ship" 0 bool
+}
+
+# phase_idle_poll measures the idle shape: idle_poll_calls consecutive pulls on
+# sp-a with no writes between. Any R2 byte movement flags (the design predicts
+# no R2 operation at all); the operation count has no counter, so its row says
+# so and the bytes row carries the flag. The per-call cost is the total Turso
+# pull over the call count, integer division flooring the remainder.
+phase_idle_poll() {
+	snap sp-a "$state_dir/ip-before.json"
+	bucket_list > "$state_dir/ip-keys-before"
+	_ip_i=0
+	while [ "$_ip_i" -lt "$idle_poll_calls" ]; do
+		sb_sh sp-a >> "$state_dir/ip-pulls.jsonl" <<EOF
+$sandbox_guard
+relevo db sync pull --json
+EOF
+		_ip_i=$(( _ip_i + 1 ))
+	done
+	snap sp-a "$state_dir/ip-after.json"
+	bucket_list > "$state_dir/ip-keys-after"
+	status_deltas sp-a "$state_dir/ip-before.json" "$state_dir/ip-after.json" > "$state_dir/ip-deltas"
+	read_deltas "$state_dir/ip-deltas"
+	table_row 'idle poll turso' "$d_pull" n/a bytes
+	table_row 'idle poll r2' "$(( d_put + d_get ))" 0 bytes
+	table_row 'idle poll r2 ops' 'n/a (no counter)' 0 ops
+	table_row 'idle poll/call' "$(( d_pull / idle_poll_calls ))" n/a bytes
+	table_row 'idle poll gets' 'n/a (no counter)' n/a count
+	table_row 'idle poll lists' 'n/a (no counter)' n/a count
+	_ip_puts=$(new_segment_keys "$state_dir/ip-keys-before" "$state_dir/ip-keys-after" "$migrator_origin")
+	table_row 'idle poll puts' "$(count_lines "$_ip_puts")" n/a count
+}
+
+# phase_day_machine ORIGIN LABEL emits one machine's compressed-day rows from
+# the deltas the caller just read (d_push, d_pull, d_put, d_get): the four
+# counters, the GET/LIST counts with no counter, and the PUT count from the
+# listing delta under the machine's origin.
+phase_day_machine() {
+	table_row "day $2 push" "$d_push" n/a bytes
+	table_row "day $2 pull" "$d_pull" n/a bytes
+	table_row "day $2 r2put" "$d_put" n/a bytes
+	table_row "day $2 r2get" "$d_get" n/a bytes
+	table_row "day $2 gets" 'n/a (no counter)' n/a count
+	table_row "day $2 lists" 'n/a (no counter)' n/a count
+	_dm_puts=$(new_segment_keys "$state_dir/cd-keys-before" "$state_dir/cd-keys-after" "$1")
+	table_row "day $2 puts" "$(count_lines "$_dm_puts")" n/a count
+}
+
+# phase_compressed_day generates the day's entries on sp-a, then b and sp-none
+# pull. The segment count is the listing delta under sp-a's origin (the PUT
+# count), against the design's ~150. sp-none reads the shared mirror only
+# (internal/syncworker/pull.go), so its R2 get bytes and new-object reads must
+# be zero: the get-bytes row asserts 0 and flags any movement; a read count has
+# no counter, and any new-object read would move get bytes, so the bytes row is
+# the zero proof for both. d_get holds sp-none's delta when the zero rows read
+# it, sp-none being the last machine measured.
+phase_compressed_day() {
+	snap sp-a "$state_dir/cd-a-before.json"
+	snap sp-b "$state_dir/cd-b-before.json"
+	snap sp-none "$state_dir/cd-n-before.json"
+	bucket_list > "$state_dir/cd-keys-before"
+	gen_day_entries
+	sb_sh sp-b > "$state_dir/cd-b-pull.json" <<EOF
+$sandbox_guard
+relevo db sync pull --json
+EOF
+	sb_sh sp-none > "$state_dir/cd-n-pull.json" <<EOF
+$sandbox_guard
+relevo db sync pull --json
+EOF
+	snap sp-a "$state_dir/cd-a-after.json"
+	snap sp-b "$state_dir/cd-b-after.json"
+	snap sp-none "$state_dir/cd-n-after.json"
+	bucket_list > "$state_dir/cd-keys-after"
+	_cd_segments=$(new_segment_keys "$state_dir/cd-keys-before" "$state_dir/cd-keys-after" "$migrator_origin")
+	table_row 'day segments' "$(count_lines "$_cd_segments")" "$day_predicted_segments" segments
+	status_deltas sp-a "$state_dir/cd-a-before.json" "$state_dir/cd-a-after.json" > "$state_dir/cd-a-deltas"
+	read_deltas "$state_dir/cd-a-deltas"
+	phase_day_machine "$migrator_origin" a
+	status_deltas sp-b "$state_dir/cd-b-before.json" "$state_dir/cd-b-after.json" > "$state_dir/cd-b-deltas"
+	read_deltas "$state_dir/cd-b-deltas"
+	phase_day_machine "$origin_b" b
+	table_row 'day b total' "$(( d_pull + d_get ))" "$day_full_client_predicted" bytes
+	status_deltas sp-none "$state_dir/cd-n-before.json" "$state_dir/cd-n-after.json" > "$state_dir/cd-n-deltas"
+	read_deltas "$state_dir/cd-n-deltas"
+	phase_day_machine "$origin_none" none
+	table_row 'none zero get' "$d_get" 0 bytes
+	table_row 'none zero reads' 'n/a (no counter)' 0 count
+}
+
+# print_footnotes prints the table's reading notes: the figures with no counter
+# or no design number, the predicted values' sources, and the verdict encodings.
+# They travel with the table (stdout and table.txt) because a row's n/a or 0/1
+# is unreadable without them.
+print_footnotes() {
+	cat <<EOF
+notes:
+- gets/lists/reads counts: n/a (no counter) -- the bucket keeps no GET or LIST
+  counter; the bytes rows are the measured figure, and counts are never
+  estimated from bytes.
+- drop-push: the DROP TABLE log push is inside the commit transaction and
+  shares the call's one turso_sent_bytes delta; no separate counter exists, so
+  it is never split out by estimate.
+- day b total predicted $day_full_client_predicted bytes = 2.3 MB, the midpoint
+  of the design's 1.6-3.0 MB full-client day range (powers of 1000).
+- day segments predicted ~$day_predicted_segments for $day_entries entries; the
+  design's floor is $day_segment_floor and ceiling $day_segment_ceiling. FLAG
+  marks a row more than twice or less than half its prediction.
+- join log shipped: 1 when the fresh join's Turso pull reached half the seeded
+  log bytes, 0 otherwise; the design predicts the dropped log's pages do not
+  ship (0). The history travels as R2 segments instead (fresh join r2get).
+- idle poll/call: the total Turso pull over $idle_poll_calls calls, integer
+  division flooring the remainder; idle poll r2 predicted 0 -- any R2 byte
+  movement flags.
+- none zero get/reads: a history:none machine reads the shared mirror only, so
+  its R2 get bytes and new-object reads are 0; any get-byte movement flags, and
+  a read with no counter is witnessed by the bytes row.
+- rows with n/a predicted carry no design figure (the join-after-year figures
+  are not applicable); their flag column stays empty.
+- a counter reset (worker restart) uses the after value as the delta and is
+  noted on stderr.
+EOF
+}
+
+# measure_phases runs the traffic phases in order after the migrate and prints
+# the measured table: every row through print_table, to stdout and to the run's
+# table.txt -- the deliverable the operator collects.
+measure_phases() {
+	measure_setup
+	phase_migrate_rows
+	phase_next_pull
+	phase_fresh_join
+	phase_idle_poll
+	phase_compressed_day
+	print_table < "$table_rows_file" > "$table_file"
+	print_footnotes >> "$table_file"
+	cat "$table_file"
+}
+
 # destroy_sandboxes destroys only the sandboxes this run recorded creating. A
 # failed destroy is ignored with a note: cleanup must not replace the run's own
 # exit status, and a sandbox left behind is the operator's to remove.
@@ -934,8 +1385,9 @@ destroy_sandboxes() {
 
 # run_phases drives the whole measured run: create the sandboxes, enable them
 # (sp-a first, creating the key), learn each origin from its first push, seed the
-# format-5 log around sp-a's origin, then migrate from sp-a and stop. The traffic
-# phases are a later run; this one ends at the migrate.
+# format-5 log around sp-a's origin, migrate from sp-a, then measure the traffic
+# phases and print the table. Each origin is kept because the listing deltas
+# count segments per origin.
 run_phases() {
 	sync_passphrase=$(gen_passphrase)
 	create_sandboxes
@@ -943,12 +1395,15 @@ run_phases() {
 	migrator_origin=$(record_new_origins | head -n1)
 	[ -n "$migrator_origin" ] || refuse 'could not learn sp-a origin from the bucket after its first push'
 	enable_joiner sp-b ''
-	record_new_origins >/dev/null
+	origin_b=$(record_new_origins | head -n1)
+	[ -n "$origin_b" ] || refuse 'could not learn sp-b origin from the bucket after its first push'
 	enable_joiner sp-none ' --history none'
-	record_new_origins >/dev/null
+	origin_none=$(record_new_origins | head -n1)
+	[ -n "$origin_none" ] || refuse 'could not learn sp-none origin from the bucket after its first push'
 	seed_log "$migrator_origin" "$log_mb"
 	migrate_run
-	printf '%s: run complete (migrate recorded in %s)\n' "$prog" "$migrate_file" >&2
+	measure_phases
+	printf '%s: run complete (migrate recorded in %s, table in %s)\n' "$prog" "$migrate_file" "$table_file" >&2
 }
 
 # print_plan prints the ordered command plan a real run executes, for --dry-run.
@@ -956,7 +1411,8 @@ run_phases() {
 # by stdin, the R2 secret by RELEVO_R2_SECRET, the passphrase for the joiners by
 # RELEVO_SYNC_PASSPHRASE, and the URL/endpoint/bucket/key-id by the scratch env
 # variables. Each in-sandbox snippet starts with the guard line. This plan and
-# the enable/migrate functions above must agree on the verb sequence.
+# the enable/migrate functions and the traffic phases above must agree on the
+# verb sequence.
 print_plan() {
 	printf 'plan: create sandboxes (from this checkout root)\n'
 	# shellcheck disable=SC2086 # the names are a space-separated list to iterate
@@ -993,6 +1449,36 @@ print_plan() {
 	printf '. %s/sp-a/env.sh\n' "$sandbox_root"
 	printf '%s\n' "$sandbox_guard"
 	printf 'relevo db sync migrate --confirm-all-upgraded --json\n'
+	printf 'plan: next pull on sp-b (one pull after the migrate)\n'
+	printf '. %s/sp-b/env.sh\n' "$sandbox_root"
+	printf '%s\n' "$sandbox_guard"
+	printf 'relevo db sync pull --json\n'
+	printf 'plan: fresh join sp-d (create after the migrate; enable full, first push)\n'
+	printf '%s create sp-d\n' "$sandbox_script"
+	printf '. %s/sp-d/env.sh\n' "$sandbox_root"
+	printf '%s\n' "$sandbox_guard"
+	printf 'relevo db sync enable --url "$RELEVO_SCRATCH_SYNC_URL" --token-stdin --r2-endpoint "$RELEVO_SCRATCH_R2_ENDPOINT" --r2-bucket "$RELEVO_SCRATCH_R2_BUCKET" --r2-key-id "$RELEVO_SCRATCH_R2_KEY_ID"\n'
+	printf 'plan: push sp-d (first push)\n'
+	printf '%s\n' "$sandbox_guard"
+	printf 'relevo db sync push --json\n'
+	printf 'plan: idle poll on sp-a: %s consecutive pulls, no writes between\n' "$idle_poll_calls"
+	printf '. %s/sp-a/env.sh\n' "$sandbox_root"
+	printf '%s\n' "$sandbox_guard"
+	printf 'relevo db sync pull --json\n'
+	printf 'plan: compressed day on sp-a: %s entries in bursts of %s (one config set per entry, one push per burst)\n' "$day_entries" "$day_burst"
+	printf '. %s/sp-a/env.sh\n' "$sandbox_root"
+	printf '%s\n' "$sandbox_guard"
+	printf 'relevo config set repos.<64-hex-id> '\''{"name":"sync-proof day entry <n> <varied word>"}'\''\n'
+	printf '%s\n' "$sandbox_guard"
+	printf 'relevo db sync push --json\n'
+	printf 'plan: day pulls (sp-b, then sp-none)\n'
+	printf '. %s/sp-b/env.sh\n' "$sandbox_root"
+	printf '%s\n' "$sandbox_guard"
+	printf 'relevo db sync pull --json\n'
+	printf '. %s/sp-none/env.sh\n' "$sandbox_root"
+	printf '%s\n' "$sandbox_guard"
+	printf 'relevo db sync pull --json\n'
+	printf 'plan: measured table: status snapshots and bucket listings around every phase; rows through print_table to stdout and <state-dir>/table.txt\n'
 }
 
 main() {

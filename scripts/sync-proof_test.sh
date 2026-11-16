@@ -618,6 +618,162 @@ if ! grep -qF 'my log' "$work/table3.actual"; then
 	fail=1
 fi
 
+# --- the measurement primitives: flags, counters, deltas, listing deltas ---
+
+# row_flag: an n/a measured or predicted figure has no ratio, so the flag
+# column stays empty; numeric pairs keep flag_ratio's verdicts.
+src row_flag 21 10
+equals 'row_flag: a numeric pair keeps flag_ratio (flag)' 'FLAG'
+src row_flag 10 10
+equals 'row_flag: a numeric pair keeps flag_ratio (agreement)' ''
+src row_flag 'n/a (no counter)' 0
+equals 'row_flag: a count with no counter does not flag' ''
+src row_flag 5 n/a
+equals 'row_flag: a prediction with no design figure does not flag' ''
+src row_flag n/a n/a
+equals 'row_flag: two n/a figures do not flag' ''
+
+# print_table with n/a figures: the rows render with an empty flag column and
+# the numeric rows keep their flags; the rendering is pinned byte for byte.
+printf 'gets\tn/a (no counter)\tn/a\tcount\nzero\t0\t0\tbytes\nflagged\t300\t100\tbytes\n' > "$work/table-na.in"
+{
+	printf '%-16s %14s %14s %-6s %s\n' name measured predicted unit flag
+	printf '%-16s %14s %14s %-6s %s\n' gets 'n/a (no counter)' n/a count ''
+	printf '%-16s %14s %14s %-6s %s\n' zero 0 0 bytes ''
+	printf '%-16s %14s %14s %-6s %s\n' flagged 300 100 bytes FLAG
+} > "$work/table-na.expected"
+# shellcheck disable=SC2016 # the inner sh expands $1, not this shell
+SYNC_PROOF_SOURCED=1 sh -c '. "$1"; print_table' sh "$script" < "$work/table-na.in" > "$work/table-na.actual" 2> "$work/table-na.err" && got=0 || got=$?
+cat "$work/table-na.actual" "$work/table-na.err" >> "$all"
+status 'the n/a table renders without error' 0
+if ! cmp -s "$work/table-na.expected" "$work/table-na.actual"; then
+	echo "FAIL: print_table mishandles n/a figures:"
+	diff "$work/table-na.expected" "$work/table-na.actual" || :
+	fail=1
+fi
+if [ -s "$work/table-na.err" ]; then
+	echo "FAIL: print_table wrote to stderr on n/a figures: $(cat "$work/table-na.err")"
+	fail=1
+fi
+
+# bytes_field: both extractors read the month's counters from a status
+# document; an absent bytes object or field is zero, not missing.
+printf '%s\n' '{"enabled":true,"bytes":{"turso_push":11,"turso_pull":22,"r2_put":33,"r2_get":44}}' > "$work/bf-full.json"
+printf '%s\n' '{"enabled":false}' > "$work/bf-none.json"
+printf '%s\n' '{"enabled":true,"bytes":{"turso_push":11}}' > "$work/bf-partial.json"
+for tool in jq python3; do
+	command -v "$tool" >/dev/null 2>&1 || continue
+	exta "$tool" bytes_field turso_push "$work/bf-full.json"
+	equals "bytes_field ($tool): turso_push" '11'
+	exta "$tool" bytes_field turso_pull "$work/bf-full.json"
+	equals "bytes_field ($tool): turso_pull" '22'
+	exta "$tool" bytes_field r2_put "$work/bf-full.json"
+	equals "bytes_field ($tool): r2_put" '33'
+	exta "$tool" bytes_field r2_get "$work/bf-full.json"
+	equals "bytes_field ($tool): r2_get" '44'
+	exta "$tool" bytes_field turso_pull "$work/bf-none.json"
+	equals "bytes_field ($tool): an absent bytes object is zero" '0'
+	exta "$tool" bytes_field r2_get "$work/bf-partial.json"
+	equals "bytes_field ($tool): an absent field is zero" '0'
+done
+
+# counter_delta: the delta arithmetic, including the worker-restart reset
+# where the after reading is itself the delta.
+src counter_delta 100 150
+equals 'counter_delta: a rise is the difference' '50'
+src counter_delta 150 100
+equals 'counter_delta: a fall is a reset, the after value is the delta' '100'
+src counter_delta 100 100
+equals 'counter_delta: equal readings moved nothing' '0'
+src counter_delta 0 0
+equals 'counter_delta: two zeros moved nothing' '0'
+src counter_delta 0 5
+equals 'counter_delta: a first reading counts from zero' '5'
+
+# status_deltas: the four deltas in ByteCounters' order from canned status
+# documents, the reset note on stderr, and the refusals for an empty snapshot
+# or a non-counter value.
+printf '%s\n' '{"bytes":{"turso_push":100,"turso_pull":200,"r2_put":300,"r2_get":400}}' > "$work/sd-before.json"
+printf '%s\n' '{"bytes":{"turso_push":150,"turso_pull":260,"r2_put":300,"r2_get":490}}' > "$work/sd-after.json"
+srcf status_deltas sp-x "$work/sd-before.json" "$work/sd-after.json"
+status 'status_deltas succeeds' 0
+equals 'status_deltas prints the four deltas in order' "$(printf '50\n60\n0\n90')"
+printf '%s\n' '{"bytes":{"turso_push":150,"turso_pull":50,"r2_put":300,"r2_get":490}}' > "$work/sd-reset.json"
+export SD_BEFORE="$work/sd-before.json" SD_RESET="$work/sd-reset.json" SD_ERR="$work/sd-reset.err"
+srcf eval 'status_deltas sp-x "$SD_BEFORE" "$SD_RESET" 2>"$SD_ERR"'
+status 'status_deltas succeeds across a reset' 0
+equals 'the reset delta is the after value' "$(printf '50\n50\n0\n90')"
+log_has "$SD_ERR" 'sp-x turso_pull counter reset (worker restart)' 'the reset is noted on stderr'
+printf '%s\n' '{"enabled":false}' > "$work/sd-nobytes.json"
+srcf status_deltas sp-x "$work/sd-nobytes.json" "$work/sd-after.json"
+equals 'an absent bytes object reads as a zero baseline' "$(printf '150\n260\n300\n490')"
+: > "$work/sd-empty.json"
+srcf status_deltas sp-x "$work/sd-empty.json" "$work/sd-after.json"
+status 'an empty before snapshot is refused' 2
+carries 'the empty-snapshot refusal names the before side' 'empty (before)'
+srcf status_deltas sp-x "$work/sd-before.json" "$work/sd-empty.json"
+status 'an empty after snapshot is refused' 2
+carries 'the empty-snapshot refusal names the after side' 'empty (after)'
+printf '%s\n' '{"bytes":{"turso_push":"abc"}}' > "$work/sd-bad.json"
+srcf status_deltas sp-x "$work/sd-bad.json" "$work/sd-after.json"
+status 'a non-counter status value is refused' 2
+carries 'the non-counter refusal names the field' 'not counters: turso_push'
+
+# new_segment_keys: the listing delta under one origin, segment keys only.
+printf 'origin-a/log/000000000001\norigin-a/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\norigin-b/log/000000000001\n' > "$work/nsk-before"
+printf 'origin-a/log/000000000001\norigin-a/log/000000000002\norigin-a/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\norigin-b/log/000000000001\norigin-b/log/000000000002\n' > "$work/nsk-after"
+srcf new_segment_keys "$work/nsk-before" "$work/nsk-after" origin-a
+status 'new_segment_keys succeeds' 0
+equals 'new_segment_keys prints only the new segment keys of the origin' 'origin-a/log/000000000002'
+srcf new_segment_keys "$work/nsk-before" "$work/nsk-after" origin-b
+equals 'new_segment_keys scopes to the requested origin' 'origin-b/log/000000000002'
+srcf new_segment_keys "$work/nsk-after" "$work/nsk-after" origin-a
+equals 'an unchanged listing has no new segments' ''
+: > "$work/nsk-empty"
+srcf new_segment_keys "$work/nsk-empty" "$work/nsk-after" origin-a
+equals 'an empty before listing counts every segment as new' "$(printf 'origin-a/log/000000000001\norigin-a/log/000000000002')"
+srcf new_segment_keys "$work/nsk-before" "$work/nsk-after" origin-c
+equals 'an origin with no objects has no new segments' ''
+# A suffix origin must not pass for the requested one: the match is a prefix.
+printf 'xorigin-a/log/000000000009\n' > "$work/nsk-suffix"
+srcf new_segment_keys "$work/nsk-empty" "$work/nsk-suffix" origin-a
+equals 'an origin that is a suffix of another is not the requested one' ''
+src count_lines ''
+equals 'count_lines of the empty list is zero' '0'
+src count_lines "$(printf 'a\nb')"
+equals 'count_lines counts the non-empty lines' '2'
+
+# day_entry_names: one line per entry, a 64-digit id and a varied name of the
+# modelled length; the last burst's partial count is honoured.
+src day_entry_names 1 3
+status 'day_entry_names succeeds' 0
+if [ "$(printf '%s\n' "$out" | wc -l)" -ne 3 ]; then
+	echo "FAIL: day_entry_names printed the wrong line count: $out"
+	fail=1
+fi
+carries 'day_entry_names labels entry 1' 'sync-proof day entry 1 '
+carries 'day_entry_names labels entry 3' 'sync-proof day entry 3 '
+if ! printf '%s\n' "$out" | awk '{
+	id = $1
+	if (length(id) != 64 || id ~ /[^0-9]/) { print "bad id: " id; bad = 1 }
+	name = substr($0, 66)
+	if (length(name) < 200) { print "short name: " length(name); bad = 1 }
+	seen[name]++
+} END {
+	for (n in seen) if (seen[n] > 1) { print "repeated name"; bad = 1 }
+	if (bad) exit 1
+}'; then
+	echo "FAIL: day_entry_names ids or names break the model: $out"
+	fail=1
+fi
+src day_entry_names 4984 17
+if [ "$(printf '%s\n' "$out" | wc -l)" -ne 17 ]; then
+	echo "FAIL: the last burst printed the wrong line count: $(printf '%s\n' "$out" | wc -l) (want 17)"
+	fail=1
+fi
+carries 'the last burst starts at entry 4984' 'sync-proof day entry 4984 '
+carries 'the last burst ends at entry 5000' 'sync-proof day entry 5000 '
+
 # --- preflight: tool resolution ---
 
 # No relevo on PATH: the quota read refuses before anything is created.
@@ -1056,7 +1212,7 @@ guard_line='test -n "$RELEVO_SANDBOX" || { echo '\''not in a sandbox'\'' >&2; ex
 before=$(find "$work/tmp" -mindepth 1 -maxdepth 1 | sort)
 sp --env "$work/preflight.env" --log-mb 20 --dry-run
 status 'the plan dry run exits 0' 0
-ordered 'the plan prints creates, enables, pushes, seed and migrate in order' \
+ordered 'the plan prints creates, enables, pushes, seed, migrate and traffic phases in order' \
 	'scripts/relevo-sandbox.sh create sp-a' \
 	'scripts/relevo-sandbox.sh create sp-b' \
 	'scripts/relevo-sandbox.sh create sp-none' \
@@ -1072,7 +1228,16 @@ ordered 'the plan prints creates, enables, pushes, seed and migrate in order' \
 	'plan: push sp-none' \
 	'plan: seed format-5' \
 	'plan: migrate from sp-a' \
-	'relevo db sync migrate --confirm-all-upgraded --json'
+	'relevo db sync migrate --confirm-all-upgraded --json' \
+	'plan: next pull on sp-b' \
+	'plan: fresh join sp-d' \
+	'scripts/relevo-sandbox.sh create sp-d' \
+	'plan: push sp-d' \
+	'plan: idle poll on sp-a' \
+	'plan: compressed day on sp-a' \
+	'relevo config set repos.' \
+	'plan: day pulls' \
+	'plan: measured table'
 carries 'the plan carries the guard line' "$guard_line"
 carries 'the plan names the token stdin source' 'token: stdin'
 carries 'the plan names the R2 secret env source' 'r2.secret: RELEVO_R2_SECRET'
@@ -1080,6 +1245,9 @@ carries 'the plan names the joiner passphrase env source' 'passphrase: RELEVO_SY
 carries 'the plan pins the seed batch count for 20 MiB' '41 batches of 500 rows (--log-mb 20)'
 carries 'the plan migrate line carries the confirm flag' 'relevo db sync migrate --confirm-all-upgraded --json'
 carries 'the plan none enable appends --history none last' '--r2-key-id "$RELEVO_SCRATCH_R2_KEY_ID" --history none'
+carries 'the plan pins the idle poll call count' '60 consecutive pulls, no writes between'
+carries 'the plan pins the day burst model' '5000 entries in bursts of 33 (one config set per entry, one push per burst)'
+carries 'the plan names the table destination' '<state-dir>/table.txt'
 absent 'the plan echoes no sentinel token' "$s_token"
 absent 'the plan echoes no sentinel secret' "$s_secret"
 absent 'the plan echoes no sentinel key id' "$s_keyid"
@@ -1196,12 +1364,15 @@ fi
 # --- the dry-run plan agrees with the real enable snippets ---
 
 # The plan follows the real run, never the reverse: the enable/unlock/push
-# verb lines extracted from the dry-run plan must equal, in order, the verbs
-# the real enables hand to sb_sh (the records above). The migrate verb is
-# pinned by the plan-order assertion; the enables are what this compares.
+# verb lines of the plan's setup section (through the migrate verb) must
+# equal, in order, the verbs the real setup enables hand to sb_sh (the
+# records above). The fresh join's enable has its own agreement below and
+# the day's pushes are pinned by the gen_day_entries capture; the migrate
+# verb is pinned by the plan-order assertion.
 sp --env "$work/preflight.env" --log-mb 20 --dry-run
 status 'the agreement dry run exits 0' 0
-printf '%s\n' "$out" | grep -E '^relevo db sync (enable|unlock|push) ' > "$work/plan-verbs" || :
+printf '%s\n' "$out" > "$work/plan-out"
+sed -n '1,/^relevo db sync migrate/p' "$work/plan-out" | grep -E '^relevo db sync (enable|unlock|push) ' > "$work/plan-verbs" || :
 : > "$work/real-verbs"
 for i in 1 2 3 4 5 6 7; do
 	grep -o 'relevo db sync .*' "$CAP_DIR/snippet-$i" >> "$work/real-verbs" || :
@@ -1217,7 +1388,7 @@ reset_fixtures
 
 # The real run_phases with every phase stubbed to log its name and arguments:
 # the logged order is the run's contract (create, enable sp-a and learn its
-# origin, enable the joiners, seed around that origin, migrate). The
+# origin, enable the joiners, seed around that origin, migrate, measure). The
 # record_new_origins stub answers the origin the seed must receive, so the
 # log also pins that the seed's origin is the one learned from the bucket.
 export PHASE_LOG="$work/phase-log"
@@ -1231,6 +1402,7 @@ enable_joiner() { printf "enable_joiner %s [%s]\n" "$1" "$2" >> "$PHASE_LOG"; }
 record_new_origins() { printf "record_new_origins\n" >> "$PHASE_LOG"; printf "origin-from-record\n"; }
 seed_log() { printf "seed_log %s %s\n" "$1" "$2" >> "$PHASE_LOG"; }
 migrate_run() { printf "migrate_run\n" >> "$PHASE_LOG"; }
+measure_phases() { printf "measure_phases\n" >> "$PHASE_LOG"; }
 log_mb=20
 run_phases
 printf "%s" "$sync_passphrase" > "$PHASE_PASS"
@@ -1248,6 +1420,7 @@ enable_joiner sp-none [ --history none]
 record_new_origins
 seed_log origin-from-record 20
 migrate_run
+measure_phases
 EOF
 if ! cmp -s "$work/phase-log-want" "$PHASE_LOG"; then
 	echo "FAIL: run_phases orders create, enables, seed and migrate:"
@@ -1512,6 +1685,578 @@ carries 'migrate reports the sent bytes' 'turso_sent_bytes=100'
 carries 'migrate reports the received bytes' 'turso_received_bytes=200'
 carries 'migrate reports the duration bound' 'bound=1800s'
 unset MR_DOC
+
+# --- the traffic phases: duration record, joiner create, day generation ---
+
+# migrate_run records the duration in the migrate document: the verb's own
+# document has no duration field, and the table's duration row reads the
+# record alone. Both extractors write it; a record that cannot be written
+# refuses rather than leaving the table a missing figure.
+export MR_DOC='{"already_migrated":false,"rows":41,"turso_sent_bytes":100,"turso_received_bytes":200,"objects_written":7,"r2_put_bytes":300,"r2_get_bytes":50}'
+srcf eval 'sb_sh() { printf "%s" "$MR_DOC"; }; migrate_run; cat "$migrate_file"'
+status 'migrate_run with the duration record succeeds' 0
+carries 'the migrate record carries duration_s' '"duration_s":'
+srcf eval 'json_tool=python3; sb_sh() { printf "%s" "$MR_DOC"; }; migrate_run; cat "$migrate_file"'
+status 'migrate_run records the duration through python3 too' 0
+carries 'the python3 migrate record carries duration_s' '"duration_s":'
+unset MR_DOC
+srcf eval 'rm -f "$migrate_file"; migrate_add_duration 7'
+status 'a duration record that cannot be written is refused' 2
+carries 'the duration refusal names the record' 'could not record the duration'
+
+# create_joiner: the mid-run creation refuses reuse before creating, and
+# records what it creates (the whole of what cleanup may destroy).
+mkdir -p "$work/reuse-root-d/sp-d"
+export FAKE_ROOT="$work/reuse-root-d"
+: > "$FAKE_SB_LOG"
+srcf eval 'sandbox_root=$FAKE_ROOT; sandbox_script=$FAKE_SB; create_joiner sp-d'
+status 'create_joiner refuses to reuse an existing sandbox' 2
+carries 'the joiner reuse refusal names the sandbox' 'sp-d'
+if [ -s "$FAKE_SB_LOG" ]; then
+	echo "FAIL: create_joiner called the sandbox script despite the reuse refusal: $(cat "$FAKE_SB_LOG")"
+	fail=1
+fi
+mkdir -p "$work/fresh-root-d"
+export FAKE_ROOT="$work/fresh-root-d"
+: > "$FAKE_SB_LOG"
+srcf eval 'sandbox_root=$FAKE_ROOT; sandbox_script=$FAKE_SB; create_joiner sp-d; cat "$sandboxes_file"'
+status 'create_joiner succeeds from an empty root' 0
+equals 'create_joiner records the joiner sandbox' 'sp-d'
+log_has "$FAKE_SB_LOG" 'create sp-d' 'create_joiner creates sp-d'
+# A failed create refuses before anything is recorded: the record append
+# follows the create, so a refusal never licenses destroying a sandbox this
+# run did not create.
+export FAKE_ROOT="$work/fresh-root-d"
+export FAKE_SB_EXIT=1
+srcf eval 'sandbox_root=$FAKE_ROOT; sandbox_script=$FAKE_SB; create_joiner sp-d2'
+status 'a failed joiner create is refused' 2
+carries 'the failed-create refusal names the sandbox' 'sandbox create failed for sp-d2'
+unset FAKE_SB_EXIT
+
+# The real gen_day_entries against a recording sb_sh: one record per call, in
+# call order. The day is 5000 config sets (one shared repos key each) in bursts
+# of 33, one push per burst -- 152 pushes, the last burst carrying 17 sets.
+mkdir -p "$work/day-capture"
+export DAY_CAP="$work/day-capture"
+srcf eval '
+sb_sh() {
+	_dc_n=$((_dc_n + 1))
+	IFS= read -r _dc_guard
+	IFS= read -r _dc_line
+	printf "%s\n%s\n" "$_dc_guard" "$_dc_line" > "$DAY_CAP/snippet-$_dc_n"
+	case $_dc_line in
+	"relevo config set repos."*)
+		printf "SET %s\n" "${_dc_line#relevo config set repos.}" >> "$DAY_CAP/log"
+		;;
+	"relevo db sync push --json")
+		printf "PUSH\n" >> "$DAY_CAP/log"
+		;;
+	*)
+		printf "OTHER\n" >> "$DAY_CAP/log"
+		;;
+	esac
+}
+_dc_n=0
+gen_day_entries
+printf "%s" "$_dc_n" > "$DAY_CAP/count"
+'
+status 'gen_day_entries runs against the recording sb_sh' 0
+if [ "$(cat "$DAY_CAP/count")" -ne 5152 ]; then
+	echo "FAIL: gen_day_entries made the wrong number of calls: $(cat "$DAY_CAP/count") (want 5152 = 5000 sets + 152 pushes)"
+	fail=1
+fi
+if [ "$(grep -c '^SET ' "$DAY_CAP/log")" -ne 5000 ]; then
+	echo "FAIL: gen_day_entries made the wrong number of config sets: $(grep -c '^SET ' "$DAY_CAP/log") (want 5000)"
+	fail=1
+fi
+if [ "$(grep -c '^PUSH$' "$DAY_CAP/log")" -ne 152 ]; then
+	echo "FAIL: gen_day_entries made the wrong number of pushes: $(grep -c '^PUSH$' "$DAY_CAP/log") (want 152)"
+	fail=1
+fi
+if grep -q '^OTHER' "$DAY_CAP/log"; then
+	echo "FAIL: gen_day_entries emitted an unexpected verb"
+	fail=1
+fi
+# The burst order: 33 sets then a push, 151 times, then 17 sets and a push.
+if ! awk '
+/^SET / { run++; next }
+/^PUSH$/ {
+	if (bursts < 151 && run != 33) { print "burst " bursts + 1 " carried " run " sets"; bad = 1 }
+	if (bursts == 151 && run != 17) { print "last burst carried " run " sets"; bad = 1 }
+	bursts++; run = 0; next
+}
+END { if (bursts != 152 || run != 0) bad = 1; if (bad) exit 1 }
+' "$DAY_CAP/log"; then
+	echo "FAIL: gen_day_entries burst order breaks the model"
+	fail=1
+fi
+# The ids run 1..5000 in order, each a 64-digit zero-padded number.
+if ! grep '^SET ' "$DAY_CAP/log" | awk '{
+	n++
+	id = $2
+	if (length(id) != 64 || id ~ /[^0-9]/ || id + 0 != n) { print "bad id at " n ": " id; bad = 1 }
+} END { if (n != 5000 || bad) exit 1 }'; then
+	echo "FAIL: gen_day_entries ids are not the sequential 1..5000"
+	fail=1
+fi
+# Every day snippet starts with the exact guard line.
+if ! awk -v g="$guard_line" 'FNR == 1 && $0 != g { print FILENAME; bad = 1 } END { if (bad) exit 1 }' "$DAY_CAP"/snippet-* > "$work/day-guard-bad"; then
+	echo "FAIL: every day snippet starts with the exact guard line: $(cat "$work/day-guard-bad")"
+	fail=1
+fi
+# One set snippet, byte for byte: the guard, then the config set with the
+# entry's id and name-only repos value the generator printed.
+src day_entry_names 1 1
+_dn_id=${out%% *}
+_dn_name=${out#* }
+{
+	printf '%s\n' "$guard_line"
+	printf 'relevo config set repos.%s '\''{"name":"%s"}'\''\n' "$_dn_id" "$_dn_name"
+} > "$work/day-want-1"
+if ! cmp -s "$work/day-want-1" "$DAY_CAP/snippet-1"; then
+	echo "FAIL: the first day set snippet matches the generator's entry byte for byte:"
+	diff "$work/day-want-1" "$DAY_CAP/snippet-1" || :
+	fail=1
+fi
+# The burst's push snippet is the guard and the push verb, nothing else.
+if ! cmp -s "$work/enable-want-3" "$DAY_CAP/snippet-34"; then
+	echo "FAIL: the day push snippet is the guard and the push verb:"
+	diff "$work/enable-want-3" "$DAY_CAP/snippet-34" || :
+	fail=1
+fi
+cat "$DAY_CAP"/snippet-* >> "$all"
+for s in "$s_url" "$s_token" "$s_endpoint" "$s_bucket" "$s_keyid" "$s_secret"; do
+	if grep -qF -- "$s" "$DAY_CAP"/snippet-*; then
+		echo "FAIL: the day snippets carry no sentinel secret value (\"$s\" present)"
+		fail=1
+	fi
+done
+
+# --- the fresh join's enable, captured and agreed with the plan ---
+
+# The fresh join enables sp-d full: the same snippet shape as sp-b's enable
+# (no --history), then the first push. The plan's fresh-join section must
+# agree with these records verb for verb.
+mkdir -p "$work/join-capture"
+export JOIN_CAP="$work/join-capture"
+srcf eval '
+sb_sh() {
+	_jc_n=$((_jc_n + 1))
+	printf "%s\n" "$1" >> "$JOIN_CAP/names"
+	cat > "$JOIN_CAP/snippet-$_jc_n"
+}
+_jc_n=0
+sync_passphrase=capture-passphrase-7e2d
+enable_joiner sp-d ""
+'
+status 'the fresh join enable runs against the recording sb_sh' 0
+if [ ! -f "$JOIN_CAP/snippet-2" ] || [ -f "$JOIN_CAP/snippet-3" ]; then
+	echo "FAIL: the fresh join enable produces exactly two snippets"
+	fail=1
+fi
+printf 'sp-d\nsp-d\n' > "$work/join-names-want"
+if ! cmp -s "$work/join-names-want" "$JOIN_CAP/names"; then
+	echo "FAIL: the fresh join enable addresses sp-d twice:"
+	diff "$work/join-names-want" "$JOIN_CAP/names" || :
+	fail=1
+fi
+cp "$work/enable-want-4" "$work/join-want-1"
+cp "$work/enable-want-3" "$work/join-want-2"
+if ! cmp -s "$work/join-want-1" "$JOIN_CAP/snippet-1"; then
+	echo "FAIL: the fresh join enables sp-d with full history:"
+	diff "$work/join-want-1" "$JOIN_CAP/snippet-1" || :
+	fail=1
+fi
+if ! cmp -s "$work/join-want-2" "$JOIN_CAP/snippet-2"; then
+	echo "FAIL: the fresh join drives its first push:"
+	diff "$work/join-want-2" "$JOIN_CAP/snippet-2" || :
+	fail=1
+fi
+cat "$JOIN_CAP"/snippet-* >> "$all"
+for s in "$s_url" "$s_token" "$s_endpoint" "$s_bucket" "$s_keyid" "$s_secret"; do
+	if grep -qF -- "$s" "$JOIN_CAP"/snippet-*; then
+		echo "FAIL: the fresh join snippets carry no sentinel secret value (\"$s\" present)"
+		fail=1
+	fi
+done
+if grep -qF -- 'capture-passphrase-7e2d' "$JOIN_CAP"/snippet-*; then
+	echo "FAIL: the fresh join snippets never inline the passphrase"
+	fail=1
+fi
+sp --env "$work/preflight.env" --log-mb 20 --dry-run
+status 'the fresh-join agreement dry run exits 0' 0
+printf '%s\n' "$out" | sed -n '/^plan: fresh join sp-d/,/^plan: idle poll/p' | grep -E '^relevo db sync (enable|unlock|push) ' > "$work/join-plan-verbs" || :
+: > "$work/join-real-verbs"
+for i in 1 2; do
+	grep -o 'relevo db sync .*' "$JOIN_CAP/snippet-$i" >> "$work/join-real-verbs" || :
+done
+if ! cmp -s "$work/join-real-verbs" "$work/join-plan-verbs"; then
+	echo "FAIL: the dry-run plan and the real fresh join enable agree on the verb sequence:"
+	diff "$work/join-real-verbs" "$work/join-plan-verbs" || :
+	fail=1
+fi
+reset_fixtures
+
+# An origin the bucket never names refuses the run: the listing deltas count
+# segments per origin, so an unknown origin would measure nothing silently.
+# The call counter lives in a file: record_new_origins runs in a command
+# substitution, so a shell variable would reset on every call.
+export EO_EMPTY_AT=2
+export EO_COUNT="$work/eo-count"
+rm -f "$EO_COUNT"
+srcf eval '
+gen_passphrase() { printf "p"; }
+create_sandboxes() { :; }
+enable_first() { :; }
+enable_joiner() { :; }
+seed_log() { :; }
+migrate_run() { :; }
+measure_phases() { :; }
+record_new_origins() {
+	_eo_n=$(cat "$EO_COUNT" 2>/dev/null || printf 0)
+	_eo_n=$((_eo_n + 1))
+	printf "%s" "$_eo_n" > "$EO_COUNT"
+	if [ "$_eo_n" = "$EO_EMPTY_AT" ]; then return 0; fi
+	printf "origin-%s\n" "$_eo_n"
+}
+log_mb=20
+run_phases
+'
+status 'an empty sp-b origin refuses the run' 2
+carries 'the sp-b origin refusal names the machine' 'could not learn sp-b origin'
+export EO_EMPTY_AT=3
+rm -f "$EO_COUNT"
+srcf eval '
+gen_passphrase() { printf "p"; }
+create_sandboxes() { :; }
+enable_first() { :; }
+enable_joiner() { :; }
+seed_log() { :; }
+migrate_run() { :; }
+measure_phases() { :; }
+record_new_origins() {
+	_eo_n=$(cat "$EO_COUNT" 2>/dev/null || printf 0)
+	_eo_n=$((_eo_n + 1))
+	printf "%s" "$_eo_n" > "$EO_COUNT"
+	if [ "$_eo_n" = "$EO_EMPTY_AT" ]; then return 0; fi
+	printf "origin-%s\n" "$_eo_n"
+}
+log_mb=20
+run_phases
+'
+status 'an empty sp-none origin refuses the run' 2
+carries 'the sp-none origin refusal names the machine' 'could not learn sp-none origin'
+srcf eval '
+create_joiner() { :; }
+snap() { :; }
+bucket_list() { :; }
+enable_joiner() { :; }
+record_new_origins() { :; }
+log_mb=20
+phase_fresh_join
+'
+status 'an empty sp-d origin refuses the fresh join' 2
+carries 'the sp-d origin refusal names the join' 'could not learn sp-d origin'
+
+# A migrate record without the duration (or with a non-numeric figure) refuses
+# the table rather than printing a row the flag arithmetic cannot read.
+srcf eval 'measure_setup; printf "%s" "{\"rows\":1}" > "$migrate_file"; phase_migrate_rows'
+status 'a migrate record without a duration is refused' 2
+carries 'the broken-record refusal names the figure' 'non-numeric figure'
+
+# --- the measured run: the full phase list against canned verbs ---
+
+# The real run_phases and measure_phases with the setup phases stubbed and
+# sb_sh answering canned verbs: status snapshots come from per-machine queues
+# (one document per snap, in call order), a push lands one new segment under
+# sp-a's origin, pulls and config sets are logged. The table is the
+# deliverable: every required row, the flag verdicts, the reset note, the call
+# counts, and table.txt agreeing with stdout. Every snippet is two lines (the
+# guard and the verb), so the stub reads them without a subprocess and checks
+# the guard itself.
+export MEAS_DIR="$work/meas"
+export BUCKET_KEYS="$work/bucket-keys"
+export GUARD_LINE="$guard_line"
+meas_body='
+gen_passphrase() { printf "meas-pass"; }
+create_sandboxes() { printf "create_sandboxes\n" >> "$MEAS_DIR/phases"; }
+create_joiner() { printf "create_joiner %s\n" "$1" >> "$MEAS_DIR/phases"; }
+enable_first() { printf "enable_first\n" >> "$MEAS_DIR/phases"; }
+enable_joiner() { printf "enable_joiner %s [%s]\n" "$1" "$2" >> "$MEAS_DIR/phases"; }
+seed_log() { printf "seed_log %s %s\n" "$1" "$2" >> "$MEAS_DIR/phases"; }
+migrate_run() { printf "migrate_run\n" >> "$MEAS_DIR/phases"; printf "%s" "$MIG_DOC" > "$migrate_file"; }
+record_new_origins() {
+	_mn=$(cat "$MEAS_DIR/rn-n" 2>/dev/null || printf 0)
+	_mn=$((_mn + 1))
+	printf "%s" "$_mn" > "$MEAS_DIR/rn-n"
+	printf "record_new_origins\n" >> "$MEAS_DIR/phases"
+	case $_mn in
+	1) printf "origin-a\n" ;;
+	2) printf "origin-b\n" ;;
+	3) printf "origin-none\n" ;;
+	4) printf "origin-d\n" ;;
+	esac
+}
+sb_sh() {
+	_ms_name=$1
+	IFS= read -r _ms_guard
+	IFS= read -r _ms_line
+	if [ "$_ms_guard" != "$GUARD_LINE" ]; then
+		printf "bad guard for %s\n" "$_ms_name" >> "$MEAS_DIR/fail"
+		return 1
+	fi
+	printf "%s\n%s\n" "$_ms_guard" "$_ms_line" >> "$MEAS_DIR/snippets"
+	case $_ms_line in
+	"relevo db sync status --json")
+		_mq=$(cat "$MEAS_DIR/$_ms_name-n" 2>/dev/null || printf 0)
+		_mq=$((_mq + 1))
+		printf "%s" "$_mq" > "$MEAS_DIR/$_ms_name-n"
+		cat "$MEAS_DIR/$_ms_name-status-$_mq"
+		;;
+	"relevo db sync pull --json")
+		printf "PULL %s\n" "$_ms_name" >> "$MEAS_DIR/verbs"
+		printf "{\"ok\":true}\n"
+		;;
+	"relevo db sync push --json")
+		_mp=$(cat "$MEAS_DIR/push-n" 2>/dev/null || printf 0)
+		_mp=$((_mp + 1))
+		printf "%s" "$_mp" > "$MEAS_DIR/push-n"
+		printf "origin-a/log/%012d\n" "$_mp" >> "$BUCKET_KEYS"
+		printf "PUSH %s\n" "$_ms_name" >> "$MEAS_DIR/verbs"
+		printf "{\"ok\":true}\n"
+		;;
+	"relevo config set repos."*)
+		printf "SET %s\n" "$_ms_name" >> "$MEAS_DIR/verbs"
+		;;
+	*)
+		printf "unexpected snippet for %s\n" "$_ms_name" >> "$MEAS_DIR/fail"
+		return 1
+		;;
+	esac
+}
+log_mb=20
+run_phases
+'
+# meas_row PATTERN sets out to the first table row whose name matches, so the
+# flag and value assertions read one row, not the whole table.
+meas_row() {
+	out=$(printf '%s\n' "$_meas_out" | grep -E "^$1" | head -n1)
+}
+
+# Scenario A: a 3x day total flags, a 1.5x duration does not, the idle poll
+# resets its pull counter (the after value is the delta, noted), the none
+# machine moves no R2 byte, and the fresh join pulls far under half the seed
+# (the dropped log did not ship, agreeing with the prediction).
+reset_fixtures
+rm -rf "$MEAS_DIR"
+mkdir -p "$MEAS_DIR"
+export MIG_DOC='{"already_migrated":false,"rows":20480,"turso_sent_bytes":21000000,"turso_received_bytes":21000000,"objects_written":80,"r2_put_bytes":20000000,"r2_get_bytes":1000,"duration_s":2700}'
+printf '%s\n' '{"enabled":true,"bytes":{"turso_push":2000000,"turso_pull":5000,"r2_put":800000,"r2_get":100}}' > "$MEAS_DIR/sp-a-status-1"
+printf '%s\n' '{"enabled":true,"bytes":{"turso_push":2000000,"turso_pull":2000,"r2_put":800000,"r2_get":100}}' > "$MEAS_DIR/sp-a-status-2"
+printf '%s\n' '{"enabled":true,"bytes":{"turso_push":2000000,"turso_pull":2000,"r2_put":800000,"r2_get":100}}' > "$MEAS_DIR/sp-a-status-3"
+printf '%s\n' '{"enabled":true,"bytes":{"turso_push":5000000,"turso_pull":2000,"r2_put":2400000,"r2_get":100}}' > "$MEAS_DIR/sp-a-status-4"
+printf '%s\n' '{"enabled":true,"bytes":{"turso_push":100,"turso_pull":1000,"r2_put":0,"r2_get":500}}' > "$MEAS_DIR/sp-b-status-1"
+printf '%s\n' '{"enabled":true,"bytes":{"turso_push":100,"turso_pull":1500,"r2_put":0,"r2_get":900}}' > "$MEAS_DIR/sp-b-status-2"
+printf '%s\n' '{"enabled":true,"bytes":{"turso_push":100,"turso_pull":1500,"r2_put":0,"r2_get":900}}' > "$MEAS_DIR/sp-b-status-3"
+printf '%s\n' '{"enabled":true,"bytes":{"turso_push":100,"turso_pull":1001500,"r2_put":0,"r2_get":5900900}}' > "$MEAS_DIR/sp-b-status-4"
+printf '%s\n' '{"enabled":true,"bytes":{"turso_push":700,"turso_pull":3000,"r2_put":0,"r2_get":0}}' > "$MEAS_DIR/sp-none-status-1"
+printf '%s\n' '{"enabled":true,"bytes":{"turso_push":700,"turso_pull":300300,"r2_put":0,"r2_get":0}}' > "$MEAS_DIR/sp-none-status-2"
+printf '%s\n' '{"enabled":false}' > "$MEAS_DIR/sp-d-status-1"
+printf '%s\n' '{"enabled":true,"bytes":{"turso_push":5000,"turso_pull":100000,"r2_put":30000,"r2_get":20000000}}' > "$MEAS_DIR/sp-d-status-2"
+find "$work/tmp" -mindepth 1 -maxdepth 1 | sort > "$work/meas-dirs-before"
+srcf eval "$meas_body"
+status 'the measured run exits 0' 0
+carries 'the measured run reports the run complete' 'run complete'
+_meas_out=$out
+if [ -s "$MEAS_DIR/fail" ]; then
+	echo "FAIL: the measured run's stub rejected a snippet: $(cat "$MEAS_DIR/fail")"
+	fail=1
+fi
+# Every required row name is present in the printed table.
+for _mr_name in 'migrate sent' 'migrate received' 'drop-push' 'migrate duration' 'migrate puts' \
+	'next pull turso' 'next pull r2get' 'next pull gets' 'next pull lists' 'next pull puts' \
+	'fresh join turso' 'fresh join r2get' 'fresh join time' 'fresh join gets' 'fresh join lists' 'fresh join puts' \
+	'join log shipped' \
+	'idle poll turso' 'idle poll r2' 'idle poll r2 ops' 'idle poll/call' 'idle poll gets' 'idle poll lists' 'idle poll puts' \
+	'day segments' \
+	'day a push' 'day a pull' 'day a r2put' 'day a r2get' 'day a gets' 'day a lists' 'day a puts' \
+	'day b push' 'day b pull' 'day b r2put' 'day b r2get' 'day b gets' 'day b lists' 'day b puts' 'day b total' \
+	'day none push' 'day none pull' 'day none r2put' 'day none r2get' 'day none gets' 'day none lists' 'day none puts' \
+	'none zero get' 'none zero reads'; do
+	if ! printf '%s\n' "$_meas_out" | grep -q "^$_mr_name"; then
+		echo "FAIL: the measured table lacks the row: $_mr_name"
+		fail=1
+	fi
+done
+out=$_meas_out
+ordered 'the measured table rows follow the phase order' \
+	'migrate sent' 'next pull turso' 'fresh join turso' 'idle poll turso' 'day segments' 'day a push' 'day b total' 'none zero get'
+# The DROP-push wording travels with the table.
+carries 'the table carries the DROP-push wording' 'the DROP TABLE log push is inside the commit transaction'
+carries 'the DROP-push wording names the shared counter' 'shares the call'\''s one turso_sent_bytes delta'
+carries 'the DROP-push wording says no separate counter exists' 'no separate counter exists'
+# The flag verdicts: 3x flags, 1.5x does not, zeros agree.
+meas_row 'day b total'
+carries 'the 3x day total flags' 'FLAG'
+carries 'the 3x day total measures 6900000' '6900000'
+meas_row 'migrate duration'
+absent 'the 1.5x migrate duration does not flag' 'FLAG'
+carries 'the migrate duration measures 2700' '2700'
+carries 'the migrate duration predicts the 30-minute bound' '1800'
+meas_row 'day segments'
+absent 'the ~1x segment count does not flag' 'FLAG'
+carries 'the segment count is the listing delta (152 pushes)' '152'
+meas_row 'none zero get'
+absent 'the zero none-get does not flag' 'FLAG'
+meas_row 'idle poll r2 +[0-9]'
+absent 'the idle R2 bytes at zero do not flag' 'FLAG'
+meas_row 'join log shipped'
+absent 'the does-not-ship verdict agrees with the prediction' 'FLAG'
+carries 'the verdict measures 0 (did not ship)' ' 0 '
+# The measured values and the reset note.
+meas_row 'next pull turso'
+carries 'the next pull measures the turso delta 500' '500'
+meas_row 'next pull r2get'
+carries 'the next pull measures the r2 get delta 400' '400'
+meas_row 'fresh join r2get'
+carries 'the fresh join history ships as R2 get bytes' '20000000'
+meas_row 'idle poll turso'
+carries 'the reset idle total is the after value' '2000'
+meas_row 'idle poll/call'
+carries 'the per-call cost floors the total over 60' '33'
+out=$_meas_out
+carries 'the reset is noted for sp-a turso_pull' 'sp-a turso_pull counter reset (worker restart)'
+# The call counts: 60 idle pulls, 5000 sets, 152 pushes, b pulls twice (next
+# pull and day), sp-none once (day).
+if [ "$(grep -c '^PULL sp-a$' "$MEAS_DIR/verbs")" -ne 60 ]; then
+	echo "FAIL: the idle poll made the wrong number of pulls: $(grep -c '^PULL sp-a$' "$MEAS_DIR/verbs") (want 60)"
+	fail=1
+fi
+if [ "$(grep -c '^SET sp-a$' "$MEAS_DIR/verbs")" -ne 5000 ]; then
+	echo "FAIL: the day made the wrong number of config sets: $(grep -c '^SET sp-a$' "$MEAS_DIR/verbs") (want 5000)"
+	fail=1
+fi
+if [ "$(grep -c '^PUSH sp-a$' "$MEAS_DIR/verbs")" -ne 152 ]; then
+	echo "FAIL: the day made the wrong number of pushes: $(grep -c '^PUSH sp-a$' "$MEAS_DIR/verbs") (want 152)"
+	fail=1
+fi
+if [ "$(grep -c '^PULL sp-b$' "$MEAS_DIR/verbs")" -ne 2 ]; then
+	echo "FAIL: sp-b pulled the wrong number of times: $(grep -c '^PULL sp-b$' "$MEAS_DIR/verbs") (want 2)"
+	fail=1
+fi
+if [ "$(grep -c '^PULL sp-none$' "$MEAS_DIR/verbs")" -ne 1 ]; then
+	echo "FAIL: sp-none pulled the wrong number of times: $(grep -c '^PULL sp-none$' "$MEAS_DIR/verbs") (want 1)"
+	fail=1
+fi
+# table.txt agrees with the printed table (stdout minus the run's stderr
+# notices), and no sentinel reached either.
+find "$work/tmp" -mindepth 1 -maxdepth 1 | sort > "$work/meas-dirs-after"
+grep -vxF -f "$work/meas-dirs-before" "$work/meas-dirs-after" > "$work/meas-new-dirs" || :
+if [ "$(wc -l < "$work/meas-new-dirs")" -ne 1 ]; then
+	echo "FAIL: the measured run did not leave exactly one new state dir: $(cat "$work/meas-new-dirs")"
+	fail=1
+else
+	_meas_state=$(cat "$work/meas-new-dirs")
+	if [ ! -f "$_meas_state/table.txt" ]; then
+		echo "FAIL: the measured run left no table.txt in $_meas_state"
+		fail=1
+	else
+		printf '%s\n' "$_meas_out" | grep -v '^sync-proof.sh: ' > "$work/meas-stdout-table"
+		if ! cmp -s "$work/meas-stdout-table" "$_meas_state/table.txt"; then
+			echo "FAIL: table.txt differs from the printed table:"
+			diff "$work/meas-stdout-table" "$_meas_state/table.txt" || :
+			fail=1
+		fi
+		for s in "$s_url" "$s_token" "$s_endpoint" "$s_bucket" "$s_keyid" "$s_secret"; do
+			if grep -qF -- "$s" "$_meas_state/table.txt"; then
+				echo "FAIL: a sentinel secret reached table.txt: \"$s\""
+				fail=1
+			fi
+		done
+	fi
+fi
+out=$_meas_out
+for s in "$s_url" "$s_token" "$s_endpoint" "$s_bucket" "$s_keyid" "$s_secret"; do
+	absent "the measured stdout carries no sentinel secret ($s)" "$s"
+done
+cat "$MEAS_DIR/snippets" >> "$all"
+mkdir -p "$work/meas-a-queues"
+cp "$MEAS_DIR"/sp-*-status-* "$work/meas-a-queues/"
+
+# Scenario B: the flag directions -- any idle R2 movement flags, a non-zero
+# none-get flags, a join pulling exactly half the seed ships (the boundary is
+# under-half, not half-or-under) and flags against the does-not-ship
+# prediction, a 3x duration flags while a 1.5x day total does not.
+reset_fixtures
+rm -rf "$MEAS_DIR"
+mkdir -p "$MEAS_DIR"
+export MIG_DOC='{"already_migrated":false,"rows":20480,"turso_sent_bytes":21000000,"turso_received_bytes":21000000,"objects_written":80,"r2_put_bytes":20000000,"r2_get_bytes":1000,"duration_s":5400}'
+printf '%s\n' '{"enabled":true,"bytes":{"turso_push":2000000,"turso_pull":5000,"r2_put":800000,"r2_get":100}}' > "$MEAS_DIR/sp-a-status-1"
+printf '%s\n' '{"enabled":true,"bytes":{"turso_push":2000000,"turso_pull":6000,"r2_put":800000,"r2_get":105}}' > "$MEAS_DIR/sp-a-status-2"
+printf '%s\n' '{"enabled":true,"bytes":{"turso_push":2000000,"turso_pull":6000,"r2_put":800000,"r2_get":105}}' > "$MEAS_DIR/sp-a-status-3"
+printf '%s\n' '{"enabled":true,"bytes":{"turso_push":5000000,"turso_pull":6000,"r2_put":2400000,"r2_get":105}}' > "$MEAS_DIR/sp-a-status-4"
+printf '%s\n' '{"enabled":true,"bytes":{"turso_push":100,"turso_pull":1000,"r2_put":0,"r2_get":500}}' > "$MEAS_DIR/sp-b-status-1"
+printf '%s\n' '{"enabled":true,"bytes":{"turso_push":100,"turso_pull":1500,"r2_put":0,"r2_get":900}}' > "$MEAS_DIR/sp-b-status-2"
+printf '%s\n' '{"enabled":true,"bytes":{"turso_push":100,"turso_pull":1500,"r2_put":0,"r2_get":900}}' > "$MEAS_DIR/sp-b-status-3"
+printf '%s\n' '{"enabled":true,"bytes":{"turso_push":100,"turso_pull":1001500,"r2_put":0,"r2_get":2450900}}' > "$MEAS_DIR/sp-b-status-4"
+printf '%s\n' '{"enabled":true,"bytes":{"turso_push":700,"turso_pull":3000,"r2_put":0,"r2_get":0}}' > "$MEAS_DIR/sp-none-status-1"
+printf '%s\n' '{"enabled":true,"bytes":{"turso_push":700,"turso_pull":300300,"r2_put":0,"r2_get":1}}' > "$MEAS_DIR/sp-none-status-2"
+printf '%s\n' '{"enabled":false}' > "$MEAS_DIR/sp-d-status-1"
+printf '%s\n' '{"enabled":true,"bytes":{"turso_push":5000,"turso_pull":10485760,"r2_put":30000,"r2_get":20000000}}' > "$MEAS_DIR/sp-d-status-2"
+srcf eval "$meas_body"
+status 'the flag-scenario measured run exits 0' 0
+_meas_out=$out
+meas_row 'idle poll r2 +[0-9]'
+carries 'any idle R2 byte movement flags' 'FLAG'
+carries 'the idle R2 movement measures 5 bytes' ' 5 '
+meas_row 'none zero get'
+carries 'a non-zero none-get flags' 'FLAG'
+meas_row 'join log shipped'
+carries 'a shipped log flags against the does-not-ship prediction' 'FLAG'
+carries 'the half-seed boundary ships' ' 1 '
+meas_row 'migrate duration'
+carries 'the 3x duration flags' 'FLAG'
+meas_row 'day b total'
+absent 'the 1.5x day total does not flag' 'FLAG'
+carries 'the 1.5x day total measures 3450000' '3450000'
+cat "$MEAS_DIR/snippets" >> "$all"
+reset_fixtures
+
+# Scenario C: the whole measured run through the python3 fallback extractor,
+# on scenario A's canned queues: the same verdicts and the full 49-row table.
+if command -v python3 >/dev/null 2>&1; then
+	rm -rf "$MEAS_DIR"
+	mkdir -p "$MEAS_DIR"
+	cp "$work/meas-a-queues"/sp-*-status-* "$MEAS_DIR/"
+	export MIG_DOC='{"already_migrated":false,"rows":20480,"turso_sent_bytes":21000000,"turso_received_bytes":21000000,"objects_written":80,"r2_put_bytes":20000000,"r2_get_bytes":1000,"duration_s":2700}'
+	meas_body_py="json_tool=python3
+$meas_body"
+	find "$work/tmp" -mindepth 1 -maxdepth 1 | sort > "$work/meas-py-dirs-before"
+	srcf eval "$meas_body_py"
+	status 'the python3 measured run exits 0' 0
+	_meas_out=$out
+	meas_row 'day b total'
+	carries 'the 3x day total flags (python3)' 'FLAG'
+	meas_row 'migrate duration'
+	absent 'the 1.5x migrate duration does not flag (python3)' 'FLAG'
+	out=$_meas_out
+	carries 'the reset is noted (python3)' 'sp-a turso_pull counter reset (worker restart)'
+	find "$work/tmp" -mindepth 1 -maxdepth 1 | sort > "$work/meas-py-dirs-after"
+	grep -vxF -f "$work/meas-py-dirs-before" "$work/meas-py-dirs-after" > "$work/meas-py-new-dirs" || :
+	if [ "$(wc -l < "$work/meas-py-new-dirs")" -ne 1 ]; then
+		echo "FAIL: the python3 measured run did not leave exactly one new state dir: $(cat "$work/meas-py-new-dirs")"
+		fail=1
+	else
+		_meas_py_state=$(cat "$work/meas-py-new-dirs")
+		if [ "$(wc -l < "$_meas_py_state/table-rows")" -ne 49 ]; then
+			echo "FAIL: the python3 table has the wrong row count: $(wc -l < "$_meas_py_state/table-rows") (want 49)"
+			fail=1
+		fi
+	fi
+	cat "$MEAS_DIR/snippets" >> "$all"
+	reset_fixtures
+fi
+unset MIG_DOC BUCKET_KEYS GUARD_LINE EO_EMPTY_AT EO_COUNT SD_BEFORE SD_RESET SD_ERR
 
 # --- hygiene sweeps ---
 
