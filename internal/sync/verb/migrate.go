@@ -32,8 +32,7 @@ func (v *Runner) migrate(ctx context.Context, verb *wire.SyncVerb) *wire.SyncRes
 	if err != nil {
 		return Refusal(Classify(err), err)
 	}
-	// A close that fails leaves the worker for the next attempt's open; the
-	// migration's own counts stand either way.
+	// A close error does not shadow the migration's own counts, so it is ignored.
 	defer func() { _ = migrator.Close() }()
 	res, err := migrator.Migrate()
 	if err != nil {

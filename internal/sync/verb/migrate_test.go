@@ -21,6 +21,7 @@ import (
 type fakeMigrator struct {
 	result   synclog.MigrateResult
 	err      error
+	closeErr error
 	migrates int
 	closes   int
 }
@@ -32,7 +33,7 @@ func (f *fakeMigrator) Migrate() (synclog.MigrateResult, error) {
 
 func (f *fakeMigrator) Close() error {
 	f.closes++
-	return nil
+	return f.closeErr
 }
 
 var _ synclog.Migrator = (*fakeMigrator)(nil)
@@ -73,7 +74,8 @@ func newMigrateFixture(t *testing.T) *migrateFixture {
 // origins, so a conversion that drops or shuffles a field shows up.
 func stagedMigrateResult() synclog.MigrateResult {
 	return synclog.MigrateResult{
-		Rows: 7, ObjectsCreated: 3, ObjectsVerified: 1,
+		AlreadyMigrated: true,
+		Rows:            7, ObjectsCreated: 3, ObjectsVerified: 1,
 		RowsSwept: 2, SharedRows: 5,
 		R2Put: 11, R2Get: 13, TursoSent: 17, TursoReceived: 19,
 		Origins: []synclog.MigrateEntry{
@@ -179,7 +181,8 @@ func TestSyncMigrateRunsAgainstTheReleasedReplica(t *testing.T) {
 		t.Error("a migrate ran outside the daemon's guard")
 	}
 	want := &wire.SyncMigrate{
-		Rows: 7, ObjectsCreated: 3, ObjectsVerified: 1,
+		AlreadyMigrated: true,
+		Rows:            7, ObjectsCreated: 3, ObjectsVerified: 1,
 		RowsSwept: 2, SharedRows: 5,
 		R2Put: 11, R2Get: 13, TursoSent: 17, TursoReceived: 19,
 		Origins: []wire.SyncMigrateOrigin{
@@ -189,6 +192,46 @@ func TestSyncMigrateRunsAgainstTheReleasedReplica(t *testing.T) {
 	}
 	if !reflect.DeepEqual(res.Migrate, want) {
 		t.Errorf("migrate answer = %+v, want %+v", res.Migrate, want)
+	}
+}
+
+// TestSyncMigrateSucceedsWithoutTriggerWhenCloseFails pins the nil-trigger
+// success path and the ignored close error: a runner with no trigger bound
+// still reports the migration's own counts, and a close that fails does not
+// shadow them.
+//
+// The mutations are an unconditional trigger call (nil dereference on a
+// triggerless runner) and a close error replacing the OK answer with a
+// refusal.
+func TestSyncMigrateSucceedsWithoutTriggerWhenCloseFails(t *testing.T) {
+	fx := newMigrateFixture(t)
+	fx.migrator.result = stagedMigrateResult()
+	fx.migrator.closeErr = fmt.Errorf("sync: migrate: close the released replica: %w", relevosync.ErrBackingOff)
+
+	res := fx.base.runner.Run(context.Background(), &wire.SyncVerb{
+		Verb: wire.SyncVerbMigrate, ConfirmAllUpgraded: true,
+	}, nil)
+	if !res.OK {
+		t.Fatalf("migrate with no trigger and a failing close refused: %s", res.Message)
+	}
+	want := &wire.SyncMigrate{
+		AlreadyMigrated: true,
+		Rows:            7, ObjectsCreated: 3, ObjectsVerified: 1,
+		RowsSwept: 2, SharedRows: 5,
+		R2Put: 11, R2Get: 13, TursoSent: 17, TursoReceived: 19,
+		Origins: []wire.SyncMigrateOrigin{
+			{Origin: "origin-a", Rows: 4, Objects: 2, Seq: 9, Floor: 8, LegacyUpto: 7, Label: "shop"},
+			{Origin: "origin-b", Rows: 3, Objects: 1, Seq: 6, Floor: 5, LegacyUpto: 4, Label: "web"},
+		},
+	}
+	if !reflect.DeepEqual(res.Migrate, want) {
+		t.Errorf("migrate answer = %+v, want %+v", res.Migrate, want)
+	}
+	if fx.migrator.migrates != 1 {
+		t.Errorf("the migrate ran %d times, want once", fx.migrator.migrates)
+	}
+	if fx.migrator.closes != 1 {
+		t.Errorf("the migrate closed the migrator %d times, want once", fx.migrator.closes)
 	}
 }
 
