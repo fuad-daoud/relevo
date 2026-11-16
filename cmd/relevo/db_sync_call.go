@@ -145,6 +145,9 @@ type dbSyncVerbOptions struct {
 	// aside before the next attempt, ignoring the window an automatic
 	// rebuild waits out.
 	Rebuild bool
+	// ConfirmAllUpgraded is migrate's --confirm-all-upgraded: every machine
+	// already runs this release, so the remote may move to the new format.
+	ConfirmAllUpgraded bool
 }
 
 // sendSyncVerb sends one verb over the framed surface and classifies the answer.
@@ -164,23 +167,24 @@ func sendSyncVerb(ctx context.Context, shared *db.DB, verb string, opts dbSyncVe
 // are the same user, so the value crosses the stream between them and nowhere else.
 func sendSyncVerbToken(ctx context.Context, shared *db.DB, verb string, token []byte, opts dbSyncVerbOptions) (*wire.SyncResult, error) {
 	req := &wire.SyncVerb{
-		Header:           wire.Header{Type: wire.TypeSyncVerb},
-		Verb:             verb,
-		RemoteURL:        opts.RemoteURL,
-		TimeoutMS:        opts.Timeout.Milliseconds(),
-		R2Endpoint:       opts.R2Endpoint,
-		R2Bucket:         opts.R2Bucket,
-		R2KeyID:          opts.R2KeyID,
-		R2SecretLen:      opts.R2SecretLen,
-		PassphraseLen:    opts.PassphraseLen,
-		NewPassphraseLen: opts.NewPassphraseLen,
-		Join:             opts.Join,
-		Yes:              opts.Yes,
-		AdoptAs:          opts.AdoptAs,
-		History:          opts.History,
-		DryRun:           opts.DryRun,
-		New:              opts.New,
-		Rebuild:          opts.Rebuild,
+		Header:             wire.Header{Type: wire.TypeSyncVerb},
+		Verb:               verb,
+		RemoteURL:          opts.RemoteURL,
+		TimeoutMS:          opts.Timeout.Milliseconds(),
+		R2Endpoint:         opts.R2Endpoint,
+		R2Bucket:           opts.R2Bucket,
+		R2KeyID:            opts.R2KeyID,
+		R2SecretLen:        opts.R2SecretLen,
+		PassphraseLen:      opts.PassphraseLen,
+		NewPassphraseLen:   opts.NewPassphraseLen,
+		Join:               opts.Join,
+		Yes:                opts.Yes,
+		AdoptAs:            opts.AdoptAs,
+		History:            opts.History,
+		DryRun:             opts.DryRun,
+		New:                opts.New,
+		Rebuild:            opts.Rebuild,
+		ConfirmAllUpgraded: opts.ConfirmAllUpgraded,
 	}
 	res, err := shared.SyncVerb(ctx, req, token)
 	if err != nil {
@@ -255,6 +259,11 @@ func dbSyncVerbRefusalFor(verb, url string, err error) error {
 		// Nothing was written, and no retry on this machine ends the wait: the
 		// fix runs on another machine. Status shows the wait and names the fix.
 		return failNext(codeRefused, "relevo db sync status", "%s", refusal.Message)
+	case wire.SyncCodeMigrateIncomplete:
+		// Late rows arrived mid-migration and nothing was swept: running the
+		// verb again sweeps them, so the next hint is the verb with the flag
+		// that confirms the fleet.
+		return failNext(codeRefused, "relevo db sync migrate --confirm-all-upgraded", "%s", refusal.Message)
 	case wire.SyncCodeRemoteRefused, wire.SyncCodeRemoteSchemaMissing:
 		// The remote refused the statement this machine's change set carried: the
 		// reader is told the constraint rather than sent to `relevo bugreport`.

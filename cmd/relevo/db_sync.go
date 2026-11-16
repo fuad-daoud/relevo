@@ -29,6 +29,7 @@ const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [-
 	"       relevo db sync reconcile [--dry-run] [--timeout D] [--json]\n" +
 	"       relevo db sync unlock [--new] [--passphrase-stdin] [--json]\n" +
 	"       relevo db sync rekey [--passphrase-stdin] [--json]\n" +
+	"       relevo db sync migrate --confirm-all-upgraded [--json]\n" +
 	"       relevo db sync invite [--json]\n\n" +
 	"enable joins this machine to the remote: it checks the origin gate, stores\n" +
 	"the token and the remote, then imports the other origins and exports this\n" +
@@ -50,7 +51,10 @@ const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [-
 	"be unlocked, the current passphrase is checked against the remote before\n" +
 	"anything is written, and the new one comes from " + dbSyncNewPassphraseEnv + "\n" +
 	"or a prompt asked twice -- stdin carries at most one secret, so it is the\n" +
-	"current passphrase's route alone. invite prints one join code on stdout for\n" +
+	"current passphrase's route alone. migrate moves the remote to the format\n" +
+	"only this release reads: run it once, on one machine, after every machine\n" +
+	"runs this release; the machine's own outbox is untouched. invite prints\n" +
+	"one join code on stdout for\n" +
 	"a new machine to join with; it carries the turso.token, so it goes to the\n" +
 	"terminal and never to a log. A machine that is not syncing, or a remote\n" +
 	"holding no key yet, is refused by name.\n" +
@@ -113,6 +117,8 @@ func cmdDBSync(args []string) error {
 		return cmdDBSyncUnlock(args[1:])
 	case len(args) > 0 && args[0] == "rekey":
 		return cmdDBSyncRekey(args[1:])
+	case len(args) > 0 && args[0] == "migrate":
+		return cmdDBSyncMigrate(args[1:])
 	case len(args) > 0 && args[0] == "invite":
 		return cmdDBSyncInvite(args[1:])
 	case len(args) > 0 && (args[0] == "help" || args[0] == "-h" || args[0] == "--help"):
