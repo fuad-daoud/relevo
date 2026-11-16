@@ -10,8 +10,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/blobstore"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
@@ -30,7 +32,9 @@ const LatchAfter = 3
 
 // The fixed sentences a latch carries. They are written in this tree: a latch is
 // shown on the statusline and in the sync view, so neither a worker's nor a
-// remote's own words may reach them.
+// remote's own words may reach them. The one exception is the missing object's
+// key, which reaches only when blobstore.IsSegmentKey or blobstore.IsBodyKey
+// accepts it, keeping the marker free of unvalidated words.
 const (
 	latchDeaths  = "sync: the worker stopped answering three times in a row"
 	latchRefused = "sync: the remote refused this machine's sync log"
@@ -220,12 +224,28 @@ func (b *Breaker) Refused(err error) error {
 		return nil
 	}
 	if errors.Is(err, synclog.ErrBlobMissing) {
+		if key, ok := missingKey(err); ok {
+			return b.latch("sync: " + key + " is missing from the bucket: check for a bucket lifecycle rule or a hand deletion, restore the object, then run `relevo db sync retry`")
+		}
 		return b.latch(latchMissing)
 	}
 	if errors.Is(err, ErrQuotaReached) {
 		return b.latch(latchQuota)
 	}
 	return b.latch(latchRefused)
+}
+
+// missingKey scans a missing-object refusal for the key it names: fields split
+// on whitespace with trailing punctuation cut, keeping only one a bucket key
+// shape check accepts. A worker's sentence reaches this scan, so unvalidated
+// words must never pass: only a validated key may name the latch.
+func missingKey(err error) (string, bool) {
+	for _, field := range strings.Fields(err.Error()) {
+		if key := strings.TrimRight(field, ",:;"); blobstore.IsSegmentKey(key) || blobstore.IsBodyKey(key) {
+			return key, true
+		}
+	}
+	return "", false
 }
 
 // Due reports whether a call may run now.

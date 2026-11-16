@@ -666,8 +666,9 @@ func TestSupervisorLatchesSyncOnABatchWithOneMissingKey(t *testing.T) {
 	if latched, _ := b.Latched(); !latched {
 		t.Fatal("a batch with one missing key did not latch sync, want it settled as a refusal")
 	}
-	if cause, _ := b.LatchCause(); cause != "sync: a body the sync log names is missing from the bucket" {
-		t.Errorf("latch cause = %q, want the missing-body cause", cause)
+	want := "sync: " + absent + " is missing from the bucket: check for a bucket lifecycle rule or a hand deletion, restore the object, then run `relevo db sync retry`"
+	if cause, _ := b.LatchCause(); cause != want {
+		t.Errorf("latch cause = %q, want %q", cause, want)
 	}
 	if got, _ := b.Deaths(); got != 0 {
 		t.Errorf("deaths = %d, want the answered call latched instead of counted", got)

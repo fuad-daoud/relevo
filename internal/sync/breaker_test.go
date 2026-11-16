@@ -207,15 +207,73 @@ func TestLatchPersistsUntilCleared(t *testing.T) {
 	}
 }
 
-// A missing body latches with its own sentence, since the remote did not refuse
-// anything and the way out is restoring the object.
+// A missing object latches naming its key, since the remote did not refuse
+// anything and the way out is restoring the object. A refusal whose text holds
+// no valid key keeps the fixed sentence, so a worker's wording never names the
+// latch.
 func TestMissingBodyLatchesWithItsOwnCause(t *testing.T) {
 	t.Parallel()
-	b, _ := breakerUnder(t)
-	if err := b.Refused(fmt.Errorf("import: %w", synclog.ErrBlobMissing)); err != nil {
-		t.Fatalf("Refused: %v", err)
+	const segKey = "origin-a/log/000000000007"
+	const bodyKey = "origin-a/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	// A near miss: a key shape with uppercase hex, which the body shape check
+	// refuses rather than folds.
+	const upperKey = "origin-a/ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789"
+	segErr := fmt.Errorf("refused: syncworker: heads for origin-a name segment %s, but none is listed past the mark: %w",
+		segKey, synclog.ErrBlobMissing)
+	bodyErr := fmt.Errorf("refused: syncworker: %s is not in the store: %w", bodyKey, synclog.ErrBlobMissing)
+	segCause := "sync: " + segKey + " is missing from the bucket: check for a bucket lifecycle rule or a hand deletion, restore the object, then run `relevo db sync retry`"
+	bodyCause := "sync: " + bodyKey + " is missing from the bucket: check for a bucket lifecycle rule or a hand deletion, restore the object, then run `relevo db sync retry`"
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "segment",
+			err:  segErr,
+			want: segCause,
+		},
+		{
+			name: "body",
+			err:  bodyErr,
+			want: bodyCause,
+		},
+		{
+			name: "no key",
+			err: fmt.Errorf("refused: import: nothing listed under origin-a/log/7, not even %s: %w",
+				upperKey, synclog.ErrBlobMissing),
+			want: latchMissing,
+		},
 	}
-	if cause, _ := b.LatchCause(); cause != latchMissing {
-		t.Errorf("latch cause = %q, want %q", cause, latchMissing)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b, local := breakerUnder(t)
+			if err := b.Refused(tc.err); err != nil {
+				t.Fatalf("Refused: %v", err)
+			}
+			if cause, _ := b.LatchCause(); cause != tc.want {
+				t.Errorf("latch cause = %q, want %q", cause, tc.want)
+			}
+			if st, err := ReadState(local); err != nil || st.LatchCause != tc.want {
+				t.Errorf("ReadState().LatchCause = %q, %v; want %q", st.LatchCause, err, tc.want)
+			}
+		})
 	}
+	t.Run("clear", func(t *testing.T) {
+		t.Parallel()
+		b, _ := breakerUnder(t)
+		if err := b.Refused(segErr); err != nil {
+			t.Fatalf("Refused: %v", err)
+		}
+		if latched, _ := b.Latched(); !latched {
+			t.Fatal("a missing segment did not latch the machine")
+		}
+		if err := b.Clear(); err != nil {
+			t.Fatalf("Clear: %v", err)
+		}
+		if latched, _ := b.Latched(); latched {
+			t.Error("Clear did not unlatch the machine")
+		}
+	})
 }
