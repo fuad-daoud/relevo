@@ -19,9 +19,12 @@ import (
 // is a bool because the value must never be printed. The R2 fields are omitempty
 // because bodies in a bucket are opt-in.
 type dbSyncStatusDoc struct {
-	Enabled      bool   `json:"enabled"`
-	RemoteURL    string `json:"remote_url,omitempty"`
-	Namespace    string `json:"namespace,omitempty"`
+	Enabled   bool   `json:"enabled"`
+	RemoteURL string `json:"remote_url,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+	// History is the stored reading mode: empty for full, "none" for none, so a
+	// full machine's document is byte-identical with or without the field.
+	History      string `json:"history,omitempty"`
 	TokenPresent bool   `json:"token_present"`
 	// Key is unlocked when this machine holds the sync key, locked when it
 	// holds none and the remote does, and none otherwise.
@@ -239,6 +242,11 @@ func dbSyncStatusDetails(doc dbSyncStatusDoc) string {
 	}
 	for _, f := range doc.Fenced {
 		fmt.Fprintf(&b, " · %d local changes to %s were fenced by a takeover", f.Count, sanitize.Text(f.Name))
+	}
+	// The mode reads beside the storage figures it explains, and only when it
+	// is none: full is the ordinary state.
+	if doc.History == relevosync.HistoryNone {
+		b.WriteString(" · history: none")
 	}
 	if doc.Bytes != nil || doc.Storage != nil {
 		fmt.Fprintf(&b, " · %s", dbSyncQuotasLine(doc))

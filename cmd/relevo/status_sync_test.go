@@ -297,6 +297,52 @@ func TestDBSyncStatusReadShowsTheMigrationWait(t *testing.T) {
 	}
 }
 
+// TestDBSyncStatusReadShowsHistoryNone pins the reader: the section's stored
+// mode reaches the document and the line. PutSettings writes the section
+// without the enabled marker, so the fixture is off -- and the clause still
+// shows, deliberately: status describes the machine's setting, on or off. A
+// machine with no section carries neither the field nor the clause.
+func TestDBSyncStatusReadShowsHistoryNone(t *testing.T) {
+	t.Parallel()
+	shared, err := db.OpenSplit(filepath.Join(t.TempDir(), "relevo.db"), db.Options{Origin: "m1"})
+	if err != nil {
+		t.Fatalf("OpenSplit: %v", err)
+	}
+	t.Cleanup(func() { _ = shared.Close() })
+	local, err := relevosync.LocalHandle(shared)
+	if err != nil {
+		t.Fatalf("LocalHandle: %v", err)
+	}
+
+	doc, err := dbSyncStatusRead(local, shared.Origin())
+	if err != nil {
+		t.Fatalf("dbSyncStatusRead with no section: %v", err)
+	}
+	if doc.History != "" {
+		t.Errorf("a machine with no section reads history %q, want the empty full form", doc.History)
+	}
+	if line := dbSyncStatusLine(doc); strings.Contains(line, "history:") {
+		t.Errorf("a machine with no section rendered the clause: %q", line)
+	}
+
+	if err := relevosync.PutSettings(local, relevosync.Settings{History: relevosync.HistoryNone}, time.Now()); err != nil {
+		t.Fatalf("PutSettings: %v", err)
+	}
+	doc, err = dbSyncStatusRead(local, shared.Origin())
+	if err != nil {
+		t.Fatalf("dbSyncStatusRead with a none section: %v", err)
+	}
+	if doc.History != relevosync.HistoryNone {
+		t.Errorf("document history = %q, want the stored none", doc.History)
+	}
+	if doc.Enabled {
+		t.Fatal("the fixture reads as on; this test pins the off half of the clause's rule")
+	}
+	if got, want := dbSyncStatusLine(doc), "sync off (remote: (none), token: absent) · history: none\n"; got != want {
+		t.Errorf("line = %q, want %q", got, want)
+	}
+}
+
 func boolLit(b bool) string {
 	if b {
 		return "true"

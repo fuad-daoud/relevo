@@ -369,6 +369,71 @@ func TestStatusLineOmitsWhatNeverHappened(t *testing.T) {
 	}
 }
 
+// TestStatusLineShowsHistoryNoneOnlyForTheNoneMode pins the mode clause: a
+// machine that reads none of the history says so immediately before the
+// storage figures the mode explains, while a full machine and one with no
+// section render no clause -- full is the ordinary state. The off machine
+// keeps the clause deliberately: status describes the machine's setting, on
+// or off, and a machine with sync off still reads none of the history.
+func TestStatusLineShowsHistoryNoneOnlyForTheNoneMode(t *testing.T) {
+	none := dbSyncStatusDoc{
+		Enabled:      true,
+		RemoteURL:    syncStatusRemote,
+		TokenPresent: true,
+		History:      relevosync.HistoryNone,
+	}
+	if got, want := dbSyncStatusLine(none), "sync on (remote: "+syncStatusRemote+", token: present) · history: none\n"; got != want {
+		t.Errorf("none line = %q, want %q", got, want)
+	}
+
+	off := dbSyncStatusDoc{History: relevosync.HistoryNone}
+	if got, want := dbSyncStatusLine(off), "sync off (remote: (none), token: absent) · history: none\n"; got != want {
+		t.Errorf("off none line = %q, want %q", got, want)
+	}
+
+	// The clause sits immediately before the quotas it explains: with a
+	// backlog and a month's counters set, the three read in that order.
+	figured := none
+	figured.Backlog = relevosync.BacklogThreshold + 1
+	figured.Bytes = &relevosync.ByteCounters{TursoPush: 7_000_000_000}
+	if line := dbSyncStatusLine(figured); !strings.Contains(line, " · backlog: 101 · history: none · this month:") {
+		t.Errorf("status line %q does not read the mode beside the storage figures", line)
+	}
+
+	// Full is stored empty, and a machine with no section at all is unset:
+	// neither renders a clause.
+	full := none
+	full.History = ""
+	if got, want := dbSyncStatusLine(full), "sync on (remote: "+syncStatusRemote+", token: present)\n"; got != want {
+		t.Errorf("full line = %q, want %q", got, want)
+	}
+	if got, want := dbSyncStatusLine(dbSyncStatusDoc{}), "sync off (remote: (none), token: absent)\n"; got != want {
+		t.Errorf("unset line = %q, want %q", got, want)
+	}
+}
+
+// TestStatusDocCarriesHistoryOnlyForTheNoneMode pins the JSON half: the key is
+// present exactly when the machine reads none of the history, so a full
+// machine's document keeps the shape every consumer already reads.
+func TestStatusDocCarriesHistoryOnlyForTheNoneMode(t *testing.T) {
+	doc := statusLineWithEveryR4Field()
+	doc.History = relevosync.HistoryNone
+	body, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("marshal the none document: %v", err)
+	}
+	if !strings.Contains(string(body), `"history":"none"`) {
+		t.Errorf("the none document %s lacks history:none", body)
+	}
+	body, err = json.Marshal(statusLineWithEveryR4Field())
+	if err != nil {
+		t.Fatalf("marshal the full document: %v", err)
+	}
+	if strings.Contains(string(body), `"history"`) {
+		t.Errorf("a full machine carries the key: %s", body)
+	}
+}
+
 // TestStatusLineShowsTheMigrationWaitAfterALatch pins the wait clause and its
 // place in the fixed order: the latch reads first because it stops the machine
 // until a human acts, and the migration wait follows it because it ends on its
