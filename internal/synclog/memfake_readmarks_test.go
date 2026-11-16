@@ -69,3 +69,31 @@ func TestMemTransportReadMarksReportsTheLogSize(t *testing.T) {
 		t.Errorf("floors = %v, want nil: nothing has compacted", empty.Floors)
 	}
 }
+
+// TestMemTransportReadMarksCarriesSetLabels pins that a name laid down on the
+// fake comes back from ReadMarks beside the heads, and only for the origin
+// that named one. The fake holds no heads table to read a label from, so the
+// label a test sets is the one a real replica's heads row would hold.
+func TestMemTransportReadMarksCarriesSetLabels(t *testing.T) {
+	t.Parallel()
+	log := NewMemTransport("m1")
+	far := log.OnLog("m2")
+	log.SetLabel("m1", "laptop")
+
+	state, err := far.ReadMarks()
+	if err != nil {
+		t.Fatalf("ReadMarks: %v", err)
+	}
+	if state.Labels["m1"] != "laptop" {
+		t.Errorf("labels = %v, want laptop for m1: the name the test set", state.Labels)
+	}
+	if _, ok := state.Labels["m2"]; ok {
+		t.Errorf("labels = %v, want no name for m2: it named none", state.Labels)
+	}
+
+	if state, err := NewMemTransport("m9").ReadMarks(); err != nil {
+		t.Fatalf("ReadMarks on an empty log: %v", err)
+	} else if state.Labels != nil {
+		t.Errorf("labels = %v, want nil: nothing named one", state.Labels)
+	}
+}

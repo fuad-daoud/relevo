@@ -84,3 +84,38 @@ func TestMarkStateFromWireCarriesTheSizes(t *testing.T) {
 		t.Errorf("Sizes = %v, want a=7", got.Sizes)
 	}
 }
+
+// TestClientReadsLabelsOverAPipe pins that the names a fake worker reply
+// carried come back through the client rather than dropped at the pipe. A
+// label names the machine for a reader that pulls no history, so a read that
+// lost it would leave every remote anonymous.
+func TestClientReadsLabelsOverAPipe(t *testing.T) {
+	c, err := startFakeWorker(t, modeNormal, handshake())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	state, err := c.ReadMarks()
+	if err != nil {
+		t.Fatalf("ReadMarks: %v", err)
+	}
+	if state.Labels["origin-b"] != "the laptop" {
+		t.Errorf("labels = %v, want the laptop for origin-b: the worker's reply", state.Labels)
+	}
+	if _, ok := state.Labels["origin-a"]; ok {
+		t.Errorf("labels = %v, want no name for origin-a: it sent none", state.Labels)
+	}
+}
+
+// TestMarkStateFromWireLeavesLabelsNilWhenAbsent pins that a reply carrying
+// no names leaves the map nil rather than empty. Nothing labelled and an
+// origin labelled empty read the same, so an empty map would invent a fact
+// the worker never sent.
+func TestMarkStateFromWireLeavesLabelsNilWhenAbsent(t *testing.T) {
+	got := markStateFromWire(syncworker.MarkState{
+		Heads: map[string]int{"origin-b": 4},
+	})
+	if got.Labels != nil {
+		t.Errorf("labels = %v, want nil: the reply carried none", got.Labels)
+	}
+}

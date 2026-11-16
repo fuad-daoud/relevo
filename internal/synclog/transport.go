@@ -196,6 +196,10 @@ type MarkState struct {
 	// row this transport cannot parse comes back with a zero epoch and no
 	// tag, the shape nothing verifies under.
 	EpochCuts map[string]EpochCut
+	// Labels is the name each origin's machine gave itself, from its heads
+	// row. It is display only, and an origin that sent none is absent rather
+	// than carried as an empty name.
+	Labels map[string]string
 }
 
 // Boundary is the first signed sequence an exporter predicts for its origin and

@@ -308,6 +308,7 @@ func (normalBackend) ReadMarks() (syncworker.MarkState, error) {
 	return syncworker.MarkState{
 		Heads:   map[string]int{"origin-a": 9, "origin-b": 4},
 		Entries: map[string]int{"origin-a": 7, "origin-b": 4},
+		Labels:  map[string]string{"origin-b": "the laptop"},
 	}, nil
 }
 
