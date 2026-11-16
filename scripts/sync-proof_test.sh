@@ -12,6 +12,7 @@
 # sentinel secret values; a final sweep asserts no sentinel ever reached any
 # output or any recorded argv, which is the pin that a refusal names variables
 # and credentials travel only in mode-600 files.
+# shellcheck disable=SC2016,SC2089,SC2090 # eval'd snippets, expected command lines and canned JSON hold literal $ and quotes on purpose
 set -eu
 
 # shellcheck disable=SC1007 # CDPATH= scopes an empty CDPATH to this one command

@@ -578,6 +578,7 @@ sandbox_root=${RELEVO_SANDBOX_ROOT:-${HOME:-}/.local/share/relevo-sandboxes}
 # The exact guard every in-sandbox snippet starts with (docs/env-sandbox.md):
 # RELEVO_SANDBOX is set iff the sandbox exports are in force, so a command never
 # runs against the developer's own state root when env.sh was not sourced.
+# shellcheck disable=SC2016 # the guard is eval'd inside the sandbox, so its $ stays literal here
 sandbox_guard='test -n "$RELEVO_SANDBOX" || { echo '\''not in a sandbox'\'' >&2; exit 1; }'
 
 # The seed's batch model: one HTTP request carries seed_batch_rows rows (the
@@ -1389,6 +1390,7 @@ destroy_sandboxes() {
 # phases and print the table. Each origin is kept because the listing deltas
 # count segments per origin.
 run_phases() {
+	# shellcheck disable=SC2034 # read by the snippets sb_sh evals in a subshell of this shell
 	sync_passphrase=$(gen_passphrase)
 	create_sandboxes
 	enable_first
@@ -1422,6 +1424,7 @@ print_plan() {
 	printf 'plan: enable sp-a (first machine; token: stdin, r2.secret: RELEVO_R2_SECRET, no passphrase)\n'
 	printf '. %s/sp-a/env.sh\n' "$sandbox_root"
 	printf '%s\n' "$sandbox_guard"
+	# shellcheck disable=SC2016 # the dry-run plan prints the variable names, never their values
 	printf 'relevo db sync enable --url "$RELEVO_SCRATCH_SYNC_URL" --token-stdin --r2-endpoint "$RELEVO_SCRATCH_R2_ENDPOINT" --r2-bucket "$RELEVO_SCRATCH_R2_BUCKET" --r2-key-id "$RELEVO_SCRATCH_R2_KEY_ID"\n'
 	printf 'plan: unlock sp-a --new (passphrase: stdin, generated per run)\n'
 	printf '%s\n' "$sandbox_guard"
@@ -1432,6 +1435,7 @@ print_plan() {
 	printf 'plan: enable sp-b (joiner; token: stdin, r2.secret: RELEVO_R2_SECRET, passphrase: RELEVO_SYNC_PASSPHRASE)\n'
 	printf '. %s/sp-b/env.sh\n' "$sandbox_root"
 	printf '%s\n' "$sandbox_guard"
+	# shellcheck disable=SC2016 # the dry-run plan prints the variable names, never their values
 	printf 'relevo db sync enable --url "$RELEVO_SCRATCH_SYNC_URL" --token-stdin --r2-endpoint "$RELEVO_SCRATCH_R2_ENDPOINT" --r2-bucket "$RELEVO_SCRATCH_R2_BUCKET" --r2-key-id "$RELEVO_SCRATCH_R2_KEY_ID"\n'
 	printf 'plan: push sp-b (first push)\n'
 	printf '%s\n' "$sandbox_guard"
@@ -1439,6 +1443,7 @@ print_plan() {
 	printf 'plan: enable sp-none (joiner, --history none; same secret sources as sp-b)\n'
 	printf '. %s/sp-none/env.sh\n' "$sandbox_root"
 	printf '%s\n' "$sandbox_guard"
+	# shellcheck disable=SC2016 # the dry-run plan prints the variable names, never their values
 	printf 'relevo db sync enable --url "$RELEVO_SCRATCH_SYNC_URL" --token-stdin --r2-endpoint "$RELEVO_SCRATCH_R2_ENDPOINT" --r2-bucket "$RELEVO_SCRATCH_R2_BUCKET" --r2-key-id "$RELEVO_SCRATCH_R2_KEY_ID" --history none\n'
 	printf 'plan: push sp-none (first push)\n'
 	printf '%s\n' "$sandbox_guard"
@@ -1457,6 +1462,7 @@ print_plan() {
 	printf '%s create sp-d\n' "$sandbox_script"
 	printf '. %s/sp-d/env.sh\n' "$sandbox_root"
 	printf '%s\n' "$sandbox_guard"
+	# shellcheck disable=SC2016 # the dry-run plan prints the variable names, never their values
 	printf 'relevo db sync enable --url "$RELEVO_SCRATCH_SYNC_URL" --token-stdin --r2-endpoint "$RELEVO_SCRATCH_R2_ENDPOINT" --r2-bucket "$RELEVO_SCRATCH_R2_BUCKET" --r2-key-id "$RELEVO_SCRATCH_R2_KEY_ID"\n'
 	printf 'plan: push sp-d (first push)\n'
 	printf '%s\n' "$sandbox_guard"
