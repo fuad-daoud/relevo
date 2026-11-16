@@ -217,7 +217,7 @@ func (v *Runner) openJoinTransport(ctx context.Context, joining bool) (synclog.L
 // The passphrase is required here, and the enable it hands off to resolves the
 // bucket credentials leniently: a code has nowhere to carry them and they arrive
 // in the secrets document, but bucket flags the joiner passed are honored.
-func (v *Runner) enableJoin(ctx context.Context, verb *wire.SyncVerb, token, passphrase []byte, r2 relevosync.R2Intake) *wire.SyncResult {
+func (v *Runner) enableJoin(ctx context.Context, verb *wire.SyncVerb, token, passphrase []byte, r2 relevosync.R2Intake, adopt *relevosync.Adoption) *wire.SyncResult {
 	history, err := relevosync.ParseHistory(verb.History)
 	if err != nil {
 		return Refusal(Classify(err), err)
@@ -228,7 +228,7 @@ func (v *Runner) enableJoin(ctx context.Context, verb *wire.SyncVerb, token, pas
 		v.recordJoinFailure(err)
 		return Refusal(Classify(err), err)
 	}
-	return v.enablePipeline(ctx, verb, token, r2, true, done)
+	return v.enablePipeline(ctx, verb, token, r2, true, done, adopt)
 }
 
 // joinStranded reports whether a marker is set on a machine that is off, the
@@ -295,15 +295,7 @@ func refusedForGood(err error, enabler *relevosync.Enabler) bool {
 //
 // joining relaxes the preflight's bucket check: a join's credentials may arrive
 // in the secrets document, so only flags actually passed are stored.
-func (v *Runner) enablePipeline(ctx context.Context, verb *wire.SyncVerb, token []byte, r2 relevosync.R2Intake, joining bool, staged *verified) *wire.SyncResult {
-	adopt, err := v.adoption(verb)
-	if err != nil {
-		if staged != nil {
-			staged.unstage()
-		}
-		v.recordJoinFailure(err)
-		return Refusal(Classify(err), err)
-	}
+func (v *Runner) enablePipeline(ctx context.Context, verb *wire.SyncVerb, token []byte, r2 relevosync.R2Intake, joining bool, staged *verified, adopt *relevosync.Adoption) *wire.SyncResult {
 	v.beginJoin()
 	var opened synclog.LogTransport
 	if staged != nil {

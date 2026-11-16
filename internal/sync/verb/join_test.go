@@ -556,3 +556,35 @@ func TestEnableSectionAtNoneWhenOpenerRuns(t *testing.T) {
 		t.Errorf("code = %q, want %q", res.Code, wire.SyncCodeInvalid)
 	}
 }
+
+// TestJoinWithBadHistoryRefusedBeforeOpening pins that a join with an unknown
+// history mode is refused before any transport is opened and stages nothing.
+func TestJoinWithBadHistoryRefusedBeforeOpening(t *testing.T) {
+	t.Parallel()
+	runner, local, _ := joinMachine(t, joinPassphrase)
+	var openerCalled, noBucketCalled bool
+	runner.Open = func(context.Context) (synclog.LogTransport, error) {
+		openerCalled = true
+		return synclog.NewMemTransport("m1"), nil
+	}
+	runner.OpenNoBucket = func(context.Context) (synclog.LogTransport, bool, error) {
+		noBucketCalled = true
+		return synclog.NewMemTransport("m1"), false, nil
+	}
+	before := localState(t, local)
+	verb := joinVerb(t, joinPassphrase)
+	verb.History = "sometimes"
+	res := runner.Run(context.Background(), verb, []byte(joinToken+joinPassphrase))
+	if res.OK {
+		t.Fatal("join with bad history succeeded, want refusal")
+	}
+	if res.Code != wire.SyncCodeInvalid {
+		t.Errorf("code = %q, want %q", res.Code, wire.SyncCodeInvalid)
+	}
+	if openerCalled || noBucketCalled {
+		t.Errorf("openers called (open %v, no-bucket %v), want none before the refusal", openerCalled, noBucketCalled)
+	}
+	if after := localState(t, local); after["section"] != before["section"] || after["token"] != before["token"] {
+		t.Errorf("a refused join staged something:\n before %+v\n after  %+v", before, after)
+	}
+}
