@@ -144,6 +144,31 @@ func (s noGetStore) Get(ctx context.Context, key string, w io.Writer) (int64, er
 	return 0, errors.New("Get called")
 }
 
+// listFailStore lists nothing: its listing refuses, the way a bucket the join
+// cannot read answers.
+type listFailStore struct {
+	blobstore.BlobStore
+	err error
+}
+
+func (s listFailStore) List(context.Context, string) ([]blobstore.Object, error) {
+	return nil, s.err
+}
+
+// A refused listing reaches the join estimate as an error, never as a zero
+// segment count: the guard must report that nothing was learned.
+func TestEstimateJoinReturnsAListingError(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("the bucket cannot be listed")
+	est, err := EstimateJoin(context.Background(), listFailStore{BlobStore: blobstore.NewMemBlobStore(nil), err: sentinel})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("EstimateJoin = %+v, %v, want the listing error", est, err)
+	}
+	if est != (JoinEstimate{}) {
+		t.Errorf("estimate = %+v, want the zero estimate with the error", est)
+	}
+}
+
 // The estimate counts the bucket's segments from the listing alone: bodies, old
 // size objects and every other key are ignored by shape, and nothing is fetched.
 func TestEstimateJoinCountsSegmentsFromTheListing(t *testing.T) {
