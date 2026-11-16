@@ -478,3 +478,81 @@ func TestReleasingAStagedWorkerCountsOnlyOneThisEnableOpened(t *testing.T) {
 		}
 	}
 }
+
+// TestEnableSectionAtNoneWhenOpenerRuns pins that an enable stages history none
+// into the section before opening the transport, restores the section when the
+// passphrase verification fails, and refuses an invalid history before the opener runs.
+func TestEnableSectionAtNoneWhenOpenerRuns(t *testing.T) {
+	t.Parallel()
+	runner, local, _ := joinMachine(t, joinPassphrase)
+	if err := relevosync.PutSettings(local, relevosync.Settings{RemoteURL: "libsql://initial.invalid", History: ""}, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("PutSettings: %v", err)
+	}
+	if err := relevosync.SetR2(local, verbFixtureR2, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("SetR2: %v", err)
+	}
+
+	var openerCalled bool
+	var sectionHistoryDuringOpen string
+	origOpen := runner.Open
+	runner.Open = func(ctx context.Context) (synclog.LogTransport, error) {
+		openerCalled = true
+		st, err := relevosync.ReadSettings(local)
+		if err != nil {
+			t.Fatalf("ReadSettings inside opener: %v", err)
+		}
+		sectionHistoryDuringOpen = st.History
+		return origOpen(ctx)
+	}
+
+	wrong := "not the passphrase"
+	verb := &wire.SyncVerb{
+		Verb:          wire.SyncVerbEnable,
+		RemoteURL:     joinRemote,
+		History:       relevosync.HistoryNone,
+		PassphraseLen: len(wrong),
+		R2Endpoint:    verbFixtureR2.Endpoint,
+		R2Bucket:      verbFixtureR2.Bucket,
+		R2KeyID:       verbFixtureR2.KeyID,
+		R2SecretLen:   len(verbFixtureR2.Secret),
+	}
+	res := runner.Run(context.Background(), verb, []byte(joinToken+wrong+verbFixtureR2.Secret))
+	if res.OK {
+		t.Fatal("enable with wrong passphrase succeeded, want refusal")
+	}
+	if !openerCalled {
+		t.Fatal("opener was not called")
+	}
+	if sectionHistoryDuringOpen != relevosync.HistoryNone {
+		t.Errorf("section history inside opener = %q, want %q", sectionHistoryDuringOpen, relevosync.HistoryNone)
+	}
+	st, err := relevosync.ReadSettings(local)
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	if st.History != "" || st.HistoryNone() {
+		t.Errorf("section history after failed passphrase = %q, want restored empty full", st.History)
+	}
+
+	openerCalled = false
+	badVerb := &wire.SyncVerb{
+		Verb:          wire.SyncVerbEnable,
+		RemoteURL:     joinRemote,
+		History:       "sometimes",
+		PassphraseLen: len(wrong),
+		R2Endpoint:    verbFixtureR2.Endpoint,
+		R2Bucket:      verbFixtureR2.Bucket,
+		R2KeyID:       verbFixtureR2.KeyID,
+		R2SecretLen:   len(verbFixtureR2.Secret),
+	}
+	res = runner.Run(context.Background(), badVerb, []byte(joinToken+wrong+verbFixtureR2.Secret))
+	if res.OK {
+		t.Fatal("enable with bad history succeeded, want refusal")
+	}
+	if openerCalled {
+		t.Error("opener was called for a bad history mode, want refusal before opener")
+	}
+	if res.Code != wire.SyncCodeInvalid {
+		t.Errorf("code = %q, want %q", res.Code, wire.SyncCodeInvalid)
+	}
+}

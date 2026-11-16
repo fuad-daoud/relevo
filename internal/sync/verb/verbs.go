@@ -367,7 +367,11 @@ func (v *Runner) enable(ctx context.Context, verb *wire.SyncVerb, tail []byte) *
 	// verify and goes on exactly as it always did.
 	var staged *verified
 	if len(bytes.TrimSpace(passphrase)) > 0 {
-		done, err := v.stageAndVerify(ctx, verb.RemoteURL, token, passphrase, false, r2)
+		history, err := relevosync.ParseHistory(verb.History)
+		if err != nil {
+			return Refusal(Classify(err), err)
+		}
+		done, err := v.stageAndVerify(ctx, verb.RemoteURL, history, token, passphrase, false, r2)
 		if err != nil {
 			v.recordJoinFailure(err)
 			return Refusal(Classify(err), err)

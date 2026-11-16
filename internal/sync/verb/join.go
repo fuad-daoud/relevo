@@ -65,7 +65,7 @@ type verified struct {
 // A plain enable stages its bucket credentials too, because its worker opens
 // from the stored set and on a fresh machine the only set is the one this
 // enable carries; a join's arrive in the fleet's secrets document instead.
-func (v *Runner) stageAndVerify(ctx context.Context, remote string, token, passphrase []byte, required bool, r2 relevosync.R2Intake) (*verified, error) {
+func (v *Runner) stageAndVerify(ctx context.Context, remote, history string, token, passphrase []byte, required bool, r2 relevosync.R2Intake) (*verified, error) {
 	if required && len(bytes.TrimSpace(passphrase)) == 0 {
 		return nil, errNoPassphrase
 	}
@@ -84,7 +84,7 @@ func (v *Runner) stageAndVerify(ctx context.Context, remote string, token, passp
 		return nil, err
 	}
 	out := &verified{snapshot: snapshot, unstage: func() { v.unstageJoin(snapshot) }}
-	if err := v.stageRows(remote, token); err != nil {
+	if err := v.stageRows(remote, history, token); err != nil {
 		v.unstageJoin(snapshot)
 		return nil, err
 	}
@@ -141,13 +141,14 @@ func (v *Runner) stageAndVerify(ctx context.Context, remote string, token, passp
 // stageRows writes the remote and the token into the machine-local rows. It is
 // the two rows the worker is opened from and nothing else: the bucket
 // credentials a plain enable takes are written by the enable itself later.
-func (v *Runner) stageRows(remote string, token []byte) error {
+func (v *Runner) stageRows(remote, history string, token []byte) error {
 	now := time.Now()
 	settings, err := relevosync.ReadSettings(v.Local)
 	if err != nil {
 		return err
 	}
 	settings.RemoteURL = remote
+	settings.History = history
 	if err := relevosync.PutSettings(v.Local, settings, now); err != nil {
 		return err
 	}
@@ -217,8 +218,12 @@ func (v *Runner) openJoinTransport(ctx context.Context, joining bool) (synclog.L
 // bucket credentials leniently: a code has nowhere to carry them and they arrive
 // in the secrets document, but bucket flags the joiner passed are honored.
 func (v *Runner) enableJoin(ctx context.Context, verb *wire.SyncVerb, token, passphrase []byte, r2 relevosync.R2Intake) *wire.SyncResult {
+	history, err := relevosync.ParseHistory(verb.History)
+	if err != nil {
+		return Refusal(Classify(err), err)
+	}
 	v.beginJoin()
-	done, err := v.stageAndVerify(ctx, verb.RemoteURL, token, passphrase, true, r2)
+	done, err := v.stageAndVerify(ctx, verb.RemoteURL, history, token, passphrase, true, r2)
 	if err != nil {
 		v.recordJoinFailure(err)
 		return Refusal(Classify(err), err)
@@ -291,6 +296,14 @@ func refusedForGood(err error, enabler *relevosync.Enabler) bool {
 // joining relaxes the preflight's bucket check: a join's credentials may arrive
 // in the secrets document, so only flags actually passed are stored.
 func (v *Runner) enablePipeline(ctx context.Context, verb *wire.SyncVerb, token []byte, r2 relevosync.R2Intake, joining bool, staged *verified) *wire.SyncResult {
+	adopt, err := v.adoption(verb)
+	if err != nil {
+		if staged != nil {
+			staged.unstage()
+		}
+		v.recordJoinFailure(err)
+		return Refusal(Classify(err), err)
+	}
 	v.beginJoin()
 	var opened synclog.LogTransport
 	if staged != nil {
@@ -306,18 +319,19 @@ func (v *Runner) enablePipeline(ctx context.Context, verb *wire.SyncVerb, token 
 	}
 	enabler := &relevosync.Enabler{
 		Request: relevosync.EnableRequest{
-			Local:  v.Local,
-			Shared: v.Shared,
-			URL:    verb.RemoteURL,
-			Token:  token,
-			R2:     r2,
-			Join:   joining,
-			Yes:    verb.Yes,
+			Local:   v.Local,
+			Shared:  v.Shared,
+			URL:     verb.RemoteURL,
+			Token:   token,
+			R2:      r2,
+			Join:    joining,
+			Yes:     verb.Yes,
+			History: verb.History,
 		},
 		Blobs:   v.Blobs,
 		Stopped: v.joinWasStopped,
 		Now:     time.Now,
-		Adopt:   v.adoption(verb),
+		Adopt:   adopt,
 	}
 	// A transport this enable already opened is handed over rather than built
 	// again: the passphrase was verified against it, and a second worker pointed
@@ -325,15 +339,7 @@ func (v *Runner) enablePipeline(ctx context.Context, verb *wire.SyncVerb, token 
 	if opened != nil {
 		enabler.Transport = opened
 	} else {
-		enabler.Open = func() (synclog.LogTransport, error) {
-			transport, err := v.openTransport(ctx)
-			if err != nil {
-				return transport, err
-			}
-			stop := relevosync.NewStopTransport(transport)
-			v.publishJoin(stop)
-			return stop, nil
-		}
+		enabler.Open = v.pipelineOpener(ctx)
 	}
 	res, err := enabler.Enable()
 	v.clearJoin(enabler.Transport)
@@ -362,6 +368,20 @@ func (v *Runner) enablePipeline(ctx context.Context, verb *wire.SyncVerb, token 
 		v.Runner.SeedStats(res.Stats)
 	}
 	return &wire.SyncResult{OK: true, Applied: true, RemoteURL: res.Remote, TokenPresent: true, Warning: enableWarning(res)}
+}
+
+// pipelineOpener builds the log opener for an enable that was handed no open
+// transport by a prior verify step.
+func (v *Runner) pipelineOpener(ctx context.Context) func() (synclog.LogTransport, error) {
+	return func() (synclog.LogTransport, error) {
+		transport, err := v.openTransport(ctx)
+		if err != nil {
+			return transport, err
+		}
+		stop := relevosync.NewStopTransport(transport)
+		v.publishJoin(stop)
+		return stop, nil
+	}
 }
 
 // settleImportBucket decides what a join's import runs on.

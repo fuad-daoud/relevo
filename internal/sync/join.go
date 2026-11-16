@@ -102,6 +102,8 @@ type EnableRequest struct {
 	Join bool
 	// Yes joins past the quota guard's refusal.
 	Yes bool
+	// History is the --history flag text, empty for full.
+	History string
 }
 
 // EnablePlan is what a passing preflight resolved.
@@ -112,15 +114,18 @@ type EnablePlan struct {
 	Token []byte
 	// R2 is the resolved bucket credentials, complete or the preflight refused it.
 	R2 R2Secrets
+	// History is the parsed reading mode, empty for full.
+	History string
 }
 
 // Preflight runs the enable's checks in their fixed order and returns the plan
 // a passing run works from. The order is the contract: already-on refuses first
 // so an enable never re-decides a running machine; the token is checked before
 // the remote because no remote can supply it; the section-versus-flag conflict
-// is checked before the origin gate because it is this machine's own rows while
-// the gate reads the shared file and costs most. Reordering would name a fix the
-// user does not owe yet, or read the shared file for a machine with no token.
+// and the history mode are checked before the origin gate because they are this
+// machine's own rows while the gate reads the shared file and costs most.
+// Reordering would name a fix the user does not owe yet, or read the shared
+// file for a machine with no token.
 func (r EnableRequest) Preflight() (EnablePlan, error) {
 	on, err := Enabled(r.Local)
 	if err != nil {
@@ -149,6 +154,10 @@ func (r EnableRequest) Preflight() (EnablePlan, error) {
 	}
 	if r.URL != "" && settings.RemoteURL != "" && r.URL != settings.RemoteURL {
 		return EnablePlan{}, &RemoteConflictError{URL: r.URL, Stored: settings.RemoteURL}
+	}
+	history, err := ParseHistory(r.History)
+	if err != nil {
+		return EnablePlan{}, err
 	}
 	if r.Shared == nil {
 		return EnablePlan{}, fmt.Errorf("sync: enable: no shared database: %w", db.ErrInvalid)
@@ -179,7 +188,7 @@ func (r EnableRequest) Preflight() (EnablePlan, error) {
 	if err := db.EnablePreflight(r.Shared).Err(); err != nil {
 		return EnablePlan{}, err
 	}
-	return EnablePlan{Remote: remote, Token: r.Token, R2: r2}, nil
+	return EnablePlan{Remote: remote, Token: r.Token, R2: r2, History: history}, nil
 }
 
 // EnableResult is what one enable moved, in the shape the caller reports.
@@ -317,6 +326,7 @@ func (e *Enabler) store(plan EnablePlan, now time.Time) error {
 		return err
 	}
 	settings.RemoteURL = plan.Remote
+	settings.History = plan.History
 	if err := PutSettings(e.Request.Local, settings, now); err != nil {
 		return err
 	}
