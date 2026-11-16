@@ -46,8 +46,7 @@ func RecordMachineLabels(shared *db.DB, transport synclog.LogTransport) error {
 	})
 }
 
-// labelWrite is one directory row to upsert: an insert names the stamps an
-// update leaves alone.
+// labelWrite is one directory row to upsert for a peer origin.
 type labelWrite struct {
 	origin string
 	values map[string]any

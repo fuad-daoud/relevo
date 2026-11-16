@@ -111,8 +111,9 @@ func TestRecordMachineLabelsAddsNewOriginLabel(t *testing.T) {
 }
 
 // TestRecordMachineLabelsUpdatesChangedLabelKeepsFirstSeen pins the update: a
-// changed label moves, last_seen moves with it, and first_seen stays where
-// the first touch left it, because the update omits that column.
+// changed label moves, last_seen moves with it, and first_seen stays at the
+// seed stamp, because the update rewrites the stamp the directory already
+// holds; the test pins that the rewrite does not move it.
 func TestRecordMachineLabelsUpdatesChangedLabelKeepsFirstSeen(t *testing.T) {
 	t.Parallel()
 
